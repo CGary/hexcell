@@ -1,0 +1,17 @@
+# Rust
+/target
+Cargo.lock
+
+# SQLite (datos de inquilinos — nunca versionar)
+*.db
+*.db-wal
+*.db-shm
+
+# Secretos y entorno
+.env
+.env.*
+
+# Editor / SO
+.DS_Store
+*.swp
+.aider*
