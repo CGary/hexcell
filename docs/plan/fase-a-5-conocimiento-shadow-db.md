@@ -1,4 +1,4 @@
-# Etapa 4 — Motor de conocimiento: Shadow DB y conmutación por épocas
+# Fase A · Etapa 5 — Motor de conocimiento: Shadow DB y conmutación por épocas
 
 **Duración relativa:** Larga.
 
@@ -26,7 +26,8 @@ consigue una conmutación por debajo de los 10 milisegundos (NFR-03) sin que nin
 vea el suelo desaparecer.
 
 Es la etapa técnicamente más delicada del plan. Un fallo aquí no se manifiesta como un error
-inmediato, sino como corrupción silenciosa de datos días después.
+inmediato, sino como corrupción silenciosa de datos días después. Nada de esto depende del canal: el
+motor de conocimiento es idéntico en ambas fases y sobrevive intacto al cambio de adaptador.
 
 ---
 
@@ -37,7 +38,7 @@ inmediato, sino como corrupción silenciosa de datos días después.
 * Esquema de conocimiento: documentos, fragmentos, metadatos y vectores de embedding.
 * Pipeline de ingesta: recepción de un payload JSON de conocimiento, fragmentación del texto,
   llamada por lotes a la API externa de embeddings y escritura en `knowledge_staging.db`.
-* Sometimiento de la ingesta a la contabilidad de dos fases de la etapa 3, para que el coste de los
+* Sometimiento de la ingesta a la contabilidad de dos fases de la etapa A-4, para que el coste de los
   embeddings esté presupuestado igual que el de la inferencia.
 * Validación de integridad estructural y semántica del índice antes de promoverlo: recuento de
   fragmentos, dimensionalidad de los vectores, ausencia de nulos y una consulta de prueba que debe
@@ -50,15 +51,15 @@ inmediato, sino como corrupción silenciosa de datos días después.
 * Retención de épocas históricas y reversión a la época anterior si la nueva resulta defectuosa.
 * Motor de recuperación (RAG): búsqueda de los fragmentos más similares al mensaje del usuario y
   construcción del contexto que se envía al modelo.
-* Endpoint interno de administración del inquilino para disparar una actualización de conocimiento.
+* Endpoint interno de administración de la célula para disparar una actualización de conocimiento.
 
 ### Qué NO entra
 
 * El panel de administración web desde el que un cliente carga su catálogo. Aquí se expone el
   endpoint que lo recibiría; la interfaz de usuario depende de flujos de producto pendientes.
 * La curaduría del contenido de conocimiento de cada microempresa, que es trabajo de onboarding
-  comercial, no de ingeniería.
-* Cualquier cambio en el plano de control: Caddy y la CLI son de las etapas 6 y 7.
+  comercial, no de ingeniería. La carga inicial de las células piloto es de la etapa A-7.
+* Cualquier cambio en el plano de control: la CLI es de la etapa A-6 y Caddy de la etapa B-2.
 
 ### Requisitos del PRD cubiertos
 
@@ -73,7 +74,7 @@ inmediato, sino como corrupción silenciosa de datos días después.
 * Módulo de conocimiento en `zeroclaw-storage` con el gestor de épocas y el pool intercambiable.
 * Módulo de ingesta con fragmentación, llamada por lotes a embeddings y escritura en staging.
 * Módulo de recuperación RAG que consume el pool vigente sin conocer su época.
-* Cliente de la API externa de embeddings, integrado con la contabilidad de la etapa 3.
+* Cliente de la API externa de embeddings, integrado con la contabilidad de la etapa A-4.
 * Migraciones y esquema de la base de conocimiento.
 * `docs/adr/adr-0006-epocas-y-conmutacion-atomica.md`, con la secuencia exacta y su
   justificación.
@@ -105,11 +106,14 @@ inmediato, sino como corrupción silenciosa de datos días después.
    purgan las antiguas y cómo se vuelve a la anterior ante un problema detectado en producción.
 9. **Implementar el motor de recuperación RAG** (1,5 días). Búsqueda por similitud sobre el pool
    vigente, selección de los fragmentos más relevantes y construcción del contexto del prompt.
-10. **Exponer el endpoint interno de actualización** (0,5 días). Ruta administrativa del inquilino,
+10. **Exponer el endpoint interno de actualización** (0,5 días). Ruta administrativa de la célula,
     accesible solo desde la red interna, que dispara la ingesta y devuelve el estado del proceso.
 11. **Construir la prueba de estrés de conmutación** (1 día). Intercambio de conocimiento bajo 20
     lecturas RAG simultáneas, con medición del tiempo de conmutación y verificación del sistema de
     archivos al terminar.
+12. **Verificar la interacción con el respaldo** (0,5 días). Comprobar que una conmutación de época
+    durante un respaldo en curso no produce copias inconsistentes ni épocas huérfanas, y ajustar el
+    procedimiento de la etapa A-2 si hiciera falta.
 
 ---
 
@@ -129,6 +133,7 @@ inmediato, sino como corrupción silenciosa de datos días después.
   servirse de ella sin reiniciar el proceso.
 * Tras el drenaje, el número de descriptores de archivo abiertos por el proceso vuelve al valor
   previo a la conmutación.
+* Un respaldo ejecutado durante una conmutación produce una copia consistente y restaurable.
 
 ---
 
@@ -138,18 +143,20 @@ inmediato, sino como corrupción silenciosa de datos días después.
 | :--- | :--- | :--- |
 | Liberar los archivos de la época antigua antes de que terminen las lecturas en vuelo. | Muy alto: corrupción de datos y caídas intermitentes difíciles de reproducir. | Drenaje explícito con espera y verificación de descriptores; prueba de estrés obligatoria antes de cerrar la etapa. |
 | El checkpoint con truncado no se completa por haber lectores activos sobre staging. | Alto: la época se sella a medias. | Garantizar que la base de staging no tiene lectores por construcción, y comprobar el resultado del `PRAGMA` antes de renombrar. |
-| Coste descontrolado de la API de embeddings en catálogos grandes. | Medio: gasto imprevisto por inquilino. | La ingesta pasa por la contabilidad de dos fases de la etapa 3 y se aborta si no hay saldo. |
-| Búsqueda vectorial demasiado lenta en hardware modesto. | Medio: latencia de respuesta del bot fuera de lo aceptable. | Medir con catálogos representativos desde el principio y acotar el número de fragmentos por inquilino; si no basta, revisar la estrategia de indexado antes de la etapa 5. |
-| El diseño de rutas y enlaces simbólicos no sobrevive al montaje de volúmenes en Docker. | Medio: retrabajo en la etapa 5. | Fijar aquí la disposición definitiva del directorio de datos y validarla en la etapa 5 antes de cerrar el `Dockerfile`. |
+| Coste descontrolado de la API de embeddings en catálogos grandes. | Medio: gasto imprevisto por célula. | La ingesta pasa por la contabilidad de dos fases de la etapa A-4 y se aborta si no hay saldo. |
+| Búsqueda vectorial demasiado lenta en hardware modesto. | Medio: latencia de respuesta del bot fuera de lo aceptable. | Medir con catálogos representativos desde el principio y acotar el número de fragmentos por célula; si no basta, revisar la estrategia de indexado antes de la etapa A-6. |
+| El diseño de rutas y enlaces simbólicos no sobrevive al montaje de volúmenes en Docker. | Medio: retrabajo en la etapa A-6. | Fijar aquí la disposición definitiva del directorio de datos y validarla en la etapa A-6 antes de cerrar el `Dockerfile`. |
+| Una conmutación durante un respaldo produce una copia inconsistente. | Alto: el respaldo existe pero no restaura. | Tarea 12 explícita, con ajuste del procedimiento de la etapa A-2 si es necesario. |
 
 ---
 
 ## Dependencias
 
-* **De otras etapas:** etapa 2 (pools duales, `knowledge_live.db` y el apagado ordenado) y etapa 3
-  (contabilidad de dos fases para presupuestar los embeddings).
+* **De otras etapas:** etapa A-2 (pools duales, `knowledge_live.db`, respaldo y apagado ordenado) y
+  etapa A-4 (contabilidad de dos fases para presupuestar los embeddings).
 * **Externas:** credenciales y cuota de una API de embeddings; un conjunto de datos de catálogo
   representativo para las pruebas de rendimiento.
 * **Decisiones de producto pendientes:** la forma en que un cliente entrega su catálogo (panel web,
   carga de archivo, integración) depende de los **flujos de usuario finales** de STATUS.md. Esta
-  etapa entrega el endpoint interno; la superficie de cara al cliente queda bloqueada.
+  etapa entrega el endpoint interno; la superficie de cara al cliente queda bloqueada. Para los dos
+  pilotos de la etapa A-7 la carga se hace manualmente contra ese endpoint.

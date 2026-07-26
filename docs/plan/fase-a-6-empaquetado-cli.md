@@ -1,0 +1,207 @@
+# Fase A · Etapa 6 — Empaquetado de la célula y CLI de operación
+
+**Duración relativa:** Media.
+
+---
+
+## Objetivo
+
+Hasta aquí existe un núcleo que funciona y un sidecar que habla con WhatsApp, ambos en la máquina del
+desarrollador. Esta etapa los convierte en la unidad de despliegue real del producto —**la célula**—
+y en algo gobernable desde una línea de comandos.
+
+Una célula de la Fase A son **dos contenedores**: el núcleo Rust y el sidecar Go, compartiendo una
+red local y un volumen. Esa dualidad es la novedad frente al diseño original, y tiene un coste
+medible: el sidecar añade unos 15-30 MB de RAM, razón por la cual NFR-01 fija para la Fase A un techo
+de 80 MB por célula en lugar de los 50 MB que se recuperarán en la Fase B, cuando el sidecar
+desaparezca.
+
+Hay dos requisitos del PRD que solo se pueden verificar de verdad en este punto. El primero es
+NFR-01: una medición en el escritorio del desarrollador no significa nada, porque el objetivo de
+negocio es alojar decenas de células en un servidor con 8 GB de memoria. El segundo es NFR-05, el
+aislamiento estricto de almacenamiento, que exige que una célula **no pueda** acceder al volumen de
+otra. Nótese la diferencia entre "no accede" y "no puede acceder": la primera es una convención y la
+segunda es una propiedad del sistema. El producto vende privacidad a microempresas que comparten
+hardware, así que solo la segunda es aceptable, y demostrarla requiere un intento explícito de
+violarla que debe fallar.
+
+La CLI que se construye aquí es deliberadamente parcial. Los comandos de ciclo de vida
+—`cell pause`, `cell unpause`, `cell terminate`, `cell list`, `cell status`— operan **solo sobre
+Docker**. No hay blackholing de Caddy porque no hay Caddy: la desconexión del websocket saliente ya
+corta el tráfico entrante, y no queda ninguna petición sin contestar. `cell create` completo, con
+subdominios y registro en Meta, pertenece a la etapa B-2.
+
+---
+
+## Alcance
+
+### Qué entra
+
+* `Dockerfile` multi-etapa del **núcleo Rust**, que compila el binario y lo entrega sobre una imagen
+  base mínima (Alpine o Scratch), sin cadena de herramientas ni dependencias innecesarias.
+* `Dockerfile` multi-etapa del **sidecar Go**, sobre una imagen mínima equivalente, con el binario
+  enlazado estáticamente cuando sea posible.
+* Compilación con enlazado adecuado a las imágenes base elegidas y perfiles de *release* orientados a
+  tamaño.
+* Ejecución de ambos procesos como usuario sin privilegios, con sistema de archivos raíz de solo
+  lectura salvo el volumen de datos, y sin capacidades de kernel superfluas.
+* **Composición de la célula:** los dos contenedores con una red local propia, no accesible desde
+  otras células, y un volumen compartido entre ellos que contiene las bases SQLite y las credenciales
+  de sesión del sidecar.
+* Diseño definitivo del volumen de datos por célula: un volumen dedicado, montado en una única ruta,
+  con permisos que impiden el acceso cruzado entre células.
+* Límites de recursos por contenedor: memoria, CPU y número de descriptores de archivo, repartidos
+  entre núcleo y sidecar dentro del presupuesto de 80 MB por célula.
+* Plantilla de composición parametrizada por célula, con las variables de entorno, el volumen, la red
+  y los límites ya resueltos.
+* Comprobación de salud de la célula apoyada en `GET /health/ready` del núcleo, que incluye el estado
+  del enlace con el sidecar.
+* Manejo correcto de señales dentro de ambos contenedores, para que el `SIGTERM` de Docker llegue al
+  proceso y active el apagado ordenado de la etapa A-2 y el cierre limpio de sesión de la etapa A-3.
+* **CLI de operación** en `zeroclaw-admin`, apoyada exclusivamente en el socket Unix de Docker:
+  * `cell pause` — detener el sidecar (cerrando el websocket) y después emitir `SIGTERM` al núcleo con
+    30 segundos de gracia.
+  * `cell unpause` — arrancar ambos contenedores y sondear `GET /health/ready` cada 100 ms hasta la
+    primera confirmación positiva, tras la cual el sidecar reanuda la sesión desde sus credenciales.
+  * `cell terminate` — cierre de sesión del canal, drenaje por `SIGTERM` de ambos contenedores y
+    destrucción física de los volúmenes.
+  * `cell list` y `cell status` — estado consolidado de cada célula, incluida la salud del canal.
+* Registro persistente del estado de cada célula en el plano de control, para que la CLI no dependa
+  exclusivamente de inferir el estado a partir de Docker.
+* Idempotencia y recuperación: cada comando debe poder reejecutarse tras un fallo parcial y dejar el
+  sistema en el estado pretendido.
+* Medición formal del consumo de memoria de la célula completa en reposo y bajo carga.
+* Publicación de ambas imágenes desde la CI, versionadas de forma reproducible.
+
+### Qué NO entra
+
+* Caddy, subdominios, certificados y blackholing: etapa B-2.
+* `cell create` con alta de subdominio y registro en Meta: etapa B-2. El alta de las células piloto de
+  la Fase A se hace en la etapa A-7 con un procedimiento más simple.
+* Orquestadores de clúster. El PRD fija un servidor local único; introducir Kubernetes o similares
+  contradice el objetivo de eficiencia.
+* Cualquier interfaz gráfica de administración.
+
+### Requisitos del PRD cubiertos
+
+* **FR-02** — aislamiento completo por célula en contenedores dedicados sobre imágenes mínimas.
+* **FR-11** — operaciones CLI de suspensión y reactivación, en su variante de Fase A (sin Caddy).
+* **NFR-01** — techo de 80 MB de RAM por célula en reposo para la Fase A, verificado por medición.
+* **NFR-05** — aislamiento estricto de almacenamiento entre células, verificado por intento de
+  violación.
+
+---
+
+## Entregables
+
+* `Dockerfile` del núcleo y `Dockerfile` del sidecar, con sus `.dockerignore`.
+* `deploy/cell.compose.yml` (o especificación equivalente) parametrizada por célula, con los dos
+  contenedores, la red local y el volumen compartido.
+* `zeroclaw-admin` con los comandos `cell pause`, `cell unpause`, `cell terminate`, `cell list` y
+  `cell status`.
+* Módulo cliente del socket Unix de Docker.
+* Almacén de estado del plano de control con su esquema y migraciones.
+* `docs/adr/adr-0007-imagen-y-aislamiento.md` documentando las imágenes base elegidas, la
+  composición de dos contenedores, el modelo de permisos del volumen y los límites de recursos.
+* `docs/runbook-operacion.md`: manual breve de operación con los comandos y sus efectos.
+* Script de medición de memoria y de tamaño de imagen, ejecutable de forma repetible.
+* Prueba automatizada de aislamiento: una célula intenta leer el volumen de otra y falla.
+* Trabajo de CI que construye y publica ambas imágenes etiquetadas.
+
+---
+
+## Tareas
+
+1. **Escribir el `Dockerfile` del núcleo** (1 día). Etapa de compilación con la cadena de
+   herramientas y etapa final mínima con solo el binario y sus datos.
+2. **Escribir el `Dockerfile` del sidecar** (0,5 días). Compilación Go y entrega sobre imagen mínima,
+   con la versión de whatsmeow fijada de forma visible en la etiqueta de la imagen.
+3. **Resolver el enlazado y minimizar los binarios** (1 día). Ajustar los objetivos de compilación a
+   las imágenes base, activar las optimizaciones de tamaño y eliminar símbolos innecesarios.
+4. **Endurecer ambos contenedores** (1 día). Usuario sin privilegios, raíz de solo lectura,
+   eliminación de capacidades no necesarias y ausencia de shell si la imagen base lo permite.
+5. **Componer la célula** (1 día). Red local propia por célula, volumen compartido entre núcleo y
+   sidecar con los permisos correctos, y socket IPC dentro del volumen. Verificar que ninguna célula
+   alcanza la red de otra.
+6. **Fijar los límites de recursos** (0,5 días). Memoria, CPU y descriptores por contenedor, con el
+   reparto entre núcleo y sidecar coherente con el techo de 80 MB por célula.
+7. **Verificar la propagación de señales** (0,5 días). Comprobar que `docker stop` con margen de 30
+   segundos produce el apagado ordenado del núcleo y el cierre limpio de sesión del sidecar, con
+   salidas con código 0 y sin recurrir a `SIGKILL`.
+8. **Parametrizar la plantilla de arranque por célula** (1 día). Todo lo que distingue a una célula de
+   otra pasa a ser configuración: identificador, volumen, red, secretos y límites.
+9. **Implementar el cliente del socket Unix de Docker** (1,5 días). Arranque, parada con margen,
+   inspección, eliminación de contenedores y de volúmenes, con manejo explícito de errores.
+10. **Construir el esqueleto de la CLI y el modelo de estado** (1 día). Analizador de argumentos,
+    salida legible, códigos de retorno significativos, modo de simulación, y estados posibles de una
+    célula con sus transiciones válidas.
+11. **Implementar `cell pause` y `cell unpause`** (1,5 días). Orden explícito en la pausa —primero el
+    sidecar, después el núcleo— y sondeo de disponibilidad cada 100 ms con límite temporal y mensaje
+    de error claro si nunca llega a estar lista.
+12. **Implementar `cell terminate`** (1 día). Cierre de sesión del canal desvinculando el dispositivo,
+    drenaje de ambos contenedores, borrado físico de volúmenes incluidas las credenciales, y
+    confirmación explícita requerida por tratarse de una operación destructiva.
+13. **Implementar `cell list` y `cell status`** (0,5 días). Estado consolidado cruzando el plano de
+    control con la realidad de Docker y con la salud del canal, señalando discrepancias.
+14. **Dotar de idempotencia y recuperación a los comandos** (1 día). Reejecución segura tras un fallo
+    parcial, con detección del punto en que quedó la secuencia.
+15. **Medir memoria y tamaño de imágenes** (0,5 días). Consumo de la célula completa en reposo y bajo
+    carga, y peso de ambas imágenes, registrados como valores de referencia.
+16. **Escribir la prueba de aislamiento** (1 día). Levantar dos células y demostrar que ninguna puede
+    leer ni escribir el volumen de la otra ni alcanzar su red, ni siquiera conociendo la ruta.
+17. **Integrar la construcción de las imágenes en la CI** (1 día). Construcción reproducible,
+    etiquetado por versión y por commit, y publicación en el registro elegido.
+18. **Escribir el runbook de operación** (0,5 días). Qué comando usar en cada situación, qué efecto
+    tiene y cómo verificar que salió bien.
+
+---
+
+## Criterios de aceptación
+
+* Una célula arranca con sus dos contenedores, el núcleo responde `GET /health/ready` con `200 OK` y
+  la célula procesa un mensaje real de extremo a extremo.
+* El consumo de memoria residente de la célula completa en reposo —núcleo más sidecar— es **inferior
+  a 80 MB**, medido con ambas bases abiertas y la sesión de canal activa (NFR-01, Fase A).
+* `cell pause` cierra el websocket antes de detener el núcleo, y durante toda la pausa no queda
+  ninguna petición entrante sin atender, porque no hay ninguna.
+* `cell unpause` no da la célula por lista hasta que `GET /health/ready` ha respondido `200 OK` al
+  menos una vez, y el sidecar reanuda la sesión sin re-emparejamiento.
+* `docker stop` con margen de 30 segundos produce salidas con código 0 en ambos contenedores y
+  checkpoint del WAL completado, sin recurrir a `SIGKILL`.
+* Una célula no puede listar, leer ni escribir el volumen de datos de otra, ni alcanzar su red
+  interna; el intento falla y queda registrado (NFR-05).
+* Ninguno de los dos procesos se ejecuta como `root` y el sistema de archivos raíz es de solo lectura
+  salvo la ruta de datos.
+* `cell terminate` deja el sistema sin rastro de la célula: sin contenedores, sin volúmenes y con el
+  dispositivo desvinculado del número.
+* Interrumpir cualquier comando a mitad y reejecutarlo lleva el sistema al estado pretendido sin
+  intervención manual.
+* Las imágenes se construyen de forma reproducible desde la CI y sus tamaños quedan registrados.
+* Con varias células simultáneas, el consumo agregado es compatible con la capacidad del servidor
+  objetivo de 8 GB.
+
+---
+
+## Riesgos y mitigaciones
+
+| Riesgo | Impacto | Mitigación |
+| :--- | :--- | :--- |
+| El sidecar dispara el consumo por encima del presupuesto de fase. | Alto: incumplimiento de NFR-01 y del modelo de densidad. | Medir pronto y por separado núcleo y sidecar; si se supera, ajustar tamaño de pools, caché de vectores y límites de concurrencia antes de continuar. |
+| Problemas de enlazado con la biblioteca C de las imágenes base mínimas. | Medio: retrasos de integración y binarios que no arrancan. | Decidir imágenes base y objetivos de compilación al principio de la etapa y validarlos con binarios mínimos antes de empaquetar los reales. |
+| Permisos de volumen mal configurados que dejan datos accesibles entre células. | Muy alto: fallo de privacidad frente al cliente final, agravado porque el volumen contiene además las credenciales de sesión del canal. | Prueba automatizada de aislamiento como criterio bloqueante de la etapa. |
+| Las redes locales de las células no están realmente separadas. | Alto: una célula podría hablar con el sidecar de otra por el socket IPC. | Red dedicada por célula y prueba explícita de alcance cruzado. |
+| Alguno de los procesos no recibe `SIGTERM` por quedar bajo un intérprete de shell. | Alto: apagados abruptos, riesgo de corrupción del WAL y de las credenciales de sesión. | Ejecutar cada binario como proceso principal directo y verificar la señal en la tarea 7. |
+| El diseño de enlaces simbólicos de épocas se comporta distinto sobre el volumen montado. | Medio: la conmutación atómica falla solo en producción. | Repetir la prueba de estrés de la etapa A-5 dentro de la célula contenedorizada antes de cerrar esta etapa. |
+| Detener el núcleo antes que el sidecar. | Medio: mensajes recibidos por el canal que no tienen a quién entregarse. | El orden está fijado en el ADR y verificado por la prueba de ciclo de vida. |
+
+---
+
+## Dependencias
+
+* **De otras etapas:** etapas A-2, A-3, A-4 y A-5 completas. En particular, la disposición definitiva
+  del directorio de datos que fija la etapa A-5, la persistencia de sesión de la etapa A-3 y la línea
+  base de memoria de la etapa A-2.
+* **Externas:** un registro de imágenes donde publicar, y acceso a un entorno con Docker equivalente
+  al servidor de destino para las mediciones.
+* **Decisiones de producto pendientes:** el **modelo de monetización** define cuándo se suspende a un
+  cliente por falta de pago. El mecanismo se entrega aquí; la política que lo activa, no.

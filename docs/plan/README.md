@@ -1,58 +1,108 @@
-# Plan de Implementación por Etapas — ZeroClaw Orchestrator
+# Plan de Implementación por Fases — ZeroClaw Orchestrator
 
-> Documento índice. Última actualización: 2026-07-24.
+> Documento índice. Última actualización: 2026-07-26.
 > Fuentes normativas: [PRD.md](../PRD.md) (requisitos FR/NFR y criterios de QA), [README.md](../../README.md) (arquitectura y CLI), [STATUS.md](../STATUS.md) (avance).
 
 ---
 
 ## 1. Visión general
 
-ZeroClaw es un orquestador multi-inquilino que despliega bots de WhatsApp para microempresas
-sobre hardware local modesto. El plan que sigue traduce en una secuencia de ocho etapas ejecutables
-lo que ya está documentado en el proyecto, sin añadir requisitos de cosecha propia. Se apoya en dos
-fuentes con rango distinto:
+ZeroClaw es un orquestador multi-célula que despliega bots de WhatsApp para microempresas sobre
+hardware local modesto. El plan que sigue traduce en una secuencia de etapas ejecutables lo que ya
+está documentado en el proyecto, sin añadir requisitos de cosecha propia. Se apoya en dos fuentes con
+rango distinto:
 
 * El **PRD es la fuente normativa**. Cada etapa declara explícitamente qué requisitos funcionales
-  (FR) y no funcionales (NFR) cubre, y entre todas se cubren FR-01 a FR-11 y NFR-01 a NFR-05.
+  (FR) y no funcionales (NFR) cubre, y entre todas se cubren FR-01 a FR-12 y NFR-01 a NFR-05.
 * El **README.md aporta detalle operativo** que el PRD no recoge, principalmente el flujo de
-  onboarding con Meta Embedded Signup y `override_callback_uri` (etapa 7) y el comando de
-  eliminación definitiva de un inquilino (etapa 6). Esos elementos van marcados con una nota de
+  onboarding con Meta Embedded Signup y `override_callback_uri` y el comando de eliminación
+  definitiva de una célula (ambos en la etapa B-2). Esos elementos van marcados con una nota de
   fuente en la etapa correspondiente. Ante cualquier contradicción entre ambos documentos, manda el
   PRD.
 
-La idea que gobierna el orden es sencilla de enunciar y difícil de respetar bajo presión: **nada
-se expone a la red pública de Meta hasta que el componente que recibe ese tráfico sabe protegerse
-a sí mismo**. Meta reintenta agresivamente los webhooks que no reciben un `200 OK`, de modo que un
-despliegue prematuro no produce un fallo silencioso sino una tormenta de reintentos que degrada el
-servidor completo y, en el peor caso, provoca que Meta desuscriba la aplicación. Por eso el control
-de admisión (GCRA) y la contabilidad financiera se construyen *antes* de que exista un onboarding
-real, y el plano de control (Caddy y la CLI) se construye *antes* de dar de alta al primer cliente
-de verdad.
+### La estructura de dos fases
 
-La segunda idea rectora es que el conocimiento (RAG) es un subsistema con su propio ciclo de vida.
-Necesita persistencia estable debajo, así que se aborda después del núcleo de datos, pero antes del
-empaquetado en contenedor, porque el diseño del volumen de disco y de los puntos de montaje depende
-de cómo se materialicen las épocas de conocimiento en el sistema de archivos.
+El plan ya no es una secuencia lineal de ocho etapas hacia el canal oficial. Se divide en dos fases
+separadas por una compuerta de negocio, y la razón es sencilla de enunciar: **la infraestructura
+completa del canal oficial —dominio, certificados, Caddy, Embedded Signup, plano de control— es cara
+de construir y no aporta ni una sola respuesta sobre si el producto sirve para algo**. Construirla
+antes de validar el negocio es invertir semanas de ingeniería en una hipótesis.
+
+* **Fase A — MVP de validación.** Canal no oficial mediante la biblioteca **whatsmeow** sobre un
+  websocket saliente: sin webhook, sin IP pública, sin Caddy, sin TLS entrante y sin handshake
+  anti-Hairpin. Alcance cerrado a **dos células piloto**, `piloto-01` y `piloto-02`, cada una con un
+  número de WhatsApp nuevo y dedicado. Docker desde el primer día. Siete etapas.
+* **Compuerta.** Cuando ambas células piloto operen de forma estable y el negocio quede validado, **el
+  tercer cliente dispara la Fase B**. No se comercializa sobre canal no oficial: el tercer cliente no
+  se suma a la Fase A, la cierra.
+* **Fase B — Comercial.** Canal oficial mediante la **Meta Cloud API** con webhooks. Tres etapas.
+  **Está CONGELADA hasta la compuerta**: sus etapas declaran alcance, criterios y dependencias, pero
+  **no se estiman en detalle todavía**, porque hacerlo sería planificar sobre un negocio que aún no
+  se sabe si existe. Además, la mitad del alcance de la etapa B-2 depende de una decisión —la entrada
+  pública— que se toma al principio de la etapa B-1.
+
+Lo que hace posible que la Fase A no sea trabajo desechable es el **puerto de canal**
+(`ChannelAdapter`, FR-12), declarado en la primera etapa del plan: un trait del núcleo Rust que
+normaliza el evento entrante, el envío, la identidad de conversación y los acuses. Todo lo construido
+sobre ese puerto —persistencia, control de admisión, presupuesto, conocimiento, aislamiento— sobrevive
+intacto al cambio de fase. El salto de canal debe ser escribir un segundo adaptador, no reescribir el
+producto, y la etapa B-1 tiene entre sus criterios de aceptación demostrarlo.
+
+### Las ideas que gobiernan el orden
+
+**Nada se conecta a un canal real hasta que el componente que lo consume sabe protegerse a sí
+mismo.** Es la misma idea que gobernaba el plan anterior, aplicada a un canal distinto: el control de
+admisión (GCRA) y la contabilidad financiera se construyen antes de que haya un piloto real, porque
+un consumo sin techo satura un servidor doméstico igual venga por websocket que por webhook.
+
+**El conocimiento (RAG) es un subsistema con su propio ciclo de vida.** Necesita persistencia estable
+debajo, así que se aborda después del núcleo de datos, pero antes del empaquetado en contenedor,
+porque el diseño del volumen de disco y de los puntos de montaje depende de cómo se materialicen las
+épocas de conocimiento en el sistema de archivos.
+
+**Los respaldos no esperan al final.** En el plan anterior vivían en la última etapa. Ahora están en
+la etapa A-2, antes incluso de que exista el canal real, porque con pilotos operando sobre datos
+conversacionales de clientes finales de un negocio ajeno, un disco que falla no es un incidente
+técnico: es la pérdida de la confianza que la validación necesita.
 
 ### Nomenclatura mínima
 
-Definiciones de los términos que se repiten a lo largo del plan, en su primera aparición:
+Definiciones de los términos que se repiten a lo largo del plan:
 
-* **Inquilino** (*tenant*): una microempresa cliente. Cada inquilino corresponde a un contenedor
-  Docker, un subdominio, una cuenta de WhatsApp Business (WABA) y un par de bases de datos propias.
+* **Célula** (*cell*): la unidad desplegable por cliente. Una microempresa corresponde a una célula.
+  En la Fase A son dos contenedores (núcleo Rust y sidecar Go) que comparten red local y volumen; en
+  la Fase B es un solo contenedor, más un subdominio y una cuenta de WhatsApp Business. Es el término
+  que sustituye a la nomenclatura de arrendamiento que usaba la versión anterior de este plan. En la
+  CLI y en el código el sustantivo es `cell`.
+* **Puerto de canal** (`ChannelAdapter`): trait del núcleo Rust que aísla el dominio de cualquier
+  transporte de WhatsApp. Normaliza el evento entrante canónico, el envío, la identidad de
+  conversación mapeada a un identificador interno y los acuses. Es la frontera de migración entre
+  fases (FR-12).
+* **whatsmeow**: biblioteca Go que implementa el protocolo no oficial de WhatsApp Web mediante un
+  websocket saliente. Es el adaptador de canal de la Fase A.
+* **Sidecar**: proceso auxiliar que acompaña al núcleo dentro de una célula. En la Fase A alberga la
+  sesión whatsmeow, porque no existe equivalente maduro en Rust. Añade unos 15-30 MB de RAM y
+  desaparece en la Fase B.
+* **Emparejamiento** (*pairing*): vinculación de la sesión whatsmeow a un número de WhatsApp mediante
+  código QR o código de emparejamiento. Sus credenciales se persisten para no repetirlo en cada
+  reinicio.
+* **Compuerta**: la decisión de negocio que cierra la Fase A y abre la Fase B. La dispara el tercer
+  cliente.
 * **WABA**: *WhatsApp Business Account*, la cuenta de Meta a la que se asocian los números de
-  teléfono y las suscripciones de webhook de un cliente.
-* **Webhook**: petición HTTP que Meta envía a nuestro servidor cuando ocurre un evento (mensaje
-  entrante, cambio de estado de entrega, etc.).
+  teléfono y las suscripciones de webhook de un cliente. Solo aplica en la Fase B.
+* **Webhook**: petición HTTP que Meta envía a nuestro servidor cuando ocurre un evento. Solo aplica en
+  la Fase B.
 * **GCRA** (*Generic Cell Rate Algorithm*): algoritmo de control de tasa que decide, con una sola
-  marca temporal por clave y sin cerrojos, si una petición se admite o se rechaza.
+  marca temporal por clave y sin cerrojos, si un evento se admite o se descarta. Opera sobre el flujo
+  normalizado del puerto de canal, no sobre HTTP.
+* **Fast-Reject**: patrón por el cual respondemos `HTTP 200 OK` inmediato a una petición que no vamos
+  a procesar, para que Meta la dé por entregada y no la reintente. Solo aplica en la Fase B: en la
+  Fase A no hay petición entrante que contestar.
 * **Shadow DB**: base de datos en sombra donde se compila el nuevo conocimiento sin tocar la que
   está sirviendo tráfico en producción.
 * **Época**: versión inmutable y numerada de la base de conocimiento (`knowledge_epoch_N.db`).
-* **Fast-Reject**: patrón por el cual respondemos `HTTP 200 OK` inmediato a una petición que no
-  vamos a procesar, para que Meta la dé por entregada y no la reintente.
 * **Blackholing**: sustitución temporal del proxy inverso por una respuesta estática, de modo que
-  el tráfico se absorbe sin llegar a ningún backend.
+  el tráfico se absorbe sin llegar a ningún backend. Solo aplica en la Fase B.
 * **Drenaje controlado** (*Graceful Drain*): cierre ordenado de un pool de conexiones antiguo,
   esperando a que terminen las operaciones en vuelo antes de liberar los descriptores de archivo.
 
@@ -60,16 +110,30 @@ Definiciones de los términos que se repiten a lo largo del plan, en su primera 
 
 ## 2. Tabla de etapas
 
+### Fase A — MVP de validación (canal no oficial, whatsmeow)
+
 | Nº | Nombre | Objetivo (una línea) | FR / NFR cubiertos | Depende de |
 | :-- | :--- | :--- | :--- | :--- |
-| 1 | [Fundaciones del repositorio y contrato con Meta](etapa-1-fundaciones.md) | Dejar el repositorio, la licencia, el workspace Rust y la CI listos, y reconstruir formalmente FR-01. | FR-01 (especificación) | — |
-| 2 | [Núcleo del inquilino: HTTP y persistencia dual](etapa-2-nucleo-http-persistencia.md) | Construir el binario del inquilino que recibe y verifica webhooks sobre dos bases SQLite independientes. | FR-01 (implementación), FR-05, NFR-01 (parcial) | 1 |
-| 3 | [Defensa perimetral y control presupuestario](etapa-3-admision-y-presupuesto.md) | Impedir que ráfagas de tráfico o el coste del LLM desestabilicen el sistema. | FR-08, FR-09, FR-10 | 2 |
-| 4 | [Motor de conocimiento: Shadow DB y épocas](etapa-4-conocimiento-shadow-db.md) | Actualizar el conocimiento del bot sin detener la producción ni corromper el WAL. | FR-06, FR-07, NFR-03 | 2 (y 3 para el coste de embeddings) |
-| 5 | [Empaquetado y aislamiento por contenedor](etapa-5-empaquetado-aislamiento.md) | Convertir el binario en una imagen mínima con aislamiento de disco verificable. | FR-02, NFR-01, NFR-05 | 2, 3, 4 |
-| 6 | [Plano de control: Caddy y CLI de administración](etapa-6-plano-de-control.md) | Gobernar rutas, certificados y ciclo de vida de contenedores sin exponer errores 502 a Meta. | FR-03, FR-11, NFR-02, NFR-04 | 5 |
-| 7 | [Onboarding de inquilinos y handshake de red](etapa-7-onboarding.md) | Dar de alta una microempresa real de extremo a extremo, sorteando la ausencia de Hairpin NAT. | FR-04, y cierre operativo de FR-01, FR-03, NFR-04 | 6 |
-| 8 | [Endurecimiento, QA y operación](etapa-8-endurecimiento-qa.md) | Demostrar con pruebas medibles que se cumplen los criterios de aceptación y los NFR. | NFR-01 a NFR-05, verificación cruzada de FR-02, FR-07, FR-08 | 7 |
+| A-1 | [Fundaciones del repositorio](fase-a-1-fundaciones.md) | Dejar el repositorio, la licencia, el workspace Rust y la CI listos, y declarar el puerto de canal. | FR-12 (declaración), FR-01 (tipos) | — |
+| A-2 | [Núcleo de la célula: mensajería y persistencia dual](fase-a-2-nucleo-persistencia.md) | Construir el motor de mensajería sobre el puerto de canal, con persistencia dual y respaldo probado. | FR-01, FR-05, FR-12, NFR-01 (parcial) | A-1 |
+| A-3 | [Adaptador whatsmeow: sidecar Go y puerto de canal](fase-a-3-adaptador-whatsmeow.md) | Conectar la célula a WhatsApp de verdad, con sesión persistente y disciplina anti-ban. | FR-01 (Fase A), FR-12 (implementación) | A-2 |
+| A-4 | [Control de admisión y presupuesto](fase-a-4-admision-presupuesto.md) | Impedir que ráfagas de mensajes o el coste del LLM desestabilicen el sistema. | FR-08, FR-09, FR-10 | A-2 (y A-3 para medir con tráfico real) |
+| A-5 | [Motor de conocimiento: Shadow DB y épocas](fase-a-5-conocimiento-shadow-db.md) | Actualizar el conocimiento del bot sin detener la producción ni corromper el WAL. | FR-06, FR-07, NFR-03 | A-2 (y A-4 para el coste de embeddings) |
+| A-6 | [Empaquetado de la célula y CLI de operación](fase-a-6-empaquetado-cli.md) | Convertir núcleo y sidecar en una célula contenedorizada gobernable desde la CLI. | FR-02, FR-11 (Fase A), NFR-01, NFR-05 | A-2, A-3, A-4, A-5 |
+| A-7 | [Células piloto y compuerta de salida](fase-a-7-pilotos.md) | Operar piloto-01 y piloto-02, medir la validación del negocio y decidir la compuerta. | Cierre operativo de FR-01, FR-02, FR-12; calibración de FR-08 y FR-10 | A-6 |
+
+### Fase B — Comercial (canal oficial, Meta Cloud API) · **CONGELADA hasta la compuerta**
+
+| Nº | Nombre | Objetivo (una línea) | FR / NFR cubiertos | Depende de |
+| :-- | :--- | :--- | :--- | :--- |
+| B-1 | [Canal oficial: adaptador Cloud API y entrada pública](fase-b-1-canal-oficial.md) | Escribir el segundo adaptador del puerto, decidir la entrada pública y migrar los pilotos. | FR-01 (Fase B), FR-08 (Fast-Reject), FR-12 | Compuerta A-7 |
+| B-2 | [Plano de control y onboarding comercial](fase-b-2-plano-de-control-onboarding.md) | Gobernar rutas, certificados y altas de clientes de pago sin exponer errores 502 a Meta. | FR-03, FR-04, FR-11 (Fase B), NFR-02, NFR-04 | B-1 (y su ADR de entrada pública) |
+| B-3 | [Endurecimiento, QA y operación comercial](fase-b-3-endurecimiento-qa.md) | Demostrar con pruebas medibles que se cumplen los criterios de aceptación y los NFR. | NFR-01 a NFR-05, verificación cruzada de FR-02, FR-07, FR-08, FR-12 | B-2 |
+
+Las etapas de la Fase B **no llevan estimación**. Su alcance, sus criterios de aceptación y sus
+dependencias están escritos para que la compuerta se decida con conocimiento de lo que viene después,
+no para planificar trabajo que quizá no se haga. Además, la etapa B-2 depende de una decisión abierta
+—Cloudflare Tunnel frente a VPS con WireGuard— que altera la mitad de su contenido.
 
 ---
 
@@ -77,33 +141,43 @@ Definiciones de los términos que se repiten a lo largo del plan, en su primera 
 
 El orden no es arbitrario; cada salto responde a una dependencia técnica concreta.
 
-**1 → 2.** No se puede escribir código de producción sin un workspace, una licencia y una CI que
-impida que la primera semana de trabajo se convierta en deuda. Además, FR-01 llegó truncado en el
-documento original: implementar el receptor de webhooks sin haber reconstruido y validado ese
-requisito sería construir sobre una suposición.
+**A-1 → A-2.** No se puede escribir código de producción sin un workspace, una licencia y una CI que
+impida que la primera semana de trabajo se convierta en deuda. Y sobre todo: el puerto de canal se
+declara antes que cualquier otra cosa, porque es la frontera que hace que el resto del trabajo
+sobreviva al cambio de fase. Declararlo después sería declararlo tarde.
 
-**2 → 3.** El control de admisión GCRA y la contabilidad financiera operan *sobre* un servidor HTTP
-y *sobre* un estado persistente. Necesitan que exista el pipeline de peticiones y las tablas de saldo
-antes de poder interponerse en ellos.
+**A-2 → A-3.** El núcleo se construye íntegramente contra un adaptador simulado. No es un rodeo: es
+la única forma de garantizar que no se acopla al transporte, porque durante toda la etapa A-2 el
+transporte no existe. Cuando llega el sidecar whatsmeow, sustituye al simulado sin tocar el núcleo.
 
-**3 → 4.** El motor de conocimiento consume APIs externas de embeddings, que cuestan dinero. Tener
-antes la contabilidad de dos fases permite que la ingesta por lotes se someta al mismo presupuesto
-que el resto de llamadas externas, en lugar de convertirse en un agujero de gasto sin instrumentar.
+**A-2 → A-4.** El control de admisión y la contabilidad financiera operan *sobre* un flujo de eventos
+y *sobre* un estado persistente. Necesitan que exista el pipeline y las tablas de saldo antes de
+poder interponerse en ellos. La etapa A-3 conviene tenerla también, para calibrar con tráfico real en
+lugar de solo simulado.
 
-**2, 3, 4 → 5.** La imagen de contenedor y su diseño de volúmenes solo pueden fijarse cuando se sabe
-qué archivos existen en disco (dos bases activas, la de staging y las épocas históricas) y qué
-recursos consume el proceso en reposo. Empaquetar antes obliga a rehacer el `Dockerfile` en cada
-iteración.
+**A-4 → A-5.** El motor de conocimiento consume APIs externas de embeddings, que cuestan dinero.
+Tener antes la contabilidad de dos fases permite que la ingesta por lotes se someta al mismo
+presupuesto que el resto de llamadas externas, en lugar de convertirse en un agujero de gasto sin
+instrumentar.
 
-**5 → 6.** La CLI de administración manipula contenedores y rutas de Caddy. Solo tiene sentido
-cuando existe una imagen que arrancar y un endpoint `GET /health/ready` al que interrogar.
+**A-2, A-3, A-4, A-5 → A-6.** La composición de la célula y su diseño de volúmenes solo pueden
+fijarse cuando se sabe qué archivos existen en disco (dos bases activas, la de staging, las épocas
+históricas y las credenciales de sesión del sidecar) y qué recursos consumen los dos procesos en
+reposo. Empaquetar antes obliga a rehacer los `Dockerfile` en cada iteración.
 
-**6 → 7.** El onboarding real registra una URL en Meta. Antes de hacerlo debe existir la capacidad de
-crear el subdominio en Caddy, obtener el certificado y suspender o eliminar al inquilino si algo sale
-mal. Registrar en Meta sin poder revertir la operación es el peor orden posible.
+**A-6 → A-7.** Dar de alta a un piloto real exige poder pausarlo, reactivarlo, respaldarlo y darlo de
+baja. Poner un negocio ajeno en producción sin capacidad de operarlo es el peor orden posible.
 
-**7 → 8.** Los criterios de QA del PRD (carga de red, resiliencia TLS, consistencia WAL) son pruebas
-de sistema completo. Requieren un inquilino real desplegado para ser significativas.
+**A-7 → B-1.** Aquí no hay dependencia técnica sino de negocio, y es la más importante del plan: **la
+compuerta**. La Fase B no se inicia porque la Fase A esté técnicamente terminada, sino porque las dos
+células piloto han validado que hay un negocio y ha aparecido un tercer cliente.
+
+**B-1 → B-2.** La decisión de entrada pública, que es la primera tarea de B-1, determina si el
+handshake anti-Hairpin y el On-Demand TLS de Caddy existen o desaparecen. Planificar B-2 antes de esa
+decisión es planificar la mitad de un trabajo que quizá no haga falta.
+
+**B-2 → B-3.** Los criterios de QA del PRD son pruebas de sistema completo. Requieren células
+comerciales reales desplegadas para ser significativas.
 
 ---
 
@@ -115,7 +189,8 @@ empezar sin leer las demás:
 * **Objetivo** — por qué existe la etapa, en prosa.
 * **Alcance** — qué entra, qué queda explícitamente fuera y qué FR/NFR del PRD cubre.
 * **Entregables** — artefactos concretos que quedan en el repositorio al terminar.
-* **Tareas** — lista ordenada; cada tarea está dimensionada entre medio día y dos días de trabajo.
+* **Tareas** — lista ordenada; en la Fase A cada tarea está dimensionada entre medio día y dos días de
+  trabajo. En la Fase B las tareas se enumeran sin estimación.
 * **Criterios de aceptación** — comprobaciones verificables, ligadas a los criterios de QA del PRD
   cuando aplica.
 * **Riesgos y mitigaciones**.
@@ -127,18 +202,26 @@ STATUS.md registra varios asuntos sin resolver: el modelo de monetización, los 
 finales, el manejo de excepciones comerciales y el proceso exacto de alta de una microempresa. Este
 plan **no los resuelve**, porque no son decisiones de ingeniería. Aparecen en las etapas que los
 necesitan bajo el epígrafe de dependencias externas o de riesgos, con una indicación clara de qué
-parte del trabajo queda bloqueada mientras no exista una respuesta. La lista consolidada de esos
-bloqueos está en la etapa correspondiente y se resume aquí:
+parte del trabajo queda bloqueada mientras no exista una respuesta:
 
 * **Modelo de monetización** — bloquea la calibración de los saldos y de la política de degradación
-  en la etapa 3, y el criterio de suspensión por falta de pago en la etapa 6.
-* **Proceso exacto de onboarding y flujos de usuario** — bloquea la etapa 7.
+  en la etapa A-4, y el criterio de suspensión por falta de pago en la etapa B-2. La etapa A-7 le
+  aporta su primera entrada empírica: la disposición a pagar de los pilotos y el coste real por
+  conversación.
+* **Proceso exacto de onboarding y flujos de usuario** — bloqueaban por completo el alta en el plan
+  anterior. Ahora la etapa A-7 los aborda de la única forma honesta que existe: descubriéndolos con
+  dos negocios reales en lugar de suponerlos. El alta comercial automatizada sigue bloqueada en la
+  etapa B-2.
 * **Manejo de excepciones comerciales** — condiciona el comportamiento del modo degradado en la
-  etapa 3 y el alcance de la lógica de negocio del bot, que este plan trata como fuera de alcance
+  etapa A-4 y el alcance de la lógica de negocio del bot, que este plan trata como fuera de alcance
   hasta que exista definición.
+* **Entrada pública de la Fase B** — decisión de arquitectura pendiente, no de producto. Es la primera
+  tarea de la etapa B-1 y condiciona la mitad de la B-2.
 
 ### Estimación de duración
 
-Las etapas no llevan fechas absolutas, porque el equipo aún no está dimensionado. Cada una declara
-una **duración relativa** en una escala de tres niveles (Corta, Media, Larga) derivada de la suma de
-sus tareas. La escala sirve para planificar capacidad, no para comprometer entregas.
+Las etapas de la Fase A no llevan fechas absolutas, porque el equipo aún no está dimensionado. Cada
+una declara una **duración relativa** en una escala de tres niveles (Corta, Media, Larga) derivada de
+la suma de sus tareas. La escala sirve para planificar capacidad, no para comprometer entregas.
+
+Las etapas de la Fase B **no se estiman**. Están congeladas hasta la compuerta.
