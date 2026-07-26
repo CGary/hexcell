@@ -25,8 +25,34 @@ la infraestructura del canal oficial. Ver [plan/README.md](plan/README.md).
   código, `cell` (`zeroclaw-admin cell pause`, `--id <cell_id>`, binario `zeroclaw-cell`).
 * **Células piloto:** `piloto-01` (negocio de prueba del propio dueño) y `piloto-02` (un conocido),
   cada una con un número de WhatsApp nuevo y dedicado.
-* **Respaldos adelantados a la etapa A-2** (`VACUUM INTO`, copia fuera del disco y restauración
-  probada), en lugar de esperar al endurecimiento final: con pilotos reales no pueden esperar.
+* **Respaldos adelantados a la etapa A-2**, en lugar de esperar al endurecimiento final: con pilotos
+  reales no pueden esperar. Cubren **las tres bases** —`sessions.db`, `knowledge_live.db` y el
+  `sqlstore` del sidecar—, este último copiado por el propio sidecar vía `VACUUM INTO` sobre orden
+  IPC y con frecuencia alta (cada pocas horas), porque las credenciales del protocolo Signal
+  evolucionan. **La restauración solo se da por buena si el bot reconecta y responde**; recuperar
+  ficheros con la sesión muerta cuenta como fallo.
+* **Re-emparejamiento por `PairPhone()` como procedimiento de recuperación de primera clase**
+  (segunda capa, etapa A-3): código de ocho caracteres que el piloto teclea en su propio teléfono,
+  sin necesidad de tenerlo en mano. Se ensaya con piloto-01 antes del alta de piloto-02.
+* **Puerto de canal abstraído hacia el caso más restrictivo** (FR-12): envío tipado
+  (`RespuestaLibre` | `Plantilla`), resultado tipado (`FueraDeVentana`, `PlantillaRequerida`,
+  `LimiteDeTasa`, `DestinatarioInvalido`) y estado de la ventana de servicio de 24 h. El adaptador
+  simulado de la etapa A-2 imita la semántica de la Cloud API, no la de whatsmeow, y los tests de
+  contrato corren contra ese caso difícil.
+* **Outbox durable en el sidecar** (etapa A-3): todo evento entrante se persiste con `fsync` como
+  primera acción, antes de entregarlo al núcleo; entrega *at-least-once* con confirmación explícita y
+  deduplicación en el núcleo. Limitación documentada: el acuse de protocolo hacia WhatsApp es
+  automático y no se puede diferir, de modo que queda una ventana de pérdida de microsegundos.
+* **Alertas push y dead-man's switch adelantados a la etapa A-6**: bot de Telegram ante sesión
+  desvinculada, sidecar sin reconectar más de 5 minutos, bucle de reinicios, saldo agotado y
+  descartes GCRA anómalos; más healthchecks.io con ping cada 5 minutos para que la caída total del
+  servidor se notifique desde fuera. Descongela deliberadamente un mínimo de la observabilidad de la
+  etapa B-3, porque hay usuarios reales desde la Fase A.
+* **Compuerta pre-registrada y roles asimétricos de los pilotos** (etapa A-7): los umbrales numéricos
+  y los **criterios de fracaso** se fijan por escrito antes del primer alta. **piloto-01 es banco de
+  pruebas técnico y sus datos no cuentan para la validación de negocio** (el dueño no puede ser su
+  propio cliente); **piloto-02 paga un importe simbólico pero real desde el segundo mes**, porque el
+  acto de pagar es la métrica y "sí pagaría" no es evidencia.
 * La pila tecnológica: Rust (backend nativo), Docker (aislamiento por célula), SQLite dual
   (persistencia); Caddy (proxy inverso + SSL) solo en la Fase B.
 * El modelo de despliegue por contenedores aislados (imágenes Alpine/Scratch), con presupuesto de
@@ -42,9 +68,14 @@ la infraestructura del canal oficial. Ver [plan/README.md](plan/README.md).
 * **ADR de entrada pública de la Fase B: Cloudflare Tunnel (capa gratuita) frente a VPS ~3 USD/mes +
   WireGuard.** Condiciona la vigencia de FR-04 y NFR-04. — *Primera tarea de la etapa B-1; determina
   la mitad del alcance de la etapa B-2.*
-* **Definir las métricas de validación del negocio con los pilotos** (calidad de respuesta, uso real
-  de los clientes finales, disposición a pagar, coste por conversación, estabilidad del canal). —
-  *Tarea 1 de la etapa A-7, anterior a cualquier alta de piloto.*
+* **Fijar los valores numéricos de la compuerta pre-registrada**: umbrales de éxito (conversaciones
+  semanales sostenidas, porcentaje de resolución sin intervención, retención de clientes finales,
+  coste máximo por conversación, disponibilidad mínima), **importe del cobro simbólico a piloto-02**
+  y techos de los criterios de fracaso. El plan fija la estructura; los números son decisión de
+  negocio. — *Tarea 1 de la etapa A-7, bloqueante y anterior a cualquier alta de piloto.*
+* **Definir la política del núcleo ante `FueraDeVentana`**: encolar hasta que el cliente vuelva a
+  escribir o escalar a un humano. — *Etapa A-2, tarea 6. No se dispara en la Fase A, pero se decide
+  con calma antes de que importe.*
 * Lógica de negocio específica. — *Bloquea el alcance funcional de la etapa A-2 y se descubre en la
   etapa A-7 con los pilotos reales.*
 * Flujos de usuario finales. — *Bloquean la superficie de carga de catálogo de la etapa A-5 y el alta

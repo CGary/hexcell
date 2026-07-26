@@ -68,6 +68,11 @@ subdominios y registro en Meta, pertenece a la etapa B-2.
   * `cell list` y `cell status` — estado consolidado de cada célula, incluida la salud del canal.
 * Registro persistente del estado de cada célula en el plano de control, para que la CLI no dependa
   exclusivamente de inferir el estado a partir de Docker.
+* **Alertas push por bot de Telegram** ante sesión desvinculada, sidecar sin reconectar durante más
+  de 5 minutos, bucle de reinicios, saldo LLM agotado o modo degradado, y tasa de descartes GCRA
+  anómala.
+* **Dead-man's switch externo** (healthchecks.io, capa gratuita): ping cada 5 minutos desde un `cron`
+  local, con notificación desde fuera del servidor cuando el ping deja de llegar.
 * Idempotencia y recuperación: cada comando debe poder reejecutarse tras un fallo parcial y dejar el
   sistema en el estado pretendido.
 * Medición formal del consumo de memoria de la célula completa en reposo y bajo carga.
@@ -81,6 +86,8 @@ subdominios y registro en Meta, pertenece a la etapa B-2.
 * Orquestadores de clúster. El PRD fija un servidor local único; introducir Kubernetes o similares
   contradice el objetivo de eficiencia.
 * Cualquier interfaz gráfica de administración.
+* El panel de métricas, la agregación por servidor y el resto de la observabilidad de operación:
+  etapa B-3. Aquí solo se adelanta el mínimo de alertado que exige tener pilotos reales.
 
 ### Requisitos del PRD cubiertos
 
@@ -103,7 +110,10 @@ subdominios y registro en Meta, pertenece a la etapa B-2.
 * Almacén de estado del plano de control con su esquema y migraciones.
 * `docs/adr/adr-0007-imagen-y-aislamiento.md` documentando las imágenes base elegidas, la
   composición de dos contenedores, el modelo de permisos del volumen y los límites de recursos.
-* `docs/runbook-operacion.md`: manual breve de operación con los comandos y sus efectos.
+* Módulo de alertas con el cliente del bot de Telegram y las condiciones que las disparan.
+* Configuración del dead-man's switch y la entrada de `cron` que lo alimenta.
+* `docs/runbook-operacion.md`: manual breve de operación con los comandos y sus efectos, incluida la
+  respuesta ante cada alerta.
 * Script de medición de memoria y de tamaño de imagen, ejecutable de forma repetible.
 * Prueba automatizada de aislamiento: una célula intenta leer el volumen de otra y falla.
 * Trabajo de CI que construye y publica ambas imágenes etiquetadas.
@@ -151,7 +161,22 @@ subdominios y registro en Meta, pertenece a la etapa B-2.
     leer ni escribir el volumen de la otra ni alcanzar su red, ni siquiera conociendo la ruta.
 17. **Integrar la construcción de las imágenes en la CI** (1 día). Construcción reproducible,
     etiquetado por versión y por commit, y publicación en el registro elegido.
-18. **Escribir el runbook de operación** (0,5 días). Qué comando usar en cada situación, qué efecto
+18. **Implementar alertas push y el dead-man's switch** (1 día). Dos mecanismos complementarios:
+    * **Alertas activas** por bot de Telegram, con una simple llamada HTTP saliente desde el
+      servidor, ante: sesión de canal desvinculada, sidecar sin reconectar durante más de 5 minutos,
+      bucle de reinicios de cualquiera de los dos contenedores, saldo LLM agotado o entrada en modo
+      degradado, y tasa de descartes GCRA anómala. Las señales del canal las emite el sidecar (etapa
+      A-3); las del saldo y los descartes, el núcleo (etapa A-4). Esta tarea las **entrega**.
+    * **Dead-man's switch externo** con healthchecks.io en su capa gratuita: un `cron` local hace
+      ping cada 5 minutos y **la ausencia de ping** dispara la notificación desde fuera del servidor.
+      Es la única clase de alerta que sobrevive al fallo que más importa: **un servidor muerto no
+      puede avisar de que ha muerto**, así que la vigilancia tiene que vivir en otro sitio.
+
+    > **Descongelación deliberada.** La observabilidad completa pertenece a la etapa B-3. Este mínimo
+    > se adelanta a la Fase A a conciencia porque hay **usuarios reales desde el primer piloto**: sin
+    > él, la forma de enterarse de que el bot lleva dos días mudo es que el piloto lo mencione. Se
+    > adelanta lo imprescindible, no el panel de métricas.
+19. **Escribir el runbook de operación** (0,5 días). Qué comando usar en cada situación, qué efecto
     tiene y cómo verificar que salió bien.
 
 ---
@@ -176,6 +201,10 @@ subdominios y registro en Meta, pertenece a la etapa B-2.
   dispositivo desvinculado del número.
 * Interrumpir cualquier comando a mitad y reejecutarlo lleva el sistema al estado pretendido sin
   intervención manual.
+* Cada una de las cinco condiciones de alerta, provocada deliberadamente, produce un mensaje de
+  Telegram en menos de un minuto.
+* **Apagar el servidor entero produce una notificación** procedente del dead-man's switch externo,
+  sin que el servidor haya podido emitir nada.
 * Las imágenes se construyen de forma reproducible desde la CI y sus tamaños quedan registrados.
 * Con varias células simultáneas, el consumo agregado es compatible con la capacidad del servidor
   objetivo de 8 GB.
@@ -192,7 +221,10 @@ subdominios y registro en Meta, pertenece a la etapa B-2.
 | Las redes locales de las células no están realmente separadas. | Alto: una célula podría hablar con el sidecar de otra por el socket IPC. | Red dedicada por célula y prueba explícita de alcance cruzado. |
 | Alguno de los procesos no recibe `SIGTERM` por quedar bajo un intérprete de shell. | Alto: apagados abruptos, riesgo de corrupción del WAL y de las credenciales de sesión. | Ejecutar cada binario como proceso principal directo y verificar la señal en la tarea 7. |
 | El diseño de enlaces simbólicos de épocas se comporta distinto sobre el volumen montado. | Medio: la conmutación atómica falla solo en producción. | Repetir la prueba de estrés de la etapa A-5 dentro de la célula contenedorizada antes de cerrar esta etapa. |
-| Detener el núcleo antes que el sidecar. | Medio: mensajes recibidos por el canal que no tienen a quién entregarse. | El orden está fijado en el ADR y verificado por la prueba de ciclo de vida. |
+| Detener el núcleo antes que el sidecar. | Medio: mensajes recibidos por el canal que no tienen a quién entregarse. | El orden está fijado en el ADR y verificado por la prueba de ciclo de vida. El outbox durable de la etapa A-3 hace que, aun ocurriendo, los eventos se reentreguen en lugar de perderse. |
+| El bot lleva días mudo y nadie se entera hasta que el piloto lo menciona. | Muy alto: se quema la confianza del único piloto externo y se contamina la validación del negocio. | Alertas push ante desvinculación y falta de reconexión, con la señal emitida por el sidecar. |
+| Toda la vigilancia vive dentro del servidor vigilado. | Alto: la caída total del servidor —el fallo más grave— es justo la que no genera ninguna alerta. | Dead-man's switch externo: la ausencia de ping notifica desde fuera. |
+| Las alertas se disparan tanto que se ignoran. | Medio: una alerta que nadie lee equivale a no tenerla. | Cinco condiciones concretas y accionables, no un volcado de métricas; los umbrales se recalibran con los datos reales de la etapa A-7. |
 
 ---
 
@@ -201,7 +233,8 @@ subdominios y registro en Meta, pertenece a la etapa B-2.
 * **De otras etapas:** etapas A-2, A-3, A-4 y A-5 completas. En particular, la disposición definitiva
   del directorio de datos que fija la etapa A-5, la persistencia de sesión de la etapa A-3 y la línea
   base de memoria de la etapa A-2.
-* **Externas:** un registro de imágenes donde publicar, y acceso a un entorno con Docker equivalente
-  al servidor de destino para las mediciones.
+* **Externas:** un registro de imágenes donde publicar; acceso a un entorno con Docker equivalente
+  al servidor de destino para las mediciones; un bot de Telegram con su token y el chat de destino; y
+  una cuenta gratuita de healthchecks.io.
 * **Decisiones de producto pendientes:** el **modelo de monetización** define cuándo se suspende a un
   cliente por falta de pago. El mecanismo se entrega aquí; la política que lo activa, no.

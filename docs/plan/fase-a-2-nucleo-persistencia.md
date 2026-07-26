@@ -41,7 +41,8 @@ técnico: es la pérdida de la confianza que la validación del negocio necesita
 ### Qué entra
 
 * Motor de mensajería en `zeroclaw-cell`: bucle asíncrono sobre Tokio que consume eventos canónicos
-  del `ChannelAdapter`, los procesa y emite respuestas mediante `send(conversation_id, contenido)`.
+  del `ChannelAdapter`, los procesa y emite respuestas mediante `send(conversation_id, mensaje)`,
+  tratando el **resultado tipado** del envío en lugar de asumir que siempre tiene éxito.
 * Servidor HTTP interno mínimo con `GET /health/live` y `GET /health/ready`. No expone rutas de
   mensajería y no se publica fuera de la red local de la célula.
 * Idempotencia de entrega: detección y descarte de eventos duplicados por el identificador de
@@ -54,15 +55,28 @@ técnico: es la pérdida de la confianza que la validación del negocio necesita
 * Migraciones versionadas y reproducibles para `sessions.db`, y esquema inicial de solo lectura para
   `knowledge_live.db`.
 * Modelo de estado conversacional: historial por contacto, con una política de retención definida.
-* **Respaldo y restauración por célula:** copia consistente en caliente mediante `VACUUM INTO`,
-  traslado de la copia fuera del disco del servidor y un procedimiento de restauración **probado**,
-  no solo documentado.
+* **Respaldo y restauración por célula, sobre las TRES bases:** copia consistente en caliente
+  mediante `VACUUM INTO` de `sessions.db` y `knowledge_live.db`, **más el `sqlstore` del sidecar**,
+  cuyo `VACUUM INTO` ordena el núcleo por IPC para que lo ejecute el propio proceso del sidecar. El
+  `sqlstore` se respalda con frecuencia alta (cada pocas horas). Traslado de las copias fuera del
+  disco del servidor y un procedimiento de restauración **probado**, no solo documentado, que solo se
+  da por bueno si la célula restaurada reconecta y responde.
 * Apagado ordenado ante `SIGTERM`: dejar de consumir del puerto, drenar las tareas en vuelo,
   ejecutar el checkpoint de SQLite y salir con código 0, dentro de la ventana de 30 segundos que
   fija el PRD.
 * Configuración por variables de entorno y observabilidad básica mediante logs estructurados.
 * Un adaptador de canal simulado, en memoria, que inyecta eventos canónicos y captura envíos, para
-  poder desarrollar y probar el núcleo completo antes de que exista el sidecar.
+  poder desarrollar y probar el núcleo completo antes de que exista el sidecar. **El simulado no imita
+  a whatsmeow: imita la semántica restrictiva de la Cloud API** —ventanas de servicio de 24 h que
+  expiran, envíos rechazados con `FueraDeVentana`, plantillas exigidas con `PlantillaRequerida`,
+  `LimiteDeTasa` y `DestinatarioInvalido`—, de modo que el núcleo se desarrolle contra el caso difícil
+  desde el primer día.
+* **Tests de contrato del puerto de canal**, ejecutados contra ese adaptador simulado, que ejercitan
+  la semántica restrictiva completa. Son la verificación real de FR-12: que la firma compile no
+  demuestra que el puerto sirva para la Fase B.
+* **Política del núcleo ante `FueraDeVentana`:** encolar la respuesta hasta que el cliente vuelva a
+  escribir, o escalar a un humano. Se define e implementa aquí aunque en la Fase A no se dispare
+  nunca, porque whatsmeow reporta la ventana siempre abierta.
 
 ### Qué NO entra
 
@@ -93,13 +107,17 @@ técnico: es la pérdida de la confianza que la validación del negocio necesita
 * `zeroclaw-cell` como binario ejecutable que arranca, consume del puerto, sirve las dos rutas de
   salud y se apaga limpio.
 * `zeroclaw-storage` con el gestor de pools duales y los ajustes de SQLite.
-* Adaptador de canal simulado en memoria, reutilizable por todas las pruebas del plan.
+* Adaptador de canal simulado en memoria **con semántica Cloud API** (ventanas que expiran,
+  plantillas requeridas, límites de tasa), reutilizable por todas las pruebas del plan.
+* Batería de **tests de contrato del puerto de canal**, que la etapa B-1 reutilizará contra el
+  adaptador oficial sin modificarla.
 * Directorio de migraciones para `sessions.db`.
 * `docs/adr/adr-0003-persistencia-dual.md` documentando los parámetros de SQLite elegidos y
   el porqué de cada uno, con la numeración que fija el [índice de ADR](../adr/README.md).
 * `docs/runbook-respaldo.md`: procedimiento de respaldo y de restauración por célula, con el
   resultado de la restauración real ejecutada como prueba.
-* Script de respaldo ejecutable de forma programada, y script de restauración.
+* Script de respaldo ejecutable de forma programada, que cubre las tres bases y respalda el
+  `sqlstore` del sidecar con frecuencia alta, y script de restauración.
 * Pruebas de integración que arrancan el núcleo sobre bases temporales y un adaptador simulado.
 
 ---
@@ -109,37 +127,58 @@ técnico: es la pérdida de la confianza que la validación del negocio necesita
 1. **Definir la configuración del proceso** (0,5 días). Variables de entorno, rutas de datos,
    secretos, validación al arranque con fallo temprano y mensaje claro si falta algo.
 2. **Levantar el servidor HTTP interno y las rutas de salud** (0,5 días). `GET /health/live` responde
-   en cuanto el proceso vive; `GET /health/ready` queda inicialmente en un esqueleto que la tarea 5
+   en cuanto el proceso vive; `GET /health/ready` queda inicialmente en un esqueleto que la tarea 7
    completa. Vinculado exclusivamente a la interfaz interna de la célula.
 3. **Construir el motor de mensajería sobre el puerto de canal** (1,5 días). Bucle de consumo de
    eventos canónicos, despacho al procesador, emisión de respuestas por `send` y tratamiento de los
    acuses normalizados. El motor no conoce ningún transporte.
-4. **Implementar el adaptador simulado en memoria** (0,5 días). Inyección de eventos y captura de
-   envíos, con control determinista del orden y de los tiempos para las pruebas.
-5. **Construir el gestor de pools duales** (1,5 días). Dos pools separados, modo WAL, parámetros de
+4. **Implementar el adaptador simulado con semántica Cloud API** (1 día). Inyección de eventos y
+   captura de envíos, con control determinista del orden y de los tiempos. Simula además el caso
+   restrictivo: ventana de servicio de 24 h por conversación que **expira de verdad**, rechazo con
+   `FueraDeVentana` al enviar `RespuestaLibre` fuera de ella, `PlantillaRequerida`, `LimiteDeTasa` y
+   `DestinatarioInvalido`, todos disparables a voluntad desde la prueba.
+5. **Escribir los tests de contrato del puerto** (1 día). Batería que cualquier implementación del
+   `ChannelAdapter` debe pasar, ejercitada contra el simulado en su modo restrictivo. Es el artefacto
+   que la etapa B-1 reutilizará tal cual contra el adaptador de Cloud API: si el contrato está bien
+   escrito, el adaptador oficial lo pasa sin que se toque una línea del núcleo.
+6. **Implementar la política del núcleo ante `FueraDeVentana`** (0,5 días). Encolado de la respuesta
+   hasta que el cliente vuelva a escribir, o escalado a humano, con la decisión documentada. En la
+   Fase A el camino no se ejercita en producción, pero sí en los tests de contrato.
+7. **Construir el gestor de pools duales** (1,5 días). Dos pools separados, modo WAL, parámetros de
    `busy_timeout` y `synchronous` justificados, y comprobación de vitalidad de cada pool que alimenta
    `GET /health/ready`.
-6. **Definir el esquema y las migraciones de `sessions.db`** (1 día). Contactos, conversaciones,
+8. **Definir el esquema y las migraciones de `sessions.db`** (1 día). Contactos, conversaciones,
    mensajes, marcas temporales e índices necesarios, con el identificador interno de conversación
    como clave y **sin ninguna columna que almacene identificadores de transporte crudos**.
-7. **Implementar el mapeo de identidad de conversación** (1 día). Traducción estable y reversible
+9. **Implementar el mapeo de identidad de conversación** (1 día). Traducción estable y reversible
    entre el identificador que provee el adaptador y el identificador interno, de modo que un cambio
    de canal no invalide el historial.
-8. **Implementar la idempotencia de entrega** (1 día). Registro de identificadores de deduplicación
+10. **Implementar la idempotencia de entrega** (1 día). Registro de identificadores de deduplicación
    ya procesados con ventana de retención, de modo que un reenvío del canal no duplique el trabajo.
-9. **Definir la interfaz del proveedor de inferencia y su implementación simulada** (1 día). Un
+11. **Definir la interfaz del proveedor de inferencia y su implementación simulada** (1 día). Un
    contrato que la etapa A-4 pueda envolver con la contabilidad sin cambiar el consumidor.
-10. **Implementar el apagado ordenado** (1 día). Captura de `SIGTERM`, cese del consumo del puerto,
+12. **Implementar el apagado ordenado** (1 día). Captura de `SIGTERM`, cese del consumo del puerto,
     drenaje de tareas en vuelo con límite temporal, checkpoint de SQLite y salida con código 0.
-11. **Implementar el respaldo por célula** (1 día). `VACUUM INTO` sobre ambas bases con el proceso en
-    caliente, verificación de integridad de la copia, y traslado fuera del disco del servidor. El
-    respaldo no debe bloquear la operación de la célula ni disparar `SQLITE_BUSY`.
-12. **Implementar y probar la restauración** (1 día). Reconstrucción completa de una célula a partir
-    de sus copias sobre un entorno limpio, y verificación de que el historial y el conocimiento
-    quedan íntegros. **Un respaldo sin restauración probada no cuenta como respaldo.**
-13. **Instrumentar logs estructurados** (0,5 días). Identificador de célula, identificador de evento y
+13. **Implementar el respaldo por célula: las TRES bases** (1,5 días). `VACUUM INTO` sobre las dos
+    bases del núcleo (`sessions.db` y `knowledge_live.db`) con el proceso en caliente, y —esto es lo
+    que se pasaba por alto— **`VACUUM INTO` del `sqlstore` del sidecar**, ordenado por IPC para que lo
+    ejecute **el propio proceso del sidecar** sobre sus conexiones, respetando el WAL. Copiar ese
+    fichero desde fuera mientras el sidecar lo tiene abierto produce una copia corrupta que solo se
+    descubre al restaurar. Las tres copias van al mismo destino fuera del disco del servidor, con
+    verificación de integridad. El `sqlstore` se respalda **con frecuencia alta (cada pocas horas)**,
+    no diaria: las credenciales del protocolo Signal evolucionan continuamente y una copia de ayer
+    puede estar ya desfasada. El respaldo no debe bloquear la operación de la célula ni disparar
+    `SQLITE_BUSY`.
+14. **Implementar y probar la restauración** (1,5 días). Reconstrucción completa de una célula a
+    partir de sus tres copias sobre un entorno limpio. **El test solo pasa si la célula restaurada
+    reconecta al canal y responde a un mensaje real.** Restaurar ficheros y comprobar que el historial
+    "está ahí" no es una restauración: una sesión muerta con el historial intacto es un fallo, porque
+    el negocio del piloto sigue sin recibir respuestas. **Un respaldo sin restauración probada no
+    cuenta como respaldo, y una restauración que no termina en un bot que contesta no cuenta como
+    restauración.**
+15. **Instrumentar logs estructurados** (0,5 días). Identificador de célula, identificador de evento y
     latencia en cada entrada, sin volcar contenido de mensajes de usuarios.
-14. **Escribir las pruebas de integración** (1 día). Camino feliz, evento duplicado, apagado bajo
+16. **Escribir las pruebas de integración** (1 día). Camino feliz, evento duplicado, apagado bajo
     carga y ciclo completo de respaldo y restauración.
 
 ---
@@ -157,10 +196,17 @@ técnico: es la pérdida de la confianza que la validación del negocio necesita
   base de datos.
 * Ante `SIGTERM`, el proceso termina con código 0 en menos de 30 segundos, sin dejar eventos a
   medias y habiendo ejecutado el checkpoint del WAL.
-* Un respaldo ejecutado con la célula en operación produce copias íntegras de ambas bases sin generar
-  errores `SQLITE_BUSY` ni interrumpir el procesamiento de mensajes.
-* Una restauración sobre un entorno limpio devuelve la célula a un estado funcional verificado, con
-  su historial conversacional y su conocimiento intactos.
+* Los tests de contrato del puerto pasan contra el adaptador simulado en su modo restrictivo:
+  `FueraDeVentana`, `PlantillaRequerida`, `LimiteDeTasa` y `DestinatarioInvalido` se producen, se
+  distinguen y el núcleo reacciona a cada uno según la política definida, sin tratarlos como error
+  genérico.
+* Un respaldo ejecutado con la célula en operación produce copias íntegras de **las tres** bases
+  —`sessions.db`, `knowledge_live.db` y el `sqlstore` del sidecar— sin generar errores `SQLITE_BUSY`
+  ni interrumpir el procesamiento de mensajes. La copia del `sqlstore` la produce el propio sidecar,
+  nunca una lectura del fichero desde fuera.
+* **Una restauración sobre un entorno limpio solo se da por buena si la célula reconecta al canal y
+  responde a un mensaje real.** Recuperar los ficheros con el historial íntegro pero con la sesión
+  muerta cuenta como **fallo** de la prueba, no como éxito parcial.
 * El consumo de memoria residente del proceso en reposo queda medido y registrado como línea base
   para NFR-01.
 
@@ -175,6 +221,9 @@ técnico: es la pérdida de la confianza que la validación del negocio necesita
 | Ajustes de SQLite copiados sin entenderlos. | Medio: aparecen `SQLITE_BUSY` bajo carga real, ya con pilotos vivos. | Documentar cada parámetro en `adr-0003` y validarlos con la prueba de consistencia WAL de la etapa A-5. |
 | El respaldo se implementa pero nunca se prueba la restauración. | Muy alto: se descubre que no funciona el día que hace falta, con datos de un cliente real perdidos. | La restauración probada es criterio de aceptación bloqueante, no un entregable documental. |
 | Las copias de respaldo se quedan en el mismo disco que los datos. | Muy alto: un fallo de disco se lleva original y copia. | El traslado fuera del disco forma parte del procedimiento y se verifica en la prueba. |
+| **El respaldo cubre las bases del núcleo pero olvida el `sqlstore` del sidecar.** | Muy alto: se restaura el historial completo y el bot sigue mudo, porque la sesión de WhatsApp no está. Es el fallo que más fácilmente pasa desapercibido, porque el respaldo "funciona". | Las tres bases son alcance explícito de la tarea 13, y el criterio de restauración exige que el bot responda, no que los ficheros existan. |
+| Copiar el `sqlstore` desde fuera mientras el sidecar lo tiene abierto. | Alto: copia corrupta que solo se descubre el día de la restauración. | El `VACUUM INTO` lo ejecuta el propio sidecar por orden IPC, sobre sus propias conexiones y respetando el WAL. |
+| Respaldar el `sqlstore` con frecuencia diaria. | Medio: las credenciales del protocolo Signal evolucionan y una copia de ayer puede no servir. | Frecuencia alta, cada pocas horas, fijada en la tarea 13. |
 | La ausencia de lógica de negocio definida tienta a improvisarla. | Medio: se construye producto sobre supuestos no aprobados. | El alcance la excluye explícitamente; el procesador de mensajes queda como punto de extensión con una implementación mínima de eco. |
 
 ---
@@ -184,7 +233,7 @@ técnico: es la pérdida de la confianza que la validación del negocio necesita
 * **De otras etapas:** etapa A-1 completa. En particular, el trait `ChannelAdapter` con sus tipos
   canónicos y el workspace con sus cinco crates.
 * **Externas:** un destino de almacenamiento fuera del disco del servidor para las copias de
-  respaldo. Es bloqueante para las tareas 11 y 12.
+  respaldo. Es bloqueante para las tareas 13 y 14.
 * **Decisiones de producto pendientes que afectan al alcance:** la lógica de negocio específica y los
   flujos de usuario finales de STATUS.md determinan qué hace el bot con un mensaje. Mientras no
   existan, esta etapa entrega la infraestructura y un procesador mínimo, no el comportamiento

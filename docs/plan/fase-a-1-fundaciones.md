@@ -34,9 +34,11 @@ comprobaciones automáticas y leer sin ambigüedad qué frontera separa el domin
 * Scaffold del workspace Rust: `Cargo.toml` raíz de tipo *workspace* y la división en crates
   propuesta más abajo, cada uno compilando aunque su contenido sea todavía un esqueleto.
 * **Declaración del trait `ChannelAdapter` (FR-12) como esqueleto de tipos**, sin implementación: el
-  evento entrante canónico, la operación de envío, el identificador interno de conversación, los
-  acuses normalizados y el sub-trait opcional de ciclo de vida de sesión. Es la frontera que hace
-  posible el salto de fase, y por eso nace en la primera etapa y no cuando haga falta.
+  evento entrante canónico, el envío tipado con su resultado tipado, el estado de la ventana de
+  servicio, el identificador interno de conversación, los acuses normalizados y el sub-trait opcional
+  de ciclo de vida de sesión. Los tipos se abstraen **hacia el caso más restrictivo** —la Cloud
+  API—, no hacia el más permisivo. Es la frontera que hace posible el salto de fase, y por eso nace
+  en la primera etapa y no cuando haga falta.
 * Registro documental de las decisiones ya tomadas: estrategia de dos fases y elección de whatsmeow
   como adaptador no oficial.
 * Integración continua mínima: formato, análisis estático, compilación y ejecución de pruebas, tanto
@@ -89,9 +91,14 @@ comprobaciones automáticas y leer sin ambigüedad qué frontera separa el domin
 
 1. **Declarar el puerto de canal en `zeroclaw-core`** (1,5 días). Tipos del evento entrante canónico
    (remitente, conversación, contenido, marca temporal, identificador de deduplicación), firma de
-   `send(conversation_id, contenido)`, tipo del identificador interno de conversación, enumerado de
-   acuses (`sent`/`delivered`/`read`/`failed`) y sub-trait opcional de ciclo de vida de sesión. La
-   prueba de que el diseño es correcto es que los tipos no mencionan ni `wa_id` ni JID.
+   `send(conversation_id, mensaje)` con el mensaje tipado como `RespuestaLibre` o
+   `Plantilla { id, parámetros }`, **resultado tipado del envío** con `FueraDeVentana`,
+   `PlantillaRequerida`, `LimiteDeTasa` y `DestinatarioInvalido`, **consulta del estado de la ventana
+   de servicio de 24 h** por conversación, tipo del identificador interno de conversación, enumerado
+   de acuses (`sent`/`delivered`/`read`/`failed`) y sub-trait opcional de ciclo de vida de sesión.
+   Los tipos se diseñan hacia el caso restrictivo (FR-12): si el puerto solo sabe expresar lo que
+   whatsmeow permite, la Fase B lo rehará entero. La prueba de que el diseño es correcto es que los
+   tipos no mencionan ni `wa_id` ni JID.
 2. **Registrar las decisiones de canal en ADR** (0,5 días). Tres registros breves, numerados según el
    [índice de ADR](../adr/README.md): `adr-0008` (estrategia de dos fases con la compuerta del tercer
    cliente), `adr-0009` (elección de whatsmeow frente a alternativas) y `adr-0010` (el puerto de canal
@@ -138,7 +145,7 @@ comprobaciones automáticas y leer sin ambigüedad qué frontera separa el domin
 
 | Riesgo | Impacto | Mitigación |
 | :--- | :--- | :--- |
-| El puerto de canal se diseña pensando solo en whatsmeow y no sirve para la Cloud API. | Muy alto: la frontera de migración deja de existir y la Fase B se convierte en una reescritura. | Diseñar los tipos con los dos canales delante desde el primer día, y validar el contrato escribiendo la firma del adaptador de Cloud API aunque su cuerpo quede sin implementar. |
+| El puerto de canal se diseña pensando solo en whatsmeow y no sirve para la Cloud API. | Muy alto: la frontera de migración deja de existir y la Fase B se convierte en una reescritura. | Abstraer hacia el **caso más restrictivo** (FR-12): envío tipado, resultado con `FueraDeVentana`/`PlantillaRequerida`/`LimiteDeTasa`/`DestinatarioInvalido`, y estado de la ventana de 24 h. Que la firma compile no demuestra nada: la validación real es que **los tests de contrato del puerto ejerciten esa semántica restrictiva contra el adaptador simulado** de la etapa A-2, con ventanas que expiran y plantillas exigidas. |
 | Un identificador de transporte se cuela en el dominio o en `sessions.db`. | Alto: la migración de fase obligaría a migrar datos históricos. | Prueba explícita en esta etapa y revisión del esquema en la etapa A-2. |
 | La elección de licencia se pospone "para más adelante". | Medio: cada commit posterior aumenta el coste de cambiar de licencia por la necesidad de consentimiento de los contribuyentes. | Es tarea bloqueante de la etapa: no se abre la etapa A-2 sin `LICENSE` en la raíz. |
 | La frontera entre crates se elige mal y obliga a refactorizaciones profundas. | Medio. | Mantener `zeroclaw-core` sin dependencias de infraestructura y revisar la división al cerrar la etapa A-5, que es la que más presiona el diseño. |

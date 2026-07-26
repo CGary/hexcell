@@ -60,10 +60,19 @@ debajo, así que se aborda después del núcleo de datos, pero antes del empaque
 porque el diseño del volumen de disco y de los puntos de montaje depende de cómo se materialicen las
 épocas de conocimiento en el sistema de archivos.
 
+**La compuerta se pre-registra y solo el cliente externo valida.** Los umbrales numéricos y los
+criterios de fracaso se fijan por escrito antes de dar de alta a ningún piloto, y piloto-01 —el
+negocio del propio dueño— queda degradado a banco de pruebas técnico: sus datos no cuentan como
+evidencia de negocio, porque nadie es cliente de sí mismo. La métrica de disposición a pagar es un
+**cobro simbólico pero real** ejecutado a piloto-02 desde el segundo mes, no una declaración de
+intenciones.
+
 **Los respaldos no esperan al final.** En el plan anterior vivían en la última etapa. Ahora están en
 la etapa A-2, antes incluso de que exista el canal real, porque con pilotos operando sobre datos
 conversacionales de clientes finales de un negocio ajeno, un disco que falla no es un incidente
-técnico: es la pérdida de la confianza que la validación necesita.
+técnico: es la pérdida de la confianza que la validación necesita. Y cubren **tres** bases, no dos:
+la sesión del canal vive en el `sqlstore` del sidecar, y restaurar el historial con la sesión muerta
+deja al bot mudo con todos sus datos intactos.
 
 ### Nomenclatura mínima
 
@@ -115,12 +124,12 @@ Definiciones de los términos que se repiten a lo largo del plan:
 | Nº | Nombre | Objetivo (una línea) | FR / NFR cubiertos | Depende de |
 | :-- | :--- | :--- | :--- | :--- |
 | A-1 | [Fundaciones del repositorio](fase-a-1-fundaciones.md) | Dejar el repositorio, la licencia, el workspace Rust y la CI listos, y declarar el puerto de canal. | FR-12 (declaración), FR-01 (tipos) | — |
-| A-2 | [Núcleo de la célula: mensajería y persistencia dual](fase-a-2-nucleo-persistencia.md) | Construir el motor de mensajería sobre el puerto de canal, con persistencia dual y respaldo probado. | FR-01, FR-05, FR-12, NFR-01 (parcial) | A-1 |
-| A-3 | [Adaptador whatsmeow: sidecar Go y puerto de canal](fase-a-3-adaptador-whatsmeow.md) | Conectar la célula a WhatsApp de verdad, con sesión persistente y disciplina anti-ban. | FR-01 (Fase A), FR-12 (implementación) | A-2 |
+| A-2 | [Núcleo de la célula: mensajería y persistencia dual](fase-a-2-nucleo-persistencia.md) | Construir el motor de mensajería sobre el puerto de canal, con tests de contrato contra el caso restrictivo y respaldo de las tres bases. | FR-01, FR-05, FR-12, NFR-01 (parcial) | A-1 |
+| A-3 | [Adaptador whatsmeow: sidecar Go y puerto de canal](fase-a-3-adaptador-whatsmeow.md) | Conectar la célula a WhatsApp de verdad, con outbox durable, sesión persistente y disciplina anti-ban. | FR-01 (Fase A), FR-12 (implementación) | A-2 |
 | A-4 | [Control de admisión y presupuesto](fase-a-4-admision-presupuesto.md) | Impedir que ráfagas de mensajes o el coste del LLM desestabilicen el sistema. | FR-08, FR-09, FR-10 | A-2 (y A-3 para medir con tráfico real) |
 | A-5 | [Motor de conocimiento: Shadow DB y épocas](fase-a-5-conocimiento-shadow-db.md) | Actualizar el conocimiento del bot sin detener la producción ni corromper el WAL. | FR-06, FR-07, NFR-03 | A-2 (y A-4 para el coste de embeddings) |
-| A-6 | [Empaquetado de la célula y CLI de operación](fase-a-6-empaquetado-cli.md) | Convertir núcleo y sidecar en una célula contenedorizada gobernable desde la CLI. | FR-02, FR-11 (Fase A), NFR-01, NFR-05 | A-2, A-3, A-4, A-5 |
-| A-7 | [Células piloto y compuerta de salida](fase-a-7-pilotos.md) | Operar piloto-01 y piloto-02, medir la validación del negocio y decidir la compuerta. | Cierre operativo de FR-01, FR-02, FR-12; calibración de FR-08 y FR-10 | A-6 |
+| A-6 | [Empaquetado de la célula y CLI de operación](fase-a-6-empaquetado-cli.md) | Convertir núcleo y sidecar en una célula contenedorizada gobernable desde la CLI, con alertas push y dead-man's switch. | FR-02, FR-11 (Fase A), NFR-01, NFR-05 | A-2, A-3, A-4, A-5 |
+| A-7 | [Células piloto y compuerta de salida](fase-a-7-pilotos.md) | Operar piloto-01 (banco de pruebas técnico) y piloto-02 (validación de negocio, con cobro real), y decidir la compuerta pre-registrada. | Cierre operativo de FR-01, FR-02, FR-12; calibración de FR-08 y FR-10 | A-6 |
 
 ### Fase B — Comercial (canal oficial, Meta Cloud API) · **CONGELADA hasta la compuerta**
 
