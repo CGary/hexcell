@@ -83,7 +83,7 @@ familia de decisiones: poner un techo explícito a lo que el proceso se permite 
 
 * Módulo de admisión GCRA en `hexcell-core`, reutilizable, independiente del transporte y con
   pruebas propias.
-* Integración del módulo en el consumo del puerto de canal dentro de `hexcell-cell`.
+* Integración del módulo en el consumo del puerto de canal dentro de `hexcell`.
 * Módulo de contabilidad con la máquina de estados de reserva y conciliación.
 * Tablas de saldo y de movimientos en las migraciones de `sessions.db`.
 * Cliente de inferencia real en un crate o módulo propio, detrás de la interfaz existente.

@@ -13,7 +13,7 @@ HexCell es una plataforma de software multi-célula (*multi-tenant*) de alta efi
 
 El objetivo central es minimizar el costo operativo por célula mediante una ejecución nativa sin sobrecarga de memoria.
 
-La unidad desplegable por cliente se denomina **célula**: un contenedor del núcleo Rust (más su sidecar de canal cuando el canal lo exige), un volumen de datos propio y un par de bases SQLite independientes. En la CLI y en los identificadores de código, el sustantivo es `cell` (`hexcell-admin cell pause`, `--id <cell_id>`, binario `hexcell-cell`).
+La unidad desplegable por cliente se denomina **célula**: un contenedor del núcleo Rust (más su sidecar de canal cuando el canal lo exige), un volumen de datos propio y un par de bases SQLite independientes. En la CLI y en los identificadores de código, el sustantivo es `cell` (`hexcell-admin cell pause`, `--id <cell_id>`, binario `hexcell`).
 
 ---
 

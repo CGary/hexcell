@@ -40,7 +40,7 @@ técnico: es la pérdida de la confianza que la validación del negocio necesita
 
 ### Qué entra
 
-* Motor de mensajería en `hexcell-cell`: bucle asíncrono sobre Tokio que consume eventos canónicos
+* Motor de mensajería en `hexcell`: bucle asíncrono sobre Tokio que consume eventos canónicos
   del `ChannelAdapter`, los procesa y emite respuestas mediante `send(conversation_id, mensaje)`,
   tratando el **resultado tipado** del envío en lugar de asumir que siempre tiene éxito.
 * Servidor HTTP interno mínimo con `GET /health/live` y `GET /health/ready`. No expone rutas de
@@ -104,7 +104,7 @@ técnico: es la pérdida de la confianza que la validación del negocio necesita
 
 ## Entregables
 
-* `hexcell-cell` como binario ejecutable que arranca, consume del puerto, sirve las dos rutas de
+* `hexcell` como binario ejecutable que arranca, consume del puerto, sirve las dos rutas de
   salud y se apaga limpio.
 * `hexcell-storage` con el gestor de pools duales y los ajustes de SQLite.
 * Adaptador de canal simulado en memoria **con semántica Cloud API** (ventanas que expiran,

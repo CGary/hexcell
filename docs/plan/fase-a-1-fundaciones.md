@@ -75,7 +75,7 @@ comprobaciones automáticas y leer sin ambigüedad qué frontera separa el domin
 * Crates del workspace, todos compilando en vacío:
   * `hexcell-core` — tipos de dominio compartidos, errores, configuración y **el trait
     `ChannelAdapter` con sus tipos canónicos**. Sin dependencias de infraestructura.
-  * `hexcell-cell` — binario que se ejecuta dentro del contenedor del núcleo de cada célula.
+  * `hexcell` — binario que se ejecuta dentro del contenedor del núcleo de cada célula.
   * `hexcell-admin` — binario de la CLI central de administración.
   * `hexcell-storage` — capa de acceso a SQLite y gestión de pools.
   * `hexcell-meta` — cliente y tipos de la Meta Graph API, incluida la verificación de firma. Nace
