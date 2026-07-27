@@ -58,7 +58,7 @@ subdominios y registro en Meta, pertenece a la etapa B-2.
   del enlace con el sidecar.
 * Manejo correcto de señales dentro de ambos contenedores, para que el `SIGTERM` de Docker llegue al
   proceso y active el apagado ordenado de la etapa A-2 y el cierre limpio de sesión de la etapa A-3.
-* **CLI de operación** en `zeroclaw-admin`, apoyada exclusivamente en el socket Unix de Docker:
+* **CLI de operación** en `hexcell-admin`, apoyada exclusivamente en el socket Unix de Docker:
   * `cell pause` — detener el sidecar (cerrando el websocket) y después emitir `SIGTERM` al núcleo con
     30 segundos de gracia.
   * `cell unpause` — arrancar ambos contenedores y sondear `GET /health/ready` cada 100 ms hasta la
@@ -104,7 +104,7 @@ subdominios y registro en Meta, pertenece a la etapa B-2.
 * `Dockerfile` del núcleo y `Dockerfile` del sidecar, con sus `.dockerignore`.
 * `deploy/cell.compose.yml` (o especificación equivalente) parametrizada por célula, con los dos
   contenedores, la red local y el volumen compartido.
-* `zeroclaw-admin` con los comandos `cell pause`, `cell unpause`, `cell terminate`, `cell list` y
+* `hexcell-admin` con los comandos `cell pause`, `cell unpause`, `cell terminate`, `cell list` y
   `cell status`.
 * Módulo cliente del socket Unix de Docker.
 * Almacén de estado del plano de control con su esquema y migraciones.

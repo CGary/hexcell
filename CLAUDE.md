@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Qué es este repositorio
 
-**ZeroClaw Orchestrator**: orquestador multi-célula (multi-tenant) en Rust para desplegar bots de WhatsApp para microempresas sobre hardware local modesto (i7 de 10 años, 8 GB RAM).
+**HexCell Orchestrator**: orquestador multi-célula (multi-tenant) en Rust para desplegar bots de WhatsApp para microempresas sobre hardware local modesto (i7 de 10 años, 8 GB RAM).
 
 **Estado actual: solo documentación.** No existe código fuente, `Cargo.toml`, ni comandos de build/test todavía. El scaffold del workspace Rust y del sidecar Go llegará en la etapa A-1 del plan.
 

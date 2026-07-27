@@ -71,7 +71,7 @@ motor de conocimiento es idéntico en ambas fases y sobrevive intacto al cambio 
 
 ## Entregables
 
-* Módulo de conocimiento en `zeroclaw-storage` con el gestor de épocas y el pool intercambiable.
+* Módulo de conocimiento en `hexcell-storage` con el gestor de épocas y el pool intercambiable.
 * Módulo de ingesta con fragmentación, llamada por lotes a embeddings y escritura en staging.
 * Módulo de recuperación RAG que consume el pool vigente sin conocer su época.
 * Cliente de la API externa de embeddings, integrado con la contabilidad de la etapa A-4.

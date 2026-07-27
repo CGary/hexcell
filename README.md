@@ -1,6 +1,6 @@
-# ZeroClaw Orchestrator
+# HexCell Orchestrator
 
-ZeroClaw es un motor orquestador multi-célula (*multi-tenant*) de ultra alta eficiencia escrito en **Rust**, diseñado para desplegar y administrar bots automatizados de WhatsApp para microempresas locales. La arquitectura está optimizada estructuralmente para ejecutarse en servidores locales con severas restricciones de hardware (procesadores heredados de consumo doméstico y baja densidad de memoria RAM) sin comprometer la estabilidad, el aislamiento de datos ni el presupuesto financiero de las APIs de lenguaje natural.
+HexCell es un motor orquestador multi-célula (*multi-tenant*) de ultra alta eficiencia escrito en **Rust**, diseñado para desplegar y administrar bots automatizados de WhatsApp para microempresas locales. La arquitectura está optimizada estructuralmente para ejecutarse en servidores locales con severas restricciones de hardware (procesadores heredados de consumo doméstico y baja densidad de memoria RAM) sin comprometer la estabilidad, el aislamiento de datos ni el presupuesto financiero de las APIs de lenguaje natural.
 
 La unidad desplegable por cliente se denomina **célula**. En la CLI y en el código el sustantivo es `cell`.
 
@@ -81,7 +81,7 @@ La suite de administración central compila como un binario nativo que interact�
 Garantiza la liberación inmediata de RAM y CPU en el hardware local sin inyectar códigos de error de enrutamiento hacia el canal.
 
 ```bash
-./zeroclaw-admin cell pause --id <cell_id>
+./hexcell-admin cell pause --id <cell_id>
 ```
 
 *Mecanismo Interno (Fase A):* detiene el sidecar, con lo que el websocket saliente se cierra y la entrada de mensajes cesa por construcción; a continuación envía una señal `SIGTERM` al contenedor del núcleo con un margen de 30 segundos para drenar lecturas RAG en vuelo y hacer flush del WAL a disco. No interviene Caddy.
@@ -93,7 +93,7 @@ Garantiza la liberación inmediata de RAM y CPU en el hardware local sin inyecta
 Restaura la producción asegurando que el backend está completamente listo antes de admitir tráfico real de mensajería.
 
 ```bash
-./zeroclaw-admin cell unpause --id <cell_id>
+./hexcell-admin cell unpause --id <cell_id>
 ```
 
 *Mecanismo Interno:* inicia los contenedores de la célula de forma aislada. La CLI ejecuta un bucle de *Readiness Polling* local hacia el endpoint `GET /health/ready` del contenedor cada 100ms, que responde 200 OK tras comprobar de extremo a extremo la vitalidad de sus pools de persistencia SQLite y el enlace del puerto de canal. En la Fase A, el sidecar reanuda entonces la sesión whatsmeow desde sus credenciales persistidas, sin re-escanear el QR. En la **Fase B**, Caddy conmuta el tráfico de la respuesta estática al proxy inverso únicamente tras la primera confirmación positiva de salud.
@@ -103,7 +103,7 @@ Restaura la producción asegurando que el backend está completamente listo ante
 Remoción destructiva limpia y desvinculación perimetral.
 
 ```bash
-./zeroclaw-admin cell terminate --id <cell_id>
+./hexcell-admin cell terminate --id <cell_id>
 ```
 
 *Mecanismo Interno (Fase A):* cierra la sesión whatsmeow (desvinculando el dispositivo del número), ejecuta el drenaje por `SIGTERM` de ambos contenedores y destruye los volúmenes de disco locales de manera física (`std::fs::remove_dir_all`), incluidas las credenciales de sesión.

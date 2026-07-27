@@ -1,5 +1,5 @@
 # Documento de Requisitos del Producto (PRD)
-## Proyecto: Orquestador Multi-Célula ZeroClaw (v1.0.0)
+## Proyecto: Orquestador Multi-Célula HexCell (v1.0.0)
 
 ### 1. Control de Versiones y Estado
 * **Estado:** Aprobado para Desarrollo.
@@ -9,11 +9,11 @@
 ---
 
 ### 2. Descripción General y Objetivos Comerciales
-ZeroClaw es una plataforma de software multi-célula (*multi-tenant*) de alta eficiencia diseñada para ejecutarse en entornos de hardware locales restringidos (servidor Intel i7 de hace 10 años, 8 GB de memoria RAM, almacenamiento SSD). El producto permite empaquetar, desplegar y operar de forma masiva bots automatizados para WhatsApp dirigidos a microempresas locales, cubriendo los casos de uso de atención al cliente, respuestas a preguntas frecuentes, catálogo/venta de productos y agendamiento de servicios.
+HexCell es una plataforma de software multi-célula (*multi-tenant*) de alta eficiencia diseñada para ejecutarse en entornos de hardware locales restringidos (servidor Intel i7 de hace 10 años, 8 GB de memoria RAM, almacenamiento SSD). El producto permite empaquetar, desplegar y operar de forma masiva bots automatizados para WhatsApp dirigidos a microempresas locales, cubriendo los casos de uso de atención al cliente, respuestas a preguntas frecuentes, catálogo/venta de productos y agendamiento de servicios.
 
 El objetivo central es minimizar el costo operativo por célula mediante una ejecución nativa sin sobrecarga de memoria.
 
-La unidad desplegable por cliente se denomina **célula**: un contenedor del núcleo Rust (más su sidecar de canal cuando el canal lo exige), un volumen de datos propio y un par de bases SQLite independientes. En la CLI y en los identificadores de código, el sustantivo es `cell` (`zeroclaw-admin cell pause`, `--id <cell_id>`, binario `zeroclaw-cell`).
+La unidad desplegable por cliente se denomina **célula**: un contenedor del núcleo Rust (más su sidecar de canal cuando el canal lo exige), un volumen de datos propio y un par de bases SQLite independientes. En la CLI y en los identificadores de código, el sustantivo es `cell` (`hexcell-admin cell pause`, `--id <cell_id>`, binario `hexcell-cell`).
 
 ---
 

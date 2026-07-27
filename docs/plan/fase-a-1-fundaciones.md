@@ -73,12 +73,12 @@ comprobaciones automáticas y leer sin ambigüedad qué frontera separa el domin
   * `docs/adr/adr-0010-puerto-de-canal.md` — el puerto de canal como frontera de migración.
 * `Cargo.toml` raíz declarando el workspace y las dependencias compartidas.
 * Crates del workspace, todos compilando en vacío:
-  * `zeroclaw-core` — tipos de dominio compartidos, errores, configuración y **el trait
+  * `hexcell-core` — tipos de dominio compartidos, errores, configuración y **el trait
     `ChannelAdapter` con sus tipos canónicos**. Sin dependencias de infraestructura.
-  * `zeroclaw-cell` — binario que se ejecuta dentro del contenedor del núcleo de cada célula.
-  * `zeroclaw-admin` — binario de la CLI central de administración.
-  * `zeroclaw-storage` — capa de acceso a SQLite y gestión de pools.
-  * `zeroclaw-meta` — cliente y tipos de la Meta Graph API, incluida la verificación de firma. Nace
+  * `hexcell-cell` — binario que se ejecuta dentro del contenedor del núcleo de cada célula.
+  * `hexcell-admin` — binario de la CLI central de administración.
+  * `hexcell-storage` — capa de acceso a SQLite y gestión de pools.
+  * `hexcell-meta` — cliente y tipos de la Meta Graph API, incluida la verificación de firma. Nace
     como esqueleto: su contenido real pertenece a la Fase B.
 * Módulo Go inicializado (`sidecar/`) que compila en vacío y que albergará el adaptador whatsmeow.
 * `.github/workflows/ci.yml` (o el equivalente del proveedor elegido) con el pipeline mínimo.
@@ -89,7 +89,7 @@ comprobaciones automáticas y leer sin ambigüedad qué frontera separa el domin
 
 ## Tareas
 
-1. **Declarar el puerto de canal en `zeroclaw-core`** (1,5 días). Tipos del evento entrante canónico
+1. **Declarar el puerto de canal en `hexcell-core`** (1,5 días). Tipos del evento entrante canónico
    (remitente, conversación, contenido, marca temporal, identificador de deduplicación), firma de
    `send(conversation_id, mensaje)` con el mensaje tipado como `RespuestaLibre` o
    `Plantilla { id, parámetros }`, **resultado tipado del envío** con `FueraDeVentana`,
@@ -110,7 +110,7 @@ comprobaciones automáticas y leer sin ambigüedad qué frontera separa el domin
    mensajes de commit, plantilla de pull request, `.gitignore` para artefactos de Rust y de Go.
 5. **Crear el workspace Cargo y los cinco crates** (1,5 días). Definir dependencias comunes en el
    workspace, fijar los límites entre crates y documentar en el ADR por qué la frontera está donde
-   está. `zeroclaw-core` no puede depender de ningún crate de infraestructura.
+   está. `hexcell-core` no puede depender de ningún crate de infraestructura.
 6. **Inicializar el módulo Go del sidecar** (0,5 días). Estructura mínima que compile, con la
    dependencia de whatsmeow declarada y fijada a una versión concreta, de modo que un *bump* ante una
    rotura de protocolo sea un cambio de una línea.
@@ -127,7 +127,7 @@ comprobaciones automáticas y leer sin ambigüedad qué frontera separa el domin
 
 ## Criterios de aceptación
 
-* El trait `ChannelAdapter` y sus tipos canónicos compilan en `zeroclaw-core` y **ninguna firma
+* El trait `ChannelAdapter` y sus tipos canónicos compilan en `hexcell-core` y **ninguna firma
   pública menciona un identificador de transporte** (`wa_id`, JID o equivalente).
 * Existe un archivo `LICENSE` en la raíz y un ADR que justifica la elección.
 * Existen los ADR `adr-0008`, `adr-0009` y `adr-0010`, que registran la estrategia de dos fases, la
@@ -148,7 +148,7 @@ comprobaciones automáticas y leer sin ambigüedad qué frontera separa el domin
 | El puerto de canal se diseña pensando solo en whatsmeow y no sirve para la Cloud API. | Muy alto: la frontera de migración deja de existir y la Fase B se convierte en una reescritura. | Abstraer hacia el **caso más restrictivo** (FR-12): envío tipado, resultado con `FueraDeVentana`/`PlantillaRequerida`/`LimiteDeTasa`/`DestinatarioInvalido`, y estado de la ventana de 24 h. Que la firma compile no demuestra nada: la validación real es que **los tests de contrato del puerto ejerciten esa semántica restrictiva contra el adaptador simulado** de la etapa A-2, con ventanas que expiran y plantillas exigidas. |
 | Un identificador de transporte se cuela en el dominio o en `sessions.db`. | Alto: la migración de fase obligaría a migrar datos históricos. | Prueba explícita en esta etapa y revisión del esquema en la etapa A-2. |
 | La elección de licencia se pospone "para más adelante". | Medio: cada commit posterior aumenta el coste de cambiar de licencia por la necesidad de consentimiento de los contribuyentes. | Es tarea bloqueante de la etapa: no se abre la etapa A-2 sin `LICENSE` en la raíz. |
-| La frontera entre crates se elige mal y obliga a refactorizaciones profundas. | Medio. | Mantener `zeroclaw-core` sin dependencias de infraestructura y revisar la división al cerrar la etapa A-5, que es la que más presiona el diseño. |
+| La frontera entre crates se elige mal y obliga a refactorizaciones profundas. | Medio. | Mantener `hexcell-core` sin dependencias de infraestructura y revisar la división al cerrar la etapa A-5, que es la que más presiona el diseño. |
 | La CI se percibe como fricción y se acaba desactivando. | Medio: la deuda técnica se acumula en silencio. | Mantenerla estrictamente mínima en esta fase: comprobaciones rápidas, sin pasos lentos. |
 
 ---

@@ -22,7 +22,7 @@ la infraestructura del canal oficial. Ver [plan/README.md](plan/README.md).
   compartiendo red local y volumen, comunicados por IPC sobre socket local.
 * **Docker desde el día 1**, también en la fase de validación.
 * **Nomenclatura:** la unidad desplegable por cliente se llama **célula**; en CLI e identificadores de
-  código, `cell` (`zeroclaw-admin cell pause`, `--id <cell_id>`, binario `zeroclaw-cell`).
+  código, `cell` (`hexcell-admin cell pause`, `--id <cell_id>`, binario `hexcell-cell`).
 * **Células piloto:** `piloto-01` (negocio de prueba del propio dueño) y `piloto-02` (un conocido),
   cada una con un número de WhatsApp nuevo y dedicado.
 * **Respaldos adelantados a la etapa A-2**, en lugar de esperar al endurecimiento final: con pilotos

@@ -40,7 +40,7 @@ técnico: es la pérdida de la confianza que la validación del negocio necesita
 
 ### Qué entra
 
-* Motor de mensajería en `zeroclaw-cell`: bucle asíncrono sobre Tokio que consume eventos canónicos
+* Motor de mensajería en `hexcell-cell`: bucle asíncrono sobre Tokio que consume eventos canónicos
   del `ChannelAdapter`, los procesa y emite respuestas mediante `send(conversation_id, mensaje)`,
   tratando el **resultado tipado** del envío en lugar de asumir que siempre tiene éxito.
 * Servidor HTTP interno mínimo con `GET /health/live` y `GET /health/ready`. No expone rutas de
@@ -49,7 +49,7 @@ técnico: es la pérdida de la confianza que la validación del negocio necesita
   deduplicación que provee el puerto de canal, con independencia del transporte que lo originó.
 * Mapeo de identidad de conversación: traducción del identificador de transporte a identificador
   interno y su persistencia. **`sessions.db` no almacena identificadores de transporte crudos.**
-* Capa `zeroclaw-storage` con dos pools independientes: `sessions.db` en lectura/escritura y
+* Capa `hexcell-storage` con dos pools independientes: `sessions.db` en lectura/escritura y
   `knowledge_live.db` en lectura. Configuración de SQLite en modo WAL, con los ajustes de
   `busy_timeout`, `synchronous` y tamaño de pool decididos y documentados.
 * Migraciones versionadas y reproducibles para `sessions.db`, y esquema inicial de solo lectura para
@@ -104,9 +104,9 @@ técnico: es la pérdida de la confianza que la validación del negocio necesita
 
 ## Entregables
 
-* `zeroclaw-cell` como binario ejecutable que arranca, consume del puerto, sirve las dos rutas de
+* `hexcell-cell` como binario ejecutable que arranca, consume del puerto, sirve las dos rutas de
   salud y se apaga limpio.
-* `zeroclaw-storage` con el gestor de pools duales y los ajustes de SQLite.
+* `hexcell-storage` con el gestor de pools duales y los ajustes de SQLite.
 * Adaptador de canal simulado en memoria **con semántica Cloud API** (ventanas que expiran,
   plantillas requeridas, límites de tasa), reutilizable por todas las pruebas del plan.
 * Batería de **tests de contrato del puerto de canal**, que la etapa B-1 reutilizará contra el

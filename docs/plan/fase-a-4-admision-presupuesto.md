@@ -81,9 +81,9 @@ familia de decisiones: poner un techo explícito a lo que el proceso se permite 
 
 ## Entregables
 
-* Módulo de admisión GCRA en `zeroclaw-core`, reutilizable, independiente del transporte y con
+* Módulo de admisión GCRA en `hexcell-core`, reutilizable, independiente del transporte y con
   pruebas propias.
-* Integración del módulo en el consumo del puerto de canal dentro de `zeroclaw-cell`.
+* Integración del módulo en el consumo del puerto de canal dentro de `hexcell-cell`.
 * Módulo de contabilidad con la máquina de estados de reserva y conciliación.
 * Tablas de saldo y de movimientos en las migraciones de `sessions.db`.
 * Cliente de inferencia real en un crate o módulo propio, detrás de la interfaz existente.
@@ -152,7 +152,7 @@ familia de decisiones: poner un techo explícito a lo que el proceso se permite 
 | :--- | :--- | :--- |
 | Parámetros de GCRA mal calibrados que descartan tráfico legítimo. | **Muy alto en la Fase A:** un mensaje descartado es un cliente final de un piloto que nunca recibe respuesta, y no hay ningún código de error que lo delate. | Registrar cada descarte con su clave, empezar con límites holgados y revisar los registros con los datos reales de los pilotos en la etapa A-7. |
 | Aplicar el GCRA después de cargar el contexto conversacional. | Medio: se pierde el beneficio de no asignar heap y la prueba de carga falla por consumo de memoria. | Fijar la posición del control por diseño y verificarlo con la métrica de memoria. |
-| Acoplar el módulo de admisión a un detalle del transporte. | Alto: habría que reescribirlo en la Fase B en lugar de reutilizarlo. | Vive en `zeroclaw-core`, sin dependencias de infraestructura, y sus pruebas corren sin servidor. |
+| Acoplar el módulo de admisión a un detalle del transporte. | Alto: habría que reescribirlo en la Fase B en lugar de reutilizarlo. | Vive en `hexcell-core`, sin dependencias de infraestructura, y sus pruebas corren sin servidor. |
 | Estimación de prompt sistemáticamente inferior al coste real. | Medio: se permite gastar por encima del presupuesto. | Métrica de desviación entre reserva y conciliación, y factor de seguridad configurable en la estimación. |
 | **Modelo de monetización sin definir** (pendiente en STATUS.md). | Medio: no se sabe cómo se recarga el saldo ni qué umbral dispara la degradación. | Se construye el mecanismo con valores configurables. La política comercial se inyecta como configuración cuando exista la decisión, sin tocar código. Los pilotos de la etapa A-7 aportarán el dato de consumo real. |
 | El modo degradado se percibe como avería por el usuario final. | Medio. | El manejo de excepciones comerciales está pendiente de definición de producto; se deja el punto de extensión y se documenta el bloqueo. |

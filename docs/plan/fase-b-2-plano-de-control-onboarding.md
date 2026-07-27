@@ -71,7 +71,7 @@ certificadora, y esa autoridad **sí** valida el entorno WAN desde fuera.
 
 #### Onboarding
 
-* Comando **`cell create` completo** en `zeroclaw-admin`, que ejecuta la secuencia de alta de
+* Comando **`cell create` completo** en `hexcell-admin`, que ejecuta la secuencia de alta de
   principio a fin con reversión automática ante fallo.
 * Generación del identificador de la célula, su subdominio, su token de verificación criptográfico
   y sus secretos, con almacenamiento seguro.
@@ -123,12 +123,12 @@ certificadora, y esa autoridad **sí** valida el entorno WAN desde fuera.
 
 ## Entregables
 
-* `zeroclaw-admin` con `cell create` completo y con los comandos de ciclo de vida ampliados a Caddy.
+* `hexcell-admin` con `cell create` completo y con los comandos de ciclo de vida ampliados a Caddy.
 * Módulo cliente de la API de administración de Caddy.
 * Configuración base de Caddy versionada en el repositorio, con la política de TLS.
 * Módulo de handshake sintético reutilizable, capaz de forzar la resolución del socket, el SNI y el
   encabezado `Host`. *(Condicionado al ADR.)*
-* Ampliación de `zeroclaw-meta` con el registro de webhook, `override_callback_uri` y el intercambio
+* Ampliación de `hexcell-meta` con el registro de webhook, `override_callback_uri` y el intercambio
   de credenciales del Embedded Signup.
 * Almacén de secretos por célula con su política de acceso.
 * ADR del plano de control con el orden de operaciones de cada secuencia y su justificación.

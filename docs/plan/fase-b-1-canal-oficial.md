@@ -84,7 +84,7 @@ transporte crudos en `sessions.db` habrá valido cada minuto invertido.
 ## Entregables
 
 * Implementación `CloudApiAdapter` del trait `ChannelAdapter`.
-* `zeroclaw-meta` completado: verificación de firma, tipos del payload de webhook y cliente de envío.
+* `hexcell-meta` completado: verificación de firma, tipos del payload de webhook y cliente de envío.
 * ADR de **entrada pública de la Fase B** con la decisión tomada y sus consecuencias sobre FR-04 y
   NFR-04.
 * ADR del adaptador de Cloud API.

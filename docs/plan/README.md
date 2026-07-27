@@ -1,4 +1,4 @@
-# Plan de Implementación por Fases — ZeroClaw Orchestrator
+# Plan de Implementación por Fases — HexCell Orchestrator
 
 > Documento índice. Última actualización: 2026-07-26.
 > Fuentes normativas: [PRD.md](../PRD.md) (requisitos FR/NFR y criterios de QA), [README.md](../../README.md) (arquitectura y CLI), [STATUS.md](../STATUS.md) (avance).
@@ -7,7 +7,7 @@
 
 ## 1. Visión general
 
-ZeroClaw es un orquestador multi-célula que despliega bots de WhatsApp para microempresas sobre
+HexCell es un orquestador multi-célula que despliega bots de WhatsApp para microempresas sobre
 hardware local modesto. El plan que sigue traduce en una secuencia de etapas ejecutables lo que ya
 está documentado en el proyecto, sin añadir requisitos de cosecha propia. Se apoya en dos fuentes con
 rango distinto:
