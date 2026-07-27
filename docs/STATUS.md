@@ -44,9 +44,19 @@ la infraestructura del canal oficial. Ver [plan/README.md](plan/README.md).
   deduplicación en el núcleo. Limitación documentada: el acuse de protocolo hacia WhatsApp es
   automático y no se puede diferir, de modo que queda una ventana de pérdida de microsegundos.
 * **Alertas push y dead-man's switch adelantados a la etapa A-6**: bot de Telegram ante sesión
-  desvinculada, sidecar sin reconectar más de 5 minutos, bucle de reinicios, saldo agotado y
-  descartes GCRA anómalos; más healthchecks.io con ping cada 5 minutos para que la caída total del
-  servidor se notifique desde fuera. Descongela deliberadamente un mínimo de la observabilidad de la
+  desvinculada, sidecar sin reconectar más de 5 minutos, bucle de reinicios, saldo agotado,
+  descartes GCRA anómalos y descarte de envíos no solicitados (invariante anti-ban); más
+  healthchecks.io con ping cada 5 minutos para que la caída total del servidor se notifique desde
+  fuera.
+* **Endurecimiento contra el patrón "compila ≠ correcto"** (2026-07-27), aplicado transversalmente:
+  validación semántica del puerto en A-1 (`match` exhaustivo y cotejo contra la documentación
+  oficial de la Cloud API), `hexcell-meta` vacío hasta resolver el ADR-0013, CI de A-1 con alcance
+  declarado, `/health/ready` condicionado a sesión de canal activa (A-2/A-3/A-6, README y PRD
+  alineados), ventana de deduplicación dimensionada frente al horizonte de reentrega (A-2),
+  invariante continuo anti-envíos-no-solicitados con alerta (A-3/A-6), criterio de no-falso-positivo
+  en GCRA (A-4), reversión de épocas con la misma validación semántica que la promoción (A-5), y
+  eliminación de la vía de escape del criterio del núcleo intacto en B-1 (ahora bloquea la
+  aceptación y exige revisar el ADR-0010). Descongela deliberadamente un mínimo de la observabilidad de la
   etapa B-3, porque hay usuarios reales desde la Fase A.
 * **Compuerta pre-registrada y roles asimétricos de los pilotos** (etapa A-7): los umbrales numéricos
   y los **criterios de fracaso** se fijan por escrito antes del primer alta. **piloto-01 es banco de

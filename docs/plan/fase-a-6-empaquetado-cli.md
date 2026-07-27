@@ -61,16 +61,18 @@ subdominios y registro en Meta, pertenece a la etapa B-2.
 * **CLI de operación** en `hexcell-admin`, apoyada exclusivamente en el socket Unix de Docker:
   * `cell pause` — detener el sidecar (cerrando el websocket) y después emitir `SIGTERM` al núcleo con
     30 segundos de gracia.
-  * `cell unpause` — arrancar ambos contenedores y sondear `GET /health/ready` cada 100 ms hasta la
-    primera confirmación positiva, tras la cual el sidecar reanuda la sesión desde sus credenciales.
+  * `cell unpause` — arrancar ambos contenedores; el sidecar reanuda la sesión whatsmeow desde sus
+    credenciales en cuanto vive, y la CLI sondea `GET /health/ready` cada 100 ms hasta la primera
+    confirmación positiva, que exige pools SQLite operativos **y** sesión de canal activa reportada
+    por el sidecar vía IPC (etapas A-2 y A-3).
   * `cell terminate` — cierre de sesión del canal, drenaje por `SIGTERM` de ambos contenedores y
     destrucción física de los volúmenes.
   * `cell list` y `cell status` — estado consolidado de cada célula, incluida la salud del canal.
 * Registro persistente del estado de cada célula en el plano de control, para que la CLI no dependa
   exclusivamente de inferir el estado a partir de Docker.
 * **Alertas push por bot de Telegram** ante sesión desvinculada, sidecar sin reconectar durante más
-  de 5 minutos, bucle de reinicios, saldo LLM agotado o modo degradado, y tasa de descartes GCRA
-  anómala.
+  de 5 minutos, bucle de reinicios, saldo LLM agotado o modo degradado, tasa de descartes GCRA
+  anómala, y descarte de un envío no solicitado (violación del invariante anti-ban de la etapa A-3).
 * **Dead-man's switch externo** (healthchecks.io, capa gratuita): ping cada 5 minutos desde un `cron`
   local, con notificación desde fuera del servidor cuando el ping deja de llegar.
 * Idempotencia y recuperación: cada comando debe poder reejecutarse tras un fallo parcial y dejar el
@@ -165,8 +167,9 @@ subdominios y registro en Meta, pertenece a la etapa B-2.
     * **Alertas activas** por bot de Telegram, con una simple llamada HTTP saliente desde el
       servidor, ante: sesión de canal desvinculada, sidecar sin reconectar durante más de 5 minutos,
       bucle de reinicios de cualquiera de los dos contenedores, saldo LLM agotado o entrada en modo
-      degradado, y tasa de descartes GCRA anómala. Las señales del canal las emite el sidecar (etapa
-      A-3); las del saldo y los descartes, el núcleo (etapa A-4). Esta tarea las **entrega**.
+      degradado, tasa de descartes GCRA anómala, y descarte de un envío no solicitado (violación del
+      invariante anti-ban). Las señales del canal y del invariante anti-ban las emite el sidecar
+      (etapa A-3); las del saldo y los descartes, el núcleo (etapa A-4). Esta tarea las **entrega**.
     * **Dead-man's switch externo** con healthchecks.io en su capa gratuita: un `cron` local hace
       ping cada 5 minutos y **la ausencia de ping** dispara la notificación desde fuera del servidor.
       Es la única clase de alerta que sobrevive al fallo que más importa: **un servidor muerto no
@@ -190,7 +193,13 @@ subdominios y registro en Meta, pertenece a la etapa B-2.
 * `cell pause` cierra el websocket antes de detener el núcleo, y durante toda la pausa no queda
   ninguna petición entrante sin atender, porque no hay ninguna.
 * `cell unpause` no da la célula por lista hasta que `GET /health/ready` ha respondido `200 OK` al
-  menos una vez, y el sidecar reanuda la sesión sin re-emparejamiento.
+  menos una vez, y esa confirmación exige pools SQLite operativos **y** sesión de canal activa; el
+  sidecar reanuda la sesión sin re-emparejamiento **antes** de que la readiness pueda confirmarla,
+  nunca después.
+* Si el sidecar no logra reconectar la sesión whatsmeow dentro del margen de sondeo, `cell unpause`
+  **no** declara la célula operativa: agota el tiempo de espera y la CLI reporta con claridad que la
+  célula levantó contenedores pero el canal sigue mudo, distinguiendo ese caso del de pools SQLite
+  caídos.
 * `docker stop` con margen de 30 segundos produce salidas con código 0 en ambos contenedores y
   checkpoint del WAL completado, sin recurrir a `SIGKILL`.
 * Una célula no puede listar, leer ni escribir el volumen de datos de otra, ni alcanzar su red
@@ -201,7 +210,7 @@ subdominios y registro en Meta, pertenece a la etapa B-2.
   dispositivo desvinculado del número.
 * Interrumpir cualquier comando a mitad y reejecutarlo lleva el sistema al estado pretendido sin
   intervención manual.
-* Cada una de las cinco condiciones de alerta, provocada deliberadamente, produce un mensaje de
+* Cada una de las seis condiciones de alerta, provocada deliberadamente, produce un mensaje de
   Telegram en menos de un minuto.
 * **Apagar el servidor entero produce una notificación** procedente del dead-man's switch externo,
   sin que el servidor haya podido emitir nada.

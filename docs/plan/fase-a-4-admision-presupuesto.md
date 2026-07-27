@@ -131,8 +131,16 @@ familia de decisiones: poner un techo explícito a lo que el proceso se permite 
   inyectados por el puerto, el control de admisión GCRA se activa, el exceso se descarta sin
   procesarse y el consumo de memoria residente no crece más de un 15 % respecto de la línea base
   medida en la etapa A-2.
-* Cada descarte queda registrado con su clave y su motivo, de modo que la pérdida de tráfico legítimo
-  sea detectable sin depender de un código de respuesta.
+* Todo descarte GCRA queda registrado desde el primer día con su clave, marca temporal y motivo; el
+  descarte silencioso está prohibido, de modo que la pérdida de tráfico legítimo sea detectable sin
+  depender de un código de respuesta.
+* **Criterio de no-falso-positivo:** bajo una simulación de tráfico legítimo a la tasa normal de una
+  conversación —patrones realistas de mensajería, no ráfagas—, el número de descartes GCRA es cero;
+  los umbrales de tasa y ráfaga se calibran contra este perfil antes de exponer el mecanismo a
+  tráfico real.
+* Existe un umbral de descartes anómalos que alimenta las alertas de la etapa A-6: un cliente
+  legítimo siendo descartado debe disparar una alerta activa, no descubrirse semanas después al
+  revisar los registros en la etapa A-7.
 * El módulo de admisión no tiene ninguna dependencia de HTTP ni del transporte, verificable porque sus
   pruebas unitarias se ejecutan sin levantar ningún servidor.
 * El número de tareas Tokio en vuelo nunca supera el límite configurado, verificado por métrica
@@ -151,6 +159,7 @@ familia de decisiones: poner un techo explícito a lo que el proceso se permite 
 | Riesgo | Impacto | Mitigación |
 | :--- | :--- | :--- |
 | Parámetros de GCRA mal calibrados que descartan tráfico legítimo. | **Muy alto en la Fase A:** un mensaje descartado es un cliente final de un piloto que nunca recibe respuesta, y no hay ningún código de error que lo delate. | Registrar cada descarte con su clave, empezar con límites holgados y revisar los registros con los datos reales de los pilotos en la etapa A-7. |
+| Mensajes reales de clientes son descartados por GCRA sin que ningún check lo detecte, quedando oculto hasta la revisión manual de registros en la etapa A-7. | Muy alto en la Fase A: se quema la confianza del único piloto sin ninguna señal temprana que lo advierta. | Criterio de aceptación de no-falso-positivo contra tráfico legítimo simulado, registro no silencioso desde el primer día con clave, marca temporal y motivo, y umbral de descartes anómalos conectado a las alertas activas de la etapa A-6. |
 | Aplicar el GCRA después de cargar el contexto conversacional. | Medio: se pierde el beneficio de no asignar heap y la prueba de carga falla por consumo de memoria. | Fijar la posición del control por diseño y verificarlo con la métrica de memoria. |
 | Acoplar el módulo de admisión a un detalle del transporte. | Alto: habría que reescribirlo en la Fase B en lugar de reutilizarlo. | Vive en `hexcell-core`, sin dependencias de infraestructura, y sus pruebas corren sin servidor. |
 | Estimación de prompt sistemáticamente inferior al coste real. | Medio: se permite gastar por encima del presupuesto. | Métrica de desviación entre reserva y conciliación, y factor de seguridad configurable en la estimación. |

@@ -146,7 +146,8 @@ técnico: es la pérdida de la confianza que la validación del negocio necesita
    Fase A el camino no se ejercita en producción, pero sí en los tests de contrato.
 7. **Construir el gestor de pools duales** (1,5 días). Dos pools separados, modo WAL, parámetros de
    `busy_timeout` y `synchronous` justificados, y comprobación de vitalidad de cada pool que alimenta
-   `GET /health/ready`.
+   `GET /health/ready` **junto con el estado de sesión que reporta el puerto de canal** —el trait
+   expone ese estado, y en la etapa A-2 el simulado lo reporta siempre activo—.
 8. **Definir el esquema y las migraciones de `sessions.db`** (1 día). Contactos, conversaciones,
    mensajes, marcas temporales e índices necesarios, con el identificador interno de conversación
    como clave y **sin ninguna columna que almacene identificadores de transporte crudos**.
@@ -154,7 +155,10 @@ técnico: es la pérdida de la confianza que la validación del negocio necesita
    entre el identificador que provee el adaptador y el identificador interno, de modo que un cambio
    de canal no invalide el historial.
 10. **Implementar la idempotencia de entrega** (1 día). Registro de identificadores de deduplicación
-   ya procesados con ventana de retención, de modo que un reenvío del canal no duplique el trabajo.
+   ya procesados con una ventana de retención **dimensionada explícitamente frente al horizonte de
+   reentrega del canal** —cuánto tiempo después puede el transporte reentregar un evento—, de modo que
+   un reenvío del canal no duplique el trabajo. Ese valor queda documentado como parámetro, con su
+   justificación.
 11. **Definir la interfaz del proveedor de inferencia y su implementación simulada** (1 día). Un
    contrato que la etapa A-4 pueda envolver con la contabilidad sin cambiar el consumidor.
 12. **Implementar el apagado ordenado** (1 día). Captura de `SIGTERM`, cese del consumo del puerto,
@@ -189,11 +193,16 @@ técnico: es la pérdida de la confianza que la validación del negocio necesita
   `sessions.db`, y la respuesta se emite por `send` con el identificador interno correcto.
 * Inyectar el mismo evento dos veces (mismo identificador de deduplicación) produce un único registro
   conversacional.
+* Inyectar un evento duplicado que llega **fuera de la ventana de retención** (reentrega tardía)
+  produce el comportamiento definido y documentado para ese caso —aunque sea degradado—, y no un
+  fallo no especificado.
 * Una inspección del esquema y de los datos de `sessions.db` no encuentra **ningún** identificador de
   transporte crudo.
-* `GET /health/ready` responde `200 OK` únicamente cuando ambos pools SQLite están operativos y el
-  puerto de canal está enlazado, y responde con error si se retira cualquiera de los dos archivos de
-  base de datos.
+* `GET /health/ready` responde `200 OK` únicamente cuando ambos pools SQLite están operativos **y el
+  puerto de canal reporta sesión activa** —no basta con que el puerto esté enlazado—, y responde con
+  error si se retira cualquiera de los dos archivos de base de datos o si el canal reporta la sesión
+  caída. En la etapa A-2 el adaptador simulado reporta sesión siempre activa; el contrato queda
+  declarado para que la etapa A-3 (sidecar whatsmeow) y la etapa A-6 (CLI) lo implementen de verdad.
 * Ante `SIGTERM`, el proceso termina con código 0 en menos de 30 segundos, sin dejar eventos a
   medias y habiendo ejecutado el checkpoint del WAL.
 * Los tests de contrato del puerto pasan contra el adaptador simulado en su modo restrictivo:
@@ -225,6 +234,8 @@ técnico: es la pérdida de la confianza que la validación del negocio necesita
 | Copiar el `sqlstore` desde fuera mientras el sidecar lo tiene abierto. | Alto: copia corrupta que solo se descubre el día de la restauración. | El `VACUUM INTO` lo ejecuta el propio sidecar por orden IPC, sobre sus propias conexiones y respetando el WAL. |
 | Respaldar el `sqlstore` con frecuencia diaria. | Medio: las credenciales del protocolo Signal evolucionan y una copia de ayer puede no servir. | Frecuencia alta, cada pocas horas, fijada en la tarea 13. |
 | La ausencia de lógica de negocio definida tienta a improvisarla. | Medio: se construye producto sobre supuestos no aprobados. | El alcance la excluye explícitamente; el procesador de mensajes queda como punto de extensión con una implementación mínima de eco. |
+| `GET /health/ready` se da por satisfecho con que el puerto esté enlazado, sin exigir sesión activa. | Alto: la CLI declara la célula operativa mientras el canal real aún no ha reconectado —operativa según la máquina, muda según WhatsApp—. | El contrato de readiness exige que el trait del puerto reporte sesión activa como parte de la condición; el simulado de A-2 la reporta siempre activa, pero A-3 y A-6 implementan la señal real. |
+| Un reenvío del canal llega más allá de la ventana de retención de deduplicación. | Medio: se procesa como evento nuevo, duplicando el trabajo conversacional. | Limitación residual aceptada y documentada: la ventana se dimensiona frente al horizonte de reentrega normal del canal, no frente a reentregas patológicas fuera de ese horizonte; la prueba de reentrega tardía deja fijado el comportamiento esperado. |
 
 ---
 

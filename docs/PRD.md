@@ -160,8 +160,8 @@ Una célula = 1 contenedor (núcleo). El sidecar desaparece.
 
 #### Secuencia de Reactivación (CLI Central)
 1. **POST Docker API:** Iniciar los contenedores de la célula. En la Fase B, Caddy mantiene el comportamiento estático activo absorbiendo webhooks en paralelo; en la Fase A no hay nada que absorber, porque el canal permanece desconectado hasta que el sidecar reanuda la sesión.
-2. **Readiness Polling local:** La CLI interroga al endpoint interno `http://{IP_DOCKER}/health/ready` cada 100ms. El contenedor solo responde 200 OK tras comprobar que las conexiones SQLite (`sessions.db` y `knowledge_live.db`) están activas, las estructuras atómicas GCRA cargadas y el puerto de canal enlazado con su adaptador.
-3. **Reconexión del canal:** en la Fase A, el sidecar restablece la sesión whatsmeow desde sus credenciales persistidas, sin necesidad de volver a escanear el QR. En la Fase B, un **PATCH a la Caddy Admin API** conmuta de la respuesta estática al `reverse_proxy` solo tras la primera confirmación positiva de salud.
+2. **Reconexión del canal:** en la Fase A, el sidecar restablece la sesión whatsmeow desde sus credenciales persistidas, sin necesidad de volver a escanear el QR, **antes** de que la readiness pueda confirmarse. En la Fase B, un **PATCH a la Caddy Admin API** conmuta de la respuesta estática al `reverse_proxy` solo tras la primera confirmación positiva de salud.
+3. **Readiness Polling local:** La CLI interroga al endpoint interno `http://{IP_DOCKER}/health/ready` cada 100ms. El contenedor solo responde 200 OK tras comprobar que las conexiones SQLite (`sessions.db` y `knowledge_live.db`) están activas, las estructuras atómicas GCRA cargadas, el puerto de canal enlazado con su adaptador **y la sesión de canal reportada como activa por el sidecar**.
 
 ---
 

@@ -61,10 +61,15 @@ es la condición de supervivencia del canal.
 * **Protocolo IPC local** entre sidecar y núcleo: definición del formato de mensaje, del socket, de la
   semántica de reconexión y de la política de reintento y confirmación, apoyada en el outbox durable,
   de modo que ni un evento entrante se pierda si uno de los dos procesos se reinicia antes que el
-  otro.
+  otro. El protocolo expone además el **estado de la sesión whatsmeow** (activa / reconectando /
+  desvinculada); el núcleo incorpora ese estado a su `GET /health/ready` —contrato declarado en la
+  etapa A-2, donde el trait `ChannelAdapter` ya reserva el campo y el simulado lo reportaba siempre
+  activo—, de modo que la célula no se declara lista mientras la sesión del canal no esté activa.
 * **Emisión de eventos de alerta** hacia el sistema de notificaciones push que construye la etapa
-  A-6: sesión desvinculada, sidecar sin reconectar durante más de 5 minutos y bucle de reinicios. El
-  sidecar produce las señales; la etapa A-6 las entrega.
+  A-6: sesión desvinculada, sidecar sin reconectar durante más de 5 minutos, bucle de reinicios y
+  descarte de un envío no solicitado por el componente de envío. El sidecar produce las señales
+  —incluido el contador expuesto de envíos rechazados por violar el invariante anti-ban, donde todo
+  descarte anómalo es alerta—; la etapa A-6 las entrega.
 * Implementación del trait `ChannelAdapter` en Rust sobre ese IPC, incluido el **sub-trait de ciclo de
   vida de sesión** (emparejamiento y persistencia de credenciales), que en la Fase B quedará sin
   implementar porque la Cloud API no lo necesita.
@@ -187,8 +192,14 @@ es la condición de supervivencia del canal.
   `sessions.db`; solo vive dentro del adaptador.
 * Los acuses del protocolo se reflejan en el núcleo exclusivamente como
   `sent`/`delivered`/`read`/`failed`.
-* El bot **no emite ningún mensaje que no sea respuesta a un mensaje entrante**, verificado por
-  inspección del registro de envíos durante toda la prueba de laboratorio.
+* El bot **no emite ningún mensaje que no sea respuesta a un mensaje entrante**: no se verifica ya
+  solo por inspección puntual del registro, sino como **invariante estructural continuo**. Todo
+  envío saliente debe corresponder a una conversación entrante dentro de la ventana de servicio; el
+  componente de envío **rechaza y registra, con un contador expuesto,** cualquier intento que lo
+  viole, en producción y no solo en laboratorio —el riesgo de ban no puede depender de una
+  inspección manual puntual—.
+* Una prueba intenta deliberadamente un envío no solicitado y verifica que el componente de envío lo
+  bloquea y que el intento queda registrado (contador incrementado y entrada en el registro).
 * Los retardos de respuesta observados están dentro de la ventana humanizada configurada y presentan
   dispersión, no un valor constante.
 * Actualizar la versión de whatsmeow y reconstruir la imagen del sidecar es una operación que no

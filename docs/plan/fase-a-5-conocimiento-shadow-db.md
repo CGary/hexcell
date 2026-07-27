@@ -102,8 +102,14 @@ motor de conocimiento es idéntico en ambas fases y sobrevive intacto al cambio 
 7. **Implementar el drenaje controlado del pool antiguo** (1,5 días). Cierre asíncrono que espera a
    las lecturas en vuelo, con límite temporal, y verificación de que no quedan archivos `-wal` ni
    `-shm` huérfanos.
-8. **Implementar retención y reversión de épocas** (1 día). Cuántas épocas se conservan, cómo se
-   purgan las antiguas y cómo se vuelve a la anterior ante un problema detectado en producción.
+8. **Implementar retención y reversión de épocas** (1,5 días). Cuántas épocas se conservan, cómo se
+   purgan las antiguas y cómo se vuelve a la anterior ante un problema detectado en producción. La
+   reversión no es una operación mecánica: antes de conmutar el enlace simbólico, repite sobre la
+   época destino la misma validación de integridad y la consulta semántica de prueba con umbral de
+   la tarea 5; si la época destino no la supera, la reversión se rechaza con un mensaje claro y la
+   producción permanece en la época vigente. Revertir a una época defectuosa sin esa comprobación
+   pasaría como "reversión exitosa": el mismo patrón de confundir que la operación terminó con que
+   el resultado es correcto que esta etapa combate en la promoción.
 9. **Implementar el motor de recuperación RAG** (1,5 días). Búsqueda por similitud sobre el pool
    vigente, selección de los fragmentos más relevantes y construcción del contexto del prompt.
 10. **Exponer el endpoint interno de actualización** (0,5 días). Ruta administrativa de la célula,
@@ -131,6 +137,15 @@ motor de conocimiento es idéntico en ambas fases y sobrevive intacto al cambio 
   vigente sin intervención manual.
 * Es posible revertir a la época anterior mediante una operación explícita, y las lecturas pasan a
   servirse de ella sin reiniciar el proceso.
+* La reversión exige que la época destino supere la misma validación de integridad y la consulta
+  semántica de prueba con umbral que la promoción (tarea 5); no se trata de una operación mecánica
+  de intercambiar el enlace simbólico.
+* Si la época destino de una reversión no supera esa validación, la operación falla con un mensaje
+  claro y la producción permanece en la época vigente, en lugar de completarse con éxito aparente
+  sobre un índice defectuoso.
+* Prueba dedicada: una época antigua marcada deliberadamente como defectuosa (por ejemplo, vectores
+  truncados o una consulta de prueba por debajo del umbral) hace que el intento de revertir a ella
+  sea rechazado, no aceptado.
 * Tras el drenaje, el número de descriptores de archivo abiertos por el proceso vuelve al valor
   previo a la conmutación.
 * Un respaldo ejecutado durante una conmutación produce una copia consistente y restaurable.

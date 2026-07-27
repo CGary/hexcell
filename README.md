@@ -96,7 +96,7 @@ Restaura la producción asegurando que el backend está completamente listo ante
 ./hexcell-admin cell unpause --id <cell_id>
 ```
 
-*Mecanismo Interno:* inicia los contenedores de la célula de forma aislada. La CLI ejecuta un bucle de *Readiness Polling* local hacia el endpoint `GET /health/ready` del contenedor cada 100ms, que responde 200 OK tras comprobar de extremo a extremo la vitalidad de sus pools de persistencia SQLite y el enlace del puerto de canal. En la Fase A, el sidecar reanuda entonces la sesión whatsmeow desde sus credenciales persistidas, sin re-escanear el QR. En la **Fase B**, Caddy conmuta el tráfico de la respuesta estática al proxy inverso únicamente tras la primera confirmación positiva de salud.
+*Mecanismo Interno:* inicia los contenedores de la célula de forma aislada. En la Fase A, el sidecar reanuda primero la sesión whatsmeow desde sus credenciales persistidas, sin re-escanear el QR: esa reanudación es condición previa de la readiness, no su consecuencia. La CLI ejecuta un bucle de *Readiness Polling* local hacia el endpoint `GET /health/ready` del contenedor cada 100ms, que responde 200 OK solo tras comprobar de extremo a extremo la vitalidad de sus pools de persistencia SQLite, el enlace del puerto de canal **y la sesión de canal activa**. En la **Fase B**, Caddy conmuta el tráfico de la respuesta estática al proxy inverso únicamente tras la primera confirmación positiva de salud.
 
 ### 3. Eliminar Definitivamente una Célula
 

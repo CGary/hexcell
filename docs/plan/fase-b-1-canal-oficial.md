@@ -136,8 +136,12 @@ transporte crudos en `sessions.db` habrá valido cada minuto invertido.
 * Bajo sobrecarga, el exceso recibe `HTTP 200 OK` rápido y en ningún escenario se devuelve `429`,
   `502` o `503` hacia Meta.
 * **El núcleo, la persistencia, el conocimiento y el módulo de admisión no han requerido ninguna
-  modificación** para soportar el canal oficial. Cualquier excepción queda documentada como deuda de
-  diseño del puerto.
+  modificación** para soportar el canal oficial. Este criterio no admite excepción documentada como
+  deuda: si el adaptador de Cloud API exige tocar el núcleo, la etapa **no se acepta**. El trabajo
+  se detiene, la desviación se analiza, el contrato del puerto se corrige mediante una revisión
+  explícita del ADR-0010 (un nuevo ADR o uno que lo supere), y solo entonces la etapa puede cerrarse
+  con este criterio cumplido de verdad. Es la prueba de fuego de toda la estrategia de dos fases: si
+  falla en silencio, la Fase A construyó sobre una premisa falsa.
 * Tras migrar una célula piloto, su historial conversacional y su conocimiento siguen siendo
   accesibles y correctos, y las conversaciones anteriores se continúan sin ruptura.
 * El consumo de memoria de una célula migrada, ya sin sidecar, es inferior a 50 MB en reposo.
@@ -148,7 +152,7 @@ transporte crudos en `sessions.db` habrá valido cada minuto invertido.
 
 | Riesgo | Impacto | Mitigación |
 | :--- | :--- | :--- |
-| El puerto de canal resulta insuficiente y el adaptador obliga a tocar el núcleo. | Muy alto: la premisa de las dos fases falla y el coste de la Fase B se dispara. | Diseño del puerto con ambos canales delante desde la etapa A-1, y firma del adaptador de Cloud API escrita ya entonces aunque sin cuerpo. |
+| El puerto de canal resulta insuficiente y el adaptador obliga a tocar el núcleo. | Muy alto: la premisa de las dos fases falla y el coste de la Fase B se dispara. | Diseño del puerto con ambos canales delante desde la etapa A-1: la abstracción hacia el caso más restrictivo (semántica de la Cloud API) y sus tests de contrato son la garantía de compatibilidad, no una firma anticipada — `hexcell-meta` nace vacío hasta que se resuelva el ADR-0013. Si aun así ocurre, no se acepta la etapa: se detiene el trabajo, se analiza la desviación y se corrige el contrato mediante una revisión explícita del ADR-0010. |
 | La opción de entrada pública se elige por coste sin evaluar sus consecuencias. | Alto: se arrastra o se descarta indebidamente FR-04 y NFR-04. | ADR obligatorio con la tabla de tradeoffs, decidido antes de cualquier despliegue. |
 | Dependencia de la capa gratuita de Cloudflare y de sus términos. | Medio: un cambio de política obligaría a migrar la entrada. | Aislar la entrada tras una frontera clara, de modo que cambiar de opción no toque el adaptador. |
 | Aprobación de la aplicación de Meta más lenta de lo previsto. | Medio: retrasa toda la Fase B. | Iniciar el trámite en cuanto se abra la compuerta, en paralelo al trabajo técnico. |
