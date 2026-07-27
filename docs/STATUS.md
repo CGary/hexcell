@@ -47,7 +47,8 @@ la infraestructura del canal oficial. Ver [plan/README.md](plan/README.md).
   desvinculada, sidecar sin reconectar más de 5 minutos, bucle de reinicios, saldo agotado,
   descartes GCRA anómalos y descarte de envíos no solicitados (invariante anti-ban); más
   healthchecks.io con ping cada 5 minutos para que la caída total del servidor se notifique desde
-  fuera.
+  fuera. Descongela deliberadamente un mínimo de la observabilidad de la etapa B-3, porque hay
+  usuarios reales desde la Fase A.
 * **Endurecimiento contra el patrón "compila ≠ correcto"** (2026-07-27), aplicado transversalmente:
   validación semántica del puerto en A-1 (`match` exhaustivo y cotejo contra la documentación
   oficial de la Cloud API), `hexcell-meta` vacío hasta resolver el ADR-0013, CI de A-1 con alcance
@@ -56,8 +57,20 @@ la infraestructura del canal oficial. Ver [plan/README.md](plan/README.md).
   invariante continuo anti-envíos-no-solicitados con alerta (A-3/A-6), criterio de no-falso-positivo
   en GCRA (A-4), reversión de épocas con la misma validación semántica que la promoción (A-5), y
   eliminación de la vía de escape del criterio del núcleo intacto en B-1 (ahora bloquea la
-  aceptación y exige revisar el ADR-0010). Descongela deliberadamente un mínimo de la observabilidad de la
-  etapa B-3, porque hay usuarios reales desde la Fase A.
+  aceptación y exige revisar el ADR-0010).
+* **Riesgo de ecosistema del canal no oficial: asumido con vigilancia progresiva** (2026-07-27). El
+  endurecimiento de Meta contra clientes no oficiales (emparejamiento con passkey/WebAuthn desde
+  junio de 2026, detección conductual) se acepta como riesgo consciente de la Fase A; no se fija un
+  límite temporal en la compuerta, y las medidas se tomarán conforme el proyecto opere y el
+  ecosistema evolucione.
+* **La Fase B nace como canal solo-respuesta** (2026-07-27): la Cloud API se usará únicamente para
+  responder consultas entrantes de clientes; no hay plan de mensajes salientes iniciados por el
+  negocio. Consecuencias: el transporte de la Fase B cuesta ≈ 0 (las respuestas dentro de la ventana
+  de servicio de 24 h son gratuitas; sin plantillas de pago), el bot queda por diseño fuera de la
+  prohibición de chatbots de propósito general de Meta (ene-2026), y la política ante
+  `FueraDeVentana` queda decidida: esperar a que el cliente vuelva a escribir, con escalada a humano
+  como excepción. El envío tipado `Plantilla` del puerto (FR-12) se conserva en el contrato, sin uso
+  previsto en esta versión del producto.
 * **Compuerta pre-registrada y roles asimétricos de los pilotos** (etapa A-7): los umbrales numéricos
   y los **criterios de fracaso** se fijan por escrito antes del primer alta. **piloto-01 es banco de
   pruebas técnico y sus datos no cuentan para la validación de negocio** (el dueño no puede ser su
@@ -83,9 +96,10 @@ la infraestructura del canal oficial. Ver [plan/README.md](plan/README.md).
   coste máximo por conversación, disponibilidad mínima), **importe del cobro simbólico a piloto-02**
   y techos de los criterios de fracaso. El plan fija la estructura; los números son decisión de
   negocio. — *Tarea 1 de la etapa A-7, bloqueante y anterior a cualquier alta de piloto.*
-* **Definir la política del núcleo ante `FueraDeVentana`**: encolar hasta que el cliente vuelva a
-  escribir o escalar a un humano. — *Etapa A-2, tarea 6. No se dispara en la Fase A, pero se decide
-  con calma antes de que importe.*
+* Interfaz de intervención humana para la Fase B: al migrar a la Cloud API desaparece la bandeja de
+  la app del teléfono (el número deja de existir en el mundo app), de modo que la escalada a humano
+  necesita una interfaz provista por HexCell, aunque sea rudimentaria. — *Alcance a declarar en las
+  etapas B-1/B-2; el piloto debe conocer esta pérdida desde el documento de expectativas de A-7.*
 * Lógica de negocio específica. — *Bloquea el alcance funcional de la etapa A-2 y se descubre en la
   etapa A-7 con los pilotos reales.*
 * Flujos de usuario finales. — *Bloquean la superficie de carga de catálogo de la etapa A-5 y el alta
