@@ -37,10 +37,11 @@ comprobaciones automáticas y leer sin ambigüedad qué frontera separa el domin
   evento entrante canónico, el envío tipado con su resultado tipado, el estado de la ventana de
   servicio, el identificador interno de conversación, los acuses normalizados y el sub-trait opcional
   de ciclo de vida de sesión. Los tipos se abstraen **hacia el caso más restrictivo** —la Cloud
-  API—, no hacia el más permisivo. Es la frontera que hace posible el salto de fase, y por eso nace
+  API—, no hacia el más permisivo. Es la frontera entre el núcleo y el transporte, y por eso nace
   en la primera etapa y no cuando haga falta.
-* Registro documental de las decisiones ya tomadas: estrategia de dos fases y elección de whatsmeow
-  como adaptador no oficial.
+* Registro documental de las decisiones ya tomadas: la estrategia de canal —incluido el registro
+  histórico, ya derogado, de las dos fases con compuerta— y la elección de whatsmeow como adaptador
+  del canal propio.
 * Integración continua mínima: formato, análisis estático, compilación y ejecución de pruebas, tanto
   del workspace Rust como del módulo Go que albergará el sidecar.
 * Fijación de la versión mínima de Rust soportada, de la versión de Go del sidecar y del perfil de
@@ -68,9 +69,13 @@ comprobaciones automáticas y leer sin ambigüedad qué frontera separa el domin
   registros de decisión de arquitectura breves que dejan constancia del porqué de cada elección.
 * Las decisiones de canal registradas, con la numeración que fija el
   [índice de ADR](../adr/README.md):
-  * `docs/adr/adr-0008-estrategia-canal-dos-fases.md` — dos fases con compuerta en el tercer cliente.
+  * `docs/adr/adr-0008-estrategia-canal-dos-fases.md` — **registro histórico, ya derogado**, de las
+    dos fases con compuerta en el tercer cliente. Se redacta como tal, remitiendo a `adr-0014`
+    (canal propio permanente), que lo supersede, y a `adr-0015` (política de convivencia con el
+    riesgo de baneo).
   * `docs/adr/adr-0009-whatsmeow-adaptador-fase-a.md` — elección de whatsmeow sobre las alternativas.
-  * `docs/adr/adr-0010-puerto-de-canal.md` — el puerto de canal como frontera de migración.
+  * `docs/adr/adr-0010-puerto-de-canal.md` — el puerto de canal como frontera entre el núcleo y el
+    transporte.
 * `Cargo.toml` raíz declarando el workspace y las dependencias compartidas.
 * Crates del workspace, todos compilando en vacío:
   * `hexcell-core` — tipos de dominio compartidos, errores, configuración y **el trait
@@ -111,9 +116,11 @@ comprobaciones automáticas y leer sin ambigüedad qué frontera separa el domin
    arrastrar el mismo error de origen sin que nadie lo note.
 2. **Registrar las decisiones de canal en ADR** (0,5 días). Tres registros breves, numerados según el
    [índice de ADR](../adr/README.md): `adr-0008` (estrategia de dos fases con la compuerta del tercer
-   cliente), `adr-0009` (elección de whatsmeow frente a alternativas) y `adr-0010` (el puerto de canal
-   como frontera de migración). Son decisiones ya tomadas: el ADR documenta el porqué y las
-   consecuencias, no vuelve a deliberar.
+   cliente, que **se redacta como registro histórico ya derogado**, remitiendo a `adr-0014` —canal
+   propio permanente, que lo supersede— y a `adr-0015` —política de convivencia con el riesgo de
+   baneo—, ambos ya existentes en `docs/adr/`), `adr-0009` (elección de whatsmeow frente a
+   alternativas) y `adr-0010` (el puerto de canal como frontera entre el núcleo y el transporte). Son
+   decisiones ya tomadas: el ADR documenta el porqué y las consecuencias, no vuelve a deliberar.
 3. **Decidir la licencia y registrarla** (0,5 días). Contrastar al menos dos opciones frente al
    objetivo comercial del proyecto, escribir el ADR y colocar el archivo `LICENSE`.
 4. **Completar la configuración del repositorio** (0,5 días). Convención de ramas, convención de
@@ -121,8 +128,8 @@ comprobaciones automáticas y leer sin ambigüedad qué frontera separa el domin
 5. **Crear el workspace Cargo y los cinco crates** (1,5 días). Definir dependencias comunes en el
    workspace, fijar los límites entre crates y documentar en el ADR por qué la frontera está donde
    está. `hexcell-core` no puede depender de ningún crate de infraestructura. `hexcell-meta` se crea
-   como `lib.rs` vacío, sin tipos ni traits públicos: su forma queda abierta hasta que se abra la
-   compuerta de la Fase B y se resuelva el ADR-0013, que es quien la condiciona.
+   como `lib.rs` vacío, sin tipos ni traits públicos: su forma queda abierta hasta que aparezca un
+   cliente que justifique el canal oficial y se resuelva el ADR-0013, que es quien la condiciona.
 6. **Inicializar el módulo Go del sidecar** (0,5 días). Estructura mínima que compile, con la
    dependencia de whatsmeow declarada y fijada a una versión concreta, de modo que un *bump* ante una
    rotura de protocolo sea un cambio de una línea.
@@ -153,8 +160,10 @@ comprobaciones automáticas y leer sin ambigüedad qué frontera separa el domin
 * Cada variante de esos enums y el evento entrante canónico están cotejados documentalmente contra
   la documentación oficial de la Meta Cloud API, no solo contra el PRD.
 * Existe un archivo `LICENSE` en la raíz y un ADR que justifica la elección.
-* Existen los ADR `adr-0008`, `adr-0009` y `adr-0010`, que registran la estrategia de dos fases, la
-  elección de whatsmeow y el puerto de canal, y el índice de ADR los recoge con esos mismos números.
+* Existen los ADR `adr-0008`, `adr-0009` y `adr-0010`, que registran la estrategia de dos fases
+  —`adr-0008` como registro histórico ya derogado, con su remisión a `adr-0014` y `adr-0015`—, la
+  elección de whatsmeow y el puerto de canal, y el índice de ADR los recoge con esos mismos números y
+  con el estado de cada uno.
 * `cargo build --workspace` y `cargo test --workspace` terminan sin errores desde un clon limpio.
 * `hexcell-meta` compila vacío y no expone ningún tipo ni trait público: su forma queda pendiente
   hasta que se resuelva el ADR-0013.
@@ -175,8 +184,8 @@ comprobaciones automáticas y leer sin ambigüedad qué frontera separa el domin
 
 | Riesgo | Impacto | Mitigación |
 | :--- | :--- | :--- |
-| El puerto de canal se diseña pensando solo en whatsmeow y no sirve para la Cloud API. | Muy alto: la frontera de migración deja de existir y la Fase B se convierte en una reescritura. | Abstraer hacia el **caso más restrictivo** (FR-12): envío tipado, resultado con `FueraDeVentana`/`PlantillaRequerida`/`LimiteDeTasa`/`DestinatarioInvalido`, y estado de la ventana de 24 h. Que la firma compile no demuestra nada: la validación real es que **los tests de contrato del puerto ejerciten esa semántica restrictiva contra el adaptador simulado** de la etapa A-2, con ventanas que expiran y plantillas exigidas. Un criterio puramente léxico —que compile y que ninguna firma mencione `wa_id` o JID— es insuficiente por sí solo: el mismo error de diseño puede repetirse bajo nombres distintos sin violar esa regla textual, y si la referencia de cotejo es solo el PRD, un error del PRD se traslada intacto al puerto. Por eso se añaden tests de `match` exhaustivo que rompen ante cualquier cambio de forma en los enums de resultado, y el cotejo se hace contra la documentación oficial de la Meta Cloud API, no solo contra el PRD. |
-| Un identificador de transporte se cuela en el dominio o en `sessions.db`. | Alto: la migración de fase obligaría a migrar datos históricos. | Prueba explícita en esta etapa y revisión del esquema en la etapa A-2. |
+| El puerto de canal se diseña pensando solo en whatsmeow y no sirve para la Cloud API. | Muy alto: la frontera entre el núcleo y el transporte deja de existir y el canal oficial se convierte en una reescritura. | Abstraer hacia el **caso más restrictivo** (FR-12): envío tipado, resultado con `FueraDeVentana`/`PlantillaRequerida`/`LimiteDeTasa`/`DestinatarioInvalido`, y estado de la ventana de 24 h. Que la firma compile no demuestra nada: la validación real es que **los tests de contrato del puerto ejerciten esa semántica restrictiva contra el adaptador simulado** de la etapa A-2, con ventanas que expiran y plantillas exigidas. Un criterio puramente léxico —que compile y que ninguna firma mencione `wa_id` o JID— es insuficiente por sí solo: el mismo error de diseño puede repetirse bajo nombres distintos sin violar esa regla textual, y si la referencia de cotejo es solo el PRD, un error del PRD se traslada intacto al puerto. Por eso se añaden tests de `match` exhaustivo que rompen ante cualquier cambio de forma en los enums de resultado, y el cotejo se hace contra la documentación oficial de la Meta Cloud API, no solo contra el PRD. |
+| Un identificador de transporte se cuela en el dominio o en `sessions.db`. | Alto: la migración opcional de una célula al canal oficial obligaría a migrar datos históricos. | Prueba explícita en esta etapa y revisión del esquema en la etapa A-2. |
 | La elección de licencia se pospone "para más adelante". | Medio: cada commit posterior aumenta el coste de cambiar de licencia por la necesidad de consentimiento de los contribuyentes. | Es tarea bloqueante de la etapa: no se abre la etapa A-2 sin `LICENSE` en la raíz. |
 | La frontera entre crates se elige mal y obliga a refactorizaciones profundas. | Medio. | Mantener `hexcell-core` sin dependencias de infraestructura y revisar la división al cerrar la etapa A-5, que es la que más presiona el diseño. |
 | La CI se percibe como fricción y se acaba desactivando. | Medio: la deuda técnica se acumula en silencio. | Mantenerla estrictamente mínima en esta fase: comprobaciones rápidas, sin pasos lentos. |

@@ -61,6 +61,18 @@ técnico: es la pérdida de la confianza que la validación del negocio necesita
   `sqlstore` se respalda con frecuencia alta (cada pocas horas). Traslado de las copias fuera del
   disco del servidor y un procedimiento de restauración **probado**, no solo documentado, que solo se
   da por bueno si la célula restaurada reconecta y responde.
+
+  > **El respaldo del `sqlstore` no es transitorio.** El sidecar es permanente en toda célula sobre
+  > canal propio, de modo que esta copia no es una muleta que se retire más adelante: es el respaldo
+  > de la **disponibilidad del canal**, y es permanente. Perder `sessions.db` cuesta historial;
+  > perder el `sqlstore` deja al negocio del cliente mudo hasta que alguien coja un teléfono.
+* **Regla de restauración del `sqlstore`**, con sus dos casos separados por escrito. **No se restaura
+  el `sqlstore` solo si hubo `LoggedOut` con `device_removed`**: en ese caso whatsmeow **ya ha
+  borrado la sesión él mismo** y restaurar el respaldo es inútil, porque el dispositivo **ya no
+  existe en el servidor** de WhatsApp; la única vía es el re-emparejamiento por `PairPhone()`. En
+  cualquier otro caso —corrupción del archivo, fallo de disco, restauración de la célula completa,
+  desconexión que no sea `device_removed`— **el respaldo sigue siendo válido y se restaura**. No toda
+  desconexión implica `device_removed`, y la etapa A-3 expone la taxonomía que permite distinguirlo.
 * Apagado ordenado ante `SIGTERM`: dejar de consumir del puerto, drenar las tareas en vuelo,
   ejecutar el checkpoint de SQLite y salir con código 0, dentro de la ventana de 30 segundos que
   fija el PRD.
@@ -115,7 +127,9 @@ técnico: es la pérdida de la confianza que la validación del negocio necesita
 * `docs/adr/adr-0003-persistencia-dual.md` documentando los parámetros de SQLite elegidos y
   el porqué de cada uno, con la numeración que fija el [índice de ADR](../adr/README.md).
 * `docs/runbook-respaldo.md`: procedimiento de respaldo y de restauración por célula, con el
-  resultado de la restauración real ejecutada como prueba.
+  resultado de la restauración real ejecutada como prueba, y con la **regla de restauración del
+  `sqlstore`** enunciada como bifurcación explícita del procedimiento —caso `LoggedOut` con
+  `device_removed` frente a todos los demás—, no como una nota al pie.
 * Script de respaldo ejecutable de forma programada, que cubre las tres bases y respalda el
   `sqlstore` del sidecar con frecuencia alta, y script de restauración.
 * Pruebas de integración que arrancan el núcleo sobre bases temporales y un adaptador simulado.
@@ -151,9 +165,12 @@ técnico: es la pérdida de la confianza que la validación del negocio necesita
 8. **Definir el esquema y las migraciones de `sessions.db`** (1 día). Contactos, conversaciones,
    mensajes, marcas temporales e índices necesarios, con el identificador interno de conversación
    como clave y **sin ninguna columna que almacene identificadores de transporte crudos**.
-9. **Implementar el mapeo de identidad de conversación** (1 día). Traducción estable y reversible
+9. **Implementar el mapeo de identidad de conversación** (1,5 días). Traducción estable y reversible
    entre el identificador que provee el adaptador y el identificador interno, de modo que un cambio
-   de canal no invalide el historial.
+   de canal no invalide el historial. La estabilidad se ancla al **contacto**, nunca al dispositivo:
+   el mapeo debe sobrevivir a un **re-emparejamiento**, que asigna un identificador de dispositivo
+   nuevo. Se prueba, no se supone —es exactamente lo que FR-12 debía garantizar y lo que nadie
+   comprueba hasta el día de la recuperación—.
 10. **Implementar la idempotencia de entrega** (1 día). Registro de identificadores de deduplicación
    ya procesados con una ventana de retención **dimensionada explícitamente frente al horizonte de
    reentrega del canal** —cuánto tiempo después puede el transporte reentregar un evento—, de modo que
@@ -173,13 +190,22 @@ técnico: es la pérdida de la confianza que la validación del negocio necesita
     no diaria: las credenciales del protocolo Signal evolucionan continuamente y una copia de ayer
     puede estar ya desfasada. El respaldo no debe bloquear la operación de la célula ni disparar
     `SQLITE_BUSY`.
-14. **Implementar y probar la restauración** (1,5 días). Reconstrucción completa de una célula a
-    partir de sus tres copias sobre un entorno limpio. **El test solo pasa si la célula restaurada
-    reconecta al canal y responde a un mensaje real.** Restaurar ficheros y comprobar que el historial
-    "está ahí" no es una restauración: una sesión muerta con el historial intacto es un fallo, porque
-    el negocio del piloto sigue sin recibir respuestas. **Un respaldo sin restauración probada no
-    cuenta como respaldo, y una restauración que no termina en un bot que contesta no cuenta como
-    restauración.**
+14. **Implementar y probar la restauración, con su regla de bifurcación** (2 días). Reconstrucción
+    completa de una célula a partir de sus tres copias sobre un entorno limpio. **El test solo pasa si
+    la célula restaurada reconecta al canal y responde a un mensaje real.** Restaurar ficheros y
+    comprobar que el historial "está ahí" no es una restauración: una sesión muerta con el historial
+    intacto es un fallo, porque el negocio del cliente sigue sin recibir respuestas. **Un respaldo sin
+    restauración probada no cuenta como respaldo, y una restauración que no termina en un bot que
+    contesta no cuenta como restauración.**
+
+    El procedimiento **bifurca antes de tocar el `sqlstore`**, y esa bifurcación se escribe en el
+    runbook con las dos ramas enfrentadas: si hubo `LoggedOut` con `device_removed`, **no se restaura
+    el `sqlstore`** —whatsmeow ya borró la sesión y el dispositivo no existe en el servidor de
+    WhatsApp: la única salida es el re-emparejamiento por `PairPhone()`—; en cualquier otro caso
+    —corrupción, fallo de disco, cualquier otra desconexión— **el respaldo es válido y se restaura**.
+    Si el runbook no separa ambos casos, alguien intentará restaurar un `sqlstore` muerto en mitad de
+    un incidente, perderá los primeros minutos —los únicos que importan— y concluirá que el respaldo
+    no sirve. Las dos ramas se ensayan.
 15. **Instrumentar logs estructurados** (0,5 días). Identificador de célula, identificador de evento y
     latencia en cada entrada, sin volcar contenido de mensajes de usuarios.
 16. **Escribir las pruebas de integración** (1 día). Camino feliz, evento duplicado, apagado bajo
@@ -216,6 +242,16 @@ técnico: es la pérdida de la confianza que la validación del negocio necesita
 * **Una restauración sobre un entorno limpio solo se da por buena si la célula reconecta al canal y
   responde a un mensaje real.** Recuperar los ficheros con el historial íntegro pero con la sesión
   muerta cuenta como **fallo** de la prueba, no como éxito parcial.
+* **La regla de restauración del `sqlstore` está ensayada en sus dos ramas.** Con `LoggedOut` y
+  `device_removed`, el procedimiento **no restaura** el `sqlstore` y va directo al re-emparejamiento;
+  con cualquier otra causa —corrupción del archivo o pérdida de disco simuladas—, restaura el respaldo
+  y la sesión revive sin tocar el teléfono. El runbook presenta las dos ramas como una bifurcación
+  explícita: un procedimiento que solo describe el caso feliz se ejecutará mal el día del incidente.
+* **La continuidad del hilo sobrevive al re-emparejamiento.** Un test re-empareja la célula, con lo
+  que el canal pasa a reportar un identificador de dispositivo nuevo, y verifica que **el mismo
+  contacto mapea al mismo identificador interno de conversación** en `sessions.db`, con su historial
+  anterior intacto y continuado en el mismo hilo. No se da por supuesto: es precisamente lo que FR-12
+  prometía y lo que el mapeo debe demostrar.
 * El consumo de memoria residente del proceso en reposo queda medido y registrado como línea base
   para NFR-01.
 
@@ -225,7 +261,7 @@ técnico: es la pérdida de la confianza que la validación del negocio necesita
 
 | Riesgo | Impacto | Mitigación |
 | :--- | :--- | :--- |
-| El núcleo se acopla al transporte por comodidad, saltándose el puerto. | Muy alto: se pierde la frontera de migración y la Fase B se convierte en una reescritura. | El núcleo se desarrolla íntegramente contra el adaptador simulado; el sidecar no existe todavía, de modo que el acoplamiento es imposible por construcción. |
+| El núcleo se acopla al transporte por comodidad, saltándose el puerto. | Muy alto: se pierde la frontera entre el núcleo y el transporte, y añadir un canal se convierte en una reescritura. | El núcleo se desarrolla íntegramente contra el adaptador simulado; el sidecar no existe todavía, de modo que el acoplamiento es imposible por construcción. |
 | Un identificador de transporte acaba persistido en `sessions.db`. | Alto: migrar de canal obligaría a migrar datos históricos de clientes reales. | Criterio de aceptación explícito con inspección del esquema y de los datos. |
 | Ajustes de SQLite copiados sin entenderlos. | Medio: aparecen `SQLITE_BUSY` bajo carga real, ya con pilotos vivos. | Documentar cada parámetro en `adr-0003` y validarlos con la prueba de consistencia WAL de la etapa A-5. |
 | El respaldo se implementa pero nunca se prueba la restauración. | Muy alto: se descubre que no funciona el día que hace falta, con datos de un cliente real perdidos. | La restauración probada es criterio de aceptación bloqueante, no un entregable documental. |
@@ -233,6 +269,8 @@ técnico: es la pérdida de la confianza que la validación del negocio necesita
 | **El respaldo cubre las bases del núcleo pero olvida el `sqlstore` del sidecar.** | Muy alto: se restaura el historial completo y el bot sigue mudo, porque la sesión de WhatsApp no está. Es el fallo que más fácilmente pasa desapercibido, porque el respaldo "funciona". | Las tres bases son alcance explícito de la tarea 13, y el criterio de restauración exige que el bot responda, no que los ficheros existan. |
 | Copiar el `sqlstore` desde fuera mientras el sidecar lo tiene abierto. | Alto: copia corrupta que solo se descubre el día de la restauración. | El `VACUUM INTO` lo ejecuta el propio sidecar por orden IPC, sobre sus propias conexiones y respetando el WAL. |
 | Respaldar el `sqlstore` con frecuencia diaria. | Medio: las credenciales del protocolo Signal evolucionan y una copia de ayer puede no servir. | Frecuencia alta, cada pocas horas, fijada en la tarea 13. |
+| **Intentar restaurar un `sqlstore` muerto durante un incidente.** | Alto: ante `LoggedOut` con `device_removed`, whatsmeow ya borró la sesión y el dispositivo no existe en el servidor de WhatsApp. Restaurar el respaldo no puede funcionar, pero es lo primero que hará quien tenga el runbook delante y solo lea "restaura las tres bases". Se pierden los primeros minutos, que son los que importan, y se concluye en falso que el respaldo no sirve. | La regla de restauración se escribe como **bifurcación explícita** del procedimiento, con las dos ramas enfrentadas y ambas ensayadas (tarea 14). El caso `device_removed` va directo al re-emparejamiento por `PairPhone()`; el respaldo se conserva porque **sigue siendo válido** para corrupción y fallo de disco. |
+| **El re-emparejamiento rompe la continuidad del hilo.** | Alto: tras recuperar una célula, cada contacto abre un hilo nuevo y el historial anterior queda huérfano. El cliente percibe amnesia justo después de una incidencia, que es el peor momento posible. | El mapeo se ancla al contacto y no al dispositivo (tarea 9), y hay un criterio de aceptación con test que re-empareja y comprueba que el mismo contacto sigue cayendo en el mismo hilo. Es lo que FR-12 debía garantizar, y por eso se prueba en lugar de suponerse. |
 | La ausencia de lógica de negocio definida tienta a improvisarla. | Medio: se construye producto sobre supuestos no aprobados. | El alcance la excluye explícitamente; el procesador de mensajes queda como punto de extensión con una implementación mínima de eco. |
 | `GET /health/ready` se da por satisfecho con que el puerto esté enlazado, sin exigir sesión activa. | Alto: la CLI declara la célula operativa mientras el canal real aún no ha reconectado —operativa según la máquina, muda según WhatsApp—. | El contrato de readiness exige que el trait del puerto reporte sesión activa como parte de la condición; el simulado de A-2 la reporta siempre activa, pero A-3 y A-6 implementan la señal real. |
 | Un reenvío del canal llega más allá de la ventana de retención de deduplicación. | Medio: se procesa como evento nuevo, duplicando el trabajo conversacional. | Limitación residual aceptada y documentada: la ventana se dimensiona frente al horizonte de reentrega normal del canal, no frente a reentregas patológicas fuera de ese horizonte; la prueba de reentrega tardía deja fijado el comportamiento esperado. |
@@ -243,6 +281,12 @@ técnico: es la pérdida de la confianza que la validación del negocio necesita
 
 * **De otras etapas:** etapa A-1 completa. En particular, el trait `ChannelAdapter` con sus tipos
   canónicos y el workspace con sus cinco crates.
+* **Hacia otras etapas:** la regla de restauración del `sqlstore` se apoya en la **taxonomía de
+  desconexión** que expone la etapa A-3 —es esa taxonomía la que distingue un `LoggedOut` con
+  `device_removed` de cualquier otra caída—, y el re-emparejamiento por `PairPhone()` al que deriva
+  la rama de `device_removed` es el procedimiento de recuperación de primera clase de esa misma
+  etapa. La verificación de continuidad del hilo tras un re-emparejamiento se ensaya aquí contra el
+  adaptador simulado y se repite en A-3 contra el canal real.
 * **Externas:** un destino de almacenamiento fuera del disco del servidor para las copias de
   respaldo. Es bloqueante para las tareas 13 y 14.
 * **Decisiones de producto pendientes que afectan al alcance:** la lógica de negocio específica y los

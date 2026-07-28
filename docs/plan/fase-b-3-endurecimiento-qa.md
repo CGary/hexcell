@@ -1,7 +1,8 @@
 # Fase B · Etapa 3 — Endurecimiento, QA y operación comercial
 
-**Duración relativa:** sin estimar. **La Fase B está CONGELADA hasta la compuerta del tercer
-cliente**; sus etapas se describen en alcance y dependencias, no en días de trabajo.
+**Duración relativa:** sin estimar. **La Fase B permanece sin planificar hasta que aparezca un
+cliente que justifique el canal oficial**; sus etapas se describen en alcance y dependencias, no en
+días de trabajo.
 
 ---
 
@@ -35,7 +36,9 @@ puertos entrantes y certificados— y las pruebas de caos.
 * Ejecución formal y documentada de los criterios de aceptación de QA del PRD: prueba de carga del
   canal, prueba de resiliencia del enlace TLS y prueba de consistencia en modo WAL.
 * Verificación de los cinco NFR con mediciones registradas y reproducibles, contra el presupuesto de
-  memoria de la Fase B (< 50 MB por célula, sin sidecar).
+  memoria que corresponda a cada célula según su canal: **< 50 MB en las células sobre canal oficial,
+  sin sidecar; ≤ 80 MB en las células sobre canal propio, que lo conservan de forma permanente**. Con
+  ambos canales conviviendo, un único presupuesto agregado no significa nada.
 * Prueba de densidad: número máximo de células concurrentes que el servidor objetivo sostiene
   cumpliendo los NFR, con el dato documentado.
 * Prueba de resistencia prolongada: ejecución sostenida durante varios días buscando fugas de
@@ -88,7 +91,7 @@ puertos entrantes y certificados— y las pruebas de caos.
 
 ## Tareas
 
-*(Sin estimación: la Fase B no se dimensiona hasta que se abra la compuerta.)*
+*(Sin estimación: la Fase B no se dimensiona hasta que aparezca el cliente que la justifique.)*
 
 1. **Montar el entorno de pruebas de sistema.** Servidor equivalente al de destino con varias células
    dadas de alta mediante el flujo real de la etapa B-2.

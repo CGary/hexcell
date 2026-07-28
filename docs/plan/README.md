@@ -1,6 +1,6 @@
 # Plan de Implementación por Fases — HexCell Orchestrator
 
-> Documento índice. Última actualización: 2026-07-26.
+> Documento índice. Última actualización: 2026-07-28.
 > Fuentes normativas: [PRD.md](../PRD.md) (requisitos FR/NFR y criterios de QA), [README.md](../../README.md) (arquitectura y CLI), [STATUS.md](../STATUS.md) (avance).
 
 ---
@@ -22,31 +22,37 @@ rango distinto:
 
 ### La estructura de dos fases
 
-El plan ya no es una secuencia lineal de ocho etapas hacia el canal oficial. Se divide en dos fases
-separadas por una compuerta de negocio, y la razón es sencilla de enunciar: **la infraestructura
-completa del canal oficial —dominio, certificados, Caddy, Embedded Signup, plano de control— es cara
-de construir y no aporta ni una sola respuesta sobre si el producto sirve para algo**. Construirla
-antes de validar el negocio es invertir semanas de ingeniería en una hipótesis.
+El plan no es una secuencia lineal de ocho etapas hacia el canal oficial, pero **tampoco son dos
+fases separadas por una compuerta de negocio**: desde el cambio de rumbo del 28 de julio de 2026 son
+**dos canales que conviven**. Los nombres de archivo (`fase-a-N-*.md`, `fase-b-N-*.md`) y la
+numeración de las etapas se conservan intactos; lo que cambió es su significado.
 
-* **Fase A — MVP de validación.** Canal no oficial mediante la biblioteca **whatsmeow** sobre un
+* **Fase A — Canal propio en producción.** Canal propio mediante la biblioteca **whatsmeow** sobre un
   websocket saliente: sin webhook, sin IP pública, sin Caddy, sin TLS entrante y sin handshake
-  anti-Hairpin. Alcance cerrado a **dos células piloto**, `piloto-01` y `piloto-02`, cada una con un
-  número de WhatsApp nuevo y dedicado. Docker desde el primer día. Siete etapas.
-* **Compuerta.** Cuando ambas células piloto operen de forma estable y el negocio quede validado, **el
-  tercer cliente dispara la Fase B**. No se comercializa sobre canal no oficial: el tercer cliente no
-  se suma a la Fase A, la cierra.
-* **Fase B — Comercial.** Canal oficial mediante la **Meta Cloud API** con webhooks. Tres etapas.
-  **Está CONGELADA hasta la compuerta**: sus etapas declaran alcance, criterios y dependencias, pero
-  **no se estiman en detalle todavía**, porque hacerlo sería planificar sobre un negocio que aún no
-  se sabe si existe. Además, la mitad del alcance de la etapa B-2 depende de una decisión —la entrada
-  pública— que se toma al principio de la etapa B-1.
+  anti-Hairpin. Es el canal **por defecto y permanente**, con clientes de pago reales encima.
+  `piloto-01` y `piloto-02` son las dos primeras células, no el alcance total. Docker desde el primer
+  día. Siete etapas.
+* **Fase B — Canal oficial adicional.** Canal oficial mediante la **Meta Cloud API** con webhooks.
+  Tres etapas. Sigue **CONGELADA**, pero ya no la dispara un número de clientes: se activa **cuando
+  aparece un cliente que la justifique**, típicamente una empresa medianamente grande que pueda
+  asumir el alta y el coste del canal oficial. Cuando llegue, **se suma** al canal propio: no lo
+  sustituye, no lo cierra y no retira ningún sidecar. Sus etapas declaran alcance, criterios y
+  dependencias, pero **no se estiman en detalle todavía**. Además, la mitad del alcance de la etapa
+  B-2 depende de una decisión —la entrada pública— que se toma al principio de la etapa B-1.
 
-Lo que hace posible que la Fase A no sea trabajo desechable es el **puerto de canal**
+**La compuerta del tercer cliente queda derogada**, junto con la regla de que no se comercializa
+sobre canal no oficial. Lo que ahora disciplina el crecimiento son **compuertas de riesgo**, no de
+validación: un **techo duro de cartera** mientras el canal propio sea el único y un **umbral de
+incidentes que congela altas** cuando se supera una tasa de baneos. Ambas viven en la etapa
+[A-7](fase-a-7-pilotos.md), y sus valores numéricos son decisiones de negocio pendientes.
+
+Lo que hace posible que ambos canales convivan sin duplicar el producto es el **puerto de canal**
 (`ChannelAdapter`, FR-12), declarado en la primera etapa del plan: un trait del núcleo Rust que
 normaliza el evento entrante, el envío, la identidad de conversación y los acuses. Todo lo construido
-sobre ese puerto —persistencia, control de admisión, presupuesto, conocimiento, aislamiento— sobrevive
-intacto al cambio de fase. El salto de canal debe ser escribir un segundo adaptador, no reescribir el
-producto, y la etapa B-1 tiene entre sus criterios de aceptación demostrarlo.
+sobre ese puerto —persistencia, control de admisión, presupuesto, conocimiento, aislamiento— sirve
+igual a las células de uno y otro canal. Incorporar el canal oficial debe ser escribir un segundo
+adaptador que **coexista** con el primero, no reescribir el producto, y la etapa B-1 tiene entre sus
+criterios de aceptación demostrarlo.
 
 ### Las ideas que gobiernan el orden
 
@@ -60,7 +66,7 @@ debajo, así que se aborda después del núcleo de datos, pero antes del empaque
 porque el diseño del volumen de disco y de los puntos de montaje depende de cómo se materialicen las
 épocas de conocimiento en el sistema de archivos.
 
-**La compuerta se pre-registra y solo el cliente externo valida.** Los umbrales numéricos y los
+**Los umbrales se pre-registran y solo el cliente externo valida.** Los umbrales numéricos y los
 criterios de fracaso se fijan por escrito antes de dar de alta a ningún piloto, y piloto-01 —el
 negocio del propio dueño— queda degradado a banco de pruebas técnico: sus datos no cuentan como
 evidencia de negocio, porque nadie es cliente de sí mismo. La métrica de disposición a pagar es un
@@ -79,28 +85,32 @@ deja al bot mudo con todos sus datos intactos.
 Definiciones de los términos que se repiten a lo largo del plan:
 
 * **Célula** (*cell*): la unidad desplegable por cliente. Una microempresa corresponde a una célula.
-  En la Fase A son dos contenedores (núcleo Rust y sidecar Go) que comparten red local y volumen; en
-  la Fase B es un solo contenedor, más un subdominio y una cuenta de WhatsApp Business. Es el término
+  Sobre canal propio son dos contenedores (núcleo Rust y sidecar Go) que comparten red local y
+  volumen; sobre canal oficial es un solo contenedor, más un subdominio y una cuenta de WhatsApp
+  Business. Ambos tipos de célula conviven en el mismo servidor. Es el término
   que sustituye a la nomenclatura de arrendamiento que usaba la versión anterior de este plan. En la
   CLI y en el código el sustantivo es `cell`.
 * **Puerto de canal** (`ChannelAdapter`): trait del núcleo Rust que aísla el dominio de cualquier
   transporte de WhatsApp. Normaliza el evento entrante canónico, el envío, la identidad de
-  conversación mapeada a un identificador interno y los acuses. Es la frontera de migración entre
-  fases (FR-12).
+  conversación mapeada a un identificador interno y los acuses. Es la frontera de **coexistencia**
+  entre canales: sostiene dos adaptadores vivos a la vez, en células distintas (FR-12).
 * **whatsmeow**: biblioteca Go que implementa el protocolo no oficial de WhatsApp Web mediante un
-  websocket saliente. Es el adaptador de canal de la Fase A.
-* **Sidecar**: proceso auxiliar que acompaña al núcleo dentro de una célula. En la Fase A alberga la
-  sesión whatsmeow, porque no existe equivalente maduro en Rust. Añade unos 15-30 MB de RAM y
-  desaparece en la Fase B.
+  websocket saliente. Es el adaptador del **canal propio**, permanente y por defecto.
+* **Sidecar**: proceso auxiliar que acompaña al núcleo dentro de una célula. Alberga la sesión
+  whatsmeow, porque no existe equivalente maduro en Rust. Añade unos 15-30 MB de RAM y es **coste
+  permanente** de toda célula sobre canal propio; una célula sobre canal oficial no lo lleva.
 * **Emparejamiento** (*pairing*): vinculación de la sesión whatsmeow a un número de WhatsApp mediante
   código QR o código de emparejamiento. Sus credenciales se persisten para no repetirlo en cada
   reinicio.
-* **Compuerta**: la decisión de negocio que cierra la Fase A y abre la Fase B. La dispara el tercer
-  cliente.
+* **Compuertas de riesgo**: los dos frenos que sustituyen a la derogada compuerta del tercer cliente.
+  Un **techo duro de cartera** —número máximo de células sobre canal propio mientras sea el único— y
+  un **umbral de incidentes que congela altas** si se supera una tasa de baneos. Sus valores son
+  decisiones de negocio pendientes; ambos se fijan en la etapa A-7.
 * **WABA**: *WhatsApp Business Account*, la cuenta de Meta a la que se asocian los números de
-  teléfono y las suscripciones de webhook de un cliente. Solo aplica en la Fase B.
+  teléfono y las suscripciones de webhook de un cliente. Solo aplica en las células sobre canal
+  oficial.
 * **Webhook**: petición HTTP que Meta envía a nuestro servidor cuando ocurre un evento. Solo aplica en
-  la Fase B.
+  las células sobre canal oficial.
 * **GCRA** (*Generic Cell Rate Algorithm*): algoritmo de control de tasa que decide, con una sola
   marca temporal por clave y sin cerrojos, si un evento se admite o se descarta. Opera sobre el flujo
   normalizado del puerto de canal, no sobre HTTP.
@@ -119,7 +129,7 @@ Definiciones de los términos que se repiten a lo largo del plan:
 
 ## 2. Tabla de etapas
 
-### Fase A — MVP de validación (canal no oficial, whatsmeow)
+### Fase A — Canal propio en producción (whatsmeow)
 
 | Nº | Nombre | Objetivo (una línea) | FR / NFR cubiertos | Depende de |
 | :-- | :--- | :--- | :--- | :--- |
@@ -129,19 +139,19 @@ Definiciones de los términos que se repiten a lo largo del plan:
 | A-4 | [Control de admisión y presupuesto](fase-a-4-admision-presupuesto.md) | Impedir que ráfagas de mensajes o el coste del LLM desestabilicen el sistema. | FR-08, FR-09, FR-10 | A-2 (y A-3 para medir con tráfico real) |
 | A-5 | [Motor de conocimiento: Shadow DB y épocas](fase-a-5-conocimiento-shadow-db.md) | Actualizar el conocimiento del bot sin detener la producción ni corromper el WAL. | FR-06, FR-07, NFR-03 | A-2 (y A-4 para el coste de embeddings) |
 | A-6 | [Empaquetado de la célula y CLI de operación](fase-a-6-empaquetado-cli.md) | Convertir núcleo y sidecar en una célula contenedorizada gobernable desde la CLI, con alertas push y dead-man's switch. | FR-02, FR-11 (Fase A), NFR-01, NFR-05 | A-2, A-3, A-4, A-5 |
-| A-7 | [Células piloto y compuerta de salida](fase-a-7-pilotos.md) | Operar piloto-01 (banco de pruebas técnico) y piloto-02 (validación de negocio, con cobro real), y decidir la compuerta pre-registrada. | Cierre operativo de FR-01, FR-02, FR-12; calibración de FR-08 y FR-10 | A-6 |
+| A-7 | [Células piloto y compuertas de riesgo](fase-a-7-pilotos.md) | Operar piloto-01 (banco de pruebas técnico) y piloto-02 (validación de negocio, con cobro real), y fijar el techo duro de cartera y el umbral de incidentes que congela altas. | Cierre operativo de FR-01, FR-02, FR-12; calibración de FR-08 y FR-10 | A-6 |
 
-### Fase B — Comercial (canal oficial, Meta Cloud API) · **CONGELADA hasta la compuerta**
+### Fase B — Canal oficial adicional (Meta Cloud API) · **CONGELADA hasta que un cliente la justifique**
 
 | Nº | Nombre | Objetivo (una línea) | FR / NFR cubiertos | Depende de |
 | :-- | :--- | :--- | :--- | :--- |
-| B-1 | [Canal oficial: adaptador Cloud API y entrada pública](fase-b-1-canal-oficial.md) | Escribir el segundo adaptador del puerto, decidir la entrada pública y migrar los pilotos. | FR-01 (Fase B), FR-08 (Fast-Reject), FR-12 | Compuerta A-7 |
+| B-1 | [Canal oficial: adaptador Cloud API y entrada pública](fase-b-1-canal-oficial.md) | Escribir el segundo adaptador del puerto y decidir la entrada pública, incorporando el canal oficial de forma **aditiva**: las células sobre canal propio siguen operando sin cambios. | FR-01 (canal oficial), FR-08 (Fast-Reject), FR-12 | A-2 (puerto de canal) y la aparición de un cliente que justifique el canal oficial |
 | B-2 | [Plano de control y onboarding comercial](fase-b-2-plano-de-control-onboarding.md) | Gobernar rutas, certificados y altas de clientes de pago sin exponer errores 502 a Meta. | FR-03, FR-04, FR-11 (Fase B), NFR-02, NFR-04 | B-1 (y su ADR de entrada pública) |
 | B-3 | [Endurecimiento, QA y operación comercial](fase-b-3-endurecimiento-qa.md) | Demostrar con pruebas medibles que se cumplen los criterios de aceptación y los NFR. | NFR-01 a NFR-05, verificación cruzada de FR-02, FR-07, FR-08, FR-12 | B-2 |
 
 Las etapas de la Fase B **no llevan estimación**. Su alcance, sus criterios de aceptación y sus
-dependencias están escritos para que la compuerta se decida con conocimiento de lo que viene después,
-no para planificar trabajo que quizá no se haga. Además, la etapa B-2 depende de una decisión abierta
+dependencias están escritos para poder responder con conocimiento de causa el día que un cliente
+pida el canal oficial, no para planificar trabajo que quizá no se haga. Además, la etapa B-2 depende de una decisión abierta
 —Cloudflare Tunnel frente a VPS con WireGuard— que altera la mitad de su contenido.
 
 ---
@@ -177,9 +187,11 @@ reposo. Empaquetar antes obliga a rehacer los `Dockerfile` en cada iteración.
 **A-6 → A-7.** Dar de alta a un piloto real exige poder pausarlo, reactivarlo, respaldarlo y darlo de
 baja. Poner un negocio ajeno en producción sin capacidad de operarlo es el peor orden posible.
 
-**A-7 → B-1.** Aquí no hay dependencia técnica sino de negocio, y es la más importante del plan: **la
-compuerta**. La Fase B no se inicia porque la Fase A esté técnicamente terminada, sino porque las dos
-células piloto han validado que hay un negocio y ha aparecido un tercer cliente.
+**A-7 → B-1.** Aquí no hay dependencia técnica sino de demanda. La Fase B no se inicia porque la Fase
+A esté técnicamente terminada ni porque se alcance un número de clientes: se inicia el día que
+aparece un cliente que justifique el canal oficial y pueda asumir su alta y su coste. Mientras no
+aparezca, el canal propio sigue siendo el modo de producción, y lo que gobierna cuántas células se
+dan de alta son las compuertas de riesgo fijadas en A-7, no el paso a la Fase B.
 
 **B-1 → B-2.** La decisión de entrada pública, que es la primera tarea de B-1, determina si el
 handshake anti-Hairpin y el On-Demand TLS de Caddy existen o desaparecen. Planificar B-2 antes de esa
@@ -226,6 +238,10 @@ parte del trabajo queda bloqueada mientras no exista una respuesta:
   hasta que exista definición.
 * **Entrada pública de la Fase B** — decisión de arquitectura pendiente, no de producto. Es la primera
   tarea de la etapa B-1 y condiciona la mitad de la B-2.
+* **Techo duro de cartera y umbral de incidentes que congela altas** — decisiones de negocio
+  pendientes desde el cambio de rumbo del 28 de julio de 2026. Sustituyen a la derogada compuerta del
+  tercer cliente y se fijan por escrito en la etapa A-7, antes de dar de alta a ningún cliente de
+  pago. Este plan no propone cifras.
 
 ### Estimación de duración
 
@@ -233,4 +249,5 @@ Las etapas de la Fase A no llevan fechas absolutas, porque el equipo aún no est
 una declara una **duración relativa** en una escala de tres niveles (Corta, Media, Larga) derivada de
 la suma de sus tareas. La escala sirve para planificar capacidad, no para comprometer entregas.
 
-Las etapas de la Fase B **no se estiman**. Están congeladas hasta la compuerta.
+Las etapas de la Fase B **no se estiman**. Están congeladas hasta que aparezca un cliente que
+justifique el canal oficial.

@@ -4,7 +4,7 @@
 ### 1. Control de Versiones y Estado
 * **Estado:** Aprobado para Desarrollo.
 * **Rol de Autoría:** Consultor de Producto Senior & Arquitecto de Soluciones.
-* **Pila Tecnológica Núcleo:** Rust (Backend Nativo), Docker (Aislamiento), SQLite (Persistencia Dual), whatsmeow como adaptador de canal en la Fase A y Meta Cloud API + Caddy (Proxy Inverso) en la Fase B.
+* **Pila Tecnológica Núcleo:** Rust (Backend Nativo), Docker (Aislamiento), SQLite (Persistencia Dual), whatsmeow como adaptador del canal propio (Fase A, permanente) y Meta Cloud API + Caddy (Proxy Inverso) como adaptador del canal oficial (Fase B, adicional).
 
 ---
 
@@ -19,34 +19,41 @@ La unidad desplegable por cliente se denomina **célula**: un contenedor del nú
 
 ### 2 bis. Estrategia de Canal por Fases
 
-El producto no ataca de golpe la infraestructura completa. La inversión en canal oficial, dominio público, certificados y plano de control solo se justifica cuando el negocio esté validado, de modo que el desarrollo se divide en dos fases con una compuerta explícita entre ellas.
+El producto no ataca de golpe la infraestructura completa, pero las dos fases **ya no son una secuencia con una compuerta que cierra la primera**. Son **dos canales que conviven**: cada célula se despliega sobre el canal que le corresponde y ambos permanecen vivos a la vez. La Fase A es el **canal propio en producción**; la Fase B es el **canal oficial adicional**, que se incorpora cuando aparece un cliente que lo justifique.
 
-#### Fase A — MVP de validación (canal no oficial)
+Este rumbo se fijó el 28 de julio de 2026 e **invierte deliberadamente** dos decisiones anteriores de este mismo documento:
+
+* Queda **derogada la regla "no se comercializa sobre canal no oficial"**. El canal propio sostiene clientes de pago reales, sin límite de dos pilotos y sin fecha de caducidad.
+* Queda **derogada la compuerta del tercer cliente**. El tercer cliente ya no cierra nada; lo que disciplina el crecimiento son las compuertas de riesgo (techo duro de cartera y umbral de incidentes que congela altas).
+
+No es un matiz de redacción sino una inversión de postura, y se registra como tal. Los motivos completos —coste de gestión comercial por cliente, coste de transporte sobrevenido tras el anuncio de Meta del 1 de julio de 2026 sobre el cobro de los mensajes de servicio desde el 1 de octubre de 2026, y la pérdida de la bandeja del móvil aceptada como pendiente conocido— están en **`adr-0014`** (canal propio permanente), que supersede a `adr-0008` y a las decisiones previas sobre esta materia.
+
+#### Fase A — Canal propio en producción
 
 Se emplea la biblioteca **whatsmeow** (Go), que implementa el protocolo no oficial de WhatsApp Web. La conexión es un **websocket saliente**: no hay webhook entrante, no hace falta IP pública, ni Caddy, ni terminación TLS entrante, ni handshake anti-Hairpin. El servidor local se conecta hacia fuera y recibe los mensajes por ese mismo canal.
 
-El alcance de la Fase A es deliberadamente estrecho: **exactamente dos células piloto**.
+Es el **canal por defecto del producto y su modo de producción permanente**. El sidecar Go que aloja la sesión whatsmeow no es andamiaje temporal: acompaña a toda célula sobre canal propio durante toda su vida.
 
-* **piloto-01** — negocio de prueba del propio dueño del proyecto, con un número de WhatsApp nuevo y dedicado.
-* **piloto-02** — negocio de un conocido, también con un número nuevo y dedicado.
+Las dos primeras células siguen siendo `piloto-01` —negocio de prueba del propio dueño, que actúa como banco de pruebas técnico— y `piloto-02` —negocio ajeno—, pero ahora son **el comienzo de la cartera, no su totalidad**. El número máximo de células sobre canal propio es un **techo duro de cartera** cuyo valor concreto es una **decisión de negocio pendiente**.
 
-Docker se emplea desde el primer día: la unidad de despliegue es la misma célula contenedorizada que usará la Fase B, aunque su adaptador de canal sea distinto.
+Docker se emplea desde el primer día: la unidad de despliegue es la misma célula contenedorizada sea cual sea su adaptador de canal.
 
-**Riesgos asumidos conscientemente en la Fase A:**
+**Riesgos asumidos conscientemente en el canal propio:**
 
 | Riesgo | Naturaleza | Mitigación aceptada |
 | :--- | :--- | :--- |
-| **Ban permanente del número** por parte de WhatsApp. | El canal no es oficial; la plataforma puede desactivar el número sin previo aviso ni derecho a apelación. | Cada célula piloto usa un **número nuevo y dedicado**, nunca el número principal del negocio. Un ban cuesta un número desechable, no la línea comercial del cliente. Se suma calentamiento de cuenta: volumen gradual, retardos humanizados y política de solo responder — el bot nunca inicia conversaciones con desconocidos. |
-| **Roturas de protocolo** cuando WhatsApp cambia su implementación. | La biblioteca la mantiene una comunidad de voluntarios; una rotura deja el canal inoperativo hasta que alguien la arregle. | Precedente medido: [la rotura de abril de 2026 en whatsmeow](https://github.com/lharries/whatsapp-mcp/issues/216) se resolvió en días mediante un simple *bump* de versión de la dependencia; el [incidente equivalente en Baileys](https://github.com/WhiskeySockets/Baileys/issues/2488) sirve de contraste para la elección de biblioteca. Se pacta con los pilotos la posibilidad de semanas de silencio y se mantiene la dependencia fácilmente actualizable. |
-| **Violación de los Términos de Servicio de WhatsApp.** | El uso de clientes no oficiales incumple los ToS de la plataforma. | Se acepta **temporalmente y solo como riesgo de validación**, con dos pilotos controlados y sin comercialización. La Fase B existe precisamente para eliminar este riesgo antes de vender. |
+| **Baneo del número** por parte de WhatsApp. | **Estructural, no conductual.** Meta detecta la biblioteca por su huella de protocolo, y ninguna medida de comportamiento lo elimina. Los issues [#810](https://github.com/tulir/whatsmeow/issues/810) y [#807](https://github.com/tulir/whatsmeow/issues/807) (mayo de 2025, concentrados en Brasil) y [#989](https://github.com/tulir/whatsmeow/issues/989) (noviembre de 2025: suspensiones de 24 h con código de enforcement `BULK_MESSAGING` pese a enviar pocos mensajes con pausas de 5 s) documentan baneos y avisos de *"unauthorized tools"* sobre cuentas de **bajo volumen y solo-respuesta**. Ninguno identificó un patrón accionable y los tres se cerraron como *not planned*. Meta banea del orden de 2 millones de cuentas al mes, el 75 % por decisión automática, y puede hacerlo **sin aviso previo**. | El baneo se documenta como **evento esperado, no como fallo**. Las medidas que reducen la probabilidad actúan sobre el término secundario; las que más valor aportan son las que **reducen el daño**: el cliente es siempre el titular del número y de la SIM —nunca HexCell—, aislamiento estricto por célula, techo duro de cartera, umbral de incidentes que congela altas y contrato que declara el canal como propio y no oficial, sin garantía de disponibilidad y con modo degradado pactado. |
+| **Roturas de protocolo** cuando WhatsApp cambia su implementación. | La biblioteca la mantiene una comunidad de voluntarios; una rotura deja el canal inoperativo hasta que alguien la arregle. | Precedente medido: [la rotura de abril de 2026 en whatsmeow](https://github.com/lharries/whatsapp-mcp/issues/216) se resolvió en días mediante un simple *bump* de versión de la dependencia; el [incidente equivalente en Baileys](https://github.com/WhiskeySockets/Baileys/issues/2488) sirve de contraste para la elección de biblioteca. Se mantiene la dependencia fácilmente actualizable y se pacta con el cliente la posibilidad de silencio prolongado. |
+| **Mantenimiento con bus factor 1.** | Prácticamente la totalidad de los ~1.620 commits de whatsmeow son de un **único mantenedor**, con actividad casi diaria en junio y julio de 2026. El patrón de rotura recurrente es `Client outdated (405)` ([#415](https://github.com/tulir/whatsmeow/issues/415), [#1031](https://github.com/tulir/whatsmeow/issues/1031)) cuando WhatsApp sube la versión mínima de cliente; el arreglo es siempre actualizar. | **No se compromete ningún tiempo de recuperación que dependa de un tercero voluntario.** La dependencia se pinnea por commit con una ventana de actualización definida —correr atrasado deja de conectar y declara una versión de cliente atípica—, y la actualización se escalona: nunca toda la cartera el mismo día. |
+| **Violación de los Términos de Servicio de WhatsApp.** | El uso de clientes no oficiales incumple los ToS de la plataforma. | Se acepta como **riesgo permanente y comercializable**, no como riesgo temporal de validación. Es la decisión invertida el 28 de julio de 2026: el canal oficial deja de existir para eliminar este riesgo y pasa a ser una opción adicional para quien la necesite. El riesgo se traslada de forma explícita al contrato con el cliente. |
 
-#### Compuerta de salida
+#### Condición de activación de la Fase B
 
-Cuando las dos células piloto operen de forma estable y el negocio quede validado, **el tercer cliente dispara la Fase B**. No se comercializa sobre canal no oficial.
+La Fase B **no la dispara un número de clientes ni una fecha**. Se activa cuando aparece un cliente que la justifique —típicamente una empresa medianamente grande que pueda asumir el alta y el coste del canal oficial—. Hasta entonces permanece congelada, y cuando se active **se suma** al canal propio: no lo sustituye, no lo cierra y no retira ningún sidecar.
 
-#### Fase B — Comercial (canal oficial)
+#### Fase B — Canal oficial adicional
 
-Se adopta la **Meta Cloud API** con recepción por webhooks. Aquí se descongela todo lo que la Fase A mantiene en reserva: Caddy, subdominios por cliente, On-Demand TLS, Embedded Signup, `override_callback_uri` y el plano de control completo.
+Se adopta la **Meta Cloud API** con recepción por webhooks, para las células que lo requieran. Aquí se descongela todo lo que el canal propio no necesita: Caddy, subdominios por cliente, On-Demand TLS, Embedded Signup, `override_callback_uri` y el plano de control completo. Las células sobre canal oficial y las células sobre canal propio conviven en el mismo servidor y bajo el mismo orquestador.
 
 La **entrada pública queda pendiente de ADR**, entre dos opciones con implicaciones muy distintas:
 
@@ -58,13 +65,13 @@ La **entrada pública queda pendiente de ADR**, entre dos opciones con implicaci
 ### 3. Requisitos
 
 #### A. Requisitos Funcionales (FR)
-* **FR-01: Recepción de Mensajes Entrantes por Fase.**
-  * *Fase A:* recepción de mensajes a través de la **sesión whatsmeow** que mantiene el sidecar Go sobre un websocket saliente. Cada evento entrante se normaliza y se entrega al núcleo Rust a través del puerto de canal (FR-12), con su identificador de deduplicación. No existe petición HTTP entrante que verificar ni firmar.
-  * *Fase B:* recepción y verificación de los **webhooks de la Meta Graph API**: desafío de suscripción (`hub.mode`, `hub.verify_token`, `hub.challenge`), validación de la firma criptográfica de cada entrega (`X-Hub-Signature-256`, HMAC-SHA256 sobre el cuerpo exacto y sin reserializar) y política de respuesta `HTTP 200 OK` inmediata antes de procesar, para no activar la máquina de reintentos de la API Graph.
+* **FR-01: Recepción de Mensajes Entrantes según el Canal Configurado en la Célula.** Cada célula declara en su configuración sobre qué canal opera, y ese ajuste determina la vía de recepción. Ambas vías son de producción y pueden estar activas simultáneamente en células distintas del mismo servidor.
+  * *Célula sobre canal propio (whatsmeow):* recepción de mensajes a través de la **sesión whatsmeow** que mantiene el sidecar Go sobre un websocket saliente. Cada evento entrante se normaliza y se entrega al núcleo Rust a través del puerto de canal (FR-12), con su identificador de deduplicación. No existe petición HTTP entrante que verificar ni firmar.
+  * *Célula sobre canal oficial (Meta Cloud API):* recepción y verificación de los **webhooks de la Meta Graph API**: desafío de suscripción (`hub.mode`, `hub.verify_token`, `hub.challenge`), validación de la firma criptográfica de cada entrega (`X-Hub-Signature-256`, HMAC-SHA256 sobre el cuerpo exacto y sin reserializar) y política de respuesta `HTTP 200 OK` inmediata antes de procesar, para no activar la máquina de reintentos de la API Graph.
   * *Nota documental:* la redacción original de FR-01 se perdió por truncado del documento fuente. El texto anterior es la **reconstrucción aprobada** y sustituye definitivamente al marcador de TODO.
-* **FR-02: Aislamiento Completo por Célula:** Cada microempresa debe operar dentro de un contenedor Docker dedicado e independiente basado en imágenes mínimas (Alpine/Scratch), con el consumo objetivo de RAM en reposo que fija NFR-01 para la fase correspondiente.
-* **FR-03: Gestión de Configuración Dinámica (Caddy) *(solo Fase B)*:** El sistema debe registrar subdominios únicos por cliente (`clienteX.midominio.com`) de manera programática en la API de administración de Caddy sin interrumpir el tráfico de terceros.
-* **FR-04: Handshake Sintético de Red *(solo Fase B)*:** Antes de registrar cualquier URL en Meta, el orquestador local debe validar la validez del certificado TLS y el enrutamiento público inyectando el SNI y resolviendo el socket directamente a la interfaz local (`127.0.0.1:443`) para eludir restricciones de Hairpin NAT. Su vigencia depende de la decisión de entrada pública: solo aplica si el TLS termina en el propio Caddy (opción VPS + WireGuard).
+* **FR-02: Aislamiento Completo por Célula:** Cada microempresa debe operar dentro de un contenedor Docker dedicado e independiente basado en imágenes mínimas (Alpine/Scratch), con el consumo objetivo de RAM en reposo que fija NFR-01 para su canal.
+* **FR-03: Gestión de Configuración Dinámica (Caddy) *(solo en células sobre canal oficial)*:** El sistema debe registrar subdominios únicos por cliente (`clienteX.midominio.com`) de manera programática en la API de administración de Caddy sin interrumpir el tráfico de terceros.
+* **FR-04: Handshake Sintético de Red *(solo en células sobre canal oficial)*:** Antes de registrar cualquier URL en Meta, el orquestador local debe validar la validez del certificado TLS y el enrutamiento público inyectando el SNI y resolviendo el socket directamente a la interfaz local (`127.0.0.1:443`) para eludir restricciones de Hairpin NAT. Su vigencia depende de la decisión de entrada pública: solo aplica si el TLS termina en el propio Caddy (opción VPS + WireGuard).
 * **FR-05: Arquitectura de Persistencia Dual (Dual-DB):** Cada contenedor debe desacoplar el estado transaccional del conocimiento de negocio mediante dos bases de datos SQLite físicas independientes: `sessions.db` (Lectura/Escritura continua) y `knowledge_live.db` (Lectura intensiva de RAG).
 * **FR-06: Indexación en Sombra (Shadow DB):** Las actualizaciones de catálogo o embeddings de IA no deben bloquear la producción. Deben compilarse asíncronamente en un archivo `knowledge_staging.db` mediante llamadas por lotes a APIs externas.
 * **FR-07: Conmutación Atómica por Épocas:** La promoción de nuevos conocimientos en el bot debe ocurrir en microsegundos usando renombrado de archivos por épocas (`knowledge_epoch_N.db`), manipulación de enlaces simbólicos y reemplazo atómico de punteros en memoria (`ArcSwap`), seguido de un drenaje asíncrono controlado (`Graceful Drain`) del pool antiguo para evitar corrupciones en el modo WAL de SQLite.
@@ -76,27 +83,33 @@ La **entrada pública queda pendiente de ADR**, entre dos opciones con implicaci
 * **FR-11: Operaciones CLI de Tráfico Amortiguado (Traffic Shedding):** Herramienta de línea de comandos capaz de suspender clientes sin generar errores hacia el canal.
   * *Fase A:* detener los contenedores de la célula (núcleo y sidecar). No interviene Caddy: al cerrarse el websocket saliente, el tráfico entrante cesa por construcción y no queda ninguna petición sin contestar.
   * *Fase B:* *blackholing* en Caddy (HTTP 200 inmediato estático) **antes** de emitir el SIGTERM de Docker, asegurando que no se generen respuestas HTTP 502 hacia Meta.
-* **FR-12: Puerto de Canal (`ChannelAdapter`):** El núcleo Rust no conoce ningún transporte de WhatsApp. Toda integración de canal se implementa detrás de un trait `ChannelAdapter` que actúa como **frontera de migración**: el salto de la Fase A a la Fase B debe ser un cambio de adaptador, no una reescritura.
+* **FR-12: Puerto de Canal (`ChannelAdapter`):** El núcleo Rust no conoce ningún transporte de WhatsApp. Toda integración de canal se implementa detrás de un trait `ChannelAdapter` que actúa como **frontera de coexistencia**: no es el paso de un canal a otro, sino la garantía de que **dos adaptadores viven a la vez**, en células distintas del mismo servidor, sin que el núcleo sepa cuál está debajo. Añadir el canal oficial debe ser escribir un segundo adaptador, no reescribir el producto.
 
-  El puerto se abstrae **hacia el caso más restrictivo**, que es la Cloud API, no hacia el más permisivo. Un puerto modelado sobre las libertades de whatsmeow —enviar lo que sea, a quien sea, cuando sea— obligaría a rediseñarlo en la Fase B, que es exactamente lo que FR-12 existe para evitar. El adaptador de whatsmeow implementa la semántica restrictiva de forma trivial (ventana siempre abierta, plantillas nunca requeridas); el de la Cloud API la implementa de verdad. El puerto normaliza siete elementos:
+  El puerto se abstrae **hacia el caso más restrictivo**, que es la Cloud API, no hacia el más permisivo. La decisión se mantiene íntegra pese al cambio de rumbo: un puerto modelado sobre las libertades de whatsmeow —enviar lo que sea, a quien sea, cuando sea— no podría albergar después al adaptador oficial, que es exactamente lo que FR-12 existe para evitar.
+
+  La distinción que hace viable la coexistencia es esta: **el TIPO admite el resultado restrictivo; la POLÍTICA de cada adaptador decide si lo produce.** Que `send()` pueda devolver `FueraDeVentana` obliga al núcleo a saber reaccionar, pero **no obliga al adaptador del canal propio a imponer una ventana de 24 horas artificial**: ese adaptador nunca produce ese resultado porque su transporte no lo impone, y fabricar la restricción sería degradar el producto para parecerse a un canal que la célula no usa. El adaptador de la Cloud API sí la implementa de verdad. El puerto normaliza siete elementos:
   1. **Evento entrante canónico:** remitente, conversación, contenido, marca temporal e identificador de deduplicación.
   2. **Envío tipado:** operación `send(conversation_id, mensaje)` donde el mensaje es `RespuestaLibre` o `Plantilla { id, parámetros }`. La distinción no es cosmética: fuera de la ventana de servicio, la Cloud API solo acepta plantillas previamente aprobadas.
   3. **Resultado tipado del envío:** `send()` no devuelve un booleano ni un error opaco, sino un resultado que enumera los fallos del caso restrictivo: `FueraDeVentana`, `PlantillaRequerida`, `LimiteDeTasa`, `DestinatarioInvalido`. El núcleo debe distinguirlos porque cada uno exige una reacción distinta, y ninguno de ellos es un fallo de programación.
-  4. **Estado de la ventana de servicio:** el puerto expone, por conversación, si la ventana de 24 horas está abierta y cuándo expira. En whatsmeow la implementación es trivial —siempre abierta—, pero el núcleo consulta el mismo contrato en ambas fases.
+  4. **Estado de la ventana de servicio:** el puerto expone, por conversación, si la ventana de 24 horas está abierta y cuándo expira. En whatsmeow la implementación es trivial —siempre abierta, porque el transporte no impone ninguna ventana—, pero el núcleo consulta el mismo contrato sea cual sea el canal.
   5. **Identidad de conversación:** el transporte expone identificadores propios (Meta usa `wa_id`, whatsmeow usa JID) que el adaptador mapea a un identificador interno del sistema. **`sessions.db` nunca almacena identificadores de transporte crudos.**
   6. **Acuses normalizados:** `sent`, `delivered`, `read`, `failed`, con la misma semántica sea cual sea el canal.
   7. **Ciclo de vida de sesión (sub-trait opcional):** emparejamiento por QR o por código y persistencia de credenciales. Solo lo implementan los adaptadores no oficiales; la Cloud API no lo necesita y no lo implementa.
 
-  El núcleo define y documenta su **política ante `FueraDeVentana`** —encolar la respuesta hasta que el cliente vuelva a escribir, o escalar a un humano— desde la Fase A, aunque en ella el caso no se dispare nunca. Una política escrita cuando el fallo no ocurre se diseña con calma; escrita el día que ocurre, se improvisa.
+  El núcleo define y documenta su **política ante `FueraDeVentana`** —encolar la respuesta hasta que el cliente vuelva a escribir, o escalar a un humano— antes de que exista ninguna célula sobre canal oficial, aunque sobre canal propio el caso no se dispare nunca. Una política escrita cuando el fallo no ocurre se diseña con calma; escrita el día que ocurre, se improvisa.
 
 #### B. Requisitos No Funcionales (NFR)
 | ID | Categoría | Requisito Técnico |
 | :--- | :--- | :--- |
-| **NFR-01** | Eficiencia | Consumo máximo por célula en reposo, por fase: **Fase A ≤ 80 MB** (núcleo Rust + sidecar Go, que añade unos 15-30 MB); **Fase B < 50 MB** (objetivo original con Cloud API, sin sidecar). |
-| **NFR-02** | Disponibilidad *(solo Fase B)* | Tasa nula (0%) de errores HTTP 502/503 expuestos hacia la WAN de Meta durante suspensiones o reactivaciones. |
+| **NFR-01** | Eficiencia | **Presupuesto de línea base: ≤ 80 MB de RAM por célula en reposo** sobre canal propio (núcleo Rust + sidecar Go, que añade unos 15-30 MB). Como el sidecar es permanente, los 80 MB dejan de ser un sobrecoste transitorio y pasan a ser la línea base del producto. Una célula sobre canal oficial no lleva sidecar y su objetivo sigue siendo **< 50 MB**. **La cifra no está validada bajo carga sostenida** (ver nota). |
+| **NFR-02** | Disponibilidad *(solo en células sobre canal oficial)* | Tasa nula (0%) de errores HTTP 502/503 expuestos hacia la WAN de Meta durante suspensiones o reactivaciones. |
 | **NFR-03** | Latencia | Conmutación interna de base de datos de conocimiento inferior a 10 milisegundos. |
-| **NFR-04** | Seguridad *(solo Fase B)* | Cifrado forzoso HTTPS TLS v1.2/v1.3 gestionado automáticamente vía Caddy (On-Demand TLS), si la entrada pública elegida termina el TLS en el propio servidor. |
+| **NFR-04** | Seguridad *(solo en células sobre canal oficial)* | Cifrado forzoso HTTPS TLS v1.2/v1.3 gestionado automáticamente vía Caddy (On-Demand TLS), si la entrada pública elegida termina el TLS en el propio servidor. |
 | **NFR-05** | Seguridad | Aislamiento estricto de almacenamiento: Un contenedor no puede mapear ni acceder al volumen de datos de otra célula. |
+
+**Nota sobre NFR-01 — el presupuesto de memoria es hoy una estimación de diseño, no una medida.** Los 80 MB se han fijado por cálculo, sin ninguna observación bajo carga sostenida. La obligación pendiente es convertirlos en un **objetivo medido**: límites de `cgroup` declarados por contenedor de la célula (núcleo y sidecar) y una **prueba de carga sostenida** que hoy no figura entre los criterios de aceptación de este documento —la prueba de carga existente ejercita el control de admisión con una ráfaga, no el consumo a lo largo del tiempo—.
+
+De ello se sigue que **el techo real de células por servidor es desconocido hasta medirlo**. Dividir 8 GB entre 80 MB es aritmética, no capacidad. Además, es probable que el cuello de botella no sea la memoria sino la **CPU y la E/S**: N websockets simultáneos con criptografía Signal, cada uno con su sidecar Go y su motor SQLite, sobre un i7 de diez años. Cualquier compromiso sobre el número de células admisibles queda como **decisión pendiente hasta que exista la medición**.
 
 ---
 
@@ -125,7 +138,7 @@ Panel Admin -> Payload JSON -> Contenedor Rust
 #### Puerto de canal y despliegue de la célula
 
 ```
-[Fase A — canal no oficial]
+[Fase A — canal propio (whatsmeow), permanente]
 WhatsApp <--websocket saliente--> [Sidecar Go: whatsmeow]
                                           |
                                     IPC / socket local
@@ -134,14 +147,16 @@ WhatsApp <--websocket saliente--> [Sidecar Go: whatsmeow]
                                           |
                            GCRA -> Presupuesto LLM -> RAG -> sessions.db
 
-Una célula = 2 contenedores (núcleo + sidecar) con red local y volumen compartidos.
+Una célula sobre canal propio = 2 contenedores (núcleo + sidecar) con red local y volumen
+compartidos. El sidecar acompaña a la célula durante toda su vida.
 
-[Fase B — canal oficial]
+[Fase B — canal oficial (Cloud API), adicional]
 Meta Cloud API --webhook HTTPS--> [Entrada pública (ADR)] --> [Núcleo Rust: ChannelAdapter]
                                           |
                            GCRA -> Presupuesto LLM -> RAG -> sessions.db
 
-Una célula = 1 contenedor (núcleo). El sidecar desaparece.
+Una célula sobre canal oficial = 1 contenedor (núcleo), sin sidecar. Ambos tipos de célula
+conviven en el mismo servidor y bajo el mismo orquestador.
 ```
 
 ---

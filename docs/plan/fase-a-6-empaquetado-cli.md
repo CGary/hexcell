@@ -10,11 +10,15 @@ Hasta aquí existe un núcleo que funciona y un sidecar que habla con WhatsApp, 
 desarrollador. Esta etapa los convierte en la unidad de despliegue real del producto —**la célula**—
 y en algo gobernable desde una línea de comandos.
 
-Una célula de la Fase A son **dos contenedores**: el núcleo Rust y el sidecar Go, compartiendo una
-red local y un volumen. Esa dualidad es la novedad frente al diseño original, y tiene un coste
+Una célula sobre canal propio son **dos contenedores**: el núcleo Rust y el sidecar Go, compartiendo
+una red local y un volumen. Esa dualidad es la novedad frente al diseño original, y tiene un coste
 medible: el sidecar añade unos 15-30 MB de RAM, razón por la cual NFR-01 fija para la Fase A un techo
-de 80 MB por célula en lugar de los 50 MB que se recuperarán en la Fase B, cuando el sidecar
-desaparezca.
+de 80 MB por célula. Conviene decirlo sin ambigüedad, porque el plan anterior daba a entender lo
+contrario: **ese coste es permanente**. El sidecar no desaparece —el canal propio es el canal por
+defecto y el canal oficial se incorporará como canal adicional que convive con él—, de modo que los
+80 MB son el presupuesto de una célula sobre canal propio, no una holgura transitoria a devolver. Los
+50 MB solo aplicarían a una célula que corriera únicamente sobre canal oficial, y el modelo de
+densidad del servidor debe dimensionarse sobre 80.
 
 Hay dos requisitos del PRD que solo se pueden verificar de verdad en este punto. El primero es
 NFR-01: una medición en el escritorio del desarrollador no significa nada, porque el objetivo de
@@ -60,7 +64,11 @@ subdominios y registro en Meta, pertenece a la etapa B-2.
   proceso y active el apagado ordenado de la etapa A-2 y el cierre limpio de sesión de la etapa A-3.
 * **CLI de operación** en `hexcell-admin`, apoyada exclusivamente en el socket Unix de Docker:
   * `cell pause` — detener el sidecar (cerrando el websocket) y después emitir `SIGTERM` al núcleo con
-    30 segundos de gracia.
+    30 segundos de gracia. El drenaje del núcleo es **drenaje sin envío** [causa documentada]: las
+    tareas en vuelo terminan y persisten su estado, pero **ninguna respuesta pendiente sale** por el
+    canal durante una pausa, una migración o una eliminación. Una respuesta que se escapa al reanudar,
+    horas después del mensaje que la originó, es justamente el patrón que el TTL de la etapa A-3
+    existe para impedir.
   * `cell unpause` — arrancar ambos contenedores; el sidecar reanuda la sesión whatsmeow desde sus
     credenciales en cuanto vive, y la CLI sondea `GET /health/ready` cada 100 ms hasta la primera
     confirmación positiva, que exige pools SQLite operativos **y** sesión de canal activa reportada
@@ -70,9 +78,21 @@ subdominios y registro en Meta, pertenece a la etapa B-2.
   * `cell list` y `cell status` — estado consolidado de cada célula, incluida la salud del canal.
 * Registro persistente del estado de cada célula en el plano de control, para que la CLI no dependa
   exclusivamente de inferir el estado a partir de Docker.
-* **Alertas push por bot de Telegram** ante sesión desvinculada, sidecar sin reconectar durante más
-  de 5 minutos, bucle de reinicios, saldo LLM agotado o modo degradado, tasa de descartes GCRA
-  anómala, y descarte de un envío no solicitado (violación del invariante anti-ban de la etapa A-3).
+* **Alertas push por bot de Telegram** ante **ocho** condiciones: **baneo temporal detectado**, sesión
+  desvinculada, sidecar sin reconectar durante más de 5 minutos, bucle de reinicios, saldo LLM
+  agotado o modo degradado, tasa de descartes GCRA anómala, descarte de un envío no solicitado
+  (violación del invariante de solo-responder de la etapa A-3) y **caída anómala del ratio de acuses
+  de entrega segmentado por contacto**.
+* **Métricas por célula** que alimentan esas alertas y el diagnóstico posterior: ratio de acuses de
+  entrega **por contacto** y latencia hasta el acuse, **reconexiones por hora** y **ventana de
+  silencio entrante** (cero mensajes recibidos en X horas hábiles cuando históricamente hay tráfico).
+  Las emite el sidecar (etapa A-3); aquí se recogen, se comparan contra umbral y se entregan.
+* **Canary de biblioteca y despliegue escalonado.** Una **célula centinela propia**, con **número
+  propio** de HexCell y ningún cliente encima, corre la versión candidata de whatsmeow durante
+  **72 horas** antes de que la actualización se escalone al resto de la cartera. **Nunca se actualizan
+  todas las células el mismo día.** El pinneado por commit y la ventana de actualización los fija la
+  etapa A-3; el escalonado se ejecuta desde aquí, porque es aquí donde viven el empaquetado y el
+  despliegue.
 * **Dead-man's switch externo** (healthchecks.io, capa gratuita): ping cada 5 minutos desde un `cron`
   local, con notificación desde fuera del servidor cuando el ping deja de llegar.
 * Idempotencia y recuperación: cada comando debe poder reejecutarse tras un fallo parcial y dejar el
@@ -89,7 +109,7 @@ subdominios y registro en Meta, pertenece a la etapa B-2.
   contradice el objetivo de eficiencia.
 * Cualquier interfaz gráfica de administración.
 * El panel de métricas, la agregación por servidor y el resto de la observabilidad de operación:
-  etapa B-3. Aquí solo se adelanta el mínimo de alertado que exige tener pilotos reales.
+  etapa B-3. Aquí solo se adelanta el mínimo de alertado que exige tener clientes reales.
 
 ### Requisitos del PRD cubiertos
 
@@ -112,7 +132,12 @@ subdominios y registro en Meta, pertenece a la etapa B-2.
 * Almacén de estado del plano de control con su esquema y migraciones.
 * `docs/adr/adr-0007-imagen-y-aislamiento.md` documentando las imágenes base elegidas, la
   composición de dos contenedores, el modelo de permisos del volumen y los límites de recursos.
-* Módulo de alertas con el cliente del bot de Telegram y las condiciones que las disparan.
+* Módulo de alertas con el cliente del bot de Telegram y las **ocho** condiciones que las disparan,
+  con su orden de prioridad declarado.
+* Recolección de las métricas por célula —acuses por contacto, reconexiones por hora y ventana de
+  silencio entrante— con sus umbrales configurables y marcados como valores a calibrar.
+* Procedimiento de **canary de biblioteca y despliegue escalonado**, con la célula centinela dada de
+  alta y su número propio.
 * Configuración del dead-man's switch y la entrada de `cron` que lo alimenta.
 * `docs/runbook-operacion.md`: manual breve de operación con los comandos y sus efectos, incluida la
   respuesta ante cada alerta.
@@ -163,23 +188,55 @@ subdominios y registro en Meta, pertenece a la etapa B-2.
     leer ni escribir el volumen de la otra ni alcanzar su red, ni siquiera conociendo la ruta.
 17. **Integrar la construcción de las imágenes en la CI** (1 día). Construcción reproducible,
     etiquetado por versión y por commit, y publicación en el registro elegido.
-18. **Implementar alertas push y el dead-man's switch** (1 día). Dos mecanismos complementarios:
+18. **Montar el canary de biblioteca y el despliegue escalonado** (1 día). Alta de una **célula
+    centinela** propia, con número propio de HexCell y sin ningún cliente encima, que corre la
+    versión candidata de whatsmeow durante **72 horas** antes de que la actualización toque a nadie
+    más. Después, escalonado por lotes de la cartera, con parada si el lote anterior presenta baneos,
+    desconexiones anómalas o `Client outdated (405)`. Queda escrito como prohibición operativa:
+    **nunca actualizar todas las células el mismo día**. La centinela es además el sitio donde se
+    ensayan medidas cuya eficacia no está probada —el experimento con Meta Verified, entre ellas—,
+    porque es el único número cuyo baneo no le cuesta el negocio a nadie.
+19. **Implementar alertas push, métricas por célula y el dead-man's switch** (1,5 días). Tres piezas
+    complementarias:
     * **Alertas activas** por bot de Telegram, con una simple llamada HTTP saliente desde el
-      servidor, ante: sesión de canal desvinculada, sidecar sin reconectar durante más de 5 minutos,
-      bucle de reinicios de cualquiera de los dos contenedores, saldo LLM agotado o entrada en modo
-      degradado, tasa de descartes GCRA anómala, y descarte de un envío no solicitado (violación del
-      invariante anti-ban). Las señales del canal y del invariante anti-ban las emite el sidecar
-      (etapa A-3); las del saldo y los descartes, el núcleo (etapa A-4). Esta tarea las **entrega**.
+      servidor, ante **ocho** condiciones. La primera va aparte por prioridad: **baneo temporal
+      detectado**, con su fecha de expiración, que es **alerta de máxima prioridad** por ser el
+      **único aviso previo que suele existir**; cualquier otra alerta puede esperar a la mañana
+      siguiente, esta no. Las siete restantes: sesión de canal desvinculada, sidecar sin reconectar
+      durante más de 5 minutos, bucle de reinicios de cualquiera de los dos contenedores, saldo LLM
+      agotado o entrada en modo degradado, tasa de descartes GCRA anómala, descarte de un envío no
+      solicitado (violación del invariante de solo-responder), y **caída anómala del ratio de acuses
+      de entrega segmentado por contacto**. Esta última es la **detección indirecta de bloqueos de
+      usuarios**: el bloqueo no se notifica, pero cuando un contacto bloquea el número **cesan sus
+      acuses de entrega**; por eso el ratio se segmenta por contacto y **nunca se mira en agregado**,
+      donde el efecto se diluye hasta desaparecer. Las señales del canal, del invariante y de los
+      acuses las emite el sidecar (etapa A-3); las del saldo y los descartes GCRA, el núcleo (etapa
+      A-4). Esta tarea las **entrega**.
+    * **Métricas por célula**: reconexiones por hora y ventana de silencio entrante —cero mensajes
+      recibidos en X horas hábiles cuando históricamente hay tráfico—, además de la latencia hasta el
+      acuse. Los umbrales quedan como parámetros a calibrar con datos reales, no como constantes
+      elegidas de antemano.
     * **Dead-man's switch externo** con healthchecks.io en su capa gratuita: un `cron` local hace
       ping cada 5 minutos y **la ausencia de ping** dispara la notificación desde fuera del servidor.
       Es la única clase de alerta que sobrevive al fallo que más importa: **un servidor muerto no
       puede avisar de que ha muerto**, así que la vigilancia tiene que vivir en otro sitio.
 
+    > **Lo que NO es observable.** Cuántos usuarios han reportado el número. **Esa señal no existe**,
+    > por ninguna vía, y ningún panel ni ninguna alerta de este plan debe fingir que la tiene. Los
+    > reportes son una de las tres familias de señales con las que Meta decide, y llegan a nuestro
+    > lado únicamente como consecuencia consumada: un baneo.
+
+    > **Lo que esto NO hace.** La observabilidad **acorta el tiempo de reacción; no evita el baneo**.
+    > Ninguna alerta de esta lista reduce la probabilidad de que Meta desactive un número: el riesgo
+    > es en buena medida estructural. Y el **baneo permanente suele llegar sin aviso previo** —el
+    > baneo temporal es el único que a veces lo da—, de modo que el valor de esta tarea es enterarse
+    > en minutos en lugar de en días, no evitar nada.
+
     > **Descongelación deliberada.** La observabilidad completa pertenece a la etapa B-3. Este mínimo
-    > se adelanta a la Fase A a conciencia porque hay **usuarios reales desde el primer piloto**: sin
-    > él, la forma de enterarse de que el bot lleva dos días mudo es que el piloto lo mencione. Se
-    > adelanta lo imprescindible, no el panel de métricas.
-19. **Escribir el runbook de operación** (0,5 días). Qué comando usar en cada situación, qué efecto
+    > se adelanta a conciencia porque hay **usuarios reales desde la primera célula**: sin él, la
+    > forma de enterarse de que el bot lleva dos días mudo es que el cliente lo mencione. Se adelanta
+    > lo imprescindible, no el panel de métricas.
+20. **Escribir el runbook de operación** (0,5 días). Qué comando usar en cada situación, qué efecto
     tiene y cómo verificar que salió bien.
 
 ---
@@ -192,6 +249,9 @@ subdominios y registro en Meta, pertenece a la etapa B-2.
   a 80 MB**, medido con ambas bases abiertas y la sesión de canal activa (NFR-01, Fase A).
 * `cell pause` cierra el websocket antes de detener el núcleo, y durante toda la pausa no queda
   ninguna petición entrante sin atender, porque no hay ninguna.
+* **Ni `cell pause`, ni `cell terminate`, ni una migración de célula emiten un solo mensaje saliente
+  durante el drenaje**, y ninguna respuesta pendiente se entrega al reanudar: una prueba deja
+  respuestas encoladas, pausa la célula, la reanuda y verifica que no salió nada.
 * `cell unpause` no da la célula por lista hasta que `GET /health/ready` ha respondido `200 OK` al
   menos una vez, y esa confirmación exige pools SQLite operativos **y** sesión de canal activa; el
   sidecar reanuda la sesión sin re-emparejamiento **antes** de que la readiness pueda confirmarla,
@@ -210,8 +270,23 @@ subdominios y registro en Meta, pertenece a la etapa B-2.
   dispositivo desvinculado del número.
 * Interrumpir cualquier comando a mitad y reejecutarlo lleva el sistema al estado pretendido sin
   intervención manual.
-* Cada una de las seis condiciones de alerta, provocada deliberadamente, produce un mensaje de
+* Cada una de las **ocho** condiciones de alerta, provocada deliberadamente, produce un mensaje de
   Telegram en menos de un minuto.
+* La alerta de **baneo temporal detectado** llega marcada como de máxima prioridad y distinguible de
+  las demás a simple vista, e incluye la fecha de expiración que reporta la taxonomía de la etapa
+  A-3.
+* La **caída del ratio de acuses de un contacto concreto** dispara la alerta aunque el ratio agregado
+  de la célula siga dentro de lo normal. Una prueba con un contacto que deja de acusar y el resto
+  acusando con normalidad debe alertar: si solo se mira el agregado, no alerta, y ese es exactamente
+  el fallo que este criterio existe para impedir.
+* Ninguna alerta, panel ni informe presenta un recuento de reportes de usuarios: **esa señal no
+  existe** y no se estima ni se aproxima.
+* Las métricas de **reconexiones por hora** y de **ventana de silencio entrante** están disponibles
+  por célula y son consultables desde `cell status`.
+* Una actualización de whatsmeow **no llega a ninguna célula de cliente** sin haber corrido 72 horas
+  en la célula centinela, y el despliegue posterior es escalonado: una prueba del procedimiento
+  verifica que no existe ninguna vía —ni la CI, ni la CLI— que actualice toda la cartera en un solo
+  paso.
 * **Apagar el servidor entero produce una notificación** procedente del dead-man's switch externo,
   sin que el servidor haya podido emitir nada.
 * Las imágenes se construyen de forma reproducible desde la CI y sus tamaños quedan registrados.
@@ -231,9 +306,12 @@ subdominios y registro en Meta, pertenece a la etapa B-2.
 | Alguno de los procesos no recibe `SIGTERM` por quedar bajo un intérprete de shell. | Alto: apagados abruptos, riesgo de corrupción del WAL y de las credenciales de sesión. | Ejecutar cada binario como proceso principal directo y verificar la señal en la tarea 7. |
 | El diseño de enlaces simbólicos de épocas se comporta distinto sobre el volumen montado. | Medio: la conmutación atómica falla solo en producción. | Repetir la prueba de estrés de la etapa A-5 dentro de la célula contenedorizada antes de cerrar esta etapa. |
 | Detener el núcleo antes que el sidecar. | Medio: mensajes recibidos por el canal que no tienen a quién entregarse. | El orden está fijado en el ADR y verificado por la prueba de ciclo de vida. El outbox durable de la etapa A-3 hace que, aun ocurriendo, los eventos se reentreguen en lugar de perderse. |
-| El bot lleva días mudo y nadie se entera hasta que el piloto lo menciona. | Muy alto: se quema la confianza del único piloto externo y se contamina la validación del negocio. | Alertas push ante desvinculación y falta de reconexión, con la señal emitida por el sidecar. |
+| El bot lleva días mudo y nadie se entera hasta que el cliente lo menciona. | Muy alto: se quema la confianza de un cliente de pago y con ella la referencia comercial. | Alertas push ante desvinculación y falta de reconexión, más la ventana de silencio entrante, con las señales emitidas por el sidecar. |
 | Toda la vigilancia vive dentro del servidor vigilado. | Alto: la caída total del servidor —el fallo más grave— es justo la que no genera ninguna alerta. | Dead-man's switch externo: la ausencia de ping notifica desde fuera. |
-| Las alertas se disparan tanto que se ignoran. | Medio: una alerta que nadie lee equivale a no tenerla. | Cinco condiciones concretas y accionables, no un volcado de métricas; los umbrales se recalibran con los datos reales de la etapa A-7. |
+| Las alertas se disparan tanto que se ignoran. | Medio: una alerta que nadie lee equivale a no tenerla. | **Ocho** condiciones concretas y accionables, no un volcado de métricas, con el baneo temporal jerarquizado por encima del resto; los umbrales se recalibran con los datos reales de la etapa A-7. |
+| **Confundir la observabilidad con una defensa.** | Alto, y es un riesgo de criterio, no de código: se dimensiona el negocio como si vigilar redujera la probabilidad de baneo. | Queda escrito en la tarea 19 y se repite aquí: **la observabilidad acorta el tiempo de reacción, no evita el baneo**. El baneo permanente **suele llegar sin aviso previo**; el temporal es el único que a veces lo da, y por eso es la alerta de máxima prioridad. Las medidas que de verdad importan son las de contención de daño. |
+| **Mirar el ratio de acuses en agregado** en lugar de por contacto. | Medio-alto: los bloqueos de usuarios —única señal indirecta disponible— se diluyen en la media y no se detecta ninguno hasta que llega el baneo. | La segmentación por contacto es alcance explícito de la tarea 19 y criterio de aceptación con una prueba de un solo contacto que deja de acusar. |
+| **Actualizar whatsmeow en toda la cartera el mismo día.** | Muy alto: una versión candidata defectuosa —o que llame la atención de la detección de Meta— se lleva por delante a todos los clientes a la vez, y con ellos la única fuente de ingresos. | Célula centinela propia con número propio durante 72 horas y escalonado por lotes con parada ante incidencias, con criterio de aceptación que verifica que no existe una vía de actualización masiva en un solo paso. |
 
 ---
 
@@ -243,7 +321,13 @@ subdominios y registro en Meta, pertenece a la etapa B-2.
   del directorio de datos que fija la etapa A-5, la persistencia de sesión de la etapa A-3 y la línea
   base de memoria de la etapa A-2.
 * **Externas:** un registro de imágenes donde publicar; acceso a un entorno con Docker equivalente
-  al servidor de destino para las mediciones; un bot de Telegram con su token y el chat de destino; y
-  una cuenta gratuita de healthchecks.io.
+  al servidor de destino para las mediciones; un bot de Telegram con su token y el chat de destino;
+  una cuenta gratuita de healthchecks.io; y un **número de WhatsApp propio de HexCell, distinto del
+  de laboratorio de la etapa A-3 y de los de cualquier cliente**, dedicado a la célula centinela del
+  canary. Es bloqueante para la tarea 18, y su baneo es un coste asumido de antemano: para eso está.
+* **De la etapa A-3:** la taxonomía de desconexión, el contador de envíos rechazados y las métricas
+  por célula —acuses por contacto, reconexiones por hora, silencio entrante— son señales que emite el
+  sidecar; esta etapa las recoge, las compara contra umbral y las entrega. El pinneado por commit y
+  la ventana de actualización también se fijan allí; aquí se ejecuta su escalonado.
 * **Decisiones de producto pendientes:** el **modelo de monetización** define cuándo se suspende a un
   cliente por falta de pago. El mecanismo se entrega aquí; la política que lo activa, no.

@@ -1,26 +1,39 @@
 # Fase B · Etapa 1 — Canal oficial: adaptador Cloud API y entrada pública
 
-**Duración relativa:** sin estimar. **La Fase B está CONGELADA hasta la compuerta del tercer
-cliente**; sus etapas se describen en alcance y dependencias, no en días de trabajo.
+**Duración relativa:** sin estimar. **La Fase B permanece sin planificar hasta que aparezca un
+cliente que justifique el canal oficial**; sus etapas se describen en alcance y dependencias, no en
+días de trabajo.
 
 ---
 
 ## Objetivo
 
 Esta etapa es la razón por la que existe el puerto de canal. Si el diseño de la etapa A-1 es correcto,
-pasar del canal no oficial al oficial debe ser **escribir un segundo adaptador**, no reescribir el
-producto. Esta etapa lo demuestra o lo refuta.
+**añadir** el canal oficial debe ser **escribir un segundo adaptador**, no reescribir el producto.
+Esta etapa lo demuestra o lo refuta.
 
-El cambio de canal invierte la dirección de la conexión. En la Fase A el servidor abría un websocket
-saliente hacia WhatsApp y no necesitaba nada del mundo exterior. En la Fase B es Meta quien llama:
-los mensajes llegan como **webhooks HTTPS entrantes**, lo que obliga a que exista una entrada pública
-con un certificado válido, dirigida a un servidor que vive detrás de un router doméstico. Ese es el
-problema que esta etapa resuelve, y tiene dos soluciones con consecuencias muy distintas.
+Desde el 28 de julio de 2026 (`adr-0014`) esta etapa **no es una migración, sino una incorporación
+aditiva**. El
+canal oficial (Cloud API) **se añade y convive** con el canal propio (whatsmeow): **no lo sustituye,
+no obliga a migrar a ninguna célula existente y no retira el sidecar** de las células que siguen
+sobre el canal propio, donde el sidecar es permanente. Lo que abre esta etapa ya no es una compuerta
+por número de clientes, sino **la aparición de un cliente que justifique el canal oficial**
+—típicamente una empresa medianamente grande capaz de asumir el alta y el coste—.
 
-Además del adaptador y de la entrada, esta etapa cubre la **migración de las dos células piloto** al
-canal oficial. Es la prueba definitiva de la frontera de migración: si el historial conversacional de
-piloto-01 sobrevive intacto al cambio de canal, la decisión de no persistir nunca identificadores de
-transporte crudos en `sessions.db` habrá valido cada minuto invertido.
+El canal oficial invierte la dirección de la conexión. Sobre el canal propio el servidor abre un
+websocket saliente hacia WhatsApp y no necesita nada del mundo exterior. Sobre el canal oficial es
+Meta quien llama: los mensajes llegan como **webhooks HTTPS entrantes**, lo que obliga a que exista
+una entrada pública con un certificado válido, dirigida a un servidor que vive detrás de un router
+doméstico. Ese es el problema que esta etapa resuelve, y tiene dos soluciones con consecuencias muy
+distintas.
+
+Además del adaptador y de la entrada, esta etapa conserva el **procedimiento de migración de una
+célula** del canal propio al oficial, ahora **opcional y por demanda**: se ejecuta cuando un cliente
+concreto decide cambiar de canal, no por defecto. El procedimiento no se descarta, porque sigue
+haciendo falta y porque sigue siendo la prueba definitiva de la frontera entre el núcleo y el
+transporte: si el historial conversacional sobrevive intacto al cambio de canal, la decisión de no
+persistir nunca identificadores de transporte crudos en `sessions.db` habrá valido cada minuto
+invertido.
 
 ---
 
@@ -48,7 +61,7 @@ transporte crudos en `sessions.db` habrá valido cada minuto invertido.
   | | **Cloudflare Tunnel (capa gratuita)** | **VPS ~3 USD/mes + WireGuard** |
   | :--- | :--- | :--- |
   | Terminación TLS | En el edge de Cloudflare. | En el propio Caddy del servidor local. |
-  | Dirección de la conexión | Saliente desde el servidor local, igual que en la Fase A. | Túnel WireGuard entre VPS y servidor local. |
+  | Dirección de la conexión | Saliente desde el servidor local, igual que en el canal propio. | Túnel WireGuard entre VPS y servidor local. |
   | Coste | Cero. | ~3 USD/mes fijos. |
   | Handshake anti-Hairpin (FR-04) | **Innecesario**: no hay certificado local que validar ni Hairpin NAT que sortear. | **Necesario**: se conserva íntegro. |
   | On-Demand TLS de Caddy (NFR-04) | **Innecesario**. | **Necesario**. |
@@ -57,16 +70,44 @@ transporte crudos en `sessions.db` habrá valido cada minuto invertido.
 
   La decisión condiciona directamente el alcance de la etapa B-2 y la vigencia de FR-04 y NFR-04.
 * Aprovisionamiento de la aplicación de Meta, del WABA de prueba y de las credenciales necesarias.
-* **Migración de las células piloto** al canal oficial: adquisición del número o migración del
-  existente al canal oficial, conmutación del adaptador y verificación de que el historial
-  conversacional y el conocimiento sobreviven intactos.
-* Retirada del sidecar en las células migradas, con la recuperación del presupuesto de memoria de
-  NFR-01 hasta los 50 MB por célula.
+* **Evaluación del modo coexistencia de Meta como opción preferente**
+  (`developers.facebook.com/docs/whatsapp/embedded-signup/custom-flows/onboarding-business-app-users/`).
+  Un mismo número funciona a la vez en la app de WhatsApp Business del móvil y en la Cloud API,
+  sincronizando 180 días de historial y contactos, y el integrador recibe por webhook
+  (`smb_message_echoes`) lo que el dueño responde a mano desde su app. Importa por dos motivos:
+  desmonta el argumento de que el cliente pierde la bandeja de su móvil, y **resuelve el pendiente de
+  la interfaz de intervención humana** sin construirla. Requiere **Embedded Signup de un Solution
+  Partner o Tech Provider: no hay ruta de Cloud API directa**. Limitaciones que la evaluación debe
+  pesar: 20 mensajes por segundo fijos, sin grupos, sin mensajes efímeros, sin vista única, sin
+  ubicación en vivo, sin listas de difusión y sin catálogo ni pedidos por API.
+* **Recálculo del coste por conversación de toda célula sobre canal oficial.** El 1 de julio de 2026
+  Meta anunció que **desde el 1 de octubre de 2026 cobrará también los mensajes de servicio** —las
+  respuestas dentro de la ventana de 24 h—, con tarifas publicables hasta el 1 de septiembre de 2026.
+  Esto **invalida el supuesto anterior de que el transporte del canal oficial cuesta aproximadamente
+  cero**. *Estado de la evidencia: confirmado por múltiples BSPs, todavía **no** reflejado en la
+  página oficial de precios de Meta; debe tratarse con ese matiz y reverificarse antes de fijar
+  ningún precio.*
+* **Convivencia de ambos adaptadores vivos a la vez**, en células distintas del mismo servidor: el
+  núcleo debe soportarlos de forma simultánea, y la **suite de pruebas de contrato del puerto es
+  única y se ejecuta contra los dos adaptadores**, no una por canal.
+* **Procedimiento de migración de una célula, opcional y por demanda**: adquisición del número o
+  migración del existente al canal oficial, conmutación del adaptador y verificación de que el
+  historial conversacional y el conocimiento sobreviven intactos. Se documenta y se ensaya aunque
+  ninguna célula vaya a migrar todavía.
+* Retirada del sidecar **únicamente en las células efectivamente migradas**, con la recuperación del
+  presupuesto de memoria de NFR-01 hasta los 50 MB por célula. Las células que permanecen sobre el
+  canal propio **conservan su sidecar de forma permanente** y se siguen midiendo contra su
+  presupuesto de 80 MB.
 
 ### Qué NO entra
 
 * Caddy, subdominios, blackholing y el `cell create` completo: etapa B-2.
-* Embedded Signup: etapa B-2.
+* La implementación del Embedded Signup: etapa B-2. Aquí solo se **evalúa** el modo coexistencia y se
+  decide si es la opción preferente.
+* **La migración obligatoria de ninguna célula existente.** El canal propio sigue siendo el canal de
+  producción por defecto; migrar es una decisión de cada cliente, célula a célula.
+* **La retirada del sidecar de las células que permanecen sobre el canal propio.** Ahí es permanente
+  y no se retira nunca.
 * Cualquier cambio en el núcleo, la persistencia, el conocimiento o el control de admisión. Si esta
   etapa necesita tocarlos, el puerto de canal estaba mal diseñado y eso es en sí mismo un hallazgo.
 
@@ -76,7 +117,8 @@ transporte crudos en `sessions.db` habrá valido cada minuto invertido.
   Graph API.
 * **FR-08** — variante de Fase B: Fast-Reject con `HTTP 200 OK` hacia Meta, sobre el mismo módulo GCRA
   ya construido.
-* **FR-12** — segunda implementación del puerto, que valida el contrato.
+* **FR-12** — segunda implementación del puerto, que valida el contrato, **con ambos adaptadores
+  vivos a la vez en células distintas** y una única suite de contrato ejercitada contra los dos.
 * **FR-04** y **NFR-04** — su vigencia queda determinada por el ADR de entrada pública.
 
 ---
@@ -88,8 +130,14 @@ transporte crudos en `sessions.db` habrá valido cada minuto invertido.
 * ADR de **entrada pública de la Fase B** con la decisión tomada y sus consecuencias sobre FR-04 y
   NFR-04.
 * ADR del adaptador de Cloud API.
+* **Evaluación escrita del modo coexistencia**, con su decisión razonada, sus limitaciones y su
+  consecuencia sobre el pendiente de la interfaz de intervención humana.
+* **Recálculo documentado del coste por conversación sobre canal oficial**, con la tarifa de mensajes
+  de servicio vigente y la fecha de la fuente consultada.
 * Entrada pública desplegada y verificada según la opción elegida.
-* Informe de migración de las células piloto, incluida la comprobación de continuidad del historial.
+* **Procedimiento de migración de una célula del canal propio al oficial**, documentado y ensayado al
+  menos una vez, con la comprobación de continuidad del historial. Se conserva como procedimiento
+  vivo aunque no haya migraciones pendientes.
 * **Banco de pruebas local reutilizable (`scripts/`) capaz de emitir webhooks firmados como lo haría
   Meta**, con payloads realistas y firma HMAC válida. Es la herramienta sobre la que se apoyan las
   pruebas de firma, de deduplicación y de carga, y permite ejercitar el canal oficial sin depender de
@@ -101,25 +149,39 @@ transporte crudos en `sessions.db` habrá valido cada minuto invertido.
 
 ## Tareas
 
-*(Sin estimación: la Fase B no se dimensiona hasta que se abra la compuerta.)*
+*(Sin estimación: la Fase B no se dimensiona hasta que aparezca el cliente que la justifique.)*
 
 1. **Decidir la entrada pública y escribir el ADR.** Es la primera tarea porque condiciona todo lo
    demás, incluida la mitad del alcance de la etapa B-2.
-2. **Desplegar y verificar la entrada pública elegida.** Certificado válido, alcance desde fuera y
+2. **Evaluar el modo coexistencia y decidir si es la opción preferente.** Va al principio porque
+   condiciona la ruta de alta —exige Embedded Signup de un Solution Partner o Tech Provider, sin ruta
+   de Cloud API directa— y porque resuelve, o no, el pendiente de la interfaz de intervención humana.
+3. **Recalcular el coste por conversación sobre canal oficial** con la tarifa de mensajes de servicio
+   vigente desde el 1 de octubre de 2026, reverificándola contra la página oficial de precios de Meta
+   en el momento de ejecutar la etapa. Sin este número no se puede fijar precio a un cliente sobre
+   canal oficial.
+4. **Desplegar y verificar la entrada pública elegida.** Certificado válido, alcance desde fuera y
    estabilidad del túnel.
-3. **Implementar el receptor de webhooks** con el desafío de verificación —comparando el token en
+5. **Implementar el receptor de webhooks** con el desafío de verificación —comparando el token en
    tiempo constante, para no filtrar información por el tiempo de respuesta— y la respuesta `200 OK`
    inmediata anterior al procesamiento.
-4. **Implementar la validación de firma HMAC-SHA256** sobre el cuerpo crudo, antes de cualquier
+6. **Implementar la validación de firma HMAC-SHA256** sobre el cuerpo crudo, antes de cualquier
    deserialización.
-5. **Traducir el payload de Meta al evento canónico** y mapear el `wa_id` al identificador interno
+7. **Traducir el payload de Meta al evento canónico** y mapear el `wa_id` al identificador interno
    dentro del adaptador.
-6. **Implementar el envío y la traducción de acuses** a `sent`/`delivered`/`read`/`failed`.
-7. **Reincorporar el Fast-Reject** sobre el módulo GCRA existente, sin modificarlo.
-8. **Migrar piloto-01 al canal oficial** y verificar la continuidad del historial conversacional.
-9. **Migrar piloto-02** una vez piloto-01 lleve tiempo estable sobre el canal oficial.
-10. **Retirar el sidecar de las células migradas** y volver a medir el consumo de memoria contra el
-    presupuesto de 50 MB.
+8. **Implementar el envío y la traducción de acuses** a `sent`/`delivered`/`read`/`failed`.
+9. **Reincorporar el Fast-Reject** sobre el módulo GCRA existente, sin modificarlo.
+10. **Ejecutar la suite de contrato del puerto contra ambos adaptadores** y levantar en el mismo
+    servidor una célula sobre canal propio y otra sobre canal oficial, comprobando que conviven sin
+    interferirse.
+11. **Documentar y ensayar el procedimiento de migración** de una célula del canal propio al oficial,
+    verificando la continuidad del historial conversacional. Se ensaya aunque ninguna célula vaya a
+    migrar: el procedimiento debe existir el día que un cliente lo pida.
+12. **Migrar por demanda** las células cuyo cliente lo solicite, de una en una y esperando a que la
+    anterior lleve tiempo estable sobre el canal oficial. Ninguna célula se migra por defecto.
+13. **Retirar el sidecar solo de las células efectivamente migradas** y volver a medir su consumo de
+    memoria contra el presupuesto de 50 MB. Las células sobre canal propio conservan el sidecar y su
+    presupuesto de 80 MB.
 
 ---
 
@@ -142,9 +204,22 @@ transporte crudos en `sessions.db` habrá valido cada minuto invertido.
   explícita del ADR-0010 (un nuevo ADR o uno que lo supere), y solo entonces la etapa puede cerrarse
   con este criterio cumplido de verdad. Es la prueba de fuego de toda la estrategia de dos fases: si
   falla en silencio, la Fase A construyó sobre una premisa falsa.
-* Tras migrar una célula piloto, su historial conversacional y su conocimiento siguen siendo
-  accesibles y correctos, y las conversaciones anteriores se continúan sin ruptura.
-* El consumo de memoria de una célula migrada, ya sin sidecar, es inferior a 50 MB en reposo.
+* **El núcleo soporta ambos adaptadores vivos a la vez**, en células distintas del mismo servidor, y
+  una **única suite de pruebas de contrato del puerto se ejecuta contra los dos** y pasa en ambos. No
+  se aceptan dos suites divergentes, una por canal: eso sería bifurcar el puerto de facto.
+* Levantar una célula sobre canal oficial **no altera el funcionamiento ni el presupuesto de memoria
+  de ninguna célula sobre canal propio**, que conserva su sidecar.
+* Tras migrar una célula, su historial conversacional y su conocimiento siguen siendo accesibles y
+  correctos, y las conversaciones anteriores se continúan sin ruptura. El procedimiento de migración
+  está documentado y ensayado al menos una vez, con independencia de cuántas células migren.
+* El consumo de memoria de una célula migrada, ya sin sidecar, es inferior a 50 MB en reposo. Las
+  células que permanecen sobre canal propio se siguen midiendo contra su presupuesto de 80 MB, con el
+  sidecar incluido.
+* Existe una **evaluación escrita del modo coexistencia** con su decisión razonada y sus limitaciones,
+  y consta si resuelve o no el pendiente de la interfaz de intervención humana.
+* El **coste por conversación sobre canal oficial está recalculado** con la tarifa de mensajes de
+  servicio vigente, con la fecha de consulta de la fuente y con la salvedad de que la página oficial
+  de precios de Meta podía no reflejarla todavía.
 
 ---
 
@@ -155,8 +230,11 @@ transporte crudos en `sessions.db` habrá valido cada minuto invertido.
 | El puerto de canal resulta insuficiente y el adaptador obliga a tocar el núcleo. | Muy alto: la premisa de las dos fases falla y el coste de la Fase B se dispara. | Diseño del puerto con ambos canales delante desde la etapa A-1: la abstracción hacia el caso más restrictivo (semántica de la Cloud API) y sus tests de contrato son la garantía de compatibilidad, no una firma anticipada — `hexcell-meta` nace vacío hasta que se resuelva el ADR-0013. Si aun así ocurre, no se acepta la etapa: se detiene el trabajo, se analiza la desviación y se corrige el contrato mediante una revisión explícita del ADR-0010. |
 | La opción de entrada pública se elige por coste sin evaluar sus consecuencias. | Alto: se arrastra o se descarta indebidamente FR-04 y NFR-04. | ADR obligatorio con la tabla de tradeoffs, decidido antes de cualquier despliegue. |
 | Dependencia de la capa gratuita de Cloudflare y de sus términos. | Medio: un cambio de política obligaría a migrar la entrada. | Aislar la entrada tras una frontera clara, de modo que cambiar de opción no toque el adaptador. |
-| Aprobación de la aplicación de Meta más lenta de lo previsto. | Medio: retrasa toda la Fase B. | Iniciar el trámite en cuanto se abra la compuerta, en paralelo al trabajo técnico. |
-| La migración de una célula piloto rompe su historial. | Alto: pérdida de contexto conversacional de clientes reales. | Respaldo previo obligatorio con restauración verificada, y comprobación de continuidad como criterio de aceptación. |
+| Aprobación de la aplicación de Meta más lenta de lo previsto. | Medio: retrasa la incorporación del canal oficial y, con ella, al cliente que la justificaba. | Iniciar el trámite en cuanto aparezca ese cliente, en paralelo al trabajo técnico. |
+| La migración de una célula rompe su historial. | Alto: pérdida de contexto conversacional de clientes reales. | Respaldo previo obligatorio con restauración verificada, comprobación de continuidad como criterio de aceptación, y ensayo del procedimiento antes de aplicarlo a una célula de cliente. |
+| **Se trata esta etapa como una migración y se arrastra a células que no la necesitan.** | Alto: se rompe lo que funciona, se retira un sidecar que es permanente sobre canal propio y se traslada al cliente un coste de transporte que no había pedido. | El canal oficial **se añade, no sustituye**: la migración es **opcional y por demanda**, la retirada del sidecar se limita a las células efectivamente migradas, y los criterios de aceptación miden los dos presupuestos de memoria por separado. |
+| **El coste del canal oficial se calcula con el supuesto derogado de "transporte ≈ 0".** | Alto: se fija precio por debajo del coste real desde el primer cliente. | Recálculo obligatorio (tarea 3) con la tarifa de mensajes de servicio vigente desde el 1 de octubre de 2026, reverificada en el momento de ejecutar la etapa y con la salvedad de que la página oficial de precios podía no reflejarla. |
+| **Los dos adaptadores divergen y el puerto se bifurca de facto.** | Muy alto: se pierde justo la propiedad que justificaba el puerto, y con retraso, porque nada falla de golpe. | Suite de contrato **única** ejecutada contra ambos adaptadores, con ambos vivos a la vez en el mismo servidor, como criterio de aceptación. |
 | Reserializar el cuerpo del webhook antes de validar la firma. | Alto: la firma falla de forma intermitente e inexplicable. | Validar siempre sobre los bytes crudos recibidos, antes de cualquier deserialización, con prueba explícita. |
 | Procesar el mensaje antes de responder a Meta. | Alto: se superan los tiempos de espera y se dispara la tormenta de reintentos. | Responder `200 OK` y encolar; la prueba de integración mide el tiempo hasta la respuesta. |
 
@@ -164,9 +242,16 @@ transporte crudos en `sessions.db` habrá valido cada minuto invertido.
 
 ## Dependencias
 
-* **De otras etapas:** **la compuerta de la etapa A-7 debe estar abierta.** Esta etapa no se inicia
-  antes. Requiere además todas las etapas de la Fase A completas.
-* **Externas:** una aplicación de Meta aprobada con acceso a la Cloud API, un WABA, y —según la
-  opción elegida— una cuenta de Cloudflare o un VPS contratado.
-* **Decisiones de producto pendientes:** el **modelo de monetización**, porque a partir de esta fase
-  hay clientes de pago.
+* **De otras etapas:** **la aparición de un cliente que justifique el canal oficial.** La condición
+  anterior —la compuerta del tercer cliente de la etapa A-7, de `adr-0008`— queda **derogada el 28 de
+  julio de 2026 por `adr-0014`**. Requiere además todas las etapas de la Fase A completas y en operación, incluido el canal
+  propio funcionando, que no se detiene por esta etapa.
+* **Externas:** una aplicación de Meta aprobada con acceso a la Cloud API, un WABA, —según la opción
+  elegida— una cuenta de Cloudflare o un VPS contratado, y —si se adopta el modo coexistencia— un
+  **Solution Partner o Tech Provider** que provea el Embedded Signup, porque no hay ruta de Cloud API
+  directa. Requiere además la **tarifa de mensajes de servicio de Meta publicada** para poder cerrar
+  el coste por conversación.
+* **Decisiones de producto pendientes:** el **modelo de monetización**, ahora con un componente
+  adicional: el transporte del canal oficial deja de costar aproximadamente cero desde el 1 de
+  octubre de 2026, de modo que una célula sobre canal oficial y una sobre canal propio tienen
+  estructuras de coste distintas y no admiten el mismo precio sin analizarlo.

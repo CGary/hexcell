@@ -8,15 +8,15 @@ La unidad desplegable por cliente se denomina **célula**. En la CLI y en el có
 
 ---
 
-## 🧭 Estrategia de dos fases
+## 🧭 Estrategia de dos canales que conviven
 
-El producto no construye de golpe la infraestructura completa: primero valida el negocio y solo después invierte en el canal oficial.
+Las dos fases no son una secuencia: son **dos canales vivos a la vez**, y cada célula se despliega sobre el que le corresponde.
 
-* **Fase A — MVP de validación (canal no oficial).** Se usa la biblioteca **whatsmeow** (Go, protocolo WhatsApp Web) sobre un **websocket saliente**: sin webhook, sin IP pública, sin Caddy y sin TLS entrante. Alcance cerrado a **dos células piloto** (`piloto-01` y `piloto-02`), cada una con un número de WhatsApp nuevo y dedicado. Docker desde el primer día. Los riesgos —ban del número, roturas de protocolo y violación de los ToS de WhatsApp— se asumen de forma consciente y acotada, y están documentados en el PRD.
-* **Compuerta.** Cuando las dos células piloto operen de forma estable y el negocio quede validado, **el tercer cliente dispara la Fase B**. No se comercializa sobre canal no oficial.
-* **Fase B — Comercial (canal oficial).** Meta Cloud API con webhooks. Aquí se descongelan Caddy, los subdominios, el On-Demand TLS y el Embedded Signup. La entrada pública está **pendiente de ADR**: Cloudflare Tunnel en capa gratuita (TLS terminado en el edge, sin necesidad del handshake anti-Hairpin) o VPS de ~3 USD/mes con WireGuard (TLS terminado en el propio Caddy, conservando la arquitectura original).
+* **Fase A — Canal propio en producción.** Se usa la biblioteca **whatsmeow** (Go, protocolo WhatsApp Web) sobre un **websocket saliente**: sin webhook, sin IP pública, sin Caddy y sin TLS entrante. Es el **canal por defecto y permanente**, con clientes de pago reales encima; no tiene límite de dos pilotos ni fecha de caducidad. `piloto-01` y `piloto-02` son las dos primeras células, no el alcance total. Docker desde el primer día. Los riesgos —baneo del número (**estructural**: Meta detecta la biblioteca por su huella de protocolo, y ninguna medida de comportamiento lo elimina), roturas de protocolo, mantenimiento con bus factor 1 y violación de los ToS de WhatsApp— se asumen de forma consciente y permanente, y están documentados en el PRD.
+* **Compuertas de riesgo.** La compuerta del tercer cliente **queda derogada** (28 de julio de 2026), igual que la regla de que no se comercializa sobre canal no oficial. Lo que disciplina el crecimiento es un **techo duro de cartera** mientras el canal propio sea el único y un **umbral de incidentes que congela altas**; ambos valores son decisiones de negocio pendientes.
+* **Fase B — Canal oficial adicional.** Meta Cloud API con webhooks, para las células que lo requieran. Se activa **cuando aparece un cliente que lo justifique** —típicamente una empresa medianamente grande que pueda asumir el alta y el coste—, no en una fecha ni con un número de clientes. **Se suma al canal propio; no lo sustituye ni retira ningún sidecar.** Aquí se descongelan Caddy, los subdominios, el On-Demand TLS y el Embedded Signup. La entrada pública está **pendiente de ADR**: Cloudflare Tunnel en capa gratuita (TLS terminado en el edge, sin necesidad del handshake anti-Hairpin) o VPS de ~3 USD/mes con WireGuard (TLS terminado en el propio Caddy, conservando la arquitectura original).
 
-La pieza que hace posible el salto sin reescribir el producto es el **puerto de canal** (`ChannelAdapter`, FR-12): un trait del núcleo Rust que normaliza eventos entrantes, envío, identidad de conversación y acuses, de modo que cambiar de canal sea cambiar de adaptador.
+La pieza que hace posible que ambos canales convivan sin reescribir el producto es el **puerto de canal** (`ChannelAdapter`, FR-12): un trait del núcleo Rust que normaliza eventos entrantes, envío, identidad de conversación y acuses, de modo que sumar un canal sea sumar un adaptador.
 
 Detalle completo en [docs/PRD.md](docs/PRD.md) (sección "Estrategia de Canal por Fases") y en el [plan de implementación](docs/plan/README.md).
 
@@ -25,7 +25,7 @@ Detalle completo en [docs/PRD.md](docs/PRD.md) (sección "Estrategia de Canal po
 ## 🛡️ Pilares de la Arquitectura de Software
 
 ### 1. Inferencia Externa y Hardware Local Protegido
-El hardware local no procesa modelos de lenguaje grande (LLMs). Toda la inferencia semántica y generativa se delega mediante conexiones HTTPS salientes hacia infraestructuras externas de bajo costo (Gemini Flash, Groq u OpenRouter). El motor nativo en Rust limita su consumo a la lógica de control, enrutamiento, consumo de API y consultas vectoriales locales, con un consumo objetivo de **≤ 80 MB de RAM por célula en la Fase A** (núcleo Rust más el sidecar Go de whatsmeow) y **< 50 MB en la Fase B**, ya sin sidecar.
+El hardware local no procesa modelos de lenguaje grande (LLMs). Toda la inferencia semántica y generativa se delega mediante conexiones HTTPS salientes hacia infraestructuras externas de bajo costo (Gemini Flash, Groq u OpenRouter). El motor nativo en Rust limita su consumo a la lógica de control, enrutamiento, consumo de API y consultas vectoriales locales, con un **presupuesto de línea base de ≤ 80 MB de RAM por célula sobre canal propio** (núcleo Rust más el sidecar Go de whatsmeow, que es permanente) y **< 50 MB en una célula sobre canal oficial**, que no lleva sidecar. Esa cifra **no está validada bajo carga sostenida**: es una estimación de diseño que debe convertirse en un objetivo medido con límites de `cgroup` y una prueba de carga, y hasta entonces **el techo real de células por servidor es desconocido** (ver la nota de NFR-01 en el PRD).
 
 ### 2. Persistencia Segregada en SQLite Dual y Aislamiento WAL
 Para evitar la contención de escrituras concurrentes y el bloqueo de transacciones (`SQLITE_BUSY`) al interactuar con servicios de red de alta latencia, cada célula corre en un contenedor Docker aislado equipado con dos bases de datos físicas independientes:
@@ -39,10 +39,12 @@ Las actualizaciones de conocimiento se gestionan en una base de datos en sombra 
 3. Reasignar de forma atómica el enlace simbólico del sistema de archivos y actualizar el pool de conexiones en memoria empleando `ArcSwap`.
 4. Ejecutar un drenaje controlado asíncrono (`Graceful Drain`) de las conexiones del pool obsoleto, erradicando corrupciones o bloqueos de descriptores de archivos (`-wal` y `-shm`).
 
-### 4. Puerto de Canal: la Frontera de Migración
+### 4. Puerto de Canal: la Frontera de Coexistencia
 El núcleo Rust no conoce ningún transporte de WhatsApp. Toda integración vive detrás del trait `ChannelAdapter`, que normaliza el evento entrante canónico (remitente, conversación, contenido, marca temporal e identificador de deduplicación), el envío `send(conversation_id, contenido)`, la identidad de conversación mapeada a un identificador interno, y los acuses (`sent`/`delivered`/`read`/`failed`). Un sub-trait opcional cubre el ciclo de vida de sesión —emparejamiento por QR o código y persistencia de credenciales— que solo implementan los adaptadores no oficiales.
 
-En la Fase A, el adaptador whatsmeow corre como **sidecar Go** junto al núcleo Rust: cada célula son dos contenedores que comparten red local y volumen, comunicados por IPC sobre socket local. El sidecar añade unos 15-30 MB de RAM.
+El puerto no es la frontera de una migración: sostiene **dos adaptadores vivos a la vez** en células distintas del mismo servidor. Se abstrae hacia el caso más restrictivo (la Cloud API), con una distinción que importa: **el tipo admite el resultado restrictivo, pero la política de cada adaptador decide si lo produce**. El adaptador del canal propio nunca devuelve `FueraDeVentana` porque su transporte no impone ninguna ventana de 24 horas, y fabricarla sería degradar el producto sin motivo.
+
+En una célula sobre canal propio, el adaptador whatsmeow corre como **sidecar Go** junto al núcleo Rust: cada célula son dos contenedores que comparten red local y volumen, comunicados por IPC sobre socket local. El sidecar añade unos 15-30 MB de RAM, y ese coste es **permanente**: no es andamiaje que desaparezca más adelante, sino parte de la línea base de toda célula sobre canal propio.
 
 ### 5. Defensa Perimetral y Control Presupuestario (GCRA)
 El control de admisión **GCRA (Generic Cell Rate Algorithm)** se aplica sobre el **flujo normalizado del puerto de canal**, no sobre HTTP, de modo que el mecanismo sea idéntico en ambas fases:
@@ -54,7 +56,9 @@ El control de admisión **GCRA (Generic Cell Rate Algorithm)** se aplica sobre e
 
 ## 🛠️ Flujo de Onboarding e Inyección de Red (Anti-Hairpin NAT) *(Fase B)*
 
-> Esta sección describe el alta sobre el canal oficial y **queda congelada hasta la compuerta del tercer cliente**. El alta de las células piloto de la Fase A no usa nada de lo que sigue: se resuelve con un emparejamiento por QR o código contra la sesión whatsmeow del sidecar.
+> Esta sección describe el alta sobre el canal oficial y **queda congelada hasta que aparezca un cliente que justifique el canal oficial** —típicamente una empresa medianamente grande que pueda asumir el alta y su coste—. Ya no la dispara ningún número de clientes: la compuerta del tercer cliente está derogada. El alta de una célula sobre canal propio no usa nada de lo que sigue: se resuelve con un emparejamiento por QR o código contra la sesión whatsmeow del sidecar.
+>
+> **Opción preferente a evaluar cuando llegue ese momento: el [modo coexistencia](https://developers.facebook.com/docs/whatsapp/embedded-signup/custom-flows/onboarding-business-app-users/) de Meta.** Permite que un mismo número funcione a la vez en la app de WhatsApp Business del móvil y en la Cloud API, sincronizando 180 días de historial y contactos, y el integrador recibe por webhook (`smb_message_echoes`) lo que el dueño responde a mano desde su app. Resuelve de un golpe la interfaz de intervención humana y desmonta el argumento de que el cliente pierde su bandeja del móvil. Limitaciones: exige Embedded Signup de un Solution Partner o Tech Provider (no hay ruta de Cloud API directa), 20 mensajes por segundo fijos, sin grupos, sin mensajes efímeros, sin vista única, sin ubicación en vivo, sin listas de difusión y sin catálogo ni pedidos por API.
 
 El proceso de alta de una nueva microempresa utiliza el flujo **Meta Embedded Signup** bajo una única aplicación del proveedor para una experiencia de usuario sin fricción técnica. El aislamiento de red se logra mediante la propiedad `override_callback_uri` de la API Graph, enviando el tráfico de cada WABA directamente al subdominio de la célula (`https://clienteX.midominio.com/webhook`).
 

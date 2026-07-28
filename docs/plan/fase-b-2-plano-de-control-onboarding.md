@@ -1,7 +1,8 @@
 # Fase B · Etapa 2 — Plano de control y onboarding comercial
 
-**Duración relativa:** sin estimar. **La Fase B está CONGELADA hasta la compuerta del tercer
-cliente**; sus etapas se describen en alcance y dependencias, no en días de trabajo.
+**Duración relativa:** sin estimar. **La Fase B permanece sin planificar hasta que aparezca un
+cliente que justifique el canal oficial**; sus etapas se describen en alcance y dependencias, no en
+días de trabajo.
 
 ---
 
@@ -141,8 +142,8 @@ certificadora, y esa autoridad **sí** valida el entorno WAN desde fuera.
 
 ## Tareas
 
-*(Sin estimación: la Fase B no se dimensiona hasta que se abra la compuerta. El desglose depende
-además de la opción de entrada pública elegida en la etapa B-1.)*
+*(Sin estimación: la Fase B no se dimensiona hasta que aparezca el cliente que la justifique. El
+desglose depende además de la opción de entrada pública elegida en la etapa B-1.)*
 
 1. **Implementar el cliente de la API de administración de Caddy**, con operaciones de grano fino
    sobre la ruta concreta.
