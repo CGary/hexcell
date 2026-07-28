@@ -48,6 +48,16 @@ es que ninguna violación del invariante de solo-respuesta salga de nuestro prop
   teléfono), con una interfaz de operación que no obligue a exponer el terminal al cliente.
 * **Persistencia de sesión** en el `sqlstore` de whatsmeow sobre el volumen de la célula, de modo que
   un reinicio del contenedor reanude la sesión sin re-escanear el QR.
+* **Ejecución real de la copia del `sqlstore` y ensayo extremo a extremo de la restauración.** La
+  etapa A-2 entrega el procedimiento de respaldo de las **cuatro** bases, el esquema, el runbook con
+  su bifurcación y el **contrato IPC** de la copia del `sqlstore`; lo que no puede entregar es su
+  ejecución, porque allí el sidecar todavía no existe y sus criterios se verifican contra el adaptador
+  simulado. Aquí se implementa la operación IPC que hace el `VACUUM INTO` **dentro del proceso del
+  sidecar**, sobre sus propias conexiones y respetando el WAL, y se ensaya la restauración completa
+  **contra el canal real**: la célula restaurada reconecta a WhatsApp y responde a un mensaje real.
+  Las **dos ramas** de la regla de restauración —`LoggedOut` con `device_removed` frente a cualquier
+  otra causa— se ejercitan en esta etapa, que es la que produce la taxonomía de desconexión capaz de
+  distinguirlas.
 * **Reconexión automática con retroceso exponencial** ante caídas del websocket, con límite superior
   de espera y registro de cada intento.
 * **Política de reconexión diferenciada ante baneo temporal** [causa documentada]. Ante la variante de
@@ -100,8 +110,15 @@ es que ninguna violación del invariante de solo-respuesta salga de nuestro prop
 * Implementación del trait `ChannelAdapter` en Rust sobre ese IPC, incluido el **sub-trait de ciclo de
   vida de sesión** (emparejamiento y persistencia de credenciales), que en la Fase B quedará sin
   implementar porque la Cloud API no lo necesita.
-* Mapeo del **JID** de whatsmeow al identificador interno de conversación, dentro del adaptador. El
-  JID no cruza la frontera del puerto.
+* Mapeo del **JID** de whatsmeow al identificador interno de conversación, **dentro del adaptador**.
+  El JID no cruza la frontera del puerto. El mapeo es propiedad del **adaptador, nunca del núcleo**
+  (`adr-0010`), que solo conoce el identificador interno y lo trata como opaco, y persiste en un
+  **almacén propio del adaptador sobre el volumen de la célula, separado del `sqlstore` de
+  whatsmeow**. La separación no es cosmética: la rama `LoggedOut` con `device_removed` obliga a
+  descartar el `sqlstore`, y el mapeo tiene que **sobrevivir** a ese re-emparejamiento para que cada
+  contacto siga cayendo en su hilo de siempre. Guardarlo dentro del `sqlstore` lo destruiría
+  exactamente en el único escenario en el que hace falta. Ese almacén es la **cuarta base** del
+  respaldo de la etapa A-2, y en él vive también la lista de exclusión (STOP).
 * Traducción de los acuses del protocolo a los acuses normalizados `sent`/`delivered`/`read`/`failed`.
 * **Invariante de solo-responder impuesto por el sistema de tipos** [causa documentada]. El bot nunca
   inicia una conversación, y eso deja de ser una política verificada a posteriori para pasar a ser una
@@ -150,8 +167,10 @@ es que ninguna violación del invariante de solo-respuesta salga de nuestro prop
 * **Lista de exclusión (STOP) persistente por célula y contacto** [causa documentada]. Efecto
   inmediato, **sin caducidad**, **precedencia sobre todo lo demás** —sobre la cola de salida, sobre el
   cortacircuitos y sobre cualquier respuesta pendiente— y **una única confirmación de baja**, que es
-  el último mensaje que ese contacto recibe. Persiste en el volumen de la célula y sobrevive a
-  reinicios, restauraciones y re-emparejamientos.
+  el último mensaje que ese contacto recibe. Persiste **en el almacén de identidad del adaptador**
+  —el mismo que guarda el mapeo, separado del `sqlstore`— y por esa razón sobrevive a reinicios,
+  restauraciones y re-emparejamientos: si viviera en el `sqlstore`, un `device_removed` daría de alta
+  otra vez a quien pidió no recibir nada.
 * **Rampa de volumen** configurable en las primeras semanas de vida de cada célula [precautorio]. Se
   entrega el mecanismo y sus parámetros. Explícitamente **fuera de alcance**: los protocolos de
   "calentamiento" con pasos y plazos y el *jitter* aleatorio como supuesta imitación de un humano.
@@ -195,8 +214,14 @@ es que ninguna violación del invariante de solo-respuesta salga de nuestro prop
   de `Outbound`, con la prueba de que el código que intenta esquivarlos no compila.
 * **Cola de salida con TTL absoluto**, con su parámetro de TTL documentado y su contador de descartes
   expuesto.
-* **Lista de exclusión (STOP)** persistente por célula y contacto, con su esquema y su punto de
-  precedencia en el camino de envío.
+* **Almacén de identidad del adaptador**: base SQLite propia sobre el volumen de la célula, separada
+  del `sqlstore`, con el esquema del mapeo JID → identificador interno anclado al contacto. Es la
+  **cuarta base** del respaldo de la etapa A-2 y aloja también la lista de exclusión (STOP).
+* **Lista de exclusión (STOP)** persistente por célula y contacto sobre ese mismo almacén, con su
+  esquema y su punto de precedencia en el camino de envío.
+* **Operación IPC de copia del `sqlstore`** implementada según el contrato que fija la etapa A-2, con
+  el informe del **ensayo de restauración extremo a extremo** ejecutado contra el canal real y con
+  las dos ramas de `device_removed` recorridas.
 * **Taxonomía de desconexión** documentada como parte de la especificación del IPC, con la
   correspondencia explícita entre cada variante y el estado de sesión que se proyecta a
   `GET /health/ready`.
@@ -250,8 +275,13 @@ es que ninguna violación del invariante de solo-respuesta salga de nuestro prop
    señal cruda: ambas viajan por el IPC.
 8. **Traducir eventos y acuses al formato canónico** (1,5 días). Mensaje entrante a evento canónico
    con su identificador de deduplicación; acuses del protocolo a `sent`/`delivered`/`read`/`failed`.
-9. **Implementar el mapeo JID → identificador interno** (1 día). Dentro del adaptador, con la garantía
-   verificable de que el JID no cruza la frontera del puerto.
+9. **Implementar el mapeo JID → identificador interno y su almacén propio** (1,5 días). Dentro del
+   adaptador, con la garantía verificable de que el JID no cruza la frontera del puerto. El mapeo
+   persiste en un **almacén del adaptador sobre el volumen de la célula, separado del `sqlstore`**,
+   anclado al **contacto** y nunca al dispositivo. La separación es el punto entero de la tarea: un
+   `LoggedOut` con `device_removed` obliga a descartar el `sqlstore`, de modo que un mapeo alojado
+   dentro de él desaparecería justo cuando el re-emparejamiento necesita que sobreviva. Ese almacén es
+   la **cuarta base** del respaldo de la etapa A-2 y su esquema se declara aquí.
 10. **Implementar `WhatsmeowAdapter` en Rust** (1,5 días). Cliente del IPC envuelto en el trait,
    incluido el sub-trait de ciclo de vida de sesión, con manejo de la caída del sidecar.
 11. **Imponer el invariante de solo-responder en el sistema de tipos** (1 día). Testigo de evento
@@ -266,9 +296,10 @@ es que ninguna violación del invariante de solo-respuesta salga de nuestro prop
     deliberada de cola de mensajes muertos**: nada se reencola al arrancar. El TTL queda como
     parámetro documentado a calibrar, no como constante escondida en el código.
 13. **Implementar la lista de exclusión (STOP)** (0,5 días). Tabla persistente por célula y contacto
-    sobre el volumen, consulta en el punto más temprano del camino de envío —por delante de la cola de
-    salida y del cortacircuitos—, efecto inmediato, sin caducidad y con una única confirmación de
-    baja.
+    **en el almacén de identidad del adaptador** —no en el `sqlstore`, para que un re-emparejamiento
+    no reviva contactos dados de baja—, consulta en el punto más temprano del camino de envío —por
+    delante de la cola de salida y del cortacircuitos—, efecto inmediato, sin caducidad y con una
+    única confirmación de baja.
 14. **Implementar la disciplina de comportamiento del canal** (1,5 días). Latencia mínima de respuesta
     y horario de atención configurables por célula; emisión del indicador de "escribiendo" antes de
     responder; variación de la plantilla del mensaje de presentación; un solo mensaje saliente por
@@ -295,6 +326,16 @@ es que ninguna violación del invariante de solo-respuesta salga de nuestro prop
     rotura recurrente es `Client outdated (405)` y que **no se puede comprometer ningún tiempo de
     recuperación** que dependa de un mantenedor voluntario. El escalonado de la actualización por la
     cartera, con la célula centinela, se ejecuta desde la etapa A-6.
+18. **Ejecutar la copia del `sqlstore` por IPC y ensayar la restauración extremo a extremo**
+    (1,5 días). Implementación de la operación IPC que la etapa A-2 dejó declarada como contrato: el
+    núcleo la ordena y **el proceso del sidecar ejecuta el `VACUUM INTO`** sobre sus propias
+    conexiones, respetando el WAL, con verificación de integridad y traslado al mismo destino que las
+    otras tres copias. A continuación, el ensayo completo que A-2 no podía hacer: restaurar una célula
+    sobre un entorno limpio a partir de las **cuatro** bases y comprobar que **reconecta al canal y
+    responde a un mensaje real**. Se recorren las **dos ramas** de la regla de restauración —con
+    `device_removed`, sin restaurar el `sqlstore` y por re-emparejamiento; con cualquier otra causa,
+    restaurando el respaldo—, que es lo que exige tener delante la taxonomía de desconexión de la
+    tarea 7.
 
 ---
 
@@ -327,7 +368,25 @@ es que ninguna violación del invariante de solo-respuesta salga de nuestro prop
   humana. Es criterio de aceptación bloqueante y no una recomendación de operación: persistir escala
   el baneo temporal a permanente.
 * El identificador JID de whatsmeow **no aparece** en ninguna estructura del núcleo ni en
-  `sessions.db`; solo vive dentro del adaptador.
+  `sessions.db`; solo vive dentro del adaptador, en su almacén de identidad.
+* **El almacén de identidad del adaptador es un archivo distinto del `sqlstore`**, verificado por
+  inspección de las rutas del volumen. Una prueba borra el `sqlstore` simulando `device_removed`,
+  re-empareja la célula y comprueba que **el mapeo y la lista de exclusión (STOP) siguen intactos** y
+  que cada contacto vuelve a caer en su hilo anterior. Si el almacén viviera dentro del `sqlstore`,
+  esta prueba fallaría, y es exactamente el escenario en el que se necesita que no falle.
+* **La copia del `sqlstore` la produce el propio proceso del sidecar** mediante `VACUUM INTO` sobre
+  sus conexiones, por orden IPC del núcleo y según el contrato que fija la etapa A-2, nunca una
+  lectura del fichero desde fuera. Se verifica sobre una célula en operación, sin `SQLITE_BUSY` y sin
+  interrumpir el procesamiento de mensajes.
+* **La restauración extremo a extremo está ensayada sobre las cuatro bases y termina en un bot que
+  contesta.** Una célula reconstruida sobre un entorno limpio **reconecta al canal y responde a un
+  mensaje real**; recuperar los ficheros con la sesión muerta cuenta como fallo, no como éxito
+  parcial. Es el criterio que la etapa A-2 dejó declarado y que solo aquí se puede ejecutar.
+* **La regla de restauración del `sqlstore` está ensayada en sus dos ramas.** Con `LoggedOut` y
+  `device_removed`, el procedimiento **no restaura** el `sqlstore` y va directo al re-emparejamiento
+  por `PairPhone()`; con cualquier otra causa —corrupción del archivo o pérdida de disco simuladas—,
+  restaura el respaldo y la sesión revive sin tocar el teléfono. Ambas ramas se recorren de verdad: un
+  procedimiento de recuperación nunca ejecutado no es un procedimiento, es una suposición.
 * Los acuses del protocolo se reflejan en el núcleo exclusivamente como
   `sent`/`delivered`/`read`/`failed`.
 * El bot **no emite ningún mensaje que no sea respuesta a un mensaje entrante**, y eso se verifica
@@ -377,7 +436,8 @@ es que ninguna violación del invariante de solo-respuesta salga de nuestro prop
 | **Rotura del protocolo** por un cambio de WhatsApp, con **bus factor 1** en la biblioteca. | Alto: el canal queda inoperativo hasta que el arreglo se publique, y prácticamente todos los ~1.620 commits de whatsmeow son de un único mantenedor. | Dependencia fijada **por commit** y aislada en el sidecar, de modo que el arreglo sea un *bump* de una línea, con ventana de actualización definida y célula centinela que la ensaya 72 h antes de escalonarla (etapa A-6). El patrón recurrente es `Client outdated (405)` (issues #415 y #1031) y el arreglo es siempre actualizar. **No se compromete ningún tiempo de recuperación** que dependa de un tercero voluntario. Precedente: [la rotura de abril de 2026](https://github.com/lharries/whatsapp-mcp/issues/216) se resolvió en días, frente al [incidente equivalente en Baileys](https://github.com/WhiskeySockets/Baileys/issues/2488); con los clientes se pacta expresamente la posibilidad de semanas de silencio (etapa A-7). |
 | **Correr atrasado** en la versión de la biblioteca. | Medio-alto, y por partida doble: se deja de conectar por `Client outdated (405)` y se declara una versión de cliente atípica, que es señal por sí misma. | Pinneado por commit **con ventana de actualización declarada**, no pinneado indefinido. Actualizar es la mitigación, no el riesgo; lo que se controla es el ritmo. |
 | **Colapsar las variantes de desconexión** en un único estado "desconectado". | Alto: destruye la señal. El baneo temporal deja de distinguirse de un `StreamReplaced`, y con él se pierde el único aviso previo que suele existir. | Taxonomía instrumentada variante a variante en el IPC, con criterio de aceptación que las prueba por separado. El estado de sesión de `/health/ready` es una proyección de la taxonomía, nunca su sustituto. |
-| Pérdida de las credenciales de sesión y re-emparejamiento forzoso. | Medio: sin una vía de recuperación acordada, obliga a coordinar con el piloto-02 en el peor momento. | **Dos capas.** Capa 1: el `sqlstore` entra en el respaldo de la etapa A-2 como tercera base, copiado por el propio sidecar vía `VACUUM INTO` sobre orden IPC y con frecuencia alta —esta etapa **expone la operación IPC** que lo hace posible, no la da por hecha—. Capa 2: re-emparejamiento por `PairPhone()`, con código de ocho caracteres que el piloto teclea en su propio teléfono, ensayado antes del alta de piloto-02. |
+| Pérdida de las credenciales de sesión y re-emparejamiento forzoso. | Medio: sin una vía de recuperación acordada, obliga a coordinar con el piloto-02 en el peor momento. | **Dos capas.** Capa 1: el `sqlstore` entra en el respaldo de la etapa A-2 como cuarta base, copiado por el propio sidecar vía `VACUUM INTO` sobre orden IPC y con frecuencia alta —esta etapa **expone la operación IPC** que lo hace posible, no la da por hecha—. Capa 2: re-emparejamiento por `PairPhone()`, con código de ocho caracteres que el piloto teclea en su propio teléfono, ensayado antes del alta de piloto-02. |
+| **El mapeo de identidad se guarda dentro del `sqlstore` del sidecar**, por parecer el sitio natural para "todo lo de whatsmeow". | Muy alto y silencioso: la rama `LoggedOut` con `device_removed` obliga a descartar el `sqlstore`, de modo que el mapeo y la lista de exclusión (STOP) se destruirían **en el único escenario en el que se necesita que sobrevivan**. Tras el re-emparejamiento cada contacto abriría un hilo nuevo y los dados de baja volverían a recibir mensajes. | El almacén de identidad es una base **separada** del `sqlstore`, decidida así por escrito en `adr-0010` y registrada como descarte en la bitácora. Hay criterio de aceptación que borra el `sqlstore`, re-empareja y exige que el mapeo y la lista STOP sigan en pie. |
 | Un fallo de corriente entre el acuse de protocolo y el `fsync` del outbox. | Bajo, pero real e imposible de eliminar: el acuse hacia WhatsApp es automático y no se puede diferir. | Se documenta explícitamente en el alcance en lugar de prometer entrega exactamente-una-vez. El outbox reduce la ventana de pérdida a milisegundos, de "todo lo que hubiera en memoria" a "el evento en vuelo". |
 | El JID se filtra al núcleo por comodidad de depuración. | Alto: rompe la frontera entre el núcleo y el transporte y contamina datos históricos. | Criterio de aceptación explícito y prueba automatizada. |
 | Un fallo del IPC pierde eventos entrantes silenciosamente. | Alto: mensajes de clientes finales que nunca se responden, sin rastro. | Outbox durable con `fsync` como primera acción y confirmación explícita del núcleo; semántica de reentrega especificada por escrito antes de implementar; y prueba de reinicio desacompasado de ambos procesos en ambos órdenes. |
@@ -389,12 +449,19 @@ es que ninguna violación del invariante de solo-respuesta salga de nuestro prop
 ## Dependencias
 
 * **De otras etapas:** etapa A-2 completa. El adaptador sustituye al simulado en un núcleo que ya
-  funciona, la deduplicación por identificador de FR-12 que hace inofensiva la reentrega del outbox ya
-  existe, y el procedimiento de respaldo al que esta etapa aporta la operación IPC de copia del
-  `sqlstore` ya está construido.
-* **Hacia otras etapas:** la etapa A-2 consume la variante `LoggedOut` con `device_removed` de la
-  taxonomía, porque de ella depende su regla de restauración del `sqlstore`, y verifica contra esta
-  etapa que la continuidad del hilo sobrevive al re-emparejamiento. La etapa A-6 consume las señales
+  funciona y la deduplicación por identificador de FR-12 que hace inofensiva la reentrega del outbox
+  ya existe. Del respaldo, la etapa A-2 entrega el **procedimiento de las cuatro bases, el esquema, el
+  runbook con su bifurcación y el contrato IPC** de la copia del `sqlstore`, verificados hasta donde
+  el adaptador simulado permite; **lo que no entrega es la copia ejecutada ni el ensayo contra un
+  canal real**, porque allí no hay sidecar al que ordenarle nada ni canal al que reconectar. Esta
+  etapa lo completa: implementa la operación IPC, ejecuta el `VACUUM INTO` dentro del proceso del
+  sidecar y ensaya la restauración extremo a extremo con las dos ramas de `device_removed`
+  (tarea 18).
+* **Hacia otras etapas:** la regla de restauración del `sqlstore` que la etapa A-2 deja **escrita**
+  solo se puede **ejercitar** aquí, porque es aquí donde nace la variante `LoggedOut` con
+  `device_removed` que separa sus dos ramas; lo mismo vale para la continuidad del hilo tras el
+  re-emparejamiento, ensayada allí contra el adaptador simulado y aquí contra el canal real. La
+  etapa A-6 consume las señales
   de alerta y las métricas por célula que aquí se emiten, y ejecuta el escalonado de actualización de
   la biblioteca con su célula centinela.
 * **Externas:** un número de WhatsApp de laboratorio, distinto de los números de los clientes, y un

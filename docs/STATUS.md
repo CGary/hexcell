@@ -52,6 +52,20 @@ adicional cuando aparezca un cliente que lo justifique. Ver [plan/README.md](pla
   más restrictivo con esta distinción: el **tipo** admite el resultado restrictivo, la **política** de
   cada adaptador decide si lo produce; el adaptador del canal propio no impone una ventana de 24 h
   artificial.
+* **El mapeo de identidad de conversación pertenece al adaptador, no al núcleo** (2026-07-28,
+  `adr-0010`). El adaptador traduce el identificador de transporte —JID en whatsmeow, `wa_id` en la
+  Cloud API— al identificador interno y **entrega ya traducido** lo que cruza el puerto; el núcleo
+  trata ese identificador como **opaco** y no lo deriva, ni lo interpreta, ni lo invierte. Se elimina
+  así la responsabilidad duplicada que la etapa A-2 asignaba al núcleo, que habría sido la función
+  identidad. La regla del PRD conserva su alcance estrecho: lo que se prohíbe es que **`sessions.db`**
+  almacene identificadores de transporte crudos, no que existan en ninguna parte —dentro del
+  adaptador existen por necesidad—.
+* **El mapeo persiste en un almacén propio del adaptador, separado del `sqlstore`** (2026-07-28,
+  `adr-0010`), sobre el volumen de la célula. El motivo es la rama `LoggedOut` con `device_removed`:
+  obliga a **descartar** el `sqlstore`, y el mapeo tiene que **sobrevivir** a ese re-emparejamiento
+  para que cada contacto siga cayendo en su hilo. Guardarlo dentro del `sqlstore` lo destruiría justo
+  en el único escenario en que hace falta. En ese mismo almacén vive la **lista de exclusión (STOP)**
+  de la etapa A-3, por la misma razón. Ese almacén es la **cuarta base del respaldo**.
 * **Arquitectura de célula sobre canal propio:** dos contenedores (núcleo Rust + sidecar Go de
   whatsmeow) compartiendo red local y volumen, comunicados por IPC sobre socket local. El sidecar es
   **permanente**, no transitorio.
@@ -61,12 +75,20 @@ adicional cuando aparezca un cliente que lo justifique. Ver [plan/README.md](pla
 * **Células piloto:** `piloto-01` (negocio de prueba del propio dueño) y `piloto-02` (un conocido).
   Son el **comienzo de la cartera**, no su alcance total: ya no existe el límite de dos células.
 * **Respaldos adelantados a la etapa A-2**, en lugar de esperar al endurecimiento final: con pilotos
-  reales no pueden esperar. Cubren **las tres bases** —`sessions.db`, `knowledge_live.db` y el
-  `sqlstore` del sidecar—, este último copiado por el propio sidecar vía `VACUUM INTO` sobre orden
-  IPC y con frecuencia alta (cada pocas horas), porque las credenciales del protocolo Signal
-  evolucionan. El respaldo del `sqlstore` deja de ser transitorio: pasa a ser respaldo de
-  **disponibilidad del canal**. **La restauración solo se da por buena si el bot reconecta y
-  responde**; recuperar ficheros con la sesión muerta cuenta como fallo.
+  reales no pueden esperar. Cubren **las cuatro bases** —`sessions.db`, `knowledge_live.db`, el
+  almacén de identidad del adaptador y el `sqlstore` del sidecar—, este último copiado por el propio
+  sidecar vía `VACUUM INTO` sobre orden IPC y con frecuencia alta (cada pocas horas), porque las
+  credenciales del protocolo Signal evolucionan. El respaldo del `sqlstore` deja de ser transitorio:
+  pasa a ser respaldo de **disponibilidad del canal**. **La restauración solo se da por buena si el
+  bot reconecta y responde**; recuperar ficheros con la sesión muerta cuenta como fallo.
+* **Reparto del respaldo entre A-2 y A-3** (2026-07-28). La etapa A-2 **diseña** el procedimiento
+  completo de las cuatro bases, escribe el runbook con su bifurcación, implementa las copias que no
+  necesitan sidecar y deja versionado el **contrato IPC** de la copia del `sqlstore` sin ejecutarlo;
+  sus criterios de aceptación se cumplen contra el adaptador simulado. La etapa A-3 lo completa con
+  la **copia ejecutada por el propio proceso del sidecar** y el **ensayo extremo a extremo** —célula
+  restaurada que reconecta al canal y responde a un mensaje real, con las dos ramas de
+  `device_removed` recorridas—. Elimina la dependencia circular que exigía a A-2 verificar contra un
+  sidecar que solo existe en A-3.
 * **Regla de restauración del `sqlstore`:** no se restaura **solo** si hubo `LoggedOut` con
   `device_removed` —whatsmeow ya borró la sesión y el dispositivo no existe en el servidor, de modo
   que restaurar es inútil, no inválido—; ante cualquier otra desconexión el respaldo sigue siendo

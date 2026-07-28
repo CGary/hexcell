@@ -76,9 +76,14 @@ intenciones.
 **Los respaldos no esperan al final.** En el plan anterior vivían en la última etapa. Ahora están en
 la etapa A-2, antes incluso de que exista el canal real, porque con pilotos operando sobre datos
 conversacionales de clientes finales de un negocio ajeno, un disco que falla no es un incidente
-técnico: es la pérdida de la confianza que la validación necesita. Y cubren **tres** bases, no dos:
-la sesión del canal vive en el `sqlstore` del sidecar, y restaurar el historial con la sesión muerta
-deja al bot mudo con todos sus datos intactos.
+técnico: es la pérdida de la confianza que la validación necesita. Y cubren **cuatro** bases, no dos:
+la sesión del canal vive en el `sqlstore` del sidecar —restaurar el historial con la sesión muerta
+deja al bot mudo con todos sus datos intactos— y el mapeo de identidad de conversación vive en un
+almacén propio del adaptador, separado del `sqlstore` precisamente para sobrevivir al
+re-emparejamiento que sigue a una desvinculación. La etapa A-2 **diseña** el procedimiento completo y
+ejecuta las copias que no dependen del sidecar; la ejecución real de la copia del `sqlstore` y el
+ensayo de restauración hasta que el bot vuelve a contestar son de la etapa A-3, que es la primera con
+canal al que reconectar.
 
 ### Nomenclatura mínima
 
@@ -134,8 +139,8 @@ Definiciones de los términos que se repiten a lo largo del plan:
 | Nº | Nombre | Objetivo (una línea) | FR / NFR cubiertos | Depende de |
 | :-- | :--- | :--- | :--- | :--- |
 | A-1 | [Fundaciones del repositorio](fase-a-1-fundaciones.md) | Dejar el repositorio, la licencia, el workspace Rust y la CI listos, y declarar el puerto de canal. | FR-12 (declaración), FR-01 (tipos) | — |
-| A-2 | [Núcleo de la célula: mensajería y persistencia dual](fase-a-2-nucleo-persistencia.md) | Construir el motor de mensajería sobre el puerto de canal, con tests de contrato contra el caso restrictivo y respaldo de las tres bases. | FR-01, FR-05, FR-12, NFR-01 (parcial) | A-1 |
-| A-3 | [Adaptador whatsmeow: sidecar Go y puerto de canal](fase-a-3-adaptador-whatsmeow.md) | Conectar la célula a WhatsApp de verdad, con outbox durable, sesión persistente y disciplina anti-ban. | FR-01 (Fase A), FR-12 (implementación) | A-2 |
+| A-2 | [Núcleo de la célula: mensajería y persistencia dual](fase-a-2-nucleo-persistencia.md) | Construir el motor de mensajería sobre el puerto de canal, con tests de contrato contra el caso restrictivo y el respaldo de las cuatro bases diseñado y probado contra el simulado. | FR-01, FR-05, FR-12, NFR-01 (parcial) | A-1 |
+| A-3 | [Adaptador whatsmeow: sidecar Go y puerto de canal](fase-a-3-adaptador-whatsmeow.md) | Conectar la célula a WhatsApp de verdad, con outbox durable, sesión persistente, disciplina anti-ban y el respaldo del `sqlstore` ejecutado y restaurado hasta que el bot contesta. | FR-01 (Fase A), FR-12 (implementación) | A-2 |
 | A-4 | [Control de admisión y presupuesto](fase-a-4-admision-presupuesto.md) | Impedir que ráfagas de mensajes o el coste del LLM desestabilicen el sistema. | FR-08, FR-09, FR-10 | A-2 (y A-3 para medir con tráfico real) |
 | A-5 | [Motor de conocimiento: Shadow DB y épocas](fase-a-5-conocimiento-shadow-db.md) | Actualizar el conocimiento del bot sin detener la producción ni corromper el WAL. | FR-06, FR-07, NFR-03 | A-2 (y A-4 para el coste de embeddings) |
 | A-6 | [Empaquetado de la célula y CLI de operación](fase-a-6-empaquetado-cli.md) | Convertir núcleo y sidecar en una célula contenedorizada gobernable desde la CLI, con alertas push y dead-man's switch. | FR-02, FR-11 (Fase A), NFR-01, NFR-05 | A-2, A-3, A-4, A-5 |

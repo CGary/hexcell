@@ -114,13 +114,15 @@ comprobaciones automáticas y leer sin ambigüedad qué frontera separa el domin
    compilación de los propios tests; y el cotejo documentado de cada variante y del evento entrante
    canónico contra la documentación oficial de la Meta Cloud API —no solo contra el PRD, que podría
    arrastrar el mismo error de origen sin que nadie lo note.
-2. **Registrar las decisiones de canal en ADR** (0,5 días). Tres registros breves, numerados según el
+2. **Registrar las decisiones de canal en ADR** (0,5 días). Dos registros breves, numerados según el
    [índice de ADR](../adr/README.md): `adr-0008` (estrategia de dos fases con la compuerta del tercer
    cliente, que **se redacta como registro histórico ya derogado**, remitiendo a `adr-0014` —canal
    propio permanente, que lo supersede— y a `adr-0015` —política de convivencia con el riesgo de
-   baneo—, ambos ya existentes en `docs/adr/`), `adr-0009` (elección de whatsmeow frente a
-   alternativas) y `adr-0010` (el puerto de canal como frontera entre el núcleo y el transporte). Son
-   decisiones ya tomadas: el ADR documenta el porqué y las consecuencias, no vuelve a deliberar.
+   baneo—, ambos ya existentes en `docs/adr/`) y `adr-0009` (elección de whatsmeow frente a
+   alternativas). El puerto de canal **ya está registrado en `adr-0010`**, escrito el 28 de julio de
+   2026 junto con la decisión sobre el dueño del mapeo de identidad: esta etapa lo implementa, no lo
+   redacta. Son decisiones ya tomadas: el ADR documenta el porqué y las consecuencias, no vuelve a
+   deliberar.
 3. **Decidir la licencia y registrarla** (0,5 días). Contrastar al menos dos opciones frente al
    objetivo comercial del proyecto, escribir el ADR y colocar el archivo `LICENSE`.
 4. **Completar la configuración del repositorio** (0,5 días). Convención de ramas, convención de
@@ -160,10 +162,12 @@ comprobaciones automáticas y leer sin ambigüedad qué frontera separa el domin
 * Cada variante de esos enums y el evento entrante canónico están cotejados documentalmente contra
   la documentación oficial de la Meta Cloud API, no solo contra el PRD.
 * Existe un archivo `LICENSE` en la raíz y un ADR que justifica la elección.
-* Existen los ADR `adr-0008`, `adr-0009` y `adr-0010`, que registran la estrategia de dos fases
-  —`adr-0008` como registro histórico ya derogado, con su remisión a `adr-0014` y `adr-0015`—, la
-  elección de whatsmeow y el puerto de canal, y el índice de ADR los recoge con esos mismos números y
-  con el estado de cada uno.
+* Existen los ADR `adr-0008` y `adr-0009`, que registran la estrategia de dos fases —`adr-0008` como
+  registro histórico ya derogado, con su remisión a `adr-0014` y `adr-0015`— y la elección de
+  whatsmeow, y el índice de ADR los recoge con esos mismos números y con el estado de cada uno.
+* `adr-0010` ya existe: esta etapa **comprueba que el trait implementado coincide con lo que ese ADR
+  declara** —dueño del mapeo en el adaptador, identificador interno opaco para el núcleo— y no lo
+  reescribe.
 * `cargo build --workspace` y `cargo test --workspace` terminan sin errores desde un clon limpio.
 * `hexcell-meta` compila vacío y no expone ningún tipo ni trait público: su forma queda pendiente
   hasta que se resuelva el ADR-0013.

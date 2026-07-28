@@ -48,6 +48,8 @@ se apoya en un principio de diseño, no.
 | [D-12](#d-12) | Devolver 429/503 a Meta bajo sobrecarga | Reabrible si cambia un hecho externo |
 | [D-13](#d-13) | Encolar mensajes ante `FueraDeVentana` | A determinar |
 | [D-14](#d-14) | Nombres anteriores: ZeroClaw, `hexcell-cell`, "inquilino" | Cerrado |
+| [D-15](#d-15) | Guardar el mapeo de identidad dentro del `sqlstore` del sidecar | Principio de diseño, no reabrir |
+| [D-16](#d-16) | Guardar el identificador de transporte en `sessions.db` | Principio de diseño, no reabrir |
 
 ---
 
@@ -247,6 +249,47 @@ toca para soportar el canal oficial (etapa B-1).**
 * **Registro normativo:** `docs/PRD.md` (FR-08), `docs/adr/README.md` fila `adr-0004`.
 * **Qué tendría que cambiar para reabrirlo:** *hecho externo mutable* — si Meta cambia el
   comportamiento de reintentos de la API Graph.
+
+### D-15
+**Guardar el mapeo de identidad de conversación —y con él la lista de exclusión (STOP)— dentro del
+`sqlstore` del sidecar, en lugar de en un almacén propio del adaptador.**
+
+* **Descartado:** 2026-07-28 (`adr-0010`).
+* **Por qué se descartó:** es el sitio que parece natural, porque "todo lo de whatsmeow vive ahí", y
+  por eso mismo hay que dejarlo escrito. La rama `LoggedOut` con `device_removed` **obliga a descartar
+  el `sqlstore`**: whatsmeow ya ha borrado la sesión, el dispositivo no existe en el servidor de
+  WhatsApp y la única salida es el re-emparejamiento. Un mapeo alojado dentro del `sqlstore` se
+  destruiría **justo en el único escenario en el que se necesita que sobreviva**, y tras el
+  re-emparejamiento cada contacto abriría un hilo nuevo: el cliente percibiría amnesia inmediatamente
+  después de una incidencia, que es el peor momento posible. Con la lista STOP dentro, el daño es
+  peor: un contacto que pidió la baja volvería a recibir mensajes. El mapeo vive por tanto en un
+  almacén propio del adaptador sobre el volumen de la célula, separado del `sqlstore`, y pasa a ser la
+  **cuarta base del respaldo**.
+* **Registro normativo:** `docs/adr/adr-0010-puerto-de-canal.md` (decisión 6 y alternativa C),
+  `docs/plan/fase-a-3-adaptador-whatsmeow.md` (tareas 9 y 13, y su tabla de riesgos),
+  `docs/plan/fase-a-2-nucleo-persistencia.md` (respaldo de las cuatro bases), `docs/STATUS.md`.
+* **Qué tendría que cambiar para reabrirlo:** *principio de diseño.* **No reabrir.** Solo decaería si
+  whatsmeow dejara de borrar la sesión ante `device_removed`, que es precisamente el comportamiento
+  del que depende toda la regla de restauración.
+
+### D-16
+**Guardar el identificador de transporte crudo —el JID de whatsmeow o el `wa_id` de Meta— en
+`sessions.db`, por comodidad de consulta y de depuración.**
+
+* **Descartado:** 2026-07-28 (`adr-0010`); la regla ya estaba en el PRD (FR-12) desde el 2026-07-26.
+* **Por qué se descartó:** contamina datos históricos de clientes de pago y convierte cualquier
+  cambio de canal en una migración de datos, que es exactamente lo que FR-12 existe para evitar. El
+  alcance de la prohibición es **estrecho y hay que citarlo como tal**: lo que se prohíbe es que
+  **`sessions.db`** almacene esos identificadores, no que existan en el sistema. Dentro del adaptador
+  existen por necesidad —alguien tiene que traducir— y ahí es donde se quedan, en el almacén de
+  identidad del adaptador. Enunciar la regla como "en ningún sitio" sería falso y volvería a abrir el
+  debate cada vez que alguien encuentre un JID en el proceso del sidecar.
+* **Registro normativo:** `docs/PRD.md` (FR-12, punto 5),
+  `docs/adr/adr-0010-puerto-de-canal.md` (decisiones 4 y 5, alternativa D),
+  `docs/plan/fase-a-2-nucleo-persistencia.md` (criterio de aceptación con inspección del esquema),
+  `docs/plan/fase-a-3-adaptador-whatsmeow.md` (criterio de aceptación del JID).
+* **Qué tendría que cambiar para reabrirlo:** *principio de diseño.* **No reabrir.** Decaería solo si
+  se abandonara la estrategia de dos canales convivientes, que es el pilar de `adr-0014`.
 
 ---
 
