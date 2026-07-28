@@ -11,6 +11,10 @@ El **canal oficial** (Meta Cloud API) queda pospuesto a una segunda etapa y se i
 adicional cuando aparezca un cliente que lo justifique. Ver [plan/README.md](plan/README.md) y
 [adr/README.md](adr/README.md).
 
+> Lo que se estudió y **no** se hizo, con su motivo y sus condiciones de reapertura, vive en
+> [bitacora-de-descartes.md](bitacora-de-descartes.md). Consúltala antes de reabrir un debate: si la
+> idea ya está allí, no se discute desde cero.
+
 ## Definido
 * **Canal propio permanente y canal oficial aditivo por demanda** (2026-07-28, `adr-0014`, que
   supersede a `adr-0008`). whatsmeow deja de ser un canal temporal de validación y pasa a ser el

@@ -19,6 +19,7 @@ Ante contradicciones, manda el orden siguiente:
 3. **`docs/plan/README.md`** — índice del plan de implementación; un archivo por etapa (`fase-a-N-*.md`, `fase-b-N-*.md`). Cada etapa declara qué FR/NFR cubre.
 4. **`docs/STATUS.md`** — registro vivo del avance (Definido / Pendiente). **Actualizarlo cuando una decisión cambie de estado.**
 5. **`docs/adr/README.md`** — tabla de ADRs; su numeración es fuente de verdad, correlativa, nunca se reutiliza ni reordena. Formato de archivo: `adr-NNNN-titulo.md`.
+6. **`docs/bitacora-de-descartes.md`** — registro de lo que se estudió y **no** se hizo, con el motivo y las condiciones de reapertura. No es normativo: no decide nada, deja rastro. Numeración `D-NN`, correlativa, nunca reutilizada; las entradas no se editan ni se borran, se marcan `REABIERTO`.
 
 ## Arquitectura (lo esencial para no romper el diseño)
 
@@ -39,3 +40,4 @@ Ante contradicciones, manda el orden siguiente:
 * Decisiones de producto abiertas (monetización, flujos de usuario, excepciones comerciales, entrada pública de la Fase B — `adr-0013`, techo duro de cartera, umbral de incidentes) se tratan como bloqueos declarados, no se resuelven de pasada. No inventar números de clientes, de células ni de precios que la documentación no fije.
 * **El riesgo de baneo del canal propio es estructural**, no conductual: Meta detecta la biblioteca por su huella de protocolo. Se documenta como evento esperado, no como fallo; las medidas de mayor valor son las que reducen el daño, no las que reducen la probabilidad. No introducir folclore de proveedores de envío masivo (jitter, protocolos de "calentamiento"), ni proxies, VPN o rotación de IP.
 * Una decisión derogada se **supersede con un ADR nuevo**; nunca se reescribe el viejo ni se reordena la numeración. Las fechas se escriben en formato absoluto (28 de julio de 2026 / 2026-07-28), nunca relativas.
+* **Antes de proponer un cambio de rumbo, un atajo o una técnica nueva, consultar `docs/bitacora-de-descartes.md`.** Si la idea ya está allí, no se vuelve a debatir desde cero: se lee su motivo y su condición de reapertura, y solo se reabre si esa condición se cumple. Todo descarte nuevo se anota en la bitácora **en el mismo commit en que se descarta**; un descarte sin motivo escrito es un descarte perdido.

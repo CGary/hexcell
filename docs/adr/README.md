@@ -25,6 +25,12 @@ escriban los registros no coincida con el orden numérico.
 | `adr-0014-canal-propio-permanente.md` | **Canal propio permanente y canal oficial pospuesto a segunda etapa.** *Supersede a `adr-0008`.* whatsmeow pasa a ser el canal de producción por defecto, permanente y con clientes de pago; la Meta Cloud API se pospone a una segunda etapa como canal adicional que convive, activada por demanda de un cliente que la justifique. Deroga la regla "no se comercializa sobre canal no oficial" y la compuerta del tercer cliente, sustituida por techo duro de cartera y umbral de incidentes. | A-1 | **Vigente** (2026-07-28) |
 | `adr-0015-politica-de-convivencia-con-el-baneo.md` | **Política de convivencia con el riesgo de baneo del canal propio.** Cuatro capas de defensa —reducir la probabilidad, detectar pronto, contener el daño, recuperar— con el baneo tratado como evento esperado y no como fallo, la marca obligatoria [causa documentada] / [precautorio], y la lista de lo que no debe hacerse. | A-3 (transversal A-2, A-6 y A-7) | **Vigente** (2026-07-28) |
 
+Estos ADR registran lo que se **decidió**. Las alternativas evaluadas y no elegidas, las decisiones
+derogadas y los supuestos que se demostraron falsos se recogen además en
+[../bitacora-de-descartes.md](../bitacora-de-descartes.md), con su motivo y —lo que un ADR no
+declara— **qué tendría que cambiar para reabrirlas**. Al escribir un ADR nuevo, anota allí las
+alternativas que descarte.
+
 Los ADR restantes del canal oficial —adaptador de Cloud API, plano de control y handshake sintético—
 recibirán su número correlativo cuando la segunda etapa se active por demanda de un cliente que la
 justifique (`adr-0014`). No se les asigna todavía porque su existencia y su alcance dependen de la
