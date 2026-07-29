@@ -113,3 +113,15 @@ Remoción destructiva limpia y desvinculación perimetral.
 *Mecanismo Interno (Fase A):* cierra la sesión whatsmeow (desvinculando el dispositivo del número), ejecuta el drenaje por `SIGTERM` de ambos contenedores y destruye los volúmenes de disco locales de manera física (`std::fs::remove_dir_all`), incluidas las credenciales de sesión.
 
 *Mecanismo Interno (Fase B):* invoca además la desasociación del webhook en la API Graph de Meta y purga de forma atómica la regla de enrutamiento y la memoria caché de certificados en el servidor web Caddy. Requiere los parámetros `--domain` y `--waba`.
+
+### 4. Sustituir el Número de una Célula *(Fase A)*
+
+Re-empareja una célula existente con un número distinto conservando su historia. Es la salida técnica de un baneo permanente, y no un alta nueva: la célula, su conocimiento y la memoria del bot por contacto sobreviven a la sustitución.
+
+```bash
+./hexcell-admin cell rebind --id <cell_id> --motivo "<motivo>"
+```
+
+*Mecanismo Interno (Fase A):* exige **confirmación explícita** por tratarse de una operación destructiva sobre la identidad de canal de la célula, con la misma exigencia que `cell terminate`. Deja la célula en **pausa de envío** hasta que el emparejamiento con el número nuevo queda confirmado, de modo que no pueda intentar responder sin sesión. Descarta el `sqlstore` del sidecar —corresponde a un dispositivo que ya no existe en el servidor de WhatsApp, y restaurarlo desde respaldo es inútil— y **conserva intactos** `sessions.db`, `knowledge_live.db` y el almacén de identidad del adaptador, que es donde viven la identidad de conversación y la lista de exclusión (STOP): por eso el mismo contacto sigue cayendo en el mismo hilo tras la sustitución. Cierra anotando la sustitución de forma auditable, con el número anterior, la fecha absoluta y el motivo.
+
+Este comando no existe en la Fase B: nace de la operación del canal propio y no interviene Caddy ni la API Graph de Meta. Cuándo **procede** sustituir el número —y cuándo no— lo decide el runbook de baneo, no la CLI.

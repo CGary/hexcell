@@ -155,6 +155,26 @@ Es la capa de mayor valor por coste y la que sustituye a la compuerta derogada e
   servidor. **No toda desconexión implica `device_removed`.** Regla exacta: *no restaurar el
   `sqlstore` solo si hubo `LoggedOut` con `device_removed`*; el respaldo sigue siendo plenamente
   válido ante corrupción o fallo de disco.
+* **SIM de reserva contratada en el alta de cada cliente, envejeciendo desde el día uno**
+  [precautorio], a nombre del cliente y con la misma marca de la Capa 1 porque le corresponde el
+  mismo grado de evidencia. La razón se deduce de la regla de higiene y no de ningún dato publicado:
+  si la higiene exige SIM física con antigüedad y uso previo, una SIM comprada el mismo día del
+  baneo **entra más débil que la que sustituye**, de modo que el reemplazo nace con más
+  probabilidad de baneo que lo reemplazado y los incidentes se pueden encadenar. Una reserva que
+  lleva meses activa rompe esa cadena. **No hay evidencia publicada de su eficacia** —de ahí la
+  marca; presentarla como [causa documentada] sería el mismo error que este ADR persigue en la Capa
+  1—.
+* **Sustitución de número tras un baneo permanente**, con el `sqlstore` descartado y el almacén de
+  identidad del adaptador conservado, ejecutada por un comando de la CLI y no a mano. **Su coste real no
+  es técnico sino de alcance:** la célula sobrevive entera —conocimiento, historial y memoria por
+  contacto—, pero **se pierde el contacto con todas las personas que tenían guardado el número
+  viejo** hasta que el cliente lo comunique. Ese aviso es **responsabilidad del cliente y no del
+  sistema**, y no por reparto de tareas sino porque el sistema no puede emitirlo: desde la cuenta
+  baneada no se puede enviar nada —y persistir en intentarlo es justamente lo que escala un baneo
+  temporal a permanente—, y hacerlo desde el número nuevo sería una iniciación de conversación en
+  masa, prohibida por el invariante de solo-respuesta y la forma más rápida de quemar también el
+  reemplazo. El runbook entrega al cliente la plantilla de aviso ya redactada para sus propios
+  canales.
 * **Verificar que la continuidad del hilo sobrevive al re-emparejamiento:** tras obtener un nuevo
   identificador de dispositivo, el mismo contacto debe mapear al mismo hilo en `sessions.db`. Es lo
   que el puerto de canal (FR-12) debía garantizar, y **hay que probarlo, no asumirlo**.
@@ -201,6 +221,15 @@ Queda escrito para que nadie lo reintroduzca más adelante como idea nueva:
   forma no cuantificable y acotan el daño de forma sí verificable; prometer más sería falso.
 * El coste operativo por alta sube: ensayo cronometrado de `PairPhone()`, higiene de número,
   contrato específico y simulacro previo al primer cliente de pago.
+* **La SIM de reserva añade un coste recurrente por cliente**, no un coste de alta: es una línea que
+  se paga todos los meses y que, si nunca hay baneo, nunca se usa. Se acepta porque su alternativa
+  —comprar la SIM el día del incidente— contradice la propia regla de higiene. **Si la reserva se
+  repercute al cliente o la absorbe HexCell queda ligado al modelo de monetización**, que sigue
+  siendo decisión de negocio pendiente en `docs/STATUS.md`; este ADR no fija importe alguno.
+* **Recuperar de un baneo permanente no restituye el alcance.** La sustitución de número devuelve la
+  célula entera pero no devuelve a los contactos que tenían guardado el número viejo, y el aviso
+  depende de un tercero —el cliente— y de sus propios canales. Es una pérdida asumida y no
+  compensable desde el producto.
 * El canary de biblioteca y la actualización escalonada obligan a mantener una célula centinela con
   número propio, que consume memoria y atención sin generar ingresos.
 * El techo de cartera limita deliberadamente los ingresos mientras el canal propio sea el único, que
@@ -220,4 +249,5 @@ Queda escrito para que nadie lo reintroduzca más adelante como idea nueva:
 * `docs/STATUS.md`: los valores numéricos del techo de cartera y del umbral de congelación de altas
   se registran como decisión de negocio pendiente, anterior al alta del primer cliente de pago.
 * `docs/plan/`: reparto de tareas por etapas (A-2 respaldos, A-3 sidecar y capas 1 y 4, A-6 alertas y
-  observabilidad de la Capa 2, A-7 simulacro y umbrales).
+  observabilidad de la Capa 2 más el comando `cell rebind` que ejecuta la sustitución de número, A-7
+  simulacro, umbrales, SIM de reserva y procedimiento de sustitución dentro del runbook de baneo).

@@ -124,6 +124,33 @@ adicional cuando aparezca un cliente que lo justifique. Ver [plan/README.md](pla
   deliberadamente un mínimo de la observabilidad de la etapa B-3, porque hay usuarios reales desde el
   primer día. **La observabilidad acorta el tiempo de reacción, no evita el baneo:** el baneo
   permanente suele llegar sin aviso.
+* **`cell rebind`: la sustitución de número es un comando, no un procedimiento a mano** (2026-07-28,
+  etapa A-6). Re-empareja una célula existente con un número distinto conservando `sessions.db`,
+  `knowledge_live.db` y el **almacén de identidad del adaptador** —donde vive la memoria del bot por
+  contacto y la lista de exclusión (STOP)— y **descartando el `sqlstore`** del sidecar, que
+  corresponde a un dispositivo que ya no existe en el servidor de WhatsApp. Exige **confirmación
+  explícita** por ser destructivo sobre la identidad de canal, deja la célula en **pausa de envío
+  hasta que el emparejamiento se confirma** y **registra la sustitución** con número anterior, fecha
+  absoluta y motivo. Es un comando de la **Fase A**. Nótese la asimetría deliberada con `cell
+  create`, congelado en la etapa B-2: el alta se opera a mano porque con pocas células automatizarla
+  no se paga, mientras que la sustitución es **recuperación de incidente** y se ejecuta con prisa y
+  con un cliente esperando.
+* **Procedimiento de sustitución de número dentro del runbook de baneo** (2026-07-28, etapa A-7,
+  tarea 5). El runbook deja de contener solo las cuatro ramas, la prohibición de reconectar, el guion
+  de apelación y la plantilla de comunicación: incorpora **cuándo procede sustituir** —baneo
+  permanente o apelación fracasada— y **cuándo no** —baneo temporal, donde se espera—, qué se
+  conserva y qué se pierde, los pasos operativos apoyados en `cell rebind`, quién debe estar presente
+  (el dueño con su teléfono, por titularidad de la SIM) y el **aviso a los contactos que tenían
+  guardado el número viejo**. Ese aviso **lo emite el cliente, no el sistema**: desde la cuenta
+  baneada no se puede enviar —insistir escala el baneo temporal a permanente— y desde el número nuevo
+  sería una iniciación de conversación en masa. El coste real de una sustitución **no es técnico sino
+  de alcance**.
+* **SIM de reserva por cliente, envejeciendo desde el día uno** (2026-07-28, `adr-0015`, etapa A-7,
+  tarea 6), marcada **[precautorio]** y nunca [causa documentada]: no hay evidencia publicada de su
+  eficacia, solo la coherencia con la regla de higiene, que exige SIM física con antigüedad y uso
+  previo. Sin reserva, el número de reemplazo se compra el día del baneo y **entra más débil que el
+  que sustituye**, con lo que los baneos se pueden encadenar. Tiene **coste recurrente por cliente**;
+  si se repercute o se absorbe queda ligado al modelo de monetización, pendiente más abajo.
 * **Canary de biblioteca** (etapa A-6): una célula centinela propia, con número propio, corre la
   versión candidata de whatsmeow durante 72 horas antes de escalonar la actualización al resto de la
   cartera. Nunca se actualizan todas las células el mismo día.

@@ -114,8 +114,11 @@ decisión consiste en comparar, no en interpretar.
     dueño. Incluye la **prohibición de reconectar en bucle ante un baneo temporal** —persistir con el
     cliente no oficial durante la suspensión escala el baneo a permanente—, el **guion de apelación
     desde la app oficial en el teléfono del titular**, redactado de antemano porque solo el dueño
-    puede presentarla y solo sirve en las primeras horas, y la **plantilla de comunicación al cliente
-    en menos de una hora**, escrita antes de la crisis y no durante.
+    puede presentarla y solo sirve en las primeras horas, la **plantilla de comunicación al cliente
+    en menos de una hora**, escrita antes de la crisis y no durante, y el **procedimiento de
+    sustitución de número**, con su criterio de procedencia, lo que se conserva y lo que se pierde,
+    los pasos operativos apoyados en `cell rebind` (etapa A-6), quién debe estar presente y el
+    **aviso a los contactos que tenían guardado el número viejo**, que solo puede dar el cliente.
   * **Ensayo cronometrado del re-emparejamiento con `PairPhone()` en el alta de CADA cliente**, no
     solo del primero. La razón es operativa y conviene dejarla escrita: el re-emparejamiento **exige
     al dueño con el teléfono delante**, de modo que, si no se ha practicado, el tiempo de
@@ -169,8 +172,10 @@ decisión consiste en comparar, no en interpretar.
 * `docs/runbook-alta-piloto.md`: procedimiento de alta paso a paso, incluidos la adquisición del
   número, el emparejamiento y la carga de conocimiento inicial.
 * `docs/runbook-baneo.md`: clasificador de incidente con sus cuatro ramas, regla de no reconexión ante
-  baneo temporal, guion de apelación y plantilla de comunicación al cliente, todos redactados antes
-  del primer incidente.
+  baneo temporal, guion de apelación, plantilla de comunicación al cliente y **procedimiento de
+  sustitución de número** —con su criterio de procedencia, lo conservado y lo perdido, los pasos
+  operativos, las personas necesarias y la plantilla de aviso que el cliente difunde por sus propios
+  canales—, todos redactados antes del primer incidente.
 * Documento de expectativas pactadas, firmado o aceptado explícitamente por cada piloto, **con el
   riesgo de baneo recogido con todas sus letras**.
 * `docs/contrato-canal-propio.md`: contrato de cliente que declara el canal como propio y no oficial,
@@ -250,16 +255,61 @@ decisión consiste en comparar, no en interpretar.
    de la SIM siempre en el cliente y nunca en HexCell; SIM física con antigüedad y uso previo, nunca
    virtual, VoIP ni recién activada; perfil de negocio completo; y el teléfono primario del dueño en
    uso humano real.
-5. **Escribir el runbook de baneo** (1 día). Clasificador de incidente con una rama por caso
+5. **Escribir el runbook de baneo** (1,5 días). Clasificador de incidente con una rama por caso
    —desconexión transitoria, baneo temporal con expiración, baneo permanente, desvinculación por el
    propio dueño—, prohibición explícita de reconectar en bucle ante baneo temporal, guion de
    apelación desde la app oficial en el teléfono del titular y plantilla de comunicación al cliente
    en menos de una hora. Todo redactado antes del primer incidente: durante la crisis no se redacta,
    se ejecuta.
+
+   El runbook incluye además el **procedimiento de sustitución de número**, que es la salida de la
+   rama más grave y por eso no puede quedar implícito. Consta de cinco partes:
+
+   * *Cuándo procede y cuándo no.* Procede ante **baneo permanente** o ante **apelación fracasada**.
+     **No procede ante un baneo temporal**: ahí se espera a la expiración con la célula en pausa, y
+     sustituir el número antes de tiempo tira un número recuperable y estrena otro sin necesidad.
+     Tampoco procede mientras la apelación siga viva, porque una apelación concedida devuelve el
+     número original con toda su antigüedad, que es precisamente lo que el número nuevo no tiene.
+   * *Qué se conserva y qué se pierde.* Se conservan la célula, su conocimiento, el historial de
+     `sessions.db` y el almacén de identidad del adaptador —identidad de conversación y lista de
+     exclusión (STOP)—, de modo que cada contacto sigue cayendo en su hilo y el bot no olvida a
+     nadie. Se pierden el número, el `sqlstore` del sidecar —que corresponde a un dispositivo que ya
+     no existe en el servidor de WhatsApp— y, sobre todo, **el alcance**: quien tuviera guardado el
+     número viejo deja de llegar al bot hasta que alguien se lo diga.
+   * *Pasos operativos.* Contratar o activar el número de reemplazo a nombre del cliente conforme a
+     la higiene de la tarea 6 —usando la SIM de reserva si existe—, ejecutar `cell rebind` (etapa
+     A-6) con su confirmación explícita, completar el emparejamiento por QR o por `PairPhone()`,
+     verificar que **el bot responde por el número nuevo y reconoce a un contacto anterior**
+     —criterio de éxito; "el archivo existe" no cuenta—, y levantar la pausa de envío solo entonces.
+   * *Quién debe estar presente.* El **dueño del número**, con su teléfono delante: es el titular de
+     la SIM y sin él no hay emparejamiento posible. Y el **operador de HexCell**, que ejecuta el
+     comando. Se acuerda una franja con el cliente antes de empezar, porque el tiempo de
+     recuperación lo fija su disponibilidad, no el código.
+   * *Aviso a los contactos que tenían guardado el número viejo.* Es un paso del procedimiento, no
+     una cortesía posterior. **El aviso no puede salir del sistema:** la cuenta baneada está muerta y
+     cualquier intento de enviar desde ella es exactamente lo que escala un baneo temporal a
+     permanente; y emitirlo desde el número nuevo sería una iniciación de conversación en masa, que
+     el invariante de solo-responder prohíbe y que es la forma más rápida de quemar también el
+     reemplazo. Lo da **el cliente por sus propios medios** —su número principal, su rótulo, sus
+     redes, su web—, y el runbook le entrega redactada la **plantilla de aviso** para que no tenga
+     que improvisarla: qué número deja de funcionar, cuál lo sustituye, desde cuándo y que sus
+     conversaciones anteriores no se han perdido.
 6. **Adquirir y preparar los números dedicados** (0,5 días). Un número dedicado por célula, **a
    nombre del cliente**, sobre SIM física con antigüedad y uso previo, con perfil de negocio
    completo. Ninguno puede ser el número principal de un negocio, ni un número virtual o VoIP, ni una
    SIM recién activada.
+
+   En la misma alta se contrata además una **SIM de reserva a nombre del cliente, que empieza a
+   envejecer desde el día uno** [precautorio]. El razonamiento es el de la propia regla de higiene y
+   no va más allá: si la sustitución de número solo se activa tras un baneo permanente, y la higiene
+   exige que la SIM tenga antigüedad y uso previo, entonces una SIM comprada el día del incidente
+   **entra más débil que la que sustituye** y abre la puerta a encadenar baneos. Una reserva que
+   lleva meses activa rompe esa cadena. Va marcada **[precautorio]** y no [causa documentada]: **no
+   hay evidencia publicada de su eficacia**, solo la coherencia con una regla que a su vez es
+   precautoria, y documentarla de otro modo sería exactamente el folclore que `adr-0015` excluye.
+   Tiene un **coste recurrente por cliente** —una línea que se paga y no se usa—, y su repercusión al
+   cliente queda ligada al **modelo de monetización**, que sigue siendo decisión de negocio pendiente
+   en `docs/STATUS.md`.
 7. **Dar de alta piloto-01 como banco de pruebas técnico** (1 día). Aprovisionamiento de la célula,
    emparejamiento, carga de conocimiento inicial y prueba de extremo a extremo con mensajes reales.
    Queda registrado desde el primer día que **esta célula no produce evidencia de negocio**.
@@ -317,6 +367,13 @@ decisión consiste en comparar, no en interpretar.
 * **El runbook de baneo existe antes del primer incidente**, con sus cuatro ramas de clasificación,
   la prohibición de reconectar en bucle ante baneo temporal, el guion de apelación y la plantilla de
   comunicación al cliente.
+* **El runbook contiene el procedimiento de sustitución de número**, y contiene las cinco partes:
+  cuándo procede —baneo permanente o apelación fracasada— y cuándo **no** procede —baneo temporal,
+  donde se espera en lugar de sustituir—; qué se conserva y qué se pierde; los pasos operativos
+  apoyados en `cell rebind`; quién debe estar presente, incluido el dueño con su teléfono; y el
+  **aviso a los contactos que tenían guardado el número viejo**, con la plantilla ya redactada y con
+  la constancia explícita de que **lo emite el cliente y no el sistema**, porque desde la cuenta
+  baneada no se puede enviar y desde la nueva sería una iniciación de conversación en masa.
 * **El re-emparejamiento por `PairPhone()` se ha ensayado y cronometrado en el alta de cada célula**,
   y los tiempos medidos están registrados.
 * **El simulacro completo de baneo se ha ejecutado antes del primer cobro a piloto-02**, terminando
@@ -352,7 +409,7 @@ decisión consiste en comparar, no en interpretar.
 
 | Riesgo | Impacto | Mitigación |
 | :--- | :--- | :--- |
-| **Baneo del número de un piloto.** | Medio: se pierde continuidad y confianza, no el negocio del cliente. | Números dedicados y a nombre del cliente, política de solo responder de la etapa A-3, expectativa y contrato pactados por escrito de antemano, y **runbook de baneo** con la apelación desde el teléfono del titular. Procedimiento de sustitución de número documentado en el runbook. |
+| **Baneo del número de un piloto.** | Medio: se pierde continuidad y confianza, no el negocio del cliente. | Números dedicados y a nombre del cliente, política de solo responder de la etapa A-3, expectativa y contrato pactados por escrito de antemano, y **runbook de baneo** con la apelación desde el teléfono del titular. **Procedimiento de sustitución de número documentado en el runbook** (tarea 5), con su criterio de procedencia, su aviso a cargo del cliente y su ejecución por `cell rebind` (etapa A-6), y **SIM de reserva envejeciendo desde el alta** [precautorio] para que el reemplazo no entre más débil que lo reemplazado. |
 | **Rotura del protocolo de WhatsApp** durante el piloto. | Alto para la percepción del piloto: el bot enmudece. | Expectativa pactada de posibles semanas de silencio; dependencia fijada y actualizable en un paso; comunicación proactiva al piloto en cuanto se detecta, sin esperar a que pregunte. |
 | El piloto-02 se siente experimento y abandona. | Alto: se pierde la única validación externa. | Expectativas honestas desde el principio, comunicación proactiva ante incidentes, y una carga de conocimiento inicial suficientemente buena como para que el bot aporte valor desde el primer día. |
 | Las métricas se definen después de empezar a operar. | Alto: se mide lo que se puede en lugar de lo que importa, y la compuerta se decide por impresión. | La compuerta se **pre-registra** en la tarea 1, con umbrales numéricos y criterios de fracaso fechados antes del primer alta. |

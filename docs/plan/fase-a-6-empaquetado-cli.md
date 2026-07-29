@@ -30,10 +30,18 @@ hardware, así que solo la segunda es aceptable, y demostrarla requiere un inten
 violarla que debe fallar.
 
 La CLI que se construye aquí es deliberadamente parcial. Los comandos de ciclo de vida
-—`cell pause`, `cell unpause`, `cell terminate`, `cell list`, `cell status`— operan **solo sobre
-Docker**. No hay blackholing de Caddy porque no hay Caddy: la desconexión del websocket saliente ya
-corta el tráfico entrante, y no queda ninguna petición sin contestar. `cell create` completo, con
-subdominios y registro en Meta, pertenece a la etapa B-2.
+—`cell pause`, `cell unpause`, `cell terminate`, `cell rebind`, `cell list`, `cell status`— operan
+**solo sobre Docker**. No hay blackholing de Caddy porque no hay Caddy: la desconexión del websocket
+saliente ya corta el tráfico entrante, y no queda ninguna petición sin contestar. `cell create`
+completo, con subdominios y registro en Meta, pertenece a la etapa B-2.
+
+Uno de esos comandos, `cell rebind`, existe por una razón que no es de comodidad sino de
+recuperación. El baneo del número está declarado como **evento esperado** (`adr-0015`), y la salida
+de un baneo permanente consiste en volver a emparejar la misma célula con un número distinto. Esa
+operación era hasta ahora un procedimiento a mano sobre volúmenes y contenedores, hecho por alguien
+con prisa y con un cliente esperando, que es la peor combinación posible para tocar a mano el
+almacén donde vive la memoria conversacional. `cell rebind` la convierte en un comando con
+confirmación, con orden fijo y con registro.
 
 ---
 
@@ -75,6 +83,17 @@ subdominios y registro en Meta, pertenece a la etapa B-2.
     por el sidecar vía IPC (etapas A-2 y A-3).
   * `cell terminate` — cierre de sesión del canal, drenaje por `SIGTERM` de ambos contenedores y
     destrucción física de los volúmenes.
+  * `cell rebind` — **re-emparejar una célula existente con un número distinto**, conservando la
+    célula y su historia. Es la salida técnica de un baneo permanente, y su regla de conservación es
+    exacta: se conservan `sessions.db`, `knowledge_live.db` y el **almacén de identidad del adaptador**
+    —donde viven la identidad de conversación y la lista de exclusión (STOP), es decir, la memoria
+    del bot por contacto—, y se **descarta el `sqlstore` del sidecar**, que pertenece a un
+    dispositivo que ya no existe en el servidor de WhatsApp (`adr-0010`, `adr-0015`). Es una
+    operación **destructiva sobre la identidad de canal** de la célula: exige **confirmación
+    explícita**, igual que `cell terminate`. Deja además la célula en **pausa de envío hasta que el
+    emparejamiento queda confirmado**, para que no intente responder sin sesión, y **registra la
+    sustitución de forma auditable**: número anterior, fecha absoluta y motivo. Es un comando de la
+    **Fase A**: nace de la operación del canal propio y no depende de nada de la Fase B.
   * `cell list` y `cell status` — estado consolidado de cada célula, incluida la salud del canal.
 * Registro persistente del estado de cada célula en el plano de control, para que la CLI no dependa
   exclusivamente de inferir el estado a partir de Docker.
@@ -126,8 +145,10 @@ subdominios y registro en Meta, pertenece a la etapa B-2.
 * `Dockerfile` del núcleo y `Dockerfile` del sidecar, con sus `.dockerignore`.
 * `deploy/cell.compose.yml` (o especificación equivalente) parametrizada por célula, con los dos
   contenedores, la red local y el volumen compartido.
-* `hexcell-admin` con los comandos `cell pause`, `cell unpause`, `cell terminate`, `cell list` y
-  `cell status`.
+* `hexcell-admin` con los comandos `cell pause`, `cell unpause`, `cell terminate`, `cell rebind`,
+  `cell list` y `cell status`.
+* Registro auditable de sustituciones de número por célula —número anterior, fecha absoluta y
+  motivo—, alimentado por `cell rebind` y consultable desde `cell status`.
 * Módulo cliente del socket Unix de Docker.
 * Almacén de estado del plano de control con su esquema y migraciones.
 * `docs/adr/adr-0007-imagen-y-aislamiento.md` documentando las imágenes base elegidas, la
@@ -178,17 +199,29 @@ subdominios y registro en Meta, pertenece a la etapa B-2.
 12. **Implementar `cell terminate`** (1 día). Cierre de sesión del canal desvinculando el dispositivo,
     drenaje de ambos contenedores, borrado físico de volúmenes incluidas las credenciales, y
     confirmación explícita requerida por tratarse de una operación destructiva.
-13. **Implementar `cell list` y `cell status`** (0,5 días). Estado consolidado cruzando el plano de
-    control con la realidad de Docker y con la salud del canal, señalando discrepancias.
-14. **Dotar de idempotencia y recuperación a los comandos** (1 día). Reejecución segura tras un fallo
+13. **Implementar `cell rebind`** (1 día). Re-emparejamiento de una célula existente con un número
+    distinto, que es la salida técnica de un baneo permanente y no un alta nueva. Secuencia fija:
+    confirmación explícita del operador —es una operación destructiva sobre la identidad de canal,
+    con la misma exigencia que `cell terminate`—; **pausa de envío** de la célula, que se mantiene
+    hasta que el emparejamiento queda confirmado, para que no intente responder sin sesión;
+    **descarte del `sqlstore`** del sidecar, que corresponde a un dispositivo muerto y no se
+    restaura nunca desde respaldo en este escenario; **conservación intacta de `sessions.db`, de
+    `knowledge_live.db` y del almacén de identidad del adaptador**, donde viven la identidad de
+    conversación y la lista de exclusión (STOP); emparejamiento con el número nuevo por QR o por
+    `PairPhone()`; y **anotación auditable de la sustitución** con el número anterior, la fecha
+    absoluta y el motivo. El comando pertenece a la **Fase A** y no toca Caddy ni nada de la Fase B.
+14. **Implementar `cell list` y `cell status`** (0,5 días). Estado consolidado cruzando el plano de
+    control con la realidad de Docker y con la salud del canal, señalando discrepancias, e
+    incluyendo el historial de sustituciones de número de la célula.
+15. **Dotar de idempotencia y recuperación a los comandos** (1 día). Reejecución segura tras un fallo
     parcial, con detección del punto en que quedó la secuencia.
-15. **Medir memoria y tamaño de imágenes** (0,5 días). Consumo de la célula completa en reposo y bajo
+16. **Medir memoria y tamaño de imágenes** (0,5 días). Consumo de la célula completa en reposo y bajo
     carga, y peso de ambas imágenes, registrados como valores de referencia.
-16. **Escribir la prueba de aislamiento** (1 día). Levantar dos células y demostrar que ninguna puede
+17. **Escribir la prueba de aislamiento** (1 día). Levantar dos células y demostrar que ninguna puede
     leer ni escribir el volumen de la otra ni alcanzar su red, ni siquiera conociendo la ruta.
-17. **Integrar la construcción de las imágenes en la CI** (1 día). Construcción reproducible,
+18. **Integrar la construcción de las imágenes en la CI** (1 día). Construcción reproducible,
     etiquetado por versión y por commit, y publicación en el registro elegido.
-18. **Montar el canary de biblioteca y el despliegue escalonado** (1 día). Alta de una **célula
+19. **Montar el canary de biblioteca y el despliegue escalonado** (1 día). Alta de una **célula
     centinela** propia, con número propio de HexCell y sin ningún cliente encima, que corre la
     versión candidata de whatsmeow durante **72 horas** antes de que la actualización toque a nadie
     más. Después, escalonado por lotes de la cartera, con parada si el lote anterior presenta baneos,
@@ -196,7 +229,7 @@ subdominios y registro en Meta, pertenece a la etapa B-2.
     **nunca actualizar todas las células el mismo día**. La centinela es además el sitio donde se
     ensayan medidas cuya eficacia no está probada —el experimento con Meta Verified, entre ellas—,
     porque es el único número cuyo baneo no le cuesta el negocio a nadie.
-19. **Implementar alertas push, métricas por célula y el dead-man's switch** (1,5 días). Tres piezas
+20. **Implementar alertas push, métricas por célula y el dead-man's switch** (1,5 días). Tres piezas
     complementarias:
     * **Alertas activas** por bot de Telegram, con una simple llamada HTTP saliente desde el
       servidor, ante **ocho** condiciones. La primera va aparte por prioridad: **baneo temporal
@@ -236,8 +269,10 @@ subdominios y registro en Meta, pertenece a la etapa B-2.
     > se adelanta a conciencia porque hay **usuarios reales desde la primera célula**: sin él, la
     > forma de enterarse de que el bot lleva dos días mudo es que el cliente lo mencione. Se adelanta
     > lo imprescindible, no el panel de métricas.
-20. **Escribir el runbook de operación** (0,5 días). Qué comando usar en cada situación, qué efecto
-    tiene y cómo verificar que salió bien.
+21. **Escribir el runbook de operación** (0,5 días). Qué comando usar en cada situación, qué efecto
+    tiene y cómo verificar que salió bien. Incluye `cell rebind` con su remisión explícita al
+    runbook de baneo de la etapa A-7, que es donde se decide **si procede** sustituir el número;
+    aquí solo se documenta **cómo** se ejecuta.
 
 ---
 
@@ -268,6 +303,19 @@ subdominios y registro en Meta, pertenece a la etapa B-2.
   salvo la ruta de datos.
 * `cell terminate` deja el sistema sin rastro de la célula: sin contenedores, sin volúmenes y con el
   dispositivo desvinculado del número.
+* **`cell rebind` exige confirmación explícita** y, sin ella, no toca nada: una invocación no
+  confirmada deja la célula exactamente como estaba, con su sesión y sus datos intactos.
+* **`cell rebind` conserva la memoria del bot y descarta solo lo que corresponde al dispositivo
+  muerto.** Una prueba con una célula que ya tiene historial verifica que, tras sustituir el número,
+  `sessions.db`, `knowledge_live.db` y el almacén de identidad del adaptador siguen intactos —el mismo
+  contacto cae en el mismo hilo y la lista de exclusión (STOP) sigue vigente— y que el `sqlstore`
+  del sidecar se ha descartado en lugar de restaurarse. Que los archivos existan no basta: el
+  criterio se cumple cuando **el bot responde por el número nuevo y reconoce al contacto de antes**.
+* **Entre la invocación de `cell rebind` y la confirmación del emparejamiento, la célula no emite un
+  solo mensaje.** La pausa de envío es parte del comando, no una recomendación al operador, y una
+  prueba con respuestas encoladas verifica que ninguna sale durante ese intervalo.
+* **Cada sustitución de número queda registrada** con el número anterior, la fecha absoluta y el
+  motivo, y el registro es consultable desde `cell status` sin abrir ningún archivo a mano.
 * Interrumpir cualquier comando a mitad y reejecutarlo lleva el sistema al estado pretendido sin
   intervención manual.
 * Cada una de las **ocho** condiciones de alerta, provocada deliberadamente, produce un mensaje de
@@ -309,8 +357,8 @@ subdominios y registro en Meta, pertenece a la etapa B-2.
 | El bot lleva días mudo y nadie se entera hasta que el cliente lo menciona. | Muy alto: se quema la confianza de un cliente de pago y con ella la referencia comercial. | Alertas push ante desvinculación y falta de reconexión, más la ventana de silencio entrante, con las señales emitidas por el sidecar. |
 | Toda la vigilancia vive dentro del servidor vigilado. | Alto: la caída total del servidor —el fallo más grave— es justo la que no genera ninguna alerta. | Dead-man's switch externo: la ausencia de ping notifica desde fuera. |
 | Las alertas se disparan tanto que se ignoran. | Medio: una alerta que nadie lee equivale a no tenerla. | **Ocho** condiciones concretas y accionables, no un volcado de métricas, con el baneo temporal jerarquizado por encima del resto; los umbrales se recalibran con los datos reales de la etapa A-7. |
-| **Confundir la observabilidad con una defensa.** | Alto, y es un riesgo de criterio, no de código: se dimensiona el negocio como si vigilar redujera la probabilidad de baneo. | Queda escrito en la tarea 19 y se repite aquí: **la observabilidad acorta el tiempo de reacción, no evita el baneo**. El baneo permanente **suele llegar sin aviso previo**; el temporal es el único que a veces lo da, y por eso es la alerta de máxima prioridad. Las medidas que de verdad importan son las de contención de daño. |
-| **Mirar el ratio de acuses en agregado** en lugar de por contacto. | Medio-alto: los bloqueos de usuarios —única señal indirecta disponible— se diluyen en la media y no se detecta ninguno hasta que llega el baneo. | La segmentación por contacto es alcance explícito de la tarea 19 y criterio de aceptación con una prueba de un solo contacto que deja de acusar. |
+| **Confundir la observabilidad con una defensa.** | Alto, y es un riesgo de criterio, no de código: se dimensiona el negocio como si vigilar redujera la probabilidad de baneo. | Queda escrito en la tarea 20 y se repite aquí: **la observabilidad acorta el tiempo de reacción, no evita el baneo**. El baneo permanente **suele llegar sin aviso previo**; el temporal es el único que a veces lo da, y por eso es la alerta de máxima prioridad. Las medidas que de verdad importan son las de contención de daño. |
+| **Mirar el ratio de acuses en agregado** en lugar de por contacto. | Medio-alto: los bloqueos de usuarios —única señal indirecta disponible— se diluyen en la media y no se detecta ninguno hasta que llega el baneo. | La segmentación por contacto es alcance explícito de la tarea 20 y criterio de aceptación con una prueba de un solo contacto que deja de acusar. |
 | **Actualizar whatsmeow en toda la cartera el mismo día.** | Muy alto: una versión candidata defectuosa —o que llame la atención de la detección de Meta— se lleva por delante a todos los clientes a la vez, y con ellos la única fuente de ingresos. | Célula centinela propia con número propio durante 72 horas y escalonado por lotes con parada ante incidencias, con criterio de aceptación que verifica que no existe una vía de actualización masiva en un solo paso. |
 
 ---
@@ -324,7 +372,7 @@ subdominios y registro en Meta, pertenece a la etapa B-2.
   al servidor de destino para las mediciones; un bot de Telegram con su token y el chat de destino;
   una cuenta gratuita de healthchecks.io; y un **número de WhatsApp propio de HexCell, distinto del
   de laboratorio de la etapa A-3 y de los de cualquier cliente**, dedicado a la célula centinela del
-  canary. Es bloqueante para la tarea 18, y su baneo es un coste asumido de antemano: para eso está.
+  canary. Es bloqueante para la tarea 19, y su baneo es un coste asumido de antemano: para eso está.
 * **De la etapa A-3:** la taxonomía de desconexión, el contador de envíos rechazados y las métricas
   por célula —acuses por contacto, reconexiones por hora, silencio entrante— son señales que emite el
   sidecar; esta etapa las recoge, las compara contra umbral y las entrega. El pinneado por commit y
