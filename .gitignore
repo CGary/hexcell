@@ -1,6 +1,18 @@
 # Rust
 /target
 Cargo.lock
+**/*.rs.bk
+*.pdb
+
+# Go (sidecar)
+/sidecar/bin/
+/sidecar/dist/
+*.exe
+*.exe~
+*.test
+*.out
+go.work
+go.work.sum
 
 # SQLite (datos de inquilinos — nunca versionar)
 *.db

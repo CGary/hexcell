@@ -1,6 +1,6 @@
 # Estado del Proyecto
 
-> Registro vivo del avance. Última actualización: 2026-07-28.
+> Registro vivo del avance. Última actualización: 2026-07-29.
 
 ## Fase actual
 **Canal propio en producción — diseño.** No existe todavía código fuente ni scaffold Rust.
@@ -16,6 +16,11 @@ adicional cuando aparezca un cliente que lo justifique. Ver [plan/README.md](pla
 > idea ya está allí, no se discute desde cero.
 
 ## Definido
+* **Licencia del proyecto: AGPL-3.0** (2026-07-29, `adr-0001`), con licenciamiento dual conservado
+  por el titular del copyright frente a un tercero que lo solicite. Se contrastó frente a Apache-2.0
+  —que no impone condición sobre uso en red y regalaría la ventaja competitiva del modelo de
+  servicio gestionado— y BUSL-1.1 —que exige gobernanza adicional de fecha de conversión sin aportar
+  nada que el dual licensing no cubra ya—. El texto oficial y verbatim vive en `LICENSE`.
 * **Canal propio permanente y canal oficial aditivo por demanda** (2026-07-28, `adr-0014`, que
   supersede a `adr-0008`). whatsmeow deja de ser un canal temporal de validación y pasa a ser el
   canal de producción por defecto, con clientes de pago. La Cloud API se pospone a una segunda etapa
@@ -252,6 +257,5 @@ adicional cuando aparezca un cliente que lo justifique. Ver [plan/README.md](pla
   primera entrada empírica.*
 * Proceso exacto de alta (onboarding) comercial de una nueva microempresa. — *El alta operada
   manualmente de los dos pilotos se resuelve en la etapa A-7; su automatización, en la etapa B-2.*
-* Decidir licencia (`LICENSE`). — *Etapa A-1, tarea 3. El repositorio git ya está inicializado.*
 * Scaffold del workspace Rust (`Cargo.toml`, `src/`) y del módulo Go del sidecar cuando arranque la
   fase de implementación. — *Etapa A-1, tareas 5 y 6.*
