@@ -1,0 +1,89 @@
+task_id: HEX-001
+summary: Document-only repo setup for Fase A-1 — license, ADR-0001/0008/0009, CONTRIBUTING, .gitignore, PR template, ADR index and STATUS updates. Risk low.
+goal: >
+  Complete the documentation and repository-configuration portion of Fase A-1
+  (fundaciones) so the repository has a license, the required ADR records, a
+  contribution convention, an extended .gitignore, and a pull request template,
+  with the ADR index and STATUS.md reflecting the new state. This task covers
+  only the paper trail; no Cargo workspace, no crates, no ChannelAdapter trait,
+  no sidecar, no CI, and no tests are created here.
+invariants:
+  - All repository content is written in Spanish, including any commit messages
+    (conventional commits, no Co-Authored-By or AI attribution).
+  - ADR numbering is correlative and never reused or reordered; adr-0010 already
+    exists and must not be modified by this task.
+  - "adr-0008 is written strictly as a deprecated historical record: it must
+    state it is Derogada/Superseded and point to adr-0014 (which supersedes it)
+    and adr-0015, both already present in docs/adr/."
+  - The document set must never state that Fase B replaces, substitutes, or
+    closes Fase A, nor that the sidecar is retired. The third-client gate is
+    explicitly derogated, not silently dropped.
+  - No secrets are committed; *.db, *.db-wal, *.db-shm, and .env* remain
+    ignored by .gitignore.
+  - All dates written in the documents are absolute (e.g. 2026-07-29), never
+    relative.
+  - Lines wrap at approximately 100 columns, consistent with the rest of the repo.
+non_goals:
+  - Cargo workspace, root Cargo.toml, or any Rust crate (hexcell-core, hexcell,
+    hexcell-admin, hexcell-storage, hexcell-meta). Out of scope, covered by a
+    later task (HEX-002/HEX-003).
+  - The ChannelAdapter trait or any Rust type declaration. Out of scope.
+  - The Go sidecar module, its dependency pinning, or any Go source. Out of scope.
+  - Rust/Go toolchain files (rust-toolchain.toml, rustfmt.toml, clippy.toml) and
+    CI pipeline (.github/workflows/ci.yml). Out of scope.
+  - adr-0002 (workspace crate structure) and adr-0011 (sidecar/IPC architecture).
+    Out of scope for this task.
+  - Any test suite or test scaffolding. Out of scope.
+constraints:
+  - License choice is fixed by the responsible party as AGPL-3.0; adr-0001 must
+    contrast at least two license options against the commercial objective
+    (dual licensing as copyright holder remains possible under AGPL-3.0).
+  - adr-0008's file name and number are fixed (adr-0008-estrategia-canal-dos-fases.md);
+    do not renumber or rewrite adr-0014/adr-0015, which already exist.
+  - The ADR index (docs/adr/README.md) must record adr-0001, adr-0008, and
+    adr-0009 with their existing table format, correct numbers, and status
+    (adr-0008 = Derogada/Superseded).
+  - docs/STATUS.md must move the license decision to Definido, dated 2026-07-29.
+  - .gitignore must add Rust and Go build-artifact patterns while preserving the
+    existing rules for *.db, *.db-wal, *.db-shm, and .env*.
+  - "CONTRIBUTING.md must define branch naming and commit message conventions:
+    conventional commits, in Spanish, with no AI attribution."
+  - The diff for this task must contain no Cargo.toml, no *.rs, and no *.go files.
+acceptance:
+  - id: AC-1
+    statement: LICENSE exists at the repo root with the official AGPL-3.0 text.
+    given: a clone of the repository after this task lands
+    when: the LICENSE file is inspected
+    then: it contains the literal strings "GNU AFFERO GENERAL PUBLIC LICENSE" and "Version 3"
+  - id: AC-2
+    statement: docs/adr/adr-0001-licencia.md exists and justifies AGPL-3.0 by
+      contrasting at least two alternatives against the commercial objective,
+      including that dual licensing remains possible as copyright holder.
+  - id: AC-3
+    statement: docs/adr/adr-0008-estrategia-canal-dos-fases.md exists, is written
+      as a derogated historical record, and references both adr-0014 and adr-0015.
+    given: docs/adr/adr-0008-estrategia-canal-dos-fases.md
+    when: its content is inspected
+    then: it states the decision is derogated/superseded and links to adr-0014 and adr-0015
+  - id: AC-4
+    statement: docs/adr/adr-0009-whatsmeow-adaptador-fase-a.md exists and
+      justifies choosing whatsmeow over at least one alternative.
+  - id: AC-5
+    statement: CONTRIBUTING.md exists and documents branch naming and commit
+      message conventions (conventional commits, in Spanish, no AI attribution).
+  - id: AC-6
+    statement: .gitignore includes Rust and Go build-artifact patterns and still
+      contains the existing entries for *.db, *.db-wal, *.db-shm, and .env*.
+  - id: AC-7
+    statement: .github/PULL_REQUEST_TEMPLATE.md exists.
+  - id: AC-8
+    statement: docs/adr/README.md lists adr-0001, adr-0008, and adr-0009 with
+      their correct numbers, and adr-0008's status reads Derogada/Superseded.
+  - id: AC-9
+    statement: docs/STATUS.md records the license decision as Definido, dated 2026-07-29.
+  - id: AC-10
+    statement: The task's diff contains no Cargo.toml, no *.rs file, and no *.go file.
+    given: the full diff introduced by this task
+    when: searched for Cargo.toml, *.rs, or *.go paths
+    then: none are found
+risk: low
