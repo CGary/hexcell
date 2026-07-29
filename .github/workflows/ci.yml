@@ -1,0 +1,53 @@
+# CI mínima de la etapa A-1: certifica compilación, formato y análisis estático del
+# workspace Rust y del módulo Go del sidecar. No certifica la corrección semántica del
+# diseño del puerto de canal; eso lo certifican los tests de contrato de la etapa A-2.
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  rust:
+    name: Rust — fmt, clippy, build, test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Instalar el toolchain fijado en rust-toolchain.toml
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cachear cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: cargo fmt --check
+        run: cargo fmt --check
+
+      - name: cargo clippy --workspace -- -D warnings
+        run: cargo clippy --workspace -- -D warnings
+
+      - name: cargo test --workspace
+        run: cargo test --workspace
+
+  go:
+    name: Go — build y vet del sidecar
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Instalar Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: sidecar/go.mod
+          cache: true
+          cache-dependency-path: sidecar/go.sum
+
+      - name: go build ./...
+        working-directory: sidecar
+        run: go build ./...
+
+      - name: go vet ./...
+        working-directory: sidecar
+        run: go vet ./...

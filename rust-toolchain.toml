@@ -1,0 +1,9 @@
+# Fija el canal exacto que este repositorio usa para compilar, formatear y analizar.
+# `rust-version = "1.92"` en Cargo.toml (workspace.package) es el suelo de MSRV que se
+# publica a quien consuma el crate; este archivo es un contrato distinto: qué toolchain
+# descarga `rustup` en este equipo y en la CI. Se fija el parche exacto (1.92.0), más
+# estricto que el suelo, para eliminar la variabilidad de "en mi máquina compila" entre
+# quienes contribuyen y el runner de integración continua.
+[toolchain]
+channel = "1.92.0"
+components = ["rustfmt", "clippy"]

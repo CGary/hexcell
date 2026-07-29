@@ -20,3 +20,16 @@ license = "AGPL-3.0-only"
 # Sin tabla `[workspace.dependencies]`: en la etapa A-1 ningún crate necesita dependencias
 # externas. La tabla nacerá cuando la etapa A-2 traiga la primera de verdad, y ese es el
 # momento en el que también hay que revisar si `Cargo.lock` debe dejar de estar ignorado.
+
+# Perfil de release orientado a tamaño de binario, coherente con NFR-01 y con el hardware
+# objetivo (i7 de 10 años, 8 GB RAM): en ese hardware el tamaño del binario y el arranque
+# en frío importan más que el tiempo de compilación.
+[profile.release]
+opt-level = "z"      # Optimiza por tamaño en vez de por velocidad.
+lto = true            # Optimización de programa completo entre crates: binario más pequeño.
+codegen-units = 1     # Una sola unidad de codegen habilita al máximo las optimizaciones de LTO,
+                      # a costa de una compilación de release más lenta.
+strip = true          # Elimina símbolos e información de depuración del binario final.
+panic = "abort"       # Sin tablas de desenrollado: ningún crate de este workspace captura
+                      # pánicos a través de una frontera FFI, así que se acepta a cambio de un
+                      # binario más pequeño.

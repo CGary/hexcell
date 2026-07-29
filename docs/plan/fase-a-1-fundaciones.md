@@ -134,15 +134,20 @@ comprobaciones automáticas y leer sin ambigüedad qué frontera separa el domin
    cliente que justifique el canal oficial y se resuelva el ADR-0013, que es quien la condiciona.
 6. **Inicializar el módulo Go del sidecar** (0,5 días). Estructura mínima que compile, con la
    dependencia de whatsmeow declarada y fijada a una versión concreta, de modo que un *bump* ante una
-   rotura de protocolo sea un cambio de una línea.
+   rotura de protocolo sea un cambio de una línea. **Entregado por `HEX-003` (2026-07-29)**:
+   `sidecar/go.mod` fija `go.mau.fi/whatsmeow` a la pseudo-versión
+   `v0.0.0-20260722203353-e9a033b24933` y `sidecar/main.go` compila como esqueleto sin conexión.
 7. **Fijar toolchain y perfiles de compilación** (0,5 días). Versión mínima de Rust, versión de Go,
    `rustfmt`, `clippy` con negación de avisos, y perfil de *release* optimizado a tamaño de binario.
+   **Entregado por `HEX-003` (2026-07-29)**: `rust-toolchain.toml`, `rustfmt.toml`, `clippy.toml` y
+   el `[profile.release]` del `Cargo.toml` raíz.
 8. **Montar la CI mínima** (1 día). Ejecutar en cada push: comprobación de formato, análisis
    estático sin avisos, compilación de todo el workspace y del módulo Go, y ejecución de pruebas. La
    CI debe fallar ante cualquiera de las comprobaciones. **Alcance de esta certificación**: la CI de
    A-1 certifica compilación, formato y análisis estático; no certifica la corrección semántica del
    diseño del puerto de canal. Esa la certifican los tests de contrato de la etapa A-2 y los tests de
-   tipos exhaustivos de la tarea 1.
+   tipos exhaustivos de la tarea 1. **Entregado por `HEX-003` (2026-07-29)**:
+   `.github/workflows/ci.yml`, con dos jobs (`rust` y `go`), ninguno con `continue-on-error`.
 9. **Escribir el esqueleto de pruebas y un caso real** (0,5 días). Una prueba efectiva sobre el mapeo
    de un identificador de transporte a identificador interno, para que la CI nazca con contenido y no
    con un pipeline vacío. No basta con que la prueba exista: hay que demostrar, dejando constancia en

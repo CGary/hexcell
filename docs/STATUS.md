@@ -59,6 +59,14 @@ adicional cuando aparezca un cliente que lo justifique. Ver [plan/README.md](pla
   más restrictivo con esta distinción: el **tipo** admite el resultado restrictivo, la **política** de
   cada adaptador decide si lo produce; el adaptador del canal propio no impone una ventana de 24 h
   artificial.
+* **Módulo Go del sidecar, toolchain de Rust, perfil de release y CI mínima** (2026-07-29,
+  `HEX-003`). El módulo `sidecar/` compila en vacío con la dependencia de whatsmeow fijada a la
+  versión explícita `v0.0.0-20260722203353-e9a033b24933`, sin ninguna lógica de conexión, sesión
+  ni pairing de WhatsApp. `rust-toolchain.toml` fija el canal `1.92.0`, `rustfmt.toml` y
+  `clippy.toml` quedan con configuración explícita, el `Cargo.toml` raíz suma un
+  `[profile.release]` orientado a tamaño, y `.github/workflows/ci.yml` ejecuta y bloquea ante
+  fallo de formato, análisis estático, tests y build de ambos lenguajes. Cierra las tareas 6, 7 y
+  8 de la etapa A-1.
 * **Workspace Rust de cinco crates con el núcleo sin dependencias** (2026-07-29, `adr-0002`).
   `hexcell-core` (dominio y declaración del puerto de canal), `hexcell` (binario de la célula),
   `hexcell-admin` (CLI central), `hexcell-storage` (persistencia) y `hexcell-meta`, este último
@@ -280,6 +288,3 @@ adicional cuando aparezca un cliente que lo justifique. Ver [plan/README.md](pla
   [cotejo-puerto-de-canal-cloud-api.md](cotejo-puerto-de-canal-cloud-api.md). — *Debe estar resuelta
   antes de que la etapa B-1 escriba el adaptador oficial, que es el primer momento en que estos
   códigos pueden llegar; sobre canal propio no llegan.*
-* Módulo Go del sidecar (`sidecar/`) que compila en vacío, con la dependencia de whatsmeow fijada a
-  una versión explícita. — *Etapa A-1, tarea 6; tarea HEX-003, junto con los archivos de toolchain y
-  la integración continua.*

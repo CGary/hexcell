@@ -1,0 +1,11 @@
+# Configuración explícita de rustfmt para HexCell. El archivo no se deja vacío: cada
+# valor que se aparta del default de la herramienta queda justificado aquí mismo.
+#
+# `edition` coincide con la edición 2024 ya declarada en `[workspace.package]` de
+# Cargo.toml: rustfmt necesita conocer la edición para aplicar sus reglas de formato
+# específicas de sintaxis (por ejemplo, cierre de bloques `let-else`).
+edition = "2024"
+
+# `max_width` se deja en el default de rustfmt (100) de forma deliberada: coincide con el
+# ancho de prosa de ~100 columnas que ya usa el resto del repositorio en Markdown, así que
+# no hace falta declararlo para lograr consistencia visual entre código y documentación.

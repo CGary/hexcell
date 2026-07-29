@@ -6,7 +6,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **HexCell Orchestrator**: orquestador multi-célula (multi-tenant) en Rust para desplegar bots de WhatsApp para microempresas sobre hardware local modesto (i7 de 10 años, 8 GB RAM).
 
-**Estado actual: solo documentación.** No existe código fuente, `Cargo.toml`, ni comandos de build/test todavía. El scaffold del workspace Rust y del sidecar Go llegará en la etapa A-1 del plan.
+**Estado actual: etapa A-1 en marcha.** Ya existe el workspace Rust de cinco crates con el
+puerto de canal `ChannelAdapter` declarado (HEX-002), y ahora también el módulo `sidecar/`
+en Go y la integración continua (HEX-003). Comandos reales: `cargo build --workspace`,
+`cargo test --workspace`, `cargo fmt --check`, `cargo clippy --workspace -- -D warnings`
+para el workspace Rust, y `cd sidecar && go build ./... && go vet ./...` para el sidecar.
 
 Todo el contenido del repositorio está en **español**, incluidos los mensajes de commit (conventional commits: `docs:`, `feat:`, etc., sin atribución de AI).
 

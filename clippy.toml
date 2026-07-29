@@ -1,0 +1,9 @@
+# Configuración explícita de clippy para HexCell.
+#
+# `msrv` restata la versión mínima de Rust ya declarada como `rust-version = "1.92"` en
+# `[workspace.package]` de Cargo.toml. La repetición es necesaria, no redundante: clippy
+# no lee la tabla `workspace.package` del manifiesto, solo un `clippy.toml` literal (o la
+# clave `[lints]` de Cargo.toml, que este repositorio no usa). Sin este valor, los lints
+# conscientes de MSRV de clippy (por ejemplo, sugerir una API estabilizada después de
+# 1.92) sugerirían código que rompería el suelo de compatibilidad publicado.
+msrv = "1.92"
