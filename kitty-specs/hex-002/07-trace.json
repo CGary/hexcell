@@ -1,0 +1,23 @@
+{
+  "attempts": [
+    {
+      "duration_s": 0,
+      "notes": "dirty_worktree_detected: 05-validation.json",
+      "phase": "execute",
+      "result": "blocked"
+    },
+    {
+      "duration_s": 0,
+      "notes": "force_cleanup: dirty paths 05-validation.json",
+      "phase": "execute",
+      "result": "passed"
+    }
+  ],
+  "context_overflows": [],
+  "execution_mode": "worktree_edit",
+  "started_at": "2026-07-29T06:51:19Z",
+  "summary": "Cargo workspace and five crates, the ChannelAdapter port declared as types only in hexcell-core, exhaustive-match and guardian tests, cotejo, adr-0002 and status updates.",
+  "task_id": "HEX-002",
+  "total_cost_usd": 0,
+  "violations": []
+}

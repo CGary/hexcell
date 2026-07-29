@@ -1,0 +1,278 @@
+{
+  "task_id": "HEX-002",
+  "summary": "All 45 verification commands passed. Cargo workspace, ChannelAdapter port, tests, and cotejo conform to contract.",
+  "executed_at": "2026-07-29T03:15:00Z",
+  "commands": [
+    {
+      "command": "cargo build --workspace",
+      "exit_code": 0,
+      "duration_s": 0.05,
+      "output_excerpt": "Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.02s"
+    },
+    {
+      "command": "cargo test --workspace",
+      "exit_code": 0,
+      "duration_s": 0.07,
+      "output_excerpt": "running 0 tests\n\ntest result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n\nrunning 0 tests\n\ntest result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n\nrunning 0 tests\n\ntest result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n\nrunning 4 tests\ntest cada_variante_del_resultado_exige_una_reaccion_distinta ... ok\ntest el_acuse_normalizado_tiene_cuatro_variantes_con_etapas_distintas ... ok\ntest el_resultado_de_envio_tiene_exactamente_cinco_variantes ... ok\ntest los_cuatro_fallos_de_fr_12_estan_declarados_y_son_distintos_del_exito ... ok\n\ntest result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n\nrunning 4 tests\ntest el_evento_canonico_se_construye_solo_con_identidad_traducida ... ok\ntest el_identificador_interno_no_contiene_rastro_del_transporte ... ok\ntest el_mapeo_es_estable_para_el_mismo_identificador_de_transporte ... ok\ntest el_mapeo_es_inyectivo_entre_identificadores_de_transporte_distintos ... ok\n\ntest result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n\nrunning 0 tests\n\ntest result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n\nrunning 0 tests\n\ntest result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n\nrunning 0 tests\n\ntest result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n\nrunning 0 tests\n\ntest result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n\nrunning 0 tests\n\ntest result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.00s\n     Running unittests src/main.rs (target/debug/deps/hexcell-039d82a5630eebdf)\n     Running unittests src/main.rs (target/debug/deps/hexcell_admin-780ed951811dd4b4)\n     Running unittests src/lib.rs (targ"
+    },
+    {
+      "command": "cargo fmt --check",
+      "exit_code": 0,
+      "duration_s": 0.09,
+      "output_excerpt": ""
+    },
+    {
+      "command": "cargo clippy --workspace -- -D warnings",
+      "exit_code": 0,
+      "duration_s": 0.09,
+      "output_excerpt": "Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.02s"
+    },
+    {
+      "command": "test -f Cargo.toml",
+      "exit_code": 0,
+      "duration_s": 0.0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "test -f crates/hexcell-core/src/canal.rs",
+      "exit_code": 0,
+      "duration_s": 0.0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "test -f crates/hexcell-core/src/identidad.rs",
+      "exit_code": 0,
+      "duration_s": 0.0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "test -f crates/hexcell-core/tests/exhaustividad_resultado_envio.rs",
+      "exit_code": 0,
+      "duration_s": 0.0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "test -f crates/hexcell-core/tests/guardian_identidad_conversacion.rs",
+      "exit_code": 0,
+      "duration_s": 0.0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "test -f crates/hexcell-meta/src/lib.rs",
+      "exit_code": 0,
+      "duration_s": 0.0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "test -f docs/cotejo-puerto-de-canal-cloud-api.md",
+      "exit_code": 0,
+      "duration_s": 0.0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "test -f docs/adr/adr-0002-estructura-workspace.md",
+      "exit_code": 0,
+      "duration_s": 0.0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "grep -q 'resolver' Cargo.toml",
+      "exit_code": 0,
+      "duration_s": 0.0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "grep -q 'hexcell-core' Cargo.toml",
+      "exit_code": 0,
+      "duration_s": 0.0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "grep -q 'hexcell-storage' Cargo.toml",
+      "exit_code": 0,
+      "duration_s": 0.0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "grep -q 'hexcell-meta' Cargo.toml",
+      "exit_code": 0,
+      "duration_s": 0.0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "grep -q 'hexcell-admin' Cargo.toml",
+      "exit_code": 0,
+      "duration_s": 0.0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "grep -q 'ChannelAdapter' crates/hexcell-core/src/canal.rs",
+      "exit_code": 0,
+      "duration_s": 0.0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "grep -q 'CicloDeVidaSesion' crates/hexcell-core/src/canal.rs",
+      "exit_code": 0,
+      "duration_s": 0.0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "grep -q 'FueraDeVentana' crates/hexcell-core/src/canal.rs",
+      "exit_code": 0,
+      "duration_s": 0.0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "grep -q 'PlantillaRequerida' crates/hexcell-core/src/canal.rs",
+      "exit_code": 0,
+      "duration_s": 0.0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "grep -q 'LimiteDeTasa' crates/hexcell-core/src/canal.rs",
+      "exit_code": 0,
+      "duration_s": 0.0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "grep -q 'DestinatarioInvalido' crates/hexcell-core/src/canal.rs",
+      "exit_code": 0,
+      "duration_s": 0.0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "grep -q 'FueraDeVentana' crates/hexcell-core/tests/exhaustividad_resultado_envio.rs",
+      "exit_code": 0,
+      "duration_s": 0.0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "grep -q 'DestinatarioInvalido' crates/hexcell-core/tests/exhaustividad_resultado_envio.rs",
+      "exit_code": 0,
+      "duration_s": 0.0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "grep -q '131047' docs/cotejo-puerto-de-canal-cloud-api.md",
+      "exit_code": 0,
+      "duration_s": 0.0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "grep -q '132001' docs/cotejo-puerto-de-canal-cloud-api.md",
+      "exit_code": 0,
+      "duration_s": 0.0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "grep -q '131048' docs/cotejo-puerto-de-canal-cloud-api.md",
+      "exit_code": 0,
+      "duration_s": 0.0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "grep -q '131049' docs/cotejo-puerto-de-canal-cloud-api.md",
+      "exit_code": 0,
+      "duration_s": 0.0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "grep -q 'error-codes' docs/cotejo-puerto-de-canal-cloud-api.md",
+      "exit_code": 0,
+      "duration_s": 0.0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "grep -q 'adr-0013' crates/hexcell-meta/src/lib.rs",
+      "exit_code": 0,
+      "duration_s": 0.0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "grep -q '2026-07-29' docs/adr/README.md",
+      "exit_code": 0,
+      "duration_s": 0.0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "grep -q '2026-07-29' docs/STATUS.md",
+      "exit_code": 0,
+      "duration_s": 0.0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "grep -q 'adr-0002' docs/STATUS.md",
+      "exit_code": 0,
+      "duration_s": 0.0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "! grep -q 'Por escribir' docs/adr/adr-0002-estructura-workspace.md",
+      "exit_code": 0,
+      "duration_s": 0.0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "! grep -qE '\\bpub\\b' crates/hexcell-meta/src/lib.rs",
+      "exit_code": 0,
+      "duration_s": 0.0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "! grep -qE 'tokio|rusqlite|sqlx|reqwest|hyper|axum|async-trait|futures|chrono|serde' crates/hexcell-core/Cargo.toml",
+      "exit_code": 0,
+      "duration_s": 0.0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "! grep -q 'non_exhaustive' crates/hexcell-core/src/canal.rs",
+      "exit_code": 0,
+      "duration_s": 0.0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "! grep -qE 'async fn' crates/hexcell-core/src/canal.rs",
+      "exit_code": 0,
+      "duration_s": 0.0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "! grep -q 'allow(async_fn_in_trait)' crates/hexcell-core/src/canal.rs",
+      "exit_code": 0,
+      "duration_s": 0.0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "! grep -rqE 'impl(<[^>]*>)? *ChannelAdapter *for' crates/",
+      "exit_code": 0,
+      "duration_s": 0.0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "! grep -rn --include='*.rs' -iE 'wa_id|msisdn|phone_number|\\bjid\\b' crates/*/src | grep -vE '^[^:]*:[0-9]+: *(//|\\*)' | grep -q .",
+      "exit_code": 0,
+      "duration_s": 0.0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "! find . -not -path './.git/*' -not -path './target/*' \\( -name '*.go' -o -name 'rust-toolchain.toml' -o -name 'rustfmt.toml' -o -name 'clippy.toml' \\) | grep -q .",
+      "exit_code": 0,
+      "duration_s": 0.0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "! test -d sidecar",
+      "exit_code": 0,
+      "duration_s": 0.0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "! test -d .github/workflows",
+      "exit_code": 0,
+      "duration_s": 0.0,
+      "output_excerpt": ""
+    }
+  ],
+  "overall_result": "passed"
+}

@@ -1,0 +1,110 @@
+task_id: HEX-002
+summary: Cargo workspace and five crates, the ChannelAdapter port declared as types only in
+  hexcell-core, exhaustive-match and guardian tests, cotejo, adr-0002 and status updates.
+entries:
+  - changed_files:
+      - Cargo.toml
+      - crates/hexcell-core/Cargo.toml
+      - crates/hexcell-core/src/lib.rs
+      - crates/hexcell-core/src/canal.rs
+      - crates/hexcell-core/src/identidad.rs
+      - crates/hexcell-core/tests/exhaustividad_resultado_envio.rs
+      - crates/hexcell-core/tests/guardian_identidad_conversacion.rs
+      - crates/hexcell/Cargo.toml
+      - crates/hexcell/src/main.rs
+      - crates/hexcell-admin/Cargo.toml
+      - crates/hexcell-admin/src/main.rs
+      - crates/hexcell-storage/Cargo.toml
+      - crates/hexcell-storage/src/lib.rs
+      - crates/hexcell-meta/Cargo.toml
+      - crates/hexcell-meta/src/lib.rs
+    notes:
+      - "Commit ab7a265. Root workspace with resolver 3, edition 2024, rust-version 1.92 and
+        AGPL-3.0-only inherited from [workspace.package]; exactly five members under crates/."
+      - "hexcell-core has an empty [dependencies] table by construction, so AC-6 holds without
+        relying on review. Time is std::time::SystemTime and Duration only."
+      - "ChannelAdapter and CicloDeVidaSesion use RPITIT (-> impl Future<Output = ...> + Send).
+        The abbreviated async form was never written and no #[allow] was added; the trait's loss
+        of dyn-compatibility is recorded in adr-0002 as a consequence, not a footnote."
+      - "ResultadoEnvio has exactly five unit variants (Aceptado plus the four FR-12 failures)
+        and carries no attribute that would open it, so external test crates still see it as
+        exhaustive."
+      - "Three opaque newtypes live in identidad.rs - IdConversacion, IdRemitente and
+        IdDeduplicacion - rather than one. The blueprint named only IdConversacion; the extra two
+        exist because EventoEntrante needs a sender and a deduplication identifier, and the
+        alternative (a raw String) is precisely the transport leak adr-0010 forbids. Justified in
+        adr-0002, decision 7."
+      - "DURACION_VENTANA_SERVICIO names the 24-hour figure once. No subscription, stream or
+        callback method was added: EventoEntrante is declared and left unconsumed."
+      - "The guardian's mapping stand-in does NOT implement ChannelAdapter; no adapter, real or
+        simulated, exists anywhere in the diff."
+    verify_pending: false
+  - changed_files:
+      - docs/cotejo-puerto-de-canal-cloud-api.md
+      - docs/adr/adr-0002-estructura-workspace.md
+      - docs/adr/README.md
+      - docs/STATUS.md
+    notes:
+      - "Commit d8c2a44. The cotejo was written against the live official pages fetched on
+        2026-07-29 (error-codes, webhooks payload-examples and webhooks components), not from
+        memory, so every quoted code carries its official English wording."
+      - "First discrepancy resolved as the blueprint directs: 131047 is the single official
+        closed-window code, therefore FueraDeVentana reflects an actual API response and
+        PlantillaRequerida is the adapter's pre-flight verdict (window closed plus a
+        RespuestaLibre message, decided without a round trip). NOTE: the orchestrator's prose
+        brief stated this assignment the other way round; the binding artifact (blueprint step
+        12) was followed."
+      - "Second discrepancy left OPEN: 132000, 132001, 132015, 132016 plus 131049 and 131048 map
+        to none of the four variants. No fifth variant was added; recorded in the cotejo and as a
+        new declared pending decision in docs/STATUS.md."
+      - "Extra grounded findings recorded honestly rather than glossed over: 131026 groups
+        heterogeneous causes under DestinatarioInvalido (noted, needs no new variant), and the
+        official webhook pages do not publish a closed list of statuses[].status values, so the
+        anchor for Acuse::Fallido rests on the errors array and is declared as a verification
+        limit for A-3 to close."
+      - "Four bite experiments were actually run and their verbatim compiler and panic output is
+        quoted in section 5 of the cotejo: add a variant (E0004), remove a variant (E0599), leak
+        a pub wa_id field into EventoEntrante (E0063 in the guardian plus the contract's lexical
+        check firing on exactly one line), and a fourth, semantic leak - making the mapping the
+        identity function without renaming anything - which passes the lexical check and still
+        fails two guardian assertions at run time. All four were reverted with git checkout --
+        and the tree was left green."
+      - "docs/adr/README.md: the adr-0002 row was edited in place to Vigente (2026-07-29). No row
+        was added, duplicated, renumbered or reordered, and no other row was touched."
+      - "docs/STATUS.md: the workspace/sidecar pending bullet was split so only the Go module
+        stays pending (attributed to HEX-003 and etapa A-1 tarea 6); a Definido bullet dated
+        (2026-07-29, adr-0002) was added; and the FR-12 enumerated-set question was added as a
+        new declared pending decision. The Fase actual header, which still claimed no source code
+        existed, was corrected in the same file - it is inside the touch list and leaving it
+        false would have contradicted the diff it describes."
+      - "OUT-OF-CONTRACT ITEMS LEFT UNDONE, needing a human decision: CLAUDE.md still says the
+        repository is documentation-only with no Cargo.toml, and docs/bitacora-de-descartes.md
+        did not receive the alternatives adr-0002 discards, even though the repository rule asks
+        for that in the same commit. Both files are outside the touch list, so neither was
+        modified. Suggested for HEX-003 or a human follow-up."
+    verify_pending: false
+  - changed_files:
+      - Cargo.toml
+      - crates/hexcell-core/src/canal.rs
+      - docs/cotejo-puerto-de-canal-cloud-api.md
+    notes:
+      - "Final verification sweep: all 45 verify.commands of 02-contract.yaml were executed
+        inside the worktree and all 45 pass. cargo build --workspace, cargo test --workspace
+        (8 tests: 4 exhaustiveness, 4 guardian), cargo fmt --check and cargo clippy --workspace
+        -- -D warnings are clean; clippy was additionally run with --all-targets and is also
+        clean, which the contract does not require."
+      - "Contract limits respected: 19 files changed of a maximum of 20, and 1252 diff lines of a
+        maximum of 2000, measured against the branch base dc143e6."
+      - "No forbidden path was touched: no *.go, no sidecar/, no rust-toolchain.toml, no
+        rustfmt.toml, no clippy.toml, no .github/workflows/, and neither docs/PRD.md,
+        docs/plan/*, adr-0010, adr-0014 nor adr-0015 appears in the diff. Cargo.lock stays
+        ignored by the .gitignore HEX-001 landed; adr-0002 records that this must be revisited
+        when the first real dependency lands in A-2."
+    verify_pending: false
+tdd_red_runs:
+  - acceptance_id: AC-8
+    command: cargo test --workspace
+    red_exit_code: 101
+  - acceptance_id: AC-10
+    command: cargo test --workspace
+    red_exit_code: 101
