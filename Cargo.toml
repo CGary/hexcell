@@ -6,6 +6,7 @@ members = [
     "crates/hexcell-admin",
     "crates/hexcell-storage",
     "crates/hexcell-meta",
+    "crates/hexcell-canal-simulado",
 ]
 
 # Metadatos comunes a los cinco crates. Cada manifiesto los hereda con `.workspace = true`
@@ -17,9 +18,25 @@ edition = "2024"
 rust-version = "1.92"
 license = "AGPL-3.0-only"
 
-# Sin tabla `[workspace.dependencies]`: en la etapa A-1 ningún crate necesita dependencias
-# externas. La tabla nacerá cuando la etapa A-2 traiga la primera de verdad, y ese es el
-# momento en el que también hay que revisar si `Cargo.lock` debe dejar de estar ignorado.
+# Primera tabla de dependencias externas del workspace: nace en la etapa A-2 (HEX-004), que es
+# el momento que reservó el comentario anterior. Cada crate se justifica aquí, no solo en el
+# manifiesto que lo consume, porque esta tabla es la única vista de conjunto del árbol externo.
+[workspace.dependencies]
+# Runtime asíncrono del binario de la célula (crates/hexcell). Se fija en la versión 1.53,
+# vigente en crates.io el 2026-07-29. hexcell-core NO depende de tokio (criterio de aceptación
+# de esta tarea): esta entrada solo la consume crates/hexcell y crates/hexcell-canal-simulado.
+tokio = { version = "1.53", default-features = false }
+# Pila HTTP elegida para servir /health/live y /health/ready: hyper 1.x en su forma de bajo
+# nivel, sin el stack de framework que trae axum (razón completa en crates/hexcell/Cargo.toml).
+hyper = "1.11"
+# Adaptadores entre hyper 1.x y el runtime de Tokio (TokioIo, TokioExecutor): hyper 1.x dejó de
+# incluirlos en el crate principal.
+hyper-util = "0.1"
+# Tipos de cuerpo HTTP (Full, Empty) que hyper 1.x tampoco reexporta desde su propio crate.
+http-body-util = "0.1"
+# Buffer de bytes compartido entre hyper y http-body-util; dependencia transitiva de ambos que
+# se declara aquí porque el servidor de salud la nombra directamente al construir cuerpos.
+bytes = "1.12"
 
 # Perfil de release orientado a tamaño de binario, coherente con NFR-01 y con el hardware
 # objetivo (i7 de 10 años, 8 GB RAM): en ese hardware el tamaño del binario y el arranque

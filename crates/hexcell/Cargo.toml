@@ -6,4 +6,33 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 
+# Pila HTTP interna de /health/live y /health/ready: hyper 1.x de bajo nivel, no un framework.
+#
+# axum 0.8 se descartó: monta encima de este mismo árbol de hyper una capa de servicios `tower`,
+# el enrutador `matchit` y su maquinaria de extractores, para servir dos rutas fijas que solo
+# necesitan un `match` sobre (método, ruta). Pagar esa capa para dos literales es la generalidad
+# especulativa que este mismo workspace evita en otros puntos.
+#
+# tiny-http se descartó: implementa su propio modelo de hilos bloqueantes, que es exactamente el
+# "runtime HTTP alternativo a Tokio" que esta tarea prohíbe (una célula ya corre sobre el
+# ejecutor de Tokio para el motor de mensajería; sumar un segundo modelo de concurrencia solo
+# para la salud duplicaría hilos sin necesidad en el hardware objetivo de NFR-01).
+#
+# Un servidor a mano sobre `TcpListener` desnudo también se descartó: la CLI de administración
+# sondea estas rutas en cada reactivación, y reimplementar el framing de peticiones, keep-alive y
+# entradas malformadas es un pasivo que el ahorro de líneas no compra.
 [dependencies]
+tokio = { workspace = true, features = [
+    "rt",
+    "macros",
+    "net",
+    "sync",
+    "io-util",
+    "time",
+] }
+hyper = { workspace = true, features = ["http1", "server"] }
+hyper-util = { workspace = true, features = ["tokio"] }
+http-body-util = { workspace = true }
+bytes = { workspace = true }
+hexcell-core = { path = "../hexcell-core" }
+hexcell-canal-simulado = { path = "../hexcell-canal-simulado" }

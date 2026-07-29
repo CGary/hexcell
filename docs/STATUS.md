@@ -231,6 +231,18 @@ adicional cuando aparezca un cliente que lo justifique. Ver [plan/README.md](pla
 * **Plan de implementación en 7 etapas de canal propio + 3 de canal oficial: ver
   [plan/README.md](plan/README.md).** Cubre FR-01..FR-12 y NFR-01..NFR-05, y sitúa los pendientes de
   producto de más abajo como bloqueos declarados en las etapas que los necesitan.
+* **Convención de entrega de eventos del puerto de canal** (2026-07-29, `adr-0016`). El
+  `ChannelAdapter` no gana un método `recv`/`subscribe`: cada adaptador crea y posee un
+  `tokio::sync::mpsc` acotado y entrega su extremo receptor al motor de mensajería del binario
+  `hexcell` al construirse. La decisión evita reabrir un trait ya cerrado por HEX-002 y resuelve
+  que el trait no es compatible con objetos de trait (`adr-0002`); la etapa A-3 (whatsmeow), ya
+  cerrada aparte, queda obligada a adoptar la misma convención si quiere conectarse al motor.
+* **`Cargo.lock` empieza a versionarse** (2026-07-29). El comentario que dejó HEX-002 en el
+  `Cargo.toml` raíz reservaba este momento para revisarlo: la primera dependencia externa real del
+  workspace nace en esta misma tarea (HEX-004), y `hexcell` es el binario que corre dentro de cada
+  célula, así que su árbol de dependencias se fija para que una reconstrucción en el hardware
+  objetivo resuelva exactamente las versiones validadas. La línea `Cargo.lock` se retiró de
+  `.gitignore`.
 
 ## Pendiente
 * **Valores numéricos de las compuertas de riesgo de cartera**: el **techo duro de células vivas**

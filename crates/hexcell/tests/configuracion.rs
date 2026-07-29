@@ -1,0 +1,195 @@
+//! Tests de `Configuracion::desde_entorno`: camino feliz y cada modo de fallo.
+//!
+//! La mitad de estos tests son a nivel de biblioteca (llaman a `Configuracion::desde_entorno`
+//! directamente) y la otra mitad son a nivel de proceso: lanzan `env!("CARGO_BIN_EXE_hexcell")`
+//! con un entorno controlado y comprueban el código de salida y `stderr`, que es lo único que
+//! demuestra de verdad que el binario termina **antes** de vincular nada (AC-2).
+
+use std::io::Read;
+use std::process::{Command, Stdio};
+use std::sync::Mutex;
+
+use hexcell::configuracion::{Configuracion, ErrorDeConfiguracion};
+
+/// `cargo test` ejecuta los tests de un mismo binario en hilos distintos del mismo proceso, y
+/// `std::env::set_var`/`remove_var` son estado **del proceso completo**, no del hilo. Sin esta
+/// exclusión mutua, dos tests de este archivo que fijan variables `HEXCELL_*` distintas a la vez
+/// se pisan entre sí y el resultado depende de una carrera. Cada test que toque el entorno del
+/// proceso adquiere este cerrojo antes de tocar nada y lo mantiene vivo durante todo su cuerpo.
+static CERROJO_DE_ENTORNO: Mutex<()> = Mutex::new(());
+
+fn limpiar_entorno_de_hexcell() {
+    for variable in [
+        "HEXCELL_ID_CELULA",
+        "HEXCELL_RUTA_DATOS",
+        "HEXCELL_DIRECCION_SALUD",
+        "HEXCELL_CANAL",
+        "HEXCELL_CAPACIDAD_COLA",
+    ] {
+        unsafe {
+            std::env::remove_var(variable);
+        }
+    }
+}
+
+#[test]
+fn arranca_con_configuracion_valida() {
+    let _guardia = CERROJO_DE_ENTORNO.lock().unwrap_or_else(|e| e.into_inner());
+    limpiar_entorno_de_hexcell();
+    let directorio_temporal =
+        std::env::temp_dir().join(format!("hexcell-test-config-ok-{}", std::process::id()));
+    std::fs::create_dir_all(&directorio_temporal)
+        .expect("crear el directorio temporal del test debe funcionar");
+
+    unsafe {
+        std::env::set_var("HEXCELL_ID_CELULA", "piloto-01");
+        std::env::set_var("HEXCELL_RUTA_DATOS", &directorio_temporal);
+    }
+
+    let configuracion =
+        Configuracion::desde_entorno().expect("la configuración válida no debe fallar");
+    assert_eq!(configuracion.id_celula, "piloto-01");
+    assert_eq!(configuracion.ruta_datos, directorio_temporal);
+
+    let _ = std::fs::remove_dir_all(&directorio_temporal);
+}
+
+#[test]
+fn falla_si_falta_la_ruta_de_datos() {
+    let _guardia = CERROJO_DE_ENTORNO.lock().unwrap_or_else(|e| e.into_inner());
+    limpiar_entorno_de_hexcell();
+    unsafe {
+        std::env::set_var("HEXCELL_ID_CELULA", "piloto-01");
+    }
+
+    let error = Configuracion::desde_entorno().expect_err("debe fallar sin HEXCELL_RUTA_DATOS");
+    assert_eq!(
+        error,
+        ErrorDeConfiguracion::VariableAusente {
+            nombre: "HEXCELL_RUTA_DATOS",
+            formato_esperado: "ruta de directorio existente en disco",
+        }
+    );
+}
+
+#[test]
+fn falla_si_la_ruta_de_datos_no_existe_en_disco() {
+    let _guardia = CERROJO_DE_ENTORNO.lock().unwrap_or_else(|e| e.into_inner());
+    limpiar_entorno_de_hexcell();
+    let ruta_inexistente =
+        std::env::temp_dir().join("hexcell-ruta-que-nunca-existe-en-este-test-12345");
+    unsafe {
+        std::env::set_var("HEXCELL_ID_CELULA", "piloto-01");
+        std::env::set_var("HEXCELL_RUTA_DATOS", &ruta_inexistente);
+    }
+
+    let error =
+        Configuracion::desde_entorno().expect_err("debe fallar si la ruta no existe en disco");
+    match error {
+        ErrorDeConfiguracion::RutaDeDatosInexistente { nombre, ruta } => {
+            assert_eq!(nombre, "HEXCELL_RUTA_DATOS");
+            assert_eq!(ruta, ruta_inexistente);
+        }
+        otro => panic!("se esperaba RutaDeDatosInexistente, se obtuvo {otro:?}"),
+    }
+}
+
+#[test]
+fn falla_si_la_direccion_de_salud_no_es_un_socket_valido() {
+    let _guardia = CERROJO_DE_ENTORNO.lock().unwrap_or_else(|e| e.into_inner());
+    limpiar_entorno_de_hexcell();
+    let directorio_temporal = std::env::temp_dir().join(format!(
+        "hexcell-test-config-direccion-{}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&directorio_temporal)
+        .expect("crear el directorio temporal del test debe funcionar");
+    unsafe {
+        std::env::set_var("HEXCELL_ID_CELULA", "piloto-01");
+        std::env::set_var("HEXCELL_RUTA_DATOS", &directorio_temporal);
+        std::env::set_var("HEXCELL_DIRECCION_SALUD", "no-es-un-socket");
+    }
+
+    let error = Configuracion::desde_entorno().expect_err("debe fallar con una dirección inválida");
+    match error {
+        ErrorDeConfiguracion::ValorInvalido { nombre, valor, .. } => {
+            assert_eq!(nombre, "HEXCELL_DIRECCION_SALUD");
+            assert_eq!(valor, "no-es-un-socket");
+        }
+        otro => panic!("se esperaba ValorInvalido, se obtuvo {otro:?}"),
+    }
+
+    let _ = std::fs::remove_dir_all(&directorio_temporal);
+}
+
+#[test]
+fn falla_si_el_canal_no_es_reconocido() {
+    let _guardia = CERROJO_DE_ENTORNO.lock().unwrap_or_else(|e| e.into_inner());
+    limpiar_entorno_de_hexcell();
+    let directorio_temporal =
+        std::env::temp_dir().join(format!("hexcell-test-config-canal-{}", std::process::id()));
+    std::fs::create_dir_all(&directorio_temporal)
+        .expect("crear el directorio temporal del test debe funcionar");
+    unsafe {
+        std::env::set_var("HEXCELL_ID_CELULA", "piloto-01");
+        std::env::set_var("HEXCELL_RUTA_DATOS", &directorio_temporal);
+        std::env::set_var("HEXCELL_CANAL", "canal-que-no-existe");
+    }
+
+    let error = Configuracion::desde_entorno().expect_err("debe fallar con un canal desconocido");
+    match error {
+        ErrorDeConfiguracion::ValorInvalido { nombre, valor, .. } => {
+            assert_eq!(nombre, "HEXCELL_CANAL");
+            assert_eq!(valor, "canal-que-no-existe");
+        }
+        otro => panic!("se esperaba ValorInvalido, se obtuvo {otro:?}"),
+    }
+
+    let _ = std::fs::remove_dir_all(&directorio_temporal);
+}
+
+/// Ejecuta el binario real con el entorno dado y devuelve `(código de salida, stderr)`.
+fn ejecutar_binario_con_entorno(variables: &[(&str, &str)]) -> (i32, String) {
+    let mut comando = Command::new(env!("CARGO_BIN_EXE_hexcell"));
+    comando.env_clear();
+    for (nombre, valor) in variables {
+        comando.env(nombre, valor);
+    }
+    comando.stdout(Stdio::piped()).stderr(Stdio::piped());
+
+    let mut hijo = comando
+        .spawn()
+        .expect("el binario hexcell debe poder lanzarse");
+    let estado = hijo
+        .wait()
+        .expect("esperar la salida del proceso hijo no debe fallar");
+    let mut stderr = String::new();
+    hijo.stderr
+        .take()
+        .expect("stderr debe estar disponible")
+        .read_to_string(&mut stderr)
+        .expect("leer stderr no debe fallar");
+
+    (estado.code().unwrap_or(-1), stderr)
+}
+
+#[test]
+fn el_binario_termina_antes_de_escuchar_si_falta_la_ruta_de_datos() {
+    let (codigo, stderr) = ejecutar_binario_con_entorno(&[("HEXCELL_ID_CELULA", "piloto-01")]);
+
+    assert_ne!(codigo, 0);
+    assert!(stderr.contains("HEXCELL_RUTA_DATOS"));
+    assert!(!stderr.to_lowercase().contains("panicked"));
+    assert!(!stderr.contains("RUST_BACKTRACE"));
+}
+
+#[test]
+fn el_binario_no_vincula_nada_si_la_configuracion_es_invalida() {
+    let (codigo, stderr) = ejecutar_binario_con_entorno(&[("HEXCELL_ID_CELULA", "piloto-01")]);
+    assert_ne!(codigo, 0);
+    assert!(stderr.contains("HEXCELL_RUTA_DATOS"));
+
+    // Ninguna dirección de salud llegó a vincularse: conectar al puerto por defecto debe fallar.
+    let conexion = std::net::TcpStream::connect("127.0.0.1:8081");
+    assert!(conexion.is_err());
+}

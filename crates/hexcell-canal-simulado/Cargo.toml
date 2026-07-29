@@ -1,0 +1,14 @@
+[package]
+name = "hexcell-canal-simulado"
+description = "Adaptador ChannelAdapter simulado en memoria, con la semántica restrictiva de la Meta Cloud API, para probar el motor de mensajería sin un canal real."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+# Solo se necesita el planificador de una sola tarea (`sync`) y la primitiva de canal acotado
+# (`sync` también cubre mpsc); no se activa "rt" porque este crate no arranca ningún runtime por
+# sí mismo, solo construye el `mpsc::Sender`/`Receiver` que el binario `hexcell` consume.
+[dependencies]
+tokio = { workspace = true, features = ["sync"] }
+hexcell-core = { path = "../hexcell-core" }
