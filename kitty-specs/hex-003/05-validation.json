@@ -1,0 +1,254 @@
+{
+  "task_id": "HEX-003",
+  "summary": "All 41 verification commands passed. Go sidecar skeleton, Rust profiles, two-job CI, and documentation conform to contract. Cargo.lock and sidecar binary cleaned up.",
+  "executed_at": "2026-07-29T11:36:00Z",
+  "commands": [
+    {
+      "command": "test -f rust-toolchain.toml",
+      "exit_code": 0,
+      "duration_s": 0.0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "test -f rustfmt.toml",
+      "exit_code": 0,
+      "duration_s": 0.0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "test -f clippy.toml",
+      "exit_code": 0,
+      "duration_s": 0.0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "grep -q 'channel' rust-toolchain.toml",
+      "exit_code": 0,
+      "duration_s": 0.0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "grep -q '1.92' rust-toolchain.toml",
+      "exit_code": 0,
+      "duration_s": 0.0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "grep -qE '\\[profile\\.release\\]' Cargo.toml",
+      "exit_code": 0,
+      "duration_s": 0.0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "grep -q 'opt-level' Cargo.toml",
+      "exit_code": 0,
+      "duration_s": 0.0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "grep -q 'lto' Cargo.toml",
+      "exit_code": 0,
+      "duration_s": 0.0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "grep -q 'codegen-units' Cargo.toml",
+      "exit_code": 0,
+      "duration_s": 0.0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "grep -q '\\[workspace\\]' Cargo.toml",
+      "exit_code": 0,
+      "duration_s": 0.0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "grep -q '\\[workspace\\.package\\]' Cargo.toml",
+      "exit_code": 0,
+      "duration_s": 0.0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "cargo build --workspace",
+      "exit_code": 0,
+      "duration_s": 0.02,
+      "output_excerpt": "Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.02s"
+    },
+    {
+      "command": "cargo test --workspace",
+      "exit_code": 0,
+      "duration_s": 0.05,
+      "output_excerpt": "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out"
+    },
+    {
+      "command": "cargo fmt --check",
+      "exit_code": 0,
+      "duration_s": 0.0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "cargo clippy --workspace -- -D warnings",
+      "exit_code": 0,
+      "duration_s": 0.02,
+      "output_excerpt": "Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.02s"
+    },
+    {
+      "command": "test -f sidecar/go.mod",
+      "exit_code": 0,
+      "duration_s": 0.0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "test -f sidecar/main.go",
+      "exit_code": 0,
+      "duration_s": 0.0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "test -s sidecar/go.sum",
+      "exit_code": 0,
+      "duration_s": 0.0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "grep -q 'module github.com/CGary/hexcell/sidecar' sidecar/go.mod",
+      "exit_code": 0,
+      "duration_s": 0.0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "grep -qE 'go\\.mau\\.fi/whatsmeow v[0-9]+\\.[0-9]+\\.[0-9]+-[0-9]{14}-[0-9a-f]{12}' sidecar/go.mod",
+      "exit_code": 0,
+      "duration_s": 0.0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "! grep -qE 'go\\.mau\\.fi/whatsmeow.*(latest|@main|@master)' sidecar/go.mod",
+      "exit_code": 0,
+      "duration_s": 0.0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "! grep -q '\\.Connect(' sidecar/main.go",
+      "exit_code": 0,
+      "duration_s": 0.0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "! grep -qi 'GetQRChannel\\|PairPhone' sidecar/main.go",
+      "exit_code": 0,
+      "duration_s": 0.0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "(cd sidecar && go build ./...)",
+      "exit_code": 0,
+      "duration_s": 0.0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "(cd sidecar && go vet ./...)",
+      "exit_code": 0,
+      "duration_s": 0.0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "test -f .github/workflows/ci.yml",
+      "exit_code": 0,
+      "duration_s": 0.0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "grep -q 'cargo fmt --check' .github/workflows/ci.yml",
+      "exit_code": 0,
+      "duration_s": 0.0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "grep -qE 'cargo clippy.*-D warnings' .github/workflows/ci.yml",
+      "exit_code": 0,
+      "duration_s": 0.0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "grep -q 'cargo test --workspace' .github/workflows/ci.yml",
+      "exit_code": 0,
+      "duration_s": 0.0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "grep -q 'go build' .github/workflows/ci.yml",
+      "exit_code": 0,
+      "duration_s": 0.0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "grep -q 'go vet' .github/workflows/ci.yml",
+      "exit_code": 0,
+      "duration_s": 0.0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "! grep -q 'continue-on-error' .github/workflows/ci.yml",
+      "exit_code": 0,
+      "duration_s": 0.0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "grep -q 'sidecar' CLAUDE.md",
+      "exit_code": 0,
+      "duration_s": 0.0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "! grep -q 'solo documentación' CLAUDE.md",
+      "exit_code": 0,
+      "duration_s": 0.0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "grep -q 'HEX-003' docs/STATUS.md",
+      "exit_code": 0,
+      "duration_s": 0.0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "grep -q '2026-07-29' docs/STATUS.md",
+      "exit_code": 0,
+      "duration_s": 0.0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "grep -q 'HEX-003' docs/plan/fase-a-1-fundaciones.md",
+      "exit_code": 0,
+      "duration_s": 0.0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "! grep -rqE 'impl(<[^>]*>)? *ChannelAdapter *for' crates/",
+      "exit_code": 0,
+      "duration_s": 0.0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "! find . -not -path './.git/*' -not -path './target/*' -not -path './worktrees/*' -iname 'Dockerfile*'  | grep -q .",
+      "exit_code": 0,
+      "duration_s": 0.0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "! test -d vendor",
+      "exit_code": 0,
+      "duration_s": 0.0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "! test -f Cargo.lock",
+      "exit_code": 0,
+      "duration_s": 0.0,
+      "output_excerpt": ""
+    }
+  ],
+  "overall_result": "passed"
+}

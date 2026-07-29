@@ -1,0 +1,135 @@
+task_id: HEX-003
+summary: "Sidecar Go esqueleto, toolchain Rust anclado, perfil release, CI y cierre documental de A-1. Risk low."
+goal: >
+  Cerrar la etapa A-1 (fundaciones) con las piezas que HEX-001 (documentación) y HEX-002
+  (workspace Rust y puerto ChannelAdapter) dejaron pendientes: el módulo Go del sidecar
+  como esqueleto compilable sin lógica de WhatsApp, los archivos de toolchain Rust
+  (rust-toolchain.toml, rustfmt.toml, clippy.toml), el perfil [profile.release] orientado
+  a tamaño en el Cargo.toml raíz, la CI mínima de GitHub Actions para ambos lenguajes, y
+  la actualización de CLAUDE.md y de los registros vivos del plan para que dejen de
+  describir un repositorio solo-documental. Ninguna lógica de negocio ni de protocolo
+  WhatsApp se escribe aquí: la lógica real del adaptador whatsmeow es etapa A-3.
+invariants:
+  - Todo el contenido del repositorio se escribe en español, incluidos los mensajes de
+    commit (conventional commits, sin Co-Authored-By ni ninguna atribución de IA).
+  - La numeración de ADR es correlativa y nunca se reutiliza ni se reordena; esta tarea no
+    crea ni modifica ningún archivo docs/adr/*.md.
+  - "Ningún documento ni comentario puede afirmar que la Fase B sustituye, reemplaza o
+    cierra la Fase A, ni que el sidecar se retira: el sidecar es coste permanente del
+    canal propio (adr-0009, adr-0014, adr-0015)."
+  - No se versiona ningún *.db, *.db-wal, *.db-shm ni .env*; ningún secreto ni API key
+    llega al repositorio.
+  - Todas las fechas escritas en los documentos son absolutas (2026-07-29), nunca relativas.
+  - La prosa en Markdown mantiene un ancho aproximado de 100 columnas, consistente con el
+    resto del repositorio.
+  - La dependencia de whatsmeow en sidecar/go.mod queda anclada a una versión explícita y
+    concreta, nunca a @latest ni a una referencia flotante de rama.
+non_goals:
+  - Cualquier lógica de protocolo WhatsApp real (conexión, pairing, envío, recepción,
+    QR, sesión). El main.go del sidecar es un esqueleto mínimo compilable; la lógica
+    pertenece a la etapa A-3.
+  - Cualquier implementación de ChannelAdapter, real o simulada. Fuera de alcance,
+    cubierto por HEX-002 (tipos) y por A-2/A-3 (implementaciones).
+  - IPC entre el núcleo Rust y el sidecar Go. Fuera de alcance (adr-0011, etapa A-3).
+  - Crear o modificar cualquier archivo docs/adr/*.md, incluido el índice
+    docs/adr/README.md. Fuera de alcance de esta tarea.
+  - Docker, Dockerfiles o docker-compose. Fuera de alcance (etapa A-6).
+  - Cualquier cambio en crates/hexcell-core, incluido el trait ChannelAdapter o sus tipos
+    canónicos. Ya cerrado por HEX-002; esta tarea no lo toca.
+  - Branch protection rules o configuración del repositorio remoto en GitHub. Solo se
+    entrega el archivo .github/workflows/ci.yml.
+constraints:
+  - "sidecar/go.mod declara el módulo y fija whatsmeow a una versión explícita (por
+    ejemplo go.mau.fi/whatsmeow vX.Y.Z), nunca 'latest' ni una referencia de rama."
+  - "sidecar/main.go es un esqueleto mínimo: compila con 'go build ./...', puede imprimir
+    un mensaje de arranque, pero no abre conexión ni sesión de WhatsApp ni implementa
+    ningún adaptador."
+  - "rust-toolchain.toml fija un canal estable concreto, coherente con rust-version =
+    \"1.92\" ya declarado en el Cargo.toml raíz por HEX-002; no se re-declara ni se
+    contradice ese valor."
+  - "rustfmt.toml y clippy.toml existen con configuración explícita (no archivos vacíos);
+    cualquier valor que difiera del default de la herramienta se justifica en un
+    comentario dentro del propio archivo."
+  - "El Cargo.toml raíz añade [profile.release] con ajustes orientados a tamaño de
+    binario (por ejemplo opt-level = \"z\", lto = true, codegen-units = 1, strip = true,
+    panic = \"abort\"), coherente con NFR-01 y el hardware objetivo (i7 de 10 años, 8 GB
+    RAM); no se modifica ninguna otra sección ya existente del Cargo.toml (workspace,
+    members, workspace.package)."
+  - ".github/workflows/ci.yml ejecuta en cada push/PR: 'cargo fmt --check', 'cargo clippy
+    --workspace -- -D warnings', 'cargo test --workspace' para el workspace Rust, y 'go
+    build ./...' más 'go vet ./...' para el módulo sidecar/; cualquier fallo bloquea el
+    workflow (sin continue-on-error)."
+  - "CLAUDE.md dejar de afirmar que el repositorio es 'solo documentación' sin Cargo.toml:
+    debe reflejar que el workspace Rust de cinco crates y el puerto ChannelAdapter ya
+    existen (HEX-002), y ahora también el módulo sidecar/ y la CI (HEX-003), e incluir
+    los comandos reales de build/test/lint (cargo build --workspace, cargo test
+    --workspace, cargo fmt --check, cargo clippy --workspace -- -D warnings, go build
+    ./... y go vet ./... dentro de sidecar/)."
+  - Todo lo que HEX-001 y HEX-002 ya dejaron en main (LICENSE, CONTRIBUTING.md,
+    .github/PULL_REQUEST_TEMPLATE.md, adr-0001, adr-0002, adr-0008, adr-0009, adr-0010,
+    .gitignore, Cargo.toml raíz con [workspace] y [workspace.package], los cinco crates)
+    no se recrea ni se reescribe; esta tarea solo añade lo que falta.
+  - docs/STATUS.md y docs/plan/fase-a-1-fundaciones.md se actualizan para reflejar que el
+    módulo Go del sidecar, el toolchain, el perfil de release y la CI dejan de estar
+    pendientes, atribuido a HEX-003, con fecha 2026-07-29; no se reabre ni se reescribe
+    ninguna decisión ya registrada como Definida.
+acceptance:
+  - id: AC-1
+    statement: El módulo Go del sidecar existe y compila en vacío.
+    given: el directorio sidecar/ con go.mod y main.go
+    when: se ejecuta "go build ./..." dentro de sidecar/
+    then: termina sin errores
+  - id: AC-2
+    statement: La dependencia whatsmeow está fijada a una versión explícita.
+    given: sidecar/go.mod
+    when: se inspecciona la línea require de go.mau.fi/whatsmeow
+    then: declara una versión semántica concreta, no "latest" ni una referencia de rama
+  - id: AC-3
+    statement: El esqueleto del sidecar no contiene lógica de protocolo WhatsApp.
+    given: sidecar/main.go
+    when: se inspecciona su contenido
+    then: no abre conexión, sesión, ni pairing de WhatsApp; solo compila y arranca
+  - id: AC-4
+    statement: El workspace Rust sigue compilando con los archivos de toolchain presentes.
+    given: rust-toolchain.toml, rustfmt.toml y clippy.toml en la raíz del repositorio
+    when: se ejecuta "cargo build --workspace" en un clon limpio
+    then: termina sin errores y usa el canal declarado en rust-toolchain.toml
+  - id: AC-5
+    statement: Formato y análisis estático terminan sin hallazgos bajo la configuración propia.
+    given: rustfmt.toml y clippy.toml ya presentes
+    when: se ejecutan "cargo fmt --check" y "cargo clippy --workspace -- -D warnings"
+    then: ambos terminan sin hallazgos
+  - id: AC-6
+    statement: El perfil de release está orientado a tamaño.
+    given: la sección [profile.release] del Cargo.toml raíz
+    when: se inspecciona
+    then: declara ajustes de reducción de tamaño de binario (por ejemplo opt-level = "z",
+      lto, codegen-units = 1) y ninguna otra sección preexistente del archivo fue alterada
+  - id: AC-7
+    statement: La CI ejecuta y bloquea ante fallo en formato, análisis estático, tests o build.
+    given: .github/workflows/ci.yml
+    when: se inspecciona el workflow
+    then: incluye pasos de "cargo fmt --check", "cargo clippy --workspace -- -D warnings",
+      "cargo test --workspace", "go build ./..." y "go vet ./..." sobre sidecar/, ninguno
+      marcado con continue-on-error
+  - id: AC-8
+    statement: CLAUDE.md refleja el estado real del repositorio.
+    given: CLAUDE.md
+    when: se inspecciona la sección de estado del repositorio
+    then: ya no afirma que el repositorio es solo documentación sin Cargo.toml, menciona
+      el workspace de cinco crates, el puerto ChannelAdapter, el módulo sidecar/ y la CI,
+      e incluye los comandos reales de build/test/lint para Rust y para Go
+  - id: AC-9
+    statement: STATUS.md y el plan de la etapa A-1 quedan sincronizados con el cierre de HEX-003.
+    given: docs/STATUS.md y docs/plan/fase-a-1-fundaciones.md
+    when: se inspeccionan
+    then: el módulo Go del sidecar, el toolchain, el perfil de release y la CI dejan de
+      figurar como pendientes, atribuidos a HEX-003 con fecha 2026-07-29, sin alterar
+      ninguna decisión ya marcada como Definida ni ningún ADR
+  - id: AC-10
+    statement: El diff respeta la frontera de esta tarea.
+    given: el diff completo introducido por esta tarea
+    when: se busca en él cualquier archivo docs/adr/*.md o cualquier cambio en
+      crates/hexcell-core
+    then: no se encuentra ninguno
+risk: low

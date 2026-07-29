@@ -1,0 +1,228 @@
+task_id: HEX-003
+summary: "Go sidecar skeleton, pinned Rust toolchain, size release profile, minimal CI for both
+  languages and closing docs for A-1. No WhatsApp protocol logic. Risk low."
+affected_files:
+  - Cargo.toml
+  - rust-toolchain.toml
+  - rustfmt.toml
+  - clippy.toml
+  - sidecar/go.mod
+  - sidecar/go.sum
+  - sidecar/main.go
+  - .github/workflows/ci.yml
+  - CLAUDE.md
+  - docs/STATUS.md
+  - docs/plan/fase-a-1-fundaciones.md
+symbols:
+  - "[profile.release]"
+  - main
+  - rust
+  - go
+dependencies:
+  - .ai/tasks/active/HEX-003-new-spec/00-spec.yaml
+  - docs/PRD.md
+  - docs/plan/fase-a-1-fundaciones.md
+  - docs/STATUS.md
+  - CLAUDE.md
+  - Cargo.toml
+  - crates/hexcell-core/Cargo.toml
+test_scenarios:
+  - statement: "`go build ./...` run inside sidecar/ terminates with no errors."
+    covers: ["AC-1"]
+  - statement: "sidecar/go.mod declares `require go.mau.fi/whatsmeow v0.0.0-20260722203353-e9a033b24933`,
+      a concrete pseudo-version, never `latest` and never a branch reference."
+    covers: ["AC-2"]
+  - statement: "sidecar/main.go contains no call to Connect, GetQRChannel, PairPhone or any
+      whatsmeow session/pairing method; it only imports the client package (to keep go.sum
+      honest under `go mod tidy`) and prints a startup message."
+    covers: ["AC-3"]
+  - statement: "`cargo build --workspace` succeeds from the existing clone with rust-toolchain.toml,
+      rustfmt.toml and clippy.toml present, and rustc reports the channel pinned in
+      rust-toolchain.toml."
+    covers: ["AC-4"]
+  - statement: "`cargo fmt --check` and `cargo clippy --workspace -- -D warnings` terminate with no
+      findings under the new rustfmt.toml/clippy.toml, against the HEX-002 code already in the
+      tree."
+    covers: ["AC-5"]
+  - statement: "Cargo.toml's new [profile.release] section declares opt-level = \"z\", lto = true,
+      codegen-units = 1 and strip = true, and every section that existed before this task
+      ([workspace], members, [workspace.package]) is byte-identical to what HEX-002 left."
+    covers: ["AC-6"]
+  - statement: ".github/workflows/ci.yml runs cargo fmt --check, cargo clippy --workspace --
+      -D warnings, cargo test --workspace, go build ./... and go vet ./... (the last two with
+      working-directory sidecar), none marked continue-on-error, so any one failure fails the
+      job."
+    covers: ["AC-7"]
+  - statement: "CLAUDE.md's 'Estado actual' line no longer claims the repository is
+      documentation-only or lacks a Cargo.toml; it names the five-crate workspace, the
+      ChannelAdapter port, the sidecar/ module and the CI, and lists the real build/test/lint
+      commands for both languages."
+    covers: ["AC-8"]
+  - statement: "docs/STATUS.md's sidecar-module Pendiente bullet is removed (or folded into a
+      Definido bullet dated 2026-07-29, attributed to HEX-003) and no other bullet already marked
+      Definido is edited."
+    covers: ["AC-9"]
+  - statement: "docs/plan/fase-a-1-fundaciones.md's tasks 6, 7 and 8 (sidecar, toolchain/profile,
+      CI) read as closed/delivered by HEX-003 without rewriting tasks 1-5 or 9, which HEX-002
+      already closed, and without touching the 'Riesgos y mitigaciones' or 'Dependencias'
+      tables."
+    covers: ["AC-9"]
+  - statement: "The full diff contains no docs/adr/*.md file and no path under crates/hexcell-core/."
+    covers: ["AC-10"]
+strategy:
+  - step: 1
+    action: "Add rust-toolchain.toml at the repo root with channel = \"1.92.0\" (exact patch
+      version, matching the installed toolchain and the rust-version = \"1.92\" already declared
+      in Cargo.toml's [workspace.package] by HEX-002) plus components = [\"rustfmt\", \"clippy\"].
+      Do not restate or contradict rust-version; rust-toolchain.toml only pins which toolchain
+      cargo downloads, it does not change the MSRV contract."
+    files:
+      - rust-toolchain.toml
+  - step: 2
+    action: "Add rustfmt.toml with explicit, commented settings (e.g. edition = \"2024\" to match
+      the workspace, max_width left at rustfmt's own default with a comment saying so is
+      deliberate) so the file is not empty and every deviation from default is justified inline,
+      per the spec constraint."
+    files:
+      - rustfmt.toml
+  - step: 3
+    action: "Add clippy.toml with explicit settings (e.g. msrv = \"1.92\" so clippy's MSRV-aware
+      lints match the workspace floor) and a comment explaining why msrv is restated here even
+      though Cargo.toml already declares rust-version: clippy does not read workspace.package,
+      only a literal clippy.toml or Cargo.toml [lints] key reaches it."
+    files:
+      - clippy.toml
+  - step: 4
+    action: "Append a [profile.release] table to the end of the existing root Cargo.toml, after
+      the workspace.dependencies comment HEX-002 left, without touching [workspace] or
+      [workspace.package]: opt-level = \"z\" (size over speed), lto = true and codegen-units = 1
+      (whole-program optimization, slower build in exchange for a smaller and sometimes faster
+      binary), strip = true (drop symbols/debug info from the shipped binary) and
+      panic = \"abort\" (no unwinding tables; acceptable because no crate here catches panics
+      across an FFI boundary and it shrinks the binary further). Justify in a comment that this
+      targets the stated hardware (10-year-old i7, 8 GB RAM) per NFR-01, where binary size and
+      cold-start footprint matter more than compile time."
+    files:
+      - Cargo.toml
+  - step: 5
+    action: "Create sidecar/go.mod with `module github.com/CGary/hexcell/sidecar`, `go 1.25`
+      (the minimum whatsmeow's own go.mod requires as of the version pinned in step 6; the
+      installed go1.26.5 toolchain satisfies it without a toolchain directive) and a `require
+      go.mau.fi/whatsmeow v0.0.0-20260722203353-e9a033b24933` line."
+    files:
+      - sidecar/go.mod
+  - step: 6
+    action: "Pin whatsmeow to v0.0.0-20260722203353-e9a033b24933 — the latest version listed on
+      pkg.go.dev as of 2026-07-29 (verified during blueprinting; see risks). The module has never
+      cut a tagged semver release, only pseudo-versions resolved from commit SHAs, so a
+      pseudo-version IS the concrete, explicit pin the spec constraint asks for; it is neither
+      `latest` nor a floating branch reference, and a future bump is a one-line change exactly as
+      adr-0009 anticipates."
+    files:
+      - sidecar/go.mod
+  - step: 7
+    action: "Write sidecar/main.go as a minimal compilable skeleton: package main, a blank import
+      `_ \"go.mau.fi/whatsmeow\"` (or an import of a lightweight non-networking symbol such as the
+      client type, referenced only to keep the compiler and `go mod tidy` from dropping the
+      dependency) and a func main that prints a Spanish startup message to stdout. No
+      NewClient/Connect/GetQRChannel/PairPhone call, no store, no session, no socket. A require
+      without any import is removed by `go mod tidy`, which is why the import must exist now even
+      though the real client construction is A-3's job."
+    files:
+      - sidecar/main.go
+  - step: 8
+    action: "Run `go mod tidy` (or `go build` followed by `go mod download` as needed) inside
+      sidecar/ to materialize sidecar/go.sum with the real hashes of whatsmeow and its transitive
+      dependencies. This step needs network access to the Go module proxy (proxy.golang.org or
+      the configured GOPROXY) — never to any WhatsApp server — which is a real constraint on the
+      implementer/verifier environment, recorded as a risk below."
+    files:
+      - sidecar/go.sum
+  - step: 9
+    action: "Write .github/workflows/ci.yml with two jobs, rust and go, both triggered on push and
+      pull_request. rust: actions/checkout, dtolnay/rust-toolchain@stable (or actions/setup with
+      the pinned channel so CI matches rust-toolchain.toml), Swatinem/rust-cache for the cargo
+      cache, then cargo fmt --check, cargo clippy --workspace -- -D warnings and cargo test
+      --workspace as separate steps, none with continue-on-error. go: actions/checkout,
+      actions/setup-go with cache: true and go-version matching sidecar/go.mod's directive, then
+      go build ./... and go vet ./... with working-directory: sidecar. No Docker, no deploy step,
+      no secret consumption: the runner only builds/vets/tests, it never dials WhatsApp."
+    files:
+      - .github/workflows/ci.yml
+  - step: 10
+    action: "Rewrite ONLY the 'Estado actual' paragraph of CLAUDE.md (the line currently reading
+      'Estado actual: solo documentación...'): state that the Rust workspace (five crates,
+      ChannelAdapter port) exists since HEX-002 and that the sidecar/ Go module, the pinned
+      toolchain, the size-oriented release profile and the CI now exist since HEX-003, and add the
+      real commands: cargo build --workspace, cargo test --workspace, cargo fmt --check, cargo
+      clippy --workspace -- -D warnings, and (cd sidecar && go build ./... && go vet ./...). Leave
+      every other section of CLAUDE.md untouched."
+    files:
+      - CLAUDE.md
+  - step: 11
+    action: "In docs/STATUS.md, remove the single Pendiente bullet 'Módulo Go del sidecar
+      (sidecar/)...' that HEX-002 left pointing at HEX-003, and add a Definido bullet dated
+      2026-07-29 attributed to HEX-003 recording that the sidecar module, the pinned toolchain,
+      the size-oriented release profile and the CI now exist. Do not touch any other bullet,
+      Definido or Pendiente, including the FR-12 template-family gap this task does not resolve."
+    files:
+      - docs/STATUS.md
+  - step: 12
+    action: "In docs/plan/fase-a-1-fundaciones.md, mark tasks 6 (sidecar Go module), 7
+      (toolchain/profiles) and 8 (CI) as delivered by HEX-003 with an inline note, following the
+      file's existing prose conventions; do not touch tasks 1-5 and 9 (HEX-002's territory), the
+      'Criterios de aceptación' list's wording beyond what those three tasks require, or the
+      'Riesgos y mitigaciones' / 'Dependencias' tables."
+    files:
+      - docs/plan/fase-a-1-fundaciones.md
+risks:
+  - "whatsmeow ships NO tagged semver releases — github.com/tulir/whatsmeow/tags and /releases are
+    both empty. Every consumer, including this task, pins a pseudo-version resolved from a commit
+    SHA (v0.0.0-YYYYMMDDHHMMSS-abbrevhash). Verified against pkg.go.dev on 2026-07-29: the latest
+    listed version is v0.0.0-20260722203353-e9a033b24933 (2026-07-22). This satisfies the spec's
+    'explicit version, never latest, never a branch reference' constraint, but it means every
+    future bump is a manual pseudo-version replacement, not a semver bump — consistent with
+    adr-0009's acknowledged bus-factor-1 risk, not a new one."
+  - "sidecar/go.sum cannot be hand-written: it must be generated by `go mod tidy`/`go build` with
+    real network access to the Go module proxy to hash whatsmeow's transitive dependency tree
+    (coder/websocket, google/uuid, rs/zerolog, mau.fi/libsignal, mau.fi/util, x/crypto, x/net,
+    x/sync, google.golang.org/protobuf and their own transitive closure). If the
+    implement/verify sandbox has no network egress at all, AC-1 and AC-2 cannot be produced or
+    reverified mechanically, and a human must run `go mod tidy` outside the sandbox and commit the
+    result. This is module-proxy network, never a WhatsApp connection, so it does not conflict
+    with the spec's ban on touching WhatsApp's network from CI."
+  - "go.sum size is not fully predictable before the dependency graph is actually resolved — it
+    depends on whatsmeow's own go.mod at the pinned commit, which can add or drop a transitive
+    dependency between blueprinting and implementation. max_diff_lines below carries real margin
+    for this; sidecar/go.sum is deliberately excluded from any per-file line cap and from forbid."
+  - "This contract touches 11 files, above the fleet policy's l_max_files = 5. Band L applies and
+    the fleet closes for this task; this is accepted rather than split, because the files are one
+    coherent close-out of A-1 tasks 6-8 and splitting them would leave CI referencing a toolchain
+    or profile that does not exist yet in an intermediate commit."
+  - "rust-toolchain.toml pins channel 1.92.0 (a specific patch), stricter than rust-version =
+    \"1.92\" in Cargo.toml (a floor). This is intentional: Cargo.toml's rust-version is the
+    published MSRV floor a downstream consumer needs; rust-toolchain.toml is what this repository's
+    own CI and contributors actually run, and pinning the exact patch removes 'works on my
+    machine' drift. If a future point release of 1.92 is needed, bumping rust-toolchain.toml is a
+    one-line change and does not touch the MSRV contract."
+  - "clippy.toml's msrv key restates 1.92 already declared as workspace.package.rust-version.
+    Verified: clippy.toml is not workspace-aware and does not read Cargo.toml's
+    workspace.package table, so the restatement is necessary, not redundant, and is called out in
+    the file's own comment per the spec's 'any value differing from tool default must be
+    justified inline' constraint."
+  - "panic = \"abort\" in [profile.release] changes unwinding behavior for the release binary only
+    (dev/test profiles are untouched by this task, so `cargo test --workspace` still unwinds
+    normally and AC-5's clippy/fmt run is unaffected). Recorded because a future crate that needs
+    catch_unwind across an FFI boundary (unlikely given hexcell-core has zero dependencies) would
+    have to override this per-profile."
+  - "The blank/marker import of go.mau.fi/whatsmeow in main.go is a deliberate, spec-mandated
+    departure from 'skeleton with nothing real': the alternative (require with no import) is
+    silently deleted by `go mod tidy`, which would make AC-2 unverifiable by that same tool. The
+    import must resolve to a symbol that does not open a connection or construct a client with a
+    live store, to keep AC-3 true."
+  - "Verified against the real tree at blueprint time: Cargo.toml has [workspace] and
+    [workspace.package] only, no [profile.*] section exists yet; no rust-toolchain.toml,
+    rustfmt.toml, clippy.toml, sidecar/ directory or .github/workflows/ file exists; installed
+    toolchain is rustc/cargo 1.92.0 and go1.26.5. docs/STATUS.md's sidecar Pendiente bullet reads
+    exactly '...tarea HEX-003, junto con los archivos de toolchain y la integración continua.',
+    confirming this task is the one it points at."
