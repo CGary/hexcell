@@ -1,0 +1,22 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/hexcell-core",
+    "crates/hexcell",
+    "crates/hexcell-admin",
+    "crates/hexcell-storage",
+    "crates/hexcell-meta",
+]
+
+# Metadatos comunes a los cinco crates. Cada manifiesto los hereda con `.workspace = true`
+# para que la versión, la edición, la versión mínima de Rust y la licencia se declaren
+# en un único sitio. La licencia es la que fija `docs/adr/adr-0001-licencia.md`.
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.92"
+license = "AGPL-3.0-only"
+
+# Sin tabla `[workspace.dependencies]`: en la etapa A-1 ningún crate necesita dependencias
+# externas. La tabla nacerá cuando la etapa A-2 traiga la primera de verdad, y ese es el
+# momento en el que también hay que revisar si `Cargo.lock` debe dejar de estar ignorado.

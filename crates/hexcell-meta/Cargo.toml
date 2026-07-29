@@ -1,0 +1,9 @@
+[package]
+name = "hexcell-meta"
+description = "Cliente y tipos de la Meta Graph API; nace vacío hasta que se resuelva adr-0013."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]

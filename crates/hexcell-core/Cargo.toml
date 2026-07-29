@@ -1,0 +1,13 @@
+[package]
+name = "hexcell-core"
+description = "Tipos de dominio de HexCell y puerto de canal ChannelAdapter (FR-12)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+# Esta tabla está vacía a propósito y es un criterio de aceptación, no un descuido.
+# El núcleo de dominio no conoce almacenamiento, transporte, motor de ejecución
+# asíncrona ni cliente HTTP: todo lo que necesita está en la biblioteca estándar.
+# Ver `docs/adr/adr-0002-estructura-workspace.md`.
+[dependencies]

@@ -1,0 +1,9 @@
+[package]
+name = "hexcell"
+description = "Binario del núcleo de una célula HexCell; se ejecuta dentro del contenedor."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]

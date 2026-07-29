@@ -1,0 +1,12 @@
+[package]
+name = "hexcell-storage"
+description = "Capa de acceso a SQLite y gestión de pools de una célula HexCell."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+# Vacía en la etapa A-1: el motor de SQLite entra con la etapa A-2, que es la que define el
+# esquema y los parámetros. Declarar la dependencia antes de tener esquema solo fijaría una
+# elección sin haberla contrastado.
+[dependencies]
