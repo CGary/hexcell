@@ -10,7 +10,7 @@ escriban los registros no coincida con el orden numérico.
 | Archivo | Decisión | Etapa que lo produce | Estado |
 | :--- | :--- | :--- | :--- |
 | `adr-0001-licencia.md` | **Licencia del proyecto: AGPL-3.0**, con dual licensing conservado por el titular del copyright, frente a Apache-2.0 y BUSL-1.1. | A-1 | **Vigente** (2026-07-29) |
-| `adr-0002-estructura-workspace.md` | División en crates del workspace Rust y sus fronteras. | A-1 | Por escribir |
+| `adr-0002-estructura-workspace.md` | **División en crates del workspace Rust y sus fronteras.** Cinco crates: `hexcell-core` (dominio y puerto de canal, **sin dependencias**, comprobable con una orden), `hexcell` (binario de la célula), `hexcell-admin` (CLI central), `hexcell-storage` (persistencia) y `hexcell-meta` (canal oficial, **vacío** hasta que se resuelva `adr-0013`). Incluye la consecuencia de declarar los métodos del puerto devolviendo `impl Future`: el trait no es compatible con objetos de trait. | A-1 | **Vigente** (2026-07-29) |
 | `adr-0003-persistencia-dual.md` | Persistencia dual SQLite (`sessions.db` + `knowledge_live.db`) y parámetros de SQLite elegidos. | A-2 | Tomada en el PRD, por formalizar |
 | `adr-0004-gcra-y-parametros.md` | Control de admisión GCRA sobre el flujo normalizado del puerto de canal, con Fast-Reject HTTP 200 hacia Meta únicamente en la Fase B. | A-4 | Tomada en el PRD, por formalizar |
 | `adr-0005-contabilidad-dos-fases.md` | Contabilidad financiera de reserva previa y conciliación posterior. | A-4 | Tomada en el PRD, por formalizar |

@@ -3,7 +3,9 @@
 > Registro vivo del avance. Última actualización: 2026-07-29.
 
 ## Fase actual
-**Canal propio en producción — diseño.** No existe todavía código fuente ni scaffold Rust.
+**Canal propio en producción — etapa A-1, fundaciones.** Ya existe el workspace Rust con sus cinco
+crates y la declaración del puerto de canal; no existe todavía ninguna lógica funcional, ni
+adaptador, ni módulo Go del sidecar.
 
 El proyecto opera sobre **dos canales que conviven**, no sobre dos fases que se suceden. El **canal
 propio** (whatsmeow, sidecar Go) es el canal por defecto y permanente, con clientes de pago reales.
@@ -57,6 +59,15 @@ adicional cuando aparezca un cliente que lo justifique. Ver [plan/README.md](pla
   más restrictivo con esta distinción: el **tipo** admite el resultado restrictivo, la **política** de
   cada adaptador decide si lo produce; el adaptador del canal propio no impone una ventana de 24 h
   artificial.
+* **Workspace Rust de cinco crates con el núcleo sin dependencias** (2026-07-29, `adr-0002`).
+  `hexcell-core` (dominio y declaración del puerto de canal), `hexcell` (binario de la célula),
+  `hexcell-admin` (CLI central), `hexcell-storage` (persistencia) y `hexcell-meta`, este último
+  **vacío y sin ningún elemento visible desde fuera** hasta que se resuelva `adr-0013`. La tabla de
+  dependencias del núcleo está vacía y eso es criterio de aceptación, no casualidad: es lo que hace
+  comprobable con una orden la frontera que declara `adr-0010`. Los métodos del puerto se declaran
+  devolviendo `impl Future`, con la consecuencia registrada de que el trait no es compatible con
+  objetos de trait. El cotejo de las variantes contra la documentación oficial de la Cloud API vive
+  en [cotejo-puerto-de-canal-cloud-api.md](cotejo-puerto-de-canal-cloud-api.md).
 * **El mapeo de identidad de conversación pertenece al adaptador, no al núcleo** (2026-07-28,
   `adr-0010`). El adaptador traduce el identificador de transporte —JID en whatsmeow, `wa_id` en la
   Cloud API— al identificador interno y **entrega ya traducido** lo que cruza el puerto; el núcleo
@@ -257,5 +268,18 @@ adicional cuando aparezca un cliente que lo justifique. Ver [plan/README.md](pla
   primera entrada empírica.*
 * Proceso exacto de alta (onboarding) comercial de una nueva microempresa. — *El alta operada
   manualmente de los dos pilotos se resuelve en la etapa A-7; su automatización, en la etapa B-2.*
-* Scaffold del workspace Rust (`Cargo.toml`, `src/`) y del módulo Go del sidecar cuando arranque la
-  fase de implementación. — *Etapa A-1, tareas 5 y 6.*
+* **Ampliación del conjunto enumerado de resultados de FR-12 para los fallos de plantilla.** El
+  cotejo contra la documentación oficial de la Cloud API (2026-07-29) encontró una familia de
+  códigos que **no encaja limpiamente** en ninguna de las cuatro variantes que FR-12 fija: 132000
+  (número de parámetros que no coincide), 132001 (plantilla inexistente o no aprobada), 132015
+  (plantilla suspendida por baja calidad) y 132016 (deshabilitada de forma permanente), más 131049
+  (entrega retenida para preservar la salud del ecosistema) y 131048 (restricción por mensajes
+  bloqueados o marcados). Ampliar el enumerado es decisión sobre el PRD y **no se resolvió de
+  pasada** al declarar el puerto. El detalle, con la redacción oficial de cada código y el motivo de
+  cada desencaje, está en
+  [cotejo-puerto-de-canal-cloud-api.md](cotejo-puerto-de-canal-cloud-api.md). — *Debe estar resuelta
+  antes de que la etapa B-1 escriba el adaptador oficial, que es el primer momento en que estos
+  códigos pueden llegar; sobre canal propio no llegan.*
+* Módulo Go del sidecar (`sidecar/`) que compila en vacío, con la dependencia de whatsmeow fijada a
+  una versión explícita. — *Etapa A-1, tarea 6; tarea HEX-003, junto con los archivos de toolchain y
+  la integración continua.*
