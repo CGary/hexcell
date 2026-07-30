@@ -1,0 +1,15 @@
+[package]
+name = "hexcell-canal-contrato"
+description = "Batería reutilizable de tests de contrato para cualquier implementación de ChannelAdapter."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+# hexcell-core es la única dependencia, y a propósito: la batería es un conjunto de `async fn`
+# más aserciones, sin ningún runtime propio. Imponer tokio (o cualquier otro) a todo futuro
+# consumidor de este crate —incluida la etapa B-1, que la ejercitará contra el adaptador de la
+# Cloud API real— sería exactamente la generalidad especulativa que este workspace evita en
+# otros puntos: quien ya tiene un runtime en marcha (el test que llama) es quien debe decidirlo.
+[dependencies]
+hexcell-core = { path = "../hexcell-core" }

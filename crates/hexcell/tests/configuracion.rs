@@ -8,6 +8,7 @@
 use std::io::Read;
 use std::process::{Command, Stdio};
 use std::sync::Mutex;
+use std::time::Duration;
 
 use hexcell::configuracion::{Configuracion, ErrorDeConfiguracion};
 
@@ -25,6 +26,7 @@ fn limpiar_entorno_de_hexcell() {
         "HEXCELL_DIRECCION_SALUD",
         "HEXCELL_CANAL",
         "HEXCELL_CAPACIDAD_COLA",
+        "HEXCELL_VENTANA_DEDUPLICACION_SEGUNDOS",
     ] {
         unsafe {
             std::env::remove_var(variable);
@@ -148,6 +150,86 @@ fn falla_si_el_canal_no_es_reconocido() {
     let _ = std::fs::remove_dir_all(&directorio_temporal);
 }
 
+#[test]
+fn la_ventana_de_deduplicacion_por_defecto_es_una_hora_sin_la_variable_de_entorno() {
+    let _guardia = CERROJO_DE_ENTORNO.lock().unwrap_or_else(|e| e.into_inner());
+    limpiar_entorno_de_hexcell();
+    let directorio_temporal = std::env::temp_dir().join(format!(
+        "hexcell-test-config-ventana-defecto-{}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&directorio_temporal)
+        .expect("crear el directorio temporal del test debe funcionar");
+    unsafe {
+        std::env::set_var("HEXCELL_ID_CELULA", "piloto-01");
+        std::env::set_var("HEXCELL_RUTA_DATOS", &directorio_temporal);
+    }
+
+    let configuracion =
+        Configuracion::desde_entorno().expect("la configuración válida no debe fallar");
+    assert_eq!(
+        configuracion.ventana_deduplicacion,
+        Duration::from_secs(3600)
+    );
+
+    let _ = std::fs::remove_dir_all(&directorio_temporal);
+}
+
+#[test]
+fn la_ventana_de_deduplicacion_se_puede_configurar_por_variable_de_entorno() {
+    let _guardia = CERROJO_DE_ENTORNO.lock().unwrap_or_else(|e| e.into_inner());
+    limpiar_entorno_de_hexcell();
+    let directorio_temporal = std::env::temp_dir().join(format!(
+        "hexcell-test-config-ventana-explicita-{}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&directorio_temporal)
+        .expect("crear el directorio temporal del test debe funcionar");
+    unsafe {
+        std::env::set_var("HEXCELL_ID_CELULA", "piloto-01");
+        std::env::set_var("HEXCELL_RUTA_DATOS", &directorio_temporal);
+        std::env::set_var("HEXCELL_VENTANA_DEDUPLICACION_SEGUNDOS", "120");
+    }
+
+    let configuracion =
+        Configuracion::desde_entorno().expect("la configuración válida no debe fallar");
+    assert_eq!(
+        configuracion.ventana_deduplicacion,
+        Duration::from_secs(120)
+    );
+
+    let _ = std::fs::remove_dir_all(&directorio_temporal);
+}
+
+#[test]
+fn falla_si_la_ventana_de_deduplicacion_no_es_un_entero_positivo() {
+    let _guardia = CERROJO_DE_ENTORNO.lock().unwrap_or_else(|e| e.into_inner());
+    limpiar_entorno_de_hexcell();
+    let directorio_temporal = std::env::temp_dir().join(format!(
+        "hexcell-test-config-ventana-invalida-{}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&directorio_temporal)
+        .expect("crear el directorio temporal del test debe funcionar");
+    unsafe {
+        std::env::set_var("HEXCELL_ID_CELULA", "piloto-01");
+        std::env::set_var("HEXCELL_RUTA_DATOS", &directorio_temporal);
+        std::env::set_var("HEXCELL_VENTANA_DEDUPLICACION_SEGUNDOS", "no-es-un-entero");
+    }
+
+    let error =
+        Configuracion::desde_entorno().expect_err("debe fallar con una ventana no numérica");
+    match error {
+        ErrorDeConfiguracion::ValorInvalido { nombre, valor, .. } => {
+            assert_eq!(nombre, "HEXCELL_VENTANA_DEDUPLICACION_SEGUNDOS");
+            assert_eq!(valor, "no-es-un-entero");
+        }
+        otro => panic!("se esperaba ValorInvalido, se obtuvo {otro:?}"),
+    }
+
+    let _ = std::fs::remove_dir_all(&directorio_temporal);
+}
+
 /// Ejecuta el binario real con el entorno dado y devuelve `(código de salida, stderr)`.
 fn ejecutar_binario_con_entorno(variables: &[(&str, &str)]) -> (i32, String) {
     let mut comando = Command::new(env!("CARGO_BIN_EXE_hexcell"));
@@ -185,11 +267,30 @@ fn el_binario_termina_antes_de_escuchar_si_falta_la_ruta_de_datos() {
 
 #[test]
 fn el_binario_no_vincula_nada_si_la_configuracion_es_invalida() {
-    let (codigo, stderr) = ejecutar_binario_con_entorno(&[("HEXCELL_ID_CELULA", "piloto-01")]);
+    // AC-10: este test ya no asume que el puerto por defecto del servidor de salud —común en
+    // máquinas de desarrollo— está libre. En vez de eso, vincula un `TcpListener` efímero
+    // (puerto 0) para que el sistema
+    // operativo asigne uno libre, lo suelta para dejarlo libre otra vez, y lo pasa al binario
+    // hijo explícitamente por HEXCELL_DIRECCION_SALUD. Queda una carrera residual —otro proceso
+    // podría reclamar ese puerto entre soltarlo y conectar a él, una ventana de microsegundos—
+    // pero es incondicionalmente mejor que asumir que un puerto fijo y habitual está libre en la
+    // máquina que ejecuta la suite.
+    let listener_temporal = std::net::TcpListener::bind("127.0.0.1:0")
+        .expect("bindear un puerto efímero debe funcionar");
+    let direccion_libre = listener_temporal
+        .local_addr()
+        .expect("leer la dirección local del listener recién creado debe funcionar");
+    drop(listener_temporal);
+
+    let (codigo, stderr) = ejecutar_binario_con_entorno(&[
+        ("HEXCELL_ID_CELULA", "piloto-01"),
+        ("HEXCELL_DIRECCION_SALUD", &direccion_libre.to_string()),
+    ]);
     assert_ne!(codigo, 0);
     assert!(stderr.contains("HEXCELL_RUTA_DATOS"));
 
-    // Ninguna dirección de salud llegó a vincularse: conectar al puerto por defecto debe fallar.
-    let conexion = std::net::TcpStream::connect("127.0.0.1:8081");
+    // La configuración inválida falla antes de vincular nada: conectar a la dirección que se
+    // habría usado debe fallar porque el binario nunca llegó a bindearla.
+    let conexion = std::net::TcpStream::connect(direccion_libre);
     assert!(conexion.is_err());
 }
