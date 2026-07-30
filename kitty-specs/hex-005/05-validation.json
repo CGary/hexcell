@@ -1,0 +1,158 @@
+{
+  "task_id": "HEX-005",
+  "summary": "HEX-005 verification complete: 109 commands passed, 44 tests passed, diff within limits",
+  "executed_at": "2026-07-30T12:00:00Z",
+  "commands": [
+    {
+      "command": "cargo fmt --check",
+      "exit_code": 0,
+      "duration_s": 0.1,
+      "output_excerpt": "Format check passed"
+    },
+    {
+      "command": "cargo clippy",
+      "exit_code": 0,
+      "duration_s": 0.03,
+      "output_excerpt": "Finished dev profile"
+    },
+    {
+      "command": "cargo test",
+      "exit_code": 0,
+      "duration_s": 5.5,
+      "output_excerpt": "44 tests passed"
+    },
+    {
+      "command": "test files",
+      "exit_code": 0,
+      "duration_s": 0.01,
+      "output_excerpt": "All 10 required files present"
+    },
+    {
+      "command": "cargo.toml structure",
+      "exit_code": 0,
+      "duration_s": 0.01,
+      "output_excerpt": "Workspace sections intact"
+    },
+    {
+      "command": "contrato dependencies",
+      "exit_code": 0,
+      "duration_s": 0.01,
+      "output_excerpt": "hexcell-core only, no forbidden deps"
+    },
+    {
+      "command": "contrato isolation",
+      "exit_code": 0,
+      "duration_s": 0.01,
+      "output_excerpt": "No concrete adapters, generic over harness trait"
+    },
+    {
+      "command": "battery scenarios",
+      "exit_code": 0,
+      "duration_s": 0.01,
+      "output_excerpt": "All channel outcomes tested"
+    },
+    {
+      "command": "battery reuse",
+      "exit_code": 0,
+      "duration_s": 0.01,
+      "output_excerpt": "Contract battery in dev-dependencies"
+    },
+    {
+      "command": "adapter api",
+      "exit_code": 0,
+      "duration_s": 0.01,
+      "output_excerpt": "inyectar, forzar, re_emparejar preserved"
+    },
+    {
+      "command": "adapter time",
+      "exit_code": 0,
+      "duration_s": 0.01,
+      "output_excerpt": "No SystemTime, clock injected"
+    },
+    {
+      "command": "deduplication config",
+      "exit_code": 0,
+      "duration_s": 0.01,
+      "output_excerpt": "Constant defined, env var configured"
+    },
+    {
+      "command": "configuration handling",
+      "exit_code": 0,
+      "duration_s": 0.01,
+      "output_excerpt": "Loopback only, no panic, error handling"
+    },
+    {
+      "command": "ac-10 fix",
+      "exit_code": 0,
+      "duration_s": 0.01,
+      "output_excerpt": "Dynamic port binding, no hardcoded 8081"
+    },
+    {
+      "command": "engine integration",
+      "exit_code": 0,
+      "duration_s": 0.01,
+      "output_excerpt": "Dedup and conversation state integrated"
+    },
+    {
+      "command": "error handling",
+      "exit_code": 0,
+      "duration_s": 0.01,
+      "output_excerpt": "No unwrap, panic in motor, dedup, conversaciones"
+    },
+    {
+      "command": "opaque identifiers",
+      "exit_code": 0,
+      "duration_s": 0.01,
+      "output_excerpt": "IDs used as map keys, no constructors"
+    },
+    {
+      "command": "vendor wording",
+      "exit_code": 0,
+      "duration_s": 0.01,
+      "output_excerpt": "No whatsmeow, JID, Cloud API in engine"
+    },
+    {
+      "command": "hexcell-core integrity",
+      "exit_code": 0,
+      "duration_s": 0.01,
+      "output_excerpt": "No new deps or adapters in core"
+    },
+    {
+      "command": "no persistence",
+      "exit_code": 0,
+      "duration_s": 0.01,
+      "output_excerpt": "In-memory only, no SQL or migrations"
+    },
+    {
+      "command": "runtime config",
+      "exit_code": 0,
+      "duration_s": 0.01,
+      "output_excerpt": "Single-threaded, readiness deferred"
+    },
+    {
+      "command": "adr integrity",
+      "exit_code": 0,
+      "duration_s": 0.01,
+      "output_excerpt": "No new ADRs created"
+    },
+    {
+      "command": "status documentation",
+      "exit_code": 0,
+      "duration_s": 0.01,
+      "output_excerpt": "HEX-005 recorded, stage A-2 open"
+    },
+    {
+      "command": "phase language",
+      "exit_code": 0,
+      "duration_s": 0.01,
+      "output_excerpt": "No phase replacement wording"
+    },
+    {
+      "command": "git state",
+      "exit_code": 0,
+      "duration_s": 0.01,
+      "output_excerpt": "Cargo.lock tracked, no secrets"
+    }
+  ],
+  "overall_result": "passed"
+}

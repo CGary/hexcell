@@ -1,0 +1,422 @@
+acceptance:
+    human_gate: true
+execution:
+    branch: ai/HEX-005
+    mode: worktree_edit
+forbid:
+    behaviors:
+        - 'Do not add, remove, rename or edit anything under crates/hexcell-core. That crate is
+          closed by HEX-002 and untouched by HEX-004. In particular do NOT add a recv/subscribe
+          method to ChannelAdapter, do NOT move the Reloj trait into it, and do NOT put the
+          deduplication registry or the FueraDeVentana policy there. Its [dependencies] table stays
+          empty; that is AC-12, not a style preference.'
+        - 'Do not make the contract battery depend on any concrete adapter. crates/hexcell-canal-contrato
+          must not name AdaptadorSimulado, must not depend on hexcell-canal-simulado, and must not
+          implement ChannelAdapter for anything. It depends on hexcell-core and on nothing else - no
+          tokio, no HTTP crate, no test framework - because it is plain async fn plus assertions,
+          awaited by whatever runtime the calling test already runs.'
+        - 'Do not solve the battery with dynamic dispatch. ChannelAdapter returns impl Future + Send
+          (RPITIT) and is therefore NOT dyn-compatible: Box<dyn ChannelAdapter> does not compile. The
+          battery is generic over a harness trait with an associated adapter type.'
+        - 'Do not fold the clock-dependent scenarios into the base harness trait. The trait that
+          advances time is a separate sub-trait, so an adapter that cannot control its clock still
+          implements the base trait and runs every non-temporal scenario.'
+        - 'Do not implement the FueraDeVentana policy anywhere except crates/hexcell. Not in
+          hexcell-core, not in hexcell-canal-simulado, not in the contract crate. The policy is
+          deferral of the reply with a BOUNDED per-conversation queue and a documented drop-oldest
+          rule at the cap; escalation to a human is not implemented, because there is no operator
+          channel to escalate to until later stages, and that rejection is written down rather than
+          left implicit.'
+        - 'Do not add a retry loop, a backoff timer, a sleep or a background task for the deferred
+          replies. They are re-attempted only when a later event arrives for that same conversation,
+          and they are flushed before that new event''s own reply so the thread stays chronological.'
+        - 'Do not give the deduplication registry a clock, and do not import Reloj, RelojDePrueba or
+          RelojDelSistema into crates/hexcell/src/. The retention window is measured against the
+          monotonic maximum marca_temporal supplied by the caller on every call. Production code in
+          crates/hexcell must not import a trait from the test-double crate for timekeeping.'
+        - 'Do not hardcode the retention window inside the registry and do not leave it as a bare
+          literal. Per the human decision of 2026-07-30 the window is a CONSTRUCTOR PARAMETER of
+          RegistroDeDeduplicacion whose default is the named Duration constant
+          VENTANA_DE_RETENCION_DEDUPLICACION_POR_DEFECTO (one hour), carrying at its declaration the
+          explicit justification AC-8 demands about the channel''s expected redelivery horizon and a
+          note that the definitive value is still an open product decision. Keep the documented hard
+          cap on retained entries so a burst cannot grow the map without bound against NFR-01.'
+        - 'Do not restate the one-hour value anywhere outside its single declaration in
+          crates/hexcell/src/deduplicacion.rs. crates/hexcell/src/configuracion.rs must IMPORT that
+          constant as its fallback, never write 3600 or an equivalent literal of its own; two
+          literals for one number is how a default silently drifts from the justification that
+          documents it.'
+        - 'Do not invent a new configuration mechanism for the window. Follow the HEXCELL_CAPACIDAD_COLA
+          precedent already in crates/hexcell/src/configuracion.rs exactly: an OPTIONAL environment
+          variable HEXCELL_VENTANA_DEDUPLICACION_SEGUNDOS, a ventana_deduplicacion field on
+          Configuracion, a ValorInvalido error naming the variable and its expected format when it
+          does not parse, and the documented default when it is absent. No config file, no CLI flag,
+          no build-time feature.'
+        - 'Do not break what HEX-004 closed in crates/hexcell/src/configuracion.rs, which this task
+          reopens only for that one addition: no unwrap(), no expect(), no panic, every existing
+          variable still parsed and validated, the loopback default preserved, and the failure path
+          still terminating before anything is bound.'
+        - 'Do not present the one-hour window as a settled figure. docs/STATUS.md gets a Pendiente
+          entry dated 2026-07-30 recording that the definitive value is an open product decision, and
+          that entry must NOT be written into the Definido section - an open product decision recorded
+          as settled is precisely the failure mode the repository''s STATUS discipline exists to
+          prevent.'
+        - 'Do not invent a behaviour for a redelivery arriving beyond the retention window. The plan''s
+          risk table already fixes it: it is processed again as a new event, deliberately, with a log
+          line, as an accepted and documented residual limitation. Do not reject it, do not panic, do
+          not add a second retention tier.'
+        - 'Do not make the re-pairing test vacuous. It must NOT construct two events with the same
+          IdConversacion and assert they are equal. The simulated adapter grows the contact-to-
+          IdConversacion map that adr-0010 assigns to the adapter, keyed by contact ONLY and never by
+          device, and re_emparejar changes the device identifier while leaving that map intact.'
+        - 'Do not construct, interpret, parse, split, reverse or derive an IdConversacion anywhere
+          under crates/hexcell/src/. IdConversacion::nuevo and IdRemitente::nuevo must not appear in
+          that directory. The engine receives the value through the port and uses it as an opaque map
+          key (AC-6).'
+        - 'Do not break the API HEX-004 left on AdaptadorSimulado. inyectar, forzar (queued per
+          conversation), forzar_siguiente (queued undirected, FIFO), forzar_averia (a one-shot
+          boolean flag, not a queue) and envios_capturados keep their current names and semantics,
+          because crates/hexcell-canal-simulado/tests/adaptador_simulado.rs and
+          crates/hexcell/tests/motor.rs depend on them.'
+        - 'Do not call SystemTime::now(), Instant::now(), tokio::time::sleep, tokio::time::pause or
+          tokio::time::advance in crates/hexcell-canal-simulado/src/adaptador.rs, and do not write
+          the literal text SystemTime::now in that file''s comments either - the verify grep is
+          textual and cannot tell code from prose. The window is computed only from the injected
+          Reloj, and RelojDelSistema in reloj.rs is the single permitted caller.'
+        - 'Do not restate the 24 h value as 86400, as 24 * 60 * 60, as 60 * 60 * 24 or as any literal
+          Duration, in the simulated adapter or in the contract crate. Import
+          DURACION_VENTANA_SERVICIO from hexcell_core::canal.'
+        - 'Do not hold a std::sync::Mutex guard across an .await inside the simulated adapter; the
+          future returned by send() must stay Send to satisfy the port''s bound, and a guard held
+          across an await breaks that with a compile error far from the cause.'
+        - 'Do not call unwrap(), expect(), panic!, unreachable! or todo! in crates/hexcell/src/motor.rs,
+          crates/hexcell/src/deduplicacion.rs or crates/hexcell/src/conversaciones.rs, and do not add
+          a wildcard arm (_ =>) to the match over ResultadoEnvio. That match must keep naming all five
+          variants plus Err so a future variant breaks compilation.'
+        - 'Do not name whatsmeow, JID, wa_id, Cloud API or Graph API in crates/hexcell/src/motor.rs,
+          procesador.rs, deduplicacion.rs or conversaciones.rs, in code or in comments. The retention
+          justification must be phrased functionally - a channel that retries an unconfirmed delivery,
+          a channel that replays what was pending on reconnect - and any vendor-specific wording goes
+          to docs/STATUS.md or to the simulated crate, where those words are legitimate. Note that
+          crates/hexcell/src/configuracion.rs already contains Cloud API legitimately and must not be
+          edited to remove it.'
+        - 'Do not create, renumber, reorder, retitle or edit any file under docs/adr/. This task adds
+          no ADR: plan task 6 asks for the decision documentada, not for an ADR, and the policy is
+          engine-internal and binds no future adapter. If review later demands one, the number is
+          0017 and it comes from the index docs/adr/README.md, which already assigns 0001 to 0016 -
+          never from ls docs/adr/, where 0003 to 0007 and 0011 to 0013 are reserved entries with no
+          file yet.'
+        - 'Do not write anything in docs/STATUS.md that marks etapa A-2 as closed, finished or
+          cerrada, and do not rewrite or delete any existing bullet, Definido or Pendiente. Add
+          exactly two new Definido entries dated 2026-07-30 and attributed to HEX-005. AC-13 treats
+          this file as a tripwire and the stage closes with HEX-008.'
+        - 'Do not open, create or reference sessions.db, knowledge_live.db or any SQLite file; do not
+          write a schema, a migration, a pool, a SQL statement or a WAL setting. Persistence is
+          HEX-006/HEX-007 and everything in this task is in memory, documented as transitional.'
+        - 'Do not implement real readiness logic in GET /health/ready, do not add any HTTP route, and
+          do not edit crates/hexcell/src/salud.rs at all. Real readiness is plan task 7 / HEX-006.'
+        - 'Do not implement SIGTERM handling, graceful shutdown, in-flight drain or SQLite checkpoint.
+          That is plan task 12 / HEX-008.'
+        - 'Do not add an LLM provider interface, real or simulated, and do not add product logic to
+          the processor beyond the existing echo. Those are plan task 11 / HEX-008 and an explicit
+          non-goal.'
+        - 'Do not add tracing, log, env_logger, serde, serde_json, clap, anyhow, thiserror, rusqlite,
+          sqlx, rand, chrono, axum, tiny-http, actix-web, warp, rocket, tide, reqwest or ureq to any
+          manifest. Structured logging is plan task 15 (HEX-008); errors stay hand-written enums with
+          Display and std::error::Error impls.'
+        - 'Do not add hexcell-canal-contrato as a REGULAR dependency of crates/hexcell or of
+          crates/hexcell-canal-simulado. It is test scaffolding and belongs under [dev-dependencies]
+          only; the cell binary already ships hexcell-canal-simulado and must not also ship the
+          battery.'
+        - 'Do not enable tokio''s rt-multi-thread feature or change the runtime flavor away from
+          current_thread. One cell serves low traffic and a per-cell worker pool is the wrong trade
+          on the target hardware (NFR-01).'
+        - 'Do not change [workspace.package], [workspace.dependencies] or [profile.release] in the
+          root Cargo.toml. The only permitted change there is adding the new crate to members.'
+        - 'Do not hand-write, hand-edit or prune Cargo.lock. Let cargo regenerate it and commit it
+          verbatim. Its path matches sensitive_path_match in complexity-score, so the calculated risk
+          for this task will read high while 00-spec says medium; that divergence is expected, is
+          recorded in the blueprint, and is not to be corrected by dropping the new crate.'
+        - 'Do not reach any network from tests. Only 127.0.0.1 loopback sockets bound by the test
+          itself are allowed, and no test may sleep to make a temporal assertion pass.'
+        - 'Do not leave the literal 8081, or any other fixed port, as the basis of an assertion in
+          crates/hexcell/tests/configuracion.rs. The free port is obtained by binding 127.0.0.1:0 and
+          dropping the listener, and the residual race is documented in a comment rather than hidden.'
+        - 'Do not state or imply anywhere that Fase B replaces, substitutes or closes Fase A, or that
+          the sidecar is retired or transitional. The own channel is the default and permanent
+          channel and the sidecar is its permanent cost.'
+        - 'Do not weaken the FR-12 distinction in prose: the TYPE admits the restrictive outcome, the
+          POLICY of each adapter decides whether it produces it. The battery exercising a 24 h window
+          against the simulated adapter must never be written as evidence that the own-channel
+          adapter should impose one.'
+        - 'Do not write repository prose, doc comments, error messages or commit messages in English.
+          Rust identifiers, crate names and existing English identifiers stay in idiomatic English;
+          the language rule governs prose, not identifiers. Markdown prose and long comments keep the
+          repository''s ~100 column width.'
+        - 'Do not add Co-Authored-By or any AI-attribution trailer to any commit message. Conventional
+          commits in Spanish only.'
+        - 'Do not write a relative date anywhere. Every date is absolute (2026-07-30).'
+        - 'Do not commit any *.db, *.db-wal, *.db-shm or .env* file, and do not hardcode any secret,
+          token, API key or credential in source, manifests or test fixtures - not even as an example
+          value in documentation.'
+    files:
+        - crates/hexcell-core/*
+        - crates/hexcell-core/**
+        - crates/hexcell/src/salud.rs
+        - crates/hexcell/src/procesador.rs
+        - crates/hexcell-canal-simulado/src/reloj.rs
+        - crates/hexcell-admin/Cargo.toml
+        - crates/hexcell-admin/src/main.rs
+        - crates/hexcell-storage/Cargo.toml
+        - crates/hexcell-storage/src/lib.rs
+        - crates/hexcell-meta/Cargo.toml
+        - crates/hexcell-meta/src/lib.rs
+        - docs/adr/*
+        - docs/adr/**
+        - sidecar/*
+        - sidecar/**
+        - docs/PRD.md
+        - docs/bitacora-de-descartes.md
+        - docs/plan/*
+        - docs/plan/**
+        - docs/cotejo-puerto-de-canal-cloud-api.md
+        - README.md
+        - CLAUDE.md
+        - CONTRIBUTING.md
+        - LICENSE
+        - rust-toolchain.toml
+        - rustfmt.toml
+        - clippy.toml
+        - .gitignore
+        - .github/*
+        - .github/**
+        - Dockerfile*
+        - docker-compose*
+        - migrations/*
+        - migrations/**
+goal: |
+    Turn A-2 plan tasks 5, 6, 9 and 10 into Rust code on top of what HEX-004 left on main, plus the
+    AC-10 fix to an existing test. Four pieces land. First, a REUSABLE contract battery for the
+    ChannelAdapter port, in a new dependency-light crate crates/hexcell-canal-contrato that names no
+    concrete adapter: because the port is RPITIT and therefore not dyn-compatible, the battery is a
+    set of generic async fn parameterised over a harness trait, with the clock-dependent scenarios
+    split into a separate sub-trait so an adapter that cannot control time still runs the rest. It is
+    exercised here from crates/hexcell-canal-simulado/tests/, that is, from outside the crate that
+    defines it, which is exactly how etapa B-1 will reuse it against the Cloud API adapter. Second,
+    the core's policy on FueraDeVentana: the engine defers the reply in a bounded per-conversation
+    queue and re-sends it when the client writes again, before that new event's own reply; escalation
+    to a human is explicitly rejected for now because there is no operator channel to escalate to.
+    Third, thread continuity across a re-pairing: the simulated adapter grows the contact-to-
+    conversation identity store that adr-0010 assigns to the adapter, keyed by contact and never by
+    device, and the engine grows the in-memory per-conversation history needed to observe that the
+    thread survives - both documented as transitional and replaced by sessions.db in HEX-006. Fourth,
+    delivery idempotency: an in-memory registry of already-seen deduplication identifiers with a
+    named retention constant of one hour, justified at its declaration against the channel's expected
+    redelivery horizon and capped in size, whose behaviour for a late redelivery is the one the plan
+    already fixed - processed again, deliberately and documented. Finally
+    el_binario_no_vincula_nada_si_la_configuracion_es_invalida stops assuming port 8081 is free. No
+    SQLite, no SIGTERM, no readiness logic, no LLM provider, no ADR, and hexcell-core is not touched
+    at all.
+limits:
+    max_diff_lines: 4400
+    max_files_changed: 27
+    per_class:
+        - glob: Cargo.lock
+          max_diff_lines: 60
+        - glob: Cargo.toml
+          max_diff_lines: 30
+        - glob: crates/hexcell-canal-contrato/Cargo.toml
+          max_diff_lines: 40
+        - glob: crates/hexcell-canal-contrato/src/**
+          max_diff_lines: 900
+        - glob: crates/hexcell-canal-simulado/Cargo.toml
+          max_diff_lines: 30
+        - glob: crates/hexcell-canal-simulado/src/**
+          max_diff_lines: 400
+        - glob: crates/hexcell-canal-simulado/tests/**
+          max_diff_lines: 550
+        - glob: crates/hexcell/Cargo.toml
+          max_diff_lines: 30
+        - glob: crates/hexcell/src/**
+          max_diff_lines: 1450
+        - glob: crates/hexcell/tests/**
+          max_diff_lines: 1200
+        - glob: docs/STATUS.md
+          max_diff_lines: 60
+read:
+    - .ai/tasks/active/HEX-005-new-spec/00-spec.yaml
+    - .ai/tasks/active/HEX-005-new-spec/01-blueprint.yaml
+    - crates/hexcell-core/src/canal.rs
+    - crates/hexcell-core/src/identidad.rs
+    - crates/hexcell-core/src/lib.rs
+    - crates/hexcell-core/Cargo.toml
+    - crates/hexcell-canal-simulado/src/reloj.rs
+    - crates/hexcell-canal-simulado/src/adaptador.rs
+    - crates/hexcell-canal-simulado/src/lib.rs
+    - crates/hexcell-canal-simulado/tests/adaptador_simulado.rs
+    - crates/hexcell/src/motor.rs
+    - crates/hexcell/src/procesador.rs
+    - crates/hexcell/src/lib.rs
+    - crates/hexcell/src/main.rs
+    - crates/hexcell/src/configuracion.rs
+    - crates/hexcell/tests/motor.rs
+    - crates/hexcell/tests/configuracion.rs
+    - Cargo.toml
+    - crates/hexcell/Cargo.toml
+    - rust-toolchain.toml
+    - rustfmt.toml
+    - clippy.toml
+    - docs/PRD.md
+    - docs/plan/fase-a-2-nucleo-persistencia.md
+    - docs/adr/adr-0010-puerto-de-canal.md
+    - docs/adr/adr-0016-convencion-de-entrega-de-eventos.md
+    - docs/adr/README.md
+    - docs/STATUS.md
+    - CLAUDE.md
+    - CONTRIBUTING.md
+retry_policy:
+    escalate_after: 1
+    max_attempts: 2
+summary: 'A-2 tasks 5, 6, 9, 10: reusable port contract battery crate, FueraDeVentana deferral policy,
+    thread continuity across re-pairing, in-memory dedup with a justified window, and the 8081 fix.'
+task_id: HEX-005
+touch:
+    - Cargo.toml
+    - Cargo.lock
+    - crates/hexcell-canal-contrato/Cargo.toml
+    - crates/hexcell-canal-contrato/src/lib.rs
+    - crates/hexcell-canal-contrato/src/banco.rs
+    - crates/hexcell-canal-contrato/src/bateria.rs
+    - crates/hexcell-canal-contrato/src/*.rs
+    - crates/hexcell-canal-simulado/Cargo.toml
+    - crates/hexcell-canal-simulado/src/lib.rs
+    - crates/hexcell-canal-simulado/src/adaptador.rs
+    - crates/hexcell-canal-simulado/tests/contrato_del_puerto.rs
+    - crates/hexcell-canal-simulado/tests/adaptador_simulado.rs
+    - crates/hexcell-canal-simulado/tests/*.rs
+    - crates/hexcell/Cargo.toml
+    - crates/hexcell/src/lib.rs
+    - crates/hexcell/src/main.rs
+    - crates/hexcell/src/configuracion.rs
+    - crates/hexcell/src/motor.rs
+    - crates/hexcell/src/deduplicacion.rs
+    - crates/hexcell/src/conversaciones.rs
+    - crates/hexcell/tests/motor.rs
+    - crates/hexcell/tests/politica_fuera_de_ventana.rs
+    - crates/hexcell/tests/deduplicacion.rs
+    - crates/hexcell/tests/continuidad_de_hilo.rs
+    - crates/hexcell/tests/configuracion.rs
+    - crates/hexcell/tests/*.rs
+    - docs/STATUS.md
+verify:
+    commands:
+        - cargo fmt --check
+        - cargo clippy --workspace --all-targets -- -D warnings
+        - cargo test --workspace
+        - test -f crates/hexcell-canal-contrato/Cargo.toml
+        - test -f crates/hexcell-canal-contrato/src/lib.rs
+        - test -f crates/hexcell-canal-contrato/src/banco.rs
+        - test -f crates/hexcell-canal-contrato/src/bateria.rs
+        - test -f crates/hexcell/src/deduplicacion.rs
+        - test -f crates/hexcell/src/conversaciones.rs
+        - test -f crates/hexcell-canal-simulado/tests/contrato_del_puerto.rs
+        - test -f crates/hexcell/tests/politica_fuera_de_ventana.rs
+        - test -f crates/hexcell/tests/deduplicacion.rs
+        - test -f crates/hexcell/tests/continuidad_de_hilo.rs
+        - grep -q 'hexcell-canal-contrato' Cargo.toml
+        - grep -qE '^\[workspace\.package\]' Cargo.toml
+        - grep -qE '^\[workspace\.dependencies\]' Cargo.toml
+        - grep -qE '^\[profile\.release\]' Cargo.toml
+        - grep -qE '^[[:space:]]*hexcell-core[[:space:]]*=' crates/hexcell-canal-contrato/Cargo.toml
+        - '! grep -qE ''^[[:space:]]*(tokio|hyper|hyper-util|http-body-util|bytes|axum|rusqlite|sqlx|serde|serde_json|chrono|rand|anyhow|thiserror|tracing|log)[[:space:]]*='' crates/hexcell-canal-contrato/Cargo.toml'
+        - '! grep -qE ''^[[:space:]]*hexcell-canal-simulado[[:space:]]*='' crates/hexcell-canal-contrato/Cargo.toml'
+        - '! grep -rq ''AdaptadorSimulado'' crates/hexcell-canal-contrato/src/'
+        - '! grep -rq ''hexcell_canal_simulado'' crates/hexcell-canal-contrato/src/'
+        - '! grep -rqE ''impl(<[^>]*>)? *ChannelAdapter *for'' crates/hexcell-canal-contrato/src/'
+        - grep -rq 'ChannelAdapter' crates/hexcell-canal-contrato/src/
+        - grep -rq 'DURACION_VENTANA_SERVICIO' crates/hexcell-canal-contrato/src/
+        - '! grep -rqE ''86400|24 \* 60 \* 60|60 \* 60 \* 24'' crates/hexcell-canal-contrato/src/'
+        - grep -rq 'ResultadoEnvio::FueraDeVentana' crates/hexcell-canal-contrato/src/
+        - grep -rq 'ResultadoEnvio::PlantillaRequerida' crates/hexcell-canal-contrato/src/
+        - grep -rq 'ResultadoEnvio::LimiteDeTasa' crates/hexcell-canal-contrato/src/
+        - grep -rq 'ResultadoEnvio::DestinatarioInvalido' crates/hexcell-canal-contrato/src/
+        - grep -rq 'EstadoVentanaServicio' crates/hexcell-canal-contrato/src/
+        - grep -q 'hexcell_canal_contrato' crates/hexcell-canal-simulado/tests/contrato_del_puerto.rs
+        - grep -qE '^\[dev-dependencies\]' crates/hexcell-canal-simulado/Cargo.toml
+        - grep -q 'hexcell-canal-contrato' crates/hexcell-canal-simulado/Cargo.toml
+        - grep -q 'inyectar_desde_contacto' crates/hexcell-canal-simulado/src/adaptador.rs
+        - grep -q 're_emparejar' crates/hexcell-canal-simulado/src/adaptador.rs
+        - grep -q 're_emparejar' crates/hexcell/tests/continuidad_de_hilo.rs
+        - grep -q 'inyectar' crates/hexcell-canal-simulado/src/adaptador.rs
+        - grep -q 'forzar_siguiente' crates/hexcell-canal-simulado/src/adaptador.rs
+        - grep -q 'forzar_averia' crates/hexcell-canal-simulado/src/adaptador.rs
+        - grep -q 'envios_capturados' crates/hexcell-canal-simulado/src/adaptador.rs
+        - '! grep -q ''SystemTime::now'' crates/hexcell-canal-simulado/src/adaptador.rs'
+        - '! grep -qE ''tokio::time::(pause|advance|sleep)'' crates/hexcell-canal-simulado/src/adaptador.rs'
+        - grep -rq 'DURACION_VENTANA_SERVICIO' crates/hexcell-canal-simulado/src/
+        - '! grep -rqE ''86400|24 \* 60 \* 60|60 \* 60 \* 24'' crates/hexcell-canal-simulado/src/'
+        - grep -rqE 'impl(<[^>]*>)? *ChannelAdapter *for' crates/hexcell-canal-simulado/src/
+        - grep -q 'VENTANA_DE_RETENCION_DEDUPLICACION_POR_DEFECTO' crates/hexcell/src/deduplicacion.rs
+        - grep -q 'Duration' crates/hexcell/src/deduplicacion.rs
+        - grep -q 'HEXCELL_VENTANA_DEDUPLICACION_SEGUNDOS' crates/hexcell/src/configuracion.rs
+        - grep -q 'ventana_deduplicacion' crates/hexcell/src/configuracion.rs
+        - grep -q 'VENTANA_DE_RETENCION_DEDUPLICACION_POR_DEFECTO' crates/hexcell/src/configuracion.rs
+        - '! grep -qE ''3600|60 \* 60'' crates/hexcell/src/configuracion.rs'
+        - grep -q 'HEXCELL_CAPACIDAD_COLA' crates/hexcell/src/configuracion.rs
+        - grep -q 'HEXCELL_RUTA_DATOS' crates/hexcell/src/configuracion.rs
+        - grep -q '127.0.0.1' crates/hexcell/src/configuracion.rs
+        - '! grep -qE ''"0\.0\.0\.0'' crates/hexcell/src/configuracion.rs'
+        - '! grep -qE ''\.(unwrap|expect)\('' crates/hexcell/src/configuracion.rs'
+        - '! grep -qE ''panic!|unreachable!|todo!'' crates/hexcell/src/configuracion.rs'
+        - grep -q 'HEXCELL_VENTANA_DEDUPLICACION_SEGUNDOS' crates/hexcell/tests/configuracion.rs
+        - grep -q 'HEXCELL_VENTANA_DEDUPLICACION_SEGUNDOS' docs/STATUS.md
+        - grep -q 'IdDeduplicacion' crates/hexcell/src/deduplicacion.rs
+        - grep -q 'HEX-006' crates/hexcell/src/deduplicacion.rs
+        - grep -q 'HEX-006' crates/hexcell/src/conversaciones.rs
+        - grep -q 'IdConversacion' crates/hexcell/src/conversaciones.rs
+        - '! grep -rqE ''\bReloj\b'' crates/hexcell/src/'
+        - grep -q 'deduplicacion' crates/hexcell/src/motor.rs
+        - grep -q 'conversaciones' crates/hexcell/src/motor.rs
+        - grep -q 'ResultadoEnvio::Aceptado' crates/hexcell/src/motor.rs
+        - grep -q 'ResultadoEnvio::FueraDeVentana' crates/hexcell/src/motor.rs
+        - grep -q 'ResultadoEnvio::PlantillaRequerida' crates/hexcell/src/motor.rs
+        - grep -q 'ResultadoEnvio::LimiteDeTasa' crates/hexcell/src/motor.rs
+        - grep -q 'ResultadoEnvio::DestinatarioInvalido' crates/hexcell/src/motor.rs
+        - grep -qE 'Err\(' crates/hexcell/src/motor.rs
+        - '! grep -qE ''\.(unwrap|expect)\('' crates/hexcell/src/motor.rs'
+        - '! grep -qE ''\.(unwrap|expect)\('' crates/hexcell/src/deduplicacion.rs'
+        - '! grep -qE ''\.(unwrap|expect)\('' crates/hexcell/src/conversaciones.rs'
+        - '! grep -qE ''panic!|unreachable!|todo!'' crates/hexcell/src/motor.rs'
+        - '! grep -rq ''IdConversacion::nuevo'' crates/hexcell/src/'
+        - '! grep -rq ''IdRemitente::nuevo'' crates/hexcell/src/'
+        - '! grep -rqE ''impl(<[^>]*>)? *ChannelAdapter *for'' crates/hexcell/src/'
+        - '! grep -rqiE ''whatsmeow|wa_id|\bJID\b|Cloud API|Graph API'' crates/hexcell/src/motor.rs'
+        - '! grep -rqiE ''whatsmeow|wa_id|\bJID\b|Cloud API|Graph API'' crates/hexcell/src/procesador.rs'
+        - '! grep -rqiE ''whatsmeow|wa_id|\bJID\b|Cloud API|Graph API'' crates/hexcell/src/deduplicacion.rs'
+        - '! grep -rqiE ''whatsmeow|wa_id|\bJID\b|Cloud API|Graph API'' crates/hexcell/src/conversaciones.rs'
+        - '! grep -qE ''^[[:space:]]*(tokio|hyper|hyper-util|http-body-util|bytes|axum|rusqlite|sqlx|hexcell-canal-simulado|hexcell-canal-contrato|hexcell-storage)[[:space:]]*='' crates/hexcell-core/Cargo.toml'
+        - '! grep -rqE ''impl(<[^>]*>)? *ChannelAdapter *for'' crates/hexcell-core/'
+        - '! grep -rqE ''RegistroDeDeduplicacion|EstadoDeConversaciones'' crates/hexcell-core/'
+        - '! grep -q ''8081'' crates/hexcell/tests/configuracion.rs'
+        - grep -q 'TcpListener::bind' crates/hexcell/tests/configuracion.rs
+        - grep -q 'HEXCELL_DIRECCION_SALUD' crates/hexcell/tests/configuracion.rs
+        - grep -q 'el_binario_no_vincula_nada_si_la_configuracion_es_invalida' crates/hexcell/tests/configuracion.rs
+        - '! grep -qE ''^[[:space:]]*(rusqlite|sqlx|tracing|log|env_logger|serde|serde_json|clap|anyhow|thiserror|chrono|rand|axum|tiny-http|reqwest|ureq)[[:space:]]*='' crates/hexcell/Cargo.toml'
+        - '! grep -rqE ''^[[:space:]]*use [^;]*(rusqlite|sqlx)'' crates/hexcell/src/ crates/hexcell-canal-simulado/src/ crates/hexcell-canal-contrato/src/'
+        - '! grep -rqiE ''CREATE TABLE|PRAGMA journal_mode|busy_timeout'' crates/hexcell/src/ crates/hexcell-canal-simulado/src/ crates/hexcell-canal-contrato/src/'
+        - '! grep -rqE ''tokio::signal|signal_hook|libc::SIG'' crates/hexcell/src/ crates/hexcell-canal-simulado/src/'
+        - '! test -d migrations'
+        - grep -q 'current_thread' crates/hexcell/src/main.rs
+        - grep -q 'HEX-006' crates/hexcell/src/salud.rs
+        - test -f docs/adr/adr-0016-convencion-de-entrega-de-eventos.md
+        - '! test -f docs/adr/adr-0003-persistencia-dual.md'
+        - '! test -f docs/adr/adr-0017-politica-fuera-de-ventana.md'
+        - grep -q 'HEX-005' docs/STATUS.md
+        - grep -q '2026-07-30' docs/STATUS.md
+        - '! grep -qiE ''etapa A-2 (cerrada|completada|finalizada|terminada)'' docs/STATUS.md'
+        - '! grep -rqiE ''sustituye a la fase a|reemplaza la fase a|cierra la fase a|el sidecar se retira'' crates/ docs/STATUS.md'
+        - git ls-files | grep -qx 'Cargo.lock'
+        - test -s Cargo.lock
+        - '! git ls-files | grep -qE ''\.(db|db-wal|db-shm)$'''
+        - '! git ls-files | grep -qE ''(^|/)\.env'''
+    target_s: 60
