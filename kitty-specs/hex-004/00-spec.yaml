@@ -1,0 +1,195 @@
+task_id: HEX-004
+summary: "Config de arranque, servidor HTTP interno de salud, motor de mensajería Tokio sobre
+  ChannelAdapter y adaptador simulado con ventana de 24 h. Tareas 1-4 de A-2. Risk medium."
+goal: >
+  Convertir en código Rust las cuatro primeras tareas de la etapa A-2
+  (docs/plan/fase-a-2-nucleo-persistencia.md, tareas 1 a 4), la primera de las cinco tareas
+  HEX-004..HEX-008 en que se partió esa etapa el 2026-07-28. El binario hexcell (crate
+  crates/hexcell) deja de ser el esqueleto de HEX-003 y arranca de verdad: lee su
+  configuración de variables de entorno, falla temprano con un mensaje claro si falta algo,
+  levanta un servidor HTTP interno con GET /health/live funcional y GET /health/ready como
+  esqueleto (la lógica real de readiness es HEX-006, tarea 7 del plan), y lanza un bucle
+  asíncrono Tokio que consume EventoEntrante del trait ChannelAdapter declarado en
+  hexcell-core (etapa A-1, HEX-002), despacha cada evento a un procesador mínimo de eco -
+  punto de extensión, no lógica de negocio - y emite la respuesta por send(conversacion,
+  mensaje) tratando el ResultadoEnvio tipado sin asumir Aceptado. Para poder probar todo
+  esto sin canal real se implementa, en esta misma tarea, un adaptador simulado en memoria
+  con la semántica más restrictiva que el puerto admite (la de la Cloud API): inyección
+  determinista de eventos, captura de los envíos realizados, ventana de servicio de 24 h por
+  conversación que expira de verdad contra un reloj controlable desde el test (no el reloj
+  de pared), y los cuatro rechazos de FR-12 - FueraDeVentana, PlantillaRequerida,
+  LimiteDeTasa, DestinatarioInvalido - disparables a voluntad. El simulado imita la Cloud
+  API, no whatsmeow: el adaptador real de whatsmeow es la etapa A-3, ya cerrada aparte.
+invariants:
+  - Todo el contenido del repositorio se escribe en español, incluidos los comentarios de
+    código y los mensajes de commit (conventional commits, sin Co-Authored-By ni ninguna
+    atribución de IA). Los identificadores de Rust (tipos, funciones, crates) se mantienen en
+    inglés idiomático donde ya lo están; esto no es una violación de la regla de idioma, que
+    gobierna la prosa, no los identificadores del lenguaje.
+  - "El motor de mensajería no conoce ningún transporte concreto: solo consume el trait
+    ChannelAdapter de hexcell-core. Ninguna referencia a whatsmeow, JID, wa_id ni a la Meta
+    Cloud API aparece en el código del motor; esas menciones solo son legítimas dentro del
+    propio adaptador simulado y su documentación, porque ese adaptador existe precisamente
+    para imitar el caso restrictivo."
+  - "La distinción que gobierna FR-12 se mantiene: el TIPO admite el resultado restrictivo;
+    la POLÍTICA de cada adaptador decide si lo produce. El adaptador simulado de esta tarea
+    SÍ impone la ventana de 24 h a propósito, porque su función es imitar el caso más
+    restrictivo (Cloud API) para que el motor y los tests futuros de contrato (HEX-005) lo
+    ejerciten; eso no implica que el canal propio deba imponerla."
+  - No se versiona ningún *.db, *.db-wal, *.db-shm ni .env*; ningún secreto ni API key llega
+    al repositorio, ni siquiera como valor de ejemplo en la documentación de configuración.
+  - Todas las fechas escritas en los documentos son absolutas (2026-07-29), nunca relativas.
+  - "Ningún documento ni comentario puede afirmar que la Fase B sustituye, reemplaza o cierra
+    la Fase A, ni que el sidecar se retira: el canal propio es el canal por defecto y
+    permanente, y el sidecar es coste permanente suyo (adr-0009, adr-0010)."
+  - La prosa en Markdown y en comentarios largos mantiene un ancho aproximado de 100
+    columnas, consistente con el resto del repositorio.
+  - "El servidor HTTP de salud se vincula exclusivamente a una interfaz interna (loopback o
+    variable de entorno explícita), nunca a 0.0.0.0 por defecto: no es un endpoint de cara al
+    público, lo sondea la CLI de administración."
+non_goals:
+  - Los tests de contrato del puerto (batería reutilizable que cualquier ChannelAdapter debe
+    pasar). Fuera de alcance, es la tarea 5 del plan y corresponde a HEX-005.
+  - La política del núcleo ante FueraDeVentana (encolado o escalado a humano). Fuera de
+    alcance, tarea 6 del plan, HEX-006.
+  - La lógica real de GET /health/ready (comprobación de pools SQLite y del estado de sesión
+    del puerto). Fuera de alcance, tarea 7 del plan, HEX-006; en esta tarea la ruta existe y
+    responde con un esqueleto fijo, sin comprobar nada todavía.
+  - "Persistencia real: sessions.db, knowledge_live.db, pools SQLite, WAL, migraciones,
+    esquema de tablas. Fuera de alcance, tareas 7 y 8 del plan, HEX-006/HEX-007. El motor de
+    esta tarea procesa en memoria únicamente."
+  - El identificador interno de conversación como tipo opaco y su prueba de re-emparejamiento
+    contra el adaptador simulado. Ya declarado en hexcell-core (HEX-002); su ejercicio de
+    supervivencia al re-emparejamiento es la tarea 9 del plan, fuera de esta tarea.
+  - Idempotencia de entrega y ventana de retención de deduplicación. Fuera de alcance, tarea
+    10 del plan, HEX-007.
+  - La interfaz del proveedor de inferencia LLM, real o simulada. Fuera de alcance, tarea 11
+    del plan, HEX-008.
+  - Apagado ordenado por SIGTERM, drenaje de tareas en vuelo y checkpoint de SQLite. Fuera de
+    alcance, tarea 12 del plan, HEX-008.
+  - Respaldo y restauración de las cuatro bases, y el runbook de bifurcación device_removed.
+    Fuera de alcance, tareas 13 y 14 del plan, HEX-008.
+  - Logs estructurados con identificador de célula, de evento y latencia. Fuera de alcance,
+    tarea 15 del plan, HEX-008.
+  - Pruebas de integración de extremo a extremo (camino feliz, duplicado, apagado bajo carga,
+    ciclo de respaldo). Fuera de alcance, tarea 16 del plan, HEX-008; esta tarea solo exige
+    tests unitarios/de integración locales al propio motor y al adaptador simulado.
+  - Cualquier lógica de negocio en el procesador de mensajes más allá del eco mínimo. El
+    procesador es un punto de extensión deliberadamente vacío de reglas de producto.
+  - Actualizar docs/STATUS.md marcando la etapa A-2 como cerrada. La etapa se cierra con
+    HEX-008; esta tarea no reabre ni reescribe ninguna decisión ya registrada como Definida.
+  - El adaptador whatsmeow real y cualquier cambio en sidecar/. Ya cerrado por A-3 aparte de
+    esta partición de A-2.
+constraints:
+  - "La configuración se lee de variables de entorno (no de argumentos CLI ni de un archivo
+    de configuración) y valida al arranque: si falta una variable obligatoria o su valor no
+    parsea, el proceso termina antes de levantar el servidor HTTP o el motor, con un mensaje
+    de error que nombra la variable concreta y su formato esperado, nunca un panic sin
+    contexto ni un fallo silencioso."
+  - "La ruta de datos de la célula es una de las variables validadas al arranque; su ausencia
+    o inexistencia en disco es un fallo temprano, no un error diferido al primer intento de
+    escritura."
+  - "GET /health/live responde 200 en cuanto el proceso está vivo, sin depender de ninguna
+    comprobación adicional (ni pools, ni estado del puerto de canal); GET /health/ready
+    existe como ruta y responde con un cuerpo fijo que documenta explícitamente que su lógica
+    real llega en HEX-006, sin fingir una comprobación que no hace."
+  - "El servidor HTTP se implementa con la dependencia externa mínima razonable, coherente
+    con NFR-01 (i7 de 10 años, 8 GB RAM, presupuesto ≤ 80 MB RAM por célula) y con el
+    [profile.release] ya orientado a tamaño; cualquier crate añadido a [dependencies] de
+    crates/hexcell o crates/hexcell-core se justifica en un comentario del propio Cargo.toml
+    y no introduce un runtime HTTP alternativo a Tokio."
+  - "El motor de mensajería vive en crates/hexcell (el binario de la célula), no en
+    hexcell-core: hexcell-core sigue sin dependencias de infraestructura (sin tokio, sin
+    async, sin HTTP), invariante ya fijada en HEX-002 y que esta tarea no toca."
+  - "El bucle de consumo es asíncrono sobre Tokio, consume EventoEntrante genérico sobre
+    cualquier implementación de ChannelAdapter (el motor es genérico o recibe el adaptador
+    por inyección, nunca hardcodea el tipo del simulado), despacha al procesador de eco y
+    llama a send(conversacion, mensaje) con MensajeSaliente::RespuestaLibre; el
+    Result<ResultadoEnvio, Error> se trata con match explícito sobre las cinco variantes de
+    ResultadoEnvio (Aceptado y los cuatro rechazos) y sobre el caso Err, sin unwrap() ni
+    expect() sobre ese resultado en el camino de ejecución del motor."
+  - "El adaptador simulado vive en crates/hexcell (o en un módulo/crate propio bajo su
+    control), nunca en hexcell-core, porque una implementación de ChannelAdapter no es un
+    tipo del dominio."
+  - "El adaptador simulado permite: (a) inyectar EventoEntrante de forma determinista y en el
+    orden que decide el test; (b) capturar cada MensajeSaliente enviado junto con su
+    ResultadoEnvio para que el test lo inspeccione; (c) avanzar un reloj inyectado/controlable
+    (no SystemTime::now() de pared) para expirar la ventana de 24 h de una conversación
+    concreta bajo control del test; (d) forzar a voluntad, por conversación o por llamada,
+    cada uno de FueraDeVentana, PlantillaRequerida, LimiteDeTasa y DestinatarioInvalido, de
+    forma que un test pueda ejercitar cada rechazo de manera aislada y distinguible de los
+    otros tres."
+  - "La ventana de servicio de 24 h usa la constante DURACION_VENTANA_SERVICIO ya declarada en
+    hexcell-core::canal; el simulado no reinventa el valor."
+  - Todo lo que HEX-001, HEX-002 y HEX-003 ya dejaron en main (workspace de cinco crates, el
+    trait ChannelAdapter y sus tipos canónicos en hexcell-core, sidecar/ esqueleto, toolchain,
+    perfil de release, CI) no se recrea ni se reescribe; esta tarea solo añade lo que falta
+    dentro de crates/hexcell y, si es estrictamente necesario para el adaptador simulado, un
+    módulo o crate nuevo dedicado a él.
+acceptance:
+  - id: AC-1
+    statement: El binario hexcell arranca con configuración válida.
+    given: las variables de entorno obligatorias presentes con valores válidos (incluida la
+      ruta de datos de la célula, existente en disco)
+    when: se ejecuta el binario hexcell
+    then: el proceso arranca sin error, levanta el servidor HTTP interno y el motor de
+      mensajería queda escuchando eventos del adaptador configurado
+  - id: AC-2
+    statement: El binario falla temprano y con mensaje claro si falta configuración.
+    given: una variable de entorno obligatoria ausente o con un valor que no parsea
+    when: se ejecuta el binario hexcell
+    then: el proceso termina antes de levantar el servidor HTTP o el motor, con un mensaje de
+      error que nombra la variable concreta, sin panic sin contexto
+  - id: AC-3
+    statement: GET /health/live responde en cuanto el proceso vive.
+    given: el binario hexcell arrancado con configuración válida
+    when: se hace GET a /health/live sobre la interfaz interna
+    then: responde 200 sin depender de ninguna comprobación de pools o de estado del canal
+  - id: AC-4
+    statement: GET /health/ready existe como esqueleto documentado.
+    given: el binario hexcell arrancado
+    when: se hace GET a /health/ready
+    then: responde con un cuerpo que documenta explícitamente que la lógica real de
+      readiness llega en HEX-006, sin simular una comprobación que no realiza
+  - id: AC-5
+    statement: Un evento canónico inyectado se procesa y la respuesta se emite por send.
+    given: el motor de mensajería corriendo sobre el adaptador simulado, con un
+      EventoEntrante inyectado de forma determinista para una conversación con la ventana
+      abierta
+    when: el bucle asíncrono lo consume
+    then: el procesador de eco despacha una respuesta y el motor la envía mediante
+      send(conversacion, mensaje), y el Result<ResultadoEnvio, Error> se trata explícitamente
+      sin asumir Aceptado
+  - id: AC-6
+    statement: La ventana de 24 h expira de verdad contra un reloj controlable.
+    given: una conversación en el adaptador simulado con la ventana abierta y el reloj de
+      prueba avanzado más allá de DURACION_VENTANA_SERVICIO desde el último evento entrante
+    when: el motor intenta enviar RespuestaLibre a esa conversación
+    then: send() devuelve ResultadoEnvio::FueraDeVentana, sin depender del reloj de pared
+  - id: AC-7
+    statement: Los cuatro rechazos restrictivos son disparables y distinguibles.
+    given: el adaptador simulado configurado para forzar, en llamadas o conversaciones
+      distintas, cada uno de FueraDeVentana, PlantillaRequerida, LimiteDeTasa y
+      DestinatarioInvalido
+    when: se invoca send() en cada caso
+    then: cada llamada devuelve la variante forzada correspondiente y un test puede
+      distinguir las cuatro entre sí sin ambigüedad
+  - id: AC-8
+    statement: El workspace compila, formatea y lintea limpio con los tests nuevos.
+    given: el repositorio en el commit de esta tarea
+    when: se ejecutan "cargo fmt --check", "cargo clippy --workspace -- -D warnings" y
+      "cargo test --workspace"
+    then: los tres terminan sin errores ni hallazgos
+  - id: AC-9
+    statement: hexcell-core sigue sin dependencias de infraestructura.
+    given: crates/hexcell-core/Cargo.toml tras esta tarea
+    when: se inspecciona su sección [dependencies]
+    then: no contiene tokio, ningún crate HTTP, ni el adaptador simulado ni su código
+  - id: AC-10
+    statement: El diff respeta la frontera de HEX-005..HEX-008.
+    given: el diff completo introducido por esta tarea
+    when: se inspecciona
+    then: no contiene tests de contrato del puerto reutilizables, ni esquema o migraciones de
+      SQLite, ni manejo de SIGTERM, ni lógica real de /health/ready, ni cambios en
+      docs/STATUS.md que marquen la etapa A-2 como cerrada
+risk: medium

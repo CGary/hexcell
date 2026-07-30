@@ -1,0 +1,71 @@
+entries:
+    - changed_files:
+        - Cargo.toml
+        - crates/hexcell/Cargo.toml
+        - crates/hexcell-canal-simulado/Cargo.toml
+      notes:
+        - Cargo.toml raíz gana [workspace.dependencies] (tokio 1.53 con default-features = false, hyper 1.11, hyper-util 0.1, http-body-util 0.1, bytes 1.12) y suma crates/hexcell-canal-simulado a members; [workspace], [workspace.package] y [profile.release] no se tocaron. tokio se declaró con default-features = false en la tabla del workspace porque cargo no permite que un manifiesto miembro override default-features cuando la entrada del workspace es un string simple; cada miembro añade solo las features que necesita.
+        - crates/hexcell/Cargo.toml documenta en un comentario largo por qué se eligió hyper 1.x de bajo nivel sobre axum (capa tower/matchit/extractores innecesaria para dos rutas fijas), tiny-http (modelo de hilos bloqueantes, el runtime alternativo que el contrato prohíbe) y un servidor a mano sobre TcpListener (framing/keep-alive/entradas malformadas son pasivo real). Depende de hexcell-core y hexcell-canal-simulado por path.
+        - crates/hexcell-canal-simulado/Cargo.toml solo depende de tokio (feature sync) y hexcell-core; comentario explica por qué no activa "rt" (el crate no arranca ningún runtime, solo construye el mpsc).
+      verify_pending: false
+    - changed_files:
+        - crates/hexcell/src/lib.rs
+        - crates/hexcell/src/configuracion.rs
+        - crates/hexcell/src/main.rs
+      notes:
+        - crates/hexcell ganó un target de biblioteca (src/lib.rs con pub mod configuracion, motor, procesador, salud) para que motor.rs pueda comprobarse sin unwrap()/expect() mientras los tests en tests/ sí los usan libremente.
+        - 'configuracion.rs: Configuracion::desde_entorno() lee HEXCELL_ID_CELULA y HEXCELL_RUTA_DATOS (obligatorias) y HEXCELL_DIRECCION_SALUD/HEXCELL_CANAL/HEXCELL_CAPACIDAD_COLA (opcionales con default). ErrorDeConfiguracion es un enum cerrado con VariableAusente/ValorInvalido/RutaDeDatosInexistente, Display en español nombrando siempre la variable y el formato esperado. Sin unwrap()/expect()/panic!: la dirección de salud por defecto se construye como SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 8081), una constante, precisamente para no necesitar parsear ni un expect() sobre un caso que nunca falla (el forbid prohíbe unwrap/expect en este archivo y en motor.rs, y [profile.release] fija panic = "abort", así que un panic en release no dejaría mensaje alguno).'
+        - 'main.rs es ahora la raíz de composición: #[tokio::main(flavor = "current_thread")] async fn main() -> ExitCode. Si Configuracion::desde_entorno() falla, imprime el Display del error en stderr y devuelve ExitCode::FAILURE antes de vincular nada; con configuración válida hace match estático sobre CanalSeleccionado (hoy solo Simulado, porque ChannelAdapter con -> impl Future no admite Box<dyn>), levanta el servidor de salud y ejecuta el Motor con tokio::select!.'
+      verify_pending: false
+    - changed_files:
+        - crates/hexcell/src/salud.rs
+      notes:
+        - 'servir_salud(direccion) vincula un TcpListener, devuelve la dirección real vinculada (soporta puerto 0 para que el test lea el puerto del SO) y sirve cada conexión con hyper::server::conn::http1 sobre hyper_util::rt::TokioIo. atender_peticion_de_salud() es una función pura (sin bind) que enruta por (método, ruta): GET /health/live devuelve 200 fijo; GET /health/ready devuelve 200 con un cuerpo que nombra HEX-006 como dueño de la lógica real y aclara que esta respuesta no comprueba nada; cualquier otra ruta, 404. No importa rusqlite/sqlx ni sondea ningún pool o estado de sesión.'
+      verify_pending: false
+    - changed_files:
+        - crates/hexcell/src/procesador.rs
+      notes:
+        - ProcesadorDeMensajes es un trait síncrono con un único método procesar(&self, evento) -> Option<MensajeSaliente>; ProcesadorDeEco es la única implementación de esta tarea y devuelve RespuestaLibre(evento.contenido.clone()). Se documenta como punto de extensión deliberadamente vacío de reglas de negocio, y el método se dejó síncrono a propósito porque la interfaz de inferencia LLM es una tarea posterior y declarar -> impl Future hoy sería generalidad especulativa.
+      verify_pending: false
+    - changed_files:
+        - crates/hexcell/src/motor.rs
+      notes:
+        - 'Motor<A: ChannelAdapter, P: ProcesadorDeMensajes> guarda el adaptador, el procesador y un mpsc::Receiver<EventoEntrante> recibido en el constructor. ejecutar() hace while let Some(evento) = receptor.recv().await, despacha al procesador y, si devuelve Some(mensaje), llama a adaptador.send(&evento.conversacion, mensaje).await tratando el resultado con un match que nombra las cinco variantes de ResultadoEnvio más Err(averia), sin brazo comodín y sin unwrap()/expect()/panic!/unreachable!. El archivo no menciona whatsmeow, JID, wa_id, Cloud API ni Graph API en código ni comentarios (greps textuales verificados); la convención de entrega se describe ahí sin nombrar transporte (''todo adaptador entrega sus eventos por este canal'').'
+      verify_pending: false
+    - changed_files:
+        - crates/hexcell-canal-simulado/src/lib.rs
+        - crates/hexcell-canal-simulado/src/reloj.rs
+        - crates/hexcell-canal-simulado/src/adaptador.rs
+      notes:
+        - lib.rs documenta que este adaptador imita la Cloud API y no whatsmeow, y por qué vive fuera de hexcell-core (una implementación de ChannelAdapter no es un tipo del dominio).
+        - 'reloj.rs declara trait Reloj { fn ahora(&self) -> SystemTime } object-safe, RelojDelSistema (único punto permitido de SystemTime::now(), verificado con grep negativo en adaptador.rs) y RelojDePrueba (Arc<Mutex<SystemTime>> con avanzar()/fijar()). El propio archivo explica por qué tokio::time::pause() no sirve: el puerto usa SystemTime, no tokio::time::Instant, así que pause() nunca lo virtualiza.'
+        - 'adaptador.rs: AdaptadorSimulado guarda Arc<dyn Reloj + Send + Sync>, el mpsc::Sender<EventoEntrante> propio y un Mutex<EstadoInterno> (anclas de ventana por conversación, colas de resultados forzados por conversación y globales, bandera de avería forzada, capturas). inyectar() ancla/refresca la ventana en reloj.ahora() y envía por el canal; forzar()/forzar_siguiente()/forzar_averia()/envios_capturados() dan la API de test. impl ChannelAdapter: send() primero consume una avería forzada (devuelve Err sin registrar nada), luego un resultado forzado (por conversación o global, uno por llamada), y si no hay nada forzado aplica la regla natural (RespuestaLibre expira a las DURACION_VENTANA_SERVICIO importada de hexcell_core::canal; Plantilla siempre se acepta). Cada guardia del Mutex se libera antes de que la función async retorne y no hay ningún await mientras el guardia vive, así que el Future sigue siendo Send. ErrorDelAdaptadorSimulado es un enum real con un único caso forceable, deliberadamente no Infallible, para que el brazo Err del motor sea alcanzable en los tests.'
+      verify_pending: false
+    - changed_files:
+        - crates/hexcell/tests/configuracion.rs
+        - crates/hexcell/tests/salud_http.rs
+        - crates/hexcell/tests/motor.rs
+        - crates/hexcell-canal-simulado/tests/adaptador_simulado.rs
+      notes:
+        - configuracion.rs cubre el camino feliz y cada modo de fallo, mitad a nivel de biblioteca y mitad lanzando CARGO_BIN_EXE_hexcell con entorno controlado para comprobar código de salida y stderr. Los tests que llaman std::env::set_var/remove_var comparten un Mutex estático (CERROJO_DE_ENTORNO) porque cargo test corre los tests de un binario en hilos distintos del MISMO proceso y las variables de entorno son estado de proceso, no de hilo; sin el cerrojo el primer intento de implementación mostró carreras reales entre tests (fallos intermitentes verificados en este mismo ciclo antes de añadir el Mutex).
+        - salud_http.rs lanza el binario con HEXCELL_DIRECCION_SALUD=127.0.0.1:0, lee el puerto real de una línea de stdout y habla HTTP/1.1 a mano sobre std::net::TcpStream; sin cliente HTTP añadido, sin red más allá de loopback.
+        - motor.rs ejercita Motor::ejecutar sobre AdaptadorSimulado (nunca genérico sobre ChannelAdapter, eso es HEX-005). Como Motor::ejecutar es un bucle infinito que solo termina cuando el canal se cierra -y el Sender vive dentro del propio AdaptadorSimulado que el motor necesita para enviar durante toda su vida-, esperar un cierre de canal para terminar el test crea un interbloqueo estructural; los dos tests async lanzan el motor con tokio::spawn, dejan que drene lo ya encolado (tokio::time::sleep corto) y lo cancelan con JoinHandle::abort(), inspeccionando después envios_capturados() a través de un Arc<AdaptadorSimulado> compartido (AdaptadorQueDelegaEnArc). Un test adicional, no asíncrono, comprueba léxicamente que motor.rs no contiene .unwrap( ni .expect(.
+        - adaptador_simulado.rs prueba la expiración de la ventana contra RelojDePrueba a ambos lados de DURACION_VENTANA_SERVICIO, que la secuencia corre en bien menos de un segundo de reloj de pared (demostrando que no depende de SystemTime::now()), los cuatro rechazos forzados y distinguibles, que un forzado se consume en una única llamada, forzar_averia() y envios_capturados().
+      verify_pending: false
+    - changed_files:
+        - .gitignore
+        - Cargo.lock
+      notes:
+        - 'Se retiró la línea Cargo.lock de la sección Rust de .gitignore, sin tocar /target ni el resto de secciones. Cargo.lock se generó con cargo (no se editó a mano) al ejecutar cargo build/test contra el árbol real: 273 líneas, 21 paquetes externos nuevos (tokio 1.53.1, hyper 1.11.0, hyper-util 0.1.20, http-body-util 0.1.4, bytes 1.12.1 y su cierre transitivo). git ls-files confirma que queda versionado.'
+      verify_pending: false
+    - changed_files:
+        - docs/adr/adr-0016-convencion-de-entrega-de-eventos.md
+        - docs/adr/README.md
+        - docs/STATUS.md
+      notes:
+        - 'adr-0016 usa el número 0016 (docs/adr/README.md ya reserva 0001-0015, incluido 0003 para persistencia-dual que HEX-006 escribirá). Contexto/Decisión/Consecuencias/Alternativas descartadas siguiendo la forma de adr-0010: la decisión es un tokio::sync::mpsc acotado creado y poseído por cada adaptador, entregado al motor al construirse, sin añadir un método al trait; alternativas descartadas: método recv/subscribe en ChannelAdapter (reabriría hexcell-core y el trait no es compatible con objetos de trait) y callback/handler (invierte el control). Fechado 2026-07-29, sin afirmar que la Fase B sustituye o cierra la Fase A ni que el sidecar se retira.'
+        - docs/adr/README.md gana exactamente una fila al final de la tabla para adr-0016; las filas 0001-0015 y la prosa circundante quedaron intactas.
+        - 'docs/STATUS.md gana dos bullets Definido fechados 2026-07-29 (convención de entrega de eventos con adr-0016; versionado de Cargo.lock), añadidos justo antes de la sección ## Pendiente sin reescribir ningún bullet existente. Ningún texto marca la etapa A-2 como cerrada.'
+      verify_pending: false
+summary: Motor Tokio sobre ChannelAdapter con adaptador simulado (ventana 24h, reloj inyectable), salud HTTP hyper y config por entorno; adr-0016 y Cargo.lock versionado.
+task_id: HEX-004

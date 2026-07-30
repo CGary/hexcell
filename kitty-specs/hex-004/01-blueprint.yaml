@@ -1,0 +1,225 @@
+affected_files:
+    - Cargo.toml
+    - crates/hexcell/Cargo.toml
+    - crates/hexcell/src/main.rs
+    - crates/hexcell/src/lib.rs
+    - crates/hexcell/src/configuracion.rs
+    - crates/hexcell/src/salud.rs
+    - crates/hexcell/src/motor.rs
+    - crates/hexcell/src/procesador.rs
+    - crates/hexcell/tests/configuracion.rs
+    - crates/hexcell/tests/motor.rs
+    - crates/hexcell/tests/salud_http.rs
+    - crates/hexcell-canal-simulado/Cargo.toml
+    - crates/hexcell-canal-simulado/src/lib.rs
+    - crates/hexcell-canal-simulado/src/reloj.rs
+    - crates/hexcell-canal-simulado/src/adaptador.rs
+    - crates/hexcell-canal-simulado/tests/adaptador_simulado.rs
+    - .gitignore
+    - Cargo.lock
+    - docs/adr/adr-0016-convencion-de-entrega-de-eventos.md
+    - docs/adr/README.md
+    - docs/STATUS.md
+dependencies:
+    - .ai/tasks/active/HEX-004-new-spec/00-spec.yaml
+    - crates/hexcell-core/src/canal.rs
+    - crates/hexcell-core/src/identidad.rs
+    - crates/hexcell-core/src/lib.rs
+    - crates/hexcell-core/Cargo.toml
+    - crates/hexcell-core/tests/exhaustividad_resultado_envio.rs
+    - crates/hexcell/src/main.rs
+    - Cargo.toml
+    - docs/PRD.md
+    - docs/plan/fase-a-2-nucleo-persistencia.md
+    - docs/adr/adr-0010-puerto-de-canal.md
+    - docs/adr/adr-0002-estructura-workspace.md
+    - docs/adr/README.md
+    - docs/STATUS.md
+    - .gitignore
+    - CLAUDE.md
+risks:
+    - 'PORT GAP, the single biggest mismatch between the spec and the tree. 00-spec says the engine `consume EventoEntrante del trait ChannelAdapter`, but the trait as it exists in crates/hexcell-core/src/canal.rs declares ONLY send() and estado_ventana(); there is no recv/subscribe/stream method. canal.rs says so explicitly: `el mecanismo de entrega -suscripcion, flujo o retrollamada- no es uno de los siete elementos de FR-12 y se decide en la etapa A-2`. This task IS that decision. Since another spec constraint forbids rewriting what HEX-002 left in hexcell-core, the blueprint resolves it OUTSIDE the trait, with a bounded tokio mpsc owned by the adapter. Consequence to accept knowingly: the delivery mechanism is a convention of the binary, not part of FR-12''s port, so A-3''s whatsmeow adapter must follow the same convention or the seam breaks. RESOLVED by the human on 2026-07-29: the ADR is written inside this task as adr-0016, so the decision no longer lands undocumented. The residual risk is unchanged and must be stated in the ADR itself - a convention that lives outside the trait is not enforced by the compiler, so nothing stops a future adapter from ignoring it; only the ADR and review catch that.'
+    - tokio::time::pause() CANNOT satisfy AC-6, and this was verified against the real types rather than assumed. EventoEntrante.marca_temporal and EstadoVentanaServicio::Abierta.expira_en are std::time::SystemTime; tokio's time pausing virtualizes tokio::time::Instant and sleep only and never affects SystemTime::now(). An injectable Reloj trait is therefore not a stylistic preference over tokio::time::pause, it is the only mechanism that can make the 24 h expiry deterministic while the port keeps using SystemTime.
+    - 'ChannelAdapter uses -> impl Future (RPITIT), so it is NOT dyn-compatible: Box<dyn ChannelAdapter> does not compile, as canal.rs and adr-0002 already record. Channel selection from HEXCELL_CANAL must therefore be a static match constructing a concrete Motor, not dynamic dispatch. Today only one arm exists (Simulado); when A-3 adds whatsmeow this match is where the duplication will show up, and that is a known, accepted cost of the RPITIT choice, not a new problem introduced here.'
+    - 'Cargo.lock policy: RESOLVED by the human on 2026-07-29. The root Cargo.toml comment written by HEX-002 flagged the birth of the first real dependency as the moment to revisit it, and that moment is this task. Decision: Cargo.lock IS versioned, per the official Rust guidance for binaries and applications, so .gitignore loses its Cargo.lock line and the generated lock is committed. Consequence to expect: the lock is by far the largest single file in this diff and its exact size cannot be predicted before cargo actually resolves the tree, which is why it gets its own generous per_class cap instead of inflating the global one - the same treatment sidecar/go.sum got in HEX-003. Second consequence: every future dependency bump now produces a lock diff in review, which is the point of committing it.'
+    - Shipping the simulated adapter in the release binary is a real and deliberate cost. AC-1 requires the engine to listen `del adaptador configurado`, and until A-3 there is no real adapter, so hexcell-canal-simulado must be a regular dependency of hexcell rather than a dev-dependency. That puts test-double code inside the production binary and charges it against NFR-01's <= 80 MB per cell. The clean fix (a cargo feature gate, or making it dev-only once whatsmeow exists) belongs to A-3 and is out of scope here.
+    - 'The first build needs network access to crates.io to fetch tokio, hyper, hyper-util, http-body-util, bytes and their transitive tree. Verified on 2026-07-29: crates.io answers 200 from this machine and the local ~/.cargo registry cache holds none of these crates, so a cold fetch WILL happen at implementation time. The verify commands themselves make no network calls, but `cargo test --workspace` on a cold cache does.'
+    - verify.target_s is set to the schema maximum of 60 and is advisory only. Compiling tokio and hyper from cold on the target hardware (10-year-old i7) takes far longer than 60 s; only the warm re-run is anywhere near that budget. Do not treat a first-run overshoot as a contract violation.
+    - The `engine names no transport` invariant is enforced by grepping motor.rs and procesador.rs for whatsmeow, JID, wa_id, Cloud API and Graph API. That is exactly what the spec invariant demands, but note it also bans legitimate explanatory prose in those two files; the explanation belongs in the simulated adapter's docs, where the same words ARE legitimate because that adapter exists to imitate the restrictive case. The greps are deliberately scoped to those two files and are not applied repository-wide.
+    - std::sync::Mutex is used for the simulated adapter's interior state instead of tokio::sync ::Mutex, to keep the dependency surface and the runtime cost down. This is only sound because send() performs no await while a guard is alive; if a future edit awaits under a guard, the returned future stops being Send and breaks the port's `impl Future<Output = ...> + Send` bound, which will surface as a confusing compile error far from the cause.
+    - '[profile.release] sets panic = "abort", so any panic in the shipped binary yields no usable diagnostic. AC-2''s `mensaje de error que nombra la variable concreta, sin panic sin contexto` is therefore only achievable if main returns ExitCode and prints the error''s Display form itself. unwrap()/expect() on the config path would silently defeat AC-2 in release while still passing a debug-profile test.'
+    - 'The health server defaults to loopback, which the spec''s invariant requires. Flagged for A-6: inside container packaging a loopback-only bind is unreachable from a sibling container, so the explicit HEXCELL_DIRECCION_SALUD override is the intended door. This blueprint does not hard-reject an explicitly configured 0.0.0.0, because the invariant constrains the DEFAULT; rejecting it outright would exceed the spec and could block A-6 packaging.'
+    - 'No logging crate (tracing/log) is added: structured logs with cell id, event id and latency are plan task 15 / HEX-008, an explicit non-goal here. The engine reports each ResultadoEnvio arm with eprintln!/println! in Spanish. This is a deliberate placeholder, and the eventual swap to structured logging will rewrite those lines.'
+    - ADR NUMBERING, verified against the index rather than the plan. docs/adr/README.md declares itself the source of truth and already assigns 0001 through 0015, so the next free correlative is 0016 - NOT 0003. adr-0003 has no file on disk, which makes it look free, but the index reserves it for `persistencia-dual` (etapa A-2), which HEX-006 writes; taking 0003 here would collide with that reservation and break the rule that numbers are never reused or reordered. Eight index entries (0003, 0004, 0005, 0006, 0007, 0011, 0012 and 0013) likewise have no file yet and are all reserved. The index's closing paragraph confirms the official-channel ADRs have no numbers assigned yet, so 0016 is genuinely the next free one.
+    - 'This task now touches 21 files, well above the complexity policy''s l_max_files = 5, so band L applies and the external fleet closes, exactly as it did for HEX-003. Accepted rather than split: the config, the health server, the engine and the simulated adapter are mutually dependent - the engine cannot be tested without the adapter, the adapter is pointless without the engine, and the binary cannot boot without the config - so any intermediate commit would be a non-compiling tree.'
+    - 'Verified against the real tree at blueprint time, 2026-07-29: the five crates exist; crates/hexcell/src/main.rs is still the A-1 println! skeleton; every crate''s [dependencies] table is empty; the workspace has no [workspace.dependencies] table; DURACION_VENTANA_SERVICIO and the five ResultadoEnvio variants exist in hexcell-core::canal exactly as the spec assumes; IdConversacion/IdRemitente/IdDeduplicacion exist in hexcell-core::identidad; no `impl ChannelAdapter for` exists anywhere; crates/hexcell has no lib.rs and no tests/ directory yet; .gitignore still carries a Cargo.lock line and no Cargo.lock exists on disk or in git; docs/adr/ holds only the seven files 0001, 0002, 0008, 0009, 0010, 0014 and 0015. Crate versions were read from crates.io on 2026-07-29: tokio 1.53.1, hyper 1.11.0, hyper-util 0.1.20, http-body-util 0.1.4, bytes 1.12.1, axum 0.8.9, tiny-http 0.12.0.'
+    - 'crates/hexcell needs a lib target (src/lib.rs beside src/main.rs) so the engine and the config can be exercised from crates/hexcell/tests/. Without it those tests would have to live inline as #[cfg(test)] modules inside motor.rs, which would in turn make the `no unwrap() or expect() in motor.rs` check unenforceable, since test code legitimately unwraps. This is a small structural change to a crate HEX-003 left as a bare binary, and it is called out here because it is not something 00-spec asks for in so many words.'
+strategy:
+    - action: 'Create the workspace dependency table the HEX-002 comment reserved for this moment. In the root Cargo.toml add [workspace.dependencies] with tokio, hyper, hyper-util, http-body-util and bytes pinned to the versions verified on crates.io on 2026-07-29 (tokio 1.53, hyper 1.11, hyper-util 0.1, http-body-util 0.1, bytes 1.12), and add crates/hexcell-canal-simulado to members. Replace the now-stale comment that says the table does not exist yet with one that records why each crate is here. Do NOT touch [workspace], [workspace.package] or [profile.release]. Architectural role: composition root manifest.'
+      files:
+        - Cargo.toml
+      step: 1
+    - action: 'Choose hyper 1.x + hyper-util + http-body-util + bytes as the HTTP stack and justify it inline in crates/hexcell/Cargo.toml. Rationale to write there: axum 0.8 was rejected because it layers a tower service stack, the matchit router and the extractor machinery on top of this exact same hyper tree, and two fixed literal routes need a `match` on (method, path), not a router; tiny-http was rejected because it runs its own blocking thread model, which is precisely the `runtime HTTP alternativo a Tokio` the spec bans; hand-rolling HTTP over a bare TcpListener was rejected because the admin CLI probes these routes during reactivations and re-implementing request framing, keep-alive and malformed input handling is a liability that a 200-line saving does not buy. Configure tokio with default-features = false and only rt, macros, net, sync, io-util and time - explicitly NOT rt-multi-thread, because one cell serves low traffic and a per-cell worker thread pool is exactly the wrong trade on a 10-year-old i7 hosting many cells (NFR-01, <= 80 MB per cell). Add hexcell-core and hexcell-canal-simulado as path dependencies. Architectural role: infrastructure manifest.'
+      files:
+        - crates/hexcell/Cargo.toml
+      step: 2
+    - action: 'Add crates/hexcell/src/lib.rs declaring pub mod configuracion, salud, motor, procesador, with crate-level docs stating that this crate is the cell binary plus its library face, that the library target exists so the engine and the config can be exercised from tests/ without the test code living beside the production match, and that hexcell-core stays free of tokio and HTTP. main.rs then becomes a thin composition root. Architectural role: module boundary declaration.'
+      files:
+        - crates/hexcell/src/lib.rs
+      step: 3
+    - action: 'Write crates/hexcell/src/configuracion.rs: a Configuracion value object holding id_celula, ruta_datos (PathBuf), direccion_salud (SocketAddr), canal (CanalSeleccionado enum, today only Simulado) and capacidad_cola (usize). Configuracion::desde_entorno() reads HEXCELL_ID_CELULA, HEXCELL_RUTA_DATOS, HEXCELL_DIRECCION_SALUD, HEXCELL_CANAL and HEXCELL_CAPACIDAD_COLA and returns Result<Self, ErrorDeConfiguracion>. Mandatory: id_celula and ruta_datos. HEXCELL_DIRECCION_SALUD defaults to 127.0.0.1:8081 - loopback, never 0.0.0.0, per the spec invariant - while still accepting an explicit override so container packaging in A-6 has a door. ruta_datos is validated by checking the directory exists on disk now, so a missing volume fails at boot and not at the first write. Architectural role: validator + value object.'
+      files:
+        - crates/hexcell/src/configuracion.rs
+      step: 4
+    - action: 'In the same file define ErrorDeConfiguracion as a closed enum with variants VariableAusente { nombre, formato_esperado }, ValorInvalido { nombre, valor, formato_esperado } and RutaDeDatosInexistente { nombre, ruta }, implementing Display in Spanish so every message names the concrete variable and its expected format, plus std::error::Error. No panic, no unwrap: main returns std::process::ExitCode, prints the Display form to stderr and returns ExitCode::FAILURE. This matters more than usual here because [profile.release] sets panic = "abort", so a panic in release would produce no usable message at all and AC-2 would be unverifiable in the shipped binary.'
+      files:
+        - crates/hexcell/src/configuracion.rs
+      step: 5
+    - action: 'Write crates/hexcell/src/salud.rs: servir_salud(direccion) binds a tokio::net::TcpListener, reports back the actually bound SocketAddr (so a caller may pass port 0 and still learn the real port), and serves each accepted connection with hyper::server::conn::http1::Builder over hyper_util::rt::TokioIo. Routing is a match on (req.method(), req.uri().path()): GET /health/live returns 200 with a short fixed body and touches nothing else; GET /health/ready returns a fixed body that states in Spanish that the real readiness check - SQLite pool liveness plus the channel port session state - arrives in HEX-006 (plan task 7) and that this response checks nothing; anything else returns 404. Keep atender_peticion_de_salud as a separate pure-ish function so a unit test can assert both routes without binding a port. salud.rs may name SQLite pools and session state in that skeleton body and its docs - the verify greps here only forbid actually importing rusqlite/sqlx - but it must not perform any probe. Architectural role: application service.'
+      files:
+        - crates/hexcell/src/salud.rs
+      step: 6
+    - action: 'Write crates/hexcell/src/procesador.rs: trait ProcesadorDeMensajes with a single synchronous method procesar(&self, evento: &EventoEntrante) -> Option<MensajeSaliente>, and ProcesadorDeEco returning MensajeSaliente::RespuestaLibre echoing evento.contenido. Keep it synchronous deliberately: the LLM provider interface is HEX-008 and adding `-> impl Future` today would be speculative generality of exactly the kind hexcell-meta''s own crate docs argue against. Document that this is an extension point and that no product rule may land here. Architectural role: domain service port (local to the binary).'
+      files:
+        - crates/hexcell/src/procesador.rs
+      step: 7
+    - action: 'Write crates/hexcell/src/motor.rs: Motor<A: ChannelAdapter, P: ProcesadorDeMensajes> holding the adapter, the processor and a tokio::sync::mpsc::Receiver<EventoEntrante>. Motor::ejecutar consumes `while let Some(evento) = receptor.recv().await`, calls the processor, and on Some(mensaje) awaits adaptador.send(&evento.conversacion, mensaje). The returned Result is destructured with a match that spells out all five ResultadoEnvio variants plus Err(averia); each arm logs a distinct Spanish line via eprintln!/println! and the loop continues. No unwrap(), no expect(), no wildcard arm - the closed enum plus the wildcard-free match means a future variant breaks this file at compile time, the same property hexcell-core''s exhaustividad test already buys. Architectural role: application service / orchestration; no domain rules here.'
+      files:
+        - crates/hexcell/src/motor.rs
+      step: 8
+    - action: Decide and document the delivery mechanism, which the port deliberately does not declare (see risks). crates/hexcell-core/src/canal.rs states in prose that the delivery mechanism - subscription, stream or callback - is not one of FR-12's seven elements and is decided in A-2; ChannelAdapter itself declares only send and estado_ventana. Because the spec forbids rewriting hexcell-core, delivery is realized as a bounded tokio::sync::mpsc::channel<EventoEntrante> created and owned by the adapter, whose Receiver is handed to the Motor at construction. Bounded, not unbounded, so a burst applies backpressure instead of growing the queue without limit against the <= 80 MB budget; capacity comes from HEXCELL_CAPACIDAD_COLA. Write the convention in the module docs of the simulated adapter, naming A-3 and its transport there, because that crate is where such names are legitimate. In motor.rs state the same convention WITHOUT naming any transport - say `todo adaptador entrega sus eventos por este canal` - because the invariant and the verify greps forbid the words whatsmeow, JID, wa_id, Cloud API and Graph API in that file, comments included.
+      files:
+        - crates/hexcell/src/motor.rs
+        - crates/hexcell-canal-simulado/src/adaptador.rs
+      step: 9
+    - action: 'Create crates/hexcell-canal-simulado as a new workspace member with Cargo.toml inheriting the workspace package metadata and depending on hexcell-core plus tokio (sync and rt only). Its crate docs must state, in Spanish, that this adapter imitates the Meta Cloud API''s restrictive semantics and NOT whatsmeow, that it lives outside hexcell-core because an implementation of ChannelAdapter is not a domain type, and that the fact it enforces a 24 h window says nothing about what the own-channel adapter must do - the TYPE admits the restrictive outcome, the POLICY of each adapter decides whether it produces it. Architectural role: test double / infrastructure adapter.'
+      files:
+        - crates/hexcell-canal-simulado/Cargo.toml
+        - crates/hexcell-canal-simulado/src/lib.rs
+      step: 10
+    - action: 'Write crates/hexcell-canal-simulado/src/reloj.rs: trait Reloj { fn ahora(&self) -> SystemTime; } plus RelojDelSistema (the only place SystemTime::now() may be called) and RelojDePrueba (interior mutability over an Arc<Mutex<SystemTime>>, with avanzar(Duration) and fijar(SystemTime)). Reloj is object-safe on purpose so the adapter can hold Arc<dyn Reloj + Send + Sync> and the generic parameter does not infect every caller. Document why tokio::time::pause() is NOT the mechanism: the port''s own types carry SystemTime (EventoEntrante.marca_temporal, EstadoVentanaServicio::Abierta.expira_en), and tokio''s pause virtualizes only tokio::time::Instant and sleep, never SystemTime::now(), so it structurally cannot make AC-6 deterministic. That whole explanation must live in reloj.rs and NOT in adaptador.rs, because a verify grep forbids the literal SystemTime::now in adaptador.rs, comments included. Architectural role: value object + port.'
+      files:
+        - crates/hexcell-canal-simulado/src/reloj.rs
+      step: 11
+    - action: 'Write crates/hexcell-canal-simulado/src/adaptador.rs: AdaptadorSimulado holding Arc<dyn Reloj + Send + Sync>, an mpsc::Sender<EventoEntrante>, a map of conversation -> last inbound instant (the window anchor), a per-conversation queue of forced ResultadoEnvio, a forced-fault flag and a capture Vec of (IdConversacion, MensajeSaliente, ResultadoEnvio). Constructor returns the adapter together with the mpsc Receiver. Test-facing API: inyectar(evento) pushes to the channel and anchors/refreshes that conversation''s window at reloj.ahora(); forzar(conversacion, resultado) and forzar_siguiente(resultado) queue a forced outcome consumed by exactly one call; forzar_averia() makes the next send return Err; envios_capturados() returns a snapshot. Architectural role: infrastructure adapter.'
+      files:
+        - crates/hexcell-canal-simulado/src/adaptador.rs
+      step: 12
+    - action: 'Implement ChannelAdapter for AdaptadorSimulado. type Error = ErrorDelAdaptadorSimulado, a real enum with a forceable AveriaDeTransporteSimulada variant implementing Display + std::error::Error - deliberately NOT std::convert::Infallible, because an uninhabited error would make the Motor''s Err arm unreachable and AC-5''s `treat the Result explicitly` untestable. send() first consumes any forced fault, then any forced ResultadoEnvio, then applies the natural rule: for MensajeSaliente::RespuestaLibre, if reloj.ahora() is at or past anchor + DURACION_VENTANA_SERVICIO return FueraDeVentana, else Aceptado; MensajeSaliente::Plantilla is accepted inside and outside the window, which is the Cloud API''s actual asymmetry. estado_ventana() computes Abierta { expira_en } or Cerrada from the same anchor. Import DURACION_VENTANA_SERVICIO from hexcell_core::canal and never restate 24 h. All state lives behind std::sync::Mutex and every guard is dropped before any await, or the future returned by send stops being Send and violates the port''s `impl Future<Output = ...> + Send` bound.'
+      files:
+        - crates/hexcell-canal-simulado/src/adaptador.rs
+      step: 13
+    - action: 'Rewrite crates/hexcell/src/main.rs as a thin composition root: #[tokio::main(flavor = "current_thread")] async fn main() -> ExitCode. Load Configuracion::desde_entorno(); on Err print the Display form to stderr and return ExitCode::FAILURE before anything is bound or spawned, which is what makes AC-2''s `termina antes de levantar el servidor HTTP o el motor` literally true. On Ok, match configuracion.canal to build the concrete adapter - static dispatch, because ChannelAdapter uses -> impl Future (RPITIT) and is therefore not dyn-compatible - bind the health listener, print the resolved bind address and the selected channel on stdout so the integration test can read the real port, and run the health server and Motor::ejecutar concurrently with tokio::join!/select!. No signal handling at all: graceful shutdown and in-flight drain are HEX-008. The docs may say so in prose; what the verify greps forbid is importing tokio::signal, signal_hook or libc signal constants.'
+      files:
+        - crates/hexcell/src/main.rs
+      step: 14
+    - action: Write crates/hexcell/tests/configuracion.rs and crates/hexcell/tests/salud_http.rs. configuracion.rs covers the happy path and each failure mode through the library API plus, for the process-level assertions, spawns env!("CARGO_BIN_EXE_hexcell") with a controlled environment and asserts exit status and stderr content. salud_http.rs spawns the binary with HEXCELL_DIRECCION_SALUD=127.0.0.1:0, reads the resolved port from stdout, and issues raw `GET /health/live` and `GET /health/ready` requests over std::net::TcpStream - no HTTP client crate is added for tests, and no test reaches any network beyond loopback. Each test kills the child process on the way out.
+      files:
+        - crates/hexcell/tests/configuracion.rs
+        - crates/hexcell/tests/salud_http.rs
+      step: 15
+    - action: 'Write crates/hexcell/tests/motor.rs (engine over the simulated adapter: echo path, all five ResultadoEnvio arms, forced fault Err arm) and crates/hexcell-canal-simulado/tests/adaptador_simulado.rs (deterministic window expiry against RelojDePrueba on both sides of DURACION_VENTANA_SERVICIO, and the four rejections forced and distinguished). Keep both concrete to AdaptadorSimulado: a battery generic over any ChannelAdapter is HEX-005''s deliverable and writing one here would take its scope. Neither file may add rusqlite/sqlx, a schema, a migration or a signal handler.'
+      files:
+        - crates/hexcell/tests/motor.rs
+        - crates/hexcell-canal-simulado/tests/adaptador_simulado.rs
+      step: 16
+    - action: 'Start versioning Cargo.lock, which is the decision the root Cargo.toml comment left pending for exactly this moment. Remove the `Cargo.lock` line from the Rust section of .gitignore, leaving /target and the rest untouched, and commit the Cargo.lock that cargo generates when it resolves tokio, hyper, hyper-util, http-body-util, bytes and their transitive tree. This follows the official Rust guidance: a lock file is committed for binaries and applications, and hexcell is the binary that ships inside every cell, so a rebuild on the target hardware must resolve the same versions the pilots were validated against. Do NOT hand-write the file - let cargo generate it and commit it verbatim.'
+      files:
+        - .gitignore
+        - Cargo.lock
+      step: 17
+    - action: 'Write docs/adr/adr-0016-convencion-de-entrega-de-eventos.md. The number is 0016 and it comes from docs/adr/README.md, which is the source of truth: the index already assigns 0001 through 0015, and adr-0003 is explicitly reserved for `persistencia-dual` (etapa A-2, HEX-006), so 0003 is NOT free despite no such file existing on disk yet. Content, in Spanish and at ~100 columns, following the shape of adr-0010 (Contexto / Decision / Consecuencias positivas y negativas / Alternativas descartadas): the ChannelAdapter port declares only send and estado_ventana, and canal.rs itself defers the delivery mechanism to etapa A-2; this ADR is that decision. Decision: events are delivered through a BOUNDED tokio::sync::mpsc channel created and owned by the adapter, whose Receiver is handed to the engine, and NOT through a new method on the trait. Rationale: it keeps hexcell-core free of tokio and of any async runtime - an acceptance criterion, not a preference - and bounded rather than unbounded so a burst applies backpressure instead of growing without limit against the <= 80 MB per-cell budget. Consequence to state plainly: the delivery mechanism is therefore NOT part of FR-12''s seven normalized elements, so it is a convention every adapter must honour, and the whatsmeow adapter of etapa A-3 is OBLIGED to adopt it or the seam breaks. Alternatives to record as rejected: adding a recv/subscribe method to the trait (rejected because it rewrites a crate HEX-002 closed, and because RPITIT already makes the trait dyn-incompatible), and a callback/handler registration (rejected because it inverts control and would push executor knowledge into the adapter). Estado: Vigente (2026-07-29), etapa A-2, requisitos FR-01 y FR-12. Absolute dates only, and never write that Fase B replaces, substitutes or closes Fase A, nor that the sidecar is retired.'
+      files:
+        - docs/adr/adr-0016-convencion-de-entrega-de-eventos.md
+      step: 18
+    - action: 'Add exactly ONE row to the table in docs/adr/README.md for `adr-0016-convencion-de-entrega-de-eventos.md`, at the end of the table, with the decision summary, `A-2` as the producing stage and `**Vigente** (2026-07-29)` as the state. Do not touch, renumber or reorder rows 0001 to 0015, and do not alter the prose above or below the table, including the closing paragraph about the official-channel ADRs still unnumbered. Then add to the `## Definido` section of docs/STATUS.md two entries dated 2026-07-29 and attributed to HEX-004: one recording the event-delivery convention and pointing at adr-0016, one recording that Cargo.lock is now versioned and why. Do not rewrite any existing bullet, Definido or Pendiente, and do not write anything that marks etapa A-2 as closed - the stage closes with HEX-008 and AC-10 makes that a tripwire.'
+      files:
+        - docs/adr/README.md
+        - docs/STATUS.md
+      step: 19
+summary: Env config, minimal hyper health server, Tokio engine over ChannelAdapter with echo processor, and an in-memory Cloud-API-semantics simulated adapter with injectable clock.
+symbols:
+    - Configuracion
+    - Configuracion::desde_entorno
+    - ErrorDeConfiguracion
+    - CanalSeleccionado
+    - servir_salud
+    - atender_peticion_de_salud
+    - Motor
+    - Motor::ejecutar
+    - ProcesadorDeMensajes
+    - ProcesadorDeEco
+    - Reloj
+    - RelojDelSistema
+    - RelojDePrueba
+    - AdaptadorSimulado
+    - ErrorDelAdaptadorSimulado
+    - '[workspace.dependencies]'
+    - main
+    - adr-0016
+task_id: HEX-004
+test_scenarios:
+    - covers:
+        - AC-1
+      statement: Spawning the hexcell binary (CARGO_BIN_EXE_hexcell) with every mandatory variable set and HEXCELL_RUTA_DATOS pointing at an existing temp dir leaves the process alive, and it prints on stdout the resolved health bind address plus a line naming the configured channel, proving both the HTTP server and the engine loop started.
+    - covers:
+        - AC-2
+      statement: 'Spawning the binary with HEXCELL_RUTA_DATOS unset exits non-zero within a couple of seconds, stderr names HEXCELL_RUTA_DATOS and its expected format, stderr contains no panic/RUST_BACKTRACE text, and nothing was bound: a TCP connect to the health address is refused.'
+    - covers:
+        - AC-2
+      statement: Spawning the binary with HEXCELL_RUTA_DATOS set to a path that does not exist on disk exits non-zero naming that variable and that path, rather than deferring the failure to a first write.
+    - covers:
+        - AC-2
+      statement: Spawning the binary with HEXCELL_DIRECCION_SALUD set to a value that is not a socket address, and separately with HEXCELL_CANAL set to an unknown channel name, exits non-zero in each case naming the offending variable and listing its accepted format.
+    - covers:
+        - AC-3
+      statement: Against the spawned binary bound to an OS-chosen port on 127.0.0.1 (port 0, real port read back from stdout), a raw std::net::TcpStream sending `GET /health/live HTTP/1.1` gets a `200` status line, with no SQLite pool and no channel adapter reachable at all.
+    - covers:
+        - AC-4
+      statement: The same raw TCP client sending `GET /health/ready HTTP/1.1` gets a body that names HEX-006 as the owner of the real readiness logic; the response never claims a pool or session check was performed, and salud.rs contains no pool/SQLite/session probe.
+    - covers:
+        - AC-5
+      statement: A unit-level test drives Motor::ejecutar over an AdaptadorSimulado whose window is open, injects one EventoEntrante deterministically, and observes exactly one captured outbound MensajeSaliente::RespuestaLibre echoing the inbound text, paired with the ResultadoEnvio the adapter returned.
+    - covers:
+        - AC-5
+      statement: Motor::ejecutar handles Ok(Aceptado) and each of the four Ok(rejection) values without panicking and without stopping the loop, and handles Err(_) from a forced simulated transport fault the same way; crates/hexcell/src/motor.rs contains no unwrap() or expect() anywhere, so the match is the only path.
+    - covers:
+        - AC-6
+      statement: With RelojDePrueba, a conversation receives an EventoEntrante (window opens), the test clock advances by DURACION_VENTANA_SERVICIO plus one second, and send(conversacion, RespuestaLibre) returns Ok(ResultadoEnvio::FueraDeVentana) while estado_ventana returns Cerrada. The same sequence with the clock advanced by DURACION_VENTANA_SERVICIO minus one second returns Ok(Aceptado) and Abierta.
+    - covers:
+        - AC-6
+      statement: The identical expiry sequence runs to completion in well under a second of wall time and yields the same verdict on repeated runs, proving no dependency on SystemTime::now(); crates/hexcell-canal-simulado/src/adaptador.rs never calls SystemTime::now() and never restates 24h, using DURACION_VENTANA_SERVICIO instead.
+    - covers:
+        - AC-7
+      statement: For four distinct conversations the simulated adapter is told to force FueraDeVentana, PlantillaRequerida, LimiteDeTasa and DestinatarioInvalido respectively; four send() calls return those four values, a match with no wildcard arm separates them, and asserting the four are pairwise distinct passes.
+    - covers:
+        - AC-7
+      statement: 'A forced rejection queued for a single call applies to that call only: the next send() on the same conversation with an open window returns Ok(Aceptado), so forcing is not a sticky global mode that would blur the four cases together.'
+    - covers:
+        - AC-8
+      statement: '`cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D warnings` and `cargo test --workspace` all terminate with no errors or findings on the resulting tree, including the new crate and the new test files.'
+    - covers:
+        - AC-9
+      statement: 'crates/hexcell-core/Cargo.toml''s [dependencies] table is still empty: no tokio, no hyper/hyper-util/http-body-util/bytes, no axum, no hexcell-canal-simulado; and no file under crates/hexcell-core/ is added, removed or modified by this task.'
+    - covers:
+        - AC-9
+      statement: No `impl ChannelAdapter for` exists anywhere under crates/hexcell-core/, and the single implementation in the tree lives in crates/hexcell-canal-simulado/.
+    - covers:
+        - AC-8
+      statement: Cargo.lock is tracked by git after this task (git ls-files lists it), .gitignore no longer carries a Cargo.lock line, and the lock file pins every crate the workspace resolves, so a rebuild on the target hardware is reproducible.
+    - covers:
+        - AC-10
+      statement: docs/adr/adr-0016-convencion-de-entrega-de-eventos.md exists, states the mpsc delivery convention decided outside the ChannelAdapter trait with its rationale and its consequence for A-3, is dated 2026-07-29 in absolute form, and never claims that Fase B replaces, substitutes or closes Fase A nor that the sidecar is retired.
+    - covers:
+        - AC-10
+      statement: 'docs/adr/README.md''s table gains exactly one row for adr-0016 pointing at etapa A-2, and rows 0001 to 0015 keep their numbers, their order and their text unchanged: no number is reused, renumbered or reordered, and adr-0003 stays reserved for the persistencia dual that HEX-006 will write.'
+    - covers:
+        - AC-10
+      statement: docs/STATUS.md gains Definido entries for the event-delivery convention (adr-0016) and for versioning Cargo.lock, both dated 2026-07-29, while no wording anywhere in the file marks etapa A-2 as closed or cerrada, and no bullet already marked Definido is rewritten.
+    - covers:
+        - AC-10
+      statement: The diff contains no reusable port contract battery generic over ChannelAdapter (the new tests name AdaptadorSimulado concretely), no SQLite/rusqlite/sqlx/migration/schema code, no SIGTERM or signal handling, and no readiness logic beyond the fixed skeleton body. docs/STATUS.md is edited, which AC-10 permits, but nothing in it marks etapa A-2 as closed.
+    - covers:
+        - AC-5
+        - AC-10
+      statement: crates/hexcell/src/motor.rs and crates/hexcell/src/procesador.rs contain no occurrence of whatsmeow, JID, wa_id, Cloud API or Graph API in code or comments; the engine names only hexcell_core types.
