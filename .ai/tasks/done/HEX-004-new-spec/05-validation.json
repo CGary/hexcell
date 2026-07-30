@@ -1,0 +1,530 @@
+{
+  "commands": [
+    {
+      "command": "cargo fmt --check",
+      "duration_s": 0.1,
+      "exit_code": 0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "cargo clippy --workspace --all-targets -- -D warnings",
+      "duration_s": 0.11,
+      "exit_code": 0,
+      "output_excerpt": "Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.03s"
+    },
+    {
+      "command": "cargo clippy --workspace -- -D warnings",
+      "duration_s": 0.08,
+      "exit_code": 0,
+      "output_excerpt": "Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.01s"
+    },
+    {
+      "command": "cargo test --workspace",
+      "duration_s": 0.18,
+      "exit_code": 0,
+      "output_excerpt": "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s"
+    },
+    {
+      "command": "grep -q 'hexcell-canal-simulado' Cargo.toml",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "grep -qE '^\\[workspace\\.dependencies\\]' Cargo.toml",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "grep -q '\\[workspace\\]' Cargo.toml",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "grep -q '\\[workspace.package\\]' Cargo.toml",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "grep -q '\\[profile.release\\]' Cargo.toml",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "test -f crates/hexcell/src/lib.rs",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "test -f crates/hexcell/src/configuracion.rs",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "test -f crates/hexcell/src/salud.rs",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "test -f crates/hexcell/src/motor.rs",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "test -f crates/hexcell/src/procesador.rs",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "test -f crates/hexcell-canal-simulado/Cargo.toml",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "test -f crates/hexcell-canal-simulado/src/reloj.rs",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "test -f crates/hexcell-canal-simulado/src/adaptador.rs",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "grep -qE '^[[:space:]]*hyper[[:space:]]*=' crates/hexcell/Cargo.toml",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "grep -qE '^[[:space:]]*tokio[[:space:]]*=' crates/hexcell/Cargo.toml",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "grep -qE '^[[:space:]]*hexcell-core[[:space:]]*=' crates/hexcell/Cargo.toml",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "grep -qE '^[[:space:]]*hexcell-canal-simulado[[:space:]]*=' crates/hexcell/Cargo.toml",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "! grep -qE '^[[:space:]]*(axum|tiny-http|actix-web|warp|rocket|tide|reqwest|ureq)[[:space:]]*=' crates/hexcell/Cargo.toml",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "! grep -qE '^[[:space:]]*(tracing|log|serde|serde_json|clap|anyhow|thiserror|rusqlite|sqlx|chrono|rand)[[:space:]]*=' crates/hexcell/Cargo.toml",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "grep -q 'current_thread' crates/hexcell/src/main.rs",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "! grep -qE '^[[:space:]]*(tokio|hyper|hyper-util|http-body-util|bytes|axum|hexcell-canal-simulado|hexcell-storage)[[:space:]]*=' crates/hexcell-core/Cargo.toml",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "! grep -rqE 'impl(\u003c[^\u003e]*\u003e)? *ChannelAdapter *for' crates/hexcell-core/",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "! grep -rqE 'impl(\u003c[^\u003e]*\u003e)? *ChannelAdapter *for' crates/hexcell/src/",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "grep -rqE 'impl(\u003c[^\u003e]*\u003e)? *ChannelAdapter *for' crates/hexcell-canal-simulado/src/",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "grep -q 'health/live' crates/hexcell/src/salud.rs",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "grep -q 'health/ready' crates/hexcell/src/salud.rs",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "grep -q 'HEX-006' crates/hexcell/src/salud.rs",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "! grep -qE '^[[:space:]]*use [^;]*(rusqlite|sqlx)' crates/hexcell/src/salud.rs",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "grep -q '127.0.0.1' crates/hexcell/src/configuracion.rs",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "! grep -qE '\"0\\.0\\.0\\.0' crates/hexcell/src/configuracion.rs",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "grep -q 'HEXCELL_RUTA_DATOS' crates/hexcell/src/configuracion.rs",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "grep -q 'HEXCELL_DIRECCION_SALUD' crates/hexcell/src/configuracion.rs",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "grep -q 'HEXCELL_CANAL' crates/hexcell/src/configuracion.rs",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "grep -q 'ExitCode' crates/hexcell/src/main.rs",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "! grep -qE '\\.(unwrap|expect)\\(' crates/hexcell/src/motor.rs",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "! grep -qE '\\.(unwrap|expect)\\(' crates/hexcell/src/configuracion.rs",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "! grep -qE 'panic!|unreachable!|todo!' crates/hexcell/src/motor.rs",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "grep -q 'ResultadoEnvio::Aceptado' crates/hexcell/src/motor.rs",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "grep -q 'ResultadoEnvio::FueraDeVentana' crates/hexcell/src/motor.rs",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "grep -q 'ResultadoEnvio::PlantillaRequerida' crates/hexcell/src/motor.rs",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "grep -q 'ResultadoEnvio::LimiteDeTasa' crates/hexcell/src/motor.rs",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "grep -q 'ResultadoEnvio::DestinatarioInvalido' crates/hexcell/src/motor.rs",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "grep -qE 'Err\\(' crates/hexcell/src/motor.rs",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "! grep -rqiE 'whatsmeow|wa_id|\\bJID\\b|Cloud API|Graph API' crates/hexcell/src/motor.rs",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "! grep -rqiE 'whatsmeow|wa_id|\\bJID\\b|Cloud API|Graph API' crates/hexcell/src/procesador.rs",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "! grep -qi 'whatsmeow' crates/hexcell-canal-simulado/Cargo.toml",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "! grep -rqE '^\\s*(use|extern crate)[^;]*whatsmeow' crates/hexcell-canal-simulado/src/",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "grep -rq 'DURACION_VENTANA_SERVICIO' crates/hexcell-canal-simulado/src/",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "! grep -rqE '86400|24 \\* 60 \\* 60|60 \\* 60 \\* 24' crates/hexcell-canal-simulado/src/",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "! grep -q 'SystemTime::now' crates/hexcell-canal-simulado/src/adaptador.rs",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "! grep -qE 'tokio::time::(pause|advance|sleep)' crates/hexcell-canal-simulado/src/adaptador.rs",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "grep -q 'RelojDePrueba' crates/hexcell-canal-simulado/src/reloj.rs",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "grep -q 'ResultadoEnvio::FueraDeVentana' crates/hexcell-canal-simulado/tests/adaptador_simulado.rs",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "grep -q 'ResultadoEnvio::PlantillaRequerida' crates/hexcell-canal-simulado/tests/adaptador_simulado.rs",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "grep -q 'ResultadoEnvio::LimiteDeTasa' crates/hexcell-canal-simulado/tests/adaptador_simulado.rs",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "grep -q 'ResultadoEnvio::DestinatarioInvalido' crates/hexcell-canal-simulado/tests/adaptador_simulado.rs",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "grep -q 'CARGO_BIN_EXE_hexcell' crates/hexcell/tests/salud_http.rs",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "! grep -rqE '^[[:space:]]*use [^;]*(rusqlite|sqlx)' crates/hexcell/src/ crates/hexcell-canal-simulado/src/",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "! grep -rqiE 'CREATE TABLE|PRAGMA journal_mode|busy_timeout' crates/hexcell/src/ crates/hexcell-canal-simulado/src/",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "! grep -rqE 'tokio::signal|signal_hook|libc::SIG' crates/hexcell/src/ crates/hexcell-canal-simulado/src/",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "! test -d migrations",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "git ls-files | grep -qx 'Cargo.lock'",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "test -s Cargo.lock",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "! grep -qE '^[[:space:]]*Cargo\\.lock[[:space:]]*$' .gitignore",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "grep -qE '^/target' .gitignore",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "grep -qE '^\\*\\.db$' .gitignore",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "test -f docs/adr/adr-0016-convencion-de-entrega-de-eventos.md",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "! test -f docs/adr/adr-0003-persistencia-dual.md",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "grep -q 'adr-0016-convencion-de-entrega-de-eventos.md' docs/adr/README.md",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "grep -q '2026-07-29' docs/adr/adr-0016-convencion-de-entrega-de-eventos.md",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "grep -q 'mpsc' docs/adr/adr-0016-convencion-de-entrega-de-eventos.md",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "grep -q 'A-3' docs/adr/adr-0016-convencion-de-entrega-de-eventos.md",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "grep -q 'adr-0010-puerto-de-canal.md' docs/adr/README.md",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "grep -q 'adr-0003-persistencia-dual.md' docs/adr/README.md",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "grep -q 'adr-0015-politica-de-convivencia-con-el-baneo.md' docs/adr/README.md",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "grep -q 'HEX-004' docs/STATUS.md",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "grep -q '2026-07-29' docs/STATUS.md",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "! grep -qiE 'etapa A-2 (cerrada|completada|finalizada|terminada)' docs/STATUS.md",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "! grep -rqiE 'sustituye a la fase a|reemplaza la fase a|cierra la fase a|el sidecar se retira' docs/adr/adr-0016-convencion-de-entrega-de-eventos.md",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "! git ls-files | grep -qE '\\.(db|db-wal|db-shm)$'",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "! git ls-files | grep -qE '(^|/)\\.env'",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "! find . -path ./.git -prune -o -name '.env*' -print | grep -q .",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "! grep -rqiE 'sustituye a la fase a|reemplaza la fase a|cierra la fase a|el sidecar se retira' crates/",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": ""
+    }
+  ],
+  "executed_at": "2026-07-29T17:46:39.767749Z",
+  "overall_result": "passed",
+  "summary": "All 87 verification commands passed. A-2 implementation complete.",
+  "task_id": "HEX-004"
+}

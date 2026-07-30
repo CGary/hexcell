@@ -1,0 +1,203 @@
+task_id: HEX-005
+summary: "Tests de contrato del ChannelAdapter, política ante FueraDeVentana, ID de conversación
+  opaco que sobrevive re-emparejamiento e idempotencia de entrega. Tareas 5, 6, 9 y 10 de A-2."
+goal: >
+  Convertir en código Rust las tareas 5, 6, 9 y 10 de la etapa A-2
+  (docs/plan/fase-a-2-nucleo-persistencia.md), la segunda de las cinco tareas HEX-004..HEX-008
+  en que se partió esa etapa el 2026-07-28, sobre lo que HEX-004 ya dejó en main (commit
+  b985cc9): el trait ChannelAdapter en hexcell-core, el adaptador simulado con semántica
+  Cloud API en hexcell-canal-simulado, y el motor de mensajería mpsc en crates/hexcell. Esta
+  tarea añade cuatro piezas. Primero, una batería de tests de contrato reutilizable que
+  cualquier implementación de ChannelAdapter debe pasar, ejercitada aquí contra el adaptador
+  simulado en su modo restrictivo; es el artefacto que la etapa B-1 reutilizará sin tocar una
+  línea del núcleo cuando llegue el adaptador de Cloud API real. Segundo, la política del
+  núcleo ante el rechazo FueraDeVentana al intentar enviar RespuestaLibre: encolado de la
+  respuesta hasta que el cliente vuelva a escribir, o escalado a humano, con la decisión
+  documentada y su alcance de esta etapa (no se ejercita en producción, sí en los tests de
+  contrato). Tercero, el identificador interno de conversación como tipo opaco ya declarado en
+  hexcell-core (HEX-002): esta tarea ejercita su consecuencia observable, que el hilo se
+  ancla al contacto y no al dispositivo, mediante un test que re-empareja la célula contra el
+  adaptador simulado (nuevo identificador de dispositivo) y verifica que el mismo contacto
+  sigue cayendo en el mismo identificador interno de conversación, con su historial anterior
+  continuado. Cuarto, la idempotencia de entrega: un registro en memoria de identificadores de
+  deduplicación ya procesados, con una ventana de retención dimensionada explícitamente frente
+  al horizonte de reentrega del canal y documentada como parámetro con su justificación, de
+  modo que un evento entrante duplicado se procese una sola vez; también se corrige el defecto
+  conocido del test "el_binario_no_vincula_nada_si_la_configuracion_es_invalida" en
+  crates/hexcell/tests/configuracion.rs, que hoy asume el puerto 8081 libre.
+invariants:
+  - Todo el contenido del repositorio se escribe en español, incluidos los comentarios de
+    código y los mensajes de commit (conventional commits, sin Co-Authored-By ni ninguna
+    atribución de IA). Los identificadores de Rust (tipos, funciones, crates) se mantienen en
+    inglés idiomático donde ya lo están; esto no es una violación de la regla de idioma, que
+    gobierna la prosa, no los identificadores del lenguaje.
+  - "El núcleo nunca conoce el transporte de WhatsApp: el adaptador simulado imita la
+    semántica restrictiva de la Meta Cloud API (ventana de 24 h, FueraDeVentana,
+    PlantillaRequerida), no la de whatsmeow. El TIPO admite el resultado restrictivo; la
+    POLÍTICA de cada adaptador decide si lo produce. La política ante FueraDeVentana que esta
+    tarea implementa vive en el motor del núcleo (crates/hexcell), es genérica sobre
+    ChannelAdapter y no asume que el canal propio vaya a producir ese rechazo."
+  - "El identificador interno de conversación es opaco: el núcleo no lo construye a partir de
+    ningún dato de transporte, no lo interpreta y no lo invierte. La traducción entre el
+    identificador de transporte y el interno no es responsabilidad del núcleo, sino del
+    adaptador (adr-0010); esta tarea no reimplementa esa traducción, solo ejercita contra el
+    simulado que el hilo sobrevive al re-emparejamiento."
+  - "sessions.db no existe todavía como persistencia real (llega en HEX-006): el registro de
+    deduplicación de esta tarea vive en memoria, dentro del motor o de un módulo propio de
+    crates/hexcell, documentado explícitamente como estructura transitoria que HEX-006
+    respaldará con persistencia; no se inventa aquí ningún esquema SQLite."
+  - No se versiona ningún *.db, *.db-wal, *.db-shm ni .env*; ningún secreto ni API key llega
+    al repositorio, ni siquiera como valor de ejemplo en la documentación.
+  - Todas las fechas escritas en los documentos son absolutas (2026-07-30), nunca relativas.
+  - "Ningún documento ni comentario puede afirmar que la Fase B sustituye, reemplaza o cierra
+    la Fase A, ni que el sidecar se retira: el canal propio es el canal por defecto y
+    permanente."
+  - La prosa en Markdown y en comentarios largos mantiene un ancho aproximado de 100
+    columnas, consistente con el resto del repositorio.
+  - "Los tests de contrato del puerto son reutilizables por diseño: viven en un módulo o crate
+    accesible desde fuera de hexcell-canal-simulado (p. ej. expuestos como función o macro de
+    tests genérica sobre cualquier ChannelAdapter), no como funciones privadas acopladas al
+    tipo concreto del simulado, porque la etapa B-1 debe poder ejercitarlos contra el
+    adaptador de Cloud API sin reescribirlos."
+non_goals:
+  - "Persistencia real de la deduplicación y de la ventana de servicio en sessions.db: esquema,
+    migraciones, pools SQLite. Fuera de alcance, tareas 7 y 8 del plan, HEX-006/HEX-007. Esta
+    tarea implementa la deduplicación en memoria."
+  - El adaptador real de whatsmeow y cualquier cambio en sidecar/. Ya cerrado por A-3 aparte
+    de esta partición de A-2.
+  - "La lógica real de GET /health/ready (comprobación de pools SQLite y del estado de sesión
+    del puerto). Fuera de alcance, tarea 7 del plan, HEX-006."
+  - El gestor de pools duales SQLite y el esquema de sessions.db. Fuera de alcance, tareas 7 y
+    8 del plan, HEX-006/HEX-007.
+  - La interfaz del proveedor de inferencia LLM, real o simulada. Fuera de alcance, tarea 11
+    del plan, HEX-008.
+  - Apagado ordenado por SIGTERM, drenaje de tareas en vuelo y checkpoint de SQLite. Fuera de
+    alcance, tarea 12 del plan, HEX-008.
+  - Respaldo y restauración de las cuatro bases, y el runbook de bifurcación device_removed.
+    Fuera de alcance, tareas 13 y 14 del plan, HEX-008.
+  - Logs estructurados con identificador de célula, de evento y latencia. Fuera de alcance,
+    tarea 15 del plan, HEX-008.
+  - Pruebas de integración de extremo a extremo (camino feliz, apagado bajo carga, ciclo de
+    respaldo). Fuera de alcance, tarea 16 del plan, HEX-008.
+  - Cualquier lógica de negocio en el procesador de mensajes más allá del eco mínimo ya
+    existente. El procesador sigue siendo un punto de extensión vacío de reglas de producto.
+  - Actualizar docs/STATUS.md marcando la etapa A-2 como cerrada. La etapa se cierra con
+    HEX-008; esta tarea no reabre ninguna decisión ya registrada como Definida.
+constraints:
+  - "Los tests de contrato viven en una ubicación reutilizable (crate propio, módulo público de
+    hexcell-core bajo cfg(test) o feature de testing, o crate hexcell-canal-simulado
+    reexportado), ejercitados en esta tarea contra el adaptador simulado configurado en su
+    modo restrictivo (los cuatro rechazos de FR-12, la ventana de 24 h real vía reloj
+    inyectable), y deben poder ejecutarse contra cualquier otra implementación futura del
+    trait sin modificar su código."
+  - "La política ante FueraDeVentana se implementa en crates/hexcell (el motor), nunca en
+    hexcell-core ni en el adaptador simulado; el motor sigue tratando el
+    Result<ResultadoEnvio, Error> con match explícito, y la rama FueraDeVentana ya no es un
+    caso más del match genérico sino que dispara la política elegida (encolado o escalado),
+    documentada en el propio código o en un ADR si el plan lo exige."
+  - "El test de continuidad de hilo re-empareja la célula contra el adaptador simulado (nuevo
+    identificador de dispositivo para el mismo contacto) y verifica que el mismo contacto
+    produce el mismo identificador interno de conversación en el estado en memoria del motor,
+    con el historial de esa conversación intacto; no depende de sessions.db, que no existe
+    todavía."
+  - "El registro de deduplicación descarta un identificador de deduplicación ya visto dentro
+    de la ventana de retención, y la propia ventana queda documentada como constante con su
+    justificación explícita frente al horizonte de reentrega esperado del canal (no frente a
+    reentregas patológicas fuera de ese horizonte); un evento duplicado que llega fuera de esa
+    ventana tiene un comportamiento definido y documentado, no un fallo no especificado."
+  - "El test el_binario_no_vincula_nada_si_la_configuracion_es_invalida en
+    crates/hexcell/tests/configuracion.rs deja de asumir que el puerto 8081 está libre: se
+    corrige para no depender de ningún puerto fijo (p. ej. vinculando primero un listener a
+    puerto efímero para obtener uno libre y verificado, y comprobando la ausencia de bind
+    contra ese puerto concreto, o un mecanismo equivalente que no dependa de que 8081 esté
+    disponible en la máquina que ejecuta el test)."
+  - Todo lo que HEX-001 a HEX-004 ya dejaron en main (workspace de cinco crates, el trait
+    ChannelAdapter y sus tipos canónicos, el adaptador simulado, el motor mpsc, configuración,
+    salud HTTP) no se recrea ni se reescribe; esta tarea solo añade lo que falta.
+acceptance:
+  - id: AC-1
+    statement: Existe una batería de tests de contrato reutilizable para ChannelAdapter.
+    given: el adaptador simulado configurado en su modo restrictivo (semántica Cloud API)
+    when: se ejecuta la batería de tests de contrato del puerto
+    then: la batería vive en un módulo o crate reutilizable (no acoplado al tipo concreto del
+      simulado) y pasa completa contra ese adaptador
+  - id: AC-2
+    statement: Los tests de contrato cubren los cuatro rechazos de FR-12 y la ventana de 24 h.
+    given: la batería de tests de contrato
+    when: se inspecciona su contenido
+    then: ejercita de forma distinguible FueraDeVentana, PlantillaRequerida, LimiteDeTasa,
+      DestinatarioInvalido y la expiración real de la ventana de 24 h vía reloj inyectable
+  - id: AC-3
+    statement: El motor reacciona a FueraDeVentana según una política definida, no como error genérico.
+    given: el motor de mensajería intentando enviar RespuestaLibre a una conversación cuya
+      ventana de servicio está cerrada en el adaptador simulado
+    when: send() devuelve ResultadoEnvio::FueraDeVentana
+    then: el motor aplica la política documentada (encolado hasta que el cliente vuelva a
+      escribir, o escalado a humano) en vez de tratarla como los demás rechazos
+  - id: AC-4
+    statement: Un test de contrato ejercita la política ante FueraDeVentana.
+    given: la batería de tests de contrato contra el adaptador simulado en modo restrictivo
+    when: se fuerza FueraDeVentana en una conversación
+    then: el test verifica que se ejecuta la política del núcleo definida en AC-3, no un
+      camino no especificado
+  - id: AC-5
+    statement: El hilo de conversación sobrevive a un re-emparejamiento del dispositivo.
+    given: una conversación existente en el motor para un contacto, con historial previo, y el
+      adaptador simulado forzado a reportar un identificador de dispositivo nuevo para ese
+      mismo contacto (re-emparejamiento)
+    when: el contacto envía un nuevo EventoEntrante tras el re-emparejamiento
+    then: el motor lo asigna al mismo identificador interno de conversación que antes, con el
+      historial previo intacto y continuado en el mismo hilo
+  - id: AC-6
+    statement: El identificador interno de conversación sigue siendo opaco.
+    given: el código de esta tarea
+    when: se inspecciona el manejo del identificador interno de conversación en crates/hexcell
+      y hexcell-core
+    then: ninguna estructura del núcleo lo construye a partir de un dato de transporte, lo
+      interpreta ni lo invierte; se recibe del puerto y se trata como valor opaco
+  - id: AC-7
+    statement: Un evento entrante duplicado se procesa una sola vez.
+    given: el motor con el registro de deduplicación activo y un EventoEntrante ya procesado
+      previamente
+    when: llega el mismo identificador de deduplicación por segunda vez dentro de la ventana
+      de retención
+    then: el motor descarta el duplicado sin volver a despachar al procesador ni a emitir una
+      segunda respuesta
+  - id: AC-8
+    statement: La ventana de retención de deduplicación está dimensionada y documentada.
+    given: la constante o parámetro que define la ventana de retención de deduplicación
+    when: se inspecciona su declaración
+    then: incluye una justificación explícita frente al horizonte de reentrega esperado del
+      canal, no un valor arbitrario sin comentario
+  - id: AC-9
+    statement: Un duplicado fuera de la ventana de retención tiene comportamiento definido.
+    given: un identificador de deduplicación ya procesado, pero cuyo evento llega de nuevo
+      después de expirar la ventana de retención
+    when: el motor lo recibe
+    then: se comporta según lo documentado explícitamente para ese caso (aunque sea
+      degradado), sin panic ni comportamiento no especificado
+  - id: AC-10
+    statement: El test de arranque inválido no depende de que el puerto 8081 esté libre.
+    given: el test el_binario_no_vincula_nada_si_la_configuracion_es_invalida en
+      crates/hexcell/tests/configuracion.rs
+    when: se ejecuta en una máquina donde el puerto 8081 está ocupado por otro proceso
+    then: el test sigue pasando, porque ya no asume ese puerto fijo como libre
+  - id: AC-11
+    statement: El workspace compila, formatea y lintea limpio con los tests nuevos.
+    given: el repositorio en el commit de esta tarea
+    when: se ejecutan "cargo fmt --check", "cargo clippy --workspace -- -D warnings" y
+      "cargo test --workspace"
+    then: los tres terminan sin errores ni hallazgos
+  - id: AC-12
+    statement: hexcell-core sigue sin dependencias de infraestructura.
+    given: crates/hexcell-core/Cargo.toml tras esta tarea
+    when: se inspecciona su sección [dependencies]
+    then: no contiene tokio, ningún crate HTTP, ni el registro de deduplicación ni la política
+      de FueraDeVentana, que viven en crates/hexcell
+  - id: AC-13
+    statement: El diff respeta la frontera de HEX-006..HEX-008.
+    given: el diff completo introducido por esta tarea
+    when: se inspecciona
+    then: no contiene esquema ni migraciones de SQLite, ni manejo de SIGTERM, ni lógica real
+      de /health/ready, ni cambios en docs/STATUS.md que marquen la etapa A-2 como cerrada
+risk: medium

@@ -1,0 +1,60 @@
+{
+  "attempts": [],
+  "context_overflows": [],
+  "events": [
+    {
+      "complexity_band": "L",
+      "complexity_signals": [
+        "public_api_signal",
+        "file_count_high: 16"
+      ],
+      "declared_risk": "medium",
+      "divergence": false,
+      "event": "risk_level_calculated",
+      "level": "medium",
+      "reasons": [
+        "file_count_high: 16"
+      ],
+      "signals": {
+        "files_count": 16,
+        "sensitive_matches": [],
+        "symbols_count": 0
+      }
+    },
+    {
+      "complexity_band": "L",
+      "complexity_signals": [
+        "public_api_signal",
+        "file_count_high: 21"
+      ],
+      "event": "risk_level_calculated",
+      "level": "high",
+      "note": "Recalculado tras ampliar el alcance con Cargo.lock versionado y adr-0016.",
+      "reasons": [
+        "sensitive_path_match: [Cargo.lock]"
+      ],
+      "signals": {
+        "files_count": 21,
+        "sensitive_matches": [
+          "Cargo.lock"
+        ],
+        "symbols_count": 0
+      }
+    },
+    {
+      "calculated": "high",
+      "declared": "medium",
+      "event": "risk_level_divergence",
+      "note": "Autoridad del humano: manda el risk declarado en 00-spec.yaml, que no se modifica. La divergencia la introduce versionar Cargo.lock, decision humana del 2026-07-29, no un cambio de la logica de la tarea.",
+      "reasons": [
+        "sensitive_path_match: [Cargo.lock]"
+      ]
+    }
+  ],
+  "execution_mode": "worktree_edit",
+  "started_at": "2026-07-29T17:07:21Z",
+  "summary": "A-2 tasks 1-4: env config with early failure, internal hyper health routes, Tokio engine over ChannelAdapter, and a simulated Cloud-API-semantics adapter with an injectable clock.",
+  "task_id": "HEX-004",
+  "total_cost_usd": 0,
+  "violations": []
+}

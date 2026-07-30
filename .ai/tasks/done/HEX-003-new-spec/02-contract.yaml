@@ -1,0 +1,167 @@
+task_id: HEX-003
+summary: "Go sidecar skeleton pinned to a real whatsmeow version, Rust toolchain/profile files,
+  two-job CI for Rust and Go, and closing docs for A-1 tasks 6-8. Risk low."
+goal: >
+  Close Fase A-1 tasks 6, 7 and 8 that HEX-001 and HEX-002 left pending: a compilable Go
+  module under sidecar/ with whatsmeow pinned to an explicit pseudo-version and no protocol
+  logic, rust-toolchain.toml/rustfmt.toml/clippy.toml, a size-oriented [profile.release] in
+  the existing root Cargo.toml, a minimal two-job GitHub Actions workflow for Rust and Go,
+  and updates to CLAUDE.md, docs/STATUS.md and docs/plan/fase-a-1-fundaciones.md so they stop
+  describing a documentation-only repository. No WhatsApp connection, session, pairing or
+  IPC logic is written here; that is A-3.
+read:
+  - .ai/tasks/active/HEX-003-new-spec/00-spec.yaml
+  - .ai/tasks/active/HEX-003-new-spec/01-blueprint.yaml
+  - docs/PRD.md
+  - docs/plan/fase-a-1-fundaciones.md
+  - docs/STATUS.md
+  - docs/adr/adr-0009-whatsmeow-adaptador-fase-a.md
+  - CLAUDE.md
+  - Cargo.toml
+  - crates/hexcell-core/Cargo.toml
+touch:
+  - Cargo.toml
+  - rust-toolchain.toml
+  - rustfmt.toml
+  - clippy.toml
+  - sidecar/go.mod
+  - sidecar/go.sum
+  - sidecar/main.go
+  - .github/workflows/ci.yml
+  - CLAUDE.md
+  - docs/STATUS.md
+  - docs/plan/fase-a-1-fundaciones.md
+forbid:
+  files:
+    - "crates/hexcell-core/*"
+    - "crates/hexcell-core/**"
+    - crates/hexcell/Cargo.toml
+    - crates/hexcell/src/main.rs
+    - crates/hexcell-admin/Cargo.toml
+    - crates/hexcell-admin/src/main.rs
+    - crates/hexcell-storage/Cargo.toml
+    - crates/hexcell-storage/src/lib.rs
+    - crates/hexcell-meta/Cargo.toml
+    - crates/hexcell-meta/src/lib.rs
+    - docs/PRD.md
+    - docs/adr/*
+    - docs/adr/**
+    - docs/bitacora-de-descartes.md
+    - docs/plan/fase-a-2-nucleo-persistencia.md
+    - docs/plan/fase-a-3-adaptador-whatsmeow.md
+    - docs/plan/fase-a-7-pilotos.md
+    - docs/plan/README.md
+    - docs/cotejo-puerto-de-canal-cloud-api.md
+    - LICENSE
+    - CONTRIBUTING.md
+    - .gitignore
+    - .github/PULL_REQUEST_TEMPLATE.md
+    - README.md
+    - "Dockerfile*"
+    - "docker-compose*"
+  behaviors:
+    - "Do not add, remove or edit anything under crates/hexcell-core, including the
+      ChannelAdapter trait, its canonical types or its Cargo.toml. That crate is closed by
+      HEX-002; this task never touches it."
+    - "Do not open a WhatsApp connection, session, QR pairing or PairPhone call in
+      sidecar/main.go. No NewClient with a live store, no Connect(), no GetQRChannel(), no
+      event handler registration for real WhatsApp events. The only whatsmeow reference
+      allowed is an import that keeps `go mod tidy` from dropping the dependency."
+    - "Do not pin go.mau.fi/whatsmeow to `latest`, to a branch name (main, master) or to any
+      form other than an explicit pseudo-version (v0.0.0-YYYYMMDDHHMMSS-hash) or a tagged
+      semver if one exists at implementation time."
+    - "Do not write any IPC mechanism, socket, named pipe or protocol between the Rust core
+      and the Go sidecar. That is adr-0011 and etapa A-3, out of scope here."
+    - "Do not add Docker, a Dockerfile or docker-compose. Etapa A-6, out of scope."
+    - "Do not mark any CI step with continue-on-error, or make any step optional; every
+      listed check (cargo fmt --check, cargo clippy -- -D warnings, cargo test --workspace,
+      go build ./..., go vet ./...) must be able to fail the job."
+    - "Do not remove or rewrite the existing [workspace] or [workspace.package] tables in the
+      root Cargo.toml; only append a new [profile.release] table."
+    - "Do not add, renumber, reorder or edit any docs/adr/*.md file, including
+      docs/adr/README.md's table."
+    - "Do not rewrite or delete any docs/STATUS.md bullet already marked Definido; only remove
+      the single sidecar-module Pendiente bullet HEX-002 left and add one new Definido bullet
+      dated 2026-07-29 attributed to HEX-003."
+    - "Do not edit docs/plan/fase-a-1-fundaciones.md's tasks 1-5 or 9, its 'Riesgos y
+      mitigaciones' table, or its 'Dependencias' section; only annotate tasks 6, 7 and 8 as
+      delivered by HEX-003."
+    - "Do not rewrite any section of CLAUDE.md other than the 'Estado actual' sentence in the
+      introductory paragraph."
+    - "Do not write repository prose, ADR text, commit messages or Go/Rust doc comments in
+      English; identifiers, package names and crate names stay in idiomatic English."
+    - "Do not add Co-Authored-By or any AI-attribution trailer to any commit message."
+    - "Do not write a relative date anywhere; every date is absolute (2026-07-29)."
+    - "Do not state or imply that Fase B replaces, substitutes or closes Fase A, nor that the
+      sidecar is retired, in any file this task touches."
+    - "Do not add a *.db, *.db-wal, *.db-shm or .env* file, and do not hardcode any secret,
+      token or API key in sidecar/main.go, sidecar/go.mod or ci.yml."
+    - "Do not vendor Go dependencies (no vendor/ directory) and do not commit Cargo.lock; both
+      remain outside this task's scope per .gitignore and the HEX-002 note about revisiting
+      Cargo.lock when A-2 lands the first real Rust dependency."
+verify:
+  commands:
+    - test -f rust-toolchain.toml
+    - test -f rustfmt.toml
+    - test -f clippy.toml
+    - grep -q 'channel' rust-toolchain.toml
+    - grep -q '1.92' rust-toolchain.toml
+    - grep -qE '\[profile\.release\]' Cargo.toml
+    - grep -q 'opt-level' Cargo.toml
+    - grep -q 'lto' Cargo.toml
+    - grep -q 'codegen-units' Cargo.toml
+    - grep -q '\[workspace\]' Cargo.toml
+    - grep -q '\[workspace\.package\]' Cargo.toml
+    - cargo build --workspace
+    - cargo test --workspace
+    - cargo fmt --check
+    - cargo clippy --workspace -- -D warnings
+    - test -f sidecar/go.mod
+    - test -f sidecar/main.go
+    - test -s sidecar/go.sum
+    - grep -q 'module github.com/CGary/hexcell/sidecar' sidecar/go.mod
+    - grep -qE 'go\.mau\.fi/whatsmeow v[0-9]+\.[0-9]+\.[0-9]+-[0-9]{14}-[0-9a-f]{12}' sidecar/go.mod
+    - "! grep -qE 'go\\.mau\\.fi/whatsmeow.*(latest|@main|@master)' sidecar/go.mod"
+    - "! grep -q '\\.Connect(' sidecar/main.go"
+    - "! grep -qi 'GetQRChannel\\|PairPhone' sidecar/main.go"
+    - (cd sidecar && go build ./...)
+    - (cd sidecar && go vet ./...)
+    - test -f .github/workflows/ci.yml
+    - grep -q 'cargo fmt --check' .github/workflows/ci.yml
+    - grep -qE 'cargo clippy.*-D warnings' .github/workflows/ci.yml
+    - grep -q 'cargo test --workspace' .github/workflows/ci.yml
+    - grep -q 'go build' .github/workflows/ci.yml
+    - grep -q 'go vet' .github/workflows/ci.yml
+    - "! grep -q 'continue-on-error' .github/workflows/ci.yml"
+    - grep -q 'sidecar' CLAUDE.md
+    - "! grep -q 'solo documentación' CLAUDE.md"
+    - grep -q 'HEX-003' docs/STATUS.md
+    - grep -q '2026-07-29' docs/STATUS.md
+    - grep -q 'HEX-003' docs/plan/fase-a-1-fundaciones.md
+    - "! grep -rqE 'impl(<[^>]*>)? *ChannelAdapter *for' crates/"
+    - "! find . -not -path './.git/*' -not -path './target/*' -not -path './worktrees/*' -iname 'Dockerfile*'  | grep -q ."
+    - "! test -d vendor"
+    - "! test -f Cargo.lock"
+  target_s: 60
+acceptance:
+  human_gate: true
+limits:
+  max_files_changed: 11
+  max_diff_lines: 900
+  per_class:
+    - glob: "sidecar/go.sum"
+      max_diff_lines: 400
+    - glob: ".github/workflows/ci.yml"
+      max_diff_lines: 150
+    - glob: "docs/STATUS.md"
+      max_diff_lines: 60
+    - glob: "docs/plan/fase-a-1-fundaciones.md"
+      max_diff_lines: 60
+    - glob: "CLAUDE.md"
+      max_diff_lines: 40
+execution:
+  mode: worktree_edit
+  branch: ai/HEX-003
+retry_policy:
+  max_attempts: 2
+  escalate_after: 1

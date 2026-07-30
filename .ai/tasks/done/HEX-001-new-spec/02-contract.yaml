@@ -1,0 +1,93 @@
+task_id: HEX-001
+summary: Create LICENSE, three ADRs (0001/0008/0009), CONTRIBUTING.md, extended
+  .gitignore, PR template, and update the ADR index and STATUS.md. Doc-only.
+goal: >
+  Land the paper-trail portion of Fase A-1 so the repository has a license,
+  the required ADR records, a contribution convention, an extended
+  .gitignore, and a PR template, with docs/adr/README.md and docs/STATUS.md
+  reflecting the new state. No Cargo workspace, no crates, no ChannelAdapter
+  code, no sidecar, no CI, no tests.
+read:
+  - .ai/tasks/active/HEX-001-new-spec/00-spec.yaml
+  - docs/adr/README.md
+  - docs/STATUS.md
+  - .gitignore
+  - docs/adr/adr-0010-puerto-de-canal.md
+  - docs/adr/adr-0014-canal-propio-permanente.md
+  - docs/adr/adr-0015-politica-de-convivencia-con-el-baneo.md
+  - docs/bitacora-de-descartes.md
+touch:
+  - LICENSE
+  - docs/adr/adr-0001-licencia.md
+  - docs/adr/adr-0008-estrategia-canal-dos-fases.md
+  - docs/adr/adr-0009-whatsmeow-adaptador-fase-a.md
+  - CONTRIBUTING.md
+  - .gitignore
+  - .github/PULL_REQUEST_TEMPLATE.md
+  - docs/adr/README.md
+  - docs/STATUS.md
+forbid:
+  files:
+    - "*.rs"
+    - "*.go"
+    - Cargo.toml
+    - Cargo.lock
+    - docs/adr/adr-0002-estructura-workspace.md
+    - docs/adr/adr-0010-puerto-de-canal.md
+    - docs/adr/adr-0011-whatsmeow-sidecar-e-ipc.md
+    - docs/adr/adr-0014-canal-propio-permanente.md
+    - docs/adr/adr-0015-politica-de-convivencia-con-el-baneo.md
+    - rust-toolchain.toml
+    - rustfmt.toml
+    - clippy.toml
+    - .github/workflows/*
+    - docs/PRD.md
+    - docs/plan/*
+  behaviors:
+    - Do not paraphrase or translate the AGPL-3.0 legal text; it must be the
+      verbatim official English text.
+    - Do not renumber, reuse, or reorder any ADR number; adr-0010, adr-0014,
+      and adr-0015 must not be modified.
+    - Do not rewrite or alter the content of adr-0014 or adr-0015; adr-0008
+      only references them by number.
+    - Do not state or imply that Fase B replaces, substitutes, or closes
+      Fase A, nor that the sidecar is retired.
+    - Do not reintroduce the derogated third-client gate as active policy.
+    - Do not write relative dates (e.g. "hoy", "la semana pasada"); all dates
+      are absolute (2026-07-29).
+    - Do not add Co-Authored-By or any AI-attribution trailer to commit
+      message examples in CONTRIBUTING.md or the PR template.
+    - Do not remove or weaken the existing *.db, *.db-wal, *.db-shm, or
+      .env* rules in .gitignore.
+    - Do not create any Cargo workspace file, Rust crate, or Go module file.
+verify:
+  commands:
+    - test -f LICENSE
+    - test -f docs/adr/adr-0001-licencia.md
+    - test -f docs/adr/adr-0008-estrategia-canal-dos-fases.md
+    - test -f docs/adr/adr-0009-whatsmeow-adaptador-fase-a.md
+    - test -f CONTRIBUTING.md
+    - test -f .github/PULL_REQUEST_TEMPLATE.md
+    - grep -q "AFFERO" LICENSE
+    - grep -q "Version 3" LICENSE
+    - grep -q "adr-0014" docs/adr/adr-0008-estrategia-canal-dos-fases.md
+    - grep -q "adr-0015" docs/adr/adr-0008-estrategia-canal-dos-fases.md
+    - grep -q "Derogada" docs/adr/README.md
+    - grep -q "2026-07-29" docs/STATUS.md
+    - grep -q "AGPL" docs/STATUS.md
+    - grep -q "\.db" .gitignore
+    - grep -q "\.env" .gitignore
+    - test "$(wc -l < .gitignore)" -gt 12
+    - "! find . -not -path './.git/*' \\( -name '*.rs' -o -name '*.go' -o -name 'Cargo.toml' \\) | grep -q ."
+  target_s: 20
+acceptance:
+  human_gate: true
+limits:
+  max_files_changed: 9
+  max_diff_lines: 1400
+execution:
+  mode: worktree_edit
+  branch: ai/HEX-001
+retry_policy:
+  max_attempts: 2
+  escalate_after: 1

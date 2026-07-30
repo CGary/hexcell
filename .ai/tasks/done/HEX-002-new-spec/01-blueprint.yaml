@@ -1,0 +1,292 @@
+task_id: HEX-002
+summary: Rust workspace with five crates and the ChannelAdapter port (FR-12) declared as
+  types only in hexcell-core, plus exhaustive-match tests, identity guardian, Cloud API
+  cotejo and adr-0002.
+affected_files:
+  - Cargo.toml
+  - crates/hexcell-core/Cargo.toml
+  - crates/hexcell-core/src/lib.rs
+  - crates/hexcell-core/src/canal.rs
+  - crates/hexcell-core/src/identidad.rs
+  - crates/hexcell-core/tests/exhaustividad_resultado_envio.rs
+  - crates/hexcell-core/tests/guardian_identidad_conversacion.rs
+  - crates/hexcell/Cargo.toml
+  - crates/hexcell/src/main.rs
+  - crates/hexcell-admin/Cargo.toml
+  - crates/hexcell-admin/src/main.rs
+  - crates/hexcell-storage/Cargo.toml
+  - crates/hexcell-storage/src/lib.rs
+  - crates/hexcell-meta/Cargo.toml
+  - crates/hexcell-meta/src/lib.rs
+  - docs/cotejo-puerto-de-canal-cloud-api.md
+  - docs/adr/adr-0002-estructura-workspace.md
+  - docs/adr/README.md
+  - docs/STATUS.md
+symbols:
+  - ChannelAdapter
+  - CicloDeVidaSesion
+  - EventoEntrante
+  - MensajeSaliente
+  - ResultadoEnvio
+  - EstadoVentanaServicio
+  - Acuse
+  - IdConversacion
+  - send
+  - estado_ventana
+dependencies:
+  - docs/PRD.md
+  - docs/adr/adr-0010-puerto-de-canal.md
+  - docs/plan/fase-a-1-fundaciones.md
+  - docs/adr/README.md
+  - docs/STATUS.md
+test_scenarios:
+  - statement: "`cargo build --workspace` completes with no errors from a clean clone on
+      stable Rust 1.92 with no rust-toolchain.toml present."
+    covers: ["AC-1"]
+  - statement: "`cargo test --workspace` completes with no errors and no test failures."
+    covers: ["AC-2"]
+  - statement: "`cargo fmt --check` and `cargo clippy --workspace -- -D warnings` terminate
+      with no findings under default configuration, with no rustfmt.toml and no clippy.toml."
+    covers: ["AC-3"]
+  - statement: The root Cargo.toml declares a workspace with resolver 3 whose members are
+      exactly the five crates, each of which compiles as a skeleton.
+    covers: ["AC-4"]
+  - statement: "crates/hexcell-meta/src/lib.rs contains no occurrence of the `pub` keyword as
+      a whole word, so it declares no public type, trait, function or module, and its `//!`
+      doc comment states its shape waits for adr-0013."
+    covers: ["AC-5"]
+  - statement: "The [dependencies] table of crates/hexcell-core/Cargo.toml is empty - no
+      storage, HTTP, transport or async-runtime crate, and no path dependency on any other
+      workspace crate."
+    covers: ["AC-6"]
+  - statement: "The ChannelAdapter trait and its canonical types compile in hexcell-core and
+      cover the seven FR-12 elements, with no `impl ChannelAdapter for` anywhere in crates/."
+    covers: ["AC-7"]
+  - statement: "The external test crate crates/hexcell-core/tests/exhaustividad_resultado_envio.rs
+      matches all five ResultadoEnvio variants and all four Acuse variants with no `_` arm and
+      no `..` rest pattern."
+    covers: ["AC-8"]
+  - statement: "Adding a variant to ResultadoEnvio breaks compilation of that external test
+      with E0004 non-exhaustive patterns, and removing one breaks it with E0599; both were
+      reproduced on rustc 1.92.0 during blueprinting and the experiment is recorded in the
+      cotejo document."
+    covers: ["AC-8"]
+  - statement: "No non-comment line under crates/*/src matches wa_id, msisdn, phone_number or
+      the whole word jid, while doc-comment prose mentioning them is tolerated by the check."
+    covers: ["AC-9"]
+  - statement: "The guardian test crates/hexcell-core/tests/guardian_identidad_conversacion.rs
+      proves the mapping is stable and injective from a test-local adapter stand-in, and that
+      the Debug rendering of IdConversacion contains no transport substring."
+    covers: ["AC-10"]
+  - statement: "Introducing the leak deliberately - adding a public transport-named field to a
+      domain type - makes the lexical check and the guardian bite; the experiment, what failed
+      and how it was reverted is written into docs/cotejo-puerto-de-canal-cloud-api.md."
+    covers: ["AC-10"]
+  - statement: "docs/cotejo-puerto-de-canal-cloud-api.md maps the four failure variants and the
+      five fields of the canonical incoming event against the official Cloud API error-code
+      page, cites that URL, resolves the 131047 discrepancy, and records 132000/132001/132015/
+      132016 plus 131049 and 131048 as open findings without adding any variant."
+    covers: ["AC-11"]
+  - statement: "adr-0002 exists and justifies the crate boundary; the existing adr-0002 row in
+      docs/adr/README.md moves from `Por escribir` to Vigente (2026-07-29) in place, with no row
+      duplicated or renumbered; and docs/STATUS.md splits the workspace/sidecar pending entry."
+    covers: ["AC-12"]
+  - statement: "The diff contains no *.go file, no sidecar/ directory, no rust-toolchain.toml,
+      no rustfmt.toml, no clippy.toml and no .github/workflows/ file."
+    covers: ["AC-13"]
+strategy:
+  - step: 1
+    action: "Create the root workspace manifest with resolver 3, the five members under
+      crates/, and a [workspace.package] block carrying version, edition 2024, rust-version
+      1.92 and license AGPL-3.0-only, so each crate inherits them with `.workspace = true`.
+      Validated: resolver 3 with edition 2024 builds clean on the installed cargo 1.92.0."
+    files:
+      - Cargo.toml
+  - step: 2
+    action: "Create the five crate manifests. hexcell-core, hexcell-storage and hexcell-meta
+      are libraries; hexcell and hexcell-admin are binaries. Every [dependencies] table stays
+      empty in this task - the port needs nothing outside std, which is what keeps AC-6 true
+      by construction rather than by review."
+    files:
+      - crates/hexcell-core/Cargo.toml
+      - crates/hexcell/Cargo.toml
+      - crates/hexcell-admin/Cargo.toml
+      - crates/hexcell-storage/Cargo.toml
+      - crates/hexcell-meta/Cargo.toml
+  - step: 3
+    action: "Declare the opaque conversation identity in its own module. IdConversacion is a
+      newtype over String with a constructor that takes an already-translated value and no
+      accessor that reconstructs a transport identifier, no From<&str> named after a transport
+      and no inverse. This is the module the guardian test targets, and adr-0010 point 5 is the
+      reason it has no derivation logic: the core does not derive, interpret or invert it."
+    files:
+      - crates/hexcell-core/src/identidad.rs
+  - step: 4
+    action: "Declare the port in crates/hexcell-core/src/canal.rs covering exactly the seven
+      FR-12 elements and no more - EventoEntrante with remitente, conversacion, contenido,
+      marca_temporal (std::time::SystemTime) and deduplicacion; MensajeSaliente as
+      RespuestaLibre or Plantilla { id, parametros }; ResultadoEnvio; EstadoVentanaServicio
+      with Abierta { expira_en } and Cerrada; Acuse; the ChannelAdapter trait; and
+      CicloDeVidaSesion as a SEPARATE trait, never a supertrait, so a Cloud API adapter simply
+      does not implement it. Use std::time::SystemTime and Duration for time - taking chrono or
+      time would break AC-6."
+    files:
+      - crates/hexcell-core/src/canal.rs
+  - step: 5
+    action: "Give the trait async methods as RPITIT - `fn send(&self, conversacion:
+      &IdConversacion, mensaje: MensajeSaliente) -> impl Future<Output = Result<ResultadoEnvio,
+      Self::Error>> + Send;` and the same shape for estado_ventana - NOT `async fn`. Confirmed
+      empirically on rustc 1.92.0: `async fn` in a public trait emits the warn-by-default
+      async_fn_in_trait lint, which `cargo clippy -- -D warnings` turns into an error and would
+      fail AC-3. RPITIT also lets the `+ Send` bound be stated now, which A-2 needs to spawn
+      the future. Transport faults travel in an associated `type Error: std::error::Error +
+      Send + Sync + 'static`; the four FR-12 failures are domain outcomes inside ResultadoEnvio,
+      not errors."
+    files:
+      - crates/hexcell-core/src/canal.rs
+  - step: 6
+    action: "Give ResultadoEnvio exactly five unit variants - one success (Aceptado) plus
+      FueraDeVentana, PlantillaRequerida, LimiteDeTasa and DestinatarioInvalido - with NO
+      #[non_exhaustive] attribute and no added or removed variant. Keep the four failures as
+      unit variants: enriching them with payloads is a design decision that belongs to A-2,
+      and FR-12 is normative on the set."
+    files:
+      - crates/hexcell-core/src/canal.rs
+  - step: 7
+    action: "Wire lib.rs as crate documentation in Spanish plus the two module declarations,
+      stating that this crate holds domain types only and carries no infrastructure dependency."
+    files:
+      - crates/hexcell-core/src/lib.rs
+  - step: 8
+    action: "Write the exhaustive-match tests as an EXTERNAL integration test under
+      crates/hexcell-core/tests/, not as a #[cfg(test)] module. Because ResultadoEnvio is not
+      #[non_exhaustive], a separate crate still sees it as exhaustive, so the test proves the
+      stronger property: an external consumer can match it without a wildcard. Cover all five
+      ResultadoEnvio variants and all four Acuse variants with no `_` arm and no `..`."
+    files:
+      - crates/hexcell-core/tests/exhaustividad_resultado_envio.rs
+  - step: 9
+    action: "Write the guardian test, also as an external integration test so it can only use
+      the public API. It defines a test-local stand-in for the adapter's mapping table -
+      transport string to IdConversacion - and asserts the mapping is stable (same transport
+      identifier yields the same conversation), injective (different ones differ), and that the
+      Debug rendering of IdConversacion contains no fragment of the transport identifier. The
+      stand-in must NOT implement ChannelAdapter: the spec forbids any adapter implementation."
+    files:
+      - crates/hexcell-core/tests/guardian_identidad_conversacion.rs
+  - step: 10
+    action: "Create the two binary skeletons and the storage skeleton - a main that compiles and
+      does nothing beyond a placeholder, and a hexcell-storage lib.rs that is documentation only.
+      No CLI parsing, no SQLite, no pool."
+    files:
+      - crates/hexcell/src/main.rs
+      - crates/hexcell-admin/src/main.rs
+      - crates/hexcell-storage/src/lib.rs
+  - step: 11
+    action: "Create crates/hexcell-meta/src/lib.rs containing only `//!` doc comments in Spanish
+      and not a single `pub` item, stating that its shape waits for adr-0013 and that designing
+      types now would condition that decision instead of awaiting it. Avoid the standalone word
+      `pub` anywhere in the prose, since the verification is a whole-word grep."
+    files:
+      - crates/hexcell-meta/src/lib.rs
+  - step: 12
+    action: "Write docs/cotejo-puerto-de-canal-cloud-api.md in Spanish, wrapped at ~100 columns.
+      It cites https://developers.facebook.com/docs/whatsapp/cloud-api/support/error-codes/ and
+      maps each of the four failure variants and each of the five canonical-event fields against
+      it. Resolve the first discrepancy explicitly: 131047 is the single official code for the
+      closed 24-hour window, so FueraDeVentana is what an ACTUAL API response produces, while
+      PlantillaRequerida is produced by the adapter's own pre-flight policy - window closed plus
+      a RespuestaLibre message, decided without a round trip - because that is the variant that
+      tells the core what to do instead."
+    files:
+      - docs/cotejo-puerto-de-canal-cloud-api.md
+  - step: 13
+    action: "In the same document, record the second discrepancy as OPEN FINDINGS without
+      touching the enum: the template family 132000 (parameter count mismatch), 132001 (template
+      does not exist or is not approved), 132015 (paused) and 132016 (permanently disabled), plus
+      131049 (ecosystem engagement) and 131048 (spam rate limit), map to none of the four
+      variants cleanly. State explicitly that adding a fifth variant is a PRD-level decision for
+      the human and is NOT taken here. Also record the two experiments - the exhaustive-match
+      bite and the guardian bite - with what was introduced, what failed and how it was reverted."
+    files:
+      - docs/cotejo-puerto-de-canal-cloud-api.md
+  - step: 14
+    action: "Write docs/adr/adr-0002-estructura-workspace.md in Spanish following the house shape
+      used by adr-0010 - Estado / Supersede a / Etapa / Requisitos tocados, then Contexto,
+      Decisión, Consecuencias split into positivas and negativas without softening, Alternativas
+      consideradas y descartadas, and Referencias. It must justify WHERE the boundary between
+      crates sits: why hexcell-core is dependency-free, why storage and meta are separate crates
+      rather than modules, why two binaries, and why hexcell-meta stays empty. Record the RPITIT
+      choice and its cost - the trait is not dyn-compatible - as a consequence, not a footnote."
+    files:
+      - docs/adr/adr-0002-estructura-workspace.md
+  - step: 15
+    action: "Update the adr-0002 row of docs/adr/README.md in place, changing only the Estado
+      cell from `Por escribir` to `**Vigente** (2026-07-29)` and enriching the Decisión cell to
+      name the five crates. Do not add a row, do not renumber, do not reorder, and do not touch
+      any other row."
+    files:
+      - docs/adr/README.md
+  - step: 16
+    action: "Update docs/STATUS.md three ways. First, split the last Pendiente bullet - `Scaffold
+      del workspace Rust (Cargo.toml, src/) y del módulo Go del sidecar` - so only the Go sidecar
+      module remains pending, attributed to HEX-003 and etapa A-1 tarea 6. Second, add a Definido
+      bullet dated (2026-07-29, `adr-0002`) recording the five-crate workspace and the
+      dependency-free core. Third, ADD a new Pendiente bullet declaring the product decision this
+      task surfaced and does not resolve: whether FR-12 widens its enumerated result set to cover
+      the template failure family (132000/132001/132015/132016) and the ecosystem codes 131049 and
+      131048, which today map to none of the four variants. Follow the file's existing inline-date
+      convention; there is no per-bullet status label."
+    files:
+      - docs/STATUS.md
+risks:
+  - "VALIDATED BLOCKER AVOIDED - `async fn` in a public trait emits the warn-by-default
+    async_fn_in_trait lint on rustc 1.92.0, reproduced during blueprinting. Under AC-3's
+    `cargo clippy --workspace -- -D warnings` that warning becomes an error, so the obvious
+    spelling of the trait would fail the task's own acceptance criteria. The blueprint therefore
+    mandates RPITIT (`-> impl Future<Output = ...> + Send`). Silencing it with #[allow] is not an
+    acceptable alternative."
+  - "RPITIT makes ChannelAdapter NOT dyn-compatible: `Box<dyn ChannelAdapter>` will not compile.
+    This is acceptable for A-1 because each cell is a separate process with exactly one adapter,
+    so static dispatch through a generic parameter is sufficient and cheaper. But if A-2 wants to
+    select the channel at runtime from configuration inside one binary, it will need an explicit
+    object-safe wrapper trait with boxed futures. Recorded in adr-0002 as a consequence so A-2
+    inherits the decision rather than rediscovering it."
+  - "The verify check for hexcell-meta must be a WHOLE-WORD grep for `pub`, not a substring
+    count. The file is Spanish prose and substrings like `publicada` or `publicar` would produce
+    a false failure. `grep -c pub` returns 0 only by luck of wording; `grep -qE '\\bpub\\b'` is the
+    robust form and is what the contract uses."
+  - "The lexical transport-identifier check must skip comment lines, because adr-0010 and the
+    spec both expect doc-comment prose to mention wa_id and JID when describing what the adapter
+    translates. A naive whole-file grep would flag legitimate documentation. The contract's form -
+    grep over crates/*/src then filter out lines whose first non-space characters are `//` or `*` -
+    was validated both ways during blueprinting: it passes on prose and bites when a public field
+    named wa_id is added to a domain type."
+  - "Cargo.lock is listed in .gitignore, which HEX-001 already landed. Rust guidance is to commit
+    the lockfile for workspaces that produce binaries. With zero external dependencies the
+    reproducibility impact is nil today, so this task does NOT correct it - .gitignore is outside
+    the touch list and is HEX-001's deliverable - but it must be revisited when the first real
+    dependency lands in A-2. Consequence for this task: Cargo.lock will not appear in the diff."
+  - "The cotejo must cite the official Meta error-code page and the spec says both discrepancies
+    were confirmed against it on 2026-07-29. The implementer may have no network access from the
+    worktree. The error codes needed are already enumerated in the spec constraints, so the
+    document can be written faithfully from them; what the implementer must NOT do is invent
+    additional codes or semantics that the spec does not supply."
+  - "The trait must NOT gain a subscription, stream or callback method for incoming events. FR-12
+    enumerates the canonical incoming event as a TYPE; the delivery mechanism is not one of the
+    seven elements, and inventing one would either exceed the declared scope or drag in the
+    futures crate and break AC-6. EventoEntrante is declared and left unconsumed in this task."
+  - "The 131047 assignment is a real design decision, not a transcription: FueraDeVentana reflects
+    an actual API response, PlantillaRequerida is the adapter's pre-flight verdict. If the reviewer
+    disagrees, the disagreement belongs in the cotejo document and adr-0002, not in a silent change
+    to the enum, whose variant set FR-12 fixes."
+  - "docs/STATUS.md gains a NEW Pendiente entry for the FR-12 enumerated-set question. That entry
+    is a declared blockage, deliberately left unresolved: the repository's rule is that open
+    product decisions are not settled in passing. Resolving it inside this task - by adding a fifth
+    variant - would violate both the spec constraints and AC-11."
+  - "Verified against the real tree at blueprint time: rustc and cargo are 1.92.0, no Cargo.toml
+    or crates/ directory exists anywhere, no *.rs or *.go file exists, and the docs/adr/README.md
+    row for adr-0002 reads exactly `Por escribir`. The full skeleton described here was prototyped
+    outside the repository and passes build, test, fmt --check and clippy -D warnings, with the
+    complete verification sweep running in under one second because the workspace has no external
+    dependencies."

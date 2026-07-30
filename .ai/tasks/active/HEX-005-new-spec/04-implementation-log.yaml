@@ -1,0 +1,214 @@
+entries:
+- changed_files:
+  - Cargo.toml
+  - crates/hexcell-canal-contrato/Cargo.toml
+  - crates/hexcell-canal-contrato/src/lib.rs
+  notes:
+  - Cargo.toml raíz suma crates/hexcell-canal-contrato a members, sin tocar [workspace.package], [workspace.dependencies]
+    ni [profile.release].
+  - crates/hexcell-canal-contrato/Cargo.toml depende solo de hexcell-core (path), sin tokio ni ningún
+    otro crate; comentario explica por qué (la batería es async fn más aserciones, awaited por el runtime
+    del test que llama, imponer uno propio sería generalidad especulativa para todo consumidor futuro,
+    incluida la etapa B-1).
+  - lib.rs documenta el porqué del crate (batería reutilizable que ninguna implementación futura de ChannelAdapter
+    debe reescribir), la distinción TIPO/POLÍTICA (el tipo admite el resultado restrictivo, la política
+    de cada adaptador decide si lo produce) y por qué existe un segundo trait (banco) en vez de ampliar
+    ChannelAdapter con ganchos de test. Declara pub mod banco/bateria y reexporta BancoDeCanal, BancoConRelojControlable
+    y verificar_contrato_del_puerto.
+  verify_pending: false
+- changed_files:
+  - crates/hexcell-canal-contrato/src/banco.rs
+  notes:
+  - trait BancoDeCanal con type Adaptador ChannelAdapter, adaptador() para acceder al adaptador bajo prueba,
+    inyectar_evento(conversacion) como impl Future Output () + Send y forzar_resultado(conversacion, resultado);
+    documentado como el segundo trait que hace posible la batería sin ampliar ChannelAdapter, porque send
+    y estado_ventana son los únicos dos elementos de FR-12, e inyectar/forzar son control, no puerto.
+  - 'trait BancoConRelojControlable, subtrait de BancoDeCanal con un único método avanzar(duracion); separado
+    a propósito del trait base: un banco futuro que no pueda controlar su reloj (por ejemplo contra un
+    sandbox HTTP ajeno) sigue implementando el trait base íntegro y corre todos los escenarios no temporales
+    de la batería.'
+  verify_pending: false
+- changed_files:
+  - crates/hexcell-canal-contrato/src/bateria.rs
+  notes:
+  - 'Seis funciones async públicas, una por escenario, genéricas sobre BancoDeCanal (cuatro) o BancoConRelojControlable
+    (dos temporales): los cuatro rechazos de FR-12 forzables y distinguibles entre sí; un rechazo forzado
+    se aplica a una sola llamada y no tiñe la siguiente; una Plantilla se acepta donde una RespuestaLibre
+    se rechazaría, la asimetría real de la Cloud API; estado_ventana concuerda con lo que send acaba de
+    hacer; con la ventana abierta RespuestaLibre es Aceptado; tras avanzar más allá de DURACION_VENTANA_SERVICIO,
+    importada de hexcell_core::canal y nunca reescrita como 86400, la misma conversación pasa a FueraDeVentana.'
+  - verificar_contrato_del_puerto es el runner agregado que awaita las seis funciones en orden; el crate
+    no nombra AdaptadorSimulado ni depende de hexcell-canal-simulado en ningún archivo, verificado con
+    grep negativo del propio contrato.
+  verify_pending: false
+- changed_files:
+  - crates/hexcell-canal-simulado/src/adaptador.rs
+  - crates/hexcell-canal-simulado/Cargo.toml
+  - crates/hexcell-canal-simulado/src/lib.rs
+  notes:
+  - EstadoInterno gana dos campos, contactos como HashMap de String a IdConversacion (el almacén de identidad
+    que adr-0010 asigna al adaptador, indexado solo por contacto) y dispositivo_actual como String (cambia
+    con re_emparejar y nunca participa como clave de contactos). AdaptadorSimulado::nuevo sigue con la
+    misma firma de dos parámetros, reloj y capacidad; dispositivo_actual arranca en "dispositivo-inicial".
+  - inyectar_desde_contacto resuelve o crea el IdConversacion del contacto en el mapa, ancla la ventana
+    y entrega el EventoEntrante por el mismo mpsc existente, devolviendo el IdConversacion asignado. re_emparejar
+    solo cambia dispositivo_actual y deja contactos intacto, exactamente la propiedad que hace no vacío
+    el test de AC-5. dispositivo_actual() es un getter añadido para que un test observe que re_emparejar
+    cambió algo de verdad, y para evitar dead_code bajo -D warnings. Cada guardia del Mutex se libera
+    antes de cualquier await, igual que en el resto del archivo; inyectar, forzar, forzar_siguiente, forzar_averia
+    y envios_capturados no cambiaron de comportamiento.
+  - hexcell-canal-simulado/Cargo.toml gana dev-dependencies con hexcell-canal-contrato por path, comentado
+    como solo de test, porque la batería no debe viajar dentro del binario hexcell, que ya carga este
+    crate como dependencia regular. lib.rs no necesitó nuevas re-exportaciones porque los tres métodos
+    nuevos son inherentes sobre AdaptadorSimulado, ya reexportado.
+  verify_pending: false
+- changed_files:
+  - crates/hexcell-canal-simulado/tests/contrato_del_puerto.rs
+  - crates/hexcell-canal-simulado/tests/adaptador_simulado.rs
+  notes:
+  - 'contrato_del_puerto.rs implementa BancoDeCanal y BancoConRelojControlable para un banco propio que
+    envuelve AdaptadorSimulado, su RelojDePrueba y el receptor mpsc (retenido para que el Sender interno
+    no se quede sin destinatario), y consume hexcell_canal_contrato::bateria desde fuera del crate que
+    la define, la prueba de que es reutilizable. Siete tests tokio: la batería agregada completa y cada
+    escenario por separado para que un fallo señale la función exacta.'
+  - adaptador_simulado.rs gana dos tests a nivel de adaptador para AC-5, uno que comprueba que el mismo
+    contacto resuelve al mismo IdConversacion antes y después de re_emparejar (con dispositivo_actual
+    confirmando que el dispositivo sí cambió) y otro que comprueba que dos contactos distintos resuelven
+    a IdConversacion distintos. Los ocho tests preexistentes de HEX-004 siguen intactos y en verde.
+  verify_pending: false
+- changed_files:
+  - crates/hexcell/src/deduplicacion.rs
+  notes:
+  - RegistroDeDeduplicacion guarda un mapa de IdDeduplicacion a SystemTime, el horizonte monótono máximo
+    visto y la ventana con la que se construyó. El constructor recibe la ventana como parámetro, nunca
+    la fija internamente. El método procesar actualiza primero el horizonte con el máximo marca_temporal
+    visto, poda y solo entonces decide Nuevo o Duplicado; la poda descarta por horizonte menos ventana
+    y, si aun así se supera el límite duro de entradas retenidas (10000), descarta además las más antiguas
+    por marca_temporal hasta volver al tope, protegiendo NFR-01.
+  - VENTANA_DE_RETENCION_DEDUPLICACION_POR_DEFECTO vale una hora, declarada una sola vez aquí, con la
+    justificación de AC-8 escrita en la propia declaración (reintento inmediato o reentrega de lo pendiente
+    al reconectar, ambos en minutos; una hora da margen amplio) y la advertencia explícita de que la cifra
+    definitiva sigue abierta, según docs/STATUS.md con fecha 2026-07-30. El registro no importa el trait
+    de reloj inyectable ni RelojDePrueba ni RelojDelSistema del crate de test-double en ningún punto,
+    verificado con grep negativo sobre crates/hexcell/src/; poda contra el máximo marca_temporal del propio
+    flujo de eventos, nunca contra un reloj propio. AC-9, una reentrega más allá de la ventana se procesa
+    de nuevo, queda documentado en el módulo tal cual lo fija la tabla de riesgos del plan, sin inventar
+    un tercer camino.
+  verify_pending: false
+- changed_files:
+  - crates/hexcell/src/conversaciones.rs
+  notes:
+  - 'EstadoDeConversaciones es un mapa de IdConversacion a un hilo de conversación en memoria, con historial
+    (lista vacía si no hay registro, nunca Option), registrar_entrante y registrar_saliente (que producen
+    entradas Entrante o Saliente en orden de procesamiento) y encolar_diferida junto con drenar_diferidas
+    (una cola por conversación con descarte del elemento más antiguo al superar un tope de dieciséis,
+    documentado contra NFR-01). El módulo no construye ni interpreta ningún IdConversacion, que es AC-6
+    a nivel estructural: lo usa solo como clave de mapa; se documenta como transitorio, reemplazado por
+    sessions.db en HEX-006, sin esquema ni sentencia SQL de ningún tipo.'
+  verify_pending: false
+- changed_files:
+  - crates/hexcell/src/motor.rs
+  - crates/hexcell/src/lib.rs
+  - crates/hexcell/src/main.rs
+  notes:
+  - 'Motor gana dos campos, el registro de deduplicación y el estado de conversaciones, y Motor::nuevo
+    gana un cuarto parámetro, la ventana de deduplicación, con el que construye el registro internamente;
+    Motor::historial expone el historial en memoria de una conversación para los tests. El bucle ejecutar
+    aplica el orden documentado en el módulo: primero deduplicación (un veredicto duplicado hace continue
+    sin despachar ni enviar, AC-7); segundo, drenaje de las diferidas de esa conversación antes de la
+    respuesta del evento que acaba de llegar; tercero, registro del entrante, despacho al procesador y
+    envío. El match sobre ResultadoEnvio sigue nombrando las cinco variantes más Err, sin brazo comodín;
+    el único cambio de comportamiento es el brazo FueraDeVentana, que ahora encola la respuesta como diferida
+    en vez de solo registrar un mensaje. Sin unwrap, expect ni panic, y sin nombrar ningún transporte.'
+  - lib.rs declara los dos módulos nuevos, conversaciones y deduplicacion. main.rs pasa la ventana de
+    deduplicación de la configuración como cuarto argumento de Motor::nuevo, sin cambios de comportamiento
+    fuera de ese hilo de datos.
+  verify_pending: false
+- changed_files:
+  - crates/hexcell/src/configuracion.rs
+  notes:
+  - 'Configuracion gana el campo ventana_deduplicacion y la constante pública que nombra la variable de
+    entorno HEXCELL_VENTANA_DEDUPLICACION_SEGUNDOS, siguiendo al detalle el precedente de HEXCELL_CAPACIDAD_COLA:
+    variable opcional, error nombrando la variable y el formato esperado si no parsea como entero positivo
+    de segundos, y el valor por defecto importado desde el módulo de deduplicación, nunca reescrito como
+    3600 ni como el producto de 60 por 60 en este archivo, cuando la variable está ausente. Los invariantes
+    de HEX-004 se conservan intactos: sin unwrap, expect ni panic, todas las variables previas siguen
+    parseándose, el valor por defecto de loopback no cambió.'
+  verify_pending: false
+- changed_files:
+  - crates/hexcell/tests/politica_fuera_de_ventana.rs
+  notes:
+  - 'Test de motor completo para AC-3 y AC-4: inyecta un evento, fuerza el rechazo por ventana cerrada
+    en la conversación, deja correr el motor un instante y comprueba que la única llamada a send capturada
+    es la forzada, la respuesta quedó diferida y no descartada ni convertida en error genérico; luego
+    inyecta un segundo evento del mismo contacto y comprueba que las tres capturas finales son, en orden,
+    la forzada, el reintento de la respuesta diferida con el contenido del primer evento y la respuesta
+    propia del segundo evento, el reintento antes que la respuesta nueva, tal como documenta el módulo
+    del motor. La cabecera explica por qué este test vive en crates/hexcell y no en la batería reutilizable,
+    porque describe una política del núcleo, no un requisito del puerto.'
+  verify_pending: false
+- changed_files:
+  - crates/hexcell/tests/deduplicacion.rs
+  notes:
+  - 'Dos tests unitarios contra el registro de deduplicación con marcas temporales explícitas, sin reloj
+    y sin sleep, deterministas: un duplicado justo antes del borde de la ventana sigue descartándose,
+    AC-8, y una reentrega más allá de la ventana, tras que un evento no relacionado adelante el horizonte,
+    se procesa de nuevo como evento nuevo, AC-9, el comportamiento que ya fija la tabla de riesgos del
+    plan. Un tercer test, a nivel de motor sobre AdaptadorSimulado, comprueba que el mismo identificador
+    de deduplicación entregado dos veces dentro de la ventana produce exactamente una captura de envío,
+    AC-7.'
+  verify_pending: false
+- changed_files:
+  - crates/hexcell/tests/continuidad_de_hilo.rs
+  notes:
+  - 'Test de motor completo para AC-5 y AC-6: inyecta desde un contacto simulado con inyectar_desde_contacto,
+    deja procesar corriendo ejecutar dentro de un select de tokio contra un sleep corto, en vez de spawn
+    y abort, para no perder la propiedad del motor y poder seguir llamando a su historial después, re-empareja
+    el dispositivo, inyecta de nuevo desde el mismo contacto y comprueba que resuelve al mismo IdConversacion
+    con el historial previo como prefijo exacto del historial posterior, continuado y no reiniciado.'
+  verify_pending: false
+- changed_files:
+  - crates/hexcell/tests/motor.rs
+  - crates/hexcell/tests/configuracion.rs
+  notes:
+  - En tests/motor.rs los dos constructores de Motor existentes ganan el cuarto argumento con una hora
+    de ventana; la función auxiliar que construye eventos de prueba deriva ahora el identificador de deduplicación
+    del propio identificador de conversación en vez de un literal fijo compartido entre las seis conversaciones
+    del segundo test, porque con deduplicación real en el motor seis eventos con el mismo identificador
+    habrían colapsado a uno solo y roto la aserción de cinco capturas que ya existía. Ningún test previo
+    cambió de intención.
+  - En tests/configuracion.rs, AC-10, el test que comprueba que el binario no vincula nada con configuración
+    inválida ya no asume el puerto de salud por defecto libre. Ahora bindea un listener TCP efímero, lee
+    el puerto real, lo suelta, se lo pasa al binario hijo por la variable de dirección de salud y comprueba
+    que conectar a esa dirección falla porque el arranque nunca llegó a bindear nada; un comentario documenta
+    la carrera residual de microsegundos y por qué sigue siendo mejor que un puerto fijo. Se añadieron
+    tres tests para la variable de ventana de deduplicación, el valor por defecto de una hora sin la variable,
+    un valor explícito respetado y un error cuando el valor no es numérico, y esa variable se sumó a la
+    función que limpia el entorno entre tests.
+  verify_pending: false
+- changed_files:
+  - docs/STATUS.md
+  notes:
+  - 'Dos bullets nuevos en la sección Definido, fechados 2026-07-30 y atribuidos a HEX-005: la política
+    de diferir en vez de escalar ante el rechazo por ventana cerrada, con la razón concreta para no escalar
+    (sin registro estructurado, sin vía de notificación a un operador, sin plano de CLI hasta la etapa
+    A-6) y por qué se documenta en código y no en un ADR nuevo, porque la tarea 6 del plan pide una decisión
+    documentada, no un ADR; y la ventana de deduplicación por defecto de una hora, configurable por variable
+    de entorno, con su justificación funcional y la limitación residual aceptada para reentregas tardías.
+    Un bullet nuevo en la sección Pendiente registra que el valor definitivo de esa ventana sigue siendo
+    una decisión de producto abierta. Ningún bullet existente se reescribió ni se borró; el archivo no
+    afirma en ningún punto que la etapa A-2 esté cerrada.'
+  verify_pending: false
+- changed_files:
+  - Cargo.lock
+  notes:
+  - 'Cargo.lock se regeneró con cargo, nunca editado a mano, al añadir crates/hexcell-canal-contrato como
+    miembro del workspace: gana la entrada de paquete del crate nuevo y su cierre transitivo, que ya estaba
+    resuelto por depender solo de hexcell-core. Diferencia esperada y registrada en el blueprint: Cargo.lock
+    coincide con el patrón de rutas sensibles del cálculo de complejidad, así que el riesgo calculado
+    de esta tarea sale alto aunque la especificación declara medio; no se corrigió a mano ni se sacó el
+    crate nuevo para evitarlo.'
+  verify_pending: false
+summary: Batería de contrato para ChannelAdapter, política de diferir ante FueraDeVentana, continuidad
+  de hilo tras re-emparejamiento, dedup con ventana configurable y fix del test de puerto fijo.
+task_id: HEX-005

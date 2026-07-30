@@ -1,0 +1,166 @@
+task_id: HEX-002
+summary: Cargo workspace and five crates, the ChannelAdapter port declared as types only in
+  hexcell-core, exhaustive-match and guardian tests, cotejo, adr-0002 and status updates.
+goal: >
+  Turn Fase A-1 tasks 1, 5 and 9 into compiling Rust: a root workspace Cargo.toml with
+  resolver 3 and the five crates hexcell-core, hexcell, hexcell-admin, hexcell-storage and
+  hexcell-meta, and inside hexcell-core the declaration of the FR-12 ChannelAdapter port as
+  types only, abstracted toward the Cloud API as the most restrictive case and agreeing with
+  adr-0010 rather than restating or amending it. Three pieces of evidence accompany the code:
+  exhaustive-match tests in an external test crate that break when the send result enum changes
+  shape, a written cotejo of every variant and of the canonical incoming event against the
+  official Cloud API error-code documentation, and a guardian test proving the transport
+  identifier does not leak into the domain, with both bite experiments recorded in the cotejo.
+  No adapter is implemented, real or simulated. No Go, no toolchain files, no CI - those are
+  HEX-003.
+read:
+  - .ai/tasks/active/HEX-002-new-spec/00-spec.yaml
+  - .ai/tasks/active/HEX-002-new-spec/01-blueprint.yaml
+  - docs/PRD.md
+  - docs/adr/adr-0010-puerto-de-canal.md
+  - docs/plan/fase-a-1-fundaciones.md
+  - docs/adr/README.md
+  - docs/STATUS.md
+  - CLAUDE.md
+  - CONTRIBUTING.md
+  - .gitignore
+touch:
+  - Cargo.toml
+  - crates/hexcell-core/Cargo.toml
+  - crates/hexcell-core/src/lib.rs
+  - crates/hexcell-core/src/canal.rs
+  - crates/hexcell-core/src/identidad.rs
+  - crates/hexcell-core/tests/exhaustividad_resultado_envio.rs
+  - crates/hexcell-core/tests/guardian_identidad_conversacion.rs
+  - crates/hexcell/Cargo.toml
+  - crates/hexcell/src/main.rs
+  - crates/hexcell-admin/Cargo.toml
+  - crates/hexcell-admin/src/main.rs
+  - crates/hexcell-storage/Cargo.toml
+  - crates/hexcell-storage/src/lib.rs
+  - crates/hexcell-meta/Cargo.toml
+  - crates/hexcell-meta/src/lib.rs
+  - docs/cotejo-puerto-de-canal-cloud-api.md
+  - docs/adr/adr-0002-estructura-workspace.md
+  - docs/adr/README.md
+  - docs/STATUS.md
+forbid:
+  files:
+    - "*.go"
+    - sidecar/*
+    - rust-toolchain.toml
+    - rustfmt.toml
+    - clippy.toml
+    - .github/workflows/*
+    - docs/PRD.md
+    - docs/plan/*
+    - docs/adr/adr-0010-puerto-de-canal.md
+    - docs/adr/adr-0014-canal-propio-permanente.md
+    - docs/adr/adr-0015-politica-de-convivencia-con-el-baneo.md
+    - docs/adr/adr-0001-licencia.md
+    - docs/adr/adr-0008-estrategia-canal-dos-fases.md
+    - docs/adr/adr-0009-whatsmeow-adaptador-fase-a.md
+    - docs/bitacora-de-descartes.md
+    - LICENSE
+    - CONTRIBUTING.md
+    - .gitignore
+    - .github/PULL_REQUEST_TEMPLATE.md
+  behaviors:
+    - "Do not write `async fn` inside any public trait. It emits the warn-by-default
+      async_fn_in_trait lint, which `clippy -- -D warnings` turns into an error and fails AC-3.
+      Use RPITIT - `fn send(...) -> impl Future<Output = ...> + Send;` - and never silence the
+      lint with #[allow(async_fn_in_trait)]."
+    - "Do not mark the send result enum #[non_exhaustive], and do not write a `_` arm or a `..`
+      rest pattern over its variants in the exhaustive-match tests."
+    - "Do not add or remove any variant of the send result enum. It carries exactly one success
+      case plus FueraDeVentana, PlantillaRequerida, LimiteDeTasa and DestinatarioInvalido. The
+      enumerated set is fixed by docs/PRD.md FR-12 and changing it is a PRD decision."
+    - "Do not add a fifth variant to close the template-family gap (132000, 132001, 132015,
+      132016) or the ecosystem codes 131049 and 131048. Record them as open findings in the
+      cotejo and as a declared pending decision in docs/STATUS.md."
+    - "Do not implement ChannelAdapter anywhere, real or simulated. The guardian test's mapping
+      stand-in must not implement the trait."
+    - "Do not add any dependency to crates/hexcell-core/Cargo.toml - no tokio, rusqlite, sqlx,
+      reqwest, hyper, axum, async-trait, futures, chrono, serde or time, and no path dependency
+      on another workspace crate. Use std::time::SystemTime and std::time::Duration."
+    - "Do not add a subscription, stream or callback method for incoming events. The port
+      declares the seven FR-12 elements and no more; the canonical incoming event is a TYPE."
+    - "Do not declare CicloDeVidaSesion as a supertrait of ChannelAdapter. It is a separate,
+      optional sub-trait that the Cloud API adapter will not implement."
+    - "Do not expose any type, field, parameter or method NAME containing wa_id, jid, msisdn or
+      phone_number in the public API. Doc-comment prose may mention them when describing what
+      the adapter translates."
+    - "Do not modify adr-0010; this stage implements it, it does not rewrite it. Do not
+      renumber, reorder, duplicate or reuse any ADR number; the adr-0002 row is updated in place."
+    - "Do not create any *.go file, sidecar/ directory, rust-toolchain.toml, rustfmt.toml,
+      clippy.toml or .github/workflows/ file. Do not tune a size-oriented release profile."
+    - "Do not declare any public item in crates/hexcell-meta/src/lib.rs, and avoid the standalone
+      word `pub` in its prose, because the check is a whole-word grep."
+    - "Do not state or imply that Fase B replaces, substitutes or closes Fase A, nor that the
+      sidecar is retired. The two channels coexist."
+    - "Do not write relative dates. All dates in documents are absolute (2026-07-29)."
+    - "Do not add Co-Authored-By or any AI-attribution trailer. Commit messages are Spanish
+      conventional commits."
+    - "Do not write repository prose in English. Documents, the ADR and Rust doc comments are in
+      Spanish; identifiers, type names and crate names stay in idiomatic English."
+    - "Do not re-create or alter anything HEX-001 landed - LICENSE, CONTRIBUTING.md, the PR
+      template, .gitignore, adr-0001, adr-0008 or adr-0009."
+verify:
+  commands:
+    - cargo build --workspace
+    - cargo test --workspace
+    - cargo fmt --check
+    - cargo clippy --workspace -- -D warnings
+    - test -f Cargo.toml
+    - test -f crates/hexcell-core/src/canal.rs
+    - test -f crates/hexcell-core/src/identidad.rs
+    - test -f crates/hexcell-core/tests/exhaustividad_resultado_envio.rs
+    - test -f crates/hexcell-core/tests/guardian_identidad_conversacion.rs
+    - test -f crates/hexcell-meta/src/lib.rs
+    - test -f docs/cotejo-puerto-de-canal-cloud-api.md
+    - test -f docs/adr/adr-0002-estructura-workspace.md
+    - grep -q 'resolver' Cargo.toml
+    - grep -q 'hexcell-core' Cargo.toml
+    - grep -q 'hexcell-storage' Cargo.toml
+    - grep -q 'hexcell-meta' Cargo.toml
+    - grep -q 'hexcell-admin' Cargo.toml
+    - grep -q 'ChannelAdapter' crates/hexcell-core/src/canal.rs
+    - grep -q 'CicloDeVidaSesion' crates/hexcell-core/src/canal.rs
+    - grep -q 'FueraDeVentana' crates/hexcell-core/src/canal.rs
+    - grep -q 'PlantillaRequerida' crates/hexcell-core/src/canal.rs
+    - grep -q 'LimiteDeTasa' crates/hexcell-core/src/canal.rs
+    - grep -q 'DestinatarioInvalido' crates/hexcell-core/src/canal.rs
+    - grep -q 'FueraDeVentana' crates/hexcell-core/tests/exhaustividad_resultado_envio.rs
+    - grep -q 'DestinatarioInvalido' crates/hexcell-core/tests/exhaustividad_resultado_envio.rs
+    - grep -q '131047' docs/cotejo-puerto-de-canal-cloud-api.md
+    - grep -q '132001' docs/cotejo-puerto-de-canal-cloud-api.md
+    - grep -q '131048' docs/cotejo-puerto-de-canal-cloud-api.md
+    - grep -q '131049' docs/cotejo-puerto-de-canal-cloud-api.md
+    - grep -q 'error-codes' docs/cotejo-puerto-de-canal-cloud-api.md
+    - grep -q 'adr-0013' crates/hexcell-meta/src/lib.rs
+    - grep -q '2026-07-29' docs/adr/README.md
+    - grep -q '2026-07-29' docs/STATUS.md
+    - grep -q 'adr-0002' docs/STATUS.md
+    - "! grep -q 'Por escribir' docs/adr/adr-0002-estructura-workspace.md"
+    - "! grep -qE '\\bpub\\b' crates/hexcell-meta/src/lib.rs"
+    - "! grep -qE 'tokio|rusqlite|sqlx|reqwest|hyper|axum|async-trait|futures|chrono|serde' crates/hexcell-core/Cargo.toml"
+    - "! grep -q 'non_exhaustive' crates/hexcell-core/src/canal.rs"
+    - "! grep -qE 'async fn' crates/hexcell-core/src/canal.rs"
+    - "! grep -q 'allow(async_fn_in_trait)' crates/hexcell-core/src/canal.rs"
+    - "! grep -rqE 'impl(<[^>]*>)? *ChannelAdapter *for' crates/"
+    - "! grep -rn --include='*.rs' -iE 'wa_id|msisdn|phone_number|\\bjid\\b' crates/*/src | grep -vE '^[^:]*:[0-9]+: *(//|\\*)' | grep -q ."
+    - "! find . -not -path './.git/*' -not -path './target/*' \\( -name '*.go' -o -name 'rust-toolchain.toml' -o -name 'rustfmt.toml' -o -name 'clippy.toml' \\) | grep -q ."
+    - "! test -d sidecar"
+    - "! test -d .github/workflows"
+  target_s: 45
+acceptance:
+  human_gate: true
+limits:
+  max_files_changed: 20
+  max_diff_lines: 2000
+execution:
+  mode: worktree_edit
+  branch: ai/HEX-002
+retry_policy:
+  max_attempts: 2
+  escalate_after: 1

@@ -1,0 +1,42 @@
+entries:
+    - changed_files:
+        - rust-toolchain.toml
+        - rustfmt.toml
+        - clippy.toml
+        - Cargo.toml
+      notes:
+        - 'rust-toolchain.toml fija channel = "1.92.0" (parche exacto instalado en el equipo), más estricto que rust-version = "1.92" de [workspace.package], sin re-declararlo ni contradecirlo: uno es el suelo de MSRV publicado, el otro es lo que rustup descarga.'
+        - rustfmt.toml declara edition = "2024" (coincide con la del workspace) y deja max_width en el default de la herramienta con un comentario explicando que ya coincide con el ancho de prosa del repositorio; no queda vacío.
+        - 'clippy.toml declara msrv = "1.92" con comentario explicando por qué es necesario restatarlo: clippy no lee workspace.package, solo un clippy.toml literal.'
+        - '[profile.release] se añade al final del Cargo.toml raíz, después del comentario de workspace.dependencies que dejó HEX-002, sin tocar [workspace] ni [workspace.package]: opt-level = "z", lto = true, codegen-units = 1, strip = true, panic = "abort", cada ajuste con su propio comentario de justificación.'
+        - cargo build --workspace, cargo test --workspace, cargo fmt --check y cargo clippy --workspace -- -D warnings terminan sin hallazgos con estos archivos presentes.
+      verify_pending: false
+    - changed_files:
+        - sidecar/go.mod
+        - sidecar/go.sum
+        - sidecar/main.go
+      notes:
+        - sidecar/go.mod declara el módulo github.com/CGary/hexcell/sidecar y fija go.mau.fi/whatsmeow a v0.0.0-20260722203353-e9a033b24933 (pseudo-versión resuelta por go get contra el proxy real de Go); whatsmeow no publica ningún tag semver, así que la pseudo-versión ES el anclaje explícito que pide el contrato, no @latest ni una rama.
+        - go.sum se generó con go get + go mod tidy contra proxy.golang.org (red real, permitida y declarada en el blueprint); 57 líneas con los hashes de whatsmeow y su cierre transitivo (libsignal, coder/websocket, zerolog, x/crypto, x/net, x/sync, google.golang.org/protobuf, etc.).
+        - 'sidecar/main.go es el esqueleto mínimo: package main, import en blanco de go.mau.fi/whatsmeow (necesario para que go mod tidy no borre el require) y un func main que imprime un mensaje de arranque en español. Sin NewClient, sin Connect, sin GetQRChannel, sin PairPhone, sin store ni socket.'
+        - go build ./... y go vet ./... dentro de sidecar/ terminan sin errores. El directivo go del go.mod quedó en go 1.26.5 (versión real del toolchain instalado go1.26.5), por encima del go 1.25 que anticipaba el blueprint como suelo mínimo de whatsmeow; no contradice ninguna restricción del contrato, que no fija una versión de directivo go concreta en sus verify.commands.
+        - El binario resultante de go build ./... (sidecar/sidecar) se eliminó antes de cada commit; no se versiona ningún artefacto compilado, ni Cargo.lock (también generado y eliminado tras cada verificación, conforme a .gitignore).
+      verify_pending: false
+    - changed_files:
+        - .github/workflows/ci.yml
+      notes:
+        - 'Dos jobs, rust y go, ambos en push y pull_request. rust: actions/checkout, dtolnay/rust-toolchain@stable con components rustfmt+clippy, Swatinem/rust-cache, y tres pasos separados (cargo fmt --check, cargo clippy --workspace -- -D warnings, cargo test --workspace). go: actions/checkout, actions/setup-go con go-version-file: sidecar/go.mod, y go build ./... / go vet ./... con working-directory: sidecar. Ningún paso lleva continue-on-error; cualquiera de los seis puede fallar el job.'
+        - 'Sin Docker, sin paso de despliegue, sin consumo de secretos: el runner solo compila/analiza/prueba, nunca marca a WhatsApp.'
+      verify_pending: false
+    - changed_files:
+        - CLAUDE.md
+        - docs/STATUS.md
+        - docs/plan/fase-a-1-fundaciones.md
+      notes:
+        - 'CLAUDE.md: se reescribió únicamente la frase de ''Estado actual'' (antes ''solo documentación... no existe Cargo.toml''); ahora nombra el workspace de cinco crates, el puerto ChannelAdapter, el módulo sidecar/ y la CI, y lista los comandos reales de build/test/lint de Rust y Go. Ninguna otra sección del archivo se tocó.'
+        - 'docs/STATUS.md: se retiró el único bullet Pendiente del módulo Go del sidecar que dejó HEX-002, y se añadió un bullet Definido fechado 2026-07-29 y atribuido a HEX-003 que recoge el sidecar, el toolchain, el perfil de release y la CI. Ningún otro bullet Definido ni Pendiente se tocó; diff de 11 líneas, dentro del límite de 60.'
+        - 'docs/plan/fase-a-1-fundaciones.md: se anotaron las tareas 6, 7 y 8 como entregadas por HEX-003 (2026-07-29) con una frase inline cada una, siguiendo la prosa existente; las tareas 1-5 y 9, la tabla de Riesgos y mitigaciones y la sección de Dependencias quedaron intactas; diff de 9 líneas, dentro del límite de 60.'
+        - Ningún archivo docs/adr/*.md ni ningún path bajo crates/hexcell-core/ aparece en el diff completo (verificado con git diff --cached --name-only).
+      verify_pending: false
+summary: Esqueleto Go del sidecar, toolchain de Rust anclado, perfil de release orientado a tamaño, CI de dos jobs y cierre documental de las tareas 6-8 de A-1.
+task_id: HEX-003

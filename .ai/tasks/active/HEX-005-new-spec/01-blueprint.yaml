@@ -1,0 +1,600 @@
+affected_files:
+    - Cargo.toml
+    - Cargo.lock
+    - crates/hexcell-canal-contrato/Cargo.toml
+    - crates/hexcell-canal-contrato/src/lib.rs
+    - crates/hexcell-canal-contrato/src/banco.rs
+    - crates/hexcell-canal-contrato/src/bateria.rs
+    - crates/hexcell-canal-simulado/Cargo.toml
+    - crates/hexcell-canal-simulado/src/lib.rs
+    - crates/hexcell-canal-simulado/src/adaptador.rs
+    - crates/hexcell-canal-simulado/tests/contrato_del_puerto.rs
+    - crates/hexcell-canal-simulado/tests/adaptador_simulado.rs
+    - crates/hexcell/Cargo.toml
+    - crates/hexcell/src/lib.rs
+    - crates/hexcell/src/configuracion.rs
+    - crates/hexcell/src/motor.rs
+    - crates/hexcell/src/deduplicacion.rs
+    - crates/hexcell/src/conversaciones.rs
+    - crates/hexcell/src/main.rs
+    - crates/hexcell/tests/motor.rs
+    - crates/hexcell/tests/deduplicacion.rs
+    - crates/hexcell/tests/politica_fuera_de_ventana.rs
+    - crates/hexcell/tests/continuidad_de_hilo.rs
+    - crates/hexcell/tests/configuracion.rs
+    - docs/STATUS.md
+dependencies:
+    - .ai/tasks/active/HEX-005-new-spec/00-spec.yaml
+    - crates/hexcell-core/src/canal.rs
+    - crates/hexcell-core/src/identidad.rs
+    - crates/hexcell-core/src/lib.rs
+    - crates/hexcell-core/Cargo.toml
+    - crates/hexcell-canal-simulado/src/reloj.rs
+    - crates/hexcell/src/procesador.rs
+    - crates/hexcell/src/configuracion.rs
+    - Cargo.toml
+    - docs/PRD.md
+    - docs/plan/fase-a-2-nucleo-persistencia.md
+    - docs/adr/adr-0010-puerto-de-canal.md
+    - docs/adr/adr-0016-convencion-de-entrega-de-eventos.md
+    - docs/adr/README.md
+    - docs/STATUS.md
+    - CLAUDE.md
+risks:
+    - 'AC-5 GAP, the single biggest mismatch between the spec and the tree, verified in
+      crates/hexcell-canal-simulado/src/adaptador.rs on 2026-07-30. The simulated adapter has NO
+      notion of contact and NO notion of device: `inyectar()` takes an already-built
+      `EventoEntrante` whose `IdConversacion` the TEST chooses. A re-pairing test written naively
+      against todays API would simply pass the same `IdConversacion` twice and assert it equals
+      itself, which proves nothing at all. Resolution adopted here: the simulated adapter grows the
+      adapter-side identity store that `adr-0010` says belongs to it and only to it - a map from an
+      opaque simulated CONTACT to `IdConversacion`, plus a mutable device identifier - together with
+      `inyectar_desde_contacto()` and `re_emparejar()`. The map is keyed by contact ONLY; the device
+      identifier is deliberately not part of the key, and that is exactly the property AC-5
+      exercises. This is an ADDITION the 00-spec does not spell out in so many words, and without it
+      AC-5 is vacuous rather than merely hard.'
+    - 'AC-5 second half, the historial, is equally unobservable today: `Motor` keeps no
+      per-conversation state whatsoever - it consumes an event, calls the processor, sends, and
+      forgets. Verifying that the previous history is intact and continued in the same thread
+      therefore requires a new in-memory per-conversation structure in crates/hexcell. It is
+      declared in code as TRANSITIONAL and replaced by `sessions.db` in HEX-006, per the spec
+      invariant that forbids inventing any SQLite schema here.'
+    - '`ChannelAdapter` is RPITIT - both methods return `impl Future<Output = ...> + Send`
+      (crates/hexcell-core/src/canal.rs) - so it is NOT dyn-compatible and `Box<dyn ChannelAdapter>`
+      does not compile, as canal.rs and adr-0002 already record. The reusable battery therefore
+      CANNOT be a list of boxed adapters: it is a set of generic `async fn` parameterised over a
+      harness trait with an associated adapter type. Static dispatch is not a style choice here, it
+      is the only shape the trait admits.'
+    - 'The battery needs powers the port does not expose. `ChannelAdapter` declares only `send` and
+      `estado_ventana`; forcing `LimiteDeTasa`, injecting an inbound event or expiring the 24 h
+      window are all CONTROL operations that live outside FR-12. The genuinely reusable artifact is
+      therefore a second trait - the harness/bench - and B-1 reuses the battery by implementing that
+      trait for its Cloud API adapter, not by handing over a bare adapter. Consequence to state now
+      rather than discover in B-1: forcing `LimiteDeTasa` or `DestinatarioInvalido` against a real
+      HTTP API is only possible against a sandbox or an injected HTTP layer. To keep the battery
+      usable even so, the clock-dependent scenarios are split into a SEPARATE sub-trait, so an
+      adapter that cannot control time still runs every other scenario instead of failing to compile.'
+    - 'Clock strategy, verified rather than assumed. `RelojDePrueba`/`RelojDelSistema` exist in
+      crates/hexcell-canal-simulado/src/reloj.rs and `tokio::time::pause()` structurally cannot
+      replace them, because the domain types carry `std::time::SystemTime`
+      (`EventoEntrante::marca_temporal`, `EstadoVentanaServicio::Abierta::expira_en`) and tokio
+      virtualises only `tokio::time::Instant` and `sleep`. The deduplication registry nevertheless
+      takes NO clock: it prunes against the monotonic maximum `marca_temporal` seen in the event
+      stream, supplied by the caller on every call. Two things are bought by that: the engine gains
+      no clock dependency at all, and - more importantly - crates/hexcell does not end up importing
+      a trait from the test-double crate into production code. Consequence to accept knowingly:
+      retention is measured in CHANNEL time, not wall time, so an adapter that delivers badly
+      out-of-order timestamps prunes earlier than intended. Documented at the declaration; HEX-006
+      revisits it when the registry gains persistence.'
+    - 'The retention window value is an engineering parameter that NO document in the repository
+      fixes - not the PRD, not the plan, not any ADR - yet AC-8 demands a dimensioned constant with
+      an explicit justification. RESOLVED by the human on 2026-07-30: ONE HOUR is the DEFAULT, and
+      the window is CONFIGURABLE by parameter; the definitive value stays an open product decision
+      and is registered as a `Pendiente` entry in docs/STATUS.md rather than settled here. The shape
+      mirrors the precedent already in the tree exactly - `HEXCELL_CAPACIDAD_COLA` with its
+      `CAPACIDAD_COLA_POR_DEFECTO` constant - so this adds no new configuration mechanism: an
+      optional env var whose absence yields the documented default, validated at boot like every
+      other one. Justification to write at the declaration, phrased functionally and without naming
+      any vendor: normal redelivery on either channel is either an immediate retry of an unconfirmed
+      delivery or a replay of what was pending when the transport reconnected, and both land within
+      minutes; one hour covers a restart or a full retry cycle with a wide margin while keeping the
+      map small. Keep the hard cap on retained entries too, so a burst cannot grow the map without
+      bound against NFR-01 regardless of how the window is configured.'
+    - 'Consequence of making the window configurable, and the one contract change it forces:
+      crates/hexcell/src/configuracion.rs LEAVES the forbid list and ENTERS the touch list, because
+      the new variable has to be parsed and validated there like every other one. Two things follow.
+      The default constant lives in crates/hexcell/src/deduplicacion.rs, which owns the concept and
+      carries the AC-8 justification, and configuracion.rs REFERENCES it rather than restating the
+      value - two literals for one number is exactly how a default silently diverges from its own
+      documentation. And the HEX-004 invariants on that file still hold and are re-verified: no
+      unwrap(), no expect(), and every existing variable keeps working, since the file was closed
+      until now and is being reopened only for this one addition.'
+    - 'AC-9s defined behaviour is ALREADY FIXED by the plan and must not be reinvented. The risk
+      table of docs/plan/fase-a-2-nucleo-persistencia.md states it plainly for a redelivery beyond
+      the retention window: `se procesa como evento nuevo, duplicando el trabajo conversacional.
+      Limitacion residual aceptada y documentada`. So the correct behaviour for AC-9 is to process
+      the late duplicate again, deliberately and with a documented log line - not to reject it, not
+      to panic, and not to invent a third path. The test pins that expectation so a future change
+      has to argue with a test rather than with prose.'
+    - 'NO NEW ADR, and this was decided against the plan text rather than by habit. Plan task 6 asks
+      for the FueraDeVentana policy `con la decision documentada`, not `en un ADR`, and the spec
+      constraint mirrors that with `documentada en el propio codigo o en un ADR si el plan lo
+      exige`. The plan does not exige one. The substantive difference with HEX-004 is that adr-0016
+      recorded a convention BINDING ON EVERY FUTURE ADAPTER and living outside the compiler; this
+      policy is engine-internal, generic over `ChannelAdapter`, and binds nobody outside
+      crates/hexcell. It is therefore documented in the module that implements it plus one Definido
+      entry in docs/STATUS.md. If a reviewer disagrees and wants an ADR, the number is 0017 and it
+      comes from the INDEX docs/adr/README.md, which is the source of truth and already assigns 0001
+      to 0016 - NOT from `ls docs/adr/`, which shows only eight files because 0003 to 0007 and 0011
+      to 0013 are reserved entries with no file yet.'
+    - 'The FueraDeVentana policy is DEFERRAL (encolado), not escalation to a human. Escalation was
+      rejected on evidence, not taste: there is no operator channel to escalate to - no logging
+      crate (structured logs are HEX-008), no admin notification path, no CLI plane until etapa A-6
+      - so an escalation branch today would mean printing a line to stderr and calling it a policy.
+      Deferral is implementable, observable and testable in memory right now. The queue is BOUNDED
+      per conversation with a documented drop-oldest rule at the cap, because an unbounded queue of
+      undeliverable replies is exactly the kind of slow leak the <= 80 MB per-cell budget of NFR-01
+      cannot absorb.'
+    - 'Flush semantics of the deferred queue, spelled out because getting them wrong is silent.
+      Pending replies are re-attempted when a LATER event arrives for the same conversation - which
+      is what `el cliente vuelve a escribir` means and what reopens the window in the simulated
+      adapter - and they are flushed BEFORE the new events own reply, so the thread stays
+      chronological. A flushed message rejected again is re-queued, subject to the same cap; there
+      is no retry loop, no backoff timer and no background task, because a timer would need a clock
+      in the engine and would drag in exactly the coupling risk 5 avoids.'
+    - 'The verify greps that ban transport names are scoped to crates/hexcell/src/motor.rs,
+      procesador.rs and the two NEW engine modules - deliberately NOT to the whole crate. Verified
+      on 2026-07-30: crates/hexcell/src/configuracion.rs legitimately contains the words `Cloud API`
+      in the doc comment of `CanalSeleccionado::Simulado`, so a whole-directory grep would fail
+      against untouched HEX-004 code and force a pointless edit. The consequence for the implementer
+      is real: the retention justification in deduplicacion.rs must be written functionally - `un
+      canal que reintenta la entrega`, `un canal que reentrega lo pendiente al reconectar` - and any
+      vendor-specific wording belongs in docs/STATUS.md or in the simulated crate, where those words
+      are legitimate.'
+    - 'The battery lives in a NEW crate, crates/hexcell-canal-contrato, rather than in a public
+      module of hexcell-canal-simulado. The spec constraint lists three permitted locations and
+      `crate propio` is the first; the decisive argument for it is that B-1 must not have to depend
+      on the TEST DOUBLE in order to test the real Cloud API adapter. The new crate depends only on
+      hexcell-core and needs no tokio at all: plain `async fn` plus assertions, awaited by whatever
+      runtime the calling test already has. hexcell-core is therefore not touched and AC-12 stays
+      trivially true.'
+    - 'Cargo.lock policy, a known and EXPECTED divergence, not a defect. Cargo.lock is versioned by
+      human decision (HEX-004, docs/STATUS.md, 2026-07-29), and adding a workspace member forces a
+      new `[[package]]` entry in it. Cargo.lock matches `sensitive_path_match` in complexity-score,
+      so the calculated risk for this task will come out HIGH while 00-spec declares `risk: medium`.
+      That divergence is recorded here and left alone; it is not to be `corrected` by hand-editing
+      the lock or by dropping the new crate.'
+    - 'Ripple the spec does not mention: `Motor::nuevo` gains the deduplication registry and the
+      conversation state, so crates/hexcell/src/main.rs and crates/hexcell/tests/motor.rs must both
+      be updated even though neither is about this tasks subject matter. Both are in the touch list
+      for that reason and for no other.'
+    - 'AC-10 fix, and its residual limitation. The test binds 127.0.0.1:0, reads back the port the
+      OS assigned, DROPS the listener so the port is free and verified free, passes it to the child
+      through HEXCELL_DIRECCION_SALUD, and then asserts that connecting to it is refused. The child
+      never reaches the bind because the configuration error fires first, which is precisely what
+      the test proves. Residual race, stated rather than hidden: another process could claim the
+      freed port between the drop and the connect. That window is microseconds wide and
+      unconditionally better than todays assumption that 8081 - a common developer port - is free on
+      whatever machine runs the suite.'
+    - 'hexcell-canal-simulado is a REGULAR dependency of the hexcell binary, not a dev-dependency
+      (verified in crates/hexcell/Cargo.toml), because until etapa A-3 there is no other adapter to
+      boot with. This task ENLARGES that crate with the identity store, so the shipped binary grows
+      slightly and charges more against NFR-01. The clean fix - a cargo feature gate, or making it
+      dev-only once a real adapter exists - was already deferred to A-3 by HEX-004 and is not
+      reopened here; it is noted so the growth is a recorded cost rather than an unnoticed one.'
+    - 'NO acceptance criterion is deferred. All thirteen are exercised inside this task: AC-1, AC-2
+      by the battery run from the simulated crates tests; AC-3 and AC-4 by the engine-level policy
+      test; AC-5 and AC-6 by the thread-continuity test plus lexical checks; AC-7, AC-8 and AC-9 by
+      the deduplication tests; AC-10 by the corrected configuration test; AC-11, AC-12 and AC-13 by
+      the cargo commands and the diff-boundary greps. This is stated explicitly so analyze does not
+      flag a missing deferral declaration.'
+    - 'Verified against the real tree at blueprint time, 2026-07-30, commit b985cc9 plus the HEX-004
+      archive commit: six workspace members exist including hexcell-canal-simulado; `ChannelAdapter`
+      declares exactly `send` and `estado_ventana`; the five `ResultadoEnvio` variants and
+      `DURACION_VENTANA_SERVICIO` are in hexcell-core::canal; `IdConversacion`, `IdRemitente` and
+      `IdDeduplicacion` are opaque newtypes with `nuevo`/`como_str` in hexcell-core::identidad;
+      crates/hexcell-core/Cargo.toml has an empty `[dependencies]` table; the simulated adapters
+      test API is `inyectar`, `forzar` (queued PER CONVERSATION), `forzar_siguiente` (queued
+      undirected, FIFO), `forzar_averia` (a one-shot boolean flag, not a queue) and
+      `envios_capturados`; `Motor` holds adapter, processor and `mpsc::Receiver` and matches all
+      five variants plus `Err` with no wildcard arm; the runtime is
+      `#[tokio::main(flavor = "current_thread")]`; `cargo fmt --check` is clean; and
+      crates/hexcell/tests/configuracion.rs line 193 connects to the literal `127.0.0.1:8081`, which
+      is the defect AC-10 names.'
+strategy:
+    - action: 'Create the new workspace member crates/hexcell-canal-contrato: Cargo.toml inheriting
+        the workspace package metadata, with `hexcell-core` as its ONLY dependency and an inline
+        comment stating why it has no tokio - the battery is plain `async fn` plus assertions and is
+        awaited by whatever runtime the calling test already runs, so a runtime dependency here
+        would be imposed on every future consumer for nothing. Add the member to the root
+        Cargo.toml `members` list, leaving `[workspace.package]`, `[workspace.dependencies]` and
+        `[profile.release]` byte-identical. Architectural role: reusable test-contract crate.'
+      files:
+        - Cargo.toml
+        - crates/hexcell-canal-contrato/Cargo.toml
+      step: 1
+    - action: 'Write crates/hexcell-canal-contrato/src/lib.rs with crate-level docs, in Spanish at
+        ~100 columns, stating the crates whole reason to exist: it holds the battery that ANY
+        implementation of `ChannelAdapter` must pass, it names no concrete adapter, and etapa B-1
+        reuses it against the Cloud API adapter without editing a line of the core. State the
+        TYPE/POLICY distinction verbatim in spirit - the type admits the restrictive outcome, the
+        policy of each adapter decides whether it produces it - so nobody later reads the battery as
+        proof that the own channel must impose a 24 h window. Declare `pub mod banco` and
+        `pub mod bateria` and re-export the traits and the entry points.'
+      files:
+        - crates/hexcell-canal-contrato/src/lib.rs
+      step: 2
+    - action: 'Write crates/hexcell-canal-contrato/src/banco.rs, the harness port, which is the real
+        reusable artifact. `trait BancoDeCanal` with `type Adaptador: ChannelAdapter`, an accessor
+        for the adapter under test, a way to inject an inbound event for a given conversation, and a
+        way to force a concrete `ResultadoEnvio` on the next send for a given conversation. Document
+        why this second trait has to exist at all: `ChannelAdapter` declares only `send` and
+        `estado_ventana`, so injecting an event or forcing a rejection is CONTROL that lives outside
+        FR-12 and can never be added to the port without polluting production code with test hooks.
+        Then declare `trait BancoConRelojControlable: BancoDeCanal` with a single method that
+        advances the benchs time source by a `Duration`. Keeping the clock in a separate sub-trait
+        is deliberate: an adapter that cannot control time still implements the base trait and runs
+        every non-temporal scenario, instead of being unable to use the battery at all. Architectural
+        role: test harness port.'
+      files:
+        - crates/hexcell-canal-contrato/src/banco.rs
+      step: 3
+    - action: 'Write crates/hexcell-canal-contrato/src/bateria.rs: one `pub async fn` PER SCENARIO,
+        generic over `B: BancoDeCanal` (and over `B: BancoConRelojControlable` for the two temporal
+        ones), so a failure names the scenario that failed instead of a single opaque battery. Non
+        temporal scenarios: each of the four FR-12 rejections is forced, produced and observed
+        distinctly; the four are asserted pairwise distinct; a forced rejection applies to one call
+        only and the next send on the same conversation is not tainted by it; a `Plantilla` is
+        accepted where a `RespuestaLibre` would be refused, which is the Cloud APIs actual asymmetry
+        and the reason `MensajeSaliente` is an enum at all; and `estado_ventana` agrees with what
+        `send` did rather than contradicting it. Temporal scenarios: with the window open a
+        `RespuestaLibre` is `Aceptado` and `estado_ventana` is `Abierta`; after advancing past
+        `DURACION_VENTANA_SERVICIO` the same send is `FueraDeVentana` and `estado_ventana` is
+        `Cerrada`. Import `DURACION_VENTANA_SERVICIO` from hexcell_core::canal and never restate
+        24 h in any form. Finish with an aggregate runner that awaits every scenario in order so a
+        consumer can call one function. Architectural role: reusable specification-as-tests.'
+      files:
+        - crates/hexcell-canal-contrato/src/bateria.rs
+      step: 4
+    - action: 'Grow crates/hexcell-canal-simulado/src/adaptador.rs with the adapter-side identity
+        store that `adr-0010` assigns to the adapter and to nobody else - this is what makes AC-5
+        non-vacuous. Add to `EstadoInterno` a map from an opaque simulated CONTACT identifier to
+        `IdConversacion`, and a current device identifier. Add `inyectar_desde_contacto(contacto,
+        contenido, deduplicacion)`, which resolves the contacts `IdConversacion` from the map -
+        creating a fresh opaque value the first time - builds the `EventoEntrante` with it, anchors
+        the window and delivers it through the existing mpsc channel. Add `re_emparejar(dispositivo
+        _nuevo)`, which replaces the device identifier and clears whatever is device-scoped, while
+        LEAVING THE CONTACT MAP UNTOUCHED. Document, at ~100 columns, that the map is keyed by
+        contact only and never by device, that this is precisely the separation `adr-0010` demands
+        between the identity store and the transports session credentials, and that a device change
+        must therefore be invisible to the thread. Keep every `Mutex` guard dropped before any
+        `await`, or the future returned by `send` stops being `Send` and violates the ports bound.
+        Do not change the existing `inyectar`, `forzar`, `forzar_siguiente`, `forzar_averia` or
+        `envios_capturados` behaviour: HEX-004s tests depend on them.'
+      files:
+        - crates/hexcell-canal-simulado/src/adaptador.rs
+      step: 5
+    - action: 'Update crates/hexcell-canal-simulado/src/lib.rs to re-export whatever the new
+        contact/re-pairing API needs, and add `hexcell-canal-contrato` as a DEV-dependency in
+        crates/hexcell-canal-simulado/Cargo.toml with an inline comment saying it is dev-only on
+        purpose: the battery is test scaffolding and must never travel inside the cell binary, which
+        already carries this crate as a regular dependency.'
+      files:
+        - crates/hexcell-canal-simulado/src/lib.rs
+        - crates/hexcell-canal-simulado/Cargo.toml
+      step: 6
+    - action: 'Write crates/hexcell-canal-simulado/tests/contrato_del_puerto.rs: implement
+        `BancoDeCanal` and `BancoConRelojControlable` for a small bench type that owns an
+        `AdaptadorSimulado` plus its `RelojDePrueba`, then run every battery scenario from
+        `#[tokio::test]` functions. This file is the proof that the battery is genuinely reusable -
+        it consumes the battery from OUTSIDE the crate that defines it, exactly as B-1 will - and it
+        is the only place in this task where the simulated adapter and the battery meet. The
+        implementation of `avanzar` is a one-liner over `RelojDePrueba::avanzar`, which is why the
+        24 h expiry runs in microseconds of wall time and yields the same verdict on every run.'
+      files:
+        - crates/hexcell-canal-simulado/tests/contrato_del_puerto.rs
+      step: 7
+    - action: 'Extend crates/hexcell-canal-simulado/tests/adaptador_simulado.rs with the
+        ADAPTER-level half of AC-5: the same contact injected before and after `re_emparejar`
+        resolves to the same `IdConversacion`, and two different contacts resolve to two different
+        ones. Keep every test already in the file untouched and passing.'
+      files:
+        - crates/hexcell-canal-simulado/tests/adaptador_simulado.rs
+      step: 8
+    - action: 'Write crates/hexcell/src/deduplicacion.rs. `RegistroDeDeduplicacion` holds a map from
+        `IdDeduplicacion` to the `SystemTime` at which it was first seen, the monotonic maximum
+        timestamp observed so far, and THE RETENTION WINDOW IT WAS CONSTRUCTED WITH - the window is a
+        constructor parameter, not a hardcoded constant, per the human decision of 2026-07-30. Its
+        single operation takes the event id and the events `marca_temporal` and returns a two-valued
+        verdict - new or duplicate - pruning on the way in every entry older than
+        `horizonte - ventana`. Declare `VENTANA_DE_RETENCION_DEDUPLICACION_POR_DEFECTO` as a
+        `Duration` constant of ONE HOUR with the justification required by AC-8 written at the
+        declaration and phrased functionally, naming no vendor: normal redelivery is either an
+        immediate retry of an unconfirmed delivery or a replay of what was pending when the transport
+        reconnected, both within minutes, and one hour covers a restart or a full retry cycle with a
+        wide margin. State at that same declaration that the DEFINITIVE value is an open product
+        decision, registered as Pendiente in docs/STATUS.md, so nobody mistakes the default for a
+        settled number. Add a documented hard cap on retained entries so a burst cannot grow the map
+        without bound against NFR-01 whatever window is configured. Document the
+        AC-9 behaviour explicitly and in the terms the plans risk table already fixed: a redelivery
+        arriving beyond the window is processed AGAIN, as a new event, and that is an accepted,
+        documented residual limitation rather than a bug. State that this structure is transitional
+        and that HEX-006 backs it with `sessions.db`. Architectural role: application-level policy;
+        no domain rules and no transport knowledge.'
+      files:
+        - crates/hexcell/src/deduplicacion.rs
+      step: 9
+    - action: 'Write crates/hexcell/src/conversaciones.rs: `EstadoDeConversaciones`, a map from
+        `IdConversacion` to that threads in-memory state - the history of what came in and what went
+        out, and the queue of replies deferred because the service window was closed. Expose
+        recording an inbound event, recording an outbound message, reading a threads history for the
+        tests, enqueuing a deferred reply and draining the deferred replies of one conversation. The
+        deferred queue is BOUNDED with a documented drop-oldest rule at the cap. The whole module
+        must be documented as TRANSITIONAL, explicitly replaced by `sessions.db` in HEX-006, and it
+        must not contain a schema, a migration, a SQL statement or any SQLite mention beyond naming
+        HEX-006 as the owner of the real persistence. It also must never construct, interpret or
+        invert an `IdConversacion`: it only uses values received from the port as opaque map keys,
+        which is AC-6 at the structural level. Architectural role: in-memory conversational state.'
+      files:
+        - crates/hexcell/src/conversaciones.rs
+      step: 10
+    - action: 'Rework crates/hexcell/src/motor.rs to wire the three new behaviours, in this exact
+        order per event, because the order is the behaviour. First deduplication: ask the registry
+        with the events `deduplicacion` and `marca_temporal`, and on a duplicate verdict log a
+        distinct Spanish line and `continue` WITHOUT dispatching to the processor and WITHOUT
+        sending anything - that is AC-7 literally. Second, flush any replies deferred for that
+        conversation, because the arriving event is the client writing again and the window has
+        reopened; flush them BEFORE the new events own reply so the thread stays chronological.
+        Third, record the inbound event in the conversation state, dispatch to the processor and
+        send as today. Keep the existing `match` naming all five `ResultadoEnvio` variants plus
+        `Err` with NO wildcard arm, and change only the `FueraDeVentana` arm, which now applies the
+        policy - enqueue the reply for that conversation - instead of merely logging. Document the
+        policy in the module docs: deferral was chosen over escalation to a human because there is
+        no operator channel to escalate to until later stages, the queue is bounded, and a reply
+        rejected again on flush is re-queued subject to the same cap, with no retry loop, no backoff
+        timer and no background task. No `unwrap()`, no `expect()`, no `panic!`, and no transport
+        name anywhere in this file, comments included.'
+      files:
+        - crates/hexcell/src/motor.rs
+      step: 11
+    - action: 'Declare the two new modules in crates/hexcell/src/lib.rs and adapt
+        crates/hexcell/src/main.rs to whatever `Motor::nuevo` now takes, keeping main a thin
+        composition root: the static `match` on `CanalSeleccionado`, no signal handling, no
+        readiness logic. If the engine-side tests need the contract crate, add it as a
+        DEV-dependency of crates/hexcell/Cargo.toml with an inline justification; do not add it as a
+        regular dependency under any circumstance.'
+      files:
+        - crates/hexcell/src/lib.rs
+        - crates/hexcell/src/main.rs
+        - crates/hexcell/Cargo.toml
+      step: 12
+    - action: 'Make the retention window configurable in crates/hexcell/src/configuracion.rs,
+        following the `HEXCELL_CAPACIDAD_COLA` precedent in that same file to the letter rather than
+        inventing a second mechanism. Add the public constant naming the OPTIONAL variable
+        HEXCELL_VENTANA_DEDUPLICACION_SEGUNDOS, add a `ventana_deduplicacion: Duration` field to
+        `Configuracion`, and parse it in `desde_entorno` with the same shape as the capacity: on a
+        present value parse the seconds and, on failure, return `ValorInvalido` naming the variable
+        and its expected format in Spanish; on an absent value fall back to
+        `VENTANA_DE_RETENCION_DEDUPLICACION_POR_DEFECTO`, IMPORTED from crate::deduplicacion rather
+        than restated as a second literal - one number, one declaration, one justification. Thread
+        the value from main.rs into the registry the Motor owns. Preserve every HEX-004 invariant of
+        this file, which was closed until this task reopened it for exactly this addition: no
+        unwrap(), no expect(), no panic, every existing variable still parsed, and the failure path
+        still terminating before anything binds.'
+      files:
+        - crates/hexcell/src/configuracion.rs
+        - crates/hexcell/src/main.rs
+      step: 13
+    - action: 'Write crates/hexcell/tests/politica_fuera_de_ventana.rs, which is AC-3 and AC-4 at the
+        engine level. Drive the real `Motor` over an `AdaptadorSimulado` in restrictive mode, force
+        `FueraDeVentana` for a conversation, and assert the reply is DEFERRED - not dropped, not
+        turned into a generic error - and then that it is actually re-sent when the same contact
+        writes again, before that new events own reply. Record in the file header why this test
+        lives here and not inside the reusable battery: the battery describes what a PORT must do
+        and must stay usable by any adapter crate, while this describes what the CORE does in
+        response, and putting it in the battery would force B-1 to depend on the cell binary.'
+      files:
+        - crates/hexcell/tests/politica_fuera_de_ventana.rs
+      step: 14
+    - action: 'Write crates/hexcell/tests/deduplicacion.rs covering AC-7, AC-8 and AC-9: the same
+        `IdDeduplicacion` delivered twice inside the window is processed once and produces exactly
+        one captured send; the retention constant is exercised at both sides of its boundary with
+        explicit timestamps, so the test is deterministic and needs no clock at all; and a
+        redelivery arriving beyond the window is processed AGAIN, pinning the documented degraded
+        behaviour so a future change has to argue with a test. Write
+        crates/hexcell/tests/continuidad_de_hilo.rs covering AC-5 and AC-6 at the engine level:
+        inject from a contact, build history, `re_emparejar`, inject from the same contact again,
+        and assert the same `IdConversacion` and the earlier history intact and continued in the
+        same thread. Extend crates/hexcell/tests/motor.rs so its existing coverage still holds
+        against the reworked engine.'
+      files:
+        - crates/hexcell/tests/deduplicacion.rs
+        - crates/hexcell/tests/continuidad_de_hilo.rs
+        - crates/hexcell/tests/motor.rs
+      step: 15
+    - action: 'Fix `el_binario_no_vincula_nada_si_la_configuracion_es_invalida` in
+        crates/hexcell/tests/configuracion.rs (AC-10). Bind a `std::net::TcpListener` to
+        127.0.0.1:0, read back the port the OS assigned, drop the listener so the port is free AND
+        verified free, pass that address to the child through HEXCELL_DIRECCION_SALUD, and assert
+        the child exits non-zero naming HEXCELL_RUTA_DATOS and that connecting to that address is
+        refused. Remove the literal 8081 from the file entirely. Add a comment recording the
+        residual race - another process could claim the freed port between the drop and the connect
+        - and why it is still unconditionally better than assuming a fixed common developer port is
+        free on the machine running the suite.'
+      files:
+        - crates/hexcell/tests/configuracion.rs
+      step: 16
+    - action: 'Add to the `## Definido` section of docs/STATUS.md exactly two entries dated
+        2026-07-30 and attributed to HEX-005: one recording the FueraDeVentana policy as deferral
+        with a bounded queue, why escalation to a human was rejected for now, and that it is
+        documented in code rather than in an ADR because plan task 6 asks for a documented decision
+        and not for an ADR; one recording that the deduplication retention window defaults to one
+        hour and is configurable through HEXCELL_VENTANA_DEDUPLICACION_SEGUNDOS, with its functional
+        justification and the accepted residual limitation for redeliveries beyond it. Then add to
+        the `## Pendiente` section exactly ONE entry, also dated 2026-07-30, recording that the
+        DEFINITIVE value of that window is an open product decision: the one hour that ships is a
+        documented default chosen against the expected redelivery horizon, not a settled figure, and
+        it is to be revisited with real traffic - HEX-006 is where it gains persistence. Naming the
+        environment variable in that entry is what lets a verify command anchor to it. Do not rewrite
+        or delete any existing bullet, Definido or Pendiente, and write nothing that marks etapa A-2
+        as closed - AC-13 treats that file as a tripwire and the stage closes with HEX-008.'
+      files:
+        - docs/STATUS.md
+      step: 17
+summary: Reusable ChannelAdapter contract battery crate, engine policy deferring replies on
+    FueraDeVentana, thread continuity across re-pairing, in-memory dedup with a documented window,
+    and the 8081 test fix.
+symbols:
+    - BancoDeCanal
+    - BancoConRelojControlable
+    - verificar_contrato_del_puerto
+    - RegistroDeDeduplicacion
+    - VENTANA_DE_RETENCION_DEDUPLICACION_POR_DEFECTO
+    - HEXCELL_VENTANA_DEDUPLICACION_SEGUNDOS
+    - Configuracion::ventana_deduplicacion
+    - VeredictoDeDeduplicacion
+    - EstadoDeConversaciones
+    - Motor::ejecutar
+    - Motor::nuevo
+    - AdaptadorSimulado::inyectar_desde_contacto
+    - AdaptadorSimulado::re_emparejar
+    - el_binario_no_vincula_nada_si_la_configuracion_es_invalida
+task_id: HEX-005
+test_scenarios:
+    - covers:
+        - AC-1
+      statement: The battery is invoked from crates/hexcell-canal-simulado/tests/contrato_del_puerto.rs
+        - that is, from OUTSIDE the crate that defines it - against a bench wrapping AdaptadorSimulado
+        in restrictive mode, and every scenario passes; the battery crate itself names no concrete
+        adapter type anywhere in its sources.
+    - covers:
+        - AC-1
+      statement: 'crates/hexcell-canal-contrato compiles with hexcell-core as its only dependency and
+        no tokio, proving the battery imposes no runtime on a future consumer, and it is a member of
+        the workspace so `cargo test --workspace` runs it.'
+    - covers:
+        - AC-2
+      statement: The battery forces FueraDeVentana, PlantillaRequerida, LimiteDeTasa and
+        DestinatarioInvalido on four distinct conversations, observes each one distinctly through a
+        match with no wildcard arm, and asserts the four values are pairwise distinct.
+    - covers:
+        - AC-2
+      statement: 'With the bench clock controllable, a RespuestaLibre inside the window returns
+        Aceptado with estado_ventana Abierta; after advancing past DURACION_VENTANA_SERVICIO the same
+        send returns FueraDeVentana with estado_ventana Cerrada. The sequence completes in well under
+        a second of wall time and repeats identically, proving it does not read SystemTime::now().'
+    - covers:
+        - AC-2
+      statement: A forced rejection queued for one call applies to that call only - the next send on
+        the same conversation with an open window returns Aceptado - so the four cases stay
+        separable instead of blurring into a sticky global mode.
+    - covers:
+        - AC-3
+      statement: 'The Motor sending a RespuestaLibre to a conversation whose window is closed does
+        not merely log: the reply is enqueued in the conversation state as a deferred reply, which is
+        observable, and the engine continues consuming without panicking and without stopping the
+        loop.'
+    - covers:
+        - AC-4
+      statement: 'After the deferral, the same contact writes again; the engine re-sends the deferred
+        reply BEFORE the new events own reply, and the adapters captured sends show that order.
+        FueraDeVentana therefore drives a documented policy rather than an unspecified path.'
+    - covers:
+        - AC-3
+      statement: The FueraDeVentana arm remains one arm of a match that still names all five
+        ResultadoEnvio variants plus Err with no wildcard arm, so adding a variant to the closed enum
+        still breaks compilation of motor.rs.
+    - covers:
+        - AC-5
+      statement: A contact writes and builds history; re_emparejar assigns a new device identifier;
+        the same contact writes again and the engine assigns the event to the same IdConversacion,
+        with the earlier history intact and continued in that same thread.
+    - covers:
+        - AC-5
+      statement: At the adapter level the same contact resolves to the same IdConversacion before and
+        after re-pairing, and two different contacts resolve to two different IdConversacion values,
+        so the mapping is anchored to the contact and never to the device.
+    - covers:
+        - AC-6
+      statement: 'No file under crates/hexcell/src/ constructs an IdConversacion: IdConversacion::nuevo
+        appears nowhere in that directory, the engine only receives the value through the port and
+        uses it as an opaque map key, and nothing parses, splits or reverses it.'
+    - covers:
+        - AC-7
+      statement: The same IdDeduplicacion delivered twice inside the retention window causes exactly
+        one dispatch to the processor and exactly one captured outbound send; the second delivery is
+        discarded with its own log line.
+    - covers:
+        - AC-8
+      statement: VENTANA_DE_RETENCION_DEDUPLICACION_POR_DEFECTO is declared as a Duration constant of
+        one hour with a justification comment at its declaration that reasons about the channel's
+        expected redelivery horizon and records that the definitive value is still an open product
+        decision, and the registry also carries a documented hard cap on retained entries.
+    - covers:
+        - AC-8
+      statement: 'The registry takes its retention window as a constructor parameter rather than
+        reading a constant, and Configuracion exposes ventana_deduplicacion: with
+        HEXCELL_VENTANA_DEDUPLICACION_SEGUNDOS absent from the environment the value is the
+        one-hour default, and with it set to an explicit number that number is used instead.'
+    - covers:
+        - AC-8
+      statement: HEXCELL_VENTANA_DEDUPLICACION_SEGUNDOS set to a value that is not a positive integer
+        makes Configuracion::desde_entorno return ValorInvalido naming that variable and its expected
+        format, exactly like the pre-existing HEXCELL_CAPACIDAD_COLA, and the binary still exits
+        non-zero before binding anything.
+    - covers:
+        - AC-8
+      statement: The one-hour default is declared exactly once, in crates/hexcell/src/deduplicacion.rs,
+        and crates/hexcell/src/configuracion.rs references that constant instead of restating the
+        number, so the default cannot drift away from the justification that documents it.
+    - covers:
+        - AC-9
+      statement: A redelivery whose entry has already been pruned - the event stream advanced beyond
+        the retention window - is processed again as a new event, deliberately and with a log line,
+        with no panic and no unspecified path; the test pins that documented degraded behaviour.
+    - covers:
+        - AC-9
+      statement: Every deduplication assertion is made with explicit SystemTime values supplied by
+        the test, so the registry needs no clock, the suite never sleeps, and the verdicts are
+        identical on every run.
+    - covers:
+        - AC-10
+      statement: 'el_binario_no_vincula_nada_si_la_configuracion_es_invalida obtains a free port by
+        binding 127.0.0.1:0 and dropping the listener, passes it to the child via
+        HEXCELL_DIRECCION_SALUD, and asserts the child exits non-zero and nothing is listening there;
+        the literal 8081 no longer appears in crates/hexcell/tests/configuracion.rs.'
+    - covers:
+        - AC-11
+      statement: '`cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D warnings` and
+        `cargo test --workspace` all terminate with no errors and no findings on the resulting tree,
+        including the new crate and every new test file.'
+    - covers:
+        - AC-12
+      statement: 'crates/hexcell-core/Cargo.toml keeps an empty [dependencies] table - no tokio, no
+        HTTP crate, no hexcell-canal-contrato - and no file under crates/hexcell-core/ is added,
+        removed or modified; the deduplication registry and the FueraDeVentana policy both live under
+        crates/hexcell/src/.'
+    - covers:
+        - AC-13
+      statement: 'The diff contains no SQLite schema, migration, pool or SQL statement, no SIGTERM or
+        signal handling, no real readiness probe in salud.rs, and no LLM provider interface; migrations/
+        still does not exist and no *.db, *.db-wal, *.db-shm or .env file is tracked by git.'
+    - covers:
+        - AC-13
+      statement: docs/STATUS.md gains exactly two Definido entries dated 2026-07-30 attributed to
+        HEX-005, no existing bullet is rewritten, and no wording anywhere in the file marks etapa A-2
+        as closed, finished or cerrada.
+    - covers:
+        - AC-8
+        - AC-13
+      statement: docs/STATUS.md also gains one Pendiente entry dated 2026-07-30 recording that the
+        definitive deduplication retention window is an open product decision and naming
+        HEXCELL_VENTANA_DEDUPLICACION_SEGUNDOS, so the shipped one hour is readable as a documented
+        default rather than a settled figure.
+    - covers:
+        - AC-6
+        - AC-13
+      statement: crates/hexcell/src/motor.rs, procesador.rs, deduplicacion.rs and conversaciones.rs
+        contain no occurrence of whatsmeow, JID, wa_id, Cloud API or Graph API in code or comments,
+        and no file in the diff states or implies that Fase B replaces, substitutes or closes Fase A
+        or that the sidecar is retired.

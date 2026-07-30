@@ -1,0 +1,251 @@
+acceptance:
+    human_gate: true
+execution:
+    branch: ai/HEX-004
+    mode: worktree_edit
+forbid:
+    behaviors:
+        - 'Do not add, remove, rename or edit anything under crates/hexcell-core, including the ChannelAdapter trait, CicloDeVidaSesion, the canonical types, DURACION_VENTANA_SERVICIO, the identity types, its Cargo.toml or its tests. That crate is closed by HEX-002. In particular, do NOT add a recv/subscribe/stream method to ChannelAdapter to solve the delivery problem: delivery is a bounded tokio mpsc owned by the adapter, per the blueprint.'
+        - Do not add tokio, any HTTP crate, any async runtime, hexcell-canal-simulado, or any other dependency to crates/hexcell-core/Cargo.toml. Its [dependencies] table stays empty; that is an acceptance criterion (AC-9), not a style preference.
+        - Do not implement ChannelAdapter anywhere except crates/hexcell-canal-simulado. Exactly one implementation exists in the tree after this task.
+        - Do not use axum, tiny-http, actix-web, warp, rocket, tide, reqwest, ureq or any HTTP client crate. The HTTP stack is hyper 1.x plus hyper-util, http-body-util and bytes, and nothing else. Do not introduce an HTTP runtime alternative to Tokio.
+        - Do not add tracing, log, env_logger, serde, serde_json, clap, anyhow, thiserror, rusqlite, sqlx, rand or chrono. Structured logging is plan task 15 (HEX-008), CLI parsing belongs to hexcell-admin, and persistence is HEX-006/HEX-007. Errors are hand-written enums with Display and std::error::Error impls.
+        - Do not enable tokio's rt-multi-thread feature or use the multi-threaded runtime flavor. One cell serves low traffic and a per-cell worker pool is the wrong trade on the target hardware (NFR-01).
+        - Do not add any dependency to crates/hexcell/Cargo.toml, crates/hexcell-canal-simulado /Cargo.toml or the root [workspace.dependencies] without an inline comment in that same manifest justifying why it is there and what was rejected instead.
+        - Do not call SystemTime::now(), Instant::now(), tokio::time::sleep or tokio::time::pause anywhere in crates/hexcell-canal-simulado/src/adaptador.rs, and do not write the literal text SystemTime::now in that file's comments either - a verify grep is textual and cannot tell code from prose, so the explanation of why the wall clock is banned belongs in reloj.rs. The window is computed only from the injected Reloj, and RelojDelSistema in reloj.rs is the single permitted caller of SystemTime::now().
+        - Do not restate the 24 h value as 86400, as 24 * 60 * 60, or as any literal Duration in the simulated adapter. Import DURACION_VENTANA_SERVICIO from hexcell_core::canal.
+        - Do not call unwrap(), expect(), panic!, unreachable! or todo! in crates/hexcell/src/motor.rs or crates/hexcell/src/configuracion.rs, and do not write a wildcard arm (_ =>) over ResultadoEnvio anywhere. The match must name all five variants so a future variant breaks compilation.
+        - Do not let the process panic on a configuration error. main returns std::process::ExitCode, prints the error's Display form to stderr and returns ExitCode::FAILURE before any listener is bound and before the engine starts. [profile.release] sets panic = "abort", so a panic would produce no usable message at all.
+        - 'Do not bind the health server to 0.0.0.0, to :: or to any non-loopback address by default. The default is 127.0.0.1; only an explicit HEXCELL_DIRECCION_SALUD may say otherwise.'
+        - 'Do not implement real readiness logic in GET /health/ready: no SQLite pool probe, no channel session-state probe, no adapter call. It returns a fixed body that says in Spanish that the real check arrives in HEX-006, and it must not claim to have checked anything.'
+        - Do not add any route beyond GET /health/live and GET /health/ready. No messaging route, no metrics route, no admin route, no public exposure.
+        - Do not write a reusable port contract battery generic over any ChannelAdapter implementation. That is HEX-005. The new tests name AdaptadorSimulado concretely.
+        - Do not open, create or reference sessions.db, knowledge_live.db or any SQLite file; do not write a schema, a migration, a pool or a WAL setting. Persistence is HEX-006/HEX-007 and this task processes in memory only.
+        - Do not implement SIGTERM handling, graceful shutdown, in-flight drain or SQLite checkpoint. That is plan task 12 / HEX-008.
+        - Do not implement the core's FueraDeVentana policy (queueing the reply or escalating to a human). The engine logs the outcome and continues; the policy is plan task 6 / HEX-006.
+        - Do not implement deduplication, idempotency or a retention window over IdDeduplicacion. That is plan task 10 / HEX-007.
+        - Do not add an LLM provider interface, real or simulated. That is plan task 11 / HEX-008.
+        - Do not add product logic to the processor beyond echoing the inbound text. It is an extension point with no business rules.
+        - 'Do not name whatsmeow, JID, wa_id, Cloud API or Graph API in crates/hexcell/src/motor.rs or crates/hexcell/src/procesador.rs, in code or in comments. Those words are legitimate only inside crates/hexcell-canal-simulado, which exists to imitate the restrictive case. The verify greps on those two files are textual and cannot tell code from prose: if the engine docs need to explain that every adapter delivers events through the same mpsc convention, write `todo adaptador` and put any transport-specific wording in the simulated crate.'
+        - Do not import, link, vendor or reference whatsmeow, any Go code, any IPC socket or the sidecar from Rust. The whatsmeow adapter and the IPC protocol are etapa A-3.
+        - Do not state or imply anywhere that Fase B replaces, substitutes or closes Fase A, or that the sidecar is retired or transitional. The own channel is the default and permanent channel and the sidecar is its permanent cost.
+        - 'Do not weaken the FR-12 distinction in prose: the TYPE admits the restrictive outcome, the POLICY of each adapter decides whether it produces it. The simulated adapter enforcing a 24 h window must never be written as evidence that the own-channel adapter should.'
+        - Do not write repository prose, doc comments, error messages or commit messages in English. Rust identifiers, crate names and existing English identifiers stay in idiomatic English; the language rule governs prose, not identifiers.
+        - Do not add Co-Authored-By or any AI-attribution trailer to any commit message. Conventional commits in Spanish only.
+        - Do not write a relative date anywhere. Every date is absolute (2026-07-29).
+        - Do not commit any *.db, *.db-wal, *.db-shm or .env* file, and do not hardcode any secret, token, API key or credential in source, manifests or test fixtures - not even as an example value in configuration documentation.
+        - Do not hand-write, hand-edit or prune Cargo.lock. Let cargo generate it and commit it verbatim; a hand-touched lock file is worse than none. The only .gitignore change allowed is removing the single Cargo.lock line - do not touch /target, the Go section, the SQLite section, the secrets section or the editor section.
+        - 'Do not create, renumber, reorder, retitle or edit any docs/adr file other than the new adr-0016-convencion-de-entrega-de-eventos.md. In particular do NOT take number 0003: the index reserves it for persistencia-dual (HEX-006) even though no such file exists on disk yet, and numbers are never reused or reordered. Add exactly one row to the table in docs/adr/README.md and leave rows 0001 to 0015 and all surrounding prose byte-identical.'
+        - Do not write anything in docs/STATUS.md that marks etapa A-2 as closed, finished or cerrada, and do not rewrite or delete any existing bullet, Definido or Pendiente. Only add new Definido entries dated 2026-07-29 and attributed to HEX-004. The stage closes with HEX-008 and AC-10 treats this file as a tripwire.
+        - Do not reach any network from tests. Only 127.0.0.1 loopback sockets bound by the test itself are allowed.
+        - Do not change [workspace], [workspace.package] or [profile.release] in the root Cargo.toml. Only add the members entry for the new crate and the new [workspace.dependencies] table.
+        - Do not hold a std::sync::Mutex guard across an .await inside the simulated adapter; the future returned by send() must stay Send to satisfy the port's bound.
+    files:
+        - crates/hexcell-core/*
+        - crates/hexcell-core/**
+        - docs/adr/adr-0001-licencia.md
+        - docs/adr/adr-0002-estructura-workspace.md
+        - docs/adr/adr-0008-estrategia-canal-dos-fases.md
+        - docs/adr/adr-0009-whatsmeow-adaptador-fase-a.md
+        - docs/adr/adr-0010-puerto-de-canal.md
+        - docs/adr/adr-0014-canal-propio-permanente.md
+        - docs/adr/adr-0015-politica-de-convivencia-con-el-baneo.md
+        - crates/hexcell-admin/Cargo.toml
+        - crates/hexcell-admin/src/main.rs
+        - crates/hexcell-storage/Cargo.toml
+        - crates/hexcell-storage/src/lib.rs
+        - crates/hexcell-meta/Cargo.toml
+        - crates/hexcell-meta/src/lib.rs
+        - sidecar/*
+        - sidecar/**
+        - docs/PRD.md
+        - docs/bitacora-de-descartes.md
+        - docs/plan/*
+        - docs/plan/**
+        - docs/cotejo-puerto-de-canal-cloud-api.md
+        - README.md
+        - CLAUDE.md
+        - CONTRIBUTING.md
+        - LICENSE
+        - rust-toolchain.toml
+        - rustfmt.toml
+        - clippy.toml
+        - .github/*
+        - .github/**
+        - Dockerfile*
+        - docker-compose*
+        - migrations/*
+        - migrations/**
+goal: |
+    Turn A-2 plan tasks 1 to 4 into Rust code inside crates/hexcell and one new crate crates/hexcell-canal-simulado. The hexcell binary stops being the A-1 skeleton: it reads its configuration from environment variables and fails before binding anything if a mandatory one is missing or unparseable, serves GET /health/live (real) and GET /health/ready (documented skeleton owned by HEX-006) on a loopback-by-default internal address, and runs a Tokio loop that consumes EventoEntrante, dispatches to a minimal echo processor and emits the reply via send(conversacion, MensajeSaliente::RespuestaLibre), matching all five ResultadoEnvio variants plus the Err case without ever assuming Aceptado. The new simulated adapter imitates the Meta Cloud API's restrictive semantics - deterministic event injection, captured sends, a 24 h service window that expires against an injectable test clock rather than the wall clock, and all four FR-12 rejections forceable and distinguishable. Two decisions the human settled on 2026-07-29 also land here: Cargo.lock starts being versioned (its .gitignore line goes away and the generated lock is committed), and the event-delivery convention gets its own ADR, numbered 0016 because docs/adr/README.md is the source of truth and already reserves 0001 through 0015 - including 0003 for the persistencia dual that HEX-006 will write. No persistence, no real channel, no contract battery, no SIGTERM handling, and hexcell-core is not touched at all.
+limits:
+    max_diff_lines: 5400
+    max_files_changed: 24
+    per_class:
+        - glob: Cargo.lock
+          max_diff_lines: 2000
+        - glob: .gitignore
+          max_diff_lines: 12
+        - glob: docs/adr/**
+          max_diff_lines: 340
+        - glob: docs/STATUS.md
+          max_diff_lines: 60
+        - glob: Cargo.toml
+          max_diff_lines: 70
+        - glob: crates/hexcell/Cargo.toml
+          max_diff_lines: 90
+        - glob: crates/hexcell/src/**
+          max_diff_lines: 1100
+        - glob: crates/hexcell/tests/**
+          max_diff_lines: 700
+        - glob: crates/hexcell-canal-simulado/Cargo.toml
+          max_diff_lines: 60
+        - glob: crates/hexcell-canal-simulado/src/**
+          max_diff_lines: 750
+        - glob: crates/hexcell-canal-simulado/tests/**
+          max_diff_lines: 380
+read:
+    - .ai/tasks/active/HEX-004-new-spec/00-spec.yaml
+    - .ai/tasks/active/HEX-004-new-spec/01-blueprint.yaml
+    - crates/hexcell-core/src/canal.rs
+    - crates/hexcell-core/src/identidad.rs
+    - crates/hexcell-core/src/lib.rs
+    - crates/hexcell-core/Cargo.toml
+    - crates/hexcell-core/tests/exhaustividad_resultado_envio.rs
+    - crates/hexcell-core/tests/guardian_identidad_conversacion.rs
+    - Cargo.toml
+    - crates/hexcell/Cargo.toml
+    - crates/hexcell/src/main.rs
+    - rust-toolchain.toml
+    - rustfmt.toml
+    - clippy.toml
+    - docs/PRD.md
+    - docs/plan/fase-a-2-nucleo-persistencia.md
+    - docs/adr/adr-0010-puerto-de-canal.md
+    - docs/adr/adr-0002-estructura-workspace.md
+    - docs/adr/README.md
+    - docs/STATUS.md
+    - .gitignore
+    - CLAUDE.md
+    - CONTRIBUTING.md
+retry_policy:
+    escalate_after: 1
+    max_attempts: 2
+summary: 'A-2 tasks 1-4: env config with early failure, internal hyper health routes, Tokio engine over ChannelAdapter, and a simulated Cloud-API-semantics adapter with an injectable clock.'
+task_id: HEX-004
+touch:
+    - Cargo.toml
+    - crates/hexcell/Cargo.toml
+    - crates/hexcell/src/main.rs
+    - crates/hexcell/src/lib.rs
+    - crates/hexcell/src/configuracion.rs
+    - crates/hexcell/src/salud.rs
+    - crates/hexcell/src/motor.rs
+    - crates/hexcell/src/procesador.rs
+    - crates/hexcell/src/*.rs
+    - crates/hexcell/tests/configuracion.rs
+    - crates/hexcell/tests/motor.rs
+    - crates/hexcell/tests/salud_http.rs
+    - crates/hexcell/tests/*.rs
+    - crates/hexcell-canal-simulado/Cargo.toml
+    - crates/hexcell-canal-simulado/src/lib.rs
+    - crates/hexcell-canal-simulado/src/reloj.rs
+    - crates/hexcell-canal-simulado/src/adaptador.rs
+    - crates/hexcell-canal-simulado/src/*.rs
+    - crates/hexcell-canal-simulado/tests/adaptador_simulado.rs
+    - crates/hexcell-canal-simulado/tests/*.rs
+    - .gitignore
+    - Cargo.lock
+    - docs/adr/adr-0016-convencion-de-entrega-de-eventos.md
+    - docs/adr/README.md
+    - docs/STATUS.md
+verify:
+    commands:
+        - cargo fmt --check
+        - cargo clippy --workspace --all-targets -- -D warnings
+        - cargo clippy --workspace -- -D warnings
+        - cargo test --workspace
+        - grep -q 'hexcell-canal-simulado' Cargo.toml
+        - grep -qE '^\[workspace\.dependencies\]' Cargo.toml
+        - grep -q '\[workspace\]' Cargo.toml
+        - grep -q '\[workspace.package\]' Cargo.toml
+        - grep -q '\[profile.release\]' Cargo.toml
+        - test -f crates/hexcell/src/lib.rs
+        - test -f crates/hexcell/src/configuracion.rs
+        - test -f crates/hexcell/src/salud.rs
+        - test -f crates/hexcell/src/motor.rs
+        - test -f crates/hexcell/src/procesador.rs
+        - test -f crates/hexcell-canal-simulado/Cargo.toml
+        - test -f crates/hexcell-canal-simulado/src/reloj.rs
+        - test -f crates/hexcell-canal-simulado/src/adaptador.rs
+        - grep -qE '^[[:space:]]*hyper[[:space:]]*=' crates/hexcell/Cargo.toml
+        - grep -qE '^[[:space:]]*tokio[[:space:]]*=' crates/hexcell/Cargo.toml
+        - grep -qE '^[[:space:]]*hexcell-core[[:space:]]*=' crates/hexcell/Cargo.toml
+        - grep -qE '^[[:space:]]*hexcell-canal-simulado[[:space:]]*=' crates/hexcell/Cargo.toml
+        - '! grep -qE ''^[[:space:]]*(axum|tiny-http|actix-web|warp|rocket|tide|reqwest|ureq)[[:space:]]*='' crates/hexcell/Cargo.toml'
+        - '! grep -qE ''^[[:space:]]*(tracing|log|serde|serde_json|clap|anyhow|thiserror|rusqlite|sqlx|chrono|rand)[[:space:]]*='' crates/hexcell/Cargo.toml'
+        - grep -q 'current_thread' crates/hexcell/src/main.rs
+        - '! grep -qE ''^[[:space:]]*(tokio|hyper|hyper-util|http-body-util|bytes|axum|hexcell-canal-simulado|hexcell-storage)[[:space:]]*='' crates/hexcell-core/Cargo.toml'
+        - '! grep -rqE ''impl(<[^>]*>)? *ChannelAdapter *for'' crates/hexcell-core/'
+        - '! grep -rqE ''impl(<[^>]*>)? *ChannelAdapter *for'' crates/hexcell/src/'
+        - grep -rqE 'impl(<[^>]*>)? *ChannelAdapter *for' crates/hexcell-canal-simulado/src/
+        - grep -q 'health/live' crates/hexcell/src/salud.rs
+        - grep -q 'health/ready' crates/hexcell/src/salud.rs
+        - grep -q 'HEX-006' crates/hexcell/src/salud.rs
+        - '! grep -qE ''^[[:space:]]*use [^;]*(rusqlite|sqlx)'' crates/hexcell/src/salud.rs'
+        - grep -q '127.0.0.1' crates/hexcell/src/configuracion.rs
+        - '! grep -qE ''"0\.0\.0\.0'' crates/hexcell/src/configuracion.rs'
+        - grep -q 'HEXCELL_RUTA_DATOS' crates/hexcell/src/configuracion.rs
+        - grep -q 'HEXCELL_DIRECCION_SALUD' crates/hexcell/src/configuracion.rs
+        - grep -q 'HEXCELL_CANAL' crates/hexcell/src/configuracion.rs
+        - grep -q 'ExitCode' crates/hexcell/src/main.rs
+        - '! grep -qE ''\.(unwrap|expect)\('' crates/hexcell/src/motor.rs'
+        - '! grep -qE ''\.(unwrap|expect)\('' crates/hexcell/src/configuracion.rs'
+        - '! grep -qE ''panic!|unreachable!|todo!'' crates/hexcell/src/motor.rs'
+        - grep -q 'ResultadoEnvio::Aceptado' crates/hexcell/src/motor.rs
+        - grep -q 'ResultadoEnvio::FueraDeVentana' crates/hexcell/src/motor.rs
+        - grep -q 'ResultadoEnvio::PlantillaRequerida' crates/hexcell/src/motor.rs
+        - grep -q 'ResultadoEnvio::LimiteDeTasa' crates/hexcell/src/motor.rs
+        - grep -q 'ResultadoEnvio::DestinatarioInvalido' crates/hexcell/src/motor.rs
+        - grep -qE 'Err\(' crates/hexcell/src/motor.rs
+        - '! grep -rqiE ''whatsmeow|wa_id|\bJID\b|Cloud API|Graph API'' crates/hexcell/src/motor.rs'
+        - '! grep -rqiE ''whatsmeow|wa_id|\bJID\b|Cloud API|Graph API'' crates/hexcell/src/procesador.rs'
+        - '! grep -qi ''whatsmeow'' crates/hexcell-canal-simulado/Cargo.toml'
+        - '! grep -rqE ''^\s*(use|extern crate)[^;]*whatsmeow'' crates/hexcell-canal-simulado/src/'
+        - grep -rq 'DURACION_VENTANA_SERVICIO' crates/hexcell-canal-simulado/src/
+        - '! grep -rqE ''86400|24 \* 60 \* 60|60 \* 60 \* 24'' crates/hexcell-canal-simulado/src/'
+        - '! grep -q ''SystemTime::now'' crates/hexcell-canal-simulado/src/adaptador.rs'
+        - '! grep -qE ''tokio::time::(pause|advance|sleep)'' crates/hexcell-canal-simulado/src/adaptador.rs'
+        - grep -q 'RelojDePrueba' crates/hexcell-canal-simulado/src/reloj.rs
+        - grep -q 'ResultadoEnvio::FueraDeVentana' crates/hexcell-canal-simulado/tests/adaptador_simulado.rs
+        - grep -q 'ResultadoEnvio::PlantillaRequerida' crates/hexcell-canal-simulado/tests/adaptador_simulado.rs
+        - grep -q 'ResultadoEnvio::LimiteDeTasa' crates/hexcell-canal-simulado/tests/adaptador_simulado.rs
+        - grep -q 'ResultadoEnvio::DestinatarioInvalido' crates/hexcell-canal-simulado/tests/adaptador_simulado.rs
+        - grep -q 'CARGO_BIN_EXE_hexcell' crates/hexcell/tests/salud_http.rs
+        - '! grep -rqE ''^[[:space:]]*use [^;]*(rusqlite|sqlx)'' crates/hexcell/src/ crates/hexcell-canal-simulado/src/'
+        - '! grep -rqiE ''CREATE TABLE|PRAGMA journal_mode|busy_timeout'' crates/hexcell/src/ crates/hexcell-canal-simulado/src/'
+        - '! grep -rqE ''tokio::signal|signal_hook|libc::SIG'' crates/hexcell/src/ crates/hexcell-canal-simulado/src/'
+        - '! test -d migrations'
+        - git ls-files | grep -qx 'Cargo.lock'
+        - test -s Cargo.lock
+        - '! grep -qE ''^[[:space:]]*Cargo\.lock[[:space:]]*$'' .gitignore'
+        - grep -qE '^/target' .gitignore
+        - grep -qE '^\*\.db$' .gitignore
+        - test -f docs/adr/adr-0016-convencion-de-entrega-de-eventos.md
+        - '! test -f docs/adr/adr-0003-persistencia-dual.md'
+        - grep -q 'adr-0016-convencion-de-entrega-de-eventos.md' docs/adr/README.md
+        - grep -q '2026-07-29' docs/adr/adr-0016-convencion-de-entrega-de-eventos.md
+        - grep -q 'mpsc' docs/adr/adr-0016-convencion-de-entrega-de-eventos.md
+        - grep -q 'A-3' docs/adr/adr-0016-convencion-de-entrega-de-eventos.md
+        - grep -q 'adr-0010-puerto-de-canal.md' docs/adr/README.md
+        - grep -q 'adr-0003-persistencia-dual.md' docs/adr/README.md
+        - grep -q 'adr-0015-politica-de-convivencia-con-el-baneo.md' docs/adr/README.md
+        - grep -q 'HEX-004' docs/STATUS.md
+        - grep -q '2026-07-29' docs/STATUS.md
+        - '! grep -qiE ''etapa A-2 (cerrada|completada|finalizada|terminada)'' docs/STATUS.md'
+        - '! grep -rqiE ''sustituye a la fase a|reemplaza la fase a|cierra la fase a|el sidecar se retira'' docs/adr/adr-0016-convencion-de-entrega-de-eventos.md'
+        - '! git ls-files | grep -qE ''\.(db|db-wal|db-shm)$'''
+        - '! git ls-files | grep -qE ''(^|/)\.env'''
+        - '! find . -path ./.git -prune -o -name ''.env*'' -print | grep -q .'
+        - '! grep -rqiE ''sustituye a la fase a|reemplaza la fase a|cierra la fase a|el sidecar se retira'' crates/'
+    target_s: 60

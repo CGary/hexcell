@@ -1,0 +1,22 @@
+{
+  "contract_compliance": true,
+  "fix_tasks": [],
+  "forbidden_files_touched": [],
+  "functional_risk": "low",
+  "missing_tests": [],
+  "notes": [
+    "contract-check via quorum analyze contract-check: ok=true, violations=[]; not_checked: forbid.behaviors",
+    "05-validation.json independently re-read from disk: 17/17 commands PASS, verdict PASS",
+    "adr-0008 is written strictly as a deprecated historical record, states Derogada/superseded by adr-0014, references adr-0015, and explicitly denies that Fase B replaces/closes Fase A or that the sidecar is retired; consistent with the live text of adr-0014 and adr-0015",
+    "adr-0009 contrasts three real alternatives (Baileys, whatsapp-web.js, direct Cloud API), gives criteria coherent with the project (lightweight Go process, \u003c=80MB/cell), and explicitly states the ban risk is structural and not reduced by this choice; no anti-ban folklore (jitter, warm-up, proxies) introduced",
+    "adr-0001 contrasts Apache-2.0 and BUSL-1.1 against AGPL-3.0 with legally sound reasoning for the AGPL-3.0 + dual licensing conclusion",
+    "docs/adr/README.md diff only touches rows 0001/0008/0009; numbering and other rows intact",
+    "docs/STATUS.md entry follows the existing inline-date bullet pattern, dated 2026-07-29, and removes the now-resolved pending license bullet",
+    "Line lengths of ~101-103 cols in the new ADRs match the existing overflow baseline in adr-0010/0014/0015 (16-21 lines \u003e100 each), so this is not a new deviation",
+    "missing_tests is empty because 00-spec.yaml non_goals explicitly exclude a test suite for this doc-only task; AC-10 (no *.rs/*.go/Cargo.toml) is verified by 05-validation.json command #17"
+  ],
+  "summary": "Doc-only diff satisfies contract; 05-validation.json shows 17/17 PASS; no forbidden files touched; ADR content is consistent with adr-0014/adr-0015.",
+  "task_id": "HEX-001",
+  "unrequested_refactor": false,
+  "verdict": "approve"
+}

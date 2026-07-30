@@ -1,0 +1,43 @@
+{
+  "task_id": "HEX-005",
+  "started_at": "2026-07-30T14:08:41Z",
+  "execution_mode": "worktree_edit",
+  "summary": "A-2 tasks 5, 6, 9, 10: reusable port contract battery crate, FueraDeVentana deferral policy, thread continuity across re-pairing, in-memory dedup with a justified window, and the 8081 fix.",
+  "events": [
+    {
+      "event": "risk_level_calculated",
+      "level": "high",
+      "complexity_band": "L",
+      "declared_risk": "medium",
+      "reasons": [
+        "sensitive_path_match: [Cargo.lock]",
+        "file_count_high: 22"
+      ],
+      "signals": {
+        "files_count": 22,
+        "sensitive_matches": [
+          "Cargo.lock"
+        ],
+        "symbols_count": 0
+      },
+      "complexity_signals": [
+        "public_api_signal",
+        "file_count_high: 22"
+      ]
+    },
+    {
+      "event": "risk_level_divergence",
+      "calculated": "high",
+      "declared": "medium",
+      "divergence": true,
+      "reasons": [
+        "sensitive_path_match: [Cargo.lock]"
+      ],
+      "note": "Autoridad del humano: manda el risk declarado en 00-spec.yaml (medium), que no se modifica. La divergencia la introduce versionar Cargo.lock, decision humana del 2026-07-30 registrada en 00-spec.yaml como invariante: 'Se versiona Cargo.lock con todas sus dependencias transitivas resueltas para reproducibilidad bit-exacta', no un cambio de la logica de la tarea. La desviacion es esperada y aceptada."
+    }
+  ],
+  "attempts": [],
+  "context_overflows": [],
+  "violations": [],
+  "total_cost_usd": 0
+}

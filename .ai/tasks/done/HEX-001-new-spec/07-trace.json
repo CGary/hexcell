@@ -1,0 +1,17 @@
+{
+  "task_id": "HEX-001",
+  "events": [
+    {
+      "event": "risk_level_calculated",
+      "level": "medium",
+      "reasons": ["file_count_high: 9"],
+      "signals": {"files_count": 9, "symbols_count": 0, "sensitive_matches": []}
+    },
+    {
+      "event": "risk_level_divergence",
+      "declared": "low",
+      "calculated": "medium",
+      "reasons": ["file_count_high: 9"]
+    }
+  ]
+}

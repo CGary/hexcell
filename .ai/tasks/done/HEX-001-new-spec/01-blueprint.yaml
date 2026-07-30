@@ -1,0 +1,118 @@
+task_id: HEX-001
+summary: Document-only Fase A-1 setup — LICENSE, ADR-0001/0008/0009,
+  CONTRIBUTING.md, .gitignore, PR template, ADR index and STATUS updates. No code.
+affected_files:
+  - LICENSE
+  - docs/adr/adr-0001-licencia.md
+  - docs/adr/adr-0008-estrategia-canal-dos-fases.md
+  - docs/adr/adr-0009-whatsmeow-adaptador-fase-a.md
+  - CONTRIBUTING.md
+  - .gitignore
+  - .github/PULL_REQUEST_TEMPLATE.md
+  - docs/adr/README.md
+  - docs/STATUS.md
+symbols: []
+dependencies:
+  - docs/adr/README.md
+  - docs/STATUS.md
+  - .gitignore
+test_scenarios:
+  - statement: LICENSE contains the literal AGPL-3.0 header strings.
+    covers: ["AC-1"]
+  - statement: adr-0001 contrasts at least two license alternatives against the
+      commercial objective and notes dual licensing remains possible.
+    covers: ["AC-2"]
+  - statement: adr-0008 is written as a derogated historical record and links
+      both adr-0014 and adr-0015.
+    covers: ["AC-3"]
+  - statement: adr-0009 justifies whatsmeow over at least one alternative.
+    covers: ["AC-4"]
+  - statement: CONTRIBUTING.md documents branch naming and Spanish conventional
+      commits with no AI attribution.
+    covers: ["AC-5"]
+  - statement: .gitignore keeps existing *.db/*.db-wal/*.db-shm/.env* rules and
+      adds Rust and Go build-artifact patterns.
+    covers: ["AC-6"]
+  - statement: .github/PULL_REQUEST_TEMPLATE.md exists.
+    covers: ["AC-7"]
+  - statement: docs/adr/README.md lists adr-0001, adr-0008 (Derogada/Superseded),
+      and adr-0009 with correct numbers.
+    covers: ["AC-8"]
+  - statement: docs/STATUS.md records the license decision as Definido, dated
+      2026-07-29.
+    covers: ["AC-9"]
+  - statement: The diff introduces no Cargo.toml, no *.rs file, and no *.go file.
+    covers: ["AC-10"]
+strategy:
+  - step: 1
+    action: Write LICENSE with the verbatim official AGPL-3.0 English text (no
+      paraphrase, no translation).
+    files:
+      - LICENSE
+  - step: 2
+    action: Write adr-0001 in Spanish contrasting at least two license
+      alternatives (e.g. MIT/Apache-2.0 vs AGPL-3.0) against the commercial
+      objective, noting dual licensing remains available as copyright holder.
+    files:
+      - docs/adr/adr-0001-licencia.md
+  - step: 3
+    action: Write adr-0008 as a historical record already marked Derogada in
+      the index; body must state it is derogated/superseded and reference
+      adr-0014 (supersedes it) and adr-0015, without altering either file.
+    files:
+      - docs/adr/adr-0008-estrategia-canal-dos-fases.md
+  - step: 4
+    action: Write adr-0009 justifying whatsmeow over at least one alternative
+      (e.g. Baileys), consistent with the existing index row wording.
+    files:
+      - docs/adr/adr-0009-whatsmeow-adaptador-fase-a.md
+  - step: 5
+    action: Write CONTRIBUTING.md with branch naming and Spanish conventional
+      commit conventions, explicitly forbidding AI attribution trailers.
+    files:
+      - CONTRIBUTING.md
+  - step: 6
+    action: Extend .gitignore with Rust (target/, Cargo.lock already present —
+      add build artifacts) and Go build-artifact patterns while preserving all
+      existing entries verbatim.
+    files:
+      - .gitignore
+  - step: 7
+    action: Write .github/PULL_REQUEST_TEMPLATE.md in Spanish.
+    files:
+      - .github/PULL_REQUEST_TEMPLATE.md
+  - step: 8
+    action: Update docs/adr/README.md table rows for adr-0001 and adr-0009 from
+      "Por escribir" to their real status; confirm adr-0008 row already reads
+      Derogada/superseded by adr-0014 and leave adr-0010/0014/0015 rows
+      untouched.
+    files:
+      - docs/adr/README.md
+  - step: 9
+    action: Add a new bullet under docs/STATUS.md's "## Definido" section
+      recording the license decision (AGPL-3.0, adr-0001) dated 2026-07-29,
+      and remove/update the matching "Decidir licencia (LICENSE)" line under
+      "## Pendiente".
+    files:
+      - docs/STATUS.md
+risks:
+  - "docs/adr/README.md already marks adr-0008 as Derogada — superseded por
+    adr-0014 (2026-07-28), but its text only names adr-0014, not adr-0015; the
+    task must add the adr-0015 reference inside the new adr-0008 file body,
+    not the index, without contradicting the index wording."
+  - "docs/STATUS.md has no per-bullet 'Definido' label; the section is a single
+    '## Definido' heading with a bulleted list dated inline (e.g. '(2026-07-28,
+    \"adr-0014\")'). The new license bullet must follow that exact inline-date
+    convention, not invent a new field or table."
+  - "None of LICENSE, docs/adr/adr-0001-licencia.md,
+    docs/adr/adr-0008-estrategia-canal-dos-fases.md,
+    docs/adr/adr-0009-whatsmeow-adaptador-fase-a.md, CONTRIBUTING.md, or
+    .github/PULL_REQUEST_TEMPLATE.md exist yet — this is pure creation, not
+    edit, for those five files, confirmed by direct filesystem check."
+  - "Risk scorer calculated 'medium' (file_count_high: 9) against the human's
+    declared 'low', purely from touching 9 files; the content itself is
+    boilerplate/documentation with no code, so the human-declared low risk is
+    kept per authority rule, and the divergence is recorded in 07-trace.json."
+  - "The repo already wraps prose at ~100 columns; grep-based verify commands
+    must match single discriminant words (e.g. 'AFFERO', 'Derogada',
+    'adr-0014'), never multi-word phrases, or they will fail on wrapped lines."
