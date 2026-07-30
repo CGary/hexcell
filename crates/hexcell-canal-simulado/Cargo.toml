@@ -12,3 +12,10 @@ license.workspace = true
 [dependencies]
 tokio = { workspace = true, features = ["sync"] }
 hexcell-core = { path = "../hexcell-core" }
+
+# Solo de test: la batería de contrato es andamiaje de pruebas y nunca debe viajar dentro del
+# binario `hexcell`, que ya carga este mismo crate como dependencia regular. Como dependencia de
+# desarrollo, cargo la enlaza únicamente al compilar `cargo test` sobre este crate, nunca al
+# construir la biblioteca que consume el binario de la célula.
+[dev-dependencies]
+hexcell-canal-contrato = { path = "../hexcell-canal-contrato" }

@@ -20,13 +20,17 @@ use hexcell_core::canal::{
 };
 use hexcell_core::identidad::{IdConversacion, IdDeduplicacion, IdRemitente};
 
+/// El identificador de deduplicación se deriva de la propia conversación para que, en los tests
+/// de este archivo que inyectan varias conversaciones a la vez, cada evento tenga un
+/// identificador distinto: el motor ahora deduplica de verdad (`crate::deduplicacion`), y un
+/// identificador repetido entre conversaciones distintas se trataría como el mismo evento.
 fn evento_de_prueba(conversacion: &IdConversacion, marca_temporal: SystemTime) -> EventoEntrante {
     EventoEntrante {
         remitente: IdRemitente::nuevo("remitente-de-prueba"),
         conversacion: conversacion.clone(),
         contenido: "eco de prueba".to_string(),
         marca_temporal,
-        deduplicacion: IdDeduplicacion::nuevo("dedup-de-prueba"),
+        deduplicacion: IdDeduplicacion::nuevo(format!("dedup-{}", conversacion.como_str())),
     }
 }
 
@@ -80,6 +84,7 @@ async fn un_evento_inyectado_se_procesa_y_la_respuesta_se_envia_por_send() {
         AdaptadorQueDelegaEnArc(Arc::clone(&adaptador)),
         ProcesadorDeEco,
         receptor_eventos,
+        Duration::from_secs(3600),
     );
     drenar_y_cancelar(motor).await;
 
@@ -124,6 +129,7 @@ async fn el_motor_no_se_detiene_ante_cada_variante_de_resultado_ni_ante_una_aver
         AdaptadorQueDelegaEnArc(Arc::clone(&adaptador)),
         ProcesadorDeEco,
         receptor_eventos,
+        Duration::from_secs(3600),
     );
     // Si el motor entrara en pánico o dejara de consumir ante cualquiera de las seis variantes,
     // la tarea de fondo habría terminado sola en vez de necesitar `abort()`; en cualquier caso lo

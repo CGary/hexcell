@@ -14,6 +14,9 @@
 use std::fmt;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::PathBuf;
+use std::time::Duration;
+
+use crate::deduplicacion::VENTANA_DE_RETENCION_DEDUPLICACION_POR_DEFECTO;
 
 /// Canal seleccionado para esta célula.
 ///
@@ -50,6 +53,13 @@ pub struct Configuracion {
     pub canal: CanalSeleccionado,
     /// Capacidad del canal `mpsc` acotado por el que el adaptador entrega sus eventos al motor.
     pub capacidad_cola: usize,
+    /// Ventana de retención del registro de deduplicación del motor (`crate::deduplicacion`).
+    ///
+    /// Por defecto, `VENTANA_DE_RETENCION_DEDUPLICACION_POR_DEFECTO`: una hora, cuya
+    /// justificación completa vive en `crate::deduplicacion`, no aquí. La cifra definitiva sigue
+    /// siendo una decisión de producto abierta (`docs/STATUS.md`, entrada `Pendiente` del
+    /// 2026-07-30); esta variable es la puerta explícita para ajustarla sin recompilar.
+    pub ventana_deduplicacion: Duration,
 }
 
 /// Error de configuración: nombra siempre la variable concreta y su formato esperado.
@@ -120,6 +130,9 @@ pub const HEXCELL_DIRECCION_SALUD: &str = "HEXCELL_DIRECCION_SALUD";
 pub const HEXCELL_CANAL: &str = "HEXCELL_CANAL";
 /// Nombre de la variable de entorno con la capacidad del canal de eventos (opcional).
 pub const HEXCELL_CAPACIDAD_COLA: &str = "HEXCELL_CAPACIDAD_COLA";
+/// Nombre de la variable de entorno con la ventana de retención de deduplicación, en segundos
+/// (opcional).
+pub const HEXCELL_VENTANA_DEDUPLICACION_SEGUNDOS: &str = "HEXCELL_VENTANA_DEDUPLICACION_SEGUNDOS";
 
 /// Dirección de salud por defecto: loopback (127.0.0.1), nunca `0.0.0.0`. Una célula sobre canal
 /// propio empaquetada en un contenedor (etapa A-6) necesita sondear esta ruta desde un
@@ -189,12 +202,28 @@ impl Configuracion {
             Err(_) => CAPACIDAD_COLA_POR_DEFECTO,
         };
 
+        let ventana_deduplicacion = match std::env::var(HEXCELL_VENTANA_DEDUPLICACION_SEGUNDOS) {
+            Ok(valor) => {
+                let segundos =
+                    valor
+                        .parse::<u64>()
+                        .map_err(|_| ErrorDeConfiguracion::ValorInvalido {
+                            nombre: HEXCELL_VENTANA_DEDUPLICACION_SEGUNDOS,
+                            valor: valor.clone(),
+                            formato_esperado: "entero positivo de segundos, p. ej. 1800",
+                        })?;
+                Duration::from_secs(segundos)
+            }
+            Err(_) => VENTANA_DE_RETENCION_DEDUPLICACION_POR_DEFECTO,
+        };
+
         Ok(Self {
             id_celula,
             ruta_datos,
             direccion_salud,
             canal,
             capacidad_cola,
+            ventana_deduplicacion,
         })
     }
 }

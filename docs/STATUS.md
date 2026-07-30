@@ -243,6 +243,24 @@ adicional cuando aparezca un cliente que lo justifique. Ver [plan/README.md](pla
   célula, así que su árbol de dependencias se fija para que una reconstrucción en el hardware
   objetivo resuelva exactamente las versiones validadas. La línea `Cargo.lock` se retiró de
   `.gitignore`.
+* **Política del motor ante `FueraDeVentana`: diferir, no escalar a un humano** (2026-07-30,
+  HEX-005). El motor de mensajería encola la respuesta rechazada por ventana cerrada en una cola
+  acotada por conversación, con descarte del elemento más antiguo al alcanzar el tope, y la
+  reintenta cuando el mismo contacto vuelve a escribir, antes de la respuesta de ese nuevo evento.
+  La escalada a un humano se descartó para esta etapa por falta de dónde aterrizar: no existe
+  todavía registro estructurado (HEX-008), vía de notificación a un operador ni plano de CLI de
+  administración (etapa A-6). La decisión se documenta en el propio código
+  (`crates/hexcell/src/motor.rs`) y no en un ADR nuevo, porque la tarea 6 del plan pide una
+  decisión documentada, no un ADR, y la política es interna al motor y no vincula a ningún
+  adaptador futuro.
+* **Ventana de retención del registro de deduplicación: una hora por defecto, configurable**
+  (2026-07-30, HEX-005). El registro en memoria de identificadores ya procesados
+  (`crates/hexcell/src/deduplicacion.rs`) descarta un duplicado visto dentro de su ventana de
+  retención; el valor por defecto, `HEXCELL_VENTANA_DEDUPLICACION_SEGUNDOS` ausente, es de una
+  hora, justificado frente al horizonte esperado de reentrega de un canal de mensajería (reintento
+  inmediato de una entrega no confirmada, o repetición de lo pendiente al reconectar el
+  transporte, ambos casos resueltos en minutos). Una reentrega que llega más allá de esa ventana
+  se procesa de nuevo, como evento nuevo, limitación residual aceptada y documentada por el plan.
 
 ## Pendiente
 * **Valores numéricos de las compuertas de riesgo de cartera**: el **techo duro de células vivas**
@@ -300,3 +318,9 @@ adicional cuando aparezca un cliente que lo justifique. Ver [plan/README.md](pla
   [cotejo-puerto-de-canal-cloud-api.md](cotejo-puerto-de-canal-cloud-api.md). — *Debe estar resuelta
   antes de que la etapa B-1 escriba el adaptador oficial, que es el primer momento en que estos
   códigos pueden llegar; sobre canal propio no llegan.*
+* **Valor definitivo de la ventana de retención de deduplicación** (2026-07-30, HEX-005). La hora
+  que trae por defecto `HEXCELL_VENTANA_DEDUPLICACION_SEGUNDOS` es un valor documentado frente al
+  horizonte de reentrega esperado de un canal, no una cifra ya cerrada: queda pendiente
+  revisitarla con tráfico real de los pilotos. — *HEX-006 le da persistencia real al registro de
+  deduplicación; el valor numérico se revisa cuando haya datos de producción con los que
+  calibrarlo.*

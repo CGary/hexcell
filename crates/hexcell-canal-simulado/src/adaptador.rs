@@ -17,7 +17,7 @@ use hexcell_core::canal::{
     ChannelAdapter, DURACION_VENTANA_SERVICIO, EstadoVentanaServicio, EventoEntrante,
     MensajeSaliente, ResultadoEnvio,
 };
-use hexcell_core::identidad::IdConversacion;
+use hexcell_core::identidad::{IdConversacion, IdDeduplicacion, IdRemitente};
 use tokio::sync::mpsc;
 
 use crate::reloj::Reloj;
@@ -61,6 +61,15 @@ struct EstadoInterno {
     forzar_averia: bool,
     /// Copia de cada envío realizado, para que el test la inspeccione con `envios_capturados()`.
     envios_capturados: Vec<(IdConversacion, MensajeSaliente, ResultadoEnvio)>,
+    /// Almacén de identidad del adaptador (`adr-0010`, puntos 5 y 6): mapa de un contacto
+    /// simulado a su identificador interno de conversación. Se declara clave por contacto **y
+    /// nunca por dispositivo**, para que un re-emparejamiento —que solo cambia
+    /// `dispositivo_actual`— deje este mapa intacto y el hilo de conversación sobreviva.
+    contactos: HashMap<String, IdConversacion>,
+    /// Identificador del dispositivo actualmente emparejado. Cambia con `re_emparejar` y no
+    /// participa nunca como clave de `contactos`: es precisamente la credencial de sesión del
+    /// transporte de la que `adr-0010` separa la identidad de contacto.
+    dispositivo_actual: String,
 }
 
 /// Adaptador `ChannelAdapter` en memoria que imita la semántica restrictiva de la Cloud API.
@@ -93,6 +102,8 @@ impl AdaptadorSimulado {
                 forzados_siguientes: VecDeque::new(),
                 forzar_averia: false,
                 envios_capturados: Vec::new(),
+                contactos: HashMap::new(),
+                dispositivo_actual: "dispositivo-inicial".to_string(),
             }),
         };
         (adaptador, receptor_eventos)
@@ -116,6 +127,71 @@ impl AdaptadorSimulado {
                 .insert(evento.conversacion.clone(), self.reloj.ahora());
         }
         self.remitente_eventos.send(evento).await
+    }
+
+    /// Inyecta un evento entrante que llega desde un contacto simulado, resolviendo (o creando)
+    /// el identificador interno de conversación de ese contacto en el almacén de identidad del
+    /// adaptador (`adr-0010`).
+    ///
+    /// A diferencia de `inyectar`, que recibe un `EventoEntrante` ya construido con la
+    /// conversación que decide el test, este método es el que hace observable —y no vacía— la
+    /// propiedad de AC-5: el mismo `contacto` siempre resuelve al mismo `IdConversacion`, pase lo
+    /// que pase con `dispositivo_actual`, porque `contactos` se indexa solo por contacto.
+    pub async fn inyectar_desde_contacto(
+        &self,
+        contacto: &str,
+        contenido: impl Into<String>,
+        deduplicacion: IdDeduplicacion,
+    ) -> Result<IdConversacion, mpsc::error::SendError<EventoEntrante>> {
+        let evento = {
+            let mut estado = self.estado.lock().expect(
+                "el mutex interno de AdaptadorSimulado no debería estar envenenado en un test",
+            );
+            let conversacion = estado
+                .contactos
+                .entry(contacto.to_string())
+                .or_insert_with(|| IdConversacion::nuevo(format!("conversacion-de-{contacto}")))
+                .clone();
+
+            let ahora = self.reloj.ahora();
+            estado.anclas_de_ventana.insert(conversacion.clone(), ahora);
+
+            EventoEntrante {
+                remitente: IdRemitente::nuevo(contacto),
+                conversacion,
+                contenido: contenido.into(),
+                marca_temporal: ahora,
+                deduplicacion,
+            }
+        };
+        let conversacion_asignada = evento.conversacion.clone();
+        self.remitente_eventos.send(evento).await?;
+        Ok(conversacion_asignada)
+    }
+
+    /// Re-empareja el adaptador con un dispositivo nuevo: cambia `dispositivo_actual` y deja el
+    /// mapa `contactos` completamente intacto.
+    ///
+    /// Esto es, literalmente, lo que un re-emparejamiento significa para el adaptador simulado:
+    /// el dispositivo vinculado cambia, pero ningún contacto cambia de hilo por ello. El mapa de
+    /// identidad vive separado de la credencial de dispositivo precisamente para que esto sea
+    /// cierto (`adr-0010`, puntos 5 y 6).
+    pub fn re_emparejar(&self, dispositivo_nuevo: impl Into<String>) {
+        let mut estado = self
+            .estado
+            .lock()
+            .expect("el mutex interno de AdaptadorSimulado no debería estar envenenado en un test");
+        estado.dispositivo_actual = dispositivo_nuevo.into();
+    }
+
+    /// Identificador del dispositivo actualmente emparejado, para que un test observe que
+    /// `re_emparejar` lo cambió de verdad.
+    pub fn dispositivo_actual(&self) -> String {
+        let estado = self
+            .estado
+            .lock()
+            .expect("el mutex interno de AdaptadorSimulado no debería estar envenenado en un test");
+        estado.dispositivo_actual.clone()
     }
 
     /// Encola un resultado forzado para una conversación concreta; se consume en la próxima

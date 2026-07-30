@@ -7,6 +7,7 @@ members = [
     "crates/hexcell-storage",
     "crates/hexcell-meta",
     "crates/hexcell-canal-simulado",
+    "crates/hexcell-canal-contrato",
 ]
 
 # Metadatos comunes a los cinco crates. Cada manifiesto los hereda con `.workspace = true`

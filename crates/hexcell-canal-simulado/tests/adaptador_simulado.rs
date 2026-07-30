@@ -217,3 +217,66 @@ async fn envios_capturados_registra_cada_envio_realizado() {
     assert_eq!(capturas[0].1, mensaje);
     assert_eq!(capturas[0].2, ResultadoEnvio::Aceptado);
 }
+
+#[tokio::test]
+async fn un_contacto_resuelve_a_la_misma_conversacion_antes_y_despues_de_re_emparejar() {
+    let reloj = RelojDePrueba::nuevo(SystemTime::UNIX_EPOCH);
+    let (adaptador, _receptor) = AdaptadorSimulado::nuevo(Arc::new(reloj), 8);
+
+    let conversacion_antes = adaptador
+        .inyectar_desde_contacto(
+            "contacto-estable",
+            "hola",
+            hexcell_core::identidad::IdDeduplicacion::nuevo("dedup-antes"),
+        )
+        .await
+        .expect("el canal recién creado debe aceptar el evento");
+
+    let dispositivo_antes = adaptador.dispositivo_actual();
+    adaptador.re_emparejar("dispositivo-nuevo");
+    assert_ne!(
+        adaptador.dispositivo_actual(),
+        dispositivo_antes,
+        "re_emparejar debe cambiar el dispositivo actual"
+    );
+
+    let conversacion_despues = adaptador
+        .inyectar_desde_contacto(
+            "contacto-estable",
+            "hola de nuevo",
+            hexcell_core::identidad::IdDeduplicacion::nuevo("dedup-despues"),
+        )
+        .await
+        .expect("el canal recién creado debe aceptar el evento");
+
+    assert_eq!(
+        conversacion_antes, conversacion_despues,
+        "el mismo contacto debe resolver siempre a la misma conversación, pase lo que pase con \
+         el dispositivo emparejado"
+    );
+}
+
+#[tokio::test]
+async fn dos_contactos_distintos_resuelven_a_conversaciones_distintas() {
+    let reloj = RelojDePrueba::nuevo(SystemTime::UNIX_EPOCH);
+    let (adaptador, _receptor) = AdaptadorSimulado::nuevo(Arc::new(reloj), 8);
+
+    let conversacion_uno = adaptador
+        .inyectar_desde_contacto(
+            "contacto-uno",
+            "hola",
+            hexcell_core::identidad::IdDeduplicacion::nuevo("dedup-uno"),
+        )
+        .await
+        .expect("el canal recién creado debe aceptar el evento");
+    let conversacion_dos = adaptador
+        .inyectar_desde_contacto(
+            "contacto-dos",
+            "hola",
+            hexcell_core::identidad::IdDeduplicacion::nuevo("dedup-dos"),
+        )
+        .await
+        .expect("el canal recién creado debe aceptar el evento");
+
+    assert_ne!(conversacion_uno, conversacion_dos);
+}

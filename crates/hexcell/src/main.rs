@@ -60,7 +60,12 @@ async fn main() -> ExitCode {
             let reloj = Arc::new(RelojDelSistema);
             let (adaptador, receptor_eventos) =
                 AdaptadorSimulado::nuevo(reloj, configuracion.capacidad_cola);
-            let mut motor = Motor::nuevo(adaptador, ProcesadorDeEco, receptor_eventos);
+            let mut motor = Motor::nuevo(
+                adaptador,
+                ProcesadorDeEco,
+                receptor_eventos,
+                configuracion.ventana_deduplicacion,
+            );
 
             tokio::select! {
                 () = servidor_salud => {}
