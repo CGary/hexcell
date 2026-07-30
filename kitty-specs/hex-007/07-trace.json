@@ -1,0 +1,127 @@
+{
+  "attempts": [],
+  "context_overflows": [
+    "Session token limit reached during implement phase (fix_task for inferencia_sin_respuesta); resumed via re-implement without loss"
+  ],
+  "events": [
+    {
+      "complexity_band": "L",
+      "complexity_signals": [
+        "new port pattern matching ChannelAdapter",
+        "deterministic fingerprint-based simulated provider (FNV-1a, no rand)",
+        "hand-written JSON logging (no tracing/log crate)",
+        "SIGTERM shutdown with timeout checking between events"
+      ],
+      "declared_risk": "medium",
+      "event": "risk_level_calculated",
+      "level": "medium",
+      "reasons": [
+        "new public API trait (ProveedorDeInferencia)",
+        "async trait pattern with explicit Send bound",
+        "structured logging hand-written JSON",
+        "SIGTERM signal handler and drain logic"
+      ],
+      "signals": {
+        "async_complexity": "async trait with impl Future return type (hand-written to avoid async_fn_in_trait lint on 1.92.0)",
+        "files_count": 31,
+        "public_api_signal": "new trait port for inference + shutdown signal handling + structured logging module"
+      }
+    },
+    {
+      "calculated": "medium",
+      "declared": "medium",
+      "divergence": false,
+      "event": "risk_level_divergence",
+      "note": "Calculated risk matches declared; Cargo.lock expansion (60 lines for signal-hook-registry) is RISK-11, recorded in blueprint as expected divergence from complexity_score due to sensitive_path_match, not corrected by manual lock edits per forbid list.",
+      "reasons": []
+    },
+    {
+      "checkpoint": "fix_task for inferencia_sin_respuesta logging added via re-implement phase",
+      "event": "implementation_session_interrupted",
+      "reason": "token_context_limit",
+      "recovery": "implementation resumed without loss; fix commit 06164bd applied cleanly, revalidated 116/116 verify commands passing",
+      "status": "recovered"
+    },
+    {
+      "change": "motor::procesar_evento emits 'inferencia_sin_respuesta' Aviso event when ProveedorDeInferencia returns None, including id_evento, id_conversacion, latencia_ms cloned before the match (previously consumed by inferencia_iniciada)",
+      "event": "review_cycle_fix_task",
+      "fix_task_id": "registrar-fallo-de-inferencia-en-motor",
+      "outcome": "approve (clean re-review with no further fix_tasks)",
+      "revalidation": "116/116 verify commands re-executed independently; 77 tests (delta: +1 test from registro_estructurado.rs); diff limits maintained: hexcell/src 1009/1300, hexcell/tests 610/1300, total 2249/4200",
+      "test_addition": "tests/registro_estructurado.rs gains second test alongside existing campo validation test",
+      "triggered_by": "06-review.json feedback loop (non-blocking note)",
+      "verification_mechanism": "HEXCELL_PROVEEDOR_DE_INFERENCIA_FALLA env var (optional, test-only, pattern matches HEXCELL_EVENTO_SIMULADO_DE_ARRANQUE and HEXCELL_LATENCIA_INFERENCIA_SIMULADA_MS) forces ProveedorSimulado::que_falla(); new test un_fallo_del_proveedor_se_registra_con_los_mismos_campos_que_los_demas_desenlaces injects boot event with provider forced-failing, waits for inferencia_sin_respuesta log line and verifies three fields present, confirms no envio_aceptado appears"
+    },
+    {
+      "acceptance": "acknowledged in blueprint; declared_risk wins per spec authority",
+      "complexity_score_output": "band L",
+      "declared_risk": "medium",
+      "event": "divergence_band_L_vs_medium",
+      "reason": "Per complexity-score configuration, Cargo.lock sensitive_path_match flags this as higher-risk than medium, but blueprint RISK-11 documents that reproducibility requirement (2026-07-30 decision) is human-authorized; divergence expected, not corrected by hand-editing lock file per forbid list."
+    },
+    {
+      "event": "WAL_checkpoint_scope_clarification",
+      "impact": "no data loss (SQLite replays WAL on next open); wording mismatch between spec 'checkpoint both pools' and implementation 'checkpoint sessions.db, report knowledge_live.db as read-only' does not block: spec belongs to human, not rewritten; RISK-1 documents the divergence",
+      "reason": "knowledge_live.db connections are all SQLITE_OPEN_READ_ONLY; PRAGMA wal_checkpoint on read-only connection fails with 'disk I/O error'; punto_de_control_de_wal tests both pools but checkpoint succeeds only on sessions.db write connection",
+      "risk_id": "RISK-1",
+      "scope": "sessions.db only, verified 2026-07-30"
+    },
+    {
+      "adr_note": "adr-0017-puerto-de-inferencia.md line 80-82 states 'el campo detalle de un fallo del proveedor no llega hoy a ningun sitio observable mas alla del registro estructurado del motor'; this is substantially correct (failure IS now visible in motor log as inferencia_sin_respuesta), though the entry does not carry a 'detalle' field proper (only id_evento, id_conversacion, latencia_ms); minor wording imprecision, non-blocking.",
+      "decision": "what a cell says when inference fails (degraded-mode response policy for A-4/FR-10)",
+      "event": "product_decision_deferred",
+      "reason": "A-2 adds logging (inferencia_sin_respuesta event); A-4 must decide whether to send fixed apology, retry, backoff, or fallback. Motor logs but does not emit or retry; docs/STATUS.md gains Pendiente entry dated 2026-07-30.",
+      "risk_id": "RISK-12",
+      "status": "open/pendiente"
+    },
+    {
+      "adrs_written": 3,
+      "checked_against": "docs/adr/README.md full table (0001 to 0016 assigned, no reserved rows for these topics, adr-0012 is different decision about inference external to local hardware)",
+      "event": "adr_number_validation",
+      "numbering": [
+        "adr-0017-puerto-de-inferencia.md",
+        "adr-0018-apagado-ordenado.md",
+        "adr-0019-registro-estructurado.md"
+      ],
+      "status": "correct"
+    },
+    {
+      "commits": [
+        {
+          "description": "initial implementation, all three pieces (inference port, SIGTERM shutdown, structured logging)",
+          "sha": "42d0be9"
+        },
+        {
+          "description": "fix: inferencia_sin_respuesta logging on provider failure",
+          "sha": "06164bd"
+        }
+      ],
+      "event": "verification_complete",
+      "phase": "verify",
+      "verification_status": "116/116 verify commands pass, 77/77 tests pass",
+      "working_tree_status": "clean",
+      "worktree": "ai/HEX-007"
+    },
+    {
+      "event": "implementation_complete",
+      "outcomes": [
+        "inference port trait (ProveedorDeInferencia) in hexcell-core with async impl Future (no async fn in trait to avoid lint on 1.92.0)",
+        "deterministic ProveedorSimulado using FNV-1a fingerprint of request (not echo, not rand, not system clock)",
+        "ProcesadorDeInferencia generic over trait, Motor consumes through trait, ProcesadorDeEco unchanged for test files",
+        "SIGTERM/SIGINT via Apagado module with tokio::sync::watch, Motor::ejecutar biased select over signal and recv, per-event work in branch body (never cancelled mid-flight), close() receiver to refuse new senders while draining buffered, 10s drain limit checked between events",
+        "hand-written JSON logging to stdout: EntradaDeRegistro with evento (\u0026'static str), id_evento, id_conversacion, latencia_ms, detalle field; OnceLock for cell id; modules that see message text forbidden from importing logging",
+        "WAL checkpoint on sessions.db only (knowledge_live.db read-only verified 2026-07-30)",
+        "three new ADRs (0017/0018/0019) dated 2026-07-30",
+        "two new discards in docs/bitacora-de-descartes.md (D-17: tracing+JSON rejected on memory budget; D-18: tokio-util CancellationToken rejected because tokio::sync::watch expresses same)",
+        "docs/STATUS.md gains three entries dated 2026-07-30 (two Definido, one Pendiente on real provider timeout vs drain limit)"
+      ],
+      "phase": "implement + review + verify cycles"
+    }
+  ],
+  "execution_mode": "worktree_edit",
+  "started_at": "2026-07-30T14:30:00Z",
+  "summary": "A-2 tasks 11, 12 and 15: inference port in hexcell-core plus deterministic simulated provider, SIGTERM shutdown with bounded drain and WAL checkpoint, structured JSON logs without message content.",
+  "task_id": "HEX-007",
+  "total_cost_usd": 0,
+  "violations": []
+}

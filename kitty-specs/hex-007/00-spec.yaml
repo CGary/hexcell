@@ -1,0 +1,96 @@
+acceptance:
+    - given: el código del crate donde el blueprint decida ubicarlo
+      id: AC-1
+      statement: Existe un trait para el proveedor de inferencia LLM con al menos una operación de generación de respuesta.
+      then: declara una operación de generación de respuesta cuya firma no depende de ninguna implementación concreta de proveedor real (Gemini, Groq, OpenRouter)
+      when: se inspecciona su definición
+    - given: dos invocaciones del simulado con la misma entrada, en momentos distintos
+      id: AC-2
+      statement: Existe una implementación simulada determinista del proveedor de inferencia.
+      then: son idénticas, sin depender de aleatoriedad ni del reloj del sistema
+      when: se comparan sus salidas
+    - given: el código del motor (o del procesador que invoca) tras esta tarea
+      id: AC-3
+      statement: El motor consume el proveedor de inferencia a través del trait, no del tipo concreto del simulado.
+      then: es genérica sobre el trait o un objeto de trait, sin nombrar el tipo simulado concreto en su firma pública
+      when: se inspecciona la firma que recibe el proveedor
+    - given: un evento canónico inyectado por el adaptador simulado del canal, con el proveedor de inferencia simulado inyectado en el motor
+      id: AC-4
+      statement: El motor genera la respuesta consultando al proveedor de inferencia en vez de tenerla cableada.
+      then: la respuesta enviada por send proviene de una llamada al proveedor de inferencia, no de un valor fijo en el código del procesador
+      when: el motor lo procesa
+    - given: el binario real en marcha, lanzado como en crates/hexcell/tests/salud_http.rs, con persistencia y canal simulado configurados
+      id: AC-5
+      statement: Ante SIGTERM, el proceso termina con código 0 en menos de 30 segundos.
+      then: el proceso termina con código de salida 0 antes de que transcurran 30 segundos desde el envío de la señal
+      when: se le envía SIGTERM
+    - given: el proceso en marcha con ambos pools SQLite abiertos en modo WAL y con escrituras previas
+      id: AC-6
+      statement: El apagado ejecuta un checkpoint del WAL antes de salir.
+      then: una inspección del estado de los archivos WAL de sessions.db tras la salida confirma que se ejecutó el checkpoint (sin archivo -wal pendiente de tamaño significativo, o el mecanismo de verificación que el blueprint fije)
+      when: recibe SIGTERM y termina
+    - given: un evento inyectado por el adaptador simulado justo antes de enviar SIGTERM al proceso
+      id: AC-7
+      statement: Un evento en vuelo durante SIGTERM se completa antes de que el proceso termine.
+      then: una inspección de sessions.db tras la salida encuentra el evento registrado y su respuesta reflejada en el historial, sin quedar a medias
+      when: el proceso recibe la señal y termina
+    - given: la salida de logs capturada de un proceso real procesando al menos un evento
+      id: AC-8
+      statement: Los logs del motor incluyen identificador de célula, identificador de evento y latencia.
+      then: contiene el identificador de célula, un identificador de evento y una medida de latencia
+      when: se inspecciona una entrada correspondiente a ese procesamiento
+    - given: un evento inyectado con un contenido de texto reconocible y distintivo
+      id: AC-9
+      statement: Los logs nunca contienen el contenido de un mensaje de usuario.
+      then: ese contenido textual no aparece en ningún lugar de la salida de logs
+      when: se inspecciona toda la salida de logs capturada del proceso tras procesarlo
+    - given: el repositorio en el commit de esta tarea
+      id: AC-10
+      statement: El workspace compila, formatea y lintea limpio con las tres piezas añadidas.
+      then: los tres terminan sin errores ni hallazgos
+      when: se ejecutan "cargo fmt --check", "cargo clippy --workspace -- -D warnings" y "cargo test --workspace"
+    - given: crates/hexcell-core/Cargo.toml tras esta tarea
+      id: AC-11
+      statement: hexcell-core no gana dependencias de infraestructura por esta tarea.
+      then: sigue sin tokio, sin ningún crate HTTP y sin ningún crate de SQLite o de pool de conexiones, con independencia de si el trait del proveedor de inferencia vive ahí o en crates/hexcell
+      when: se inspecciona su sección [dependencies]
+    - given: el diff completo introducido por esta tarea
+      id: AC-12
+      statement: El diff respeta la frontera de HEX-007..HEX-008.
+      then: no contiene VACUUM INTO, ningún mecanismo de respaldo o restauración, ningún contrato IPC del sidecar, ninguna clave de API real ni cambios en docs/STATUS.md que marquen la etapa A-2 como cerrada
+      when: se inspecciona
+constraints:
+    - El trait del proveedor de inferencia declara como mínimo una operación de generación de respuesta a partir del contenido normalizado de un evento (o del tipo que el blueprint juzgue mínimo), de forma que la etapa A-4 pueda envolver la implementación con la contabilidad financiera sin tocar la firma que consume el motor ni el propio motor.
+    - 'La implementación simulada del proveedor de inferencia es determinista: para la misma entrada produce siempre la misma salida, sin aleatoriedad ni dependencia del reloj del sistema, y es inyectable en el motor (o en el procesador) por construcción, igual que el adaptador simulado del canal ya lo es.'
+    - El motor (o el procesador que el motor invoca) consume el proveedor de inferencia a través del trait, nunca del tipo concreto del simulado; el tipo genérico o el objeto de trait que lo transporte se decide en el blueprint.
+    - Ante SIGTERM, el binario deja de aceptar nuevos eventos del puerto, espera a que los eventos ya en curso terminen su procesamiento (registro, despacho, envío y anotación en sessions.db) sujeto a un límite temporal explícito y documentado, ejecuta un checkpoint del WAL sobre ambos pools SQLite y termina con código de salida 0, todo en menos de 30 segundos, verificado por un test de proceso real (no solo de unidad) siguiendo el patrón de crates/hexcell/tests/salud_http.rs que lanza el binario compilado y le envía la señal.
+    - Un evento inyectado justo antes de SIGTERM se completa (queda registrado en sessions.db y su respuesta se envía por el puerto simulado) antes de que el proceso termine; un test verifica esta condición inspeccionando sessions.db tras la salida del proceso.
+    - Cada entrada de log emitida por el motor durante el procesamiento de un evento incluye el identificador de célula, un identificador de evento y una medida de latencia; ninguna incluye el contenido textual del mensaje entrante ni del saliente. Un test negativo inyecta un evento con contenido reconocible y verifica que ese contenido no aparece en la salida de logs capturada del proceso.
+    - Todo lo que HEX-001 a HEX-006 ya dejaron en main (workspace de cinco crates, el trait ChannelAdapter y sus tipos canónicos, el adaptador simulado, el motor mpsc, la política ante FueraDeVentana, el identificador opaco de conversación, la persistencia dual con pools WAL, el esquema y las migraciones de sessions.db, la deduplicación y el historial persistidos, GET /health/ready condicionado a ambos pools y a la sesión del canal) no se recrea ni se reescribe; esta tarea solo añade el proveedor de inferencia, el apagado ordenado y los logs estructurados sobre lo que ya existe.
+    - 'Ningún test de esta tarea depende de una base de datos compartida entre ejecuciones ni de una llamada de red real: los tests de proceso real usan bases y puertos temporales por test, y el proveedor de inferencia es siempre el simulado.'
+goal: |
+    Convertir en código Rust las tareas 11, 12 y 15 de la etapa A-2 (docs/plan/fase-a-2-nucleo- persistencia.md), la cuarta de las cinco tareas HEX-004..HEX-008 en que se partió esa etapa el 2026-07-28, sobre lo que HEX-006 dejó en main: la persistencia dual de sessions.db y knowledge_live.db, el gestor de pools de hexcell-storage, GET /health/ready condicionado a ambos pools y al estado de sesión del canal, y el motor mpsc de crates/hexcell operando sobre el ChannelAdapter y el repositorio de sesiones. Esta tarea añade tres piezas independientes entre sí. Primero, un contrato Rust para el proveedor de inferencia LLM (un trait) que la etapa A-4 pueda envolver después con la contabilidad financiera de dos fases (reserva previa y conciliación) sin cambiar el consumidor, junto con una implementación simulada determinista e inyectable para tests; el motor pasa a consultar ese proveedor en vez de tener la respuesta cableada como hasta ahora en ProcesadorDeEco. La inferencia real (Gemini Flash, Groq, OpenRouter) sigue siendo tarea de la etapa A-4: aquí solo se fija el contrato y el simulado. Segundo, el apagado ordenado del binario: captura de SIGTERM, cese del consumo de nuevos eventos del puerto, drenaje de las tareas en vuelo con un límite temporal, checkpoint del WAL de SQLite sobre ambos pools y salida con código 0. Tercero, logs estructurados mínimos: cada entrada de log del motor lleva identificador de célula, identificador de evento e identificador de conversación cuando aplique) y latencia, sin volcar jamás el contenido de un mensaje de usuario.
+invariants:
+    - Todo el contenido del repositorio se escribe en español, incluidos los comentarios de código y los mensajes de commit (conventional commits, sin Co-Authored-By ni ninguna atribución de IA). Los identificadores de Rust (tipos, funciones, crates) se mantienen en inglés idiomático donde ya lo están; esto no es una violación de la regla de idioma, que gobierna la prosa, no los identificadores del lenguaje.
+    - El núcleo nunca conoce el transporte de WhatsApp; sessions.db no almacena identificadores de transporte crudos bajo ninguna forma ni columna. Esta tarea no toca el trait ChannelAdapter ni el adaptador simulado del canal, solo añade el consumo de un proveedor de inferencia y el apagado ordenado alrededor del motor ya existente.
+    - hexcell-core permanece libre de tokio y de cualquier dependencia de infraestructura. Si el trait del proveedor de inferencia vive en hexcell-core, su firma no depende de tokio (nada de tipos de tokio::sync ni de -> impl Future ligado a un runtime concreto salvo el mismo patrón async-en-trait ya usado por ChannelAdapter); si en cambio vive en crates/hexcell junto al motor, hexcell-core no cambia en absoluto por esta tarea. La decisión de dónde vive el trait es del blueprint, no de este spec.
+    - No se versiona ningún *.db, *.db-wal, *.db-shm ni .env*; ningún secreto ni clave de API llega al repositorio, ni siquiera como valor de ejemplo en la documentación o en los logs.
+    - Todas las fechas escritas en los documentos son absolutas (2026-07-30), nunca relativas.
+    - 'Ningún documento ni comentario puede afirmar que la Fase B sustituye, reemplaza o cierra la Fase A, ni que el sidecar se retira: el canal propio es el canal por defecto y permanente.'
+    - La prosa en Markdown y en comentarios largos mantiene un ancho aproximado de 100 columnas, consistente con el resto del repositorio.
+    - 'Los logs nunca contienen el contenido de un mensaje de usuario, entrante ni saliente, bajo ninguna forma (texto completo, fragmento, ni siquiera truncado): solo identificadores y métricas. Esta prohibición es un criterio de aceptación verificado por test, no una aspiración documental.'
+    - 'El apagado ordenado no cambia la semántica de deduplicación ni de historial de conversación fijadas por HEX-005/HEX-006: un evento en vuelo durante SIGTERM se procesa y se persiste hasta su fin natural (registro, despacho, envío y anotación en sessions.db) antes de que el proceso termine; no se corta a la mitad.'
+non_goals:
+    - La contabilidad financiera real de dos fases (reserva previa y conciliación exacta) sobre el proveedor de inferencia. Fuera de alcance, etapa A-4.
+    - Cualquier proveedor de inferencia real (Gemini Flash, Groq, OpenRouter) o clave de API real. El simulado de esta tarea no realiza ninguna llamada de red.
+    - Respaldo y restauración de las cuatro bases (sessions.db, knowledge_live.db, el almacén de identidad del adaptador y el sqlstore del sidecar) y el runbook de bifurcación device_removed. Fuera de alcance, tareas 13 y 14 del plan, HEX-008.
+    - El contrato IPC del sidecar para VACUUM INTO. Fuera de alcance, HEX-008.
+    - Pruebas de integración de ciclo completo de respaldo y restauración. Fuera de alcance, parte de la tarea 16 del plan, HEX-008.
+    - Actualizar docs/STATUS.md marcando la etapa A-2 como cerrada. La etapa se cierra con HEX-008; esta tarea no reabre ninguna decisión ya registrada como Definida.
+    - Elegir la biblioteca concreta de logging estructurado (p. ej. tracing) o decidir que se escribe a mano sobre println!/eprintln! con un formato propio. Esta tarea deja esa elección como decisión abierta para el blueprint, con la única restricción de que los tres campos exigidos aparezcan y de que el contenido de mensajes nunca se vuelque.
+    - Cualquier lógica de negocio en el procesador de mensajes más allá de consultar el proveedor de inferencia simulado para generar la respuesta; el procesador sigue sin reglas de negocio de dominio.
+    - Cualquier canal real (whatsmeow, Cloud API) o cambio en sidecar/. No forma parte de esta partición de A-2.
+    - Medición de memoria residente en reposo como línea base de NFR-01. No es objeto de esta tarea concreta del plan.
+risk: medium
+summary: Interfaz del proveedor de inferencia LLM con simulado determinista, apagado ordenado por SIGTERM y logs estructurados. Tareas 11, 12 y 15 de A-2.
+task_id: HEX-007

@@ -1,0 +1,115 @@
+entries:
+    - changed_files:
+        - crates/hexcell-core/src/inferencia.rs
+        - crates/hexcell-core/src/lib.rs
+      notes:
+        - 'Trait ProveedorDeInferencia declarado en hexcell-core junto a ChannelAdapter, con generar devolviendo impl Future<Output = Result<RespuestaDeInferencia, Self::Error>> + Send en vez de async fn, mismo motivo ya escrito en canal.rs: async_fn_in_trait dispara con clippy -D warnings sobre 1.92.0. PeticionDeInferencia lleva IdConversacion y contenido normalizado; RespuestaDeInferencia lleva solo el texto de respuesta. Sin recuento de tokens, coste, nombre de modelo ni streaming (D-09): la etapa A-4 añade eso a RespuestaDeInferencia sin tocar la firma que el motor consume. cargo tree -p hexcell-core sigue imprimiendo una sola línea.'
+      verify_pending: false
+    - changed_files:
+        - crates/hexcell/src/inferencia.rs
+      notes:
+        - 'ProveedorSimulado como módulo de crates/hexcell, no un octavo crate (nada fuera del binario lo consume). La respuesta es una huella FNV-1a de 64 bits del contenido de entrada, calculada a mano en un bucle sobre los bytes, sin rand, sin leer ningún reloj y sin el hasher por defecto de la biblioteca estándar. Deliberadamente no es un eco: un test la distingue de lo que ProcesadorDeEco habría devuelto. Latencia artificial opcional (Duration, cero por defecto) que no crea temporizador si es cero y no cambia ninguna salida; existe para hacer falsificable el test de apagado en vuelo (AC-7). ProveedorSimulado::que_falla() da un proveedor que siempre falla, sin mutador sobre &self.'
+      verify_pending: false
+    - changed_files:
+        - crates/hexcell/src/procesador.rs
+      notes:
+        - 'ProcesadorDeMensajes::procesar pasa a devolver impl Future<Output = Option<MensajeSaliente>> + Send; las implementaciones (ProcesadorDeEco, ProcesadorDeInferencia) usan async fn normal, que no dispara el lint. ProcesadorDeInferencia<I: ProveedorDeInferencia> es genérico sobre el trait, nunca nombra ProveedorSimulado; su impl exige I: ProveedorDeInferencia + Sync porque &self cruza un await y el futuro debe seguir siendo Send. ProcesadorDeEco se conserva íntegro para los cinco archivos de test que lo usan. Un fallo del proveedor produce None, sin texto fijo de disculpa ni reintento (decisión de producto diferida a A-4/FR-10, RISK-12).'
+      verify_pending: false
+    - changed_files:
+        - crates/hexcell/src/apagado.rs
+        - crates/hexcell/src/configuracion.rs
+      notes:
+        - 'Apagado::instalar registra SIGTERM y SIGINT con tokio::signal::unix::signal justo tras analizar la configuración, y arranca una tarea que flipa un tokio::sync::watch y se queda aparcada para siempre (std::future::pending), así que el emisor vive tanto como el proceso. SenalDeApagado no guarda su propio emisor; SenalDeApagado::nunca() crea un canal cuyo emisor se descarta al volver, así que un receptor sin cambios nunca ve Err mientras nadie lo agite, exactamente lo que necesitan los seis sitios de prueba existentes. LIMITE_DE_DRENAJE_POR_ DEFECTO = 10s, importado en configuracion.rs. Tres variables de entorno nuevas: HEXCELL_LIMITE_DE_DRENAJE_SEGUNDOS, HEXCELL_LATENCIA_INFERENCIA_SIMULADA_MS (solo la lee el proveedor simulado) y HEXCELL_EVENTO_SIMULADO_DE_ARRANQUE (solo el brazo Simulado de main).'
+      verify_pending: false
+    - changed_files:
+        - crates/hexcell/src/motor.rs
+        - crates/hexcell/src/deduplicacion.rs
+      notes:
+        - 'Motor::ejecutar(&mut self, senal: SenalDeApagado) corre un select! biased sobre exactamente dos ramas (la señal y receptor_eventos.recv()); el trabajo de cada evento se espera dentro del cuerpo de la rama de recv, nunca como rama del propio select!, así que no puede cortarse a medias. Al recibir la señal cierra el receptor con close() y drena lo ya encolado comprobando el límite temporal entre eventos, nunca con un timeout envolvente. Cada println!/eprintln! se reemplaza por una entrada de registro (evento_recibido, evento_duplicado, inferencia_iniciada, envio_aceptado, envio_diferido, envio_rechazado, averia_de_transporte, fallo_de_persistencia, apagado_solicitado, drenaje_completado, drenaje_incompleto), con latencia medida con Instant::now, única excepción documentada a la prohibición de ese reloj en crates/hexcell/src/. deduplicacion.rs solo cambia una frase de comentario para no repetir la palabra prohibida en registro.rs.'
+      verify_pending: false
+    - changed_files:
+        - crates/hexcell/src/registro.rs
+      notes:
+        - 'Registro estructurado escrito a mano: EntradaDeRegistro con evento: &''static str (no puede transportar un valor construido en tiempo de ejecución), id_evento, id_conversacion, latencia_ms y un único campo de texto libre, detalle, documentado como propio del proceso y nunca del mensaje. formatear es puro y devuelve el String ya escapado (comillas, barras invertidas, caracteres de control); emitir toma stdout().lock() una vez. id_celula vive en un OnceLock fijado por inicializar(), estampado en cada línea. Ningún crate de logging; ninguna aparición de la palabra que designaría el texto de un mensaje en este archivo.'
+      verify_pending: false
+    - changed_files:
+        - crates/hexcell-storage/src/pools.rs
+        - crates/hexcell-storage/src/lib.rs
+      notes:
+        - 'GestorDePools::punto_de_control_de_wal visita ambos pools: ejecuta PRAGMA wal_checkpoint(TRUNCATE) sobre la única conexión de escritura de sessions.db y reporta knowledge_live.db como de solo lectura sin nada que consolidar, porque el pragma sobre una conexión SQLITE_OPEN_READ_ONLY falla con un error de E/S (verificado 2026-07-30). Devuelve ResumenDePuntoDeControl con el flag ocupado y el tamaño en bytes del -wal resultante; no se asume ningún contador de páginas positivo tras un TRUNCATE con éxito, que devuelve 0|0|0. SUFIJO_DE_ARCHIVO_WAL centraliza la construcción de la ruta -wal. Ambos símbolos reexportados desde lib.rs.'
+      verify_pending: false
+    - changed_files:
+        - crates/hexcell/src/main.rs
+        - crates/hexcell/src/lib.rs
+      notes:
+        - 'Orden de composición: configuración, Apagado::instalar, registro::inicializar, apertura de pools, servidor de salud (con línea de registro salud_vinculada), adaptador simulado, inyección opcional del evento de arranque vía inyectar_desde_contacto (único punto de crates/hexcell/src/ donde aparece IdDeduplicacion::nuevo, documentado como excepción del canal real), ProcesadorDeInferencia sobre ProveedorSimulado con la latencia configurada, select! entre salud y motor.ejecutar(senal), punto_de_control_de_wal, y ExitCode::SUCCESS siempre, incluso si el punto de control falla. La línea de doc que atribuía el apagado a HEX-008 se corrigió (RISK-2).'
+      verify_pending: false
+    - changed_files:
+        - crates/hexcell/tests/comun/mod.rs
+      notes:
+        - 'Reescrito para drenar ambas tuberías del hijo en hilos de fondo hacia un búfer compartido, en vez de envolver stdout en un BufReader local que se cerraba al volver (RISK-5: el binario ahora imprime una línea por evento y el cierre de la tubería habría producido EPIPE). Añade esperar_linea, salida_capturada, enviar_sigterm (via /bin/kill -TERM) y esperar_salida (sondea try_wait). La dirección de salud se lee del campo detalle de la línea salud_vinculada. lanzar_binario_con_variables acepta variables de entorno extra para los tests de apagado y registro.'
+      verify_pending: false
+    - changed_files:
+        - crates/hexcell/tests/inferencia.rs
+      notes:
+        - 'Cinco tests nuevos: determinismo del proveedor simulado con la misma petición, ausencia de eco, peticiones distintas dan respuestas distintas, el motor envía la respuesta del proveedor y no el eco (AC-3, AC-4) comparando contra una segunda llamada directa al mismo proveedor, y un proveedor que siempre falla no produce ningún envío ni panic mientras el motor sigue consumiendo.'
+      verify_pending: false
+    - changed_files:
+        - crates/hexcell/tests/apagado_ordenado.rs
+      notes:
+        - Dos tests de proceso real. El primero inyecta un evento de arranque con latencia simulada de 1500 ms, espera la línea inferencia_iniciada (prueba de que el evento está en vuelo, no una carrera con sleep), envía SIGTERM, comprueba salida en menos de 30s con código 0 (AC-5), la línea punto_de_control_wal con el WAL en cero bytes (AC-6), y tras soltar el binario abre sessions.db y encuentra el evento entrante y su respuesta en el historial (AC-7). El segundo comprueba la salida rápida sin evento en vuelo.
+      verify_pending: false
+    - changed_files:
+        - crates/hexcell/tests/registro_estructurado.rs
+      notes:
+        - Inyecta un evento de arranque con un marcador distintivo, espera evento_recibido y comprueba que la línea lleva id_celula, id_evento y latencia_ms (AC-8), y que el marcador no aparece en ningún lugar de toda la salida capturada tras terminar de procesarse (AC-9).
+      verify_pending: false
+    - changed_files:
+        - crates/hexcell-storage/tests/pools.rs
+      notes:
+        - 'Test nuevo con los pools abiertos (no tras la salida del proceso, donde SQLite ya consolidaría solo): escribe 200 filas, comprueba que el -wal creció por encima de cero, llama punto_de_control_de_wal, comprueba -wal en cero bytes con la conexión todavía abierta y que las filas siguen siendo legibles.'
+      verify_pending: false
+    - changed_files:
+        - crates/hexcell/tests/motor.rs
+        - crates/hexcell/tests/persistencia.rs
+        - crates/hexcell/tests/deduplicacion.rs
+        - crates/hexcell/tests/continuidad_de_hilo.rs
+        - crates/hexcell/tests/politica_fuera_de_ventana.rs
+      notes:
+        - Los seis sitios de Motor::ejecutar() de estos cinco archivos pasan a Motor::ejecutar(SenalDeApagado::nunca()), sin cambiar ninguna aserción semántica existente.
+      verify_pending: false
+    - changed_files:
+        - crates/hexcell/Cargo.toml
+        - Cargo.lock
+      notes:
+        - 'tokio gana la característica signal en crates/hexcell/Cargo.toml, con su razón de una línea. Verificado contra 1.92.0: resuelve limpio y suma un único paquete nuevo, signal-hook-registry 1.4.8; libc, mio y socket2 ya llegaban por rusqlite e hyper. Cargo.lock regenerado por cargo, no editado a mano; coincide con la ruta sensible del cálculo de complejidad (RISK-11), divergencia esperada frente al riesgo medio declarado.'
+      verify_pending: false
+    - changed_files:
+        - docs/adr/adr-0017-puerto-de-inferencia.md
+        - docs/adr/adr-0018-apagado-ordenado.md
+        - docs/adr/adr-0019-registro-estructurado.md
+        - docs/adr/README.md
+      notes:
+        - Tres ADR nuevos fechados 2026-07-30, numerados 0017/0018/0019 tras comprobar la tabla completa de docs/adr/README.md (ninguna fila estaba reservada; adr-0012 es una decisión distinta, inferencia externa). adr-0017 cubre el puerto y el simulado; adr-0018 el apagado ordenado, el checkpoint restringido a sessions.db y el riesgo del límite de drenaje ante un proveedor real; adr-0019 el registro estructurado y su mecanismo de privacidad tipado. Las tres filas se añaden a README.md sin tocar ninguna existente.
+      verify_pending: false
+    - changed_files:
+        - docs/bitacora-de-descartes.md
+      notes:
+        - D-17 (tracing + tracing-subscriber con capa JSON, rechazado por presupuesto de memoria) y D-18 (tokio-util::CancellationToken, rechazado porque watch ya expresa lo mismo) añadidos como entradas nuevas con su motivo y condición de reapertura, con su fila en el índice y la fecha de última actualización puesta al 2026-07-30. Ninguna entrada D-01 a D-16 se edita.
+      verify_pending: false
+    - changed_files:
+        - docs/STATUS.md
+      notes:
+        - Tres entradas Definido nuevas fechadas 2026-07-30 y atribuidas a HEX-007 (puerto de inferencia y simulado, apagado ordenado, registro estructurado) y una entrada Pendiente sobre el tiempo máximo por llamada que un proveedor real de la etapa A-4 deberá fijar frente al límite de drenaje (RISK-6). Ninguna entrada existente se edita ni se borra; el archivo no marca en ningún punto la etapa A-2 como cerrada.
+      verify_pending: false
+    - changed_files:
+        - crates/hexcell/src/motor.rs
+        - crates/hexcell/src/configuracion.rs
+        - crates/hexcell/src/main.rs
+        - crates/hexcell/tests/registro_estructurado.rs
+      notes:
+        - 'Fix del revisor (no bloqueante): adr-0017 y RISK-12 dicen que el fallo de inferencia deja constancia en el registro estructurado, pero procesar_evento retornaba en silencio cuando el procesador devolvía None, sin ninguna entrada entre inferencia_iniciada y el fin del evento. Motor::procesar_evento ahora emite una entrada Aviso "inferencia_sin_respuesta" con id_evento, id_conversacion y latencia_ms (jamás contenido de mensaje) en ese caso terminal, igual que los demás desenlaces; los dos ids se clonan también en la entrada inferencia_iniciada, que antes los consumía y los dejaba indisponibles para este caso.'
+        - 'Para hacerlo verificable con un test de proceso real sin ampliar más superficie, se añade HEXCELL_PROVEEDOR_DE_INFERENCIA_FALLA (opcional, solo test, basta su presencia) que hace que main construya ProveedorSimulado::que_falla() en vez de con_latencia(); es el mismo patrón ya usado por HEXCELL_EVENTO_SIMULADO_DE_ARRANQUE y HEXCELL_LATENCIA_INFERENCIA_SIMULADA_MS. Nuevo test en registro_estructurado.rs: inyecta un evento de arranque con el proveedor forzado a fallar, espera la línea inferencia_sin_respuesta y comprueba sus tres campos, y comprueba que no aparece ningún envio_aceptado. Los 116 verify.commands del contrato siguen en exit 0 y los límites por clase de diff se mantienen dentro de cada tope (hexcell/src 1009/1300, hexcell/tests 610/1300, total 2249/4200 líneas, 31/38 archivos).'
+      verify_pending: false
+summary: Puerto de inferencia con simulado determinista, apagado ordenado por SIGTERM/SIGINT y registro estructurado sin crate de logging. 77 tests pasan en el workspace.
+task_id: HEX-007

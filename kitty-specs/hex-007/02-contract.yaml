@@ -1,0 +1,350 @@
+acceptance:
+    human_gate: true
+execution:
+    branch: ai/HEX-007
+    mode: worktree_edit
+forbid:
+    behaviors:
+        - 'Do not write the trait methods as async fn. Both ProveedorDeInferencia::generar and ProcesadorDeMensajes::procesar are DECLARED returning impl Future<Output = ...> + Send. On rustc 1.92.0 the short form fires the async_fn_in_trait warning, which cargo clippy -D warnings turns into an error, and crates/hexcell-core/src/canal.rs already carries this exact reasoning for ChannelAdapter. The IMPLEMENTATIONS may and should use plain async fn: the lint fires on the declaration, not on the impl. Verified on the pinned toolchain on 2026-07-30, together with the bound the impl needs: ProcesadorDeInferencia<I> requires I: ProveedorDeInferencia + Sync, because &self crosses the await and the future must stay Send. Do not silence the lint with an allow attribute and do not drop the + Send bound.'
+        - 'Do not give crates/hexcell-core a single dependency. Its [dependencies] table stays empty and that is AC-11, not a style preference: no tokio, no HTTP crate, no SQLite crate, no serde, no futures. The inference port lives there BECAUSE it costs nothing - IdConversacion, String and std::future::Future - and if any type you want to add would need a crate, the type is wrong, not the rule. crates/hexcell-core/src/canal.rs and identidad.rs are not edited at all: this task does not reopen ChannelAdapter, does not add a session-state method, does not implement CicloDeVidaSesion and does not touch the canonical event types. The only change under hexcell-core is the NEW file src/inferencia.rs plus its module declaration in lib.rs.'
+        - Do not put anything speculative in the inference types. PeticionDeInferencia carries the opaque IdConversacion and the normalised content; RespuestaDeInferencia carries the reply text. NO token counts, no cost, no model name, no temperature, no streaming variant, no retry policy and no budget hook. That is D-09 in docs/bitacora-de-descartes.md - an anticipated signature written as a compatibility mitigation, discarded as a design principle - and the spec only requires that A-4 be able to WRAP the provider without changing the signature the engine consumes. A-4 adding a usage field to RespuestaDeInferencia does not change that signature, so the deferral is safe and must be stated in adr-0017 rather than hedged against in code.
+        - 'Do not make the simulated provider non-deterministic, and do not make it an echo. The reply is derived ONLY from the request content, by a hand-written FNV-1a 64 fingerprint of about ten lines: no rand crate, no hashing crate, no SystemTime::now, no Instant::now, no DefaultHasher (whose output is explicitly not stable across processes) and no HashMap iteration order. It must NOT be the echo of the input, because AC-4 requires a test to distinguish a reply that came from the provider from a value fixed in the processor, and an echo cannot be distinguished from what ProcesadorDeEco already did. The optional fixed latency is a Duration defaulting to ZERO, awaits nothing at all when zero, changes no output and therefore does not weaken the determinism criterion.'
+        - 'Do not create an eighth workspace crate for the simulated provider, and do not add or remove any workspace member. It is a module of crates/hexcell, which already has a lib target for exactly this reason. hexcell-canal-simulado earned a crate because hexcell-canal-contrato consumes it independently of the binary; nothing outside crates/hexcell consumes this one. Do not edit the root Cargo.toml at all: the tokio entry in [workspace.dependencies] already carries default-features = false and every crate selects its own features, so the signal feature is added in crates/hexcell/Cargo.toml and nowhere else.'
+        - Do not add tracing, tracing-subscriber, tracing-appender, log, env_logger, slog, fern, serde, serde_json, tokio-util, libc, nix, signal-hook, tempfile, rand, chrono, time, anyhow or thiserror to any manifest. The logger is about two hundred lines of hand-written JSON-line emission; tracing plus a JSON subscriber would drag serde and serde_json and roughly a dozen crates to print a handful of fields per event on a cell budgeted at 80 MB, which is the same argument this repository already made against axum, tiny-http and r2d2. tokio-util is rejected because CancellationToken duplicates what tokio::sync::watch - already enabled - expresses exactly. libc is rejected because the process test delivers the signal with /bin/kill, the same trade this repository made when it wrote raw HTTP over a TcpStream rather than add a client crate. Record both rejections as NEW entries D-17 and D-18 in docs/bitacora-de-descartes.md, as CLAUDE.md requires a discard to be written in the same commit that makes it.
+        - 'Do not let message content reach a log line, by construction and not by care. EntradaDeRegistro declares evento as a &''static str - a runtime String cannot be coerced into one, so a message body cannot occupy that field - plus the identifier fields, latencia_ms, and EXACTLY ONE free-text field, detalle, documented as being for the process own text (a bound address, a storage error) and never for the text of a message. Do not add a generic key-value bag, a Display-based field, a format-string passthrough or a Debug dump of EventoEntrante or of MensajeSaliente anywhere. crates/hexcell/src/registro.rs must not contain the identifier contenido at all, and inferencia.rs, procesador.rs, conversaciones.rs and deduplicacion.rs must not import the logging module: those are the modules that can see message text, and the import ban is the structural half of AC-9.'
+        - Do not emit anything to stdout or stderr from crates/hexcell/src/motor.rs except through the logging module. Every existing println! and eprintln! in that file is replaced by a registro entry. Every entry emitted while processing an event carries the cell identifier, the event identifier and a latency measurement, including the duplicate-discarded case and the error cases. The cell identifier comes from a std::sync::OnceLock set once by registro::inicializar from Configuracion::id_celula; it is not threaded through Motor::nuevo, which keeps its five parameters.
+        - 'Do not read Instant::now or SystemTime::now outside the one place this task permits. SystemTime::now stays banned across crates/hexcell/src/ and crates/hexcell-storage/src/, with no exception: message timestamps still come from the event and the deduplication horizon is still pruned against the maximum received timestamp, exactly as HEX-005 fixed and HEX-006 persisted. Instant::now - the MONOTONIC clock - is permitted in crates/hexcell/src/motor.rs only, to measure latency and to check the drain limit between events, and remains banned in deduplicacion.rs, conversaciones.rs, configuracion.rs and inferencia.rs. Do not import Reloj, RelojDePrueba or RelojDelSistema into crates/hexcell/src/: production code does not take its clock from the test-double crate.'
+        - 'Do not put anything except the shutdown signal and receptor_eventos.recv() inside the select! of Motor::ejecutar. The per-event work is awaited in the BODY of the recv branch, never as a select branch, so an event in flight cannot be cancelled half-way; that is the structural form of the invariant that an event in flight is processed to its natural end. Use biased so the shutdown branch wins deterministically. On the signal, call receptor_eventos.close(): senders are refused from that instant while recv() keeps yielding what is already buffered until the queue empties. Do NOT wrap the drain loop in tokio::time::timeout - it would drop the inner future at whatever await point it had reached, possibly between the send and the history write, which is precisely the truncation this task exists to prevent. The limit is checked BETWEEN events, before dequeuing the next one, and a spent limit logs drenaje_incompleto with the pending count and breaks.'
+        - 'Do not try to checkpoint knowledge_live.db, and do not open a read-write connection to it at shutdown to make the wording of the spec literally true. Verified empirically on 2026-07-30: PRAGMA wal_checkpoint on a SQLITE_OPEN_READ_ONLY connection fails with a disk I/O error, and every connection of PoolDeConocimiento is read-only because FR-05 and adr-0003 say knowledge_live.db is read-only in production. punto_de_control_de_wal visits both pools, runs PRAGMA wal_checkpoint(TRUNCATE) on the single sessions.db write connection, and reports the knowledge pool as read-only with nothing to consolidate. The mismatch with the spec wording is RISK-1 in the blueprint; the spec belongs to the human and is not rewritten.'
+        - 'Do not assert that the checkpointed-page count is greater than zero. Verified on 2026-07-30: after a successful TRUNCATE the pragma returns 0|0|0, because the counters describe the WAL state after the reset. What is observable, and what the storage test asserts WITH THE POOLS STILL OPEN, is that the -wal file is exactly zero bytes and the data still reads back. Do not write that assertion as a check after the process has exited: SQLite checkpoints and DELETES the -wal by itself when the last connection closes, so such a test passes identically with and without the explicit checkpoint - a test that cannot fail is decoration.'
+        - 'Do not fail the process because the checkpoint failed. A WAL that could not be consolidated is not data loss - SQLite replays it on the next open - and reporting a failure exit to the orchestrator for it would be a false alarm during a routine stop. Log it and still return ExitCode::SUCCESS. Equally, do not skip the checkpoint when the engine stopped for any other reason: it runs after the select in every path that reaches the end of main.'
+        - 'Do not call unwrap(), expect(), panic!, unreachable! or todo! anywhere under crates/hexcell/src/, crates/hexcell-core/src/ or crates/hexcell-storage/src/. None of those directories contains a single one today, verified on 2026-07-30, and that is not an accident: [profile.release] sets panic = "abort", so a panic in production leaves no usable message. Registering the signal handler is fallible and its error is returned and handled in main, not expect()ed. Do not add a wildcard arm to the match over ResultadoEnvio in motor.rs: it keeps naming all five variants plus Err so a future variant breaks compilation.'
+        - 'Do not construct an IdConversacion or an IdRemitente anywhere under crates/hexcell/src/ or crates/hexcell-storage/src/. The synthetic boot event is injected through AdaptadorSimulado::inyectar_desde_contacto, which mints both inside the adapter where adr-0010 says identity translation belongs. IdDeduplicacion::nuevo may appear in main.rs ONLY, for that one synthetic event, with a doc comment saying why: with a real channel the event identifier always arrives from the transport through the adapter. It must not appear in motor.rs, procesador.rs, inferencia.rs, conversaciones.rs or deduplicacion.rs.'
+        - 'Do not edit crates/hexcell-canal-simulado in any way. The spec invariant says this task does not touch the channel adapter, and it does not need to: AdaptadorSimulado::inyectar_desde_contacto already exists and is public, and the boot event is injected BEFORE Motor::nuevo takes ownership of the adapter, so no Arc, no shared handle and no delegating ChannelAdapter wrapper is needed in src/. Do not add an injection route to the health server and do not add a stdin reader to the binary; both were considered and rejected in RISK-8 of the blueprint.'
+        - Do not leave the test harness dropping the child stdout pipe. crates/hexcell/tests/comun/mod.rs currently builds a BufReader over the child stdout and lets it drop when lanzar_binario_con_ruta_de_datos returns; that closes the read end, and once the binary logs per event the child gets EPIPE and println! panics. Both pipes must be drained for the whole life of the child, on detached threads, into a shared buffer the test can read. Launch the child with stdin null. Deliver the signal with /bin/kill -TERM and wait for exit by polling try_wait, because std has no wait-with-timeout.
+        - Do not make a temporal assertion pass by sleeping. The in-flight shutdown test waits for the inferencia_iniciada log line - which proves the event is being processed - and only then sends SIGTERM; it does not sleep an arbitrary interval and hope. Every process test uses its own temporary directory and binds 127.0.0.1:0 for a free port; no test asserts on a fixed port, no test shares a database between tests or between runs, and no test reaches any network beyond the loopback socket it binds itself. No test calls a real inference provider, because none exists in this task.
+        - Do not implement anything that belongs to HEX-008 or to a later stage. No VACUUM INTO, no backup, no restore, no restore runbook, no device_removed branch, no sidecar IPC contract, no knowledge_staging.db, no epoch file, no ArcSwap, no symlink switching, no GCRA, no financial accounting, no real inference provider (Gemini, Groq, OpenRouter), no HTTP client and no API key, token or credential anywhere - not in source, not in manifests, not as an example value in documentation. AC-12 treats the diff as a tripwire for these.
+        - Do not add product logic to the processor beyond consulting the provider. When the provider returns an error the engine logs it and sends nothing; do not invent a fixed apology text, a retry loop, a backoff or a fallback rule. What a cell says when inference fails is product policy tied to the degraded mode of A-4 (FR-10), and docs/STATUS.md lists product decisions as declared blocks, not things to settle in passing.
+        - 'Do not enable tokio rt-multi-thread and do not change the runtime flavor away from current_thread. Add exactly the signal feature to the tokio entry in crates/hexcell/Cargo.toml, with its one-line reason. Verified on 2026-07-30 against the pinned 1.92.0 toolchain: it resolves, compiles clean and pulls exactly one new package, signal-hook-registry 1.4.8, since libc, mio and socket2 are already in the lock through rusqlite and hyper.'
+        - Do not hand-write, hand-edit or prune Cargo.lock. Let cargo regenerate it and commit it verbatim. Its path matches sensitive_path_match in complexity-score, so the calculated risk will read higher than the medium 00-spec declares; that divergence is expected, is RISK-11 in the blueprint, and is not corrected by touching the lock file.
+        - 'Do not create adr-0020 or higher, do not renumber, reorder, retitle or edit any existing ADR row, and do not skip the check. The full table of docs/adr/README.md was read for this task: 0001 to 0016 are all assigned, NO row is reserved for ordered shutdown or for structured logging, and adr-0012 is a different decision (inference is 100% external, the local hardware runs no models, stage A-4) which must not be repurposed for the port. The three new rows are adr-0017-puerto-de-inferencia.md, adr-0018-apagado-ordenado.md and adr-0019-registro-estructurado.md, each stating the stage that produces it (A-2) and its status as Vigente with the date 2026-07-30. Every other row stays byte-identical.'
+        - 'Do not edit or renumber any existing entry of docs/bitacora-de-descartes.md. Entries are append-only by its own rules: add D-17 (logging crates rejected) and D-18 (tokio-util CancellationToken rejected), each with its motive and its explicit reopen condition, add their two rows to the index table, and update the last-updated line at the top. D-01 to D-16 stay untouched, and a reopened discard would be marked REABIERTO rather than rewritten - no discard is reopened here.'
+        - Do not write anything in docs/STATUS.md that marks etapa A-2 as closed, finished, cerrada, completada or terminada, and do not rewrite or delete any existing bullet. Add only new entries dated 2026-07-30 attributed to HEX-007, including one Pendiente stating that a real provider in A-4 must carry a per-call timeout comfortably smaller than the drain limit, because the drain limit is checked between events and cannot bound a single hung call. The stage closes with HEX-008.
+        - 'Do not state or imply anywhere that Fase B replaces, substitutes or closes Fase A, or that the sidecar is retired or transitional. The own channel is the default and permanent channel and the sidecar is its permanent cost. Do not introduce any mass-sender folklore (jitter, warm-up protocols, proxies, VPN, IP rotation): D-08 rejects it as a design principle.'
+        - 'Do not write repository prose, doc comments, error messages or commit messages in English. Rust identifiers, crate names, SQL keywords and existing English identifiers stay as they are; the language rule governs prose, not identifiers. JSON log field names are written in Spanish, consistently with the identifiers already used across the tree. Markdown prose and long comments keep the repository''s ~100 column width. Every date written is absolute (2026-07-30), never relative. Correct the two stale module-doc lines that attribute ordered shutdown and structured logging to HEX-008 (crates/hexcell/src/main.rs and motor.rs): those are plan tasks 12 and 15 and they belong to THIS task.'
+        - Do not add Co-Authored-By or any AI-attribution trailer to any commit message. Conventional commits in Spanish only.
+        - 'Do not commit any *.db, *.db-wal, *.db-shm or .env* file - .gitignore already covers them and must not be edited - and do not leave a temporary directory behind: every test directory is removed on drop by the existing helper.'
+    files:
+        - Cargo.toml
+        - crates/hexcell-core/src/canal.rs
+        - crates/hexcell-core/src/identidad.rs
+        - crates/hexcell-core/Cargo.toml
+        - crates/hexcell-canal-simulado/*
+        - crates/hexcell-canal-simulado/**
+        - crates/hexcell-canal-contrato/*
+        - crates/hexcell-canal-contrato/**
+        - crates/hexcell-storage/Cargo.toml
+        - crates/hexcell-storage/src/sesiones.rs
+        - crates/hexcell-storage/src/migraciones.rs
+        - crates/hexcell-storage/migraciones/*
+        - crates/hexcell-storage/migraciones/**
+        - crates/hexcell-admin/Cargo.toml
+        - crates/hexcell-admin/src/main.rs
+        - crates/hexcell-meta/Cargo.toml
+        - crates/hexcell-meta/src/lib.rs
+        - crates/hexcell/src/conversaciones.rs
+        - crates/hexcell/src/deduplicacion.rs
+        - crates/hexcell/src/preparacion.rs
+        - docs/adr/adr-0001-licencia.md
+        - docs/adr/adr-0002-estructura-workspace.md
+        - docs/adr/adr-0003-persistencia-dual.md
+        - docs/adr/adr-0008-estrategia-canal-dos-fases.md
+        - docs/adr/adr-0009-whatsmeow-adaptador-fase-a.md
+        - docs/adr/adr-0010-puerto-de-canal.md
+        - docs/adr/adr-0014-canal-propio-permanente.md
+        - docs/adr/adr-0015-politica-de-convivencia-con-el-baneo.md
+        - docs/adr/adr-0016-convencion-de-entrega-de-eventos.md
+        - docs/PRD.md
+        - docs/plan/*
+        - docs/plan/**
+        - docs/cotejo-puerto-de-canal-cloud-api.md
+        - README.md
+        - CLAUDE.md
+        - CONTRIBUTING.md
+        - LICENSE
+        - rust-toolchain.toml
+        - rustfmt.toml
+        - clippy.toml
+        - .gitignore
+        - .github/*
+        - .github/**
+        - sidecar/*
+        - sidecar/**
+        - Dockerfile*
+        - docker-compose*
+        - migrations/*
+        - migrations/**
+goal: |
+    Turn A-2 plan tasks 11, 12 and 15 into Rust code on top of what HEX-006 left on main. Three
+    independent pieces land. First, the INFERENCE PORT: a trait ProveedorDeInferencia declared in
+    crates/hexcell-core/src/inferencia.rs with std only, written as fn generar(...) -> impl
+    Future<Output = Result<RespuestaDeInferencia, Self::Error>> + Send because async fn in a trait
+    fires async_fn_in_trait and clippy -D warnings turns that into an error on the pinned 1.92.0
+    toolchain, plus a deterministic ProveedorSimulado in crates/hexcell/src/inferencia.rs whose reply
+    is an FNV-1a fingerprint of the request content - no rand, no clock, and deliberately NOT the echo
+    of the input, so a test can prove the reply came from the provider. The engine consumes it through
+    ProcesadorDeMensajes, which becomes future-returning, and a new ProcesadorDeInferencia<I> generic
+    over the trait; ProcesadorDeEco stays for the five test files that must not become inference tests.
+    No token accounting, no cost, no model name: that is D-09 territory and A-4 adds usage to the
+    response when it has a real API to model it on, without touching the engine. Second, the ORDERED
+    SHUTDOWN: Apagado::instalar registers SIGTERM and SIGINT over tokio::sync::watch, Motor::ejecutar
+    selects biased over exactly two branches - the signal and recv - with the per-event work awaited in
+    the branch BODY so it can never be cancelled half-way, closes the receiver on the signal so senders
+    are refused while buffered events still drain, checks the 10 s limit BETWEEN events rather than
+    wrapping the drain in a timeout, and then checkpoints the WAL and exits 0. The checkpoint visits
+    both pools but only sessions.db can receive one: verified on 2026-07-30, a checkpoint on a
+    read-only connection fails with a disk I/O error and every knowledge_live.db connection is
+    read-only by FR-05. Third, STRUCTURED LOGS: one hand-rolled JSON object per line on stdout, NO
+    logging crate, with a typed field set - evento is a &'static str, there is exactly one free-text
+    field - and with the modules that can see message text forbidden from importing the logger at all.
+    Three ADRs are written, numbered 0017, 0018 and 0019, checked against the full README table rather
+    than assumed. No backup, no restore, no VACUUM INTO, no sidecar IPC, no real provider, no API key,
+    and nothing marking etapa A-2 as closed.
+limits:
+    max_diff_lines: 4200
+    max_files_changed: 38
+    per_class:
+        - glob: Cargo.lock
+          max_diff_lines: 60
+        - glob: crates/hexcell/Cargo.toml
+          max_diff_lines: 25
+        - glob: crates/hexcell-core/src/**
+          max_diff_lines: 220
+        - glob: crates/hexcell/src/**
+          max_diff_lines: 1300
+        - glob: crates/hexcell/tests/**
+          max_diff_lines: 1300
+        - glob: crates/hexcell-storage/src/**
+          max_diff_lines: 220
+        - glob: crates/hexcell-storage/tests/**
+          max_diff_lines: 220
+        - glob: docs/adr/**
+          max_diff_lines: 700
+        - glob: docs/bitacora-de-descartes.md
+          max_diff_lines: 130
+        - glob: docs/STATUS.md
+          max_diff_lines: 70
+read:
+    - .ai/tasks/active/HEX-007-new-spec/00-spec.yaml
+    - .ai/tasks/active/HEX-007-new-spec/01-blueprint.yaml
+    - crates/hexcell-core/src/canal.rs
+    - crates/hexcell-core/src/identidad.rs
+    - crates/hexcell-core/src/lib.rs
+    - crates/hexcell-core/Cargo.toml
+    - crates/hexcell-canal-simulado/src/adaptador.rs
+    - crates/hexcell-canal-simulado/src/reloj.rs
+    - crates/hexcell-canal-simulado/src/lib.rs
+    - crates/hexcell/src/main.rs
+    - crates/hexcell/src/lib.rs
+    - crates/hexcell/src/motor.rs
+    - crates/hexcell/src/procesador.rs
+    - crates/hexcell/src/configuracion.rs
+    - crates/hexcell/src/salud.rs
+    - crates/hexcell/src/preparacion.rs
+    - crates/hexcell/src/conversaciones.rs
+    - crates/hexcell/src/deduplicacion.rs
+    - crates/hexcell/tests/comun/mod.rs
+    - crates/hexcell/tests/salud_http.rs
+    - crates/hexcell/tests/motor.rs
+    - crates/hexcell/tests/persistencia.rs
+    - crates/hexcell/tests/configuracion.rs
+    - crates/hexcell/tests/deduplicacion.rs
+    - crates/hexcell/tests/continuidad_de_hilo.rs
+    - crates/hexcell/tests/politica_fuera_de_ventana.rs
+    - crates/hexcell/tests/preparacion.rs
+    - crates/hexcell-storage/src/lib.rs
+    - crates/hexcell-storage/src/pools.rs
+    - crates/hexcell-storage/src/sesiones.rs
+    - crates/hexcell-storage/src/error.rs
+    - crates/hexcell-storage/tests/pools.rs
+    - crates/hexcell-storage/Cargo.toml
+    - crates/hexcell/Cargo.toml
+    - Cargo.toml
+    - rust-toolchain.toml
+    - rustfmt.toml
+    - clippy.toml
+    - .gitignore
+    - .github/workflows/ci.yml
+    - docs/PRD.md
+    - docs/plan/fase-a-2-nucleo-persistencia.md
+    - docs/adr/README.md
+    - docs/adr/adr-0002-estructura-workspace.md
+    - docs/adr/adr-0003-persistencia-dual.md
+    - docs/adr/adr-0010-puerto-de-canal.md
+    - docs/adr/adr-0016-convencion-de-entrega-de-eventos.md
+    - docs/bitacora-de-descartes.md
+    - docs/STATUS.md
+    - CLAUDE.md
+    - CONTRIBUTING.md
+retry_policy:
+    escalate_after: 1
+    max_attempts: 2
+summary: 'A-2 tasks 11, 12, 15: inference port in hexcell-core plus deterministic simulated provider, SIGTERM shutdown with bounded drain and WAL checkpoint, structured JSON logs without message content.'
+task_id: HEX-007
+touch:
+    - Cargo.lock
+    - crates/hexcell-core/src/inferencia.rs
+    - crates/hexcell-core/src/lib.rs
+    - crates/hexcell/Cargo.toml
+    - crates/hexcell/src/lib.rs
+    - crates/hexcell/src/main.rs
+    - crates/hexcell/src/inferencia.rs
+    - crates/hexcell/src/procesador.rs
+    - crates/hexcell/src/motor.rs
+    - crates/hexcell/src/apagado.rs
+    - crates/hexcell/src/registro.rs
+    - crates/hexcell/src/configuracion.rs
+    - crates/hexcell/src/salud.rs
+    - crates/hexcell/src/*.rs
+    - crates/hexcell-storage/src/pools.rs
+    - crates/hexcell-storage/src/lib.rs
+    - crates/hexcell-storage/tests/pools.rs
+    - crates/hexcell-storage/tests/comun/mod.rs
+    - crates/hexcell/tests/comun/mod.rs
+    - crates/hexcell/tests/apagado_ordenado.rs
+    - crates/hexcell/tests/registro_estructurado.rs
+    - crates/hexcell/tests/inferencia.rs
+    - crates/hexcell/tests/motor.rs
+    - crates/hexcell/tests/persistencia.rs
+    - crates/hexcell/tests/deduplicacion.rs
+    - crates/hexcell/tests/continuidad_de_hilo.rs
+    - crates/hexcell/tests/politica_fuera_de_ventana.rs
+    - crates/hexcell/tests/configuracion.rs
+    - crates/hexcell/tests/salud_http.rs
+    - crates/hexcell/tests/preparacion.rs
+    - crates/hexcell/tests/*.rs
+    - docs/adr/adr-0017-puerto-de-inferencia.md
+    - docs/adr/adr-0018-apagado-ordenado.md
+    - docs/adr/adr-0019-registro-estructurado.md
+    - docs/adr/README.md
+    - docs/bitacora-de-descartes.md
+    - docs/STATUS.md
+verify:
+    commands:
+        - cargo fmt --check
+        - cargo clippy --workspace --all-targets -- -D warnings
+        - cargo test --workspace
+        - test "$(cargo tree -p hexcell-core | wc -l)" = "1"
+        - test -f crates/hexcell-core/src/inferencia.rs
+        - grep -q 'ProveedorDeInferencia' crates/hexcell-core/src/inferencia.rs
+        - grep -q 'PeticionDeInferencia' crates/hexcell-core/src/inferencia.rs
+        - grep -q 'RespuestaDeInferencia' crates/hexcell-core/src/inferencia.rs
+        - grep -q 'impl Future' crates/hexcell-core/src/inferencia.rs
+        - grep -q 'inferencia' crates/hexcell-core/src/lib.rs
+        - '! grep -qE ''^[[:space:]]*(tokio|rusqlite|hyper|hyper-util|http-body-util|bytes|serde|serde_json|tracing|log|rand|chrono|anyhow|thiserror|futures)[[:space:]]*='' crates/hexcell-core/Cargo.toml'
+        - '! grep -rqE ''^[[:space:]]*use [^;]*(tokio|rusqlite|hyper|serde|tracing)'' crates/hexcell-core/'
+        - '! grep -rqE ''async fn (generar|procesar|send|estado_ventana)'' crates/hexcell-core/src/'
+        - test -f crates/hexcell/src/inferencia.rs
+        - grep -q 'ProveedorSimulado' crates/hexcell/src/inferencia.rs
+        - grep -q 'impl ProveedorDeInferencia for' crates/hexcell/src/inferencia.rs
+        - '! grep -qE ''SystemTime::now|Instant::now|DefaultHasher|rand::'' crates/hexcell/src/inferencia.rs'
+        - grep -q 'ProcesadorDeInferencia' crates/hexcell/src/procesador.rs
+        - grep -q 'ProcesadorDeEco' crates/hexcell/src/procesador.rs
+        - grep -q 'impl Future' crates/hexcell/src/procesador.rs
+        - grep -q 'ProcesadorDeInferencia' crates/hexcell/src/main.rs
+        - test -f crates/hexcell/src/apagado.rs
+        - grep -q 'SignalKind::terminate' crates/hexcell/src/apagado.rs
+        - grep -q 'SenalDeApagado' crates/hexcell/src/apagado.rs
+        - grep -q 'nunca' crates/hexcell/src/apagado.rs
+        - grep -q 'LIMITE_DE_DRENAJE_POR_DEFECTO' crates/hexcell/src/apagado.rs
+        - grep -q 'LIMITE_DE_DRENAJE_POR_DEFECTO' crates/hexcell/src/configuracion.rs
+        - test -f crates/hexcell/src/registro.rs
+        - grep -q 'id_celula' crates/hexcell/src/registro.rs
+        - grep -q 'id_evento' crates/hexcell/src/registro.rs
+        - grep -q 'latencia_ms' crates/hexcell/src/registro.rs
+        - grep -q 'OnceLock' crates/hexcell/src/registro.rs
+        - 'grep -qE "evento: &''static str" crates/hexcell/src/registro.rs'
+        - '! grep -q ''contenido'' crates/hexcell/src/registro.rs'
+        - '! grep -rqE ''use crate::registro'' crates/hexcell/src/inferencia.rs crates/hexcell/src/procesador.rs crates/hexcell/src/conversaciones.rs crates/hexcell/src/deduplicacion.rs'
+        - '! grep -rq ''registro::'' crates/hexcell/src/inferencia.rs crates/hexcell/src/procesador.rs crates/hexcell/src/conversaciones.rs crates/hexcell/src/deduplicacion.rs'
+        - '! grep -qE ''println!|eprintln!'' crates/hexcell/src/motor.rs'
+        - grep -q 'Instant::now' crates/hexcell/src/motor.rs
+        - '! grep -rq ''SystemTime::now'' crates/hexcell/src/ crates/hexcell-storage/src/'
+        - '! grep -q ''Instant::now'' crates/hexcell/src/deduplicacion.rs'
+        - '! grep -q ''Instant::now'' crates/hexcell/src/conversaciones.rs'
+        - '! grep -q ''Instant::now'' crates/hexcell/src/configuracion.rs'
+        - '! grep -rqE ''\bReloj\b'' crates/hexcell/src/'
+        - grep -q 'biased' crates/hexcell/src/motor.rs
+        - grep -q 'SenalDeApagado' crates/hexcell/src/motor.rs
+        - grep -q 'close()' crates/hexcell/src/motor.rs
+        - '! grep -q ''tokio::time::timeout'' crates/hexcell/src/motor.rs'
+        - grep -q 'ResultadoEnvio::Aceptado' crates/hexcell/src/motor.rs
+        - grep -q 'ResultadoEnvio::FueraDeVentana' crates/hexcell/src/motor.rs
+        - grep -q 'ResultadoEnvio::PlantillaRequerida' crates/hexcell/src/motor.rs
+        - grep -q 'ResultadoEnvio::LimiteDeTasa' crates/hexcell/src/motor.rs
+        - grep -q 'ResultadoEnvio::DestinatarioInvalido' crates/hexcell/src/motor.rs
+        - grep -q 'wal_checkpoint(TRUNCATE)' crates/hexcell-storage/src/pools.rs
+        - grep -q 'punto_de_control_de_wal' crates/hexcell-storage/src/pools.rs
+        - grep -q 'punto_de_control_de_wal' crates/hexcell-storage/src/lib.rs
+        - grep -q 'punto_de_control_de_wal' crates/hexcell/src/main.rs
+        - grep -q 'ExitCode::SUCCESS' crates/hexcell/src/main.rs
+        - grep -q 'current_thread' crates/hexcell/src/main.rs
+        - grep -q 'inyectar_desde_contacto' crates/hexcell/src/main.rs
+        - grep -q 'HEXCELL_LIMITE_DE_DRENAJE_SEGUNDOS' crates/hexcell/src/configuracion.rs
+        - grep -q 'HEXCELL_LATENCIA_INFERENCIA_SIMULADA_MS' crates/hexcell/src/configuracion.rs
+        - grep -q 'HEXCELL_EVENTO_SIMULADO_DE_ARRANQUE' crates/hexcell/src/configuracion.rs
+        - grep -q 'HEXCELL_VENTANA_DEDUPLICACION_SEGUNDOS' crates/hexcell/src/configuracion.rs
+        - grep -q '127.0.0.1' crates/hexcell/src/configuracion.rs
+        - '! grep -rqE ''\.(unwrap|expect)\('' crates/hexcell/src/ crates/hexcell-core/src/ crates/hexcell-storage/src/'
+        - '! grep -rqE ''panic!|unreachable!|todo!'' crates/hexcell/src/ crates/hexcell-core/src/ crates/hexcell-storage/src/'
+        - '! grep -rq ''IdConversacion::nuevo'' crates/hexcell/src/ crates/hexcell-storage/src/'
+        - '! grep -rq ''IdRemitente::nuevo'' crates/hexcell/src/ crates/hexcell-storage/src/'
+        - '! grep -rq ''IdDeduplicacion::nuevo'' crates/hexcell/src/motor.rs crates/hexcell/src/procesador.rs crates/hexcell/src/inferencia.rs crates/hexcell/src/conversaciones.rs crates/hexcell/src/deduplicacion.rs'
+        - '! grep -rqE ''impl(<[^>]*>)? *ChannelAdapter *for'' crates/hexcell/src/'
+        - '! grep -rqE ''impl(<[^>]*>)? *CicloDeVidaSesion *for'' crates/'
+        - grep -q '"signal"' crates/hexcell/Cargo.toml
+        - grep -A2 'name = "signal-hook-registry"' Cargo.lock | grep -qE 'version = "1\.'
+        - '! grep -qE ''^[[:space:]]*(tracing|tracing-subscriber|log|env_logger|serde|serde_json|tokio-util|libc|nix|signal-hook|tempfile|rand|chrono|anyhow|thiserror)[[:space:]]*='' crates/hexcell/Cargo.toml'
+        - '! grep -qE ''^[[:space:]]*(tracing|tracing-subscriber|log|env_logger|serde|serde_json|tokio-util|nix|signal-hook|tempfile|rand)[[:space:]]*='' Cargo.toml'
+        - grep -qE '^[[:space:]]*rusqlite[[:space:]]*=' Cargo.toml
+        - grep -qE 'rusqlite.*0\.39' Cargo.toml
+        - grep -qE '^\[profile\.release\]' Cargo.toml
+        - '! grep -rqi ''VACUUM'' crates/'
+        - '! grep -rqiE ''sqlstore|device_removed'' crates/'
+        - '! grep -rqiE ''generativelanguage|api\.groq|openrouter|api_key *=|apikey *='' crates/'
+        - test -f crates/hexcell/tests/apagado_ordenado.rs
+        - test -f crates/hexcell/tests/registro_estructurado.rs
+        - test -f crates/hexcell/tests/inferencia.rs
+        - grep -q 'TERM' crates/hexcell/tests/comun/mod.rs
+        - grep -q 'try_wait' crates/hexcell/tests/comun/mod.rs
+        - grep -rq 'temp_dir' crates/hexcell/tests/
+        - grep -q 'SenalDeApagado::nunca' crates/hexcell/tests/motor.rs
+        - grep -q 'inferencia_iniciada' crates/hexcell/tests/apagado_ordenado.rs
+        - grep -rq 'punto_de_control_de_wal' crates/hexcell-storage/tests/pools.rs
+        - '! grep -rq ''8081'' crates/hexcell/tests/'
+        - '! grep -q ''thread::sleep'' crates/hexcell/tests/apagado_ordenado.rs'
+        - test -f docs/adr/adr-0017-puerto-de-inferencia.md
+        - test -f docs/adr/adr-0018-apagado-ordenado.md
+        - test -f docs/adr/adr-0019-registro-estructurado.md
+        - '! ls docs/adr/ | grep -q ''adr-0020'''
+        - grep -q 'adr-0017-puerto-de-inferencia.md' docs/adr/README.md
+        - grep -q 'adr-0018-apagado-ordenado.md' docs/adr/README.md
+        - grep -q 'adr-0019-registro-estructurado.md' docs/adr/README.md
+        - grep -q 'adr-0003-persistencia-dual.md' docs/adr/README.md
+        - grep -q 'adr-0016-convencion-de-entrega-de-eventos.md' docs/adr/README.md
+        - grep -q '2026-07-30' docs/adr/adr-0017-puerto-de-inferencia.md
+        - grep -q '2026-07-30' docs/adr/adr-0018-apagado-ordenado.md
+        - grep -q '2026-07-30' docs/adr/adr-0019-registro-estructurado.md
+        - grep -q 'D-16' docs/bitacora-de-descartes.md
+        - grep -q 'D-17' docs/bitacora-de-descartes.md
+        - grep -q 'D-18' docs/bitacora-de-descartes.md
+        - grep -q 'HEX-007' docs/STATUS.md
+        - grep -q '2026-07-30' docs/STATUS.md
+        - '! grep -qiE ''etapa A-2 (cerrada|completada|finalizada|terminada)'' docs/STATUS.md'
+        - '! grep -rqiE ''sustituye a la fase a|reemplaza la fase a|cierra la fase a|el sidecar se retira'' crates/ docs/STATUS.md docs/adr/adr-0017-puerto-de-inferencia.md docs/adr/adr-0018-apagado-ordenado.md docs/adr/adr-0019-registro-estructurado.md'
+        - git ls-files | grep -qx 'Cargo.lock'
+        - test -s Cargo.lock
+        - '! git ls-files | grep -qE ''\.(db|db-wal|db-shm)$'''
+        - '! git ls-files | grep -qE ''(^|/)\.env'''
+        - grep -q 'channel = "1.92.0"' rust-toolchain.toml
+    target_s: 60

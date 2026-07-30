@@ -1,0 +1,232 @@
+affected_files:
+    - Cargo.lock
+    - crates/hexcell-core/src/inferencia.rs
+    - crates/hexcell-core/src/lib.rs
+    - crates/hexcell/Cargo.toml
+    - crates/hexcell/src/lib.rs
+    - crates/hexcell/src/main.rs
+    - crates/hexcell/src/inferencia.rs
+    - crates/hexcell/src/procesador.rs
+    - crates/hexcell/src/motor.rs
+    - crates/hexcell/src/apagado.rs
+    - crates/hexcell/src/registro.rs
+    - crates/hexcell/src/configuracion.rs
+    - crates/hexcell/src/salud.rs
+    - crates/hexcell-storage/src/pools.rs
+    - crates/hexcell-storage/src/lib.rs
+    - crates/hexcell-storage/tests/pools.rs
+    - crates/hexcell/tests/comun/mod.rs
+    - crates/hexcell/tests/apagado_ordenado.rs
+    - crates/hexcell/tests/registro_estructurado.rs
+    - crates/hexcell/tests/inferencia.rs
+    - crates/hexcell/tests/motor.rs
+    - crates/hexcell/tests/persistencia.rs
+    - crates/hexcell/tests/deduplicacion.rs
+    - crates/hexcell/tests/continuidad_de_hilo.rs
+    - crates/hexcell/tests/politica_fuera_de_ventana.rs
+    - crates/hexcell/tests/configuracion.rs
+    - crates/hexcell/tests/salud_http.rs
+    - docs/adr/adr-0017-puerto-de-inferencia.md
+    - docs/adr/adr-0018-apagado-ordenado.md
+    - docs/adr/adr-0019-registro-estructurado.md
+    - docs/adr/README.md
+    - docs/bitacora-de-descartes.md
+    - docs/STATUS.md
+dependencies:
+    - .ai/tasks/active/HEX-007-new-spec/00-spec.yaml
+    - crates/hexcell-core/src/canal.rs
+    - crates/hexcell-core/src/identidad.rs
+    - crates/hexcell-core/Cargo.toml
+    - crates/hexcell-canal-simulado/src/adaptador.rs
+    - crates/hexcell-canal-simulado/src/reloj.rs
+    - crates/hexcell-storage/src/sesiones.rs
+    - crates/hexcell-storage/src/error.rs
+    - crates/hexcell/src/conversaciones.rs
+    - crates/hexcell/src/deduplicacion.rs
+    - crates/hexcell/src/preparacion.rs
+    - Cargo.toml
+    - rust-toolchain.toml
+    - .github/workflows/ci.yml
+    - .gitignore
+    - docs/PRD.md
+    - docs/plan/fase-a-2-nucleo-persistencia.md
+    - docs/adr/README.md
+    - docs/adr/adr-0002-estructura-workspace.md
+    - docs/adr/adr-0003-persistencia-dual.md
+    - docs/adr/adr-0010-puerto-de-canal.md
+    - docs/adr/adr-0016-convencion-de-entrega-de-eventos.md
+    - docs/bitacora-de-descartes.md
+    - docs/STATUS.md
+    - CLAUDE.md
+risks:
+    - 'RISK-1, THE ONE THAT DECIDES WHETHER AC-6 MEANS ANYTHING. The spec constraint says the shutdown "ejecuta un checkpoint del WAL sobre ambos pools SQLite". Verified empirically on 2026-07-30: a checkpoint on a SQLITE_OPEN_READ_ONLY connection fails with a disk I/O error, and EVERY connection of PoolDeConocimiento is read-only because FR-05 and adr-0003 make knowledge_live.db read-only in production. The spec is the human''s and is not rewritten; the mismatch is recorded here. Resolution: punto_de_control_de_wal visits both pools, checkpoints sessions.db on its write connection with TRUNCATE, and reports the knowledge pool as read-only with nothing to consolidate. Opening a temporary read-write connection to knowledge_live.db at shutdown just to satisfy the wording would break the invariant FR-05 exists to state. AC-6 itself only inspects the sessions.db WAL and explicitly delegates the verification mechanism to this blueprint, so nothing is lost.'
+    - 'RISK-2, A SECOND MISMATCH, THIS ONE IN THE TREE RATHER THAN IN THE SPEC. Two module docs left by HEX-006 attribute THIS task to HEX-008: crates/hexcell/src/main.rs says "el apagado ordenado y el drenaje en vuelo son una etapa posterior del plan (HEX-008, tarea 12)" and crates/hexcell/src/motor.rs says no structured log exists "(llega en HEX-008)". Plan tasks 12 and 15 belong to HEX-007; HEX-008 is tasks 13, 14 and 16 (backup, restore, integration). Both lines are corrected as part of this diff. They are called out because a reviewer reading only the tree would conclude this task is out of scope.'
+    - 'RISK-3, ADR NUMBERING, WHERE THE HEX-006 LESSON CUTS THE OTHER WAY. HEX-006 had to use the RESERVED row 0003 instead of the next free index. The full table of docs/adr/README.md was read again for this task: rows 0001 to 0016 are all assigned, no row is reserved for ordered shutdown or for logging, and the only inference-shaped row, adr-0012, is a DIFFERENT decision (inference is 100% external, the local hardware runs no models, stage A-4). So the numbers here really are the next free ones, 0017, 0018 and 0019, and no existing row may be renumbered, retitled or reordered.'
+    - 'RISK-4, A RULE FROM HEX-006 THAT MUST BE READ PRECISELY OR THIS TASK CANNOT BE BUILT. The HEX-006 contract verified "! grep -rqE ''SystemTime::now|Instant::now'' crates/hexcell/src/". A latency measurement REQUIRES a monotonic clock, so Instant::now must be permitted in motor.rs - and only there. The rule it protected is intact and is about a different clock: the deduplication horizon is still pruned against the maximum received timestamp, message timestamps still come from the event, SystemTime::now stays banned across crates/hexcell/src/ and crates/hexcell-storage/src/, and Instant::now stays banned in deduplicacion.rs, conversaciones.rs and configuracion.rs. A reviewer who greps without reading this will report a false regression.'
+    - RISK-5, THE HARNESS DEFECT THAT IS ARMED TODAY AND FIRES THE MOMENT THE BINARY LOGS. crates/hexcell/tests/comun/mod.rs builds a BufReader over the child stdout inside lanzar_binario_con_ruta_de_datos and lets it drop when the function returns, closing the read end of the pipe. Nothing has bitten yet only because the binary prints nothing after startup; once every event emits a line, the child receives EPIPE and println! PANICS - and under [profile.release] panic = "abort" that would be a silent death in production shape. The harness must keep both pipes drained for the whole life of the child. This is not a nicety of the new tests; it is a latent bug that this task is the first to touch.
+    - 'RISK-6, THE DRAIN LIMIT DOES NOT BOUND A SINGLE PATHOLOGICAL EVENT, and that is a conscious trade with a written revisit trigger. The limit is checked BETWEEN events precisely so that an event in flight is never truncated - the invariant the spec states. Consequently one event whose provider call hangs can outlast the 10 s limit and, in theory, the 30 s PRD grace, after which the orchestrator sends SIGKILL. With the simulated provider the processing time is bounded by construction, so this cannot happen in this task. REVISIT TRIGGER, stated so it is not rediscovered in production: A-4 introduces a real HTTP provider and MUST give it a per-call timeout comfortably smaller than the drain limit. Recorded as a Pendiente in docs/STATUS.md.'
+    - RISK-7, THE IN-FLIGHT TEST IS ONLY MEANINGFUL BECAUSE OF THE ARTIFICIAL LATENCY. Without HEXCELL_LATENCIA_INFERENCIA_SIMULADA_MS the simulated provider answers in microseconds, so a SIGTERM sent right after injection almost always arrives when the event is already persisted, and AC-7 would pass identically over an implementation that kills in-flight work. The latency exists to make the criterion falsifiable, defaults to zero so production behaviour is unchanged and no timer is even created, and does not affect any output, so AC-2 determinism is untouched. If a reviewer wants it removed, the AC-7 test loses its power and must be replaced by something else.
+    - 'RISK-8, THE SIMULATED CHANNEL HAS NO EXTERNAL EVENT SOURCE, WHICH IS WHY A BOOT-EVENT VARIABLE EXISTS. AdaptadorSimulado::inyectar is an in-process method; a running binary on the simulated channel can never receive an event from outside, so AC-5 to AC-9 - all of which demand a REAL PROCESS - would be untestable. Alternatives considered and rejected: a POST route on the health server, which would give a health endpoint a mutation surface that a real deployment exposes; and a stdin injector, which needs a shared adapter handle plus a delegating wrapper and buys nothing that a boot event does not already give. HEXCELL_EVENTO_SIMULADO_DE_ARRANQUE is read ONLY inside the CanalSeleccionado::Simulado arm, which is by definition the development and test channel.'
+    - RISK-9, tokio::signal::unix IS UNIX ONLY. The cell ships as a Linux container (A-6) and CI runs ubuntu-latest, so this is not a portability regression; it is stated so that nobody discovers it as a surprise. No cfg(unix) fallback is added, because a Windows branch would be untested code standing in for a platform this product does not target. /bin/kill, used by the process test to deliver the signal, is present on ubuntu-latest and on the development machine (verified 2026-07-30).
+    - 'RISK-10, THE PROCESSOR TRAIT GOES ASYNC AND THAT IS UNAVOIDABLE CHURN, NOT SCOPE CREEP. ProcesadorDeMensajes::procesar becomes a future-returning method, so every implementation and the engine call site change. The blast radius is small because the impls may keep using plain async fn: ProcesadorDeEco is a two-line edit and the six Motor::ejecutar call sites gain SenalDeApagado::nunca(). What must NOT change is the observable semantics those five existing test files assert - deduplication verdicts, history order, the FueraDeVentana deferral policy and restart behaviour.'
+    - RISK-11, THE CALCULATED RISK SCORE WILL READ HIGHER THAN THE SPEC DECLARES, exactly as in HEX-005 and HEX-006. Cargo.lock is touched again and matches sensitive_path_match in complexity-score, so the computed risk reads high while 00-spec.yaml declares medium. Expected, and not to be resolved by hand-editing the lock file, which cargo regenerates and which is committed verbatim.
+    - 'RISK-12, A PRODUCT DECISION THAT IS NOT RESOLVED HERE AND MUST NOT BE. What a cell answers when the inference provider fails - stay silent, send a fixed apology, escalate - is product policy, not engineering, and it belongs with the degraded mode of A-4 (FR-10, "modo degradado de reglas fijas locales al agotarse el saldo"), which does not exist yet. This task returns None and logs the failure: no reply is sent and nothing is invented. Any fixed fallback text written now would be product invented in passing, which docs/STATUS.md lists as a declared block.'
+strategy:
+    - action: 'Declare the inference port in crates/hexcell-core/src/inferencia.rs, and nowhere else. THE PORT BELONGS IN THE DOMAIN CRATE for the same reason ChannelAdapter does: the core must not know Gemini, Groq or OpenRouter any more than it knows whatsmeow, and adr-0012 already fixed that inference is 100% external. It costs hexcell-core NOTHING: PeticionDeInferencia {conversacion: IdConversacion, contenido: String}, RespuestaDeInferencia {contenido: String} and the trait use std only, so the empty [dependencies] table of AC-11 stays empty and is still checkable with one command (cargo tree -p hexcell-core prints exactly one line). Write the method as fn generar(&self, peticion: PeticionDeInferencia) -> impl Future<Output = Result<RespuestaDeInferencia, Self::Error>> + Send, NOT as async fn: on rustc 1.92.0 the short form fires async_fn_in_trait, which cargo clippy -D warnings turns into an error, and this is the same reason already written in crates/hexcell-core/src/canal.rs. Carry the associated type Error: std::error::Error + Send + Sync + ''static, exactly like ChannelAdapter::Error, so a real provider can report a transport fault without inventing a domain result. DO NOT add token counts, cost, model name, temperature or a streaming variant. That is D-09 in the discard log - writing an anticipated signature as a compatibility mitigation - and A-4 will add usage to RespuestaDeInferencia when it has a real API response to model it on; adding a field to that struct does not change the signature the engine consumes, which is what the spec constraint actually requires.'
+      files:
+        - crates/hexcell-core/src/inferencia.rs
+        - crates/hexcell-core/src/lib.rs
+      step: 1
+    - action: 'Implement the deterministic simulated provider in crates/hexcell/src/inferencia.rs, as a MODULE of the binary crate and not as an eighth workspace crate. hexcell-canal-simulado earned its own crate because a second crate, hexcell-canal-contrato, consumes it independently of the binary; nothing outside crates/hexcell consumes this one, and promoting it later is mechanical. Determinism is structural, not a promise: the reply is format!("respuesta simulada {huella:016x}") over an FNV-1a 64 hash of peticion.contenido computed in ten lines with no dependency - no rand, no SystemTime::now, no Instant::now, no HashMap iteration order. TWO CONSEQUENCES ARE DELIBERATE. First, the reply is NOT the echo of the incoming content, so a test can prove the outgoing message came from the provider and not from the processor, which is exactly AC-4 and which ProcesadorDeEco could never demonstrate. Second, the reply carries no user text, so it cannot smuggle content anywhere. The provider also honours an OPTIONAL fixed latency (Duration, default ZERO, and with zero it awaits nothing at all): it does not change any output and so does not weaken AC-2, and it is what makes the in-flight shutdown test of AC-7 falsifiable instead of decorative - see step 11. The error type is a one-variant enum rather than Infallible, for the same reason ErrorDelAdaptadorSimulado is: a deshabited error leaves the Err arm of the consumer unreachable and untestable.'
+      files:
+        - crates/hexcell/src/inferencia.rs
+      step: 2
+    - action: 'Make the processor the seam that consumes the port, which is what crates/hexcell/src/procesador.rs already predicted in its own module doc ("se anadira cuando el procesador real la necesite"). ProcesadorDeMensajes::procesar becomes fn procesar(&self, evento: &EventoEntrante) -> impl Future<Output = Option<MensajeSaliente>> + Send - the declaration uses impl Future for the clippy reason of step 1, while the IMPLEMENTATIONS may and should use plain async fn, which does not fire the lint. Add ProcesadorDeInferencia<I> holding an I: ProveedorDeInferencia and delegating to it; the spec constraint explicitly allows the port to be consumed by "el procesador que el motor invoca", and this keeps Motor::nuevo at five parameters instead of six. VERIFIED ON 1.92.0 WITH CLIPPY -D WARNINGS: the impl needs the bound I: ProveedorDeInferencia + Sync, because &self crosses the await and the returned future must be Send; without + Sync the code fails to compile with an error pointing far from its cause. A provider error is logged by the engine and produces no reply (None), never a panic and never a hard-coded fallback text, because a fixed fallback string is product policy and this task has none. KEEP ProcesadorDeEco: five existing test files use it to exercise deduplication, history, restart and the FueraDeVentana policy, and those tests must not become tests of the inference provider.'
+      files:
+        - crates/hexcell/src/procesador.rs
+      step: 3
+    - action: 'Write crates/hexcell/src/registro.rs: one JSON object per line on stdout, hand-rolled, NO LOGGING CRATE. tracing plus tracing-subscriber plus its JSON layer would bring serde and serde_json and about a dozen crates to emit at most a handful of fields per event on a cell budgeted at 80 MB - the same argument this repository already applied to axum, to tiny-http and to r2d2, and it is recorded as D-17 in docs/bitacora-de-descartes.md so it is not re-proposed from scratch in six months. THE FIELD SET IS TYPED AND THAT IS THE PRIVACY MECHANISM, not a convention: EntradaDeRegistro carries nivel, evento: &''static str (a runtime String cannot be coerced into a &''static str, so a message body cannot land in that field), id_evento, id_conversacion, latencia_ms and exactly ONE free-text field, detalle, documented as being for the process own text - a bound address, a storage error - and never for the text of a message. id_celula is not a parameter: it is stored once in a std::sync::OnceLock by registro::inicializar from Configuracion::id_celula and stamped on every line, printing sin-configurar if a line is ever emitted before initialisation. Split formatear (pure, returns the String, unit-tested including the JSON escaping of quotes, backslashes and control characters) from emitir (takes stdout().lock() once and writes the line), so the format is testable without capturing a process.'
+      files:
+        - crates/hexcell/src/registro.rs
+      step: 4
+    - action: 'Write crates/hexcell/src/apagado.rs. Apagado::instalar registers SIGTERM AND SIGINT with tokio::signal::unix::signal (SIGINT because a developer running the binary by hand deserves the same ordered exit as the orchestrator, and it costs three lines) and spawns one task that flips a tokio::sync::watch channel and then parks forever, so the sender is never dropped. SenalDeApagado is what the engine receives: the watch receiver plus the drain limit. It also offers SenalDeApagado::nunca() for the six existing call sites of Motor::ejecutar, and nunca RETAINS ITS OWN SENDER inside the struct - a watch receiver whose sender has been dropped returns Err from changed() immediately, which would make every existing test shut the engine down instantly instead of never. VERIFIED EMPIRICALLY ON 2026-07-30 against tokio 1.53.1 on the pinned 1.92.0 toolchain: the whole skeleton (signal, watch, select! biased, close(), bounded drain) compiles under clippy -D warnings and a real process exits 0 on SIGTERM. Do NOT add tokio-util for CancellationToken (D-18): watch is already in the enabled sync feature and expresses this exactly. Register the handler EARLY, right after configuration parses, so a SIGTERM arriving during startup is caught rather than killing the process by default action.'
+      files:
+        - crates/hexcell/src/apagado.rs
+      step: 5
+    - action: 'Add the WAL checkpoint to crates/hexcell-storage/src/pools.rs, and READ THE NEXT SENTENCE BEFORE WRITING IT, because the obvious reading of the spec is not implementable. VERIFIED EMPIRICALLY ON 2026-07-30: PRAGMA wal_checkpoint on a SQLITE_OPEN_READ_ONLY connection fails with a disk I/O error, and every connection of PoolDeConocimiento is read-only by construction because FR-05 says knowledge_live.db is read-only in production. So punto_de_control_de_wal VISITS BOTH POOLS but only sessions.db can actually checkpoint: it runs PRAGMA wal_checkpoint(TRUNCATE) on the single write connection, and for knowledge_live.db it reports "solo lectura, sin escrituras que consolidar" without opening a read-write connection - opening one at shutdown just to checkpoint would violate the very invariant FR-05 states. ALSO VERIFIED: after a successful TRUNCATE the pragma returns 0|0|0, so do NOT assert that the checkpointed-page count is greater than zero; what is observable is that the -wal file is truncated to ZERO BYTES while the connection stays open. Return ResumenDePuntoDeControl with the busy flag and the resulting -wal size in bytes, and add SUFIJO_DE_ARCHIVO_WAL so the path is built in one place. A busy result is reported, not escalated: the engine has already stopped, but the readiness read connection may hold a read mark for an instant.'
+      files:
+        - crates/hexcell-storage/src/pools.rs
+        - crates/hexcell-storage/src/lib.rs
+      step: 6
+    - action: 'Teach the engine to shut down, and get the cancellation surface right, because this is the whole difference between a graceful shutdown and a truncated one. Motor::ejecutar takes a SenalDeApagado and runs tokio::select! with biased over exactly two branches: the shutdown signal and receptor_eventos.recv(). NOTHING ELSE IS EVER INSIDE THE SELECT. The per-event work is awaited in the BODY of the recv branch, so the select cannot be polling while an event is being processed and therefore CANNOT cancel it half-way - the invariant of the spec ("no se corta a la mitad") is structural, not a promise. On the signal the engine calls receptor_eventos.close(), which is the exact semantics the spec asks for: senders are refused from that moment on, while recv() keeps yielding what is already buffered until the queue is empty and then returns None. THE DRAIN LIMIT IS CHECKED BETWEEN EVENTS, NOT AROUND THE DRAIN: wrapping the drain loop in tokio::time::timeout would drop the inner future at whatever await point it reached - possibly between send and the history write - which is precisely the truncation this task exists to prevent. So the loop tests the elapsed time before dequeuing the next event and, if the limit is spent, logs drenaje_incompleto with receptor_eventos.len() pending and breaks.'
+      files:
+        - crates/hexcell/src/motor.rs
+      step: 7
+    - action: 'Instrument the engine, and only the engine. Every println!/eprintln! in crates/hexcell/src/motor.rs is replaced by a registro entry, and no other module that can see message text is allowed to import the logging module - not inferencia.rs, not procesador.rs, not conversaciones.rs, not deduplicacion.rs. That import ban IS the structural half of AC-9, and it is checked by a grep in the contract. Each entry carries id_celula (implicit), id_evento = the IdDeduplicacion of the event as an opaque string (the same internal identifier sessions.db already stores as a primary key since HEX-006, so it is not a raw transport identifier by the D-16 rule), id_conversacion where one applies, and latencia_ms measured with std::time::Instant from the moment the event was dequeued. READ THIS BEFORE ASSUMING Instant IS BANNED: HEX-006 forbade both SystemTime::now and Instant::now under crates/hexcell/src/ to protect the deduplication horizon, which is measured against the maximum received timestamp and never against a system clock. That rule stands for SystemTime::now everywhere and for BOTH clocks in deduplicacion.rs, conversaciones.rs and configuracion.rs; a monotonic Instant in motor.rs to measure latency is the single documented exception, it never reaches a timestamp column, and RISK-4 explains it so a reviewer does not read it as a regression. Events to emit: evento_recibido, evento_duplicado, inferencia_iniciada, envio_aceptado, envio_diferido, envio_rechazado, averia_de_transporte, fallo_de_persistencia, apagado_solicitado, drenaje_completado, drenaje_incompleto.'
+      files:
+        - crates/hexcell/src/motor.rs
+      step: 8
+    - action: 'Add the three environment variables to crates/hexcell/src/configuracion.rs, each with the same shape the existing ones already have (named constant, explicit expected format in the error, no unwrap and no expect). HEXCELL_LIMITE_DE_DRENAJE_SEGUNDOS, default LIMITE_DE_DRENAJE_POR_DEFECTO = 10 s, declared once in apagado.rs and IMPORTED here exactly as configuracion.rs already imports the deduplication window: ten and not thirty because the PRD grace is 30 s total and the checkpoint plus process teardown must fit inside what is left, and A-6 will align the container stop timeout with this value. HEXCELL_LATENCIA_INFERENCIA_SIMULADA_MS, default 0, which only the simulated provider reads. HEXCELL_EVENTO_SIMULADO_DE_ARRANQUE, optional text, which only the simulado arm of main reads. The last two are test-facing and that is stated in their doc comment rather than hidden: with the simulated channel there is NO external source of events, so a real process running the simulated channel can otherwise never receive one, and every process-level acceptance criterion of this task depends on it being able to.'
+      files:
+        - crates/hexcell/src/configuracion.rs
+      step: 9
+    - action: 'Compose it in crates/hexcell/src/main.rs. Order matters and is: parse configuration -> registro::inicializar(id_celula) -> Apagado::instalar -> open pools -> bind health -> build the simulated adapter -> inject the boot event IF configured -> build ProcesadorDeInferencia over ProveedorSimulado -> build the engine -> select over health and engine -> punto_de_control_de_wal -> ExitCode::SUCCESS. The boot event is injected THROUGH AdaptadorSimulado::inyectar_desde_contacto, so the adapter mints the IdConversacion and the IdRemitente exactly as adr-0010 requires and main never constructs either - the ban on IdConversacion::nuevo and IdRemitente::nuevo under crates/hexcell/src/ stays intact. IdDeduplicacion::nuevo appears in main.rs ONLY, for that synthetic event, and the doc comment says why: with a real channel the event identifier always arrives from the transport through the adapter. Injection happens BEFORE Motor::nuevo takes ownership of the adapter, so no shared handle, no Arc and no delegating wrapper is needed anywhere in src/. A checkpoint failure is logged and the process STILL exits 0: an unconsolidated WAL is not data loss, SQLite replays it on the next open, and reporting failure to the orchestrator for it would be a false alarm. Replace the stale module doc line that says signal handling belongs to HEX-008 (RISK-2).'
+      files:
+        - crates/hexcell/src/main.rs
+        - crates/hexcell/src/lib.rs
+        - crates/hexcell/src/salud.rs
+      step: 10
+    - action: 'Rebuild the process-test harness in crates/hexcell/tests/comun/mod.rs, because the current one cannot support any of AC-5 to AC-9 and, worse, would break the binary the moment it starts logging. TODAY lanzar_binario_con_ruta_de_datos takes the child stdout, wraps it in a local BufReader and DROPS IT on return: nothing bites yet only because the child prints nothing after startup, but once every processed event writes a line, the child gets EPIPE and println! panics. So: keep both pipes alive for the life of the child, drain stdout and stderr on two detached threads into a shared Arc<Mutex<String>>, and expose esperar_linea(fragmento, plazo) (polls the buffer, returns the matching line), salida_capturada() (everything so far), enviar_sigterm() and esperar_salida(plazo) -> ExitStatus (polls try_wait, since std has no wait-with-timeout). enviar_sigterm shells out to /bin/kill -TERM: adding libc as a dev-dependency to call one function is the same trade this repository already refused when it wrote raw HTTP over a TcpStream instead of adding a client crate. The health address is now read from the JSON line whose evento is salud_vinculada, and the child is launched with .stdin(Stdio::null()) so nothing inherits the test runner terminal.'
+      files:
+        - crates/hexcell/tests/comun/mod.rs
+      step: 11
+    - action: 'Write the three new test files. tests/inferencia.rs covers the port: two identical requests to ProveedorSimulado return identical replies (AC-2), the engine drives an event end to end through ProcesadorDeInferencia and the message captured by the simulated adapter is the PROVIDER reply and not the echo of the input (AC-3, AC-4), and a provider error produces no send and no panic. tests/apagado_ordenado.rs covers the process: with HEXCELL_EVENTO_SIMULADO_DE_ARRANQUE set and HEXCELL_LATENCIA_INFERENCIA_SIMULADA_MS set to about 1500, the test waits for the inferencia_iniciada line - which PROVES the event is in flight, so the assertion is not a race and not a sleep - then sends SIGTERM, asserts exit code 0 within 30 s (AC-5), then opens sessions.db AFTER the process is gone and finds both the incoming event and the outgoing reply in the history (AC-7), plus the punto_de_control_wal line reporting a zero-byte WAL (AC-6). A second case with no boot event and zero latency asserts the plain fast exit. tests/registro_estructurado.rs injects a boot event whose content is a distinctive marker, waits for evento_recibido, and asserts that the captured output contains id_celula, an id_evento and a latencia_ms for that event (AC-8) and that the marker appears NOWHERE in stdout or stderr (AC-9).'
+      files:
+        - crates/hexcell/tests/inferencia.rs
+        - crates/hexcell/tests/apagado_ordenado.rs
+        - crates/hexcell/tests/registro_estructurado.rs
+      step: 12
+    - action: 'Make the checkpoint falsifiable where it actually can be, in crates/hexcell-storage/tests/pools.rs. VERIFIED ON 2026-07-30 AND THIS IS WHY THE TEST GOES HERE: when the LAST connection to a WAL database closes, SQLite checkpoints and DELETES the -wal file by itself, so asserting on the -wal after the process has exited would pass identically with and without the explicit checkpoint - a test that cannot fail. The falsifiable test keeps the pools OPEN: write rows through the repository, assert the -wal file is larger than zero, call punto_de_control_de_wal, assert the -wal is exactly zero bytes and the data still reads back. Also repair the six existing Motor::ejecutar call sites with SenalDeApagado::nunca() (tests/motor.rs, persistencia.rs, deduplicacion.rs, continuidad_de_hilo.rs, politica_fuera_de_ventana.rs) and extend tests/configuracion.rs with the three new variables: default when absent, parsed when present, named error when malformed.'
+      files:
+        - crates/hexcell-storage/tests/pools.rs
+        - crates/hexcell/tests/motor.rs
+        - crates/hexcell/tests/persistencia.rs
+        - crates/hexcell/tests/deduplicacion.rs
+        - crates/hexcell/tests/continuidad_de_hilo.rs
+        - crates/hexcell/tests/politica_fuera_de_ventana.rs
+        - crates/hexcell/tests/configuracion.rs
+        - crates/hexcell/tests/salud_http.rs
+      step: 13
+    - action: 'Add the tokio signal feature to crates/hexcell/Cargo.toml with its one-line reason, and let cargo regenerate Cargo.lock. VERIFIED ON 2026-07-30 against the pinned 1.92.0 toolchain: the feature resolves and compiles clean and pulls exactly ONE new package, signal-hook-registry 1.4.8; libc, mio and socket2 are already in the lock through rusqlite and hyper, so the lock grows by roughly a dozen lines and no new toolchain trap appears. Do not touch the root Cargo.toml: the tokio entry in [workspace.dependencies] carries default-features = false and each crate selects its own features, so nothing there changes. Do not add tracing, tracing-subscriber, log, env_logger, serde, serde_json, tokio-util, libc, nix, signal-hook or tempfile to any manifest.'
+      files:
+        - crates/hexcell/Cargo.toml
+        - Cargo.lock
+      step: 14
+    - action: 'Write the three ADRs in Spanish, dated 2026-07-30, and add their three rows to docs/adr/README.md WITHOUT touching, renumbering or reordering any existing row. THE NUMBERS ARE 0017, 0018 AND 0019 and this was checked against the full table, not assumed from the next free index (RISK-3): no row is reserved for shutdown or for logging, and adr-0012 -inferencia externa- is NOT this decision, it is the A-4 record that the hardware runs no local models. adr-0017 covers the inference port: why it lives in hexcell-core, the impl Future shape and its dyn-incompatibility cost, why token accounting is deliberately absent until A-4, and why the simulated provider is a module and not a crate. adr-0018 covers the ordered shutdown: close() over cancellation, the limit between events rather than around the drain, the 10 s value against the PRD 30 s grace, the checkpoint that only sessions.db can receive and why, and exit 0 even when the checkpoint fails. adr-0019 covers structured logging: JSON lines on stdout with no crate, the typed field set as the privacy mechanism, and the never-log-content rule as a tested criterion. Add D-17 (logging crates) and D-18 (tokio-util CancellationToken) to docs/bitacora-de-descartes.md as NEW entries with their reopen condition, updating its index table and its last-updated line and editing NO existing entry. Add Definido entries to docs/STATUS.md dated 2026-07-30 attributed to HEX-007, plus one Pendiente recording that a real provider in A-4 must carry a per-call timeout smaller than the shutdown grace (RISK-6). Write NOTHING that marks etapa A-2 as closed: it closes with HEX-008.'
+      files:
+        - docs/adr/adr-0017-puerto-de-inferencia.md
+        - docs/adr/adr-0018-apagado-ordenado.md
+        - docs/adr/adr-0019-registro-estructurado.md
+        - docs/adr/README.md
+        - docs/bitacora-de-descartes.md
+        - docs/STATUS.md
+      step: 15
+summary: 'A-2 tasks 11, 12, 15: inference port in hexcell-core plus deterministic simulated provider, SIGTERM shutdown with bounded drain and WAL checkpoint, structured JSON logs without message content.'
+symbols:
+    - ProveedorDeInferencia
+    - PeticionDeInferencia
+    - RespuestaDeInferencia
+    - ProveedorSimulado
+    - ErrorDeInferenciaSimulada
+    - huella_determinista
+    - ProcesadorDeMensajes
+    - ProcesadorDeInferencia
+    - ProcesadorDeEco
+    - Motor::ejecutar
+    - Apagado
+    - SenalDeApagado
+    - SenalDeApagado::nunca
+    - LIMITE_DE_DRENAJE_POR_DEFECTO
+    - EntradaDeRegistro
+    - NivelDeRegistro
+    - registro::inicializar
+    - registro::emitir
+    - registro::formatear
+    - GestorDePools::punto_de_control_de_wal
+    - ResumenDePuntoDeControl
+    - SUFIJO_DE_ARCHIVO_WAL
+    - HEXCELL_LIMITE_DE_DRENAJE_SEGUNDOS
+    - HEXCELL_LATENCIA_INFERENCIA_SIMULADA_MS
+    - HEXCELL_EVENTO_SIMULADO_DE_ARRANQUE
+    - BinarioDePrueba::esperar_linea
+    - BinarioDePrueba::enviar_sigterm
+    - BinarioDePrueba::esperar_salida
+    - BinarioDePrueba::salida_capturada
+task_id: HEX-007
+test_scenarios:
+    - covers:
+        - AC-1
+        - AC-11
+      statement: The inference port declares one generation operation whose signature names no concrete provider, returns impl Future + Send rather than using async fn in the trait, and lives in a crate whose dependency table stays empty.
+    - covers:
+        - AC-2
+      statement: Calling the simulated provider twice with the same request, in separate invocations, returns byte-identical replies, and the reply is derived only from the request content with no randomness and no reading of any clock.
+    - covers:
+        - AC-3
+      statement: The engine receives the provider through a processor that is generic over the trait, so the concrete simulated type is never named in the signature the engine holds.
+    - covers:
+        - AC-4
+      statement: An event injected by the simulated adapter and processed by the engine produces an outgoing message captured by the adapter that equals the provider reply and is NOT the echo of the incoming content, proving the reply came from the provider rather than from a value fixed in the processor.
+    - covers:
+        - AC-4
+      statement: A provider failure produces no send and no panic, and the engine keeps consuming subsequent events.
+    - covers:
+        - AC-5
+      statement: The real binary, launched as tests/salud_http.rs launches it and with an in-flight event proven by its inferencia_iniciada log line, exits with code 0 in under 30 seconds after receiving SIGTERM.
+    - covers:
+        - AC-6
+      statement: With both pools still open, writing rows and then calling the checkpoint leaves the sessions.db -wal file at exactly zero bytes and the data still readable, which is the falsifiable form of the criterion because SQLite deletes the -wal by itself when the last connection closes.
+    - covers:
+        - AC-6
+      statement: The shutdown of the real process emits a punto_de_control_wal entry reporting a zero-byte WAL before the process exits.
+    - covers:
+        - AC-7
+      statement: An event still in flight when SIGTERM arrives is found complete in sessions.db after the process is gone - the incoming event registered and its outgoing reply recorded in the conversation history - with nothing half-written.
+    - covers:
+        - AC-7
+      statement: Events already queued but not yet dequeued when the signal arrives are drained before exit, because the engine closes the receiver instead of abandoning it, and no sender can enqueue anything after that point.
+    - covers:
+        - AC-8
+      statement: A log entry produced while processing an event carries the cell identifier, an event identifier and a latency measurement, in a single JSON object per line.
+    - covers:
+        - AC-9
+      statement: An event whose content is a distinctive marker leaves that marker nowhere in the whole captured stdout and stderr of the process, while its log entries are still present and correlated by identifier.
+    - covers:
+        - AC-10
+      statement: cargo fmt --check, cargo clippy --workspace --all-targets -- -D warnings and cargo test --workspace all finish clean on the pinned 1.92.0 toolchain, including the trait methods written as impl Future + Send rather than async fn.
+    - covers:
+        - AC-11
+      statement: 'crates/hexcell-core/Cargo.toml still declares no dependency at all: no tokio, no HTTP crate, no SQLite or pool crate, whether or not the inference port lives there.'
+    - covers:
+        - AC-12
+      statement: The diff contains no VACUUM INTO, no backup or restore mechanism, no sidecar IPC contract, no API key and nothing in docs/STATUS.md marking etapa A-2 as closed.
