@@ -38,6 +38,21 @@ http-body-util = "0.1"
 # Buffer de bytes compartido entre hyper y http-body-util; dependencia transitiva de ambos que
 # se declara aquí porque el servidor de salud la nombra directamente al construir cuerpos.
 bytes = "1.12"
+# Motor SQLite de la persistencia dual de FR-05 (crates/hexcell-storage). La serie 0.39 está
+# fijada a propósito y no es un descuido de actualización: comprobado el 2026-07-30, la serie
+# siguiente arrastra libsqlite3-sys 0.38.1, cuyo script de compilación usa la macro todavía
+# inestable `cfg_select!` y falla con E0658 sobre el canal 1.92.0 que fija rust-toolchain.toml;
+# la 0.39 arrastra libsqlite3-sys 0.37.0 y compila limpio. Sin esta nota escrita, la próxima
+# actualización reintroduce un fallo de compilación cuya causa está a tres crates de distancia.
+# `bundled` compila SQLite dentro del binario: la célula se despliega en una imagen mínima
+# (etapa A-6) y no se puede depender de la versión de libsqlite3 del sistema anfitrión.
+# Se descarta un pool externo (la familia de r2d2, deadpool o un ORM como sqlx): SQLite serializa
+# a los escritores por diseño, así que un pool de N conexiones de escritura no compra nada más
+# que SQLITE_BUSY, y un hilo de fondo segando conexiones ociosas es coste puro en el hardware
+# objetivo. Es el mismo argumento que crates/hexcell/Cargo.toml ya aplicó a axum y a tiny-http.
+# También se descarta el crate de directorios temporales para tests: crates/hexcell/tests/ ya
+# construye los suyos con temp_dir() y process::id(), y esta tarea extiende ese patrón.
+rusqlite = { version = "0.39", features = ["bundled"] }
 
 # Perfil de release orientado a tamaño de binario, coherente con NFR-01 y con el hardware
 # objetivo (i7 de 10 años, 8 GB RAM): en ese hardware el tamaño del binario y el arranque

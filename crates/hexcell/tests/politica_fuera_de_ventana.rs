@@ -8,9 +8,12 @@
 //! batería obligaría a la etapa B-1 a depender del binario de la célula para ejercitar el
 //! contrato del puerto, exactamente la dependencia que la batería existe para evitar.
 
+mod comun;
+
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
+use comun::{DirectorioTemporal, repositorio_temporal};
 use hexcell::motor::Motor;
 use hexcell::procesador::ProcesadorDeEco;
 use hexcell_canal_simulado::{AdaptadorSimulado, ErrorDelAdaptadorSimulado, Reloj, RelojDePrueba};
@@ -59,6 +62,7 @@ impl ChannelAdapter for AdaptadorQueDelegaEnArc {
 
 #[tokio::test]
 async fn una_respuesta_fuera_de_ventana_se_difiere_y_se_reenvia_antes_que_la_nueva() {
+    let directorio = DirectorioTemporal::nuevo("fuera-de-ventana");
     let reloj = RelojDePrueba::nuevo(SystemTime::UNIX_EPOCH);
     let (adaptador, receptor_eventos) = AdaptadorSimulado::nuevo(Arc::new(reloj.clone()), 8);
     let adaptador = Arc::new(adaptador);
@@ -77,6 +81,7 @@ async fn una_respuesta_fuera_de_ventana_se_difiere_y_se_reenvia_antes_que_la_nue
         ProcesadorDeEco,
         receptor_eventos,
         Duration::from_secs(3600),
+        repositorio_temporal(directorio.ruta()),
     );
     let manejador = tokio::spawn(async move {
         motor.ejecutar().await;

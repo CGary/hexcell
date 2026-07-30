@@ -9,9 +9,12 @@
 //! (`JoinHandle::abort`) en vez de esperar un cierre de canal que estos tests no necesitan
 //! provocar; lo que importa comprobar es lo que el adaptador capturó mientras tanto.
 
+mod comun;
+
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
+use comun::{DirectorioTemporal, repositorio_temporal};
 use hexcell::motor::Motor;
 use hexcell::procesador::ProcesadorDeEco;
 use hexcell_canal_simulado::{AdaptadorSimulado, ErrorDelAdaptadorSimulado, Reloj, RelojDePrueba};
@@ -70,6 +73,7 @@ async fn drenar_y_cancelar(motor: Motor<AdaptadorQueDelegaEnArc, ProcesadorDeEco
 
 #[tokio::test]
 async fn un_evento_inyectado_se_procesa_y_la_respuesta_se_envia_por_send() {
+    let directorio = DirectorioTemporal::nuevo("motor-eco");
     let reloj = RelojDePrueba::nuevo(SystemTime::UNIX_EPOCH);
     let (adaptador, receptor_eventos) = AdaptadorSimulado::nuevo(Arc::new(reloj.clone()), 8);
     let adaptador = Arc::new(adaptador);
@@ -85,6 +89,7 @@ async fn un_evento_inyectado_se_procesa_y_la_respuesta_se_envia_por_send() {
         ProcesadorDeEco,
         receptor_eventos,
         Duration::from_secs(3600),
+        repositorio_temporal(directorio.ruta()),
     );
     drenar_y_cancelar(motor).await;
 
@@ -100,6 +105,7 @@ async fn un_evento_inyectado_se_procesa_y_la_respuesta_se_envia_por_send() {
 
 #[tokio::test]
 async fn el_motor_no_se_detiene_ante_cada_variante_de_resultado_ni_ante_una_averia() {
+    let directorio = DirectorioTemporal::nuevo("motor-variantes");
     let reloj = RelojDePrueba::nuevo(SystemTime::UNIX_EPOCH);
     let (adaptador, receptor_eventos) = AdaptadorSimulado::nuevo(Arc::new(reloj.clone()), 8);
     let adaptador = Arc::new(adaptador);
@@ -130,6 +136,7 @@ async fn el_motor_no_se_detiene_ante_cada_variante_de_resultado_ni_ante_una_aver
         ProcesadorDeEco,
         receptor_eventos,
         Duration::from_secs(3600),
+        repositorio_temporal(directorio.ruta()),
     );
     // Si el motor entrara en pánico o dejara de consumir ante cualquiera de las seis variantes,
     // la tarea de fondo habría terminado sola en vez de necesitar `abort()`; en cualquier caso lo

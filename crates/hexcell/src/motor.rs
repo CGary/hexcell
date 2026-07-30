@@ -30,6 +30,21 @@
 //!    `FueraDeVentana` ya no se limita a registrar un mensaje: aplica la política (encolar la
 //!    respuesta como diferida) en vez de tratar el rechazo como los demás.
 //!
+//! # Dos políticas ante un fallo de persistencia
+//!
+//! Desde HEX-006 el registro de deduplicación y el historial viven en `sessions.db`, así que las
+//! dos operaciones pueden fallar. Ninguna de las dos mata la célula, y cada una falla en la
+//! dirección que menos daño hace al negocio del cliente:
+//!
+//! * **Deduplicación: `fail-open`.** Si la base no responde, el evento se procesa **como nuevo**.
+//!   El residuo es el mismo que el plan ya aceptó para una reentrega tardía —duplicar el trabajo
+//!   conversacional— y es estrictamente mejor que enmudecer ante un cliente que está escribiendo.
+//! * **Historial: se reporta y se sigue.** Que no se pueda anotar lo ocurrido no es razón para no
+//!   contestar: la respuesta sale igualmente y el fallo se imprime en `stderr`.
+//!
+//! Las dos quedan escritas aquí a propósito. Un `fail-open` sin justificación al lado se lee, seis
+//! meses después, como un caso de error que alguien olvidó tratar.
+//!
 //! # Política ante `FueraDeVentana`: diferir, no escalar
 //!
 //! Se eligió **diferir** (encolar la respuesta hasta que el cliente vuelva a escribir) en vez de
@@ -37,7 +52,7 @@
 //! preferencia: no existe todavía ningún registro estructurado (llega en HEX-008), ninguna vía de
 //! notificación a un operador ni ningún plano de CLI de administración (llega en la etapa A-6); una
 //! rama de escalada hoy sería, en la práctica, imprimir una línea a `stderr` y llamarlo política.
-//! Diferir, en cambio, es implementable, observable y probable en memoria ahora mismo.
+//! Diferir, en cambio, es implementable, observable y probable ahora mismo.
 //!
 //! La cola de diferidas es **acotada por conversación**
 //! (`crate::conversaciones::EstadoDeConversaciones`) con una regla de descarte del más antiguo en
@@ -45,16 +60,18 @@
 //! presupuesto de ≤ 80 MB por célula de NFR-01 no puede absorber. No hay bucle de reintento, ni
 //! temporizador de `backoff`, ni tarea de fondo: las diferidas se reintentan únicamente cuando
 //! llega un evento **posterior** para esa misma conversación, y una respuesta rechazada de nuevo
-//! al drenar vuelve a encolarse, sujeta al mismo tope. Un temporizador necesitaría un reloj dentro
-//! del motor, exactamente el acoplamiento que este módulo evita a propósito.
+//! al drenar vuelve a encolarse, sujeta al mismo tope. Un temporizador necesitaría una fuente de
+//! tiempo dentro del motor, exactamente el acoplamiento que este módulo evita a propósito.
 
-use std::time::Duration;
+use std::sync::Arc;
+use std::time::{Duration, SystemTime};
 
 use hexcell_core::canal::{ChannelAdapter, EventoEntrante, MensajeSaliente, ResultadoEnvio};
 use hexcell_core::identidad::IdConversacion;
+use hexcell_storage::{ErrorDeAlmacen, RepositorioDeSesiones};
 use tokio::sync::mpsc;
 
-use crate::conversaciones::EstadoDeConversaciones;
+use crate::conversaciones::{EstadoDeConversaciones, EventoDeHistorial};
 use crate::deduplicacion::{RegistroDeDeduplicacion, VeredictoDeDeduplicacion};
 use crate::procesador::ProcesadorDeMensajes;
 
@@ -77,29 +94,34 @@ where
     P: ProcesadorDeMensajes,
 {
     /// Construye el motor a partir del adaptador, el procesador, el receptor de eventos que el
-    /// propio adaptador entregó al crearse (siguiendo la convención de entrega descrita arriba) y
-    /// la ventana de retención con la que arranca el registro de deduplicación que el motor posee
-    /// (`Configuracion::ventana_deduplicacion` en producción).
+    /// propio adaptador entregó al crearse (siguiendo la convención de entrega descrita arriba),
+    /// la ventana de retención con la que arranca el registro de deduplicación
+    /// (`Configuracion::ventana_deduplicacion` en producción) y el repositorio de `sessions.db`
+    /// que respalda tanto ese registro como el historial.
     pub fn nuevo(
         adaptador: A,
         procesador: P,
         receptor_eventos: mpsc::Receiver<EventoEntrante>,
         ventana_deduplicacion: Duration,
+        repositorio: Arc<RepositorioDeSesiones>,
     ) -> Self {
         Self {
             adaptador,
             procesador,
             receptor_eventos,
-            deduplicacion: RegistroDeDeduplicacion::nuevo(ventana_deduplicacion),
-            conversaciones: EstadoDeConversaciones::nuevo(),
+            deduplicacion: RegistroDeDeduplicacion::nuevo(
+                Arc::clone(&repositorio),
+                ventana_deduplicacion,
+            ),
+            conversaciones: EstadoDeConversaciones::nuevo(repositorio),
         }
     }
 
-    /// Historial en memoria de una conversación, para que los tests observen su continuidad.
+    /// Historial persistido de una conversación, para que los tests observen su continuidad.
     pub fn historial(
         &self,
         conversacion: &IdConversacion,
-    ) -> &[crate::conversaciones::EventoDeHistorial] {
+    ) -> Result<Vec<EventoDeHistorial>, ErrorDeAlmacen> {
         self.conversaciones.historial(conversacion)
     }
 
@@ -109,9 +131,21 @@ where
     /// procesador; ver la documentación del módulo para el porqué de ese orden exacto.
     pub async fn ejecutar(&mut self) {
         while let Some(evento) = self.receptor_eventos.recv().await {
-            let veredicto = self
+            let veredicto = match self
                 .deduplicacion
-                .procesar(evento.deduplicacion.clone(), evento.marca_temporal);
+                .procesar(evento.deduplicacion.clone(), evento.marca_temporal)
+            {
+                Ok(veredicto) => veredicto,
+                Err(error) => {
+                    // `fail-open`: ver la sección «Dos políticas ante un fallo de persistencia»
+                    // en la documentación de este módulo.
+                    eprintln!(
+                        "motor: fallo al consultar la deduplicación persistida ({error}); el \
+                         evento se procesa como nuevo para no dejar al cliente sin respuesta"
+                    );
+                    VeredictoDeDeduplicacion::Nuevo
+                }
+            };
             if veredicto == VeredictoDeDeduplicacion::Duplicado {
                 println!(
                     "motor: evento entrante descartado por duplicado, ya procesado dentro de la \
@@ -120,38 +154,67 @@ where
                 continue;
             }
 
-            self.drenar_diferidas(&evento.conversacion).await;
+            self.drenar_diferidas(&evento.conversacion, evento.marca_temporal)
+                .await;
 
-            self.conversaciones
-                .registrar_entrante(&evento.conversacion, evento.contenido.clone());
+            if let Err(error) = self.conversaciones.registrar_entrante(
+                &evento.conversacion,
+                &evento.remitente,
+                &evento.contenido,
+                evento.marca_temporal,
+            ) {
+                eprintln!(
+                    "motor: no se pudo anotar el evento entrante en el historial ({error}); la \
+                     respuesta se envía de todos modos"
+                );
+            }
 
             let Some(mensaje) = self.procesador.procesar(&evento) else {
                 continue;
             };
 
-            self.enviar_y_registrar(&evento.conversacion, mensaje).await;
+            self.enviar_y_registrar(&evento.conversacion, mensaje, evento.marca_temporal)
+                .await;
         }
     }
 
     /// Reintenta, en orden de llegada, cada respuesta que quedó diferida para esta conversación.
-    async fn drenar_diferidas(&mut self, conversacion: &IdConversacion) {
+    async fn drenar_diferidas(
+        &mut self,
+        conversacion: &IdConversacion,
+        marca_temporal: SystemTime,
+    ) {
         for mensaje in self.conversaciones.drenar_diferidas(conversacion) {
-            self.enviar_y_registrar(conversacion, mensaje).await;
+            self.enviar_y_registrar(conversacion, mensaje, marca_temporal)
+                .await;
         }
     }
 
+    /// Envía un mensaje y aplica la política que corresponda a cada desenlace del puerto.
+    ///
+    /// La marca temporal con la que se anota la salida es la del evento entrante que la provocó,
+    /// no una lectura de la hora del sistema: el motor no tiene ninguna fuente de tiempo propia, y
+    /// todo lo que persiste está medido en el tiempo del canal.
     async fn enviar_y_registrar(
         &mut self,
         conversacion: &IdConversacion,
         mensaje: MensajeSaliente,
+        marca_temporal: SystemTime,
     ) {
         let resultado = self.adaptador.send(conversacion, mensaje.clone()).await;
 
         match resultado {
             Ok(ResultadoEnvio::Aceptado) => {
                 println!("motor: envío aceptado por el canal configurado");
-                self.conversaciones
-                    .registrar_saliente(conversacion, mensaje);
+                if let Err(error) =
+                    self.conversaciones
+                        .registrar_saliente(conversacion, &mensaje, marca_temporal)
+                {
+                    eprintln!(
+                        "motor: no se pudo anotar la respuesta enviada en el historial ({error}); \
+                         el mensaje ya salió y no se reintenta"
+                    );
+                }
             }
             Ok(ResultadoEnvio::FueraDeVentana) => {
                 println!(

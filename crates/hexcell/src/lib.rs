@@ -17,5 +17,6 @@ pub mod configuracion;
 pub mod conversaciones;
 pub mod deduplicacion;
 pub mod motor;
+pub mod preparacion;
 pub mod procesador;
 pub mod salud;

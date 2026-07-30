@@ -11,9 +11,12 @@
 //! dentro de un `tokio::select!` contra un `sleep` corto: el préstamo `&mut motor` termina cuando
 //! el `select!` termina, y el `motor`, que nunca se movió, sigue disponible para inspeccionarlo.
 
+mod comun;
+
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
+use comun::{DirectorioTemporal, repositorio_temporal};
 use hexcell::motor::Motor;
 use hexcell::procesador::ProcesadorDeEco;
 use hexcell_canal_simulado::{AdaptadorSimulado, ErrorDelAdaptadorSimulado, RelojDePrueba};
@@ -58,6 +61,7 @@ where
 
 #[tokio::test]
 async fn el_hilo_sobrevive_a_un_re_emparejamiento_con_su_historial_intacto() {
+    let directorio = DirectorioTemporal::nuevo("continuidad-de-hilo");
     let reloj = RelojDePrueba::nuevo(SystemTime::UNIX_EPOCH);
     let (adaptador, receptor_eventos) = AdaptadorSimulado::nuevo(Arc::new(reloj), 8);
     let adaptador = Arc::new(adaptador);
@@ -76,10 +80,13 @@ async fn el_hilo_sobrevive_a_un_re_emparejamiento_con_su_historial_intacto() {
         ProcesadorDeEco,
         receptor_eventos,
         Duration::from_secs(3600),
+        repositorio_temporal(directorio.ruta()),
     );
     dejar_procesar(&mut motor).await;
 
-    let historial_antes = motor.historial(&conversacion_antes).to_vec();
+    let historial_antes = motor
+        .historial(&conversacion_antes)
+        .expect("leer el historial persistido");
     assert!(
         !historial_antes.is_empty(),
         "el primer evento debe haber dejado algo en el historial"
@@ -104,7 +111,9 @@ async fn el_hilo_sobrevive_a_un_re_emparejamiento_con_su_historial_intacto() {
 
     dejar_procesar(&mut motor).await;
 
-    let historial_despues = motor.historial(&conversacion_despues);
+    let historial_despues = motor
+        .historial(&conversacion_despues)
+        .expect("leer el historial persistido tras el re-emparejamiento");
     assert!(
         historial_despues.len() > historial_antes.len(),
         "el historial debe continuar, no reiniciarse, tras el re-emparejamiento"

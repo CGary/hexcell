@@ -1,8 +1,11 @@
 //! Registro de deduplicación: idempotencia de entrega de eventos entrantes.
 //!
-//! **Estructura TRANSITORIA.** Vive en memoria porque `sessions.db` no existe todavía —llega en
-//! HEX-006, que es quien la respaldará con persistencia real—. No hay aquí ningún esquema, ninguna
-//! migración y ninguna sentencia SQL: esta tarea no inventa la persistencia que HEX-006 diseñará.
+//! **Ya no vive en memoria.** Desde HEX-006, `sessions.db` es la única fuente de verdad del
+//! conjunto de identificadores ya procesados: este tipo es una fachada delgada sobre
+//! `hexcell_storage::RepositorioDeSesiones` que recuerda la ventana de retención configurada y no
+//! guarda ningún mapa propio. No queda ninguna caché delante de la base a propósito: dos fuentes
+//! de verdad para el mismo conjunto es exactamente cómo un reinicio acaba en desacuerdo consigo
+//! mismo sin que nadie lo note.
 //!
 //! # La ventana de retención
 //!
@@ -20,15 +23,14 @@
 //!
 //! # Por qué el registro no tiene reloj propio
 //!
-//! El registro nunca lee un reloj: poda contra el máximo `marca_temporal` visto hasta ahora en el
-//! propio flujo de eventos, que le llega como parámetro en cada llamada a `procesar`. Esto compra
-//! dos cosas: el motor no gana ninguna dependencia de reloj, y —más importante— este crate nunca
-//! importa el trait de reloj inyectable, ni `RelojDePrueba` ni `RelojDelSistema`, del crate de
-//! test-double (`hexcell-canal-simulado`) para nada relacionado con el tiempo de producción. La
-//! consecuencia
-//! que se acepta a sabiendas: la retención se mide en tiempo del **canal**, no en tiempo de pared,
-//! así que un adaptador que entregase marcas temporales muy desordenadas podaría antes de lo
-//! previsto. Documentado aquí; HEX-006 lo revisita cuando el registro gane persistencia.
+//! El registro nunca lee la hora del sistema: poda contra el máximo `marca_temporal` visto hasta
+//! ahora en el propio flujo de eventos, que le llega como parámetro en cada llamada a `procesar`.
+//! Ese máximo —el horizonte— pasó a vivir en la tabla `estado_del_motor` de `sessions.db` y avanza
+//! de forma monótona también entre reinicios, así que la semántica que fijó HEX-005 no cambia:
+//! sigue midiéndose en tiempo del **canal** y no en tiempo de pared, con la misma consecuencia
+//! aceptada a sabiendas —un adaptador que entregase marcas temporales muy desordenadas podaría
+//! antes de lo previsto—. Este crate tampoco importa el trait de tiempo inyectable del crate de
+//! test-double (`hexcell-canal-simulado`) para nada relacionado con el tiempo de producción.
 //!
 //! # AC-9: un duplicado que llega fuera de la ventana
 //!
@@ -37,11 +39,17 @@
 //! duplicando el trabajo conversacional, como limitación residual aceptada y documentada. Este
 //! módulo no rechaza ese caso, no hace `panic!` y no inventa un tercer camino: simplemente, si la
 //! entrada ya fue podada por antigua, el identificador vuelve a parecer nuevo.
+//!
+//! El tope duro de entradas retenidas vive ahora junto al SQL que lo aplica, en
+//! `hexcell_storage::LIMITE_DE_ENTRADAS_RETENIDAS`, con su valor sin cambios.
 
-use std::collections::HashMap;
+use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
 use hexcell_core::identidad::IdDeduplicacion;
+use hexcell_storage::{ErrorDeAlmacen, RepositorioDeSesiones};
+
+pub use hexcell_storage::VeredictoDeDeduplicacion;
 
 /// Ventana de retención por defecto del registro de deduplicación: una hora.
 ///
@@ -49,99 +57,44 @@ use hexcell_core::identidad::IdDeduplicacion;
 /// canal de mensajería es o bien un reintento inmediato de una entrega no confirmada, o bien la
 /// repetición de lo que quedó pendiente cuando el transporte se reconectó, y ambos casos aterrizan
 /// en minutos. Una hora cubre con margen amplio un reinicio o un ciclo completo de reintentos sin
-/// dejar crecer el mapa sin necesidad. **La cifra definitiva sigue siendo una decisión de producto
-/// abierta** (`docs/STATUS.md`, entrada `Pendiente` del 2026-07-30): este valor es el
+/// dejar crecer la tabla sin necesidad. **La cifra definitiva sigue siendo una decisión de
+/// producto abierta** (`docs/STATUS.md`, entrada `Pendiente` del 2026-07-30): este valor es el
 /// que se usa mientras esa decisión no se tome, no un número ya cerrado.
 pub const VENTANA_DE_RETENCION_DEDUPLICACION_POR_DEFECTO: Duration = Duration::from_secs(60 * 60);
 
-/// Tope duro de identificadores retenidos, sea cual sea la ventana configurada.
-///
-/// Protege el presupuesto de memoria de NFR-01 frente a una ráfaga: sin este tope, una ráfaga de
-/// entregas con identificadores distintos podría crecer el mapa sin límite dentro de la propia
-/// ventana, antes de que la poda por antigüedad tuviera ocasión de actuar.
-const LIMITE_DE_ENTRADAS_RETENIDAS: usize = 10_000;
-
-/// Veredicto de `RegistroDeDeduplicacion::procesar` sobre un identificador de deduplicación.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum VeredictoDeDeduplicacion {
-    /// No se había visto antes dentro de la ventana de retención vigente: se debe procesar.
-    Nuevo,
-    /// Ya se vio antes, dentro de la ventana de retención vigente: se debe descartar.
-    Duplicado,
-}
-
-/// Registro en memoria de identificadores de deduplicación ya procesados.
-///
-/// Estructura **transitoria**: HEX-006 la respalda con `sessions.db`. Mientras tanto vive
-/// enteramente en memoria del proceso y se pierde en cada reinicio, lo cual es aceptable porque un
-/// reinicio ya interrumpe la ventana de servicio del canal de todos modos.
+/// Fachada del registro de deduplicación respaldado por `sessions.db`.
 pub struct RegistroDeDeduplicacion {
-    /// Identificador visto → marca temporal a la que se vio por primera vez.
-    vistos: HashMap<IdDeduplicacion, SystemTime>,
-    /// Máximo `marca_temporal` observado hasta ahora, en tiempo del canal, no de pared.
-    horizonte: SystemTime,
+    repositorio: Arc<RepositorioDeSesiones>,
     /// Ventana de retención con la que se construyó este registro.
     ventana: Duration,
 }
 
 impl RegistroDeDeduplicacion {
-    /// Construye el registro con la ventana de retención dada.
+    /// Construye el registro sobre el repositorio de sesiones y con la ventana de retención dada.
     ///
     /// La ventana es un parámetro y no una constante interna: el valor por defecto vive en
     /// [`VENTANA_DE_RETENCION_DEDUPLICACION_POR_DEFECTO`] y quien construye el registro (hoy,
     /// `crates/hexcell/src/main.rs` a partir de `Configuracion::ventana_deduplicacion`) decide si
     /// usa ese valor o uno configurado explícitamente.
-    pub fn nuevo(ventana: Duration) -> Self {
+    pub fn nuevo(repositorio: Arc<RepositorioDeSesiones>, ventana: Duration) -> Self {
         Self {
-            vistos: HashMap::new(),
-            horizonte: SystemTime::UNIX_EPOCH,
+            repositorio,
             ventana,
         }
     }
 
     /// Procesa un identificador de deduplicación llegado con la marca temporal dada.
     ///
-    /// Actualiza primero el horizonte monótono, poda las entradas que hayan quedado fuera de la
-    /// ventana de retención medida contra ese horizonte y contra el tope duro de entradas
-    /// retenidas, y solo entonces decide si `id` ya estaba presente. Un identificador podado por
-    /// antigüedad —AC-9— vuelve a parecer nuevo a propósito: es el comportamiento ya fijado por el
-    /// plan, no una laguna de esta implementación.
+    /// Delega en una única transacción de `sessions.db` que avanza el horizonte monótono, poda por
+    /// antigüedad y por el tope duro, e inserta el identificador si no estaba. Devuelve `Err`
+    /// cuando la persistencia falla; qué hacer con ese error es política del motor y está
+    /// documentada allí, no aquí: esta fachada no decide por el negocio del cliente.
     pub fn procesar(
         &mut self,
         id: IdDeduplicacion,
         marca_temporal: SystemTime,
-    ) -> VeredictoDeDeduplicacion {
-        if marca_temporal > self.horizonte {
-            self.horizonte = marca_temporal;
-        }
-        self.podar();
-
-        if self.vistos.contains_key(&id) {
-            return VeredictoDeDeduplicacion::Duplicado;
-        }
-
-        self.vistos.insert(id, marca_temporal);
-        VeredictoDeDeduplicacion::Nuevo
-    }
-
-    /// Descarta las entradas fuera de la ventana de retención vigente y, si aun así se supera el
-    /// tope duro de entradas, descarta además las más antiguas hasta volver a estar dentro de él.
-    fn podar(&mut self) {
-        if let Some(corte) = self.horizonte.checked_sub(self.ventana) {
-            self.vistos.retain(|_, marca| *marca >= corte);
-        }
-
-        if self.vistos.len() > LIMITE_DE_ENTRADAS_RETENIDAS {
-            let mut restantes: Vec<(IdDeduplicacion, SystemTime)> = self
-                .vistos
-                .iter()
-                .map(|(id, marca)| (id.clone(), *marca))
-                .collect();
-            restantes.sort_by_key(|(_, marca)| *marca);
-            let exceso = restantes.len() - LIMITE_DE_ENTRADAS_RETENIDAS;
-            for (id, _) in restantes.into_iter().take(exceso) {
-                self.vistos.remove(&id);
-            }
-        }
+    ) -> Result<VeredictoDeDeduplicacion, ErrorDeAlmacen> {
+        self.repositorio
+            .procesar_deduplicacion(&id, marca_temporal, self.ventana)
     }
 }

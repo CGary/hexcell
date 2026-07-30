@@ -1,0 +1,106 @@
+//! Migraciones versionadas con `PRAGMA user_version`.
+//!
+//! # Por qué no hay ningún crate de migraciones
+//!
+//! SQLite ya guarda un entero de 32 bits en la cabecera del archivo, `user_version`, que ninguna
+//! otra parte del motor usa y que cambia **dentro de la misma transacción** que el esquema. Un
+//! crate de migraciones añadiría una tabla de versiones que duplica exactamente ese dato, con la
+//! diferencia de que la tabla puede quedar desincronizada del esquema y la cabecera no.
+//!
+//! # Por qué el guion SQL viaja dentro del binario
+//!
+//! Los `.sql` viven en `crates/hexcell-storage/migraciones/` y entran por `include_str!`: se leen
+//! como SQL en el repositorio —revisables, con su propio historial— y a la vez no crean ninguna
+//! dependencia de archivos en tiempo de ejecución, que en la imagen mínima de la etapa A-6 sería
+//! un modo de fallo nuevo (el binario arrancaría y moriría al primer arranque por un archivo que
+//! nadie copió).
+//!
+//! Volver a aplicar una migración sobre una base ya migrada es una operación **nula** que devuelve
+//! `Ok`: es el caso normal, porque cada arranque de la célula la ejecuta.
+
+use rusqlite::Connection;
+
+use crate::error::ErrorDeAlmacen;
+
+/// Versión de esquema que este binario espera encontrar en `sessions.db`.
+pub const VERSION_DE_ESQUEMA_DE_SESIONES: i64 = 1;
+
+/// Versión de esquema que este binario espera encontrar en `knowledge_live.db`.
+///
+/// El esquema real de la base de conocimiento lo diseña la etapa A-5, con la Shadow DB y las
+/// épocas inmutables; esta versión 1 solo crea la tabla mínima de metadatos que permite abrir el
+/// archivo en solo lectura y sondearlo.
+pub const VERSION_DE_ESQUEMA_DE_CONOCIMIENTO: i64 = 1;
+
+const ESQUEMA_INICIAL_DE_SESIONES: &str =
+    include_str!("../migraciones/sesiones/0001-esquema-inicial.sql");
+
+const ESQUEMA_MINIMO_DE_CONOCIMIENTO: &str =
+    include_str!("../migraciones/conocimiento/0001-esquema-minimo.sql");
+
+/// Lleva `sessions.db` hasta [`VERSION_DE_ESQUEMA_DE_SESIONES`].
+///
+/// La conexión debe estar abierta en lectura y escritura.
+pub fn aplicar_migraciones_de_sesiones(conexion: &Connection) -> Result<(), ErrorDeAlmacen> {
+    aplicar(
+        conexion,
+        VERSION_DE_ESQUEMA_DE_SESIONES,
+        ESQUEMA_INICIAL_DE_SESIONES,
+        "migrar el esquema de sessions.db",
+    )
+}
+
+/// Lleva `knowledge_live.db` hasta [`VERSION_DE_ESQUEMA_DE_CONOCIMIENTO`].
+///
+/// La conexión debe estar abierta en lectura y escritura: es la única ocasión en que la célula
+/// escribe esa base, justo antes de reabrirla en solo lectura para servir producción.
+pub fn aplicar_migraciones_de_conocimiento(conexion: &Connection) -> Result<(), ErrorDeAlmacen> {
+    aplicar(
+        conexion,
+        VERSION_DE_ESQUEMA_DE_CONOCIMIENTO,
+        ESQUEMA_MINIMO_DE_CONOCIMIENTO,
+        "migrar el esquema de knowledge_live.db",
+    )
+}
+
+/// Lee la versión de la cabecera y, si se queda corta, aplica el guion y sube la versión en la
+/// **misma** transacción: o quedan las dos cosas, o no queda ninguna. Si el archivo quedase con
+/// el esquema aplicado y la versión antigua, el arranque siguiente reintentaría el `CREATE TABLE`
+/// y fallaría para siempre.
+fn aplicar(
+    conexion: &Connection,
+    version_objetivo: i64,
+    guion: &str,
+    operacion: &'static str,
+) -> Result<(), ErrorDeAlmacen> {
+    let version_actual: i64 = conexion
+        .query_row("PRAGMA user_version", [], |fila| fila.get(0))
+        .map_err(ErrorDeAlmacen::en(
+            "leer la versión de esquema (user_version)",
+        ))?;
+
+    if version_actual >= version_objetivo {
+        return Ok(());
+    }
+
+    let transaccion = conexion
+        .unchecked_transaction()
+        .map_err(ErrorDeAlmacen::en(operacion))?;
+
+    transaccion
+        .execute_batch(guion)
+        .map_err(ErrorDeAlmacen::en(operacion))?;
+
+    // `PRAGMA` no admite parámetros ligados, así que la versión se interpola con `format!`. El
+    // valor interpolado es **siempre** una constante entera de este crate y nunca llega de fuera:
+    // esa es la única razón por la que la interpolación es aceptable aquí.
+    transaccion
+        .execute_batch(&format!("PRAGMA user_version = {version_objetivo};"))
+        .map_err(ErrorDeAlmacen::en("fijar la versión de esquema"))?;
+
+    transaccion
+        .commit()
+        .map_err(ErrorDeAlmacen::en("confirmar la migración de esquema"))?;
+
+    Ok(())
+}

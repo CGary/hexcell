@@ -261,8 +261,31 @@ adicional cuando aparezca un cliente que lo justifique. Ver [plan/README.md](pla
   inmediato de una entrega no confirmada, o repetición de lo pendiente al reconectar el
   transporte, ambos casos resueltos en minutos). Una reentrega que llega más allá de esa ventana
   se procesa de nuevo, como evento nuevo, limitación residual aceptada y documentada por el plan.
+* **Persistencia dual SQLite formalizada** (2026-07-30, HEX-006, `adr-0003`). Lo que el PRD tenía
+  tomado y sin formalizar pasa a ADR vigente: dos bases separadas por célula (`sessions.db` en
+  lectura y escritura caliente, `knowledge_live.db` en solo lectura), `rusqlite` de la serie 0.39
+  con la característica `bundled` —con el descarte razonado de los pools de conexiones externos,
+  de `sqlx` y de los crates de migraciones—, tamaños de pool justificados contra el hardware
+  objetivo, y WAL, `busy_timeout` de 5000 ms, `synchronous = NORMAL` y `foreign_keys = ON` cada uno
+  con su contrapartida escrita. Las migraciones se versionan con `PRAGMA user_version` dentro de la
+  misma transacción que cambia el esquema, así que volver a aplicarlas es una operación nula.
+* **Deduplicación e historial de conversación persistidos en `sessions.db`** (2026-07-30, HEX-006).
+  Lo que HEX-005 dejó en memoria pasa a disco y sobrevive a un reinicio del proceso, con la
+  semántica de HEX-005 intacta: la poda se mide contra el máximo instante recibido por el canal
+  —ahora guardado en la base y monótono también entre reinicios— y nunca contra un reloj de pared.
+  `sessions.db` es la **única** fuente de verdad de ambos: no queda ninguna caché en memoria
+  delante. La cola acotada de respuestas diferidas es la excepción documentada y sigue en memoria.
+  Ninguna columna de ninguna de las dos bases guarda un identificador de transporte crudo
+  (`adr-0010`). Con esto, `GET /health/ready` deja de ser un esqueleto y responde la conjunción de
+  las dos vitalidades de los pools y del estado de sesión del canal, que se provee en la raíz de
+  composición porque el puerto `ChannelAdapter` no expone ninguna consulta de sesión.
 
 ## Pendiente
+* **Revisar `synchronous = NORMAL` cuando la etapa A-4 añada la contabilidad financiera de LLM**
+  (2026-07-30, HEX-006). El valor elegido acepta que un corte de luz o una caída del sistema
+  operativo pierdan transacciones confirmadas desde el último punto de control; una caída del
+  proceso no pierde ninguna. Esa contrapartida es razonable para una anotación de historial y hay
+  que volver a mirarla cuando lo que se confirme sea un saldo. — *Etapa A-4.*
 * **Valores numéricos de las compuertas de riesgo de cartera**: el **techo duro de células vivas**
   mientras el canal propio sea el único, y el **umbral de incidentes de baneo** (cuántos, en qué
   ventana) que congela todas las altas hasta analizar. Sustituyen a la compuerta del tercer cliente y
