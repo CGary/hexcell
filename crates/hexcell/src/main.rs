@@ -150,8 +150,11 @@ async fn main() -> ExitCode {
                 }
             }
 
-            let proveedor =
-                ProveedorSimulado::con_latencia(configuracion.latencia_inferencia_simulada);
+            let proveedor = if configuracion.proveedor_de_inferencia_falla {
+                ProveedorSimulado::que_falla()
+            } else {
+                ProveedorSimulado::con_latencia(configuracion.latencia_inferencia_simulada)
+            };
             let procesador = ProcesadorDeInferencia::nuevo(proveedor);
             let mut motor = Motor::nuevo(
                 adaptador,

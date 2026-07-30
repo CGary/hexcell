@@ -262,12 +262,23 @@ where
 
         emitir(
             EntradaDeRegistro::nueva(NivelDeRegistro::Info, "inferencia_iniciada")
-                .con_id_evento(id_evento)
-                .con_id_conversacion(id_conversacion)
+                .con_id_evento(id_evento.clone())
+                .con_id_conversacion(id_conversacion.clone())
                 .con_latencia_ms(latencia_ms(inicio)),
         );
 
         let Some(mensaje) = self.procesador.procesar(&evento).await else {
+            // El procesador devuelve `None` tanto si decide no responder como si el proveedor
+            // de inferencia falló (RISK-12: qué contesta la célula ante ese fallo es una decisión
+            // de producto diferida a la etapa A-4, y este procesador no la resuelve). El motor no
+            // distingue esos dos casos porque el procesador no se lo dice, pero sí deja constancia
+            // de que el evento terminó sin enviar nada, igual que hace con cada otro desenlace.
+            emitir(
+                EntradaDeRegistro::nueva(NivelDeRegistro::Aviso, "inferencia_sin_respuesta")
+                    .con_id_evento(id_evento)
+                    .con_id_conversacion(id_conversacion)
+                    .con_latencia_ms(latencia_ms(inicio)),
+            );
             return;
         };
 

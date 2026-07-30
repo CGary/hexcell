@@ -81,6 +81,13 @@ pub struct Configuracion {
     /// simulado nunca podría recibir un evento desde fuera, y los criterios de aceptación AC-5 a
     /// AC-9, que exigen un proceso real, serían imposibles de comprobar.
     pub evento_simulado_de_arranque: Option<String>,
+    /// Si está presente (con cualquier valor), el proveedor de inferencia simulado falla siempre.
+    ///
+    /// Solo la lee el brazo `CanalSeleccionado::Simulado` de la raíz de composición, para que un
+    /// test de proceso real pueda comprobar que el motor registra `inferencia_sin_respuesta` (y
+    /// no envía nada) cuando el proveedor falla, sin necesidad de un proveedor real ni de tocar
+    /// producción: por defecto, ausente, el proveedor nunca falla.
+    pub proveedor_de_inferencia_falla: bool,
 }
 
 /// Error de configuración: nombra siempre la variable concreta y su formato esperado.
@@ -163,6 +170,9 @@ pub const HEXCELL_LATENCIA_INFERENCIA_SIMULADA_MS: &str = "HEXCELL_LATENCIA_INFE
 /// Nombre de la variable de entorno con el contenido de un evento sintético de arranque para el
 /// canal simulado (opcional, solo para tests).
 pub const HEXCELL_EVENTO_SIMULADO_DE_ARRANQUE: &str = "HEXCELL_EVENTO_SIMULADO_DE_ARRANQUE";
+/// Nombre de la variable de entorno que fuerza que el proveedor de inferencia simulado falle
+/// siempre (opcional, solo para tests; su presencia basta, el valor no se interpreta).
+pub const HEXCELL_PROVEEDOR_DE_INFERENCIA_FALLA: &str = "HEXCELL_PROVEEDOR_DE_INFERENCIA_FALLA";
 
 /// Dirección de salud por defecto: loopback (127.0.0.1), nunca `0.0.0.0`. Una célula sobre canal
 /// propio empaquetada en un contenedor (etapa A-6) necesita sondear esta ruta desde un
@@ -279,6 +289,8 @@ impl Configuracion {
             };
 
         let evento_simulado_de_arranque = std::env::var(HEXCELL_EVENTO_SIMULADO_DE_ARRANQUE).ok();
+        let proveedor_de_inferencia_falla =
+            std::env::var(HEXCELL_PROVEEDOR_DE_INFERENCIA_FALLA).is_ok();
 
         Ok(Self {
             id_celula,
@@ -290,6 +302,7 @@ impl Configuracion {
             limite_de_drenaje,
             latencia_inferencia_simulada,
             evento_simulado_de_arranque,
+            proveedor_de_inferencia_falla,
         })
     }
 }
