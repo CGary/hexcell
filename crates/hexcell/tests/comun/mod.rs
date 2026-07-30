@@ -31,7 +31,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use hexcell_storage::{GestorDePools, RepositorioDeSesiones};
+use hexcell_storage::{AlmacenDeIdentidad, GestorDePools, RepositorioDeSesiones};
 
 /// Distingue dos directorios creados por el mismo proceso: `process::id()` solo separa procesos.
 static SECUENCIA: AtomicUsize = AtomicUsize::new(0);
@@ -80,6 +80,22 @@ pub fn abrir_persistencia(ruta_datos: &Path) -> (Arc<GestorDePools>, Arc<Reposit
 /// Atajo para los tests que solo necesitan el repositorio.
 pub fn repositorio_temporal(ruta_datos: &Path) -> Arc<RepositorioDeSesiones> {
     abrir_persistencia(ruta_datos).1
+}
+
+/// Abre los dos pools, el repositorio y el almacén de identidad del adaptador sobre una ruta de
+/// datos: lo que necesita un test de respaldo y restauración para levantar una célula completa.
+pub fn abrir_persistencia_con_identidad(
+    ruta_datos: &Path,
+) -> (
+    Arc<GestorDePools>,
+    Arc<RepositorioDeSesiones>,
+    Arc<AlmacenDeIdentidad>,
+) {
+    let (pools, repositorio) = abrir_persistencia(ruta_datos);
+    let almacen = Arc::new(
+        AlmacenDeIdentidad::abrir(ruta_datos).expect("abrir el almacén de identidad del test"),
+    );
+    (pools, repositorio, almacen)
 }
 
 /// Extrae, sin ningún analizador JSON, el valor del campo `"detalle"` de una línea de registro ya

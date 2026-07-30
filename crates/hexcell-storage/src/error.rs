@@ -32,6 +32,29 @@ pub enum ErrorDeAlmacen {
     },
     /// El pool de conocimiento se construyó sin ninguna conexión de lectura utilizable.
     PoolDeConocimientoVacio,
+    /// El destino de un respaldo (`VACUUM INTO`) ya existe. `VACUUM INTO` rechaza sobrescribir un
+    /// archivo existente, y esta capa lo comprueba **antes** de la primera copia de una ronda de
+    /// respaldo para no dejar ninguna copia a medias.
+    DestinoDeRespaldoOcupado {
+        /// Ruta del archivo de destino ya ocupado.
+        ruta: PathBuf,
+    },
+    /// El directorio que debería recibir un respaldo no existe o no es un directorio. `VACUUM
+    /// INTO` exige que el directorio padre del destino ya exista.
+    DirectorioDeRespaldoInaccesible {
+        /// Ruta del destino cuyo directorio padre falta o no es válido.
+        ruta: PathBuf,
+    },
+    /// Una copia de respaldo ya escrita no superó su verificación de integridad: o
+    /// `PRAGMA integrity_check` no devolvió `ok`, o `PRAGMA user_version` no coincide con el
+    /// esperado. Se nombra como fallo propio y no como aviso: una copia que no verifica no debe
+    /// darse nunca por válida.
+    CopiaCorrupta {
+        /// Ruta de la copia que no superó la verificación.
+        ruta: PathBuf,
+        /// Motivo legible, en español, de por qué no verifica.
+        motivo: String,
+    },
 }
 
 impl ErrorDeAlmacen {
@@ -60,6 +83,21 @@ impl fmt::Display for ErrorDeAlmacen {
                 f,
                 "el pool de conocimiento no tiene ninguna conexión de lectura disponible"
             ),
+            Self::DestinoDeRespaldoOcupado { ruta } => write!(
+                f,
+                "el destino del respaldo ya existe, VACUUM INTO no sobrescribe: {}",
+                ruta.display()
+            ),
+            Self::DirectorioDeRespaldoInaccesible { ruta } => write!(
+                f,
+                "el directorio del destino del respaldo no existe o no es un directorio: {}",
+                ruta.display()
+            ),
+            Self::CopiaCorrupta { ruta, motivo } => write!(
+                f,
+                "la copia de respaldo {} no superó su verificación: {motivo}",
+                ruta.display()
+            ),
         }
     }
 }
@@ -70,6 +108,9 @@ impl std::error::Error for ErrorDeAlmacen {
             Self::Sqlite { causa, .. } => Some(causa),
             Self::RutaDeDatosInaccesible { causa, .. } => Some(causa),
             Self::PoolDeConocimientoVacio => None,
+            Self::DestinoDeRespaldoOcupado { .. } => None,
+            Self::DirectorioDeRespaldoInaccesible { .. } => None,
+            Self::CopiaCorrupta { .. } => None,
         }
     }
 }

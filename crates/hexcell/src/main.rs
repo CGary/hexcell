@@ -56,7 +56,9 @@ use hexcell::registro::{self, EntradaDeRegistro, NivelDeRegistro};
 use hexcell::salud::{EstadoDeSalud, servir_salud};
 use hexcell_canal_simulado::{AdaptadorSimulado, RelojDelSistema};
 use hexcell_core::identidad::IdDeduplicacion;
-use hexcell_storage::{GestorDePools, RepositorioDeSesiones, ResumenDePuntoDeControl};
+use hexcell_storage::{
+    AlmacenDeIdentidad, GestorDePools, RepositorioDeSesiones, ResumenDePuntoDeControl,
+};
 
 /// Contacto sintético que recibe el evento de arranque cuando
 /// `HEXCELL_EVENTO_SIMULADO_DE_ARRANQUE` está presente.
@@ -100,6 +102,22 @@ async fn main() -> ExitCode {
     };
     println!("hexcell: persistencia dual abierta y migrada");
 
+    // Almacén de identidad del adaptador (adr-0010, puntos 5 y 6): propio del adaptador y no del
+    // gestor de pools del núcleo, con la misma disciplina de fallo que las dos bases anteriores.
+    // Se abre aquí, en la composición, para que main —y no GestorDePools— sea quien decide su
+    // dueño; ruta derivada de la misma ruta de datos ya validada, sin variable de entorno nueva.
+    let almacen_de_identidad = match AlmacenDeIdentidad::abrir(&configuracion.ruta_datos) {
+        Ok(almacen) => Arc::new(almacen),
+        Err(error) => {
+            eprintln!(
+                "hexcell: no se pudo abrir el almacén de identidad del adaptador en {}: {error}",
+                configuracion.ruta_datos.display()
+            );
+            return ExitCode::FAILURE;
+        }
+    };
+    println!("hexcell: almacén de identidad del adaptador abierto y migrado");
+
     let repositorio = Arc::new(RepositorioDeSesiones::nuevo(Arc::clone(&pools)));
     let estado_de_salud = Arc::new(EstadoDeSalud::nuevo(
         Arc::clone(&pools),
@@ -127,8 +145,11 @@ async fn main() -> ExitCode {
         CanalSeleccionado::Simulado => {
             println!("hexcell: canal configurado: simulado");
             let reloj = Arc::new(RelojDelSistema);
-            let (adaptador, receptor_eventos) =
-                AdaptadorSimulado::nuevo(reloj, configuracion.capacidad_cola);
+            let (adaptador, receptor_eventos) = AdaptadorSimulado::nuevo_con_almacen(
+                reloj,
+                configuracion.capacidad_cola,
+                Arc::clone(&almacen_de_identidad),
+            );
 
             if let Some(contenido) = configuracion.evento_simulado_de_arranque.clone() {
                 // Único lugar de `crates/hexcell/src/` donde se construye un `IdDeduplicacion`:

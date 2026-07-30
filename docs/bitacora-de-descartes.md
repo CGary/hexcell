@@ -1,6 +1,6 @@
 # Bitácora de descartes
 
-> Registro de lo que se consideró y **no** se hizo. Última actualización: 2026-07-30.
+> Registro de lo que se consideró y **no** se hizo. Última actualización: 2026-07-30 (D-19, D-20).
 
 ## Para qué sirve este documento
 
@@ -52,6 +52,8 @@ se apoya en un principio de diseño, no.
 | [D-16](#d-16) | Guardar el identificador de transporte en `sessions.db` | Principio de diseño, no reabrir |
 | [D-17](#d-17) | `tracing` + `tracing-subscriber` con capa JSON para el registro estructurado | Principio de diseño, no reabrir |
 | [D-18](#d-18) | `tokio-util::CancellationToken` para el apagado ordenado | Principio de diseño, no reabrir |
+| [D-19](#d-19) | API de respaldo en línea de `rusqlite` (`Connection::backup`) frente a `VACUUM INTO` | Principio de diseño, no reabrir |
+| [D-20](#d-20) | Planificador de respaldo dentro del propio proceso de la célula | Principio de diseño, no reabrir |
 
 ---
 
@@ -346,6 +348,36 @@ estructurado del motor de mensajería, en lugar de escribirlo a mano.**
 * **Registro normativo:** `docs/adr/adr-0018-apagado-ordenado.md`.
 * **Qué tendría que cambiar para reabrirlo:** *principio de diseño.* **No reabrir**, salvo que
   `tokio::sync::watch` deje de estar disponible en la característica `sync` ya habilitada.
+
+### D-19
+**API de respaldo en línea de `rusqlite` (característica `backup`, `Connection::backup`) para
+copiar `sessions.db`, `knowledge_live.db` y el almacén de identidad del adaptador, en lugar de
+`VACUUM INTO`.**
+
+* **Descartado:** 2026-07-30 (HEX-008).
+* **Por qué se descartó:** la API de respaldo en línea reinicia su copia cada vez que un escritor
+  confirma una transacción; bajo un escritor activo de forma continua puede no llegar a terminar
+  nunca, exactamente el escenario de una célula procesando eventos sin pausa. `VACUUM INTO` toma
+  una única instantánea de lectura, no necesita activar ninguna característica adicional de
+  `rusqlite` y produce, de regalo, un archivo defragmentado en vez de uno con el mismo desorden
+  interno que el origen.
+* **Registro normativo:** `docs/adr/adr-0020-respaldo-y-restauracion-por-celula.md`.
+* **Qué tendría que cambiar para reabrirlo:** *principio de diseño.* **No reabrir**, salvo que
+  `VACUUM INTO` deje de estar disponible en la serie de `rusqlite` que este workspace fija.
+
+### D-20
+**Planificador de respaldo periódico dentro del propio proceso de la célula.**
+
+* **Descartado:** 2026-07-30 (HEX-008).
+* **Por qué se descartó:** la planificación y el empaquetado de la célula son alcance de la etapa
+  A-6, no de esta. Un temporizador propio dentro de cada proceso duplicaría el trabajo de un futuro
+  orquestador de respaldo, a cambio de un hilo o una tarea de fondo por célula sobre un presupuesto
+  de memoria de ≤ 80 MB (NFR-01) que ya está ajustado. `respaldar_celula` queda como una operación
+  de biblioteca sin disparador de producción en esta tarea, invocada hoy solo por los tests de
+  integración.
+* **Registro normativo:** `docs/adr/adr-0020-respaldo-y-restauracion-por-celula.md`, `docs/STATUS.md`.
+* **Qué tendría que cambiar para reabrirlo:** *principio de diseño.* **No reabrir** antes de que la
+  etapa A-6 decida el mecanismo real de planificación de la célula.
 
 ---
 

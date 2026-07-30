@@ -21,5 +21,5 @@
 pub mod adaptador;
 pub mod reloj;
 
-pub use adaptador::{AdaptadorSimulado, ErrorDelAdaptadorSimulado};
+pub use adaptador::{AdaptadorSimulado, ErrorDeInyeccion, ErrorDelAdaptadorSimulado};
 pub use reloj::{Reloj, RelojDePrueba, RelojDelSistema};

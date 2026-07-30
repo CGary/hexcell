@@ -18,6 +18,7 @@ use hexcell_core::canal::{
     MensajeSaliente, ResultadoEnvio,
 };
 use hexcell_core::identidad::{IdConversacion, IdDeduplicacion, IdRemitente};
+use hexcell_storage::{AlmacenDeIdentidad, ErrorDeAlmacen};
 use tokio::sync::mpsc;
 
 use crate::reloj::Reloj;
@@ -48,6 +49,60 @@ impl fmt::Display for ErrorDelAdaptadorSimulado {
 
 impl std::error::Error for ErrorDelAdaptadorSimulado {}
 
+/// Fallo de `inyectar_desde_contacto`: o el canal ya se cerró, o el almacén de identidad no
+/// respondió al resolver o registrar el contacto.
+///
+/// No se aplana en un solo caso: confundir un fallo de almacenamiento con uno de envío
+/// enmascararía justo la corrupción que la tarea de respaldo y restauración existe para detectar.
+#[derive(Debug)]
+pub enum ErrorDeInyeccion {
+    /// El canal `mpsc` hacia el `Motor` ya se cerró.
+    Envio(mpsc::error::SendError<EventoEntrante>),
+    /// El almacén de identidad del adaptador falló al resolver o registrar el contacto.
+    Almacen(ErrorDeAlmacen),
+}
+
+impl fmt::Display for ErrorDeInyeccion {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Envio(error) => write!(f, "fallo al entregar el evento al motor: {error}"),
+            Self::Almacen(error) => {
+                write!(f, "fallo del almacén de identidad del adaptador: {error}")
+            }
+        }
+    }
+}
+
+impl std::error::Error for ErrorDeInyeccion {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Envio(error) => Some(error),
+            Self::Almacen(error) => Some(error),
+        }
+    }
+}
+
+impl From<mpsc::error::SendError<EventoEntrante>> for ErrorDeInyeccion {
+    fn from(error: mpsc::error::SendError<EventoEntrante>) -> Self {
+        Self::Envio(error)
+    }
+}
+
+/// El mapa de contactos del adaptador: en memoria (comportamiento histórico de `nuevo`) o
+/// persistido en el almacén de identidad propio del adaptador (`nuevo_con_almacen`, `adr-0010`).
+///
+/// Un enumerado y no dos structs distintos: solo `inyectar_desde_contacto` distingue el caso, y
+/// el resto del adaptador —incluida la ventana de servicio y los envíos forzados— no sabe ni
+/// necesita saber cuál de los dos está en uso.
+enum AlmacenDeContactos {
+    /// Comportamiento histórico: el mapa vive y muere con el proceso.
+    EnMemoria(HashMap<String, IdConversacion>),
+    /// Comportamiento persistente: el mapa vive en `adapter_identity.db`, y sobrevive a un
+    /// reinicio o a una restauración. Compartido por `Arc` y no poseído, porque `Motor` toma
+    /// posesión del adaptador y el respaldo de la célula todavía necesita el almacén después.
+    Persistente(Arc<AlmacenDeIdentidad>),
+}
+
 /// Estado interno mutable del adaptador, agrupado para que un único `Mutex` lo proteja entero.
 struct EstadoInterno {
     /// Ancla de la ventana de servicio de cada conversación: el instante del último evento
@@ -65,7 +120,7 @@ struct EstadoInterno {
     /// simulado a su identificador interno de conversación. Se declara clave por contacto **y
     /// nunca por dispositivo**, para que un re-emparejamiento —que solo cambia
     /// `dispositivo_actual`— deje este mapa intacto y el hilo de conversación sobreviva.
-    contactos: HashMap<String, IdConversacion>,
+    contactos: AlmacenDeContactos,
     /// Identificador del dispositivo actualmente emparejado. Cambia con `re_emparejar` y no
     /// participa nunca como clave de `contactos`: es precisamente la credencial de sesión del
     /// transporte de la que `adr-0010` separa la identidad de contacto.
@@ -92,6 +147,32 @@ impl AdaptadorSimulado {
         reloj: Arc<dyn Reloj + Send + Sync>,
         capacidad: usize,
     ) -> (Self, mpsc::Receiver<EventoEntrante>) {
+        Self::construir(
+            reloj,
+            capacidad,
+            AlmacenDeContactos::EnMemoria(HashMap::new()),
+        )
+    }
+
+    /// Crea el adaptador simulado con el almacén de identidad **persistente** del adaptador
+    /// (`adr-0010`) en vez del mapa en memoria: el mismo contacto sigue resolviendo al mismo
+    /// identificador interno después de un reinicio o de una restauración desde respaldo.
+    ///
+    /// `almacen` se comparte por `Arc`, no se posee: `Motor` toma posesión del adaptador y el
+    /// respaldo de la célula sigue necesitando el almacén después de construirlo.
+    pub fn nuevo_con_almacen(
+        reloj: Arc<dyn Reloj + Send + Sync>,
+        capacidad: usize,
+        almacen: Arc<AlmacenDeIdentidad>,
+    ) -> (Self, mpsc::Receiver<EventoEntrante>) {
+        Self::construir(reloj, capacidad, AlmacenDeContactos::Persistente(almacen))
+    }
+
+    fn construir(
+        reloj: Arc<dyn Reloj + Send + Sync>,
+        capacidad: usize,
+        contactos: AlmacenDeContactos,
+    ) -> (Self, mpsc::Receiver<EventoEntrante>) {
         let (remitente_eventos, receptor_eventos) = mpsc::channel(capacidad);
         let adaptador = Self {
             reloj,
@@ -102,7 +183,7 @@ impl AdaptadorSimulado {
                 forzados_siguientes: VecDeque::new(),
                 forzar_averia: false,
                 envios_capturados: Vec::new(),
-                contactos: HashMap::new(),
+                contactos,
                 dispositivo_actual: "dispositivo-inicial".to_string(),
             }),
         };
@@ -137,21 +218,60 @@ impl AdaptadorSimulado {
     /// conversación que decide el test, este método es el que hace observable —y no vacía— la
     /// propiedad de AC-5: el mismo `contacto` siempre resuelve al mismo `IdConversacion`, pase lo
     /// que pase con `dispositivo_actual`, porque `contactos` se indexa solo por contacto.
+    ///
+    /// Con el almacén persistente (`nuevo_con_almacen`), el identificador de un contacto nuevo se
+    /// acuña a partir de `contactos_registrados()` —cuántos contactos había ya, no del propio
+    /// nombre del contacto— así que depende del **orden** en el que cada contacto se vio por
+    /// primera vez. Es lo que hace observable que una restauración es real: un almacén vacío
+    /// asignaría el mismo primer identificador que uno restaurado, pero no el segundo ni los
+    /// siguientes.
     pub async fn inyectar_desde_contacto(
         &self,
         contacto: &str,
         contenido: impl Into<String>,
         deduplicacion: IdDeduplicacion,
-    ) -> Result<IdConversacion, mpsc::error::SendError<EventoEntrante>> {
+    ) -> Result<IdConversacion, ErrorDeInyeccion> {
         let evento = {
             let mut estado = self.estado.lock().expect(
                 "el mutex interno de AdaptadorSimulado no debería estar envenenado en un test",
             );
-            let conversacion = estado
-                .contactos
-                .entry(contacto.to_string())
-                .or_insert_with(|| IdConversacion::nuevo(format!("conversacion-de-{contacto}")))
-                .clone();
+
+            let conversacion = match &mut estado.contactos {
+                AlmacenDeContactos::EnMemoria(mapa) => mapa
+                    .entry(contacto.to_string())
+                    .or_insert_with(|| IdConversacion::nuevo(format!("conversacion-de-{contacto}")))
+                    .clone(),
+                AlmacenDeContactos::Persistente(almacen) => {
+                    let existente = almacen
+                        .buscar(contacto)
+                        .map_err(ErrorDeInyeccion::Almacen)?;
+                    match existente {
+                        Some(identificador) => IdConversacion::nuevo(identificador),
+                        None => {
+                            let orden_de_llegada = almacen
+                                .contactos_registrados()
+                                .map_err(ErrorDeInyeccion::Almacen)?;
+                            // El PRIMER contacto que ve un almacén vacío no puede, por
+                            // construcción, distinguirse de un almacén restaurado que solo tuviera
+                            // ese mismo contacto: los dos le asignan la posición cero. Por eso el
+                            // sufijo de orden se añade a partir del SEGUNDO contacto en adelante,
+                            // que es donde un almacén vacío y uno restaurado sí divergen. El primer
+                            // contacto conserva el formato histórico `conversacion-de-{contacto}`
+                            // (el mismo que ya usaba el mapa en memoria), y `main.rs` depende de
+                            // ese formato exacto para su único evento sintético de arranque.
+                            let identificador = if orden_de_llegada == 0 {
+                                format!("conversacion-de-{contacto}")
+                            } else {
+                                format!("conversacion-de-{contacto}-{orden_de_llegada}")
+                            };
+                            almacen
+                                .registrar(contacto, &identificador)
+                                .map_err(ErrorDeInyeccion::Almacen)?;
+                            IdConversacion::nuevo(identificador)
+                        }
+                    }
+                }
+            };
 
             let ahora = self.reloj.ahora();
             estado.anclas_de_ventana.insert(conversacion.clone(), ahora);

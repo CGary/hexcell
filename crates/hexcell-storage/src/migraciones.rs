@@ -32,11 +32,21 @@ pub const VERSION_DE_ESQUEMA_DE_SESIONES: i64 = 1;
 /// archivo en solo lectura y sondearlo.
 pub const VERSION_DE_ESQUEMA_DE_CONOCIMIENTO: i64 = 1;
 
+/// Versión de esquema que este binario espera encontrar en `adapter_identity.db`.
+///
+/// Base propia del adaptador (`adr-0010`, puntos 5 y 6), no del núcleo: esta capa la abre y la
+/// migra con el mismo mecanismo que las otras dos, pero no construye ni interpreta ningún
+/// identificador de conversación al hacerlo.
+pub const VERSION_DE_ESQUEMA_DE_IDENTIDAD: i64 = 1;
+
 const ESQUEMA_INICIAL_DE_SESIONES: &str =
     include_str!("../migraciones/sesiones/0001-esquema-inicial.sql");
 
 const ESQUEMA_MINIMO_DE_CONOCIMIENTO: &str =
     include_str!("../migraciones/conocimiento/0001-esquema-minimo.sql");
+
+const ESQUEMA_INICIAL_DE_IDENTIDAD: &str =
+    include_str!("../migraciones/identidad/0001-esquema-inicial.sql");
 
 /// Lleva `sessions.db` hasta [`VERSION_DE_ESQUEMA_DE_SESIONES`].
 ///
@@ -60,6 +70,20 @@ pub fn aplicar_migraciones_de_conocimiento(conexion: &Connection) -> Result<(), 
         VERSION_DE_ESQUEMA_DE_CONOCIMIENTO,
         ESQUEMA_MINIMO_DE_CONOCIMIENTO,
         "migrar el esquema de knowledge_live.db",
+    )
+}
+
+/// Lleva `adapter_identity.db` hasta [`VERSION_DE_ESQUEMA_DE_IDENTIDAD`].
+///
+/// La conexión debe estar abierta en lectura y escritura. Vive en este módulo y no en
+/// `almacen_de_identidad` para que las tres bases de la célula compartan el mismo mecanismo de
+/// migración versionada, ya justificado arriba.
+pub fn aplicar_migraciones_de_identidad(conexion: &Connection) -> Result<(), ErrorDeAlmacen> {
+    aplicar(
+        conexion,
+        VERSION_DE_ESQUEMA_DE_IDENTIDAD,
+        ESQUEMA_INICIAL_DE_IDENTIDAD,
+        "migrar el esquema de adapter_identity.db",
     )
 }
 

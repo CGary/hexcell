@@ -12,6 +12,10 @@ license.workspace = true
 [dependencies]
 tokio = { workspace = true, features = ["sync"] }
 hexcell-core = { path = "../hexcell-core" }
+# Almacén de identidad del adaptador (adr-0010): AdaptadorSimulado::nuevo_con_almacen persiste el
+# mapa contacto -> identificador interno en AlmacenDeIdentidad (HEX-008), en vez del HashMap en
+# memoria que tenía antes.
+hexcell-storage = { path = "../hexcell-storage" }
 
 # Solo de test: la batería de contrato es andamiaje de pruebas y nunca debe viajar dentro del
 # binario `hexcell`, que ya carga este mismo crate como dependencia regular. Como dependencia de

@@ -3,7 +3,9 @@
 //! Una batería genérica sobre cualquier `ChannelAdapter` es la etapa siguiente (HEX-005); estos
 //! tests nombran el tipo concreto a propósito, sin adelantar ese alcance.
 
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, SystemTime};
 
 use hexcell_canal_simulado::{AdaptadorSimulado, Reloj, RelojDePrueba};
@@ -12,6 +14,38 @@ use hexcell_core::canal::{
     MensajeSaliente, ResultadoEnvio,
 };
 use hexcell_core::identidad::{IdConversacion, IdDeduplicacion, IdRemitente};
+use hexcell_storage::AlmacenDeIdentidad;
+
+/// Directorio temporal propio de este archivo de test, borrado al salir de alcance: el mismo
+/// patrón que ya usan `crates/hexcell/tests/` y `crates/hexcell-storage/tests/`.
+static SECUENCIA: AtomicUsize = AtomicUsize::new(0);
+
+struct DirectorioTemporal {
+    ruta: PathBuf,
+}
+
+impl DirectorioTemporal {
+    fn nuevo(etiqueta: &str) -> Self {
+        let secuencia = SECUENCIA.fetch_add(1, Ordering::Relaxed);
+        let ruta = std::env::temp_dir().join(format!(
+            "hexcell-canal-simulado-{etiqueta}-{}-{secuencia}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&ruta);
+        std::fs::create_dir_all(&ruta).expect("crear el directorio temporal del test");
+        Self { ruta }
+    }
+
+    fn ruta(&self) -> &Path {
+        &self.ruta
+    }
+}
+
+impl Drop for DirectorioTemporal {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.ruta);
+    }
+}
 
 fn evento_de_prueba(conversacion: &IdConversacion, marca_temporal: SystemTime) -> EventoEntrante {
     EventoEntrante {
@@ -279,4 +313,50 @@ async fn dos_contactos_distintos_resuelven_a_conversaciones_distintas() {
         .expect("el canal recién creado debe aceptar el evento");
 
     assert_ne!(conversacion_uno, conversacion_dos);
+}
+
+#[tokio::test]
+async fn con_almacen_persistente_un_contacto_resuelve_igual_tras_re_emparejar() {
+    // La forma simulada de la rama `device_removed` que razona el runbook de restauración: un
+    // re-emparejamiento cambia el dispositivo, nunca el mapa de identidad, que aquí vive en
+    // adapter_identity.db en vez de en memoria.
+    let directorio = DirectorioTemporal::nuevo("almacen-persistente");
+    let almacen = Arc::new(
+        AlmacenDeIdentidad::abrir(directorio.ruta()).expect("abrir el almacén de identidad"),
+    );
+    let reloj = RelojDePrueba::nuevo(SystemTime::UNIX_EPOCH);
+    let (adaptador, _receptor) =
+        AdaptadorSimulado::nuevo_con_almacen(Arc::new(reloj), 8, Arc::clone(&almacen));
+
+    let conversacion_antes = adaptador
+        .inyectar_desde_contacto(
+            "contacto-persistente",
+            "hola",
+            IdDeduplicacion::nuevo("dedup-persistente-antes"),
+        )
+        .await
+        .expect("el canal recién creado debe aceptar el evento");
+
+    adaptador.re_emparejar("dispositivo-nuevo");
+
+    let conversacion_despues = adaptador
+        .inyectar_desde_contacto(
+            "contacto-persistente",
+            "hola de nuevo",
+            IdDeduplicacion::nuevo("dedup-persistente-despues"),
+        )
+        .await
+        .expect("el canal debe seguir aceptando eventos tras el re-emparejamiento");
+
+    assert_eq!(
+        conversacion_antes, conversacion_despues,
+        "el almacén persistente debe resolver siempre al mismo contacto tras re-emparejar"
+    );
+    assert_eq!(
+        almacen
+            .contactos_registrados()
+            .expect("contar los contactos registrados"),
+        1,
+        "re-emparejar no debe registrar un contacto nuevo para el mismo contacto de siempre"
+    );
 }

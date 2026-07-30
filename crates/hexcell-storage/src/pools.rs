@@ -39,6 +39,7 @@ use rusqlite::{Connection, OpenFlags};
 
 use crate::error::ErrorDeAlmacen;
 use crate::migraciones::{aplicar_migraciones_de_conocimiento, aplicar_migraciones_de_sesiones};
+use crate::respaldo::{self, CopiaVerificada};
 
 /// Nombre del archivo de la base de sesiones dentro de la ruta de datos de la célula.
 pub const NOMBRE_DE_ARCHIVO_DE_SESIONES: &str = "sessions.db";
@@ -267,6 +268,53 @@ impl GestorDePools {
         &self.conocimiento
     }
 
+    /// Respalda en caliente `sessions.db` y `knowledge_live.db` sobre un directorio existente,
+    /// bajo sus nombres canónicos, sin tocar la conexión de escritura.
+    ///
+    /// Las dos copias se toman **siempre** de una conexión de lectura —`con_lectura` de cada
+    /// pool—, nunca de una recién abierta ni de `con_escritura`: comprobado el 2026-07-30 con
+    /// `sqlite3 -readonly`, `VACUUM INTO` **sí** funciona sobre una conexión de solo lectura y
+    /// produce una copia que supera `integrity_check`, justo lo contrario de
+    /// `PRAGMA wal_checkpoint`, que HEX-007 ya comprobó que falla ahí. Bajo WAL una lectura nunca
+    /// bloquea al escritor, y el camino caliente del motor —`procesar_deduplicacion`,
+    /// `anotar_entrante` y `anotar_saliente`— pasa siempre por `con_escritura`: el respaldo no
+    /// puede hacer esperar al escritor ni producir `SQLITE_BUSY` contra él. El coste aceptado, y
+    /// documentado aquí porque es donde vive: una lectura de historial concurrente con este
+    /// respaldo espera detrás de él en la conexión de lectura de `sessions.db`.
+    ///
+    /// Las dos rutas de destino se comprueban **antes** de la primera copia, para que un destino
+    /// ya ocupado o inalcanzable falle sin dejar la otra copia a medias.
+    pub fn respaldar_en(
+        &self,
+        directorio: &Path,
+    ) -> Result<ResumenDeRespaldoDePools, ErrorDeAlmacen> {
+        let ruta_sesiones = directorio.join(NOMBRE_DE_ARCHIVO_DE_SESIONES);
+        let ruta_conocimiento = directorio.join(NOMBRE_DE_ARCHIVO_DE_CONOCIMIENTO);
+        respaldo::verificar_destino_disponible(&ruta_sesiones)?;
+        respaldo::verificar_destino_disponible(&ruta_conocimiento)?;
+
+        let copia_de_sesiones = self.sesiones.con_lectura(|conexion| {
+            respaldo::respaldar_base(
+                conexion,
+                &ruta_sesiones,
+                crate::migraciones::VERSION_DE_ESQUEMA_DE_SESIONES,
+                NOMBRE_DE_ARCHIVO_DE_SESIONES,
+            )
+        })?;
+        let copia_de_conocimiento = self.conocimiento.con_lectura(|conexion| {
+            respaldo::respaldar_base(
+                conexion,
+                &ruta_conocimiento,
+                crate::migraciones::VERSION_DE_ESQUEMA_DE_CONOCIMIENTO,
+                NOMBRE_DE_ARCHIVO_DE_CONOCIMIENTO,
+            )
+        })?;
+
+        Ok(ResumenDeRespaldoDePools {
+            copias: vec![copia_de_sesiones, copia_de_conocimiento],
+        })
+    }
+
     /// Ejecuta el punto de control del WAL al apagar la célula.
     ///
     /// Visita los dos pools, pero solo `sessions.db` puede recibir de verdad un punto de control:
@@ -321,6 +369,14 @@ fn ruta_wal_de(ruta_de_la_base: &Path) -> PathBuf {
     PathBuf::from(ruta)
 }
 
+/// Resultado de [`GestorDePools::respaldar_en`]: las copias verificadas de `sessions.db` y de
+/// `knowledge_live.db`, en ese orden fijo.
+#[derive(Debug)]
+pub struct ResumenDeRespaldoDePools {
+    /// Copias verificadas, en el orden en que se tomaron.
+    pub copias: Vec<CopiaVerificada>,
+}
+
 /// Resultado de [`GestorDePools::punto_de_control_de_wal`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ResumenDePuntoDeControl {
@@ -335,7 +391,11 @@ pub struct ResumenDePuntoDeControl {
 
 /// Abre una conexión de lectura y escritura, creando el archivo si no existía, y le aplica los
 /// parámetros de SQLite de la célula.
-fn abrir_lectura_escritura(ruta: &Path) -> Result<Connection, ErrorDeAlmacen> {
+///
+/// `pub(crate)` porque [`crate::almacen_de_identidad`] la reutiliza para abrir su propia base
+/// exactamente con el mismo criterio: WAL fijado desde la conexión de escritura, y los mismos
+/// parámetros de conexión que `sessions.db` y `knowledge_live.db`.
+pub(crate) fn abrir_lectura_escritura(ruta: &Path) -> Result<Connection, ErrorDeAlmacen> {
     let conexion = Connection::open(ruta)
         .map_err(ErrorDeAlmacen::en("abrir la base en lectura y escritura"))?;
 
@@ -359,7 +419,9 @@ fn abrir_lectura_escritura(ruta: &Path) -> Result<Connection, ErrorDeAlmacen> {
 }
 
 /// Abre una conexión de **solo lectura** y le aplica los parámetros de SQLite de la célula.
-fn abrir_solo_lectura(ruta: &Path) -> Result<Connection, ErrorDeAlmacen> {
+///
+/// `pub(crate)`: ver la nota de [`abrir_lectura_escritura`].
+pub(crate) fn abrir_solo_lectura(ruta: &Path) -> Result<Connection, ErrorDeAlmacen> {
     let conexion = Connection::open_with_flags(
         ruta,
         OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,

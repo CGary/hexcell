@@ -299,8 +299,30 @@ adicional cuando aparezca un cliente que lo justifique. Ver [plan/README.md](pla
   de conversación y latencia; el contenido de un mensaje nunca llega a un log, garantía
   estructural por el tipo de los campos (`evento: &'static str`) y por que ningún módulo que ve
   texto de mensaje importa el módulo de registro.
+* **Respaldo en caliente de las tres bases alcanzables desde esta etapa, y almacén de identidad
+  del adaptador materializado como base SQLite real** (2026-07-30, HEX-008, `adr-0020`).
+  `sessions.db`, `knowledge_live.db` y el nuevo `adapter_identity.db` se copian con `VACUUM INTO`
+  sobre conexiones de lectura que el proceso ya tiene abiertas, sin producir `SQLITE_BUSY` ni
+  interrumpir el procesamiento de eventos en curso, con verificación de integridad de cada copia.
+  El almacén de identidad del adaptador —antes un mapa en memoria— pasa a ser una tercera base con
+  su propia migración, ejecutando lo que `adr-0010` ya había decidido. El contrato IPC del
+  respaldo del `sqlstore` (`docs/contrato-ipc-respaldo-del-sqlstore.md`) y el runbook de
+  restauración con su bifurcación ante `device_removed` (`docs/runbook-restauracion-de-celula.md`)
+  quedan redactados y versionados; su ejecución real contra un sidecar desplegado sigue siendo de
+  la etapa A-3.
 
 ## Pendiente
+* **Destino remoto real del respaldo por célula, fuera del disco del servidor** (2026-07-30,
+  HEX-008). `respaldar_celula` escribe sus tres copias en un directorio que recibe como parámetro;
+  cuál es ese directorio en producción —otra máquina, almacenamiento en la nube, o cualquier otro
+  medio realmente externo al servidor— es una decisión de negocio que esta tarea no toma. Los
+  tests lo simulan con un segundo directorio local. — *Bloquea el primer respaldo de producción
+  real; no bloquea la etapa A-2.*
+* **Disparador de producción del respaldo por célula** (2026-07-30, HEX-008). Ni esta tarea ni la
+  tarea 13 del plan piden un planificador, una ruta HTTP ni un subcomando de CLI:
+  `respaldar_celula` es hoy una operación de biblioteca invocada solo por los tests de
+  integración, documentada en el runbook como el procedimiento que un operador o un futuro
+  planificador ejecutan. Empaquetado y planificación son alcance de la etapa A-6. — *Etapa A-6.*
 * **Tiempo máximo por llamada del proveedor de inferencia real** (2026-07-30, HEX-007). El límite
   de drenaje del apagado ordenado se comprueba entre eventos, no alrededor de uno en curso, así
   que un evento cuya llamada al proveedor no retorne puede superar ese límite y, en teoría, el

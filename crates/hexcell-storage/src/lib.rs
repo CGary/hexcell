@@ -33,22 +33,28 @@
 //! `knowledge_live.db` como de solo lectura, sin nada que consolidar
 //! (`docs/adr/adr-0018-apagado-ordenado.md`).
 
+pub mod almacen_de_identidad;
 pub mod error;
 pub mod migraciones;
 pub mod pools;
+pub mod respaldo;
 pub mod sesiones;
 pub mod tiempo;
 
+pub use almacen_de_identidad::{AlmacenDeIdentidad, NOMBRE_DE_ARCHIVO_DE_IDENTIDAD_DEL_ADAPTADOR};
 pub use error::ErrorDeAlmacen;
 pub use migraciones::{
-    VERSION_DE_ESQUEMA_DE_CONOCIMIENTO, VERSION_DE_ESQUEMA_DE_SESIONES,
-    aplicar_migraciones_de_conocimiento, aplicar_migraciones_de_sesiones,
+    VERSION_DE_ESQUEMA_DE_CONOCIMIENTO, VERSION_DE_ESQUEMA_DE_IDENTIDAD,
+    VERSION_DE_ESQUEMA_DE_SESIONES, aplicar_migraciones_de_conocimiento,
+    aplicar_migraciones_de_identidad, aplicar_migraciones_de_sesiones,
 };
 pub use pools::{
     BUSY_TIMEOUT, CONEXIONES_DE_LECTURA_DE_CONOCIMIENTO, GestorDePools,
     NOMBRE_DE_ARCHIVO_DE_CONOCIMIENTO, NOMBRE_DE_ARCHIVO_DE_SESIONES, PoolDeConocimiento,
-    PoolDeSesiones, ResumenDePuntoDeControl, SINCRONIA, SUFIJO_DE_ARCHIVO_WAL, Vitalidad,
+    PoolDeSesiones, ResumenDePuntoDeControl, ResumenDeRespaldoDePools, SINCRONIA,
+    SUFIJO_DE_ARCHIVO_WAL, Vitalidad,
 };
+pub use respaldo::{CopiaVerificada, respaldar_base, verificar_destino_disponible};
 pub use sesiones::{
     EventoDeHistorial, LIMITE_DE_ENTRADAS_RETENIDAS, RepositorioDeSesiones,
     VeredictoDeDeduplicacion,
