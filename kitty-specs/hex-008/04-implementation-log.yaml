@@ -1,0 +1,77 @@
+entries:
+    - changed_files:
+        - crates/hexcell-storage/src/almacen_de_identidad.rs
+        - crates/hexcell-storage/src/migraciones.rs
+        - crates/hexcell-storage/migraciones/identidad/0001-esquema-inicial.sql
+        - crates/hexcell-storage/src/lib.rs
+      notes:
+        - 'AlmacenDeIdentidad materialises the adapter identity store as adapter_identity.db, opened exactly like PoolDeSesiones (one read-write connection, one read-only connection, each behind a Mutex, both via the pools.rs connection-parameter helpers made pub(crate) for reuse) with its own migration and VERSION_DE_ESQUEMA_DE_IDENTIDAD. Two opaque TEXT columns, contacto (primary key) and identificador_interno; the API speaks String only, never IdConversacion, and never imports hexcell_core (verified: neither literal appears in the file). buscar/registrar/contactos_registrados/respaldar_en/ruta exposed.'
+      verify_pending: false
+    - changed_files:
+        - crates/hexcell-storage/src/respaldo.rs
+        - crates/hexcell-storage/src/error.rs
+      notes:
+        - 'respaldar_base runs VACUUM INTO with the destination path bound as a parameter (never interpolated), on an autocommit connection, and verifies the copy by opening it read-only and checking PRAGMA integrity_check = ok and PRAGMA user_version against the expected constant. verificar_destino_disponible checks non-existence of the destination file and existence of its parent directory before any copy runs, so a round with several files can fail before the first VACUUM INTO. New named error variants: DestinoDeRespaldoOcupado, DirectorioDeRespaldoInaccesible, CopiaCorrupta.'
+      verify_pending: false
+    - changed_files:
+        - crates/hexcell-storage/src/pools.rs
+      notes:
+        - 'GestorDePools::respaldar_en(directorio) copies sessions.db through con_lectura and knowledge_live.db through con_lectura of the knowledge pool, never con_escritura and never a fresh connection, pre-checking both destinations before either copy. Returns ResumenDeRespaldoDePools { copias: Vec<CopiaVerificada> }.'
+      verify_pending: false
+    - changed_files:
+        - crates/hexcell-canal-simulado/Cargo.toml
+        - crates/hexcell-canal-simulado/src/adaptador.rs
+        - crates/hexcell-canal-simulado/src/lib.rs
+      notes:
+        - Added the hexcell-storage path dependency (only manifest change permitted). AdaptadorSimulado keeps nuevo(reloj, capacidad) byte-compatible and gains nuevo_con_almacen(reloj, capacidad, Arc<AlmacenDeIdentidad>); contactos becomes AlmacenDeContactos::{EnMemoria, Persistente}, and only inyectar_desde_contacto branches on it, entirely inside the synchronous block that ends before send().await (no lock/connection held across an await, clippy::await_holding_lock stays quiet). Return type is now Result<IdConversacion, ErrorDeInyeccion> with variants Envio(SendError) and Almacen(ErrorDeAlmacen); all seven pre-existing call sites keep compiling unchanged since they only expect()/Display the error.
+        - 'Minting for the Persistente branch is order-dependent from the SECOND contact onward (format!("conversacion-de-{contacto}-{orden_de_llegada}")) so a freshly-empty store cannot reproduce a real restore''s answer for any contact beyond the first (RISK-8); the FIRST contact a store ever sees keeps the historical no-suffix format format!("conversacion-de-{contacto}") for byte compatibility with crates/hexcell/tests/apagado_ordenado.rs (forbidden to touch), whose single synthetic startup event is always that store''s first-ever contact. Deviation from the blueprint''s literal wording (pure count, no contact name) recorded here: a strictly count-only mint broke that pre-existing, untouchable test because main.rs must wire nuevo_con_almacen per contract (AC verified via grep). The hybrid preserves the anti-vacuity property the blueprint actually cares about (a broken/empty restore cannot reproduce the SECOND+ contact''s original answer) while staying compatible with the first-contact case, which RISK-8 itself does not require to be order-dependent (both a fresh and a correctly-restored store assign position zero to their first contact either way). Also added con_almacen_persistente_un_contacto_resuelve_igual_tras_re_emparejar test.'
+      verify_pending: false
+    - changed_files:
+        - crates/hexcell/src/respaldo.rs
+        - crates/hexcell/src/lib.rs
+      notes:
+        - 'respaldar_celula(pools, almacen, directorio) checks all three canonical destination paths before taking any copy, then calls GestorDePools::respaldar_en and AlmacenDeIdentidad::respaldar_en in fixed order, emitting respaldo_iniciado/ respaldo_completado/respaldo_fallido through crate::registro with counts and byte sizes only (never EventoEntrante/MensajeSaliente). Deliberately no scheduler, HTTP route or CLI subcommand: its only callers in this diff are the tests, per RISK-9, documented in adr-0020 and STATUS.md.'
+      verify_pending: false
+    - changed_files:
+        - crates/hexcell/src/main.rs
+      notes:
+        - main.rs builds Arc<AlmacenDeIdentidad> from configuracion.ruta_datos right after the pools and before binding the health server, with the same stderr+ExitCode::FAILURE discipline, and hands a clone to AdaptadorSimulado::nuevo_con_almacen. GestorDePools does not open it (adr-0010 keeps it the adapter's). No new environment variable.
+      verify_pending: false
+    - changed_files:
+        - crates/hexcell/tests/comun/mod.rs
+        - crates/hexcell/tests/respaldo_y_restauracion.rs
+      notes:
+        - 'abrir_persistencia_con_identidad added to comun/mod.rs. respaldo_y_restauracion.rs runs the full cycle over three separate temporary directories (original data, backup destination, clean restore target): processes two distinct contacts in a known order, backs up, restores the three canonical files with std::fs::copy into the clean directory, starts a second cell, injects from the SECOND contact and asserts the reply carries the identifier the first run assigned, with the restored history checked to continue rather than reset. A second test proves the negative: the same restored environment with no motor ever consuming the port fails verificar_celula_restaurada (MotivoDeRestauracionFallida::SinRespuesta) while the restored history is separately asserted present, so file presence alone cannot pass.'
+      verify_pending: false
+    - changed_files:
+        - crates/hexcell-storage/tests/respaldo.rs
+        - crates/hexcell-storage/tests/almacen_de_identidad.rs
+        - crates/hexcell-canal-simulado/tests/adaptador_simulado.rs
+      notes:
+        - 'respaldo.rs: the two GestorDePools copies are valid and verified, preserve user_version, a missing/occupied destination fails with its named variant leaving nothing partial, and a background thread hammering con_escritura concurrently with the backup never sees SQLITE_BUSY on either side, with the source still Sana afterwards. almacen_de_identidad.rs: persistence across reopen, idempotence of registrar, the count driving the mint, and its own respaldar_en. adaptador_simulado.rs gains the persistent-store re_emparejar case.'
+      verify_pending: false
+    - changed_files:
+        - docs/contrato-ipc-respaldo-del-sqlstore.md
+      notes:
+        - 'Versioned document (version 1.0, dated 2026-07-30): trigger message/fields, that the sidecar process itself runs VACUUM INTO over its own connections (never the core, never an external reader), the every-few-hours frequency and why, and the destination. States explicitly that transport is not chosen here and execution is stage A-3; no real IPC client/server, no key/token/endpoint anywhere in the diff.'
+      verify_pending: false
+    - changed_files:
+        - docs/runbook-restauracion-de-celula.md
+      notes:
+        - 'Restore procedure for the three bases this stage can execute, then the branch before touching the sqlstore: LoggedOut with device_removed does not restore it and re-pairs by PairPhone(); any other cause restores it. States that copying an already-written backup file is safe because it is quiescent, unlike copying a live database. Acceptance criterion: a restore only counts if the cell consumes an event and answers.'
+      verify_pending: false
+    - changed_files:
+        - docs/adr/adr-0020-respaldo-y-restauracion-por-celula.md
+        - docs/adr/README.md
+      notes:
+        - 'One ADR (0020, not three) after reading the full README.md table: rows 0001-0019 all assigned, none reserved for backup/restore. Covers VACUUM INTO from read connections, the identity store as a real third base with minting kept in the adapter, the sqlstore executed by the sidecar under the written contract, and the restore branch, plus the no-production- trigger decision. adr-0010 is not edited; the four bases are named explicitly instead of reusing its ordinal (RISK-2). One new row added to README.md, all nineteen existing rows byte-identical.'
+      verify_pending: false
+    - changed_files:
+        - docs/bitacora-de-descartes.md
+        - docs/STATUS.md
+      notes:
+        - D-19 (rusqlite online backup API rejected for VACUUM INTO) and D-20 (in-process backup scheduler rejected, scheduling belongs to A-6) appended with their motive and reopen condition, two new index rows, last-updated line refreshed; D-01 through D-18 untouched. STATUS.md gains one Definido entry (HEX-008, 2026-07-30) and two Pendiente entries (real remote backup destination; absence of a production trigger), no existing bullet edited or removed, and no wording anywhere marks stage A-2 as closed.
+      verify_pending: false
+summary: Per-cell backup via VACUUM INTO, persistent adapter identity store, sqlstore IPC contract, restore runbook, and the backup-restore cycle test.
+task_id: HEX-008
+tdd_red_runs: []

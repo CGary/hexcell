@@ -1,0 +1,198 @@
+task_id: HEX-008
+summary: Respaldo por célula (VACUUM INTO + contrato IPC del sqlstore), runbook de restauración con
+    bifurcación device_removed y tests del ciclo respaldo-restauración. Tareas 13, 14, 16 de A-2.
+risk: medium
+goal: |
+    Convertir en código y documentación las tareas 13, 14 y 16 de la etapa A-2
+    (docs/plan/fase-a-2-nucleo-persistencia.md), la quinta y última de las cinco tareas
+    HEX-004..HEX-008 en que se partió esa etapa el 2026-07-28, sobre lo que HEX-007 dejó en main: el
+    proveedor de inferencia simulado, el apagado ordenado por SIGTERM con checkpoint del WAL sobre
+    ambos pools, y los logs estructurados del motor.
+
+    Primero, el respaldo por célula de las tres bases que esta etapa puede copiar por sí misma:
+    `sessions.db`, `knowledge_live.db` y el almacén de identidad del adaptador (en esta etapa, el del
+    adaptador simulado), mediante `VACUUM INTO` en caliente contra los pools SQLite ya existentes, con
+    copia del resultado a un destino fuera del disco del servidor (simulado en los tests con otro
+    directorio local, ya que el destino remoto real es una decisión de negocio pendiente en
+    docs/STATUS.md) y verificación de integridad de cada copia. Ninguna operación de respaldo produce
+    `SQLITE_BUSY` ni interrumpe el procesamiento de eventos en curso.
+
+    Segundo, el contrato IPC escrito y versionado para el respaldo de la cuarta base, el `sqlstore`
+    del sidecar Go: un documento que fija el mensaje o la orden que el núcleo (o el orquestador de
+    respaldo) envía al sidecar para que sea el propio proceso del sidecar quien ejecute `VACUUM INTO`
+    sobre sus conexiones respetando el WAL, la frecuencia alta exigida (cada pocas horas, no diaria,
+    por la evolución continua de las credenciales del protocolo Signal), y el destino de la copia
+    resultante. Este contrato se redacta y se versiona; su ejecución real —el sidecar todavía no
+    existe como proceso desplegado con este contrato implementado— es explícitamente diferida a la
+    etapa A-3.
+
+    Tercero, el procedimiento de restauración completa de una célula desde sus copias sobre un
+    entorno limpio, con su runbook escrito, que bifurca explícitamente antes de tocar el `sqlstore`:
+    si la causa de la pérdida fue `LoggedOut` con `device_removed`, no se restaura el `sqlstore` y se
+    va directo al re-emparejamiento por `PairPhone()`; ante cualquier otra causa (corrupción, fallo de
+    disco, cualquier otra desconexión) el respaldo es válido y se restaura. Ambas ramas se redactan y
+    razonan aquí; su ensayo contra la taxonomía de desconexión real del sidecar es diferido a la etapa
+    A-3.
+
+    Cuarto, el test de integración que cierra el ciclo: respaldo de las tres bases alcanzables desde
+    esta etapa, restauración sobre un entorno limpio (directorio de trabajo temporal, sin reutilizar
+    el original) y verificación de que la célula restaurada vuelve a consumir un evento inyectado por
+    el adaptador simulado y a responder por el puerto con el identificador interno correcto. Restaurar
+    ficheros con el historial intacto pero con la célula incapaz de responder cuenta como fallo de la
+    prueba, no como éxito parcial.
+invariants:
+    - Todo el contenido del repositorio se escribe en español, incluidos los comentarios de código, el
+      runbook, el contrato IPC y los mensajes de commit (conventional commits, sin Co-Authored-By ni
+      ninguna atribución de IA). Los identificadores de Rust (tipos, funciones, crates) se mantienen
+      en inglés idiomático donde ya lo están.
+    - No se versiona ningún *.db, *.db-wal, *.db-shm ni .env*; ningún secreto ni clave de API llega al
+      repositorio, ni siquiera como valor de ejemplo en el contrato IPC o en el runbook.
+    - El núcleo nunca conoce el transporte de WhatsApp. sessions.db no almacena identificadores de
+      transporte crudos bajo ninguna forma ni columna, tampoco en sus copias de respaldo.
+    - hexcell-core permanece libre de tokio y de cualquier dependencia de infraestructura; el
+      mecanismo de respaldo y restauración vive en crates/hexcell o en hexcell-storage, no en
+      hexcell-core.
+    - Todas las fechas escritas en los documentos son absolutas (2026-07-30), nunca relativas.
+    - Ningún documento ni comentario puede afirmar que la Fase B sustituye, reemplaza o cierra la Fase
+      A, ni que el sidecar se retira, el canal propio es el canal por defecto y permanente.
+    - La prosa en Markdown y en comentarios largos mantiene un ancho aproximado de 100 columnas,
+      consistente con el resto del repositorio.
+    - El contrato IPC del sqlstore se redacta y se versiona en esta tarea, pero no se ejecuta; no
+      existe en este diff ningún cliente ni servidor IPC real hablando con un proceso sidecar, porque
+      el sidecar con ese contrato implementado es entregable de la etapa A-3. Esta ausencia de
+      ejecución real es un diferido explícito, no un hueco de la tarea.
+    - Las dos ramas de la bifurcación de restauración del sqlstore (LoggedOut con device_removed frente
+      a cualquier otra causa) se redactan y razonan en el runbook de esta tarea; su ensayo contra la
+      taxonomía de desconexión real del sidecar es diferido explícito a la etapa A-3, igual que el
+      destino remoto real del respaldo, que sigue siendo decisión de negocio pendiente en
+      docs/STATUS.md y aquí se simula con un directorio local distinto.
+    - El respaldo de las tres bases alcanzables desde esta etapa no bloquea la operación de la célula;
+      ningún test de este alcance debe observar un error SQLITE_BUSY ni una interrupción del
+      procesamiento de eventos en curso durante la ejecución del respaldo.
+non_goals:
+    - La ejecución real del contrato IPC del sqlstore por un proceso sidecar Go desplegado. Diferido
+      explícito, criterio de aceptación de la etapa A-3.
+    - El ensayo de las dos ramas de la bifurcación de restauración (LoggedOut/device_removed frente a
+      cualquier otra causa) contra la taxonomía de desconexión real de whatsmeow. Diferido explícito,
+      etapa A-3.
+    - El destino real de respaldo remoto fuera del servidor (almacenamiento en otra máquina, en la nube
+      o similar). Decisión de negocio pendiente en docs/STATUS.md; esta tarea usa un directorio local
+      distinto como simulación de "fuera del disco" en sus tests.
+    - Cualquier canal real (whatsmeow, Cloud API) o cambio en sidecar/. No forma parte de esta
+      partición de A-2.
+    - La medición de memoria residente en reposo como línea base de NFR-01.
+    - Reabrir o modificar el proveedor de inferencia simulado, el apagado ordenado o los logs
+      estructurados que HEX-007 ya dejó en main; esta tarea solo añade respaldo, restauración y sus
+      tests sobre lo ya existente.
+    - Actualizar docs/STATUS.md marcando la etapa A-2 como cerrada de forma unilateral desde esta
+      tarea; el cierre de la etapa se registra como corresponde a la finalización acordada de A-2, no
+      como efecto secundario automático de este spec.
+constraints:
+    - El respaldo de sessions.db, knowledge_live.db y el almacén de identidad del adaptador simulado se
+      implementa con VACUUM INTO ejecutado en caliente sobre los pools SQLite ya abiertos por el
+      proceso, nunca copiando el fichero físico desde fuera del proceso que lo tiene abierto.
+    - Cada copia de respaldo se acompaña de una verificación de integridad (como mínimo, una
+      comprobación de que el fichero resultante abre correctamente y supera una verificación de
+      consistencia de SQLite) antes de darse por válida.
+    - El contrato IPC del sqlstore se entrega como documento versionado (ubicación que el blueprint
+      decida, por ejemplo en docs/ o junto al código de respaldo) que especifica al menos el mensaje o
+      la orden de disparo, el proceso responsable de ejecutar VACUUM INTO (el propio sidecar, nunca el
+      núcleo ni un proceso externo leyendo el fichero), la frecuencia (cada pocas horas) y el destino
+      de la copia; no incluye ninguna implementación de transporte IPC real.
+    - El runbook de restauración se entrega como documento (ubicación que el blueprint decida) que
+      describe el procedimiento completo para las cuatro bases y bifurca explícitamente antes de tocar
+      el sqlstore, con sus dos ramas enfrentadas y razonadas; LoggedOut + device_removed no restaura el
+      sqlstore y re-empareja por PairPhone(); cualquier otra causa restaura el respaldo.
+    - El test de integración de ciclo completo ejecuta, contra el adaptador simulado, en este orden
+      dentro de un entorno de prueba aislado (directorios y bases temporales por test), procesar al
+      menos un evento, respaldar las tres bases alcanzables, restaurar sobre un directorio de trabajo
+      limpio distinto del original, arrancar la célula restaurada, inyectar un nuevo evento por el
+      adaptador simulado y verificar que se procesa y que la respuesta se emite por send con el
+      identificador interno correcto.
+    - Ningún test de esta tarea depende de una base de datos compartida entre ejecuciones, de una
+      llamada de red real ni de un proceso sidecar real; usa siempre el adaptador de canal simulado y
+      bases y directorios temporales por test.
+    - Todo lo que HEX-001 a HEX-007 ya dejaron en main (workspace de cinco crates, el trait
+      ChannelAdapter y sus tipos canónicos, el adaptador simulado, el motor mpsc, la política ante
+      FueraDeVentana, el identificador opaco de conversación, la persistencia dual con pools WAL, el
+      esquema y las migraciones de sessions.db, la deduplicación y el historial persistidos, GET
+      /health/ready, el proveedor de inferencia simulado, el apagado ordenado y los logs estructurados)
+      no se recrea ni se reescribe; esta tarea solo añade respaldo, restauración y sus tests sobre lo
+      ya existente.
+acceptance:
+    - id: AC-1
+      statement: Un respaldo ejecutado con la célula en operación produce copias íntegras de
+          sessions.db, knowledge_live.db y el almacén de identidad del adaptador simulado.
+      given: una célula en marcha, con el adaptador simulado y ambos pools SQLite abiertos y con datos
+          previos
+      when: se dispara el procedimiento de respaldo
+      then: se generan tres ficheros de copia en el destino configurado, cada uno abre correctamente y
+          supera una verificación de integridad de SQLite, sin que la operación bloquee ni interrumpa
+          el procesamiento de eventos en curso
+    - id: AC-2
+      statement: El respaldo no produce errores SQLITE_BUSY.
+      given: un respaldo disparado mientras el motor procesa eventos de forma concurrente
+      when: se inspecciona el resultado de la operación de respaldo y los logs del proceso
+      then: ninguna de las tres operaciones VACUUM INTO devuelve ni registra un error SQLITE_BUSY
+    - id: AC-3
+      statement: El contrato IPC del respaldo del sqlstore existe como documento versionado y no como
+          código ejecutado.
+      given: el repositorio en el commit de esta tarea
+      when: se inspecciona el documento del contrato IPC y el diff completo
+      then: el documento especifica el mensaje/orden de disparo, que el propio sidecar ejecuta VACUUM
+          INTO sobre sus conexiones, la frecuencia (cada pocas horas) y el destino de la copia; el diff
+          no contiene ningún cliente ni servidor IPC real que lo ejecute
+    - id: AC-4
+      statement: El runbook de restauración existe como documento versionado con la bifurcación
+          explícita antes de tocar el sqlstore.
+      given: el documento del runbook en el commit de esta tarea
+      when: se inspecciona su contenido
+      then: describe el procedimiento para las cuatro bases y enfrenta explícitamente sus dos ramas de
+          decisión sobre el sqlstore (LoggedOut + device_removed → no se restaura, se re-empareja por
+          PairPhone(); cualquier otra causa → se restaura), razonando cada una
+    - id: AC-5
+      statement: Una restauración completa sobre un entorno limpio se da por buena solo si la célula
+          restaurada vuelve a consumir un evento y a responder por el puerto.
+      given: copias de respaldo de sessions.db, knowledge_live.db y el almacén de identidad del
+          adaptador simulado, generadas por una ejecución previa de la célula, y un directorio de
+          trabajo limpio distinto del original
+      when: se restauran las copias sobre ese directorio limpio, se arranca una nueva instancia de la
+          célula contra ellas y se le inyecta un evento por el adaptador simulado
+      then: el evento se procesa, queda registrado en el sessions.db restaurado y la respuesta se emite
+          por send con el identificador interno de conversación correcto
+    - id: AC-6
+      statement: Restaurar ficheros con historial intacto pero sin que la célula responda no pasa el
+          test de restauración.
+      given: el mismo test de AC-5, modificado para que la célula restaurada no logre iniciar el
+          consumo del puerto (escenario de prueba negativa documentado en el propio test o en su
+          descripción)
+      when: se ejecuta esa variante
+      then: el test falla explícitamente, dejando constancia de que la sola presencia del historial no
+          basta como criterio de éxito
+    - id: AC-7
+      statement: El test de integración de ciclo completo respaldo-restauración pasa de punta a punta.
+      given: un entorno de prueba aislado con bases y directorios temporales
+      when: se ejecuta el ciclo completo (procesar evento → respaldar → restaurar en directorio limpio
+          → arrancar → inyectar evento → verificar respuesta) como parte de la suite de tests de
+          integración
+      then: el test concluye con éxito de forma reproducible, sin depender de estado compartido entre
+          ejecuciones ni de red real
+    - id: AC-8
+      statement: El workspace compila, formatea y lintea limpio con las piezas añadidas.
+      given: el repositorio en el commit de esta tarea
+      when: se ejecutan "cargo fmt --check", "cargo clippy --workspace -- -D warnings" y "cargo test
+          --workspace"
+      then: los tres terminan sin errores ni hallazgos
+    - id: AC-9
+      statement: hexcell-core no gana dependencias de infraestructura por esta tarea.
+      given: crates/hexcell-core/Cargo.toml tras esta tarea
+      when: se inspecciona su sección [dependencies]
+      then: sigue sin tokio, sin ningún crate HTTP y sin ningún crate de SQLite o de pool de conexiones
+    - id: AC-10
+      statement: El diff respeta la frontera de esta tarea y no adelanta trabajo diferido a A-3.
+      given: el diff completo introducido por esta tarea
+      when: se inspecciona
+      then: no contiene ningún cliente ni servidor IPC real hablando con un proceso sidecar, ningún
+          ensayo contra un sidecar real ni contra un canal real, ninguna clave de API real, ningún
+          destino de respaldo remoto real, y ningún cambio en docs/STATUS.md que marque la etapa A-2
+          como cerrada

@@ -1,0 +1,387 @@
+acceptance:
+    human_gate: true
+execution:
+    branch: ai/HEX-008
+    mode: worktree_edit
+forbid:
+    behaviors:
+        - 'Do not try to back up the adapter identity store without first creating it. The spec says to VACUUM INTO it against the already open pools; verified on 2026-07-30, it is the in-memory field contactos: HashMap<String, IdConversacion> of EstadoInterno in crates/hexcell-canal-simulado/src/adaptador.rs and there is no file behind it. Do not fake the third copy by serialising that map to a file with your own format, do not skip it and report two copies, and do not rewrite 00-spec.yaml, which belongs to the human. Create AlmacenDeIdentidad over a real SQLite file named adapter_identity.db under the cell data path, with its own migration and its own user_version, which is what adr-0010 already decided. This is RISK-1 in the blueprint.'
+        - 'Do not let AlmacenDeIdentidad know what an IdConversacion is. It stores two opaque TEXT columns - contacto as PRIMARY KEY and identificador_interno - and its API speaks String: buscar(contacto) -> Option<String>, registrar(contacto, identificador_interno) as an idempotent INSERT OR IGNORE, contactos_registrados() -> i64. Do not import hexcell_core into crates/hexcell-storage/src/almacen_de_identidad.rs and do not construct IdConversacion or IdRemitente anywhere under crates/hexcell-storage/src/ or crates/hexcell/src/. adr-0010 puts identity translation in the ADAPTER and the core treats the identifier as opaque; a storage layer that minted identifiers would be a second translator, and two pieces that translate the same thing diverge without anyone noticing until both have written data.'
+        - Do not derive the new internal identifier from the contact name. Today the adapter does exactly that, with a deterministic format, which means a cell started against an EMPTY identity store would hand out the same identifier as a correctly restored one - so the AC-5 assertion would pass whether or not the restore worked, and the test could not fail. Mint it from the count already stored (contactos_registrados), so identifiers depend on the ORDER of first sight, and make the cycle test register at least two contacts in a known order and assert on the SECOND. This is RISK-8 and it is the difference between AC-5/AC-6 meaning something and being decoration.
+        - 'Do not change AdaptadorSimulado::nuevo and do not thread the store through every constructor. Keep nuevo(reloj, capacidad) byte-compatible and add nuevo_con_almacen(reloj, capacidad, Arc<AlmacenDeIdentidad>); turn the contactos field into an enum with an EnMemoria variant holding today''s HashMap and a Persistente variant holding the Arc, and branch only inside inyectar_desde_contacto. The store is shared by Arc and not owned, because Motor takes ownership of the adapter and the backup still needs the store afterwards. Do not add a second injection method that duplicates the logic: one method, one branch.'
+        - 'Do not hold the adapter Mutex or a SQLite connection across an await. The SQLite work of inyectar_desde_contacto goes inside the existing non-async block that already ends before self.remitente_eventos.send(evento).await, exactly as the current code builds the event. clippy::await_holding_lock is an error under -D warnings and it is right: a connection held across an await in a current_thread runtime stalls the whole cell. Do not silence it with an allow attribute.'
+        - 'Do not flatten the new failure mode into the old error. inyectar_desde_contacto returns Result<IdConversacion, ErrorDeInyeccion> with variants Envio(SendError<EventoEntrante>) and Almacen(ErrorDeAlmacen), deriving Debug and implementing Display and std::error::Error. There are seven call sites (crates/hexcell/src/main.rs, crates/hexcell/tests/continuidad_de_hilo.rs twice, crates/hexcell-canal-simulado/tests/adaptador_simulado.rs four times) and all of them expect() or Display the error, so they compile unchanged. Do not map a storage failure onto SendError and do not swallow it into an Ok: a write to the identity store that silently failed is the exact corruption this task exists to catch.'
+        - 'Do not run any VACUUM INTO from a write connection, and do not open a read-write connection to knowledge_live.db to make one possible. sessions.db is copied through PoolDeSesiones::con_lectura, knowledge_live.db through PoolDeConocimiento::con_lectura, the identity store through its own read-only connection. Verified on 2026-07-30 against sqlite3 3.53.4 with -readonly: VACUUM INTO SUCCEEDS on a read-only connection and the copy passes integrity_check, because it is a read - the exact opposite of PRAGMA wal_checkpoint, which HEX-007 verified fails with a disk I/O error on the same kind of connection. Using con_escritura would serialise the backup behind the hot writer, which is the interruption AC-1 forbids; a read-write knowledge connection would violate FR-05 and adr-0003 for no gain. This is RISK-4.'
+        - 'Do not open a fresh connection of your own for the backup either. The spec constraint says the copy is made over the pools the process ALREADY has open, and reusing them also reuses their busy_timeout, synchronous and foreign_keys settings rather than quietly acquiring different ones. The cost - a concurrent historial() call waits behind the copy on the sessions read connection - is accepted and documented where the code is, because the engine''s hot path writes: procesar_deduplicacion, anotar_entrante and anotar_saliente all go through con_escritura. That is RISK-7.'
+        - 'Do not interpolate the destination path into the VACUUM INTO statement. Verified on 2026-07-30: VACUUM INTO ?1 accepts a bound parameter, so bind it. A path built by format! into SQL is the one place in this crate where an outside value would reach a statement as text, and crates/hexcell-storage/src/migraciones.rs already documents that the only acceptable interpolation is a constant integer of the crate itself.'
+        - 'Do not run VACUUM INTO inside a transaction and do not assume anything about the destination. Verified on 2026-07-30: it cannot run within an open transaction, it fails if the destination FILE already exists, and it fails if the destination''s parent DIRECTORY does not exist. So issue it on an autocommit connection, never wrapped in unchecked_transaction; take an EXISTING destination directory; write the three copies under their CANONICAL names sessions.db, knowledge_live.db and adapter_identity.db; and check all three for prior existence BEFORE the first copy, failing with a named error variant so no half-finished round is left behind. Canonical names are what make the runbook''s restore step a copy of three files.'
+        - Do not name backup files from a clock. SystemTime::now stays banned across crates/hexcell/src/ and crates/hexcell-storage/src/, as HEX-005 fixed and HEX-007 kept, and Instant::now remains permitted only in motor.rs. Rotation, labelling and retention of destination directories belong to the operator and are written in the runbook, not derived inside the code. Do not add chrono, time or any date crate to any manifest to get around this.
+        - 'Do not weaken the integrity verification into an existence check. Each copy is opened READ-ONLY and must satisfy two things before it counts: PRAGMA integrity_check returns the single value ok, and PRAGMA user_version equals the schema version its origin declares - verified on 2026-07-30 that VACUUM INTO preserves user_version. A copy that fails either one is an error with its own variant, not a warning. Do not use PRAGMA quick_check here and do not compare file sizes as a proxy for consistency.'
+        - 'Do not assert that a copy comes back in WAL mode. Verified on 2026-07-30: the file VACUUM INTO produces is in journal_mode = delete even when the origin is in WAL. It self-heals on restore, because abrir_lectura_escritura issues PRAGMA journal_mode = WAL on every read-write open. Do not treat delete mode in a copy as corruption, do not add a step that rewrites the mode of a copy, and do not touch punto_de_control_de_wal or any other part of the HEX-007 shutdown path to make it look tidier.'
+        - Do not add a scheduler, a timer, an HTTP route, an environment variable or a hexcell-admin subcommand to trigger the backup. Nothing in 00-spec.yaml or in task 13 of docs/plan/fase-a-2-nucleo-persistencia.md asks for one; the ordered shutdown belongs to HEX-007 and the spec's non-goals forbid reopening it; packaging, CLI and scheduling are stage A-6. respaldar_celula is a public library operation whose callers in this diff are the tests, and whose invocation by an operator or a future scheduler is described in the runbook. Write that deferral in adr-0020 and as a Pendiente in docs/STATUS.md so it reads as a decision instead of an omission. This is RISK-9 and closing it here is out of contract.
+        - 'Do not let GestorDePools open the identity store. main.rs builds Arc<AlmacenDeIdentidad> from configuracion.ruta_datos right after the pools and before binding the health server, failing the same way the pools do - stderr plus ExitCode::FAILURE - and hands a clone to AdaptadorSimulado::nuevo_con_almacen. adr-0010 makes that store the adapter''s; folding it into the core''s pool manager would put the adapter''s identity file behind the core''s persistence. Do not add a new environment variable for its path: derive it from the already validated data path, exactly as sessions.db and knowledge_live.db are.'
+        - 'Do not implement any part of the sqlstore IPC. No UnixStream, UnixListener or UnixDatagram anywhere under crates/; no serde, serde_json, prost, tonic, bincode, ipc-channel or interprocess in any manifest; no std::process::Command under any src/ directory; no client, server, socket path, retry loop or message struct for talking to a sidecar. The contract is a DOCUMENT. Prose is not the target of this ban: doc comments and the two new documents will and should say sqlstore, PairPhone and device_removed while explaining the boundary, and deleting that explanation to satisfy a word search would be the wrong fix. The ban is on machinery.'
+        - Do not enable the rusqlite backup feature and do not use Connection::backup. The SQLite online backup API restarts its copy every time a writer commits, so under a hot writer it can make no progress, while VACUUM INTO takes one read snapshot, needs no extra feature and yields a defragmented single file. Record that rejection as D-19 in docs/bitacora-de-descartes.md, and the rejection of a periodic backup scheduler inside the cell process as D-20, each with its motive and its explicit reopen condition, both in the same commit that makes them, as CLAUDE.md requires.
+        - Do not copy a live database file from outside the process that has it open, anywhere, and do not let the documents imply it is acceptable. That is the whole reason the sqlstore contract puts VACUUM INTO inside the sidecar. The runbook does copy backup FILES with an ordinary copy, and it must say why that is safe - they are quiescent - so nobody generalises the wrong lesson in either direction.
+        - 'Do not add any crate to any manifest. The only manifest change permitted is adding the hexcell-storage PATH dependency to crates/hexcell-canal-simulado/Cargo.toml, with its one-line reason. Do not touch the root Cargo.toml, crates/hexcell/Cargo.toml or crates/hexcell-storage/Cargo.toml: every crate this task needs is already there. Do not hand-write, hand-edit or prune Cargo.lock; let cargo regenerate it and commit it verbatim, where the only change should be the dependency list of the hexcell-canal-simulado package.'
+        - Do not give crates/hexcell-core a single dependency and do not put one line of this task in it. Its [dependencies] table stays empty and cargo tree -p hexcell-core keeps printing exactly one line; that is AC-9. Backup, restore, identity persistence and SQLite are infrastructure and belong in hexcell-storage; the core is not edited at all in this task.
+        - Do not call unwrap(), expect(), panic!, unreachable! or todo! anywhere under crates/hexcell/src/, crates/hexcell-core/src/ or crates/hexcell-storage/src/. None of those directories contains one today, verified on 2026-07-30, and [profile.release] sets panic = "abort", so a panic in production leaves no usable message. New failure modes get named variants of ErrorDeAlmacen - a destination directory that is inaccessible, a destination already occupied, a copy that fails verification - each carrying the path it is talking about. crates/hexcell-canal-simulado/src/ keeps its existing expect() calls on its own Mutex and is NOT covered by this ban.
+        - 'Do not let message content near the backup path. crates/hexcell/src/respaldo.rs may import crate::registro - it never sees message text - and emits respaldo_iniciado, respaldo_completado and respaldo_fallido with counts, byte sizes and paths only. It must not import EventoEntrante or MensajeSaliente, must not take one as a parameter and must not Debug-dump either. The typed field set of HEX-007 stays as it is: registro.rs is not edited.'
+        - Do not test with a shared database, a fixed path, a real network call or a real sidecar. Every test builds its own temporary directory with the existing DirectorioTemporal helper and removes it on drop; the cycle test uses THREE separate ones - original data, backup destination, clean restore target - and the restore target must never be the original directory. No test binds a fixed port, none reaches beyond loopback, none spawns a sidecar process, and none calls a real inference provider, because none exists in this task.
+        - 'Do not let the restore test pass on file presence alone. Factor the criterion into one helper returning Result<IdConversacion, MotivoDeRestauracionFallida> and use the SAME helper for both cases: the positive test asserts Ok and that the identifier equals the one the first run assigned to that contact, read from envios_capturados(); the negative test runs the same restored environment with the engine deliberately not consuming, asserts the helper reports the no-reply reason, AND separately asserts that the restored history IS present. Without that second assertion the negative test proves nothing. Do not make a temporal assertion pass by sleeping an arbitrary interval.'
+        - 'Do not create adr-0021 or higher, do not renumber, reorder, retitle or edit any existing ADR row, and do not skip the check. The full table of docs/adr/README.md was read for this task: rows 0001 to 0019 are all assigned, none is reserved for backup or restore, and the remaining official-channel ADRs are deliberately unnumbered until adr-0013 is decided. Write ONE new ADR, adr-0020-respaldo-y-restauracion-por-celula.md, stating stage A-2, status Vigente and the absolute date 2026-07-30, and add exactly one row. Every other row stays byte-identical. adr-0010 in particular is NOT edited, even though it calls the identity store the cuarta base while this task''s spec calls the sqlstore the cuarta base: name the four bases explicitly in the new documents and avoid the ordinal instead of renumbering a Vigente ADR (RISK-2).'
+        - 'Do not edit or renumber any existing entry of docs/bitacora-de-descartes.md. It is append-only by its own rules and runs to D-18 today: add D-19 and D-20 with their motives and explicit reopen conditions, add their two rows to the index table, refresh the last-updated line, and leave D-01 to D-18 untouched. A reopened discard would be marked REABIERTO rather than rewritten; none is reopened here.'
+        - 'Do not write anything in docs/STATUS.md that marks etapa A-2 as closed, finished, cerrada, completada or terminada, and do not rewrite or delete any existing bullet. Add only new entries dated 2026-07-30 attributed to HEX-008: the backup with no production trigger in this stage, the identity store now persistent, the two new documents, and the still pending business decision on the real remote backup destination, which this task simulates with a second local directory and must not resolve.'
+        - Do not invent a real remote backup destination. No S3 bucket, no rsync target, no host name, no cloud provider, no credential and no example endpoint, in code or in documentation. docs/STATUS.md lists it as a pending business decision and the tests simulate outside the disk with a second local directory. No API key, token, password or secret appears anywhere in the diff, not even as an example value.
+        - 'Do not state or imply anywhere that Fase B replaces, substitutes or closes Fase A, or that the sidecar is retired or transitional. The own channel is the default and permanent channel and the sidecar is its permanent cost - which is precisely why its sqlstore is backed up every few hours rather than daily. Do not introduce mass-sender folklore (jitter, warm-up protocols, proxies, VPN, IP rotation): D-08 rejects it as a design principle.'
+        - Do not write repository prose, doc comments, error messages or commit messages in English. Rust identifiers, crate names, SQL keywords and existing English identifiers stay as they are; the language rule governs prose. File names of the databases stay in English (sessions.db, knowledge_live.db, adapter_identity.db) for consistency with what is already on disk. Markdown prose and long comments keep the repository's ~100 column width. Every date written is absolute (2026-07-30), never relative.
+        - Do not add Co-Authored-By or any AI-attribution trailer to any commit message. Conventional commits in Spanish only.
+        - 'Do not commit any *.db, *.db-wal, *.db-shm or .env* file - .gitignore already covers them and must not be edited - and do not leave a temporary directory or a backup round behind: every test directory is removed on drop by the existing helper.'
+    files:
+        - Cargo.toml
+        - crates/hexcell-core/*
+        - crates/hexcell-core/**
+        - crates/hexcell-canal-contrato/*
+        - crates/hexcell-canal-contrato/**
+        - crates/hexcell-admin/*
+        - crates/hexcell-admin/**
+        - crates/hexcell-meta/*
+        - crates/hexcell-meta/**
+        - crates/hexcell/Cargo.toml
+        - crates/hexcell/src/motor.rs
+        - crates/hexcell/src/apagado.rs
+        - crates/hexcell/src/registro.rs
+        - crates/hexcell/src/configuracion.rs
+        - crates/hexcell/src/procesador.rs
+        - crates/hexcell/src/inferencia.rs
+        - crates/hexcell/src/conversaciones.rs
+        - crates/hexcell/src/deduplicacion.rs
+        - crates/hexcell/src/preparacion.rs
+        - crates/hexcell/src/salud.rs
+        - crates/hexcell/tests/apagado_ordenado.rs
+        - crates/hexcell/tests/registro_estructurado.rs
+        - crates/hexcell/tests/inferencia.rs
+        - crates/hexcell/tests/motor.rs
+        - crates/hexcell/tests/persistencia.rs
+        - crates/hexcell/tests/deduplicacion.rs
+        - crates/hexcell/tests/politica_fuera_de_ventana.rs
+        - crates/hexcell/tests/configuracion.rs
+        - crates/hexcell/tests/salud_http.rs
+        - crates/hexcell/tests/preparacion.rs
+        - crates/hexcell-storage/Cargo.toml
+        - crates/hexcell-storage/src/sesiones.rs
+        - crates/hexcell-storage/migraciones/sesiones/*
+        - crates/hexcell-storage/migraciones/conocimiento/*
+        - crates/hexcell-storage/tests/pools.rs
+        - crates/hexcell-storage/tests/migraciones.rs
+        - crates/hexcell-storage/tests/repositorio_de_sesiones.rs
+        - crates/hexcell-storage/tests/comun/mod.rs
+        - crates/hexcell-canal-simulado/src/reloj.rs
+        - crates/hexcell-canal-simulado/tests/contrato_del_puerto.rs
+        - docs/adr/adr-0001-licencia.md
+        - docs/adr/adr-0002-estructura-workspace.md
+        - docs/adr/adr-0003-persistencia-dual.md
+        - docs/adr/adr-0008-estrategia-canal-dos-fases.md
+        - docs/adr/adr-0009-whatsmeow-adaptador-fase-a.md
+        - docs/adr/adr-0010-puerto-de-canal.md
+        - docs/adr/adr-0014-canal-propio-permanente.md
+        - docs/adr/adr-0015-politica-de-convivencia-con-el-baneo.md
+        - docs/adr/adr-0016-convencion-de-entrega-de-eventos.md
+        - docs/adr/adr-0017-puerto-de-inferencia.md
+        - docs/adr/adr-0018-apagado-ordenado.md
+        - docs/adr/adr-0019-registro-estructurado.md
+        - docs/PRD.md
+        - docs/plan/*
+        - docs/plan/**
+        - docs/cotejo-puerto-de-canal-cloud-api.md
+        - README.md
+        - CLAUDE.md
+        - CONTRIBUTING.md
+        - LICENSE
+        - rust-toolchain.toml
+        - rustfmt.toml
+        - clippy.toml
+        - .gitignore
+        - .github/*
+        - .github/**
+        - sidecar/*
+        - sidecar/**
+        - Dockerfile*
+        - docker-compose*
+        - migrations/*
+        - migrations/**
+goal: |
+    Turn A-2 plan tasks 13, 14 and 16 into code and documentation on top of what HEX-007 left on main.
+    FOUR pieces land, and the first of them is the one the spec does not know it is asking for.
+
+    ONE, THE THIRD BASE HAS TO BE MADE BEFORE IT CAN BE BACKED UP. The spec asks for a VACUUM INTO of
+    the adapter identity store against the already open SQLite pools. Verified on 2026-07-30: that
+    store is a HashMap<String, IdConversacion> in the field contactos of EstadoInterno in
+    crates/hexcell-canal-simulado/src/adaptador.rs. There is no file, no pool and no schema behind it,
+    so there is nothing to copy and AC-5 could not be satisfied either. adr-0010 already decided that
+    the mapping persists in a store of the adapter's own, separate from the sqlstore, so this
+    implements adr-0010 rather than widening the spec. Add AlmacenDeIdentidad in
+    crates/hexcell-storage/src/almacen_de_identidad.rs over its own file adapter_identity.db, opened
+    like PoolDeSesiones (one read-write connection, one read-only connection, each behind a Mutex, both
+    through aplicar_parametros_de_conexion), with its own migration and its own user_version. It stores
+    TWO OPAQUE TEXT COLUMNS - contacto as primary key, identificador_interno - and never names
+    IdConversacion: minting stays in the adapter, which is where adr-0010 puts identity translation and
+    where HEX-007's standing check expects it. The adapter derives the new identifier from the stored
+    COUNT, so identifiers depend on the order of first sight; that is what stops the restore assertion
+    from being one an empty store would also satisfy.
+
+    TWO, THE BACKUP ITSELF. crates/hexcell-storage/src/respaldo.rs runs VACUUM INTO with the
+    destination path BOUND AS A PARAMETER (verified: VACUUM INTO ?1 accepts a bound parameter) and then
+    verifies each copy by opening it read-only and asserting PRAGMA integrity_check = ok and PRAGMA
+    user_version equal to the origin's schema version, which VACUUM INTO preserves. EVERY copy is taken
+    from a READ connection: sessions.db through PoolDeSesiones::con_lectura, knowledge_live.db through
+    PoolDeConocimiento::con_lectura, the identity store through its own read-only connection. Verified
+    on 2026-07-30 with sqlite3 3.53.4 and -readonly: VACUUM INTO succeeds on a read-only connection,
+    unlike PRAGMA wal_checkpoint, which HEX-007 verified fails there. Under WAL a reader never blocks
+    the writer and the engine's hot path is all writes, so no SQLITE_BUSY and no interruption. The
+    destination is an EXISTING directory into which the three copies go under their CANONICAL names;
+    an already occupied destination is a named error checked before the first copy, because VACUUM INTO
+    refuses to overwrite. crates/hexcell/src/respaldo.rs orchestrates the three and emits the log lines.
+    There is NO scheduler, NO HTTP route and NO CLI subcommand: nothing in the spec or in plan task 13
+    asks for one, the shutdown path belongs to HEX-007 and is off limits, and scheduling is A-6.
+
+    THREE, TWO DOCUMENTS. docs/contrato-ipc-respaldo-del-sqlstore.md fixes the trigger message, that the
+    SIDECAR PROCESS ITSELF runs VACUUM INTO over its own connections, the every-few-hours frequency and
+    the destination - written and versioned, never executed, with no IPC client or server anywhere in
+    the diff. docs/runbook-restauracion-de-celula.md covers the four bases and confronts its two
+    branches before touching the sqlstore: LoggedOut with device_removed does not restore it and
+    re-pairs by PairPhone(), any other cause restores the backup.
+
+    FOUR, THE TESTS THAT MAKE THE CLAIM REAL. A full in-process cycle over three separate temporary
+    directories - process events, back up, restore into a clean one, start a second cell, inject and
+    assert the reply carries the identifier the first run assigned - plus the negative probe with the
+    same helper, where restored history is present but the cell does not answer and the helper reports
+    failure. One ADR, adr-0020, and two new discards, D-19 and D-20. Nothing marks stage A-2 as closed.
+limits:
+    max_diff_lines: 3800
+    max_files_changed: 30
+    per_class:
+        - glob: Cargo.lock
+          max_diff_lines: 40
+        - glob: crates/hexcell-canal-simulado/Cargo.toml
+          max_diff_lines: 20
+        - glob: crates/hexcell-storage/src/**
+          max_diff_lines: 800
+        - glob: crates/hexcell-storage/migraciones/**
+          max_diff_lines: 60
+        - glob: crates/hexcell-storage/tests/**
+          max_diff_lines: 550
+        - glob: crates/hexcell-canal-simulado/src/**
+          max_diff_lines: 280
+        - glob: crates/hexcell-canal-simulado/tests/**
+          max_diff_lines: 200
+        - glob: crates/hexcell/src/**
+          max_diff_lines: 320
+        - glob: crates/hexcell/tests/**
+          max_diff_lines: 700
+        - glob: docs/adr/**
+          max_diff_lines: 420
+        - glob: docs/contrato-ipc-respaldo-del-sqlstore.md
+          max_diff_lines: 280
+        - glob: docs/runbook-restauracion-de-celula.md
+          max_diff_lines: 320
+        - glob: docs/bitacora-de-descartes.md
+          max_diff_lines: 150
+        - glob: docs/STATUS.md
+          max_diff_lines: 80
+read:
+    - .ai/tasks/active/HEX-008-new-spec/00-spec.yaml
+    - .ai/tasks/active/HEX-008-new-spec/01-blueprint.yaml
+    - crates/hexcell-core/src/canal.rs
+    - crates/hexcell-core/src/identidad.rs
+    - crates/hexcell-core/src/lib.rs
+    - crates/hexcell-core/Cargo.toml
+    - crates/hexcell-storage/src/pools.rs
+    - crates/hexcell-storage/src/sesiones.rs
+    - crates/hexcell-storage/src/migraciones.rs
+    - crates/hexcell-storage/src/error.rs
+    - crates/hexcell-storage/src/lib.rs
+    - crates/hexcell-storage/src/tiempo.rs
+    - crates/hexcell-storage/tests/comun/mod.rs
+    - crates/hexcell-storage/tests/pools.rs
+    - crates/hexcell-storage/tests/migraciones.rs
+    - crates/hexcell-storage/Cargo.toml
+    - crates/hexcell-canal-simulado/src/adaptador.rs
+    - crates/hexcell-canal-simulado/src/reloj.rs
+    - crates/hexcell-canal-simulado/src/lib.rs
+    - crates/hexcell-canal-simulado/tests/adaptador_simulado.rs
+    - crates/hexcell-canal-simulado/Cargo.toml
+    - crates/hexcell/src/main.rs
+    - crates/hexcell/src/lib.rs
+    - crates/hexcell/src/motor.rs
+    - crates/hexcell/src/registro.rs
+    - crates/hexcell/src/configuracion.rs
+    - crates/hexcell/src/procesador.rs
+    - crates/hexcell/src/inferencia.rs
+    - crates/hexcell/src/apagado.rs
+    - crates/hexcell/Cargo.toml
+    - crates/hexcell/tests/comun/mod.rs
+    - crates/hexcell/tests/persistencia.rs
+    - crates/hexcell/tests/continuidad_de_hilo.rs
+    - crates/hexcell/tests/apagado_ordenado.rs
+    - crates/hexcell/tests/motor.rs
+    - Cargo.toml
+    - rust-toolchain.toml
+    - rustfmt.toml
+    - clippy.toml
+    - .gitignore
+    - .github/workflows/ci.yml
+    - docs/PRD.md
+    - docs/plan/fase-a-2-nucleo-persistencia.md
+    - docs/plan/fase-a-3-adaptador-whatsmeow.md
+    - docs/adr/README.md
+    - docs/adr/adr-0003-persistencia-dual.md
+    - docs/adr/adr-0010-puerto-de-canal.md
+    - docs/adr/adr-0015-politica-de-convivencia-con-el-baneo.md
+    - docs/adr/adr-0018-apagado-ordenado.md
+    - docs/cotejo-puerto-de-canal-cloud-api.md
+    - docs/bitacora-de-descartes.md
+    - docs/STATUS.md
+    - CLAUDE.md
+    - CONTRIBUTING.md
+retry_policy:
+    escalate_after: 1
+    max_attempts: 2
+summary: 'A-2 tasks 13, 14, 16: VACUUM INTO backup of three bases from read connections, persistent adapter identity store, versioned sqlstore IPC contract, restore runbook and the cycle test.'
+task_id: HEX-008
+touch:
+    - Cargo.lock
+    - crates/hexcell-storage/src/respaldo.rs
+    - crates/hexcell-storage/src/almacen_de_identidad.rs
+    - crates/hexcell-storage/src/pools.rs
+    - crates/hexcell-storage/src/migraciones.rs
+    - crates/hexcell-storage/src/error.rs
+    - crates/hexcell-storage/src/lib.rs
+    - crates/hexcell-storage/migraciones/identidad/0001-esquema-inicial.sql
+    - crates/hexcell-storage/tests/respaldo.rs
+    - crates/hexcell-storage/tests/almacen_de_identidad.rs
+    - crates/hexcell-canal-simulado/Cargo.toml
+    - crates/hexcell-canal-simulado/src/adaptador.rs
+    - crates/hexcell-canal-simulado/src/lib.rs
+    - crates/hexcell-canal-simulado/tests/adaptador_simulado.rs
+    - crates/hexcell/src/respaldo.rs
+    - crates/hexcell/src/lib.rs
+    - crates/hexcell/src/main.rs
+    - crates/hexcell/tests/comun/mod.rs
+    - crates/hexcell/tests/respaldo_y_restauracion.rs
+    - crates/hexcell/tests/continuidad_de_hilo.rs
+    - docs/adr/adr-0020-respaldo-y-restauracion-por-celula.md
+    - docs/adr/README.md
+    - docs/contrato-ipc-respaldo-del-sqlstore.md
+    - docs/runbook-restauracion-de-celula.md
+    - docs/bitacora-de-descartes.md
+    - docs/STATUS.md
+verify:
+    commands:
+        - cargo fmt --check
+        - cargo clippy --workspace --all-targets -- -D warnings
+        - cargo test --workspace
+        - test "$(cargo tree -p hexcell-core | wc -l)" = "1"
+        - '! grep -qE ''^[[:space:]]*(tokio|rusqlite|hyper|serde|serde_json|tracing|log|rand|chrono|anyhow|thiserror|futures)[[:space:]]*='' crates/hexcell-core/Cargo.toml'
+        - '! grep -rqiE ''vacuum|respaldar|almacen_de_identidad'' crates/hexcell-core/src/'
+        - test -f crates/hexcell-storage/src/respaldo.rs
+        - grep -q 'VACUUM INTO' crates/hexcell-storage/src/respaldo.rs
+        - grep -q 'integrity_check' crates/hexcell-storage/src/respaldo.rs
+        - grep -q 'user_version' crates/hexcell-storage/src/respaldo.rs
+        - grep -q 'CopiaVerificada' crates/hexcell-storage/src/respaldo.rs
+        - '! grep -q ''unchecked_transaction'' crates/hexcell-storage/src/respaldo.rs'
+        - '! grep -qE ''format!\([^)]*VACUUM'' crates/hexcell-storage/src/respaldo.rs'
+        - grep -q 'respaldo' crates/hexcell-storage/src/lib.rs
+        - grep -q 'respaldar_en' crates/hexcell-storage/src/pools.rs
+        - grep -q 'con_lectura' crates/hexcell-storage/src/pools.rs
+        - grep -q 'punto_de_control_de_wal' crates/hexcell-storage/src/pools.rs
+        - test -f crates/hexcell-storage/src/almacen_de_identidad.rs
+        - test -f crates/hexcell-storage/migraciones/identidad/0001-esquema-inicial.sql
+        - grep -q 'AlmacenDeIdentidad' crates/hexcell-storage/src/almacen_de_identidad.rs
+        - grep -q 'adapter_identity.db' crates/hexcell-storage/src/almacen_de_identidad.rs
+        - grep -q 'respaldar_en' crates/hexcell-storage/src/almacen_de_identidad.rs
+        - '! grep -q ''IdConversacion'' crates/hexcell-storage/src/almacen_de_identidad.rs'
+        - '! grep -q ''hexcell_core'' crates/hexcell-storage/src/almacen_de_identidad.rs'
+        - grep -q 'AlmacenDeIdentidad' crates/hexcell-storage/src/lib.rs
+        - grep -q 'VERSION_DE_ESQUEMA_DE_IDENTIDAD' crates/hexcell-storage/src/migraciones.rs
+        - grep -q 'aplicar_migraciones_de_identidad' crates/hexcell-storage/src/migraciones.rs
+        - grep -q 'VERSION_DE_ESQUEMA_DE_SESIONES' crates/hexcell-storage/src/migraciones.rs
+        - grep -qE 'DestinoDeRespaldoOcupado' crates/hexcell-storage/src/error.rs
+        - grep -q 'nuevo_con_almacen' crates/hexcell-canal-simulado/src/adaptador.rs
+        - grep -q 'AlmacenDeIdentidad' crates/hexcell-canal-simulado/src/adaptador.rs
+        - grep -q 'ErrorDeInyeccion' crates/hexcell-canal-simulado/src/adaptador.rs
+        - grep -q 'IdConversacion::nuevo' crates/hexcell-canal-simulado/src/adaptador.rs
+        - grep -q 'contactos_registrados' crates/hexcell-canal-simulado/src/adaptador.rs
+        - grep -q 'ErrorDeInyeccion' crates/hexcell-canal-simulado/src/lib.rs
+        - grep -q 'hexcell-storage' crates/hexcell-canal-simulado/Cargo.toml
+        - test -f crates/hexcell/src/respaldo.rs
+        - grep -q 'respaldar_celula' crates/hexcell/src/respaldo.rs
+        - grep -q 'respaldo_completado' crates/hexcell/src/respaldo.rs
+        - '! grep -qE ''EventoEntrante|MensajeSaliente'' crates/hexcell/src/respaldo.rs'
+        - grep -q 'respaldo' crates/hexcell/src/lib.rs
+        - grep -q 'AlmacenDeIdentidad' crates/hexcell/src/main.rs
+        - grep -q 'nuevo_con_almacen' crates/hexcell/src/main.rs
+        - grep -q 'punto_de_control_de_wal' crates/hexcell/src/main.rs
+        - grep -q 'ExitCode::SUCCESS' crates/hexcell/src/main.rs
+        - grep -q 'biased' crates/hexcell/src/motor.rs
+        - '! grep -rqE ''\.(unwrap|expect)\('' crates/hexcell/src/ crates/hexcell-core/src/ crates/hexcell-storage/src/'
+        - '! grep -rqE ''panic!|unreachable!|todo!'' crates/hexcell/src/ crates/hexcell-core/src/ crates/hexcell-storage/src/'
+        - '! grep -rq ''SystemTime::now'' crates/hexcell/src/ crates/hexcell-storage/src/'
+        - '! grep -rq ''IdConversacion::nuevo'' crates/hexcell/src/ crates/hexcell-storage/src/'
+        - '! grep -rq ''IdRemitente::nuevo'' crates/hexcell/src/ crates/hexcell-storage/src/'
+        - '! grep -rqE ''UnixStream|UnixListener|UnixDatagram'' crates/'
+        - '! grep -rq ''Command::new'' crates/*/src/'
+        - '! grep -rqE ''^[[:space:]]*(serde|serde_json|prost|tonic|bincode|ipc-channel|interprocess|tracing|log|rand|chrono|tempfile|anyhow|thiserror)[[:space:]]*='' Cargo.toml crates/hexcell/Cargo.toml crates/hexcell-storage/Cargo.toml crates/hexcell-canal-simulado/Cargo.toml'
+        - '! grep -qE ''rusqlite.*backup'' Cargo.toml'
+        - '! grep -rq ''Connection::backup'' crates/'
+        - grep -qE 'rusqlite.*0\.39' Cargo.toml
+        - test -f crates/hexcell-storage/tests/respaldo.rs
+        - test -f crates/hexcell-storage/tests/almacen_de_identidad.rs
+        - test -f crates/hexcell/tests/respaldo_y_restauracion.rs
+        - grep -qi 'busy' crates/hexcell-storage/tests/respaldo.rs
+        - grep -q 'integrity_check' crates/hexcell-storage/tests/respaldo.rs
+        - grep -q 'verificar_celula_restaurada' crates/hexcell/tests/respaldo_y_restauracion.rs
+        - grep -q 'MotivoDeRestauracionFallida' crates/hexcell/tests/respaldo_y_restauracion.rs
+        - grep -q 'envios_capturados' crates/hexcell/tests/respaldo_y_restauracion.rs
+        - grep -q 'DirectorioTemporal' crates/hexcell/tests/respaldo_y_restauracion.rs
+        - grep -q 're_emparejar' crates/hexcell-canal-simulado/tests/adaptador_simulado.rs
+        - '! grep -rq ''8081'' crates/hexcell/tests/'
+        - test -f docs/adr/adr-0020-respaldo-y-restauracion-por-celula.md
+        - '! ls docs/adr/ | grep -q ''adr-0021'''
+        - grep -q 'adr-0020-respaldo-y-restauracion-por-celula.md' docs/adr/README.md
+        - grep -q 'adr-0019-registro-estructurado.md' docs/adr/README.md
+        - grep -q 'adr-0010-puerto-de-canal.md' docs/adr/README.md
+        - grep -q 'adr-0003-persistencia-dual.md' docs/adr/README.md
+        - grep -q '2026-07-30' docs/adr/adr-0020-respaldo-y-restauracion-por-celula.md
+        - grep -q 'VACUUM INTO' docs/adr/adr-0020-respaldo-y-restauracion-por-celula.md
+        - test -f docs/contrato-ipc-respaldo-del-sqlstore.md
+        - grep -q 'VACUUM INTO' docs/contrato-ipc-respaldo-del-sqlstore.md
+        - grep -q 'sqlstore' docs/contrato-ipc-respaldo-del-sqlstore.md
+        - grep -qi 'cada pocas horas' docs/contrato-ipc-respaldo-del-sqlstore.md
+        - grep -q 'A-3' docs/contrato-ipc-respaldo-del-sqlstore.md
+        - grep -q '2026-07-30' docs/contrato-ipc-respaldo-del-sqlstore.md
+        - test -f docs/runbook-restauracion-de-celula.md
+        - grep -q 'device_removed' docs/runbook-restauracion-de-celula.md
+        - grep -q 'LoggedOut' docs/runbook-restauracion-de-celula.md
+        - grep -q 'PairPhone' docs/runbook-restauracion-de-celula.md
+        - grep -q 'sqlstore' docs/runbook-restauracion-de-celula.md
+        - grep -q 'sessions.db' docs/runbook-restauracion-de-celula.md
+        - grep -q 'knowledge_live.db' docs/runbook-restauracion-de-celula.md
+        - grep -q 'adapter_identity.db' docs/runbook-restauracion-de-celula.md
+        - grep -q '2026-07-30' docs/runbook-restauracion-de-celula.md
+        - grep -q 'D-18' docs/bitacora-de-descartes.md
+        - grep -q 'D-19' docs/bitacora-de-descartes.md
+        - grep -q 'D-20' docs/bitacora-de-descartes.md
+        - '! grep -q ''D-21'' docs/bitacora-de-descartes.md'
+        - grep -q 'HEX-008' docs/STATUS.md
+        - grep -q '2026-07-30' docs/STATUS.md
+        - '! grep -qiE ''etapa A-2 (cerrada|completada|finalizada|terminada)'' docs/STATUS.md'
+        - '! grep -rqiE ''generativelanguage|api\.groq|openrouter|api_key *=|apikey *='' crates/ docs/adr/adr-0020-respaldo-y-restauracion-por-celula.md docs/contrato-ipc-respaldo-del-sqlstore.md docs/runbook-restauracion-de-celula.md'
+        - '! grep -rqiE ''(secret|token|password)[[:space:]]*[:=]'' crates/ docs/'
+        - '! grep -rqiE ''sustituye a la fase a|reemplaza la fase a|cierra la fase a|el sidecar se retira'' crates/ docs/'
+        - git ls-files | grep -qx 'Cargo.lock'
+        - test -s Cargo.lock
+        - '! git ls-files | grep -qE ''\.(db|db-wal|db-shm)$'''
+        - '! git ls-files | grep -qE ''(^|/)\.env'''
+        - grep -q 'channel = "1.92.0"' rust-toolchain.toml
+    target_s: 60

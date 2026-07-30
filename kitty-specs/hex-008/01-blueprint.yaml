@@ -1,0 +1,233 @@
+affected_files:
+    - Cargo.lock
+    - crates/hexcell-storage/src/respaldo.rs
+    - crates/hexcell-storage/src/almacen_de_identidad.rs
+    - crates/hexcell-storage/src/pools.rs
+    - crates/hexcell-storage/src/migraciones.rs
+    - crates/hexcell-storage/src/error.rs
+    - crates/hexcell-storage/src/lib.rs
+    - crates/hexcell-storage/migraciones/identidad/0001-esquema-inicial.sql
+    - crates/hexcell-storage/tests/respaldo.rs
+    - crates/hexcell-storage/tests/almacen_de_identidad.rs
+    - crates/hexcell-canal-simulado/Cargo.toml
+    - crates/hexcell-canal-simulado/src/adaptador.rs
+    - crates/hexcell-canal-simulado/src/lib.rs
+    - crates/hexcell-canal-simulado/tests/adaptador_simulado.rs
+    - crates/hexcell/src/respaldo.rs
+    - crates/hexcell/src/lib.rs
+    - crates/hexcell/src/main.rs
+    - crates/hexcell/tests/comun/mod.rs
+    - crates/hexcell/tests/respaldo_y_restauracion.rs
+    - crates/hexcell/tests/continuidad_de_hilo.rs
+    - docs/adr/adr-0020-respaldo-y-restauracion-por-celula.md
+    - docs/adr/README.md
+    - docs/contrato-ipc-respaldo-del-sqlstore.md
+    - docs/runbook-restauracion-de-celula.md
+    - docs/bitacora-de-descartes.md
+    - docs/STATUS.md
+dependencies:
+    - .ai/tasks/active/HEX-008-new-spec/00-spec.yaml
+    - crates/hexcell-core/src/canal.rs
+    - crates/hexcell-core/src/identidad.rs
+    - crates/hexcell-core/Cargo.toml
+    - crates/hexcell-storage/src/sesiones.rs
+    - crates/hexcell-storage/src/tiempo.rs
+    - crates/hexcell-storage/tests/comun/mod.rs
+    - crates/hexcell-storage/tests/pools.rs
+    - crates/hexcell-canal-simulado/src/reloj.rs
+    - crates/hexcell-canal-simulado/tests/contrato_del_puerto.rs
+    - crates/hexcell/src/motor.rs
+    - crates/hexcell/src/apagado.rs
+    - crates/hexcell/src/registro.rs
+    - crates/hexcell/src/configuracion.rs
+    - crates/hexcell/src/procesador.rs
+    - crates/hexcell/src/inferencia.rs
+    - crates/hexcell/src/salud.rs
+    - crates/hexcell/tests/continuidad_de_hilo.rs
+    - crates/hexcell/tests/persistencia.rs
+    - crates/hexcell/tests/apagado_ordenado.rs
+    - Cargo.toml
+    - rust-toolchain.toml
+    - .gitignore
+    - .github/workflows/ci.yml
+    - docs/PRD.md
+    - docs/plan/fase-a-2-nucleo-persistencia.md
+    - docs/plan/fase-a-3-adaptador-whatsmeow.md
+    - docs/adr/adr-0003-persistencia-dual.md
+    - docs/adr/adr-0010-puerto-de-canal.md
+    - docs/adr/adr-0015-politica-de-convivencia-con-el-baneo.md
+    - docs/adr/adr-0018-apagado-ordenado.md
+    - docs/adr/README.md
+    - docs/bitacora-de-descartes.md
+    - docs/STATUS.md
+    - CLAUDE.md
+risks:
+    - 'RISK-1, THE ONE THAT SIZES THIS TASK. The spec''s goal and AC-1 treat the adapter identity store as an existing SQLite base to be copied with VACUUM INTO against the already open pools. Verified on 2026-07-30: it does not exist. It is the in-memory field contactos: HashMap<String, IdConversacion> inside EstadoInterno in crates/hexcell-canal-simulado/src/adaptador.rs, with no file, no pool and no schema behind it. AC-5 cannot be satisfied without it either, since a restored cell must answer with the identifier the original assigned. The spec belongs to the human and is not rewritten; the resolution is recorded here: this task materialises the store as a real third SQLite base (adapter_identity.db), implementing what adr-0010 already decided, which is why it counts as executing the spec rather than expanding it. It is roughly a third of the code of this task and it is the reason the contract has to touch crates/hexcell-canal-simulado, which HEX-007 forbade for its own scope.'
+    - RISK-2, AN ORDINAL CLASH BETWEEN TWO NORMATIVE DOCUMENTS. adr-0010 calls the adapter identity store the cuarta base del respaldo; the 00-spec of this task calls the sqlstore the cuarta base and the identity store one of the tres bases alcanzables. They agree on the substance - four bases, of which this stage can copy three - and disagree only on which one carries the ordinal. New documents must name the four bases explicitly and avoid the ordinal, and must NOT renumber or rewrite adr-0010, which is Vigente and whose renumbering CLAUDE.md forbids.
+    - 'RISK-3, A SIGNATURE CHANGE THAT LOOKS BIGGER THAN IT IS. Persisting identity makes inyectar_desde_contacto fallible for a second reason, so it returns Result<IdConversacion, ErrorDeInyeccion> instead of Result<IdConversacion, SendError<EventoEntrante>>. There are seven call sites - one in crates/hexcell/src/main.rs, two in crates/hexcell/tests/continuidad_de_hilo.rs and four in crates/hexcell-canal-simulado/tests/adaptador_simulado.rs - and all of them either expect() or Display the error, so they keep compiling if ErrorDeInyeccion derives Debug and implements Display and Error. If any of them destructures SendError it must be adapted rather than the error type flattened: swallowing a storage failure into a send failure would hide exactly the corruption this task exists to detect.'
+    - 'RISK-4, THE EMPIRICAL FACT THE WHOLE BACKUP RESTS ON, WITH ITS TWIN THAT POINTS THE OTHER WAY. Verified on 2026-07-30 against sqlite3 3.53.4 with -readonly: VACUUM INTO SUCCEEDS on a read-only connection and the copy passes integrity_check. This is the opposite of PRAGMA wal_checkpoint, which HEX-007 verified fails with a disk I/O error on the very same kind of connection - and the reason is that one is a read and the other a write. An implementer who remembers only the HEX-007 lesson will be tempted to open a read-write connection to knowledge_live.db for the backup; that would violate FR-05 and adr-0003 for no gain. If rusqlite 0.39 were to disagree with the CLI on this point, the correct move is to record it and use a dedicated read-only connection - never a read-write one.'
+    - 'RISK-5, THREE THINGS VACUUM INTO REFUSES, EACH OF WHICH LOOKS LIKE A BUG IF IT IS NOT ANTICIPATED. Verified on 2026-07-30: it fails if the destination FILE already exists (output file already exists), it fails if the destination''s parent DIRECTORY does not exist (unable to open database), and it cannot run inside an open transaction, so the copy must be issued on an autocommit connection and never wrapped in unchecked_transaction. The first of the three is a feature, not an obstacle: it makes an accidental overwrite of a previous backup round impossible, and the contract turns it into a named error checked before the first copy.'
+    - 'RISK-6, A COPY THAT COMES BACK IN A DIFFERENT JOURNAL MODE. Verified on 2026-07-30: the file produced by VACUUM INTO is in journal_mode = delete, not WAL, even when the origin is in WAL. It self-heals, because abrir_lectura_escritura issues PRAGMA journal_mode = WAL on every read-write open and both sessions.db and the identity store are opened read-write first, and knowledge_live.db is migrated read-write on open for the same reason. No test may assert that a fresh copy is in WAL, and no code may treat delete mode in a copy as corruption. Verified in the same run: PRAGMA user_version IS preserved by VACUUM INTO, which is what lets the integrity check compare the copy''s schema version against the expected constant.'
+    - 'RISK-7, THE CONCURRENCY CLAIM OF AC-2 IS ABOUT THE WRITER, NOT ABOUT ALL CONTENTION. Backing up sessions.db through con_lectura holds the pool''s READ mutex for the duration of the copy, so a concurrent historial() call waits. It does not block the engine''s hot path, because procesar_deduplicacion, anotar_entrante and anotar_saliente all go through con_escritura - verified in crates/hexcell-storage/src/sesiones.rs. The knowledge pool has two read connections, so a backup on one leaves the other serving. This trade must be written where the code is rather than discovered later: a future consumer that put a history read in the hot path would turn a backup into user-visible latency.'
+    - RISK-8, A TEST THAT CANNOT FAIL WOULD SATISFY AC-5 WITHOUT MEANING ANYTHING. Today the simulated adapter derives the conversation from the contact name with a deterministic format, so a cell started against an EMPTY identity store would hand out the same identifier as a correctly restored one, and an assertion on it would pass whether or not the restore worked. The persistent store must therefore assign identifiers from the stored count, making them depend on the order of first sight, and the cycle test must register at least two contacts in a known order and assert on the SECOND. Without this, AC-5 and AC-6 are decoration.
+    - RISK-9, THE BACKUP HAS NO PRODUCTION TRIGGER IN THIS TASK, AND THAT IS A DECISION. Neither the spec nor plan task 13 asks for a scheduler, an HTTP route or a CLI subcommand; the shutdown path belongs to HEX-007 and the spec's non-goals forbid reopening it; packaging and scheduling are A-6. So the only callers of respaldar_celula in this diff are tests. A reviewer can legitimately read that as dead code, which is why the deferral must be stated in adr-0020, in the runbook and as a Pendiente in STATUS.md rather than left implicit. Anyone tempted to close the gap by adding a timer, an endpoint or an admin subcommand is out of contract.
+    - RISK-10, TWO NEW ROOT-LEVEL DOCUMENTS IN docs/. The IPC contract and the runbook are new kinds of document for this repository. The precedent chosen is docs/cotejo-puerto-de-canal-cloud-api.md, already a root-level document, rather than a new directory that would need its own index and a change to the documentary hierarchy in CLAUDE.md - which this task must not touch. Both are referenced from adr-0020 and from STATUS.md so they are reachable from the normative documents rather than orphaned.
+    - RISK-11, THE FORBID LIST HAS TO DISTINGUISH PROSE FROM CODE THIS TIME. HEX-007 could ban the words VACUUM, sqlstore and device_removed from crates/ outright because none of them belonged there. Here VACUUM INTO is the implementation, and doc comments will legitimately mention the sqlstore, PairPhone and device_removed while explaining why the third base is not the fourth. So the ban on premature A-3 work is written against MACHINERY - Unix socket types, serialisation crates, process spawning under any src directory - and never against vocabulary. A lexical ban on those words would fire on a correct doc comment and push the implementer to delete the explanation instead of the code.
+    - RISK-12, THE CALCULATED RISK LEVEL WILL READ ABOVE THE DECLARED MEDIUM. Cargo.lock is touched (a path dependency is added; no new external crate), the file count is around twenty-five, and the change spans five crates plus six documents. That divergence is expected and is recorded in 07-trace.json as risk_level_divergence; the human's declared risk wins and 00-spec is not edited.
+    - RISK-13, NO PRIOR FAILED TASK OVERLAPS. .ai/tasks/failed/ holds only .gitkeep, so there is no earlier failure whose lesson should be carried into this contract. Recorded so a later reader knows the absence was checked rather than skipped.
+strategy:
+    - action: 'MATERIALISE THE THIRD BASE FIRST, because the spec assumes it already exists and it does not. The spec asks to back up the adapter identity store with VACUUM INTO against the already open SQLite pools; verified on 2026-07-30, that store is today a HashMap<String, IdConversacion> in the field contactos of EstadoInterno in crates/hexcell-canal-simulado/src/adaptador.rs, with no file behind it. There is nothing to VACUUM. adr-0010 already fixed that the mapping persists in a store of the adapter''s own, separate from the sqlstore, so this implements adr-0010 rather than inventing scope, but it is the largest single piece of this task and it is RISK-1. Add crates/hexcell-storage/src/almacen_de_identidad.rs with AlmacenDeIdentidad: its own SQLite file adapter_identity.db under the cell data path, opened exactly like PoolDeSesiones (one read-write connection and one read-only connection, each behind its own Mutex, both going through aplicar_parametros_de_conexion so busy_timeout, synchronous and foreign_keys are identical), its own migration file and its own user_version constant.'
+      files:
+        - crates/hexcell-storage/src/almacen_de_identidad.rs
+        - crates/hexcell-storage/src/migraciones.rs
+        - crates/hexcell-storage/migraciones/identidad/0001-esquema-inicial.sql
+        - crates/hexcell-storage/src/lib.rs
+      step: 1
+    - action: 'KEEP IDENTITY MINTING IN THE ADAPTER, WHICH DECIDES THE SHAPE OF THE STORE API. adr-0010 says the mapping belongs to the adapter and the core treats the identifier as opaque, and HEX-007 left a standing check that IdConversacion::nuevo appears nowhere under crates/hexcell-storage/src/. So AlmacenDeIdentidad never names IdConversacion: it stores two opaque TEXT columns, contacto as primary key and identificador_interno, and exposes buscar(contacto) -> Option<String>, registrar(contacto, identificador_interno) as an idempotent INSERT OR IGNORE, and contactos_registrados() -> i64. The adapter mints the value from the count already stored, and it stays the only place that builds an IdConversacion. Deriving the identifier from the stored count rather than from the contact name is deliberate: it makes the identifier depend on the ORDER of first sight, so the restore test can prove the mapping came from the restored file and not from a rule any empty store would reproduce.'
+      files:
+        - crates/hexcell-storage/src/almacen_de_identidad.rs
+        - crates/hexcell-canal-simulado/src/adaptador.rs
+      step: 2
+    - action: WIRE THE STORE INTO THE ADAPTER ADDITIVELY, so no existing test has to change shape. AdaptadorSimulado keeps nuevo(reloj, capacidad) exactly as it is and gains nuevo_con_almacen(reloj, capacidad, Arc<AlmacenDeIdentidad>); the contactos field becomes an enum AlmacenDeContactos with an EnMemoria variant holding today's HashMap and a Persistente variant holding the Arc. Only inyectar_desde_contacto branches on it. Its return type becomes Result<IdConversacion, ErrorDeInyeccion> with ErrorDeInyeccion { Envio(SendError<EventoEntrante>), Almacen(ErrorDeAlmacen) } implementing Debug, Display and Error, so all seven existing call sites keep compiling unchanged - they either expect() or print the error. The SQLite work happens inside the existing non-async block that ends before the send().await, so no lock and no connection is ever held across an await point and clippy's await_holding_lock stays quiet. The store must be shared rather than owned, because Motor takes ownership of the adapter and the backup still needs the store afterwards; that is what makes Arc the right wrapper.
+      files:
+        - crates/hexcell-canal-simulado/src/adaptador.rs
+        - crates/hexcell-canal-simulado/src/lib.rs
+        - crates/hexcell-canal-simulado/Cargo.toml
+      step: 3
+    - action: 'IMPLEMENT THE COPY ITSELF IN hexcell-storage AND NOWHERE ELSE, because VACUUM INTO must run on a connection this process already holds and this is the only crate that holds one. New module crates/hexcell-storage/src/respaldo.rs with respaldar_base(conexion, destino) executing VACUUM INTO with the destination path BOUND AS A PARAMETER - verified on 2026-07-30 against sqlite3 3.53.4 that VACUUM INTO ?1 accepts a bound parameter, so the path is never interpolated into SQL - followed by verificar_copia(destino, version_esperada), which opens the copy read-only and asserts that PRAGMA integrity_check returns ok and that PRAGMA user_version equals the origin''s schema version, verified preserved by VACUUM INTO on the same date. It returns CopiaVerificada { nombre_logico, ruta, bytes }. hexcell-core is not touched at all and gains no dependency: AC-9 stays checkable with one command.'
+      files:
+        - crates/hexcell-storage/src/respaldo.rs
+        - crates/hexcell-storage/src/error.rs
+        - crates/hexcell-storage/src/lib.rs
+      step: 4
+    - action: 'RUN EVERY VACUUM INTO ON A READ CONNECTION, WHICH IS WHAT MAKES AC-2 TRUE RATHER THAN HOPEFUL. GestorDePools::respaldar_en(directorio) copies sessions.db through self.sesiones.con_lectura and knowledge_live.db through self.conocimiento.con_lectura, and AlmacenDeIdentidad::respaldar_en uses its own read-only connection. Verified empirically on 2026-07-30 with sqlite3 -readonly: VACUUM INTO SUCCEEDS on a SQLITE_OPEN_READ_ONLY connection and produces a copy that passes integrity_check - it is a read, unlike PRAGMA wal_checkpoint, which HEX-007 verified fails with a disk I/O error on the same kind of connection. Under WAL a reader never blocks the writer, and the whole hot path of the engine writes: procesar_deduplicacion, anotar_entrante and anotar_saliente all go through con_escritura, and only historial reads. So the backup cannot make the engine wait for the writer lock and cannot raise SQLITE_BUSY against it. Do NOT open a fresh connection just for the backup and do NOT use con_escritura: the first drops the constraint that the copy comes from the pools the process already has open, the second serialises the backup behind the hot writer, which is exactly the interruption AC-1 forbids.'
+      files:
+        - crates/hexcell-storage/src/pools.rs
+        - crates/hexcell-storage/src/respaldo.rs
+      step: 5
+    - action: 'FIX THE DESTINATION CONTRACT AROUND WHAT VACUUM INTO ACTUALLY DEMANDS, AND KEEP THE CLOCK OUT OF IT. Verified on 2026-07-30: it fails if the destination file already exists and fails if its parent directory does not exist. So respaldar_en takes an EXISTING destination directory, writes the three copies under their CANONICAL names (sessions.db, knowledge_live.db, adapter_identity.db) and fails with DestinoDeRespaldoOcupado if any of the three is already there, checked before the first copy so no partial round is left behind. Canonical names make restoring literally a copy of three files into the cell data directory, which is what the runbook tells a human under pressure to do. Naming, rotation and retention of the destination directories belong to the operator and are written in the runbook, NOT derived from a clock inside the code: SystemTime::now stays banned across crates/hexcell/src and crates/hexcell-storage/src, as HEX-005 fixed and HEX-007 kept.'
+      files:
+        - crates/hexcell-storage/src/respaldo.rs
+        - crates/hexcell-storage/src/error.rs
+        - docs/runbook-restauracion-de-celula.md
+      step: 6
+    - action: 'ORCHESTRATE THE THREE COPIES IN crates/hexcell/src/respaldo.rs AND GIVE THE OPERATION ITS LOG LINES. respaldar_celula(pools, almacen, directorio) calls the two storage entry points in a fixed order, aggregates them into ResumenDeRespaldoDeCelula { copias: Vec<CopiaVerificada> } and emits respaldo_iniciado, respaldo_completado and respaldo_fallido through crate::registro with the count and the byte sizes, never with any message content, which HEX-007''s typed field set already guarantees structurally. THE TRIGGER IS DELIBERATELY NOT A SCHEDULER, NOT AN HTTP ROUTE AND NOT A CLI SUBCOMMAND: the spec asks for none, task 13 of the plan asks for none, the shutdown path is HEX-007''s and the spec''s non-goals forbid reopening it, and packaging and scheduling belong to A-6. The backup is a public library operation invoked by the integration tests and documented in the runbook as the procedure an operator or a future scheduler calls; that deferral is written explicitly in the ADR and in STATUS.md so it reads as a decision rather than as an omission (RISK-9).'
+      files:
+        - crates/hexcell/src/respaldo.rs
+        - crates/hexcell/src/lib.rs
+      step: 7
+    - action: 'OPEN THE IDENTITY STORE IN THE COMPOSITION ROOT, NOT INSIDE GestorDePools. main.rs builds Arc<AlmacenDeIdentidad> from configuracion.ruta_datos right after the pools, before binding the health server and with the same failure discipline - stderr plus ExitCode::FAILURE - and hands a clone to AdaptadorSimulado::nuevo_con_almacen. GestorDePools deliberately does NOT open it: adr-0010 makes that store the adapter''s, and folding it into the pool manager would put the adapter''s identity file behind the core''s persistence manager. No new environment variable is introduced: the path is derived from the already validated data path, exactly as sessions.db and knowledge_live.db are.'
+      files:
+        - crates/hexcell/src/main.rs
+      step: 8
+    - action: 'WRITE THE CYCLE TEST SO THAT A RESTORED-BUT-DEAD CELL FAILS IT, WHICH IS THE WHOLE POINT OF AC-6. In crates/hexcell/tests/respaldo_y_restauracion.rs, factor the success criterion into verificar_celula_restaurada(...) -> Result<IdConversacion, MotivoDeRestauracionFallida> so the SAME helper serves the positive and the negative case. Positive path, all in-process over three separate temporary directories - original data, backup destination, clean restore target: start a cell (pools, identity store, adapter, engine over the real Motor), inject from two distinct contacts in a known order, back up the three bases, copy the three files into the clean directory with std::fs::copy under their canonical names, start a SECOND cell against it, inject a new event from the SECOND contact, and assert that envios_capturados() shows the reply carrying the identifier the FIRST run assigned to that contact. In-process rather than through the binary because AC-5 asks for the identifier that reached send, which only envios_capturados() exposes. Negative path: same restored files, engine deliberately not consuming, assert the helper returns the no-reply reason WHILE separately asserting the restored history is present, so the test proves that history alone is not a restore.'
+      files:
+        - crates/hexcell/tests/respaldo_y_restauracion.rs
+        - crates/hexcell/tests/comun/mod.rs
+      step: 9
+    - action: COVER THE STORAGE LAYER WITH ITS OWN TESTS, AT THE LEVEL WHERE THE FAILURE MODES LIVE. crates/hexcell-storage/tests/respaldo.rs asserts the three copies exist, are valid and keep their user_version, and that a destination that is missing or already occupied fails with its named variant leaving nothing partial behind; it also runs a backup from a second thread while the main one writes through con_escritura in a loop, and asserts that no error carries the SQLITE_BUSY code and that the source is still healthy afterwards. crates/hexcell-storage/tests/almacen_de_identidad.rs covers persistence across reopen, idempotence of registrar and the count that drives assignment. crates/hexcell-canal-simulado/tests/adaptador_simulado.rs gains the case where a persistent store is used and re_emparejar leaves every mapping intact - the simulated form of the device_removed branch the runbook reasons about. Each test builds its own temporary directory with the existing DirectorioTemporal helper; no fixed path, no shared database, no network.
+      files:
+        - crates/hexcell-storage/tests/respaldo.rs
+        - crates/hexcell-storage/tests/almacen_de_identidad.rs
+        - crates/hexcell-canal-simulado/tests/adaptador_simulado.rs
+      step: 10
+    - action: 'WRITE THE SQLSTORE IPC CONTRACT AS A VERSIONED DOCUMENT AT docs/contrato-ipc-respaldo-del-sqlstore.md, following the precedent of docs/cotejo-puerto-de-canal-cloud-api.md, already a root-level document of docs/. Versioned in both senses: it is in git and it carries an explicit version line dated 2026-07-30, with the rule that an incompatible change takes a new number and does not rewrite this one. It fixes the trigger message and its fields, that the SIDECAR PROCESS ITSELF runs VACUUM INTO over its own connections - never the core, never an external process reading the file, because a file copied from outside while whatsmeow holds it open produces a corrupt copy that only shows up at restore time -, the acknowledgement the sidecar returns, the high frequency of every few hours rather than daily because the Signal protocol credentials evolve continuously, and the destination. It states in its own words that the transport is NOT chosen here and that execution is stage A-3. No key, no token and no real endpoint appears in it, not even as an example value.'
+      files:
+        - docs/contrato-ipc-respaldo-del-sqlstore.md
+      step: 11
+    - action: 'WRITE THE RESTORE RUNBOOK AT docs/runbook-restauracion-de-celula.md WITH THE BRANCH PLACED WHERE AN OPERATOR HITS IT. Structure: preconditions, restore of the three bases this stage can execute, then the branch BEFORE touching the sqlstore, presented as two confronted branches each with its reasoning - LoggedOut with device_removed means whatsmeow already deleted the session and the device no longer exists on the WhatsApp server, so restoring is USELESS rather than invalid and the only way out is re-pairing by PairPhone(); any other cause (corruption, disk failure, any other disconnection) means the backup is valid and is restored - and finally the acceptance criterion that a restore only counts when the cell consumes an event and answers, plus the explicit deferral of rehearsing both branches against the real disconnection taxonomy to stage A-3. It must state that copying a backup FILE is safe precisely because it is quiescent, unlike copying a live database, so nobody generalises the wrong lesson from it.'
+      files:
+        - docs/runbook-restauracion-de-celula.md
+      step: 12
+    - action: 'RECORD THE DECISION AS ONE ADR, adr-0020-respaldo-y-restauracion-por-celula.md, after reading the full docs/adr/README.md table rather than assuming the next number. Verified on 2026-07-30: rows 0001 to 0019 are all assigned, no row is reserved for backup or restore, and the remaining official-channel ADRs are explicitly left unnumbered until adr-0013 is decided, so 0020 is free. ONE ADR and not three: VACUUM INTO from the read connections, the identity store as a real third SQLite base of the adapter with minting kept in the adapter, the sqlstore executed by the sidecar under a written contract, and the restore branch are one decision - how a cell is backed up and restored - and splitting it would scatter a single argument. It states the stage that produces it (A-2), the status Vigente with the absolute date 2026-07-30, and the deferrals to A-3 and to the pending business decision on the real remote destination.'
+      files:
+        - docs/adr/adr-0020-respaldo-y-restauracion-por-celula.md
+        - docs/adr/README.md
+      step: 13
+    - action: APPEND THE DISCARDS AND UPDATE THE LIVING RECORD, in the same commit that makes them, as CLAUDE.md requires. docs/bitacora-de-descartes.md is append-only and runs to D-18 today, so add D-19 - the SQLite online backup API (rusqlite's backup feature and Connection::backup) rejected in favour of VACUUM INTO, because the online backup restarts its copy whenever a writer commits and can starve under a hot writer, while VACUUM INTO takes one read snapshot, needs no extra rusqlite feature and yields a defragmented single file - and D-20 - a periodic backup scheduler inside the cell process rejected for this stage, because scheduling belongs to packaging in A-6 and a timer per cell duplicates the orchestrator's job on hardware budgeted at 80 MB per cell. Add both rows to the index table and refresh the last-updated line; D-01 to D-18 stay untouched. docs/STATUS.md gains only NEW entries dated 2026-07-30 attributed to HEX-008, including the pending business decision on the real remote destination and the deferral of the backup trigger, and marks NOTHING as closing stage A-2.
+      files:
+        - docs/bitacora-de-descartes.md
+        - docs/STATUS.md
+      step: 14
+summary: 'A-2 tasks 13, 14, 16: per-cell backup by VACUUM INTO over three bases, versioned sqlstore IPC contract, restore runbook with the device_removed branch, and the full backup-restore cycle test.'
+symbols:
+    - AlmacenDeIdentidad
+    - AlmacenDeIdentidad::abrir
+    - AlmacenDeIdentidad::buscar
+    - AlmacenDeIdentidad::registrar
+    - AlmacenDeIdentidad::contactos_registrados
+    - AlmacenDeIdentidad::respaldar_en
+    - AlmacenDeIdentidad::ruta
+    - AlmacenDeIdentidad::vitalidad
+    - NOMBRE_DE_ARCHIVO_DE_IDENTIDAD_DEL_ADAPTADOR
+    - VERSION_DE_ESQUEMA_DE_IDENTIDAD
+    - aplicar_migraciones_de_identidad
+    - CopiaVerificada
+    - respaldar_base
+    - verificar_copia
+    - GestorDePools::respaldar_en
+    - ResumenDeRespaldoDePools
+    - ErrorDeAlmacen::DestinoDeRespaldoOcupado
+    - ErrorDeAlmacen::DirectorioDeRespaldoInaccesible
+    - ErrorDeAlmacen::CopiaCorrupta
+    - AlmacenDeContactos
+    - AdaptadorSimulado::nuevo_con_almacen
+    - AdaptadorSimulado::inyectar_desde_contacto
+    - ErrorDeInyeccion
+    - respaldar_celula
+    - ResumenDeRespaldoDeCelula
+    - MotivoDeRestauracionFallida
+    - verificar_celula_restaurada
+task_id: HEX-008
+test_scenarios:
+    - covers:
+        - AC-1
+      statement: A backup fired while the cell is running produces exactly three files in the destination directory, named sessions.db, knowledge_live.db and adapter_identity.db, each of them non-empty and each opening as a valid SQLite database.
+    - covers:
+        - AC-1
+      statement: Every one of the three copies passes PRAGMA integrity_check with the value ok read over a read-only connection, and its PRAGMA user_version equals the schema version its origin declares, which VACUUM INTO preserves.
+    - covers:
+        - AC-1
+        - AC-2
+      statement: With the engine concurrently consuming a burst of injected events, the backup completes, no VACUUM INTO returns an error whose SQLite code is SQLITE_BUSY, and every event injected before, during and after the backup is still answered through send.
+    - covers:
+        - AC-2
+      statement: After a backup taken while the writer is active, the source sessions.db is still writable and readable, the vitality probes of both pools still report Sana, and the backup neither truncated nor removed the -wal file of sessions.db.
+    - covers:
+        - AC-1
+      statement: A backup into a directory that does not exist, and a backup into a directory that already holds a file with one of the three canonical names, both fail with their own named error variant and leave no partial copy behind, because VACUUM INTO refuses an existing destination.
+    - covers:
+        - AC-5
+      statement: The adapter identity store maps a contact to an internal conversation identifier that survives closing and reopening the store, and re-pairing the adapter with a different device leaves every mapping intact.
+    - covers:
+        - AC-5
+        - AC-6
+      statement: The internal identifier the store assigns depends on the order in which contacts were first seen, so a store rebuilt from scratch would hand the second contact a different identifier than the restored store does; the cycle test relies on that to make its assertion non-vacuous.
+    - covers:
+        - AC-5
+        - AC-7
+      statement: Full cycle in one isolated test - a cell processes events over a temporary data directory, the three bases are backed up into a second temporary directory outside it, the copies are restored into a third clean directory, a new cell instance starts against the restored files, a new event is injected from a previously known contact, and the reply is emitted through send carrying the same internal conversation identifier the original cell used.
+    - covers:
+        - AC-5
+      statement: The event injected after the restore is persisted into the restored sessions.db, and the history read back from it contains both the entries that came from the backup and the new one, in order.
+    - covers:
+        - AC-6
+      statement: Negative probe - the same restored environment, with the engine deliberately not consuming the port, is fed to the same verification helper; the helper reports the failure reason of no reply through the port even though the restored history is verifiably present, so file presence alone can never be reported as a successful restore.
+    - covers:
+        - AC-3
+        - AC-10
+      statement: The sqlstore IPC contract document exists, carries an explicit contract version and the absolute date 2026-07-30, and states the trigger message, that the sidecar process itself runs VACUUM INTO over its own connections, the high frequency of every few hours rather than daily, and the destination of the copy.
+    - covers:
+        - AC-3
+        - AC-10
+      statement: The diff contains no real IPC client or server - no Unix socket type, no serialisation crate, no process spawn under any src directory - so the contract is written and versioned but not executed.
+    - covers:
+        - AC-4
+      statement: The restore runbook exists, covers the four bases, and confronts its two branches before touching the sqlstore, each with its reasoning - LoggedOut with device_removed does not restore the sqlstore and goes straight to re-pairing by PairPhone, any other cause restores the backup.
+    - covers:
+        - AC-8
+        - AC-9
+      statement: cargo fmt --check, cargo clippy --workspace --all-targets -- -D warnings and cargo test --workspace all finish clean, and crates/hexcell-core still resolves to exactly one node in cargo tree with an empty dependency table.
+    - covers:
+        - AC-10
+      statement: No backup copy, temporary directory or database file is left behind by any test or tracked by git, and no API key, remote backup destination or STATUS.md wording closing stage A-2 appears in the diff.
