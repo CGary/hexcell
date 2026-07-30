@@ -13,10 +13,13 @@
 //! asíncrono, sin HTTP — y este crate es precisamente el que sí las tiene: el motor de mensajería,
 //! el servidor de salud y la configuración de arranque viven aquí, no en el dominio.
 
+pub mod apagado;
 pub mod configuracion;
 pub mod conversaciones;
 pub mod deduplicacion;
+pub mod inferencia;
 pub mod motor;
 pub mod preparacion;
 pub mod procesador;
+pub mod registro;
 pub mod salud;

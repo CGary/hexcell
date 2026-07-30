@@ -1,6 +1,6 @@
 # Estado del Proyecto
 
-> Registro vivo del avance. Última actualización: 2026-07-29.
+> Registro vivo del avance. Última actualización: 2026-07-30.
 
 ## Fase actual
 **Canal propio en producción — etapa A-1, fundaciones.** Ya existe el workspace Rust con sus cinco
@@ -279,8 +279,34 @@ adicional cuando aparezca un cliente que lo justifique. Ver [plan/README.md](pla
   (`adr-0010`). Con esto, `GET /health/ready` deja de ser un esqueleto y responde la conjunción de
   las dos vitalidades de los pools y del estado de sesión del canal, que se provee en la raíz de
   composición porque el puerto `ChannelAdapter` no expone ninguna consulta de sesión.
+* **Puerto de inferencia LLM `ProveedorDeInferencia` y proveedor simulado determinista**
+  (2026-07-30, HEX-007, `adr-0017`). El motor deja de tener la respuesta cableada en
+  `ProcesadorDeEco` y pasa a consultar, a través de `ProcesadorDeInferencia<I>`, un proveedor de
+  inferencia inyectado por el trait. El trait vive en `hexcell-core` sin coste de dependencias
+  (verificable con `cargo tree -p hexcell-core`), y el proveedor simulado de esta tarea es
+  determinista por construcción (huella FNV-1a de 64 bits, sin `rand` ni lectura de ningún reloj)
+  y deliberadamente no es un eco, para que un test pueda distinguir la respuesta del proveedor de
+  un valor fijo del procesador. Sin recuento de tokens ni coste (D-09): la contabilidad financiera
+  de dos fases y el proveedor real siguen siendo tarea de la etapa A-4.
+* **Apagado ordenado del binario ante `SIGTERM`/`SIGINT`** (2026-07-30, HEX-007, `adr-0018`). El
+  motor deja de aceptar eventos nuevos (`receptor_eventos.close()`), drena los ya encolados
+  comprobando un límite temporal entre eventos —nunca envolviendo uno en curso, para que ninguno
+  se corte a la mitad—, ejecuta un punto de control del WAL sobre `sessions.db` (la única base que
+  puede recibirlo; `knowledge_live.db` es de solo lectura por FR-05) y termina siempre con código
+  de salida 0, dentro del plazo de gracia de treinta segundos del PRD.
+* **Registro estructurado del motor, sin ningún crate de logging** (2026-07-30, HEX-007,
+  `adr-0019`). Una línea JSON por evento, escrita a mano, con identificador de célula, de evento,
+  de conversación y latencia; el contenido de un mensaje nunca llega a un log, garantía
+  estructural por el tipo de los campos (`evento: &'static str`) y por que ningún módulo que ve
+  texto de mensaje importa el módulo de registro.
 
 ## Pendiente
+* **Tiempo máximo por llamada del proveedor de inferencia real** (2026-07-30, HEX-007). El límite
+  de drenaje del apagado ordenado se comprueba entre eventos, no alrededor de uno en curso, así
+  que un evento cuya llamada al proveedor no retorne puede superar ese límite y, en teoría, el
+  plazo de gracia del PRD. Con el proveedor simulado de esta tarea el tiempo de procesamiento está
+  acotado por construcción; la etapa A-4, que introduce un proveedor HTTP real, debe darle un
+  tiempo máximo por llamada cómodamente menor que el límite de drenaje. — *Etapa A-4.*
 * **Revisar `synchronous = NORMAL` cuando la etapa A-4 añada la contabilidad financiera de LLM**
   (2026-07-30, HEX-006). El valor elegido acepta que un corte de luz o una caída del sistema
   operativo pierdan transacciones confirmadas desde el último punto de control; una caída del

@@ -40,7 +40,7 @@
 //!   El residuo es el mismo que el plan ya aceptó para una reentrega tardía —duplicar el trabajo
 //!   conversacional— y es estrictamente mejor que enmudecer ante un cliente que está escribiendo.
 //! * **Historial: se reporta y se sigue.** Que no se pueda anotar lo ocurrido no es razón para no
-//!   contestar: la respuesta sale igualmente y el fallo se imprime en `stderr`.
+//!   contestar: la respuesta sale igualmente y el fallo se registra estructuradamente.
 //!
 //! Las dos quedan escritas aquí a propósito. Un `fail-open` sin justificación al lado se lee, seis
 //! meses después, como un caso de error que alguien olvidó tratar.
@@ -49,10 +49,10 @@
 //!
 //! Se eligió **diferir** (encolar la respuesta hasta que el cliente vuelva a escribir) en vez de
 //! **escalar a un humano**. La escalada se descartó por falta de dónde aterrizar, no por
-//! preferencia: no existe todavía ningún registro estructurado (llega en HEX-008), ninguna vía de
-//! notificación a un operador ni ningún plano de CLI de administración (llega en la etapa A-6); una
-//! rama de escalada hoy sería, en la práctica, imprimir una línea a `stderr` y llamarlo política.
-//! Diferir, en cambio, es implementable, observable y probable ahora mismo.
+//! preferencia: hasta esta misma tarea no existía ningún registro estructurado ni ninguna vía de
+//! notificación a un operador, y el plano de CLI de administración llega en la etapa A-6; una rama
+//! de escalada seguiría sin tener adónde ir. Diferir, en cambio, es implementable, observable y
+//! probable ahora mismo.
 //!
 //! La cola de diferidas es **acotada por conversación**
 //! (`crate::conversaciones::EstadoDeConversaciones`) con una regla de descarte del más antiguo en
@@ -62,18 +62,34 @@
 //! llega un evento **posterior** para esa misma conversación, y una respuesta rechazada de nuevo
 //! al drenar vuelve a encolarse, sujeta al mismo tope. Un temporizador necesitaría una fuente de
 //! tiempo dentro del motor, exactamente el acoplamiento que este módulo evita a propósito.
+//!
+//! # Apagado ordenado (HEX-007)
+//!
+//! `ejecutar` recibe una [`SenalDeApagado`](crate::apagado::SenalDeApagado) y corre un
+//! `tokio::select!` con `biased` sobre exactamente dos ramas: la señal y `receptor_eventos.recv()`.
+//! El trabajo de cada evento se espera **dentro** del cuerpo de esa segunda rama, nunca como una
+//! rama más del propio `select!`, así que el `select!` nunca puede estar sondeando mientras un
+//! evento está a medias: no hay forma de cancelarlo. Al recibir la señal, el motor cierra
+//! `receptor_eventos` (`close()`): a partir de ese instante ningún emisor puede encolar nada más,
+//! pero `recv()` sigue entregando lo que ya estuviera en la cola hasta vaciarla. El drenaje que
+//! sigue comprueba el límite temporal **entre** eventos, nunca envolviendo el drenaje entero en un
+//! temporizador de expiración global: eso cortaría el futuro en curso en cualquier punto en que
+//! estuviera, posiblemente entre el envío y la anotación en el historial — precisamente el corte a
+//! medias que esta tarea existe para impedir.
 
 use std::sync::Arc;
-use std::time::{Duration, SystemTime};
+use std::time::{Duration, Instant, SystemTime};
 
 use hexcell_core::canal::{ChannelAdapter, EventoEntrante, MensajeSaliente, ResultadoEnvio};
 use hexcell_core::identidad::IdConversacion;
 use hexcell_storage::{ErrorDeAlmacen, RepositorioDeSesiones};
 use tokio::sync::mpsc;
 
+use crate::apagado::SenalDeApagado;
 use crate::conversaciones::{EstadoDeConversaciones, EventoDeHistorial};
 use crate::deduplicacion::{RegistroDeDeduplicacion, VeredictoDeDeduplicacion};
 use crate::procesador::ProcesadorDeMensajes;
+use crate::registro::{EntradaDeRegistro, NivelDeRegistro, emitir};
 
 /// Motor de mensajería de una célula: bucle asíncrono sobre un adaptador y un procesador.
 pub struct Motor<A, P>
@@ -125,57 +141,138 @@ where
         self.conversaciones.historial(conversacion)
     }
 
-    /// Ejecuta el bucle de consumo hasta que el canal de eventos se cierra.
+    /// Ejecuta el bucle de consumo hasta que llega la señal de apagado o el canal de eventos se
+    /// cierra por su cuenta.
     ///
-    /// Por cada evento aplica, en orden, deduplicación, drenaje de diferidas y despacho al
-    /// procesador; ver la documentación del módulo para el porqué de ese orden exacto.
-    pub async fn ejecutar(&mut self) {
-        while let Some(evento) = self.receptor_eventos.recv().await {
-            let veredicto = match self
-                .deduplicacion
-                .procesar(evento.deduplicacion.clone(), evento.marca_temporal)
-            {
-                Ok(veredicto) => veredicto,
-                Err(error) => {
-                    // `fail-open`: ver la sección «Dos políticas ante un fallo de persistencia»
-                    // en la documentación de este módulo.
-                    eprintln!(
-                        "motor: fallo al consultar la deduplicación persistida ({error}); el \
-                         evento se procesa como nuevo para no dejar al cliente sin respuesta"
-                    );
-                    VeredictoDeDeduplicacion::Nuevo
+    /// Ver la sección «Apagado ordenado» en la documentación del módulo para el porqué exacto de
+    /// la forma de este bucle.
+    pub async fn ejecutar(&mut self, mut senal: SenalDeApagado) {
+        loop {
+            tokio::select! {
+                biased;
+                () = senal.recibida() => {
+                    emitir(EntradaDeRegistro::nueva(NivelDeRegistro::Info, "apagado_solicitado"));
+                    self.receptor_eventos.close();
+                    break;
                 }
-            };
-            if veredicto == VeredictoDeDeduplicacion::Duplicado {
-                println!(
-                    "motor: evento entrante descartado por duplicado, ya procesado dentro de la \
-                     ventana de retención"
-                );
-                continue;
+                evento = self.receptor_eventos.recv() => {
+                    match evento {
+                        Some(evento) => self.procesar_evento(evento).await,
+                        None => return,
+                    }
+                }
             }
-
-            self.drenar_diferidas(&evento.conversacion, evento.marca_temporal)
-                .await;
-
-            if let Err(error) = self.conversaciones.registrar_entrante(
-                &evento.conversacion,
-                &evento.remitente,
-                &evento.contenido,
-                evento.marca_temporal,
-            ) {
-                eprintln!(
-                    "motor: no se pudo anotar el evento entrante en el historial ({error}); la \
-                     respuesta se envía de todos modos"
-                );
-            }
-
-            let Some(mensaje) = self.procesador.procesar(&evento) else {
-                continue;
-            };
-
-            self.enviar_y_registrar(&evento.conversacion, mensaje, evento.marca_temporal)
-                .await;
         }
+
+        self.drenar_con_limite(senal.limite_de_drenaje()).await;
+    }
+
+    /// Tras la señal de apagado, drena lo que ya estuviera en la cola, comprobando el límite
+    /// temporal **antes** de aceptar el siguiente evento, nunca alrededor de uno en curso.
+    async fn drenar_con_limite(&mut self, limite: Duration) {
+        let inicio_del_drenaje = Instant::now();
+        loop {
+            if inicio_del_drenaje.elapsed() >= limite {
+                emitir(
+                    EntradaDeRegistro::nueva(NivelDeRegistro::Aviso, "drenaje_incompleto")
+                        .con_detalle(format!(
+                            "límite de drenaje agotado con {} eventos pendientes",
+                            self.receptor_eventos.len()
+                        )),
+                );
+                return;
+            }
+
+            match self.receptor_eventos.recv().await {
+                Some(evento) => self.procesar_evento(evento).await,
+                None => {
+                    emitir(EntradaDeRegistro::nueva(
+                        NivelDeRegistro::Info,
+                        "drenaje_completado",
+                    ));
+                    return;
+                }
+            }
+        }
+    }
+
+    /// Procesa un único evento: deduplicación, drenaje de diferidas, registro, despacho al
+    /// procesador y envío. Es el cuerpo que tanto el bucle principal como el drenaje comparten.
+    async fn procesar_evento(&mut self, evento: EventoEntrante) {
+        let inicio = Instant::now();
+        let id_evento = evento.deduplicacion.como_str().to_string();
+        let id_conversacion = evento.conversacion.como_str().to_string();
+
+        emitir(
+            EntradaDeRegistro::nueva(NivelDeRegistro::Info, "evento_recibido")
+                .con_id_evento(id_evento.clone())
+                .con_id_conversacion(id_conversacion.clone())
+                .con_latencia_ms(latencia_ms(inicio)),
+        );
+
+        let veredicto = match self
+            .deduplicacion
+            .procesar(evento.deduplicacion.clone(), evento.marca_temporal)
+        {
+            Ok(veredicto) => veredicto,
+            Err(error) => {
+                // `fail-open`: ver la sección «Dos políticas ante un fallo de persistencia» en la
+                // documentación de este módulo.
+                emitir(
+                    EntradaDeRegistro::nueva(NivelDeRegistro::Error, "fallo_de_persistencia")
+                        .con_id_evento(id_evento.clone())
+                        .con_id_conversacion(id_conversacion.clone())
+                        .con_latencia_ms(latencia_ms(inicio))
+                        .con_detalle(format!(
+                            "fallo al consultar la deduplicación persistida: {error}"
+                        )),
+                );
+                VeredictoDeDeduplicacion::Nuevo
+            }
+        };
+        if veredicto == VeredictoDeDeduplicacion::Duplicado {
+            emitir(
+                EntradaDeRegistro::nueva(NivelDeRegistro::Info, "evento_duplicado")
+                    .con_id_evento(id_evento)
+                    .con_id_conversacion(id_conversacion)
+                    .con_latencia_ms(latencia_ms(inicio)),
+            );
+            return;
+        }
+
+        self.drenar_diferidas(&evento.conversacion, evento.marca_temporal, inicio)
+            .await;
+
+        if let Err(error) = self.conversaciones.registrar_entrante(
+            &evento.conversacion,
+            &evento.remitente,
+            &evento.contenido,
+            evento.marca_temporal,
+        ) {
+            emitir(
+                EntradaDeRegistro::nueva(NivelDeRegistro::Error, "fallo_de_persistencia")
+                    .con_id_evento(id_evento.clone())
+                    .con_id_conversacion(id_conversacion.clone())
+                    .con_latencia_ms(latencia_ms(inicio))
+                    .con_detalle(format!(
+                        "no se pudo anotar el evento entrante en el historial: {error}"
+                    )),
+            );
+        }
+
+        emitir(
+            EntradaDeRegistro::nueva(NivelDeRegistro::Info, "inferencia_iniciada")
+                .con_id_evento(id_evento)
+                .con_id_conversacion(id_conversacion)
+                .con_latencia_ms(latencia_ms(inicio)),
+        );
+
+        let Some(mensaje) = self.procesador.procesar(&evento).await else {
+            return;
+        };
+
+        self.enviar_y_registrar(&evento.conversacion, mensaje, evento.marca_temporal, inicio)
+            .await;
     }
 
     /// Reintenta, en orden de llegada, cada respuesta que quedó diferida para esta conversación.
@@ -183,9 +280,10 @@ where
         &mut self,
         conversacion: &IdConversacion,
         marca_temporal: SystemTime,
+        inicio: Instant,
     ) {
         for mensaje in self.conversaciones.drenar_diferidas(conversacion) {
-            self.enviar_y_registrar(conversacion, mensaje, marca_temporal)
+            self.enviar_y_registrar(conversacion, mensaje, marca_temporal, inicio)
                 .await;
         }
     }
@@ -193,48 +291,91 @@ where
     /// Envía un mensaje y aplica la política que corresponda a cada desenlace del puerto.
     ///
     /// La marca temporal con la que se anota la salida es la del evento entrante que la provocó,
-    /// no una lectura de la hora del sistema: el motor no tiene ninguna fuente de tiempo propia, y
-    /// todo lo que persiste está medido en el tiempo del canal.
+    /// no una lectura de la hora del sistema: el motor no tiene ninguna fuente de tiempo propia
+    /// para lo que persiste, y todo lo que persiste está medido en el tiempo del canal. `inicio`
+    /// es la única lectura de reloj monótono del motor, y mide exclusivamente la latencia de
+    /// procesamiento para el registro estructurado.
     async fn enviar_y_registrar(
         &mut self,
         conversacion: &IdConversacion,
         mensaje: MensajeSaliente,
         marca_temporal: SystemTime,
+        inicio: Instant,
     ) {
+        let id_conversacion = conversacion.como_str().to_string();
         let resultado = self.adaptador.send(conversacion, mensaje.clone()).await;
 
         match resultado {
             Ok(ResultadoEnvio::Aceptado) => {
-                println!("motor: envío aceptado por el canal configurado");
+                emitir(
+                    EntradaDeRegistro::nueva(NivelDeRegistro::Info, "envio_aceptado")
+                        .con_id_conversacion(id_conversacion.clone())
+                        .con_latencia_ms(latencia_ms(inicio)),
+                );
                 if let Err(error) =
                     self.conversaciones
                         .registrar_saliente(conversacion, &mensaje, marca_temporal)
                 {
-                    eprintln!(
-                        "motor: no se pudo anotar la respuesta enviada en el historial ({error}); \
-                         el mensaje ya salió y no se reintenta"
+                    emitir(
+                        EntradaDeRegistro::nueva(NivelDeRegistro::Error, "fallo_de_persistencia")
+                            .con_id_conversacion(id_conversacion)
+                            .con_latencia_ms(latencia_ms(inicio))
+                            .con_detalle(format!(
+                                "no se pudo anotar la respuesta enviada en el historial: {error}"
+                            )),
                     );
                 }
             }
             Ok(ResultadoEnvio::FueraDeVentana) => {
-                println!(
-                    "motor: ventana de servicio cerrada, la respuesta se difiere hasta que el \
-                     cliente vuelva a escribir"
+                emitir(
+                    EntradaDeRegistro::nueva(NivelDeRegistro::Info, "envio_diferido")
+                        .con_id_conversacion(id_conversacion)
+                        .con_latencia_ms(latencia_ms(inicio)),
                 );
                 self.conversaciones.encolar_diferida(conversacion, mensaje);
             }
             Ok(ResultadoEnvio::PlantillaRequerida) => {
-                eprintln!("motor: envío rechazado, el canal exige una plantilla aprobada");
+                emitir(
+                    EntradaDeRegistro::nueva(NivelDeRegistro::Aviso, "envio_rechazado")
+                        .con_id_conversacion(id_conversacion)
+                        .con_latencia_ms(latencia_ms(inicio))
+                        .con_detalle("el canal exige una plantilla aprobada"),
+                );
             }
             Ok(ResultadoEnvio::LimiteDeTasa) => {
-                eprintln!("motor: envío rechazado, el canal está limitando la tasa de envío");
+                emitir(
+                    EntradaDeRegistro::nueva(NivelDeRegistro::Aviso, "envio_rechazado")
+                        .con_id_conversacion(id_conversacion)
+                        .con_latencia_ms(latencia_ms(inicio))
+                        .con_detalle("el canal está limitando la tasa de envío"),
+                );
             }
             Ok(ResultadoEnvio::DestinatarioInvalido) => {
-                eprintln!("motor: envío rechazado, el destinatario no es válido");
+                emitir(
+                    EntradaDeRegistro::nueva(NivelDeRegistro::Aviso, "envio_rechazado")
+                        .con_id_conversacion(id_conversacion)
+                        .con_latencia_ms(latencia_ms(inicio))
+                        .con_detalle("el destinatario no es válido"),
+                );
             }
             Err(averia) => {
-                eprintln!("motor: avería de transporte al enviar: {averia}");
+                emitir(
+                    EntradaDeRegistro::nueva(NivelDeRegistro::Error, "averia_de_transporte")
+                        .con_id_conversacion(id_conversacion)
+                        .con_latencia_ms(latencia_ms(inicio))
+                        .con_detalle(format!("avería de transporte al enviar: {averia}")),
+                );
             }
         }
     }
+}
+
+/// Milisegundos transcurridos desde `inicio`, medidos con el reloj monótono del proceso.
+///
+/// Único punto de este módulo —y de todo `crates/hexcell/src/`, salvo aquí— donde se permite leer
+/// `Instant::now()`: mide exclusivamente latencia de procesamiento para el registro estructurado y
+/// nunca alimenta la deduplicación ni el historial, que siguen midiéndose contra la marca temporal
+/// del propio evento (`docs/adr/adr-0018-apagado-ordenado.md`).
+fn latencia_ms(inicio: Instant) -> u64 {
+    u64::try_from(Instant::now().duration_since(inicio).as_millis()).unwrap_or(u64::MAX)
 }

@@ -16,6 +16,7 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::PathBuf;
 use std::time::Duration;
 
+use crate::apagado::LIMITE_DE_DRENAJE_POR_DEFECTO;
 use crate::deduplicacion::VENTANA_DE_RETENCION_DEDUPLICACION_POR_DEFECTO;
 
 /// Canal seleccionado para esta célula.
@@ -60,6 +61,26 @@ pub struct Configuracion {
     /// siendo una decisión de producto abierta (`docs/STATUS.md`, entrada `Pendiente` del
     /// 2026-07-30); esta variable es la puerta explícita para ajustarla sin recompilar.
     pub ventana_deduplicacion: Duration,
+    /// Límite temporal de drenaje tras la señal de apagado (`crate::apagado`).
+    ///
+    /// Por defecto, `LIMITE_DE_DRENAJE_POR_DEFECTO`: diez segundos, frente al plazo de gracia
+    /// total de treinta segundos que fija el PRD para todo el proceso.
+    pub limite_de_drenaje: Duration,
+    /// Latencia artificial del proveedor de inferencia simulado, antes de responder.
+    ///
+    /// Solo la lee `crate::inferencia::ProveedorSimulado`. Por defecto cero: no crea ningún
+    /// temporizador y no cambia ninguna salida. Existe para que un test de proceso real pueda
+    /// demostrar que un evento en vuelo durante `SIGTERM` se completa (AC-7): sin ella, la
+    /// inferencia simulada responde en microsegundos y la condición dejaría de ser falsificable.
+    pub latencia_inferencia_simulada: Duration,
+    /// Contenido de un evento sintético que `main` inyecta al arrancar por el canal simulado.
+    ///
+    /// Solo lo lee el brazo `CanalSeleccionado::Simulado` de la raíz de composición. El canal
+    /// simulado no tiene ninguna fuente externa de eventos —`AdaptadorSimulado::inyectar` es un
+    /// método en proceso—, así que sin esta variable un binario real corriendo sobre el canal
+    /// simulado nunca podría recibir un evento desde fuera, y los criterios de aceptación AC-5 a
+    /// AC-9, que exigen un proceso real, serían imposibles de comprobar.
+    pub evento_simulado_de_arranque: Option<String>,
 }
 
 /// Error de configuración: nombra siempre la variable concreta y su formato esperado.
@@ -133,6 +154,15 @@ pub const HEXCELL_CAPACIDAD_COLA: &str = "HEXCELL_CAPACIDAD_COLA";
 /// Nombre de la variable de entorno con la ventana de retención de deduplicación, en segundos
 /// (opcional).
 pub const HEXCELL_VENTANA_DEDUPLICACION_SEGUNDOS: &str = "HEXCELL_VENTANA_DEDUPLICACION_SEGUNDOS";
+/// Nombre de la variable de entorno con el límite de drenaje del apagado ordenado, en segundos
+/// (opcional).
+pub const HEXCELL_LIMITE_DE_DRENAJE_SEGUNDOS: &str = "HEXCELL_LIMITE_DE_DRENAJE_SEGUNDOS";
+/// Nombre de la variable de entorno con la latencia artificial del proveedor de inferencia
+/// simulado, en milisegundos (opcional, solo para tests).
+pub const HEXCELL_LATENCIA_INFERENCIA_SIMULADA_MS: &str = "HEXCELL_LATENCIA_INFERENCIA_SIMULADA_MS";
+/// Nombre de la variable de entorno con el contenido de un evento sintético de arranque para el
+/// canal simulado (opcional, solo para tests).
+pub const HEXCELL_EVENTO_SIMULADO_DE_ARRANQUE: &str = "HEXCELL_EVENTO_SIMULADO_DE_ARRANQUE";
 
 /// Dirección de salud por defecto: loopback (127.0.0.1), nunca `0.0.0.0`. Una célula sobre canal
 /// propio empaquetada en un contenedor (etapa A-6) necesita sondear esta ruta desde un
@@ -217,6 +247,39 @@ impl Configuracion {
             Err(_) => VENTANA_DE_RETENCION_DEDUPLICACION_POR_DEFECTO,
         };
 
+        let limite_de_drenaje = match std::env::var(HEXCELL_LIMITE_DE_DRENAJE_SEGUNDOS) {
+            Ok(valor) => {
+                let segundos =
+                    valor
+                        .parse::<u64>()
+                        .map_err(|_| ErrorDeConfiguracion::ValorInvalido {
+                            nombre: HEXCELL_LIMITE_DE_DRENAJE_SEGUNDOS,
+                            valor: valor.clone(),
+                            formato_esperado: "entero positivo de segundos, p. ej. 10",
+                        })?;
+                Duration::from_secs(segundos)
+            }
+            Err(_) => LIMITE_DE_DRENAJE_POR_DEFECTO,
+        };
+
+        let latencia_inferencia_simulada =
+            match std::env::var(HEXCELL_LATENCIA_INFERENCIA_SIMULADA_MS) {
+                Ok(valor) => {
+                    let milisegundos =
+                        valor
+                            .parse::<u64>()
+                            .map_err(|_| ErrorDeConfiguracion::ValorInvalido {
+                                nombre: HEXCELL_LATENCIA_INFERENCIA_SIMULADA_MS,
+                                valor: valor.clone(),
+                                formato_esperado: "entero no negativo de milisegundos, p. ej. 1500",
+                            })?;
+                    Duration::from_millis(milisegundos)
+                }
+                Err(_) => Duration::ZERO,
+            };
+
+        let evento_simulado_de_arranque = std::env::var(HEXCELL_EVENTO_SIMULADO_DE_ARRANQUE).ok();
+
         Ok(Self {
             id_celula,
             ruta_datos,
@@ -224,6 +287,9 @@ impl Configuracion {
             canal,
             capacidad_cola,
             ventana_deduplicacion,
+            limite_de_drenaje,
+            latencia_inferencia_simulada,
+            evento_simulado_de_arranque,
         })
     }
 }

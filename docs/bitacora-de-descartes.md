@@ -1,6 +1,6 @@
 # Bitácora de descartes
 
-> Registro de lo que se consideró y **no** se hizo. Última actualización: 2026-07-28.
+> Registro de lo que se consideró y **no** se hizo. Última actualización: 2026-07-30.
 
 ## Para qué sirve este documento
 
@@ -50,6 +50,8 @@ se apoya en un principio de diseño, no.
 | [D-14](#d-14) | Nombres anteriores: ZeroClaw, `hexcell-cell`, "inquilino" | Cerrado |
 | [D-15](#d-15) | Guardar el mapeo de identidad dentro del `sqlstore` del sidecar | Principio de diseño, no reabrir |
 | [D-16](#d-16) | Guardar el identificador de transporte en `sessions.db` | Principio de diseño, no reabrir |
+| [D-17](#d-17) | `tracing` + `tracing-subscriber` con capa JSON para el registro estructurado | Principio de diseño, no reabrir |
+| [D-18](#d-18) | `tokio-util::CancellationToken` para el apagado ordenado | Principio de diseño, no reabrir |
 
 ---
 
@@ -315,6 +317,35 @@ e "inquilino" como término para la unidad desplegable por cliente (sustituido p
 * **Registro normativo:** solo el historial de git (`e290e40`, `e1876a6`, `fa7ef4d`).
 * **Qué tendría que cambiar para reabrirlo:** *cerrado.* Se registran para que nadie confunda una
   mención antigua con un componente distinto.
+
+### D-17
+**`tracing` + `tracing-subscriber` con una capa de serialización JSON para el registro
+estructurado del motor de mensajería, en lugar de escribirlo a mano.**
+
+* **Descartado:** 2026-07-30 (HEX-007).
+* **Por qué se descartó:** arrastra un serializador y alrededor de una docena de crates
+  transitivos para emitir, como mucho, un puñado de campos por evento procesado — el mismo
+  argumento que este árbol ya aplicó contra `axum`, `tiny-http` y los pools de conexión externos
+  de `hexcell-storage`. El registro completo, escrito a mano, son unas pocas decenas de líneas en
+  `crates/hexcell/src/registro.rs`, con el conjunto de campos tipado como mecanismo de privacidad
+  (`evento: &'static str` no puede transportar un valor construido en tiempo de ejecución).
+* **Registro normativo:** `docs/adr/adr-0019-registro-estructurado.md`, `docs/STATUS.md`.
+* **Qué tendría que cambiar para reabrirlo:** *principio de diseño.* **No reabrir**, salvo que el
+  presupuesto de memoria por célula (NFR-01) deje de ser una restricción del producto.
+
+### D-18
+**`tokio-util::CancellationToken` para transportar la señal de apagado ordenado, en lugar de
+`tokio::sync::watch`.**
+
+* **Descartado:** 2026-07-30 (HEX-007).
+* **Por qué se descartó:** `tokio::sync::watch` ya estaba habilitado en la característica `sync`
+  que `crates/hexcell/Cargo.toml` ya declaraba, y expresa exactamente lo que el apagado ordenado
+  necesita: un valor compartido que cambia una vez y que cualquier receptor observa.
+  `CancellationToken` duplicaría esa expresividad a cambio de una dependencia nueva que no aporta
+  nada que `watch` no cubra ya.
+* **Registro normativo:** `docs/adr/adr-0018-apagado-ordenado.md`.
+* **Qué tendría que cambiar para reabrirlo:** *principio de diseño.* **No reabrir**, salvo que
+  `tokio::sync::watch` deje de estar disponible en la característica `sync` ya habilitada.
 
 ---
 

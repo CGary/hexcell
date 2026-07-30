@@ -68,6 +68,12 @@ pub const SINCRONIA: &str = "NORMAL";
 /// Conexiones de solo lectura del pool de conocimiento.
 pub const CONEXIONES_DE_LECTURA_DE_CONOCIMIENTO: usize = 2;
 
+/// Sufijo del archivo WAL que SQLite mantiene junto a cada base en modo `journal_mode = WAL`.
+///
+/// Se nombra una sola vez y aquí para que el punto de control y cualquier test que lo verifique
+/// construyan la misma ruta de la misma forma.
+pub const SUFIJO_DE_ARCHIVO_WAL: &str = "-wal";
+
 /// Consulta barata de la sonda de vitalidad de `sessions.db`.
 const CONSULTA_DE_VITALIDAD_DE_SESIONES: &str = "SELECT count(*) FROM estado_del_motor";
 
@@ -260,6 +266,71 @@ impl GestorDePools {
     pub fn conocimiento(&self) -> &PoolDeConocimiento {
         &self.conocimiento
     }
+
+    /// Ejecuta el punto de control del WAL al apagar la célula.
+    ///
+    /// Visita los dos pools, pero solo `sessions.db` puede recibir de verdad un punto de control:
+    /// comprobado el 2026-07-30, `PRAGMA wal_checkpoint` sobre una conexión abierta con
+    /// `SQLITE_OPEN_READ_ONLY` falla con un error de E/S de disco, y **todas** las conexiones de
+    /// [`PoolDeConocimiento`] son de solo lectura por construcción (FR-05,
+    /// `docs/adr/adr-0003-persistencia-dual.md`). Abrir una conexión de lectura y escritura sobre
+    /// `knowledge_live.db` solo para este momento del apagado violaría precisamente el invariante
+    /// que FR-05 fija, así que no se hace: se informa que ese pool es de solo lectura y no tiene
+    /// nada que consolidar.
+    ///
+    /// Sobre `sessions.db` se ejecuta `PRAGMA wal_checkpoint(TRUNCATE)` en la única conexión de
+    /// escritura: tras un `TRUNCATE` con éxito, SQLite devuelve `0|0|0` en sus tres contadores —no
+    /// hay ninguna cifra positiva que comprobar—, y lo observable es que el archivo `-wal` queda en
+    /// cero bytes mientras la conexión sigue abierta. Un fallo del punto de control se informa,
+    /// nunca se propaga como error fatal: un WAL no consolidado no es pérdida de datos, SQLite lo
+    /// reproduce solo en la siguiente apertura.
+    pub fn punto_de_control_de_wal(&self) -> ResumenDePuntoDeControl {
+        let resultado_de_sesiones = self.sesiones.con_escritura(|conexion| {
+            conexion
+                .query_row(
+                    "PRAGMA wal_checkpoint(TRUNCATE)",
+                    [],
+                    |fila| -> rusqlite::Result<(i64, i64, i64)> {
+                        Ok((fila.get(0)?, fila.get(1)?, fila.get(2)?))
+                    },
+                )
+                .map_err(ErrorDeAlmacen::en("ejecutar el punto de control del WAL"))
+        });
+
+        let ocupado = match resultado_de_sesiones {
+            Ok((bloqueado, ..)) => bloqueado != 0,
+            Err(_) => true,
+        };
+
+        let ruta_wal = ruta_wal_de(&self.sesiones.ruta);
+        let tamano_wal_de_sesiones_bytes = std::fs::metadata(&ruta_wal)
+            .map(|metadatos| metadatos.len())
+            .unwrap_or(0);
+
+        ResumenDePuntoDeControl {
+            ocupado,
+            tamano_wal_de_sesiones_bytes,
+        }
+    }
+}
+
+/// Construye la ruta del archivo `-wal` que acompaña a la base indicada en modo WAL.
+fn ruta_wal_de(ruta_de_la_base: &Path) -> PathBuf {
+    let mut ruta = ruta_de_la_base.as_os_str().to_owned();
+    ruta.push(SUFIJO_DE_ARCHIVO_WAL);
+    PathBuf::from(ruta)
+}
+
+/// Resultado de [`GestorDePools::punto_de_control_de_wal`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ResumenDePuntoDeControl {
+    /// El punto de control encontró la base ocupada por otro escritor y no pudo completarse del
+    /// todo. Se informa, no se escala: el motor ya se detuvo y la conexión de lectura puede
+    /// sostener una marca de lectura por un instante.
+    pub ocupado: bool,
+    /// Tamaño en bytes del archivo `-wal` de `sessions.db` tras el intento de punto de control.
+    /// Cero significa que `TRUNCATE` consolidó el WAL por completo.
+    pub tamano_wal_de_sesiones_bytes: u64,
 }
 
 /// Abre una conexión de lectura y escritura, creando el archivo si no existía, y le aplica los

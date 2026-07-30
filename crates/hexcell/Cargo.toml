@@ -22,6 +22,9 @@ license.workspace = true
 # sondea estas rutas en cada reactivación, y reimplementar el framing de peticiones, keep-alive y
 # entradas malformadas es un pasivo que el ahorro de líneas no compra.
 [dependencies]
+# "signal" habilita tokio::signal::unix para capturar SIGTERM/SIGINT en el apagado ordenado
+# (HEX-007). Verificado el 2026-07-30 contra el canal 1.92.0: resuelve limpio y suma un único
+# paquete nuevo, signal-hook-registry 1.4.8 (libc, mio y socket2 ya llegan por rusqlite e hyper).
 tokio = { workspace = true, features = [
     "rt",
     "macros",
@@ -29,6 +32,7 @@ tokio = { workspace = true, features = [
     "sync",
     "io-util",
     "time",
+    "signal",
 ] }
 hyper = { workspace = true, features = ["http1", "server"] }
 hyper-util = { workspace = true, features = ["tokio"] }

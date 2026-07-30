@@ -11,6 +11,7 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
 use comun::{DirectorioTemporal, abrir_persistencia};
+use hexcell::apagado::SenalDeApagado;
 use hexcell::conversaciones::EventoDeHistorial;
 use hexcell::motor::Motor;
 use hexcell::procesador::ProcesadorDeEco;
@@ -63,7 +64,7 @@ fn evento(
 async fn drenar_y_soltar(motor: Motor<AdaptadorQueDelegaEnArc, ProcesadorDeEco>) {
     let mut motor = motor;
     let manejador = tokio::spawn(async move {
-        motor.ejecutar().await;
+        motor.ejecutar(SenalDeApagado::nunca()).await;
     });
     tokio::time::sleep(Duration::from_millis(50)).await;
     manejador.abort();

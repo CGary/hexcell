@@ -25,6 +25,13 @@
 //! conversación es el `IdConversacion` interno y la única clave de contacto es el `IdRemitente`
 //! interno, ambos recibidos ya traducidos por el adaptador de canal y tratados aquí como valores
 //! **opacos**: este crate no los construye, no los interpreta y no los invierte.
+//!
+//! # Punto de control del WAL al apagar (HEX-007)
+//!
+//! `GestorDePools::punto_de_control_de_wal` es lo que el binario llama durante el apagado
+//! ordenado: consolida el WAL de `sessions.db` con `PRAGMA wal_checkpoint(TRUNCATE)` y reporta
+//! `knowledge_live.db` como de solo lectura, sin nada que consolidar
+//! (`docs/adr/adr-0018-apagado-ordenado.md`).
 
 pub mod error;
 pub mod migraciones;
@@ -40,7 +47,7 @@ pub use migraciones::{
 pub use pools::{
     BUSY_TIMEOUT, CONEXIONES_DE_LECTURA_DE_CONOCIMIENTO, GestorDePools,
     NOMBRE_DE_ARCHIVO_DE_CONOCIMIENTO, NOMBRE_DE_ARCHIVO_DE_SESIONES, PoolDeConocimiento,
-    PoolDeSesiones, SINCRONIA, Vitalidad,
+    PoolDeSesiones, ResumenDePuntoDeControl, SINCRONIA, SUFIJO_DE_ARCHIVO_WAL, Vitalidad,
 };
 pub use sesiones::{
     EventoDeHistorial, LIMITE_DE_ENTRADAS_RETENIDAS, RepositorioDeSesiones,

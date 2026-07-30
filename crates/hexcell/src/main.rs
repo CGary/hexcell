@@ -24,19 +24,43 @@
 //! `ChannelAdapter` no expone ninguna consulta de sesión y esta tarea no lo reabre para inventarla
 //! (el porqué completo está en `crate::preparacion`).
 //!
-//! Sin manejo de señales: el apagado ordenado y el drenaje en vuelo son una etapa posterior del
-//! plan (HEX-008, tarea 12).
+//! # Apagado ordenado, inferencia y registro (HEX-007)
+//!
+//! El manejador de señales se registra **nada más** analizar la configuración, antes de tocar
+//! disco o red, para que un `SIGTERM` que llegara durante el arranque quede capturado en vez de
+//! matar el proceso con la acción por defecto del sistema operativo. El registro estructurado se
+//! inicializa justo después, para que toda línea posterior lleve ya el identificador de célula.
+//! Tras el bucle principal (`tokio::select!` entre el servidor de salud y el motor), se ejecuta el
+//! punto de control del WAL sobre ambos pools y el proceso termina siempre con
+//! `ExitCode::SUCCESS`: un punto de control que falla se registra, pero no es un fallo de salida,
+//! porque un WAL sin consolidar no es pérdida de datos.
+//!
+//! El evento sintético de arranque (`HEXCELL_EVENTO_SIMULADO_DE_ARRANQUE`) se inyecta **antes**
+//! de que `Motor::nuevo` tome posesión del adaptador, así que no hace falta compartirlo por
+//! `Arc` ni envolverlo en un delegador: se inyecta a través de
+//! `AdaptadorSimulado::inyectar_desde_contacto`, que es quien traduce el contacto sintético a un
+//! `IdConversacion` (`adr-0010`) — `main` no construye ninguno. `IdDeduplicacion::nuevo` aparece
+//! en este archivo y solo en él, precisamente porque con un canal real el identificador de evento
+//! siempre llega ya traducido desde el transporte a través del adaptador.
 
 use std::process::ExitCode;
 use std::sync::Arc;
 
+use hexcell::apagado::Apagado;
 use hexcell::configuracion::{CanalSeleccionado, Configuracion};
+use hexcell::inferencia::ProveedorSimulado;
 use hexcell::motor::Motor;
 use hexcell::preparacion::SesionDelCanal;
-use hexcell::procesador::ProcesadorDeEco;
+use hexcell::procesador::ProcesadorDeInferencia;
+use hexcell::registro::{self, EntradaDeRegistro, NivelDeRegistro};
 use hexcell::salud::{EstadoDeSalud, servir_salud};
 use hexcell_canal_simulado::{AdaptadorSimulado, RelojDelSistema};
-use hexcell_storage::{GestorDePools, RepositorioDeSesiones};
+use hexcell_core::identidad::IdDeduplicacion;
+use hexcell_storage::{GestorDePools, RepositorioDeSesiones, ResumenDePuntoDeControl};
+
+/// Contacto sintético que recibe el evento de arranque cuando
+/// `HEXCELL_EVENTO_SIMULADO_DE_ARRANQUE` está presente.
+const CONTACTO_DEL_EVENTO_DE_ARRANQUE: &str = "arranque-simulado";
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> ExitCode {
@@ -47,6 +71,16 @@ async fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
+
+    let (_apagado, senal_de_apagado) = match Apagado::instalar(configuracion.limite_de_drenaje) {
+        Ok(instalado) => instalado,
+        Err(error) => {
+            eprintln!("hexcell: no se pudo instalar el manejador de señales: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
+
+    registro::inicializar(configuracion.id_celula.clone());
 
     println!(
         "hexcell: célula {} arrancando; ruta de datos {}",
@@ -84,6 +118,10 @@ async fn main() -> ExitCode {
             }
         };
     println!("hexcell: servidor de salud escuchando en {direccion_salud}");
+    registro::emitir(
+        EntradaDeRegistro::nueva(NivelDeRegistro::Info, "salud_vinculada")
+            .con_detalle(direccion_salud.to_string()),
+    );
 
     match configuracion.canal {
         CanalSeleccionado::Simulado => {
@@ -91,9 +129,33 @@ async fn main() -> ExitCode {
             let reloj = Arc::new(RelojDelSistema);
             let (adaptador, receptor_eventos) =
                 AdaptadorSimulado::nuevo(reloj, configuracion.capacidad_cola);
+
+            if let Some(contenido) = configuracion.evento_simulado_de_arranque.clone() {
+                // Único lugar de `crates/hexcell/src/` donde se construye un `IdDeduplicacion`:
+                // con un canal real, ese identificador siempre llega ya traducido por el
+                // adaptador desde el transporte. Aquí no hay transporte, así que este evento
+                // sintético necesita uno propio.
+                let deduplicacion = IdDeduplicacion::nuevo("evento-simulado-de-arranque");
+                if let Err(error) = adaptador
+                    .inyectar_desde_contacto(
+                        CONTACTO_DEL_EVENTO_DE_ARRANQUE,
+                        contenido,
+                        deduplicacion,
+                    )
+                    .await
+                {
+                    eprintln!(
+                        "hexcell: no se pudo inyectar el evento simulado de arranque: {error}"
+                    );
+                }
+            }
+
+            let proveedor =
+                ProveedorSimulado::con_latencia(configuracion.latencia_inferencia_simulada);
+            let procesador = ProcesadorDeInferencia::nuevo(proveedor);
             let mut motor = Motor::nuevo(
                 adaptador,
-                ProcesadorDeEco,
+                procesador,
                 receptor_eventos,
                 configuracion.ventana_deduplicacion,
                 repositorio,
@@ -101,10 +163,27 @@ async fn main() -> ExitCode {
 
             tokio::select! {
                 () = servidor_salud => {}
-                () = motor.ejecutar() => {}
+                () = motor.ejecutar(senal_de_apagado) => {}
             }
         }
     }
 
+    emitir_punto_de_control(pools.punto_de_control_de_wal());
+
     ExitCode::SUCCESS
+}
+
+/// Registra el resultado del punto de control del WAL de apagado.
+fn emitir_punto_de_control(resumen: ResumenDePuntoDeControl) {
+    let nivel = if resumen.ocupado {
+        NivelDeRegistro::Aviso
+    } else {
+        NivelDeRegistro::Info
+    };
+    registro::emitir(
+        EntradaDeRegistro::nueva(nivel, "punto_de_control_wal").con_detalle(format!(
+            "ocupado={} wal_sesiones_bytes={}",
+            resumen.ocupado, resumen.tamano_wal_de_sesiones_bytes
+        )),
+    );
 }

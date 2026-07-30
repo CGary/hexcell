@@ -14,6 +14,7 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
 use comun::{DirectorioTemporal, repositorio_temporal};
+use hexcell::apagado::SenalDeApagado;
 use hexcell::motor::Motor;
 use hexcell::procesador::ProcesadorDeEco;
 use hexcell_canal_simulado::{AdaptadorSimulado, ErrorDelAdaptadorSimulado, Reloj, RelojDePrueba};
@@ -84,7 +85,7 @@ async fn una_respuesta_fuera_de_ventana_se_difiere_y_se_reenvia_antes_que_la_nue
         repositorio_temporal(directorio.ruta()),
     );
     let manejador = tokio::spawn(async move {
-        motor.ejecutar().await;
+        motor.ejecutar(SenalDeApagado::nunca()).await;
     });
 
     // Deja que el motor procese el primer evento: la política ante `FueraDeVentana` debe diferir

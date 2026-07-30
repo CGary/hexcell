@@ -5,8 +5,9 @@ mod comun;
 
 use comun::DirectorioTemporal;
 use hexcell_storage::{
-    BUSY_TIMEOUT, CONEXIONES_DE_LECTURA_DE_CONOCIMIENTO, GestorDePools,
-    NOMBRE_DE_ARCHIVO_DE_CONOCIMIENTO, NOMBRE_DE_ARCHIVO_DE_SESIONES, Vitalidad,
+    BUSY_TIMEOUT, CONEXIONES_DE_LECTURA_DE_CONOCIMIENTO, ErrorDeAlmacen, GestorDePools,
+    NOMBRE_DE_ARCHIVO_DE_CONOCIMIENTO, NOMBRE_DE_ARCHIVO_DE_SESIONES, SUFIJO_DE_ARCHIVO_WAL,
+    Vitalidad,
 };
 use rusqlite::Connection;
 
@@ -231,6 +232,80 @@ fn la_vitalidad_es_sana_al_abrir_y_cae_cuando_el_archivo_desaparece_del_disco() 
             assert_eq!(componente, NOMBRE_DE_ARCHIVO_DE_CONOCIMIENTO);
         }
     }
+}
+
+#[test]
+fn el_punto_de_control_deja_el_wal_de_sesiones_en_cero_bytes_con_los_pools_abiertos() {
+    // El test se hace falsificable manteniendo los pools ABIERTOS: comprobado el 2026-07-30,
+    // SQLite consolida y borra por sí solo el archivo `-wal` cuando la última conexión a una base
+    // se cierra, así que comprobar el `-wal` después de que el proceso termine pasaría
+    // exactamente igual con o sin este punto de control explícito — una aserción que no puede
+    // fallar es decoración, no una prueba.
+    let directorio = DirectorioTemporal::nuevo("pools-checkpoint");
+    let gestor = GestorDePools::abrir(directorio.ruta()).expect("abrir los dos pools");
+
+    // Escribe suficientes filas para que el WAL de sessions.db crezca por encima de cero bytes
+    // antes del punto de control.
+    gestor
+        .sesiones()
+        .con_escritura(|conexion| {
+            for indice in 0..200i64 {
+                conexion
+                    .execute(
+                        "INSERT INTO estado_del_motor (clave, valor) VALUES (?1, ?2)",
+                        rusqlite::params![format!("clave-{indice}"), indice],
+                    )
+                    .expect("insertar una fila de prueba");
+            }
+            Ok(())
+        })
+        .expect("escribir las filas de prueba");
+
+    let ruta_wal = directorio.ruta().join(format!(
+        "{}{SUFIJO_DE_ARCHIVO_WAL}",
+        NOMBRE_DE_ARCHIVO_DE_SESIONES
+    ));
+    let tamano_antes = std::fs::metadata(&ruta_wal)
+        .map(|metadatos| metadatos.len())
+        .unwrap_or(0);
+    assert!(
+        tamano_antes > 0,
+        "el WAL debe haber crecido por encima de cero bytes antes del punto de control"
+    );
+
+    let resumen = gestor.punto_de_control_de_wal();
+    assert!(
+        !resumen.ocupado,
+        "el punto de control no debe estar ocupado en este test"
+    );
+    assert_eq!(
+        resumen.tamano_wal_de_sesiones_bytes, 0,
+        "el punto de control debe consolidar el WAL a cero bytes"
+    );
+
+    let tamano_despues = std::fs::metadata(&ruta_wal)
+        .map(|metadatos| metadatos.len())
+        .unwrap_or(0);
+    assert_eq!(
+        tamano_despues, 0,
+        "el archivo -wal debe quedar en cero bytes con los pools todavía abiertos"
+    );
+
+    // Los datos siguen siendo legibles: el punto de control consolida, no destruye.
+    let cuenta: i64 = gestor
+        .sesiones()
+        .con_lectura(|conexion| {
+            conexion
+                .query_row("SELECT count(*) FROM estado_del_motor", [], |fila| {
+                    fila.get(0)
+                })
+                .map_err(|causa| ErrorDeAlmacen::Sqlite {
+                    operacion: "contar filas de prueba",
+                    causa,
+                })
+        })
+        .expect("las filas deben seguir siendo legibles tras el punto de control");
+    assert_eq!(cuenta, 200);
 }
 
 #[test]

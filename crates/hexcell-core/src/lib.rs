@@ -13,3 +13,4 @@
 
 pub mod canal;
 pub mod identidad;
+pub mod inferencia;

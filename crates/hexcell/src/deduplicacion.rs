@@ -37,7 +37,7 @@
 //! El comportamiento no se inventa en esta tarea: la tabla de riesgos de
 //! `docs/plan/fase-a-2-nucleo-persistencia.md` ya lo fija — se procesa como evento **nuevo**,
 //! duplicando el trabajo conversacional, como limitación residual aceptada y documentada. Este
-//! módulo no rechaza ese caso, no hace `panic!` y no inventa un tercer camino: simplemente, si la
+//! módulo no rechaza ese caso, no entra en pánico y no inventa un tercer camino: simplemente, si la
 //! entrada ya fue podada por antigua, el identificador vuelve a parecer nuevo.
 //!
 //! El tope duro de entradas retenidas vive ahora junto al SQL que lo aplica, en

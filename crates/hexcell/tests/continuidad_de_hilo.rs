@@ -7,7 +7,7 @@
 //!
 //! No se usa `tokio::spawn` + `abort()` aquí como en otros tests de este directorio: este test
 //! necesita inspeccionar `Motor::historial` entre una tanda de eventos y la siguiente, y mover el
-//! motor a una tarea de fondo impediría recuperarlo. En su lugar, `motor.ejecutar()` se corre
+//! motor a una tarea de fondo impediría recuperarlo. En su lugar, `motor.ejecutar(..)` se corre
 //! dentro de un `tokio::select!` contra un `sleep` corto: el préstamo `&mut motor` termina cuando
 //! el `select!` termina, y el `motor`, que nunca se movió, sigue disponible para inspeccionarlo.
 
@@ -17,6 +17,7 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
 use comun::{DirectorioTemporal, repositorio_temporal};
+use hexcell::apagado::SenalDeApagado;
 use hexcell::motor::Motor;
 use hexcell::procesador::ProcesadorDeEco;
 use hexcell_canal_simulado::{AdaptadorSimulado, ErrorDelAdaptadorSimulado, RelojDePrueba};
@@ -46,7 +47,7 @@ impl ChannelAdapter for AdaptadorQueDelegaEnArc {
     }
 }
 
-/// Deja avanzar `motor.ejecutar()` un tiempo corto sin moverlo de sitio, para poder seguir
+/// Deja avanzar `motor.ejecutar(..)` un tiempo corto sin moverlo de sitio, para poder seguir
 /// inspeccionándolo después.
 async fn dejar_procesar<A, P>(motor: &mut Motor<A, P>)
 where
@@ -54,7 +55,7 @@ where
     P: hexcell::procesador::ProcesadorDeMensajes,
 {
     tokio::select! {
-        () = motor.ejecutar() => {}
+        () = motor.ejecutar(SenalDeApagado::nunca()) => {}
         () = tokio::time::sleep(Duration::from_millis(50)) => {}
     }
 }

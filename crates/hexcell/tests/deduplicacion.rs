@@ -12,6 +12,7 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
 use comun::{DirectorioTemporal, repositorio_temporal};
+use hexcell::apagado::SenalDeApagado;
 use hexcell::deduplicacion::{RegistroDeDeduplicacion, VeredictoDeDeduplicacion};
 use hexcell::motor::Motor;
 use hexcell::procesador::ProcesadorDeEco;
@@ -140,7 +141,7 @@ async fn el_motor_procesa_un_evento_duplicado_una_sola_vez_dentro_de_la_ventana(
         repositorio_temporal(directorio.ruta()),
     );
     let manejador = tokio::spawn(async move {
-        motor.ejecutar().await;
+        motor.ejecutar(SenalDeApagado::nunca()).await;
     });
     tokio::time::sleep(Duration::from_millis(50)).await;
     manejador.abort();

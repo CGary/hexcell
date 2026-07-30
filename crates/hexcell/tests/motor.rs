@@ -15,6 +15,7 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
 use comun::{DirectorioTemporal, repositorio_temporal};
+use hexcell::apagado::SenalDeApagado;
 use hexcell::motor::Motor;
 use hexcell::procesador::ProcesadorDeEco;
 use hexcell_canal_simulado::{AdaptadorSimulado, ErrorDelAdaptadorSimulado, Reloj, RelojDePrueba};
@@ -64,7 +65,7 @@ impl ChannelAdapter for AdaptadorQueDelegaEnArc {
 async fn drenar_y_cancelar(motor: Motor<AdaptadorQueDelegaEnArc, ProcesadorDeEco>) {
     let mut motor = motor;
     let manejador = tokio::spawn(async move {
-        motor.ejecutar().await;
+        motor.ejecutar(SenalDeApagado::nunca()).await;
     });
     tokio::time::sleep(Duration::from_millis(50)).await;
     manejador.abort();
