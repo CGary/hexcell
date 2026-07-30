@@ -1,0 +1,211 @@
+task_id: HEX-006
+summary: "Pools SQLite duales, esquema y migraciones de sessions.db, y persistencia de dedup
+  e historial de conversación. Tareas 7 y 8 de A-2."
+goal: >
+  Convertir en código Rust las tareas 7 y 8 de la etapa A-2 (docs/plan/fase-a-2-nucleo-
+  persistencia.md), la tercera de las cinco tareas HEX-004..HEX-008 en que se partió esa
+  etapa el 2026-07-28, sobre lo que HEX-005 dejó en main: el trait ChannelAdapter, el
+  adaptador simulado, el motor mpsc de crates/hexcell, los tests de contrato del puerto, la
+  política ante FueraDeVentana, el identificador interno de conversación opaco, y los dos
+  módulos transitorios en memoria crates/hexcell/src/deduplicacion.rs y
+  crates/hexcell/src/conversaciones.rs. Esta tarea añade tres piezas. Primero, un gestor de
+  pools SQLite duales: un pool de lectura/escritura para sessions.db y un pool de solo
+  lectura para knowledge_live.db, ambas bases en modo WAL, con busy_timeout y synchronous
+  configurados y justificados por escrito frente al perfil de hardware modesto del proyecto
+  (i7 de diez años, 8 GB RAM, escritura caliente concurrente con lecturas), más una
+  comprobación de vitalidad de cada pool. Segundo, el esquema y las migraciones versionadas de
+  sessions.db (contactos, conversaciones, mensajes, marcas temporales e índices), con el
+  identificador interno de conversación como clave y sin ninguna columna que almacene
+  identificadores de transporte crudos. Tercero, la persistencia de lo que HEX-005 dejó en
+  memoria: el registro de deduplicación y el historial de conversación se respaldan en
+  sessions.db, de modo que ambos sobreviven un reinicio del proceso, sin cambiar la semántica
+  ya fijada por HEX-005 (poda de dedup contra la marca temporal máxima recibida, nunca contra
+  el reloj del sistema; ventana por defecto de 1 h configurable vía
+  HEXCELL_VENTANA_DEDUPLICACION_SEGUNDOS). La comprobación de vitalidad de ambos pools se
+  conecta a GET /health/ready junto con el estado de sesión que ya expone el trait
+  ChannelAdapter (el adaptador simulado lo reporta siempre activo en esta etapa).
+invariants:
+  - Todo el contenido del repositorio se escribe en español, incluidos los comentarios de
+    código y los mensajes de commit (conventional commits, sin Co-Authored-By ni ninguna
+    atribución de IA). Los identificadores de Rust (tipos, funciones, crates) se mantienen en
+    inglés idiomático donde ya lo están; esto no es una violación de la regla de idioma, que
+    gobierna la prosa, no los identificadores del lenguaje.
+  - "El núcleo nunca conoce el transporte de WhatsApp: sessions.db no almacena identificadores
+    de transporte crudos bajo ninguna forma ni columna. El adaptador simulado imita la
+    semántica restrictiva de la Meta Cloud API; esta tarea no toca el adaptador ni el trait
+    ChannelAdapter, solo persiste lo que el motor ya produce."
+  - "El identificador interno de conversación es opaco: el esquema de sessions.db lo usa como
+    clave (probablemente como texto o blob, decisión del blueprint), pero ninguna migración ni
+    consulta lo construye a partir de un dato de transporte, lo interpreta ni lo invierte."
+  - "hexcell-core permanece libre de tokio y de cualquier dependencia de infraestructura,
+    incluida cualquier crate de SQLite o de pool de conexiones: toda esa dependencia va al
+    crate binario crates/hexcell, tal como ya establece el repositorio para el resto de
+    infraestructura (servidor HTTP, motor mpsc)."
+  - No se versiona ningún *.db, *.db-wal, *.db-shm ni .env*; ningún secreto ni API key llega
+    al repositorio, ni siquiera como valor de ejemplo en la documentación.
+  - Todas las fechas escritas en los documentos son absolutas (2026-07-30), nunca relativas.
+  - "Ningún documento ni comentario puede afirmar que la Fase B sustituye, reemplaza o cierra
+    la Fase A, ni que el sidecar se retira: el canal propio es el canal por defecto y
+    permanente."
+  - La prosa en Markdown y en comentarios largos mantiene un ancho aproximado de 100
+    columnas, consistente con el resto del repositorio.
+  - "La semántica de deduplicación y de historial de conversación que fijó HEX-005 no cambia
+    en esta tarea: solo se le añade una capa de persistencia. La poda de dedup sigue basada en
+    la marca temporal máxima recibida, nunca en el reloj del sistema, y la ventana por defecto
+    de 1 h configurable vía HEXCELL_VENTANA_DEDUPLICACION_SEGUNDOS se mantiene sin
+    modificación de su valor por defecto ni de su mecanismo de configuración."
+non_goals:
+  - "knowledge_staging.db, épocas inmutables (knowledge_epoch_N.db) y la conmutación atómica
+    por symlink + ArcSwap + Graceful Drain. Fuera de alcance de A-2; llegan en etapas
+    posteriores de construcción de conocimiento."
+  - "La interfaz del proveedor de inferencia LLM, real o simulada, y su contabilidad financiera
+    en dos fases. Fuera de alcance, tarea 11 del plan, HEX-007."
+  - Apagado ordenado por SIGTERM, drenaje de tareas en vuelo y checkpoint de SQLite al cierre.
+    Fuera de alcance, tarea 12 del plan, HEX-007.
+  - Logs estructurados con identificador de célula, de evento y latencia. Fuera de alcance,
+    tarea 15 del plan, HEX-007.
+  - "Respaldo y restauración de las cuatro bases (sessions.db, knowledge_live.db, el almacén de
+    identidad del adaptador y el sqlstore del sidecar) y el runbook de bifurcación
+    device_removed. Fuera de alcance, tareas 13 y 14 del plan, HEX-008. Esta tarea deja las
+    bases en disco, listas para que HEX-008 las respalde, pero no implementa VACUUM INTO ni
+    ningún mecanismo de copia."
+  - Pruebas de integración de extremo a extremo que cubran apagado bajo carga o ciclo completo
+    de respaldo y restauración. Fuera de alcance, tarea 16 del plan, HEX-008.
+  - Cualquier canal real (whatsmeow, Cloud API) o cambio en sidecar/. No forma parte de esta
+    partición de A-2.
+  - Cualquier lógica de negocio en el procesador de mensajes más allá del eco mínimo ya
+    existente.
+  - Actualizar docs/STATUS.md marcando la etapa A-2 como cerrada. La etapa se cierra con
+    HEX-008; esta tarea no reabre ninguna decisión ya registrada como Definida.
+  - "Elegir el crate concreto de SQLite y de pool de conexiones para crates/hexcell (p. ej.
+    rusqlite+r2d2, sqlx, o deadpool-sqlite). Esta tarea deja esa elección como decisión abierta
+    para el blueprint, con la única restricción de que la dependencia no toque hexcell-core."
+constraints:
+  - "El gestor de pools duales vive en crates/hexcell (o un módulo/crate de infraestructura que
+    este último consuma), nunca en hexcell-core. hexcell-core no gana ninguna dependencia
+    nueva por esta tarea."
+  - "Ambas bases (sessions.db, knowledge_live.db) se abren en modo WAL. Los valores de
+    busy_timeout y de synchronous quedan documentados en el código con su justificación
+    técnica explícita frente al perfil de hardware del proyecto (i7 de diez años, 8 GB RAM,
+    escritura caliente concurrente con lecturas); no se dejan como valores por defecto sin
+    comentar. knowledge_live.db se abre en modo solo lectura en producción; esta tarea no
+    implementa su llenado real (llega con Shadow DB en etapas posteriores), solo su esquema
+    mínimo y su pool de lectura."
+  - "El esquema de sessions.db cubre como mínimo contactos, conversaciones, mensajes y marcas
+    temporales, con los índices necesarios para las consultas que ya ejercitan
+    deduplicacion.rs y conversaciones.rs, y usa el identificador interno de conversación como
+    clave sin derivarlo de ningún dato de transporte."
+  - "Las migraciones de sessions.db son versionadas y reproducibles (herramienta de migración a
+    elección del blueprint), aplicables desde una base vacía y re-ejecutables sin error sobre
+    una base ya migrada."
+  - "El registro de deduplicación de crates/hexcell/src/deduplicacion.rs y el historial de
+    conversación de crates/hexcell/src/conversaciones.rs dejan de ser exclusivamente en
+    memoria: sus escrituras se reflejan en sessions.db de forma que, tras detener el proceso y
+    volver a arrancarlo contra la misma base, el estado de dedup y el historial de
+    conversación previos siguen disponibles. La interfaz pública de ambos módulos hacia el
+    motor no tiene por qué cambiar de forma incompatible; el blueprint decide si se persiste
+    de forma síncrona o con una capa de repositorio detrás del mismo tipo."
+  - "GET /health/ready responde 200 solo cuando el pool de sessions.db, el pool de
+    knowledge_live.db y el estado de sesión reportado por el ChannelAdapter (ya expuesto por
+    el trait desde HEX-002/HEX-004) están todos en condición sana; si cualquiera de los tres
+    falla, responde con error. El adaptador simulado de esta etapa reporta sesión siempre
+    activa, así que el criterio se ejercita en tests forzando la caída de cada pool por
+    separado, no forzando una sesión caída."
+  - Todo lo que HEX-001 a HEX-005 ya dejaron en main (workspace de cinco crates, el trait
+    ChannelAdapter y sus tipos canónicos, el adaptador simulado, el motor mpsc, la política
+    ante FueraDeVentana, el identificador opaco de conversación, la deduplicación en memoria,
+    los tests de contrato del puerto, configuración, salud HTTP) no se recrea ni se reescribe;
+    esta tarea solo añade persistencia sobre lo que ya existe.
+  - "Ningún test de esta tarea depende de una base de datos compartida entre ejecuciones: los
+    tests de integración que verifican persistencia usan bases temporales (archivo o
+    directorio temporal por test), nunca sessions.db ni knowledge_live.db reales del
+    repositorio ni rutas fijas compartidas."
+acceptance:
+  - id: AC-1
+    statement: Existe un gestor de pools SQLite duales para sessions.db y knowledge_live.db.
+    given: el crate binario crates/hexcell tras esta tarea
+    when: se inspecciona su código de arranque
+    then: expone dos pools de conexión independientes, uno de lectura/escritura para
+      sessions.db y otro de solo lectura para knowledge_live.db, ambos en modo WAL
+  - id: AC-2
+    statement: Los parámetros de busy_timeout y synchronous están fijados y justificados.
+    given: la configuración de apertura de ambos pools
+    when: se inspecciona el código
+    then: busy_timeout y synchronous tienen valores explícitos acompañados de un comentario
+      que justifica la elección frente al perfil de hardware del proyecto
+  - id: AC-3
+    statement: Existe el esquema y las migraciones versionadas de sessions.db.
+    given: un directorio de migraciones para sessions.db
+    when: se aplican contra una base vacía
+    then: quedan creadas las tablas de contactos, conversaciones, mensajes y marcas temporales
+      con sus índices, usando el identificador interno de conversación como clave
+  - id: AC-4
+    statement: sessions.db no contiene ninguna columna de identificador de transporte crudo.
+    given: el esquema resultante de las migraciones
+    when: se inspecciona cada tabla y columna
+    then: ninguna almacena un identificador de transporte crudo del canal (p. ej. JID o número
+      de teléfono en claro); el único identificador de conversación es el interno y opaco
+  - id: AC-5
+    statement: Las migraciones son reproducibles.
+    given: una base sessions.db ya migrada
+    when: se vuelve a ejecutar el proceso de migración contra esa misma base
+    then: termina sin error y sin duplicar ni corromper el esquema existente
+  - id: AC-6
+    statement: Un evento procesado queda registrado en sessions.db.
+    given: el motor de mensajería conectado a una sessions.db temporal migrada, y un evento
+      canónico inyectado por el adaptador simulado
+    when: el motor lo procesa y responde por send
+    then: una inspección de sessions.db encuentra el mensaje y la conversación registrados
+      bajo el identificador interno correcto
+  - id: AC-7
+    statement: La deduplicación sobrevive a un reinicio del proceso.
+    given: un evento ya procesado y su identificador de deduplicación persistido en
+      sessions.db, seguido de la detención completa del proceso
+    when: el proceso se levanta de nuevo contra la misma sessions.db y recibe el mismo
+      identificador de deduplicación dentro de la ventana de retención
+    then: el motor lo descarta como duplicado sin volver a despachar al procesador, igual que
+      si el proceso no se hubiera reiniciado
+  - id: AC-8
+    statement: El historial de conversación sobrevive a un reinicio del proceso.
+    given: una conversación con mensajes previos persistidos en sessions.db, seguida de la
+      detención completa del proceso
+    when: el proceso se levanta de nuevo contra la misma sessions.db y el mismo contacto envía
+      un nuevo evento
+    then: el motor lo asigna al mismo identificador interno de conversación con el historial
+      previo disponible, sin que el reinicio lo haya perdido
+  - id: AC-9
+    statement: La semántica de poda de deduplicación no cambia respecto a HEX-005.
+    given: el código de deduplicacion.rs tras esta tarea
+    when: se inspecciona su lógica de poda de la ventana de retención
+    then: sigue basada en la marca temporal máxima recibida, nunca en el reloj del sistema, y
+      la variable HEXCELL_VENTANA_DEDUPLICACION_SEGUNDOS sigue controlando la ventana con el
+      mismo valor por defecto de 1 h
+  - id: AC-10
+    statement: GET /health/ready refleja la vitalidad de ambos pools y el estado de sesión del
+      puerto.
+    given: el servidor HTTP interno en marcha con ambos pools sanos y el adaptador simulado
+      reportando sesión activa
+    when: se consulta GET /health/ready y luego se fuerza la caída de cada pool por separado
+      (archivo de base retirado o pool cerrado)
+    then: responde 200 OK en el primer caso, y responde con error cuando cualquiera de los dos
+      pools deja de estar operativo
+  - id: AC-11
+    statement: El workspace compila, formatea y lintea limpio con la persistencia añadida.
+    given: el repositorio en el commit de esta tarea
+    when: se ejecutan "cargo fmt --check", "cargo clippy --workspace -- -D warnings" y
+      "cargo test --workspace"
+    then: los tres terminan sin errores ni hallazgos
+  - id: AC-12
+    statement: hexcell-core sigue sin dependencias de infraestructura.
+    given: crates/hexcell-core/Cargo.toml tras esta tarea
+    when: se inspecciona su sección [dependencies]
+    then: no contiene tokio, ningún crate HTTP, ni ningún crate de SQLite o de pool de
+      conexiones
+  - id: AC-13
+    statement: El diff respeta la frontera de HEX-007..HEX-008.
+    given: el diff completo introducido por esta tarea
+    when: se inspecciona
+    then: no contiene la interfaz del proveedor de inferencia, manejo de SIGTERM, logs
+      estructurados, VACUUM INTO ni ningún mecanismo de respaldo o restauración, ni cambios en
+      docs/STATUS.md que marquen la etapa A-2 como cerrada
+risk: medium

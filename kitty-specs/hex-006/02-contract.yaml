@@ -1,0 +1,478 @@
+task_id: HEX-006
+summary: 'A-2 tasks 7 and 8: dual SQLite pools in hexcell-storage on rusqlite 0.39, sessions.db schema
+    and user_version migrations, dedup and history persisted, real /health/ready.'
+goal: |
+    Turn A-2 plan tasks 7 and 8 into Rust code on top of what HEX-005 left on main. Three pieces land.
+    First, a DUAL SQLITE POOL MANAGER in crates/hexcell-storage - the crate adr-0002 reserved for
+    persistence and the one the A-2 plan names for exactly this - holding one read/write pool for
+    sessions.db and one read-only pool for knowledge_live.db, both in WAL, every connection setting
+    busy_timeout, synchronous and foreign_keys explicitly with its justification written at the point
+    of the call, plus a per-pool vitality probe. The driver is rusqlite 0.39 with the bundled feature
+    and NOTHING else: r2d2 is rejected because it would run a background reaper thread over a writer
+    pool whose maximum useful size is one, sqlx is rejected for its dependency tree, and both
+    rejections are the same argument this repository already applied to axum and tiny-http. The crate
+    stays synchronous and tokio-free; whoever owns the runtime decides how to schedule blocking work.
+    Second, the SCHEMA AND VERSIONED MIGRATIONS of sessions.db - contactos, conversaciones, mensajes,
+    parametros_de_plantilla, deduplicacion and estado_del_motor, STRICT, with their indexes, keyed by
+    the internal opaque conversation identifier and with NO column holding a raw transport identifier -
+    driven by PRAGMA user_version inside the same transaction that changes the schema, so re-running is
+    a no-op and no migration crate is needed. Third, PERSISTENCE OF WHAT HEX-005 LEFT IN MEMORY:
+    sessions.db becomes the single source of truth for the deduplication registry and the conversation
+    history, so both survive a process restart, with the semantics HEX-005 fixed unchanged - pruning
+    against the maximum received timestamp, never a system clock, and the one-hour default still driven
+    by HEXCELL_VENTANA_DEDUPLICACION_SEGUNDOS. Finally GET /health/ready stops being a placeholder and
+    becomes the conjunction of both pool vitalities and the channel session state, the last supplied at
+    composition time because - contrary to what 00-spec.yaml assumes - ChannelAdapter exposes no such
+    method and this task does not reopen hexcell-core to add one. One ADR is written, and its number is
+    0003, not 0017. No SIGTERM, no LLM provider, no structured logging, no backup or restore, no epochs,
+    no real channel, and hexcell-core is not touched at all.
+read:
+    - .ai/tasks/active/HEX-006-new-spec/00-spec.yaml
+    - .ai/tasks/active/HEX-006-new-spec/01-blueprint.yaml
+    - crates/hexcell-core/src/canal.rs
+    - crates/hexcell-core/src/identidad.rs
+    - crates/hexcell-core/src/lib.rs
+    - crates/hexcell-core/Cargo.toml
+    - crates/hexcell-canal-simulado/src/adaptador.rs
+    - crates/hexcell-canal-simulado/src/reloj.rs
+    - crates/hexcell-canal-simulado/src/lib.rs
+    - crates/hexcell/src/motor.rs
+    - crates/hexcell/src/deduplicacion.rs
+    - crates/hexcell/src/conversaciones.rs
+    - crates/hexcell/src/procesador.rs
+    - crates/hexcell/src/configuracion.rs
+    - crates/hexcell/src/salud.rs
+    - crates/hexcell/src/main.rs
+    - crates/hexcell/src/lib.rs
+    - crates/hexcell/tests/motor.rs
+    - crates/hexcell/tests/salud_http.rs
+    - crates/hexcell/tests/configuracion.rs
+    - crates/hexcell/tests/deduplicacion.rs
+    - crates/hexcell/tests/continuidad_de_hilo.rs
+    - crates/hexcell/tests/politica_fuera_de_ventana.rs
+    - crates/hexcell-storage/src/lib.rs
+    - crates/hexcell-storage/Cargo.toml
+    - Cargo.toml
+    - crates/hexcell/Cargo.toml
+    - rust-toolchain.toml
+    - rustfmt.toml
+    - clippy.toml
+    - .gitignore
+    - .github/workflows/ci.yml
+    - docs/PRD.md
+    - docs/plan/fase-a-2-nucleo-persistencia.md
+    - docs/adr/README.md
+    - docs/adr/adr-0002-estructura-workspace.md
+    - docs/adr/adr-0010-puerto-de-canal.md
+    - docs/adr/adr-0016-convencion-de-entrega-de-eventos.md
+    - docs/STATUS.md
+    - CLAUDE.md
+    - CONTRIBUTING.md
+touch:
+    - Cargo.toml
+    - Cargo.lock
+    - crates/hexcell-storage/Cargo.toml
+    - crates/hexcell-storage/src/lib.rs
+    - crates/hexcell-storage/src/error.rs
+    - crates/hexcell-storage/src/tiempo.rs
+    - crates/hexcell-storage/src/pools.rs
+    - crates/hexcell-storage/src/migraciones.rs
+    - crates/hexcell-storage/src/sesiones.rs
+    - crates/hexcell-storage/src/*.rs
+    - crates/hexcell-storage/migraciones/sesiones/0001-esquema-inicial.sql
+    - crates/hexcell-storage/migraciones/conocimiento/0001-esquema-minimo.sql
+    - crates/hexcell-storage/migraciones/**
+    - crates/hexcell-storage/tests/comun/mod.rs
+    - crates/hexcell-storage/tests/migraciones.rs
+    - crates/hexcell-storage/tests/pools.rs
+    - crates/hexcell-storage/tests/repositorio_de_sesiones.rs
+    - crates/hexcell-storage/tests/*.rs
+    - crates/hexcell/Cargo.toml
+    - crates/hexcell/src/lib.rs
+    - crates/hexcell/src/main.rs
+    - crates/hexcell/src/configuracion.rs
+    - crates/hexcell/src/preparacion.rs
+    - crates/hexcell/src/salud.rs
+    - crates/hexcell/src/motor.rs
+    - crates/hexcell/src/deduplicacion.rs
+    - crates/hexcell/src/conversaciones.rs
+    - crates/hexcell/tests/comun/mod.rs
+    - crates/hexcell/tests/persistencia.rs
+    - crates/hexcell/tests/preparacion.rs
+    - crates/hexcell/tests/salud_http.rs
+    - crates/hexcell/tests/motor.rs
+    - crates/hexcell/tests/continuidad_de_hilo.rs
+    - crates/hexcell/tests/deduplicacion.rs
+    - crates/hexcell/tests/politica_fuera_de_ventana.rs
+    - crates/hexcell/tests/configuracion.rs
+    - crates/hexcell/tests/*.rs
+    - docs/adr/adr-0003-persistencia-dual.md
+    - docs/adr/README.md
+    - docs/STATUS.md
+forbid:
+    files:
+        - crates/hexcell-core/*
+        - crates/hexcell-core/**
+        - crates/hexcell/src/procesador.rs
+        - crates/hexcell-canal-simulado/*
+        - crates/hexcell-canal-simulado/**
+        - crates/hexcell-canal-contrato/*
+        - crates/hexcell-canal-contrato/**
+        - crates/hexcell-admin/Cargo.toml
+        - crates/hexcell-admin/src/main.rs
+        - crates/hexcell-meta/Cargo.toml
+        - crates/hexcell-meta/src/lib.rs
+        - docs/adr/adr-0001-licencia.md
+        - docs/adr/adr-0002-estructura-workspace.md
+        - docs/adr/adr-0008-estrategia-canal-dos-fases.md
+        - docs/adr/adr-0009-whatsmeow-adaptador-fase-a.md
+        - docs/adr/adr-0010-puerto-de-canal.md
+        - docs/adr/adr-0014-canal-propio-permanente.md
+        - docs/adr/adr-0015-politica-de-convivencia-con-el-baneo.md
+        - docs/adr/adr-0016-convencion-de-entrega-de-eventos.md
+        - docs/PRD.md
+        - docs/bitacora-de-descartes.md
+        - docs/plan/*
+        - docs/plan/**
+        - docs/cotejo-puerto-de-canal-cloud-api.md
+        - README.md
+        - CLAUDE.md
+        - CONTRIBUTING.md
+        - LICENSE
+        - rust-toolchain.toml
+        - rustfmt.toml
+        - clippy.toml
+        - .gitignore
+        - .github/*
+        - .github/**
+        - sidecar/*
+        - sidecar/**
+        - Dockerfile*
+        - docker-compose*
+        - migrations/*
+        - migrations/**
+    behaviors:
+        - 'Do not add, remove, rename or edit anything under crates/hexcell-core. That crate has an
+          empty [dependencies] table and it is AC-12, not a style preference: no SQLite crate, no pool
+          crate, no tokio, no HTTP crate. In particular do NOT add an estado_sesion, sesion_activa,
+          esta_conectado or similarly named method to ChannelAdapter or to CicloDeVidaSesion, and do NOT
+          implement CicloDeVidaSesion for anything. See the next item for why the temptation exists.'
+        - 'Do not believe 00-spec.yaml when it says the channel session state is "ya expuesto por el
+          trait ChannelAdapter". It is not, and this was verified against the tree on 2026-07-30:
+          ChannelAdapter declares send and estado_ventana and nothing else; CicloDeVidaSesion declares
+          only iniciar_emparejamiento and cerrar_sesion and is implemented by no type in the workspace.
+          The spec belongs to the human and is not rewritten; the mismatch is recorded as RISK-1 in
+          01-blueprint.yaml. Readiness therefore takes the session state as a THIRD INPUT declared in
+          crates/hexcell and supplied at composition time, not read from the port. Do NOT reopen the
+          trait to invent the missing method, and do NOT substitute estado_ventana for it: that call
+          answers whether ONE CONVERSATION is inside its 24 h service window, so wiring it into
+          readiness would make a cell report itself unhealthy because a customer went quiet for a day.'
+        - 'Do not resolve the readiness session term by faking it away. The pure combinator must take
+          three arguments and must return not-ready when the session term is down, and a unit test must
+          exercise that combination even though no adapter in this stage can produce it. A term that no
+          test can ever falsify is decoration, and AC-10 asks for a conjunction, not for two thirds of
+          one.'
+        - 'Do not let cargo pick the latest rusqlite. Pin rusqlite = "0.39" with the bundled feature in
+          [workspace.dependencies] and say why in the comment. Verified on 2026-07-30: rusqlite 0.40.1
+          pulls libsqlite3-sys 0.38.1, whose build script uses the still-unstable cfg_select! and fails
+          with E0658 on the 1.92.0 toolchain that rust-toolchain.toml pins; rusqlite 0.39 pulls
+          libsqlite3-sys 0.37.0 and builds clean. Without the written reason, the next cargo update
+          reintroduces a build failure whose cause is three crates away from anything in this diff.'
+        - 'Do not add r2d2, r2d2_sqlite, deadpool-sqlite, sqlx, diesel, sea-orm, refinery,
+          rusqlite_migration, tempfile, serde, serde_json, chrono, time, rand, anyhow, thiserror,
+          tracing, log or env_logger to any manifest. r2d2 would run a background scheduled-thread-pool
+          reaping idle connections in a writer pool whose maximum useful size is one, because SQLite
+          serialises writers by design - the same argument crates/hexcell/Cargo.toml already made
+          against axum and tiny-http. The migration crates would add a version table that duplicates
+          what PRAGMA user_version already stores atomically in the file header. tempfile is
+          unnecessary because crates/hexcell/tests/configuracion.rs and salud_http.rs already hand-roll
+          temporary directories from std::env::temp_dir() and std::process::id(), and this task extends
+          that pattern into a shared helper rather than adding a second way to do it.'
+        - 'Do not add tokio, hyper, or any async dependency to crates/hexcell-storage. That crate is a
+          SYNCHRONOUS SQLite layer, and this mirrors the argument already written in
+          crates/hexcell-canal-contrato/Cargo.toml: whoever already has a runtime running is who decides
+          how to schedule blocking work. Do not wrap the repository in spawn_blocking inside the storage
+          crate either; the current_thread trade-off is analysed in RISK-5 of the blueprint and its
+          revisit trigger is HEX-008, not this task.'
+        - 'Do not create a second migrations directory at the repository root. The .sql files live under
+          crates/hexcell-storage/migraciones/ and reach the binary through include_str!, so they are
+          readable as SQL and still travel inside the binary with no runtime file dependency in the A-6
+          image. Do not read them from disk at runtime.'
+        - 'Do not put a raw transport identifier in any column, in any table, in either database, and do
+          not add one in a comment as an example either. No jid, wa_id, waid, telefono, phone, msisdn,
+          numero, e164, remote_jid or chat_id column. The only conversation key is the internal opaque
+          IdConversacion and the only contact key is the internal opaque IdRemitente, both received
+          already translated through the port. AC-4 is checked by a test that walks pragma_table_info
+          over every table AND greps the stored schema text, so a creative synonym does not get past it.'
+        - 'Do not construct, interpret, parse, split, reverse or derive an IdConversacion or an
+          IdRemitente anywhere under crates/hexcell/src/ or crates/hexcell-storage/src/.
+          IdConversacion::nuevo and IdRemitente::nuevo must not appear in either directory. Both crates
+          receive the value through the port and use it as an opaque key; the translation belongs to the
+          adapter (adr-0010).'
+        - 'Do not change the deduplication semantics HEX-005 fixed. Pruning is still measured against
+          the MAXIMUM RECEIVED TIMESTAMP, which now lives in estado_del_motor and is advanced with ON
+          CONFLICT DO UPDATE SET valor = max(valor, excluded.valor) so it stays monotonic across
+          restarts. Do NOT call SystemTime::now() or Instant::now() in crates/hexcell/src/ or in
+          crates/hexcell-storage/src/, and do NOT import Reloj, RelojDePrueba or RelojDelSistema into
+          either directory: production code must not take its clock from the test-double crate.'
+        - 'Do not restate the one-hour window anywhere outside its single declaration
+          VENTANA_DE_RETENCION_DEDUPLICACION_POR_DEFECTO in crates/hexcell/src/deduplicacion.rs, and do
+          not change that default value or its environment variable
+          HEXCELL_VENTANA_DEDUPLICACION_SEGUNDOS. crates/hexcell/src/configuracion.rs keeps IMPORTING
+          the constant and must never write 3600 or an equivalent literal of its own. Do not present the
+          figure as settled: it is still the open product decision recorded as Pendiente in
+          docs/STATUS.md, and that existing entry must not be edited or removed.'
+        - 'Do not keep a second source of truth for deduplication or for history. sessions.db IS the
+          source of truth; do not leave the old HashMap and VecDeque of already-seen identifiers or of
+          history in place as a cache in front of it. Two sources of truth for one set is how a restart
+          silently disagrees with itself. The bounded per-conversation queue of DEFERRED replies is the
+          documented exception and stays in memory, with the reason written in the module doc rather
+          than left implicit.'
+        - 'Do not swallow a persistence failure silently and do not let one kill the cell. On an
+          ErrorDeAlmacen in the deduplication path the event is processed as NEW - fail-open - which is
+          the same residual the plan already accepted for a late redelivery, and is strictly better than
+          going mute for the client business. On the history path the error is reported and the reply
+          still goes out. Write both policies down where they are implemented; an undocumented fail-open
+          reads as a forgotten error case.'
+        - 'Do not call unwrap(), expect(), panic!, unreachable! or todo! in crates/hexcell/src/ or
+          crates/hexcell-storage/src/, and do not add a wildcard arm (_ =>) to the match over
+          ResultadoEnvio in crates/hexcell/src/motor.rs. That match keeps naming all five variants plus
+          Err so a future variant breaks compilation. This matters more than usual because
+          [profile.release] sets panic = "abort": a panic in production leaves no usable message.'
+        - 'Do not hold a std::sync::MutexGuard alive across an .await in crates/hexcell/src/salud.rs or
+          crates/hexcell/src/motor.rs. The health handler stays synchronous and the connection guard is
+          released before the future yields; a guard held across an await stops the future being Send
+          and produces a compiler error far from its cause.'
+        - 'Do not make GET /health/live depend on the pools. It answers 200 as soon as the process is
+          alive, exactly as it does today; only /health/ready gains the three-term conjunction, and only
+          it may answer an error. Do not add any third route.'
+        - 'Do not invent a new environment variable for the database paths, for the pool sizes, for
+          busy_timeout or for synchronous. The two paths are derived from the already-validated
+          Configuracion::ruta_datos as sessions.db and knowledge_live.db; the rest are named Rust
+          constants with their justification at the declaration. A settable knob outlives the reason it
+          existed, and the spec asks for none.'
+        - 'Do not break what HEX-004 closed in crates/hexcell/src/configuracion.rs: no unwrap(), no
+          expect(), no panic, every existing variable still parsed and validated, the 127.0.0.1 loopback
+          default preserved and never 0.0.0.0, and the failure path still terminating before anything is
+          bound. Opening and migrating both databases happens BEFORE the health listener is bound, and a
+          failure there exits through stderr plus ExitCode::FAILURE, never through a panic.'
+        - 'Do not leave the literal 8081, or any other fixed port, as the basis of an assertion in
+          crates/hexcell/tests/. Free ports are obtained by binding 127.0.0.1:0. Do not reach any
+          network from any test beyond loopback sockets the test itself binds, and do not make a
+          temporal assertion pass by sleeping.'
+        - 'Do not let any test touch a shared or fixed database path. Every test that needs a database
+          creates its own temporary directory, and a restart test must actually DROP the first engine
+          and its pools before opening the second: a restart test that keeps the first connection alive
+          proves nothing about persistence and will pass over a broken implementation.'
+        - 'Do not create adr-0017 and do not renumber, reorder, retitle or edit any existing ADR. The
+          number for this decision is 0003. docs/adr/README.md, which the repository declares to be the
+          source of truth for numbering, ALREADY reserves adr-0003-persistencia-dual.md for "Persistencia
+          dual SQLite (sessions.db + knowledge_live.db) y parametros de SQLite elegidos" at stage A-2 and
+          marks it "Tomada en el PRD, por formalizar"; independently, the risk table of
+          docs/plan/fase-a-2-nucleo-persistencia.md says the SQLite parameters are documented "en
+          adr-0003" by name. Writing 0017 instead would orphan 0003 on the same subject. Only its status
+          cell in the README table changes; every other row stays byte-identical.'
+        - 'Do not state a SQLite parameter without its trade. WAL, busy_timeout = 5000 ms, synchronous =
+          NORMAL, foreign_keys = ON and both pool sizes each carry a written justification against the
+          project hardware profile (ten-year-old i7, 8 GB RAM, hot writes concurrent with reads), and the
+          synchronous = NORMAL entry must state what is actually risked: a power cut or OS crash can lose
+          transactions committed since the last checkpoint, while a process crash cannot. "Copiar ajustes
+          de SQLite sin entenderlos" is a named risk in the A-2 plan and this is the mitigation it asks
+          for.'
+        - 'Do not implement the vitality probe as a query alone. Verified on 2026-07-30: on Linux,
+          deleting the database file does NOT disturb an already-open SQLite connection, so a
+          query-only probe keeps answering 200 OK after the file AC-10 asks the test to remove. The
+          probe checks that the file still exists at its path AND that a cheap query succeeds.'
+        - 'Do not implement VACUUM INTO, any backup, any restore, any checkpoint-on-shutdown, any SIGTERM
+          or signal handling, any in-flight drain, any LLM provider interface real or simulated, any
+          structured logging crate, any knowledge_staging.db, any epoch file, any ArcSwap and any symlink
+          switching. Those are HEX-007, HEX-008 and stage A-5, and AC-13 treats the diff as a tripwire
+          for them.'
+        - 'Do not design the content schema of knowledge_live.db. This task creates the file with one
+          minimal metadata table only so the read-only pool has something to open and probe - opening a
+          nonexistent file with SQLITE_OPEN_READ_ONLY fails - and its real schema belongs to A-5. Do not
+          add documents, chunks, embeddings or vector tables.'
+        - 'Do not add product logic to the message processor beyond the existing echo, and do not edit
+          crates/hexcell/src/procesador.rs at all.'
+        - 'Do not enable tokio rt-multi-thread or change the runtime flavor away from current_thread.
+          One cell serves low traffic and a per-cell worker pool is the wrong trade on the target
+          hardware (NFR-01).'
+        - 'Do not change [workspace.package] or [profile.release] in the root Cargo.toml, and do not add
+          or remove workspace members. The only permitted change there is the new entry in
+          [workspace.dependencies] with its justification comment, because that table is the single
+          whole-tree view of the external dependency set.'
+        - 'Do not hand-write, hand-edit or prune Cargo.lock. Let cargo regenerate it and commit it
+          verbatim. Its path matches sensitive_path_match in complexity-score, so the calculated risk
+          will read higher than the medium that 00-spec declares; that divergence is expected, is
+          recorded as RISK-10 in the blueprint, and is not corrected by touching the lock file.'
+        - 'Do not write anything in docs/STATUS.md that marks etapa A-2 as closed, finished, cerrada,
+          completada or terminada, and do not rewrite or delete any existing bullet, Definido or
+          Pendiente. Add only new entries dated 2026-07-30 and attributed to HEX-006. AC-13 treats this
+          file as a tripwire and the stage closes with HEX-008.'
+        - 'Do not state or imply anywhere that Fase B replaces, substitutes or closes Fase A, or that
+          the sidecar is retired or transitional. The own channel is the default and permanent channel
+          and the sidecar is its permanent cost.'
+        - 'Do not write repository prose, doc comments, error messages or commit messages in English.
+          Rust identifiers, crate names, SQL keywords and existing English identifiers stay as they are;
+          the language rule governs prose, not identifiers. Markdown prose and long comments keep the
+          repository''s ~100 column width. Every date written is absolute (2026-07-30), never relative.'
+        - 'Do not add Co-Authored-By or any AI-attribution trailer to any commit message. Conventional
+          commits in Spanish only.'
+        - 'Do not commit any *.db, *.db-wal, *.db-shm or .env* file - .gitignore already covers them and
+          must not be edited - and do not hardcode any secret, token, API key or credential in source,
+          manifests, migrations or test fixtures, not even as an example value in documentation.'
+verify:
+    commands:
+        - cargo fmt --check
+        - cargo clippy --workspace --all-targets -- -D warnings
+        - cargo test --workspace
+        - grep -qE '^[[:space:]]*rusqlite[[:space:]]*=' Cargo.toml
+        - grep -qE 'rusqlite.*0\.39' Cargo.toml
+        - '! grep -qE ''rusqlite.*"0\.4[0-9]'' Cargo.toml'
+        - grep -q 'bundled' Cargo.toml
+        - grep -A1 'name = "libsqlite3-sys"' Cargo.lock | grep -qE 'version = "0\.37'
+        - '! grep -qE ''^[[:space:]]*(r2d2|r2d2_sqlite|deadpool-sqlite|sqlx|diesel|sea-orm|refinery|rusqlite_migration|tempfile|serde|serde_json|chrono|rand|anyhow|thiserror|tracing|log|env_logger)[[:space:]]*='' Cargo.toml'
+        - grep -qE '^\[workspace\.package\]' Cargo.toml
+        - grep -qE '^\[profile\.release\]' Cargo.toml
+        - grep -q 'hexcell-storage' Cargo.toml
+        - grep -qE '^[[:space:]]*rusqlite[[:space:]]*=' crates/hexcell-storage/Cargo.toml
+        - grep -qE '^[[:space:]]*hexcell-core[[:space:]]*=' crates/hexcell-storage/Cargo.toml
+        - '! grep -qE ''^[[:space:]]*(tokio|hyper|hyper-util|http-body-util|bytes|axum|r2d2|r2d2_sqlite|deadpool-sqlite|sqlx|refinery|rusqlite_migration|serde|serde_json|chrono|rand|anyhow|thiserror|tracing|log)[[:space:]]*='' crates/hexcell-storage/Cargo.toml'
+        - '! grep -qE ''^[[:space:]]*(r2d2|r2d2_sqlite|deadpool-sqlite|sqlx|refinery|rusqlite_migration|tempfile|serde|serde_json|chrono|rand|anyhow|thiserror|tracing|log|env_logger)[[:space:]]*='' crates/hexcell/Cargo.toml'
+        - grep -qE '^[[:space:]]*hexcell-storage[[:space:]]*=' crates/hexcell/Cargo.toml
+        - '! grep -qE ''^[[:space:]]*(tokio|hyper|hyper-util|http-body-util|bytes|axum|rusqlite|sqlx|r2d2|hexcell-storage|hexcell-canal-simulado|hexcell-canal-contrato)[[:space:]]*='' crates/hexcell-core/Cargo.toml'
+        - '! grep -rqE ''^[[:space:]]*use [^;]*(rusqlite|sqlx|r2d2)'' crates/hexcell-core/'
+        - test -f crates/hexcell-storage/src/pools.rs
+        - test -f crates/hexcell-storage/src/migraciones.rs
+        - test -f crates/hexcell-storage/src/sesiones.rs
+        - test -d crates/hexcell-storage/migraciones
+        - '! test -d migrations'
+        - test -f crates/hexcell-storage/migraciones/sesiones/0001-esquema-inicial.sql
+        - test -f crates/hexcell-storage/migraciones/conocimiento/0001-esquema-minimo.sql
+        - grep -rq 'include_str!' crates/hexcell-storage/src/
+        - grep -rq 'user_version' crates/hexcell-storage/src/
+        - grep -rqi 'CREATE TABLE contactos' crates/hexcell-storage/migraciones/
+        - grep -rqi 'CREATE TABLE conversaciones' crates/hexcell-storage/migraciones/
+        - grep -rqi 'CREATE TABLE mensajes' crates/hexcell-storage/migraciones/
+        - grep -rqi 'CREATE TABLE deduplicacion' crates/hexcell-storage/migraciones/
+        - grep -rqi 'CREATE INDEX' crates/hexcell-storage/migraciones/
+        - grep -rq 'id_conversacion' crates/hexcell-storage/migraciones/
+        - grep -rq 'id_remitente' crates/hexcell-storage/migraciones/
+        - '! grep -rqiE ''wa_id|waid|\bjid\b|remote_jid|chat_id|telefono|phone|msisdn|e164|numero_de_telefono'' crates/hexcell-storage/migraciones/'
+        - '! grep -rqiE ''embedding|vector|chunk'' crates/hexcell-storage/migraciones/conocimiento/'
+        - grep -rq 'journal_mode' crates/hexcell-storage/src/
+        - grep -rq 'WAL' crates/hexcell-storage/src/
+        - grep -rq 'busy_timeout' crates/hexcell-storage/src/
+        - grep -rq 'synchronous' crates/hexcell-storage/src/
+        - grep -rq 'foreign_keys' crates/hexcell-storage/src/
+        - grep -rq 'SQLITE_OPEN_READ_ONLY' crates/hexcell-storage/src/
+        - grep -rq 'knowledge_live' crates/hexcell-storage/src/ crates/hexcell/src/
+        - grep -rq 'sessions.db' crates/hexcell-storage/src/ crates/hexcell/src/
+        - '! grep -rqE ''\.(unwrap|expect)\('' crates/hexcell-storage/src/'
+        - '! grep -rqE ''panic!|unreachable!|todo!'' crates/hexcell-storage/src/'
+        - '! grep -rqE ''SystemTime::now|Instant::now'' crates/hexcell-storage/src/ crates/hexcell/src/'
+        - '! grep -rqE ''\bReloj\b'' crates/hexcell/src/'
+        - '! grep -rqE ''\bReloj\b'' crates/hexcell-storage/src/'
+        - '! grep -rq ''hexcell_canal_simulado'' crates/hexcell-storage/src/'
+        - '! grep -rq ''IdConversacion::nuevo'' crates/hexcell/src/ crates/hexcell-storage/src/'
+        - '! grep -rq ''IdRemitente::nuevo'' crates/hexcell/src/ crates/hexcell-storage/src/'
+        - '! grep -rqE ''impl(<[^>]*>)? *ChannelAdapter *for'' crates/hexcell/src/ crates/hexcell-storage/src/'
+        - '! grep -rqE ''impl(<[^>]*>)? *CicloDeVidaSesion *for'' crates/'
+        - '! grep -rqi ''VACUUM'' crates/hexcell-storage/migraciones/'
+        - '! grep -rqE ''tokio::signal|signal_hook|libc::SIG'' crates/hexcell/src/ crates/hexcell-storage/src/'
+        - '! grep -rqE ''^[[:space:]]*tokio[[:space:]]*='' crates/hexcell-storage/Cargo.toml'
+        - grep -q 'VENTANA_DE_RETENCION_DEDUPLICACION_POR_DEFECTO' crates/hexcell/src/deduplicacion.rs
+        - grep -q 'VENTANA_DE_RETENCION_DEDUPLICACION_POR_DEFECTO' crates/hexcell/src/configuracion.rs
+        - grep -qE 'Duration::from_secs\(60 \* 60\)' crates/hexcell/src/deduplicacion.rs
+        - '! grep -qE ''3600|60 \* 60'' crates/hexcell/src/configuracion.rs'
+        - grep -q 'HEXCELL_VENTANA_DEDUPLICACION_SEGUNDOS' crates/hexcell/src/configuracion.rs
+        - grep -q 'HEXCELL_CAPACIDAD_COLA' crates/hexcell/src/configuracion.rs
+        - grep -q 'HEXCELL_RUTA_DATOS' crates/hexcell/src/configuracion.rs
+        - grep -q '127.0.0.1' crates/hexcell/src/configuracion.rs
+        - '! grep -qE ''"0\.0\.0\.0'' crates/hexcell/src/configuracion.rs'
+        - '! grep -qE ''\.(unwrap|expect)\('' crates/hexcell/src/configuracion.rs'
+        - '! grep -qE ''\.(unwrap|expect)\('' crates/hexcell/src/motor.rs'
+        - '! grep -qE ''\.(unwrap|expect)\('' crates/hexcell/src/deduplicacion.rs'
+        - '! grep -qE ''\.(unwrap|expect)\('' crates/hexcell/src/conversaciones.rs'
+        - '! grep -qE ''panic!|unreachable!|todo!'' crates/hexcell/src/motor.rs'
+        - grep -q 'ResultadoEnvio::Aceptado' crates/hexcell/src/motor.rs
+        - grep -q 'ResultadoEnvio::FueraDeVentana' crates/hexcell/src/motor.rs
+        - grep -q 'ResultadoEnvio::PlantillaRequerida' crates/hexcell/src/motor.rs
+        - grep -q 'ResultadoEnvio::LimiteDeTasa' crates/hexcell/src/motor.rs
+        - grep -q 'ResultadoEnvio::DestinatarioInvalido' crates/hexcell/src/motor.rs
+        - '! grep -rqiE ''whatsmeow|wa_id|\bJID\b|Cloud API|Graph API'' crates/hexcell/src/motor.rs crates/hexcell/src/deduplicacion.rs crates/hexcell/src/conversaciones.rs'
+        - test -f crates/hexcell/src/salud.rs
+        - grep -q '/health/ready' crates/hexcell/src/salud.rs
+        - grep -q '/health/live' crates/hexcell/src/salud.rs
+        - '! grep -q ''no comprueba nada'' crates/hexcell/src/salud.rs'
+        - '! grep -q ''esqueleto'' crates/hexcell/src/salud.rs'
+        - grep -rq 'evaluar_preparacion' crates/hexcell/src/
+        - grep -rq 'SesionDelCanal' crates/hexcell/src/
+        - grep -rqE 'StatusCode::SERVICE_UNAVAILABLE|503' crates/hexcell/src/
+        - '! grep -rq ''estado_ventana'' crates/hexcell/src/salud.rs'
+        - grep -q 'current_thread' crates/hexcell/src/main.rs
+        - grep -q 'hexcell_storage' crates/hexcell/src/main.rs
+        - test -f crates/hexcell/tests/persistencia.rs
+        - test -f crates/hexcell-storage/tests/migraciones.rs
+        - test -f crates/hexcell-storage/tests/pools.rs
+        - grep -rq 'temp_dir' crates/hexcell/tests/ crates/hexcell-storage/tests/
+        - '! grep -rq ''8081'' crates/hexcell/tests/'
+        - '! grep -rqE ''thread::sleep'' crates/hexcell-storage/tests/'
+        - test -f docs/adr/adr-0003-persistencia-dual.md
+        - '! test -f docs/adr/adr-0017-persistencia-dual.md'
+        - '! ls docs/adr/ | grep -q ''adr-0017'''
+        - grep -q 'adr-0003-persistencia-dual.md' docs/adr/README.md
+        - grep 'adr-0003-persistencia-dual' docs/adr/README.md | grep -q 'Vigente'
+        - grep -q 'adr-0016-convencion-de-entrega-de-eventos.md' docs/adr/README.md
+        - grep -q '2026-07-30' docs/adr/adr-0003-persistencia-dual.md
+        - grep -q 'busy_timeout' docs/adr/adr-0003-persistencia-dual.md
+        - grep -q 'synchronous' docs/adr/adr-0003-persistencia-dual.md
+        - grep -q 'rusqlite' docs/adr/adr-0003-persistencia-dual.md
+        - grep -q 'HEX-006' docs/STATUS.md
+        - grep -q '2026-07-30' docs/STATUS.md
+        - grep -q 'HEXCELL_VENTANA_DEDUPLICACION_SEGUNDOS' docs/STATUS.md
+        - '! grep -qiE ''etapa A-2 (cerrada|completada|finalizada|terminada)'' docs/STATUS.md'
+        - '! grep -rqiE ''sustituye a la fase a|reemplaza la fase a|cierra la fase a|el sidecar se retira'' crates/ docs/STATUS.md docs/adr/adr-0003-persistencia-dual.md'
+        - git ls-files | grep -qx 'Cargo.lock'
+        - test -s Cargo.lock
+        - '! git ls-files | grep -qE ''\.(db|db-wal|db-shm)$'''
+        - '! git ls-files | grep -qE ''(^|/)\.env'''
+        - grep -qE '^\*\.db$' .gitignore
+        - grep -qE '^\*\.db-wal$' .gitignore
+        - grep -qE '^\.env$' .gitignore
+        - grep -q 'channel = "1.92.0"' rust-toolchain.toml
+    target_s: 60
+acceptance:
+    human_gate: true
+limits:
+    max_files_changed: 38
+    max_diff_lines: 5800
+    per_class:
+        - glob: Cargo.lock
+          max_diff_lines: 140
+        - glob: Cargo.toml
+          max_diff_lines: 30
+        - glob: crates/hexcell-storage/Cargo.toml
+          max_diff_lines: 40
+        - glob: crates/hexcell-storage/src/**
+          max_diff_lines: 1300
+        - glob: crates/hexcell-storage/migraciones/**
+          max_diff_lines: 220
+        - glob: crates/hexcell-storage/tests/**
+          max_diff_lines: 850
+        - glob: crates/hexcell/Cargo.toml
+          max_diff_lines: 20
+        - glob: crates/hexcell/src/**
+          max_diff_lines: 1400
+        - glob: crates/hexcell/tests/**
+          max_diff_lines: 1500
+        - glob: docs/adr/**
+          max_diff_lines: 260
+        - glob: docs/STATUS.md
+          max_diff_lines: 60
+execution:
+    mode: worktree_edit
+    branch: ai/HEX-006
+retry_policy:
+    max_attempts: 2
+    escalate_after: 1

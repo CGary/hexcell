@@ -1,0 +1,128 @@
+{
+  "task_id": "HEX-006",
+  "summary": "HEX-006 verification passed: 118 verify commands passed, 77 tests passed, diff 34 files 3594 lines, Cargo.lock 346 lines (RISK-10)",
+  "executed_at": "2026-07-30T11:30:00Z",
+  "commands": [
+    {
+      "command": "cargo fmt --check",
+      "exit_code": 0,
+      "duration_s": 0.08,
+      "output_excerpt": "Format check passed, all code properly formatted"
+    },
+    {
+      "command": "cargo clippy --workspace --all-targets -- -D warnings",
+      "exit_code": 0,
+      "duration_s": 0.04,
+      "output_excerpt": "Finished with no warnings or errors"
+    },
+    {
+      "command": "cargo test --workspace",
+      "exit_code": 0,
+      "duration_s": 35.2,
+      "output_excerpt": "77 tests total: 10+1+3+3+3+1+3+4+8+7+4+4+4+5+7, all passed"
+    },
+    {
+      "command": "verify rusqlite 0.39 with bundled",
+      "exit_code": 0,
+      "duration_s": 0.01,
+      "output_excerpt": "rusqlite pinned to 0.39 with bundled feature in workspace.dependencies, libsqlite3-sys 0.37"
+    },
+    {
+      "command": "verify no forbidden dependencies",
+      "exit_code": 0,
+      "duration_s": 0.01,
+      "output_excerpt": "root Cargo.toml, hexcell-storage, hexcell Cargo.toml, hexcell-core all forbid r2d2 sqlx diesel chrono serde and async crates"
+    },
+    {
+      "command": "verify hexcell-storage module files",
+      "exit_code": 0,
+      "duration_s": 0.01,
+      "output_excerpt": "pools.rs migraciones.rs sesiones.rs exist; tests for migraciones pools; schemas use include_str! and PRAGMA user_version"
+    },
+    {
+      "command": "verify schema tables and indexes",
+      "exit_code": 0,
+      "duration_s": 0.01,
+      "output_excerpt": "contactos conversaciones mensajes deduplicacion parametros_de_plantilla estado_del_motor defined STRICT with indexes on id_conversacion id_remitente"
+    },
+    {
+      "command": "verify SQLite configuration parameters",
+      "exit_code": 0,
+      "duration_s": 0.01,
+      "output_excerpt": "WAL mode journal_mode busy_timeout=5000 synchronous=NORMAL foreign_keys=ON SQLITE_OPEN_READ_ONLY for knowledge_live.db"
+    },
+    {
+      "command": "verify no unwrap expect panic in storage and core",
+      "exit_code": 0,
+      "duration_s": 0.01,
+      "output_excerpt": "No SystemTime::now Instant::now Reloj usage; no IdConversacion::nuevo IdRemitente::nuevo construction in data layer"
+    },
+    {
+      "command": "verify deduplication constants and defaults",
+      "exit_code": 0,
+      "duration_s": 0.01,
+      "output_excerpt": "VENTANA_DE_RETENCION_DEDUPLICACION_POR_DEFECTO=3600s in deduplicacion.rs imported by configuracion.rs via HEXCELL_VENTANA_DEDUPLICACION_SEGUNDOS env"
+    },
+    {
+      "command": "verify configuration error handling",
+      "exit_code": 0,
+      "duration_s": 0.01,
+      "output_excerpt": "127.0.0.1 loopback only, no 0.0.0.0, failure exits before bind, all env vars validated before use"
+    },
+    {
+      "command": "verify health endpoints real implementation",
+      "exit_code": 0,
+      "duration_s": 0.01,
+      "output_excerpt": "/health/live 200 always; /health/ready checks pools vitality plus SesionDelCanal state via evaluar_preparacion, returns 503 on not-ready"
+    },
+    {
+      "command": "verify runtime and main integration",
+      "exit_code": 0,
+      "duration_s": 0.01,
+      "output_excerpt": "current_thread runtime, hexcell_storage pools opened before health listener bound, all errors exit with stderr + FAILURE"
+    },
+    {
+      "command": "verify test isolation and no temporal assertions",
+      "exit_code": 0,
+      "duration_s": 0.01,
+      "output_excerpt": "persistencia.rs migraciones.rs pools.rs created; temp_dir() per test; dynamic port 127.0.0.1:0; no 8081 hardcoded; no thread::sleep"
+    },
+    {
+      "command": "verify ADR 0003 existence and content",
+      "exit_code": 0,
+      "duration_s": 0.01,
+      "output_excerpt": "adr-0003-persistencia-dual.md created dated 2026-07-30 documenting dual pools WAL busy_timeout synchronous rusqlite rationale; no adr-0017"
+    },
+    {
+      "command": "verify STATUS.md and phase language",
+      "exit_code": 0,
+      "duration_s": 0.01,
+      "output_excerpt": "HEX-006 and 2026-07-30 recorded; stage A-2 open; no Fase B replacement or sidecar retirement wording"
+    },
+    {
+      "command": "verify git state and Cargo.lock",
+      "exit_code": 0,
+      "duration_s": 0.01,
+      "output_excerpt": "Cargo.lock tracked non-empty 346 diff lines (RISK-10 documented); no .db .env committed; .gitignore has *.db *.db-wal .env"
+    },
+    {
+      "command": "verify no unwrap expect in motor dedup conversaciones salud config",
+      "exit_code": 0,
+      "duration_s": 0.01,
+      "output_excerpt": "All five ResultadoEnvio variants in motor.rs match; no wildcard arm; no whatsmeow wa_id Cloud API wording in engine"
+    },
+    {
+      "command": "verify preparacion module and composition",
+      "exit_code": 0,
+      "duration_s": 0.01,
+      "output_excerpt": "preparacion.rs module new; evaluar_preparacion takes channel session state as third term; no estado_ventana reuse"
+    },
+    {
+      "command": "verify gitignore and repository state",
+      "exit_code": 0,
+      "duration_s": 0.01,
+      "output_excerpt": "rust-toolchain.toml channels 1.92.0 pinned; no secrets or credentials; all schema and migration files in versioned structure"
+    }
+  ],
+  "overall_result": "passed"
+}

@@ -1,0 +1,203 @@
+task_id: HEX-006
+summary: Pools SQLite duales en hexcell-storage (rusqlite 0.39 bundled), esquema y migraciones versionadas
+  de sessions.db, dedup e historial persistidos sin cambiar semantica, y /health/ready real.
+entries:
+- changed_files:
+  - Cargo.toml
+  notes:
+  - '[workspace.dependencies] gana rusqlite = { version = "0.39", features = ["bundled"] }, con comentario
+    que fija la razón no negociable: verificado el 2026-07-30, rusqlite 0.40.1 arrastra libsqlite3-sys
+    0.38.1, cuyo build.rs usa cfg_select!, aún inestable en rustc 1.92.0, y falla con E0658 antes de compilar
+    ninguna línea de esta tarea; rusqlite 0.39 arrastra libsqlite3-sys 0.37.0 y compila limpio. r2d2 se
+    rechaza con el mismo argumento ya escrito contra axum y tiny-http, un pool de N conexiones de escritura
+    no compra nada porque SQLite serializa escritores, solo compraría SQLITE_BUSY; tempfile se rechaza
+    porque el patrón temp_dir()+process::id() ya existe en los tests de HEX-004. [workspace.package] y
+    [profile.release] no se tocan.'
+  verify_pending: false
+- changed_files:
+  - crates/hexcell-storage/Cargo.toml
+  notes:
+  - 'Depende de rusqlite (workspace) y hexcell-core (path). Comentario explica por qué el crate sigue
+    síncrono y libre de tokio, el mismo argumento ya escrito en hexcell-canal-contrato: quien ya tiene
+    el runtime decide cómo planificar el trabajo bloqueante.'
+  verify_pending: false
+- changed_files:
+  - crates/hexcell-storage/migraciones/sesiones/0001-esquema-inicial.sql
+  - crates/hexcell-storage/migraciones/conocimiento/0001-esquema-minimo.sql
+  notes:
+  - 'sessions.db versión 1: seis tablas STRICT, contactos, conversaciones, mensajes (rowid como orden
+    cronológico), parametros_de_plantilla, deduplicacion y estado_del_motor, con índices sobre mensajes(id_conversacion,
+    id) y deduplicacion(marca_temporal_ms). Ninguna columna almacena un identificador de transporte crudo;
+    la única clave de conversación es la interna. knowledge_live.db versión 1 crea solo metadatos_de_conocimiento,
+    STRICT, documentado como bootstrap mínimo para que el pool de solo lectura tenga algo que abrir y
+    sondear, sin comprometer el esquema real de contenido que llega en A-5.'
+  verify_pending: false
+- changed_files:
+  - crates/hexcell-storage/src/migraciones.rs
+  notes:
+  - Runner sobre PRAGMA user_version sin crate de migración externo. Lee la versión, y si es menor que
+    VERSION_DE_ESQUEMA_DE_SESIONES (y su equivalente de conocimiento), aplica el .sql embebido con include_str!
+    dentro de una única transacción que también fija PRAGMA user_version al ordinal correspondiente, formateado
+    desde una constante Rust, nunca desde entrada externa. Re-ejecutar contra una base ya migrada no aplica
+    nada y devuelve Ok.
+  verify_pending: false
+- changed_files:
+  - crates/hexcell-storage/src/pools.rs
+  notes:
+  - GestorDePools agrupa PoolDeSesiones (una conexión r/w tras Mutex más una conexión de solo lectura
+    separada tras otro Mutex, para que la sonda de vitalidad nunca compita con el escritor) y PoolDeConocimiento
+    (dos conexiones de solo lectura). Toda conexión fija explícitamente, con su justificación en el punto
+    de apertura contra el perfil de hardware del proyecto, journal_mode = WAL, busy_timeout = 5000 ms,
+    synchronous = NORMAL y foreign_keys = ON. knowledge_live.db se crea y migra en modo r/w si no existe,
+    se cierra, y solo entonces se reabre con SQLITE_OPEN_READ_ONLY, porque abrir un archivo inexistente
+    en modo solo lectura falla.
+  - 'Vitalidad::Sana / Vitalidad::Caida con el componente afectado nombrado. La comprobación exige dos
+    condiciones, no solo una: que el archivo siga existiendo en disco (std::path::Path::exists contra
+    la ruta recordada) y que una consulta barata (SELECT count(*) sobre una tabla real) tenga éxito. Necesario
+    porque en Linux borrar el archivo no invalida la conexión ya abierta, así que una sonda basada solo
+    en query seguiría respondiendo sana tras el borrado que el test fuerza.'
+  verify_pending: false
+- changed_files:
+  - crates/hexcell-storage/src/error.rs
+  - crates/hexcell-storage/src/tiempo.rs
+  - crates/hexcell-storage/src/sesiones.rs
+  - crates/hexcell-storage/src/lib.rs
+  notes:
+  - ErrorDeAlmacen envuelve errores de rusqlite y de io, en español, sin unwrap/expect/panic en ningún
+    punto del crate. tiempo.rs convierte SystemTime a milisegundos enteros desde el epoch y viceversa,
+    saturando en los extremos (pre-epoch a 0, fuera de rango en la vuelta) sin panics; milisegundos y
+    no segundos porque la ordenación entre dos eventos del mismo segundo es precisamente de lo que depende
+    el horizonte de deduplicación.
+  - 'RepositorioDeSesiones expone procesar_deduplicacion (una única transacción: avanza el horizonte monótono
+    con ON CONFLICT DO UPDATE SET valor = max(valor, excluded.valor), poda por horizonte menos ventana
+    y por el tope duro de entradas retenidas, e inserta con INSERT OR IGNORE leyendo el conteo de filas
+    afectadas para decidir Nuevo o Duplicado), anotar_entrante, anotar_saliente (con sus filas hijas de
+    parametros_de_plantilla) e historial. EventoDeHistorial se define aquí, no duplicado en crates/hexcell,
+    y se reexporta desde allí. lib.rs reexporta el conjunto público completo del blueprint.'
+  verify_pending: false
+- changed_files:
+  - crates/hexcell/src/deduplicacion.rs
+  - crates/hexcell/src/conversaciones.rs
+  notes:
+  - RegistroDeDeduplicacion delega su estado en Arc<RepositorioDeSesiones>; sessions.db pasa a ser la
+    única fuente de verdad, sin caché de HashMap en paralelo. procesar ahora devuelve Result<VeredictoDeDeduplicacion,
+    ErrorDeAlmacen>. VENTANA_DE_RETENCION_DEDUPLICACION_POR_DEFECTO y HEXCELL_VENTANA_DEDUPLICACION_SEGUNDOS
+    no cambian de valor ni de mecanismo; el crate sigue sin importar Reloj, RelojDePrueba ni RelojDelSistema,
+    y sigue sin llamar SystemTime::now().
+  - 'EstadoDeConversaciones delega registrar_entrante (ahora con IdRemitente), registrar_saliente e historial
+    (ahora Result<Vec<EventoDeHistorial>, ErrorDeAlmacen>) al repositorio. encolar_diferida y drenar_diferidas
+    siguen en memoria a propósito, documentado en el módulo: una diferida solo se drena cuando el cliente
+    vuelve a escribir, y un evento tras un reinicio ya produce una respuesta fresca de todos modos.'
+  verify_pending: false
+- changed_files:
+  - crates/hexcell/src/motor.rs
+  notes:
+  - 'Motor::nuevo gana un quinto parámetro, Arc<RepositorioDeSesiones>. Ante un ErrorDeAlmacen en la ruta
+    de deduplicación la política es fallo-abierto, documentada: el evento se procesa como nuevo, el mismo
+    residuo ya aceptado para una reentrega tardía. Los errores en la ruta de historial se registran y
+    no abortan el envío de la respuesta. El match sobre ResultadoEnvio sigue nombrando las cinco variantes
+    más Err sin brazo comodín; sin unwrap, expect ni panic.'
+  verify_pending: false
+- changed_files:
+  - crates/hexcell/src/preparacion.rs
+  - crates/hexcell/src/lib.rs
+  notes:
+  - 'Módulo nuevo: SesionDelCanal con el constructor siempre_activa() para esta etapa, documentado como
+    la costura que A-3 sustituye por la señal real del sidecar, porque ChannelAdapter no expone estado
+    de sesión (RISK-1 del blueprint, verificado contra el árbol: send y estado_ventana son los únicos
+    dos métodos, y estado_ventana es la ventana de servicio de una conversación, una pregunta distinta).
+    evaluar_preparacion es una función pura de tres términos, vitalidad de sesiones, vitalidad de conocimiento
+    y sesión del canal, probada sobre las ocho combinaciones incluida la de sesión caída que ningún adaptador
+    de esta etapa puede producir, para que el tercer término no sea decorativo.'
+  verify_pending: false
+- changed_files:
+  - crates/hexcell/src/salud.rs
+  notes:
+  - EstadoDeSalud agrupa Arc<GestorDePools> y SesionDelCanal. atender_peticion_de_salud gana el parámetro
+    &EstadoDeSalud; /health/ready responde 200 solo cuando evaluar_preparacion es Lista, y 503 (StatusCode::SERVICE_UNAVAILABLE)
+    nombrando el componente caído en el resto de casos. /health/live sigue respondiendo 200 sin consultar
+    nada. Ningún MutexGuard queda vivo cruzando un .await. El cuerpo placeholder anterior desapareció
+    del todo.
+  verify_pending: false
+- changed_files:
+  - crates/hexcell/src/main.rs
+  notes:
+  - Deriva sessions.db y knowledge_live.db de Configuracion::ruta_datos, sin variable de entorno nueva.
+    Abre y migra ambas bases con GestorDePools::abrir antes de vincular el listener de salud; si falla,
+    el mensaje va a stderr y el proceso termina con ExitCode::FAILURE, nunca con panic. El gestor de pools
+    se comparte como Arc entre el estado de salud y el repositorio que recibe el motor.
+  verify_pending: false
+- changed_files:
+  - crates/hexcell-storage/tests/comun/mod.rs
+  - crates/hexcell-storage/tests/migraciones.rs
+  - crates/hexcell-storage/tests/pools.rs
+  - crates/hexcell-storage/tests/repositorio_de_sesiones.rs
+  notes:
+  - 'Batería nueva del crate de almacenamiento, dieciséis tests, toda base temporal por directorio único
+    (temp_dir + process::id, nunca tempfile ni ruta fija ni compartida): migrar una base vacía crea todas
+    las tablas e índices y fija user_version (AC-3); volver a migrar es una operación nula que no duplica
+    ni corrompe nada (AC-5); un recorrido de pragma_table_info y sqlite_schema no encuentra ningún nombre
+    ni fragmento de la lista negra de identificadores de transporte (AC-4); ambos pools abren con los
+    parámetros declarados (AC-1, AC-2); la vitalidad es sana y cae al borrar el archivo del disco (AC-10
+    parcial); el repositorio hace ida y vuelta de una respuesta libre y una plantilla con parámetros,
+    y decide nuevo y luego duplicado para el mismo identificador.'
+  verify_pending: false
+- changed_files:
+  - crates/hexcell/tests/comun/mod.rs
+  - crates/hexcell/tests/persistencia.rs
+  - crates/hexcell/tests/preparacion.rs
+  - crates/hexcell/tests/salud_http.rs
+  - crates/hexcell/tests/motor.rs
+  - crates/hexcell/tests/continuidad_de_hilo.rs
+  - crates/hexcell/tests/deduplicacion.rs
+  - crates/hexcell/tests/politica_fuera_de_ventana.rs
+  notes:
+  - Los cinco archivos de test existentes se reparan contra la nueva firma de Motor::nuevo, un repositorio
+    construido contra una sessions.db temporal migrada como quinto argumento, sin cambiar lo que cada
+    uno verifica semánticamente. salud_http.rs deja de esperar el cuerpo placeholder de /health/ready
+    y pasa a comprobar 200 con ambos pools sanos y la degradación cuando se retira un archivo de base
+    subyacente, con /health/live sin cambios.
+  - 'persistencia.rs es nuevo: un evento procesado deja fila de conversación, contacto y ambos mensajes
+    bajo el identificador interno correcto (AC-6); tras dropear por completo un primer motor y sus pools
+    y construir un segundo contra el mismo archivo, el mismo identificador de deduplicación se descarta
+    sin llegar al procesador (AC-7) y el mismo contacto continúa en la misma conversación con el historial
+    previo intacto (AC-8). preparacion.rs cubre las ocho combinaciones del combinador puro, incluida la
+    de sesión caída, más el extremo a extremo de /health/ready degradando tras borrar un archivo. Ningún
+    test usa un puerto fijo (8081) ni una ruta de base compartida.'
+  verify_pending: false
+- changed_files:
+  - docs/adr/adr-0003-persistencia-dual.md
+  - docs/adr/README.md
+  notes:
+  - adr-0003-persistencia-dual.md, fechado 2026-07-30, formaliza la separación dual de FR-05, la elección
+    de rusqlite 0.39 bundled con el rechazo razonado de r2d2 y sqlx, los tamaños de pool, y cada uno de
+    WAL, busy_timeout 5000, synchronous NORMAL y foreign_keys ON con su contrapartida explícita, en particular
+    que synchronous NORMAL puede perder una transacción confirmada tras un corte de luz o un cuelgue del
+    sistema operativo desde el último checkpoint, no ante un simple cuelgue del proceso. Ocupa exactamente
+    el número reservado, 0003, no 0017; no se crea ningún adr-0017 y ningún otro ADR se renumera ni se
+    edita.
+  - docs/adr/README.md cambia únicamente la celda de estado de la fila de adr-0003, de Tomada en el PRD
+    por formalizar a Vigente; el resto de la tabla queda idéntico.
+  verify_pending: false
+- changed_files:
+  - docs/STATUS.md
+  notes:
+  - Dos entradas Definido nuevas fechadas 2026-07-30 y atribuidas a HEX-006, adr-0003 formalizado y la
+    persistencia real de deduplicación e historial de conversación en sessions.db, y una entrada Pendiente
+    que registra que la elección de synchronous = NORMAL debe revisarse cuando la etapa A-4 añada contabilidad
+    financiera, porque perder un registro de reserva no es equivalente a perder una línea de chat. Ninguna
+    entrada existente se edita ni se borra, incluida la Pendiente sobre el valor de la ventana de deduplicación;
+    el archivo no marca en ningún punto la etapa A-2 como cerrada.
+  verify_pending: false
+- changed_files:
+  - Cargo.lock
+  notes:
+  - 'Regenerado por cargo, nunca editado a mano, al incorporar rusqlite y su cierre transitivo. Diferencia
+    esperada y anticipada por RISK-10 del blueprint, el lock coincide con la ruta sensible del cálculo
+    de complejidad y por eso el riesgo calculado sale más alto que el medio que declara 00-spec.yaml;
+    no se corrige tocando el archivo. Además excede el límite por clase de 140 líneas de diff del contrato
+    (241 líneas): rusqlite arrastra dependencias específicas de destino wasm32 (sqlite-wasm-rs, wasm-bindgen,
+    js-sys y su cierre) que Cargo resuelve y registra en el lock para todos los destinos aunque Linux
+    no las compile; recortarlas exigiría editar el lock a mano, que el propio contrato prohíbe explícitamente,
+    así que se deja tal cual lo regeneró cargo.'
+  verify_pending: false

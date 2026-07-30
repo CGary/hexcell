@@ -1,0 +1,512 @@
+task_id: HEX-006
+summary: 'A-2 tasks 7 and 8: dual SQLite pools in hexcell-storage on rusqlite 0.39, sessions.db schema
+    and user_version migrations, dedup and history persisted, real /health/ready.'
+affected_files:
+    - Cargo.toml
+    - Cargo.lock
+    - crates/hexcell-storage/Cargo.toml
+    - crates/hexcell-storage/src/lib.rs
+    - crates/hexcell-storage/src/error.rs
+    - crates/hexcell-storage/src/tiempo.rs
+    - crates/hexcell-storage/src/pools.rs
+    - crates/hexcell-storage/src/migraciones.rs
+    - crates/hexcell-storage/src/sesiones.rs
+    - crates/hexcell-storage/migraciones/sesiones/0001-esquema-inicial.sql
+    - crates/hexcell-storage/migraciones/conocimiento/0001-esquema-minimo.sql
+    - crates/hexcell-storage/tests/comun/mod.rs
+    - crates/hexcell-storage/tests/migraciones.rs
+    - crates/hexcell-storage/tests/pools.rs
+    - crates/hexcell-storage/tests/repositorio_de_sesiones.rs
+    - crates/hexcell/Cargo.toml
+    - crates/hexcell/src/lib.rs
+    - crates/hexcell/src/main.rs
+    - crates/hexcell/src/configuracion.rs
+    - crates/hexcell/src/preparacion.rs
+    - crates/hexcell/src/salud.rs
+    - crates/hexcell/src/motor.rs
+    - crates/hexcell/src/deduplicacion.rs
+    - crates/hexcell/src/conversaciones.rs
+    - crates/hexcell/tests/comun/mod.rs
+    - crates/hexcell/tests/persistencia.rs
+    - crates/hexcell/tests/preparacion.rs
+    - crates/hexcell/tests/salud_http.rs
+    - crates/hexcell/tests/motor.rs
+    - crates/hexcell/tests/continuidad_de_hilo.rs
+    - crates/hexcell/tests/deduplicacion.rs
+    - crates/hexcell/tests/politica_fuera_de_ventana.rs
+    - docs/adr/adr-0003-persistencia-dual.md
+    - docs/adr/README.md
+    - docs/STATUS.md
+symbols:
+    - GestorDePools
+    - PoolDeSesiones
+    - PoolDeConocimiento
+    - Vitalidad
+    - ErrorDeAlmacen
+    - RepositorioDeSesiones
+    - EventoDeHistorial
+    - VeredictoDeDeduplicacion
+    - RegistroDeDeduplicacion
+    - EstadoDeConversaciones
+    - SesionDelCanal
+    - EstadoDeSalud
+    - Preparacion
+    - evaluar_preparacion
+    - aplicar_migraciones_de_sesiones
+    - aplicar_migraciones_de_conocimiento
+    - VERSION_DE_ESQUEMA_DE_SESIONES
+    - BUSY_TIMEOUT
+    - SINCRONIA
+    - CONEXIONES_DE_LECTURA_DE_CONOCIMIENTO
+    - LIMITE_DE_ENTRADAS_RETENIDAS
+    - VENTANA_DE_RETENCION_DEDUPLICACION_POR_DEFECTO
+    - Motor::nuevo
+    - Motor::historial
+    - atender_peticion_de_salud
+    - servir_salud
+dependencies:
+    - .ai/tasks/active/HEX-006-new-spec/00-spec.yaml
+    - crates/hexcell-core/src/canal.rs
+    - crates/hexcell-core/src/identidad.rs
+    - crates/hexcell-core/Cargo.toml
+    - crates/hexcell-canal-simulado/src/adaptador.rs
+    - crates/hexcell-canal-simulado/src/reloj.rs
+    - crates/hexcell/src/procesador.rs
+    - Cargo.toml
+    - rust-toolchain.toml
+    - .github/workflows/ci.yml
+    - .gitignore
+    - docs/PRD.md
+    - docs/plan/fase-a-2-nucleo-persistencia.md
+    - docs/adr/README.md
+    - docs/adr/adr-0002-estructura-workspace.md
+    - docs/adr/adr-0010-puerto-de-canal.md
+    - docs/adr/adr-0016-convencion-de-entrega-de-eventos.md
+    - docs/STATUS.md
+    - CLAUDE.md
+strategy:
+    - step: 1
+      action: 'Pin the SQLite driver in the workspace dependency table and justify it there, as that
+          table is the only whole-tree view of the external dependency set. rusqlite = "0.39", default
+          features plus "bundled". THE VERSION IS NOT NEGOTIABLE AND MUST NOT BE BUMPED TO LATEST:
+          verified on 2026-07-30 against the pinned toolchain, rusqlite 0.40.1 pulls libsqlite3-sys
+          0.38.1, whose build script uses the still-unstable cfg_select! and fails to compile on rustc
+          1.92.0; rusqlite 0.39 pulls libsqlite3-sys 0.37.0, which builds and passes. Do NOT add r2d2,
+          r2d2_sqlite, deadpool-sqlite, sqlx or tempfile. The rejection of r2d2 is the same argument
+          this repository already applied to axum and to tiny-http in crates/hexcell/Cargo.toml: r2d2
+          brings a background scheduled-thread-pool to reap idle connections, and it would be reaping a
+          writer pool whose maximum useful size is one, because SQLite serialises writers by design. A
+          pool of N writer connections buys nothing but SQLITE_BUSY. tempfile is rejected for a
+          different reason: crates/hexcell/tests/configuracion.rs and salud_http.rs already hand-roll
+          temporary directories from std::env::temp_dir() and std::process::id(), and this task extends
+          that existing pattern into a shared helper rather than introducing a second way of doing the
+          same thing.'
+      files:
+        - Cargo.toml
+        - Cargo.lock
+    - step: 2
+      action: 'Give crates/hexcell-storage its dependencies: rusqlite from the workspace table and
+          hexcell-core by path. The crate stays SYNCHRONOUS and gains NO tokio. This is deliberate and
+          mirrors the argument already written in crates/hexcell-canal-contrato/Cargo.toml: whoever
+          already has a runtime running is who decides how to schedule the blocking work. A SQLite
+          layer is a blocking layer; wrapping it in spawn_blocking inside the crate would bake one
+          scheduling policy into every future consumer. The dual pool manager lands HERE and not in
+          crates/hexcell, because docs/plan/fase-a-2-nucleo-persistencia.md assigns "capa
+          hexcell-storage con dos pools independientes" to this crate and adr-0002 already reserved it
+          for persistence; the spec permits it explicitly ("o un modulo/crate de infraestructura que
+          este ultimo consuma"). hexcell-core is not touched at all (AC-12).'
+      files:
+        - crates/hexcell-storage/Cargo.toml
+    - step: 3
+      action: 'Write the two embedded SQL migrations. sessions.db version 1 creates six STRICT tables -
+          contactos (id_remitente, primera_actividad_ms, ultima_actividad_ms), conversaciones
+          (id_conversacion, creada_ms, ultima_actividad_ms), mensajes (id INTEGER PRIMARY KEY, the rowid
+          IS the chronological order so no separate orden column is needed, id_conversacion REFERENCES
+          conversaciones, id_remitente REFERENCES contactos, direccion CHECK IN (entrante, saliente),
+          clase CHECK IN (texto, plantilla), contenido, marca_temporal_ms), parametros_de_plantilla
+          (id_mensaje, posicion, valor) which round-trips MensajeSaliente::Plantilla WITHOUT adding
+          serde or any hand-rolled encoding, deduplicacion (id_deduplicacion PRIMARY KEY,
+          marca_temporal_ms) and estado_del_motor (clave, valor) - plus indexes on mensajes
+          (id_conversacion, id) and on deduplicacion (marca_temporal_ms). knowledge_live.db version 1
+          creates only metadatos_de_conocimiento (clave, valor) STRICT: its real content schema belongs
+          to A-5 and is NOT decided here, but one real table lets the vitality probe read something
+          instead of asserting a tautology. Every column holds an internal opaque identifier; no column
+          holds a phone number, a JID, a wa_id or any other transport identifier (AC-4). STRICT is used
+          on purpose so a type mismatch is a database error rather than a value that silently coerces.
+          The files are .sql on disk and reach the binary through include_str!, so they are readable as
+          SQL and still travel inside the binary with no runtime file dependency in the A-6 image.'
+      files:
+        - crates/hexcell-storage/migraciones/sesiones/0001-esquema-inicial.sql
+        - crates/hexcell-storage/migraciones/conocimiento/0001-esquema-minimo.sql
+    - step: 4
+      action: 'Implement the migration runner over PRAGMA user_version, with no migration crate. Read
+          user_version; for every embedded migration whose ordinal is greater, run it inside a single
+          transaction that ALSO sets PRAGMA user_version to that ordinal, so schema and version advance
+          or fail together. Re-running against an already-migrated database reads the version, finds
+          nothing to apply and returns Ok (AC-5). refinery and rusqlite_migration are rejected: a
+          version TABLE would be a second source of truth for something SQLite already stores
+          atomically in the file header, inside the very transaction that changes the schema. Note for
+          the implementer: PRAGMA user_version does not accept a bound parameter, so the ordinal is
+          formatted into the statement from a Rust integer constant - never from external input.'
+      files:
+        - crates/hexcell-storage/src/migraciones.rs
+    - step: 5
+      action: 'Implement the dual pool manager. PoolDeSesiones owns EXACTLY ONE read/write connection
+          behind a std::sync::Mutex plus ONE separate read-only connection, also behind its own Mutex.
+          One writer because SQLite serialises writers anyway; the separate reader exists so the
+          readiness probe never queues behind the engine on the writer mutex and, at the SQLite level,
+          never blocks on the writer at all thanks to WAL. PoolDeConocimiento owns
+          CONEXIONES_DE_LECTURA_DE_CONOCIMIENTO = 2 read-only connections handed out and returned by a
+          guard: two, not more, because the binary runs a current_thread runtime, so real parallelism is
+          one, and two leaves the health probe a connection while a consumer path holds the other. Both
+          databases are opened with journal_mode = WAL, and every connection sets busy_timeout = 5000 ms
+          and synchronous = NORMAL and foreign_keys = ON explicitly, each with its written justification
+          at the point of the call (AC-2). If knowledge_live.db does not exist, create it read/write
+          once, migrate it, close, and only then open the read-only pool - opening a nonexistent file
+          READ_ONLY fails, verified on 2026-07-30.'
+      files:
+        - crates/hexcell-storage/src/pools.rs
+    - step: 6
+      action: 'Implement Vitalidad, the per-pool liveness check, and get it right, because the obvious
+          implementation silently fails AC-10. Verified empirically on 2026-07-30: on Linux, removing
+          the database file does NOT invalidate an already open SQLite connection - the query keeps
+          answering from the still-open descriptor. A probe that only runs a query would therefore
+          return 200 OK after the operator deletes sessions.db, which is exactly the failure AC-10
+          exists to catch. The check is therefore TWO conditions: the file still exists at its recorded
+          path AND a cheap query succeeds on a pooled connection (SELECT count(*) over a real table).
+          Vitalidad reports which of the two failed, so the readiness body can name the broken component
+          instead of saying only "not ready".'
+      files:
+        - crates/hexcell-storage/src/pools.rs
+    - step: 7
+      action: 'Implement RepositorioDeSesiones, ErrorDeAlmacen and the SystemTime <-> milliseconds
+          conversion. Timestamps are stored as INTEGER milliseconds since the Unix epoch: seconds would
+          discard ordering between two events inside the same second, which is precisely the ordering
+          the deduplication horizon depends on. The conversion never panics and never calls unwrap() or
+          expect(): a pre-epoch instant saturates to 0 and an out-of-range stored value saturates on the
+          way back, both documented. The repository exposes the deduplication verdict as ONE
+          transaction - advance the persisted horizon with ON CONFLICT DO UPDATE SET valor = max(valor,
+          excluded.valor) so it stays monotonic exactly as HEX-005 defined it, DELETE rows older than
+          horizonte - ventana, DELETE beyond LIMITE_DE_ENTRADAS_RETENIDAS keeping the newest, then
+          INSERT OR IGNORE the identifier and read the affected-row count: 0 means Duplicado, 1 means
+          Nuevo. All four statements verified against rusqlite 0.39 on 2026-07-30. It also exposes
+          anotar_entrante (upserting contacto and conversacion and appending the message),
+          anotar_saliente (appending the outgoing message plus its template parameter rows) and
+          historial (ORDER BY id). EventoDeHistorial is DEFINED HERE and re-exported by
+          crates/hexcell/src/conversaciones.rs, rather than duplicated on both sides of the boundary
+          with a mapping layer between two structurally identical enums.'
+      files:
+        - crates/hexcell-storage/src/sesiones.rs
+        - crates/hexcell-storage/src/error.rs
+        - crates/hexcell-storage/src/tiempo.rs
+        - crates/hexcell-storage/src/lib.rs
+    - step: 8
+      action: 'Persist the deduplication registry WITHOUT changing one bit of the semantics HEX-005
+          fixed. Make sessions.db the SINGLE source of truth rather than adding a write-through cache in
+          front of the existing HashMap: two sources of truth for the same set is how a restart silently
+          disagrees with itself, and the SQL form additionally removes the in-memory map from the NFR-01
+          budget entirely. RegistroDeDeduplicacion keeps its identity - it still owns the window and the
+          hard cap and still prunes against the MAXIMUM RECEIVED TIMESTAMP, never against a system
+          clock, and crates/hexcell still never imports Reloj (AC-9) - but delegates its state to the
+          repository, so procesar returns Result<VeredictoDeDeduplicacion, ErrorDeAlmacen>. Keep
+          VENTANA_DE_RETENCION_DEDUPLICACION_POR_DEFECTO as the single declaration of the one-hour
+          value, still imported by configuracion.rs, still driven by
+          HEXCELL_VENTANA_DEDUPLICACION_SEGUNDOS, default unchanged. The horizon now survives restart in
+          estado_del_motor, so the post-restart window is measured from where the channel left off
+          rather than from the epoch.'
+      files:
+        - crates/hexcell/src/deduplicacion.rs
+    - step: 9
+      action: 'Persist conversation history the same way. EstadoDeConversaciones delegates
+          registrar_entrante, registrar_saliente and historial to the repository; historial necessarily
+          becomes Result<Vec<EventoDeHistorial>, ErrorDeAlmacen> because the rows now come from SQL and
+          cannot be handed out as a borrowed slice. registrar_entrante additionally takes the
+          IdRemitente so the contactos table has something to hold. The deferred-reply queue
+          (encolar_diferida / drenar_diferidas) STAYS IN MEMORY and that is a decision, not an
+          oversight: a deferred reply is only ever drained when the client writes again, and a client
+          writing again after a restart produces a fresh event and a fresh reply, so the queue is worth
+          at most one stale message that was unsendable anyway. Write that argument in the module doc
+          instead of leaving the omission implicit. This module still never constructs, interprets,
+          splits or inverts an IdConversacion: it passes the opaque value to the repository as a key.'
+      files:
+        - crates/hexcell/src/conversaciones.rs
+    - step: 10
+      action: 'Wire the engine. Motor::nuevo takes a fifth parameter, the Arc<RepositorioDeSesiones>,
+          and builds both collaborators from it; the order of the three per-event policies that HEX-005
+          documented (deduplicate, drain deferred, then register/dispatch/send) does NOT change. The
+          engine now has to handle a persistence error on the dedup path, and the policy is FAIL-OPEN
+          and must be written down: on ErrorDeAlmacen the event is processed as new. That is the same
+          residual behaviour the plan already accepted for a late redelivery - work done twice - and it
+          is strictly better than going mute, which is what fail-closed would mean for the client
+          business. Persistence errors on the history path are logged and do not abort the reply: a cell
+          that cannot write its log of a conversation must still answer it. No unwrap, no expect, no
+          panic, and the match over ResultadoEnvio keeps naming all five variants plus Err with no
+          wildcard arm.'
+      files:
+        - crates/hexcell/src/motor.rs
+    - step: 11
+      action: 'Make GET /health/ready real, and route around the gap described in RISK-1. Readiness is
+          the conjunction of THREE terms: sessions pool vitality, knowledge pool vitality, and the
+          channel session state. The first two come from the pool manager. The third CANNOT come from
+          ChannelAdapter, because that trait exposes no such thing; it is supplied at composition time
+          as SesionDelCanal, whose constructor for this stage is siempre_activa() and whose doc comment
+          names the seam that A-3 replaces with the sidecar signal. Keep the decision as a PURE function
+          evaluar_preparacion(vitalidad_sesiones, vitalidad_conocimiento, sesion) -> Preparacion so it
+          can be unit-tested across all combinations, including the session-down combination that no
+          adapter can produce in this stage - that is what keeps the third term from being decorative.
+          atender_peticion_de_salud gains an &EstadoDeSalud parameter and servir_salud an
+          Arc<EstadoDeSalud>; /health/live keeps answering 200 without consulting anything, and
+          /health/ready answers 200 when all three hold and 503 naming the failed component otherwise.
+          The handler stays synchronous: no MutexGuard may be alive across an .await, or the future
+          stops being Send and the compiler complains far from the cause.'
+      files:
+        - crates/hexcell/src/preparacion.rs
+        - crates/hexcell/src/salud.rs
+        - crates/hexcell/src/lib.rs
+    - step: 12
+      action: 'Compose it in main.rs. Derive both database paths from the already-validated
+          Configuracion::ruta_datos - sessions.db and knowledge_live.db - and add NO new environment
+          variable, because the spec asks for none and inventing configuration is how a settable knob
+          outlives the reason it existed. Open and migrate both databases BEFORE binding the health
+          listener, so a cell that cannot open its own storage fails the same way a cell with bad
+          configuration already fails: a message on stderr naming the problem and ExitCode::FAILURE,
+          never a panic, because panic = "abort" leaves no usable message in release. Share the pool
+          manager as an Arc between the health state and the repository the engine holds.'
+      files:
+        - crates/hexcell/src/main.rs
+        - crates/hexcell/src/configuracion.rs
+    - step: 13
+      action: 'Write the storage tests: migrations from an empty database create every table and index
+          (AC-3); re-running against a migrated database is a no-op and corrupts nothing (AC-5); an
+          inspection walking sqlite_schema and pragma_table_info finds no column and no schema text
+          matching the transport-identifier deny list - jid, wa_id, waid, telefono, phone, msisdn,
+          numero, e164, remote_jid, chat_id (AC-4); both pools open, report journal_mode = wal and the
+          configured busy_timeout and synchronous (AC-1, AC-2); vitality is Sana on a healthy pool and
+          Caida after the database file is REMOVED FROM DISK, which is the case that only the existence
+          check catches; and the repository round-trips a RespuestaLibre and a Plantilla with
+          parameters, and returns the deduplication verdict Nuevo then Duplicado for the same
+          identifier. Every test uses its own temporary directory built from the crate-local helper -
+          never a fixed path, never a database shared between tests or between runs.'
+      files:
+        - crates/hexcell-storage/tests/comun/mod.rs
+        - crates/hexcell-storage/tests/migraciones.rs
+        - crates/hexcell-storage/tests/pools.rs
+        - crates/hexcell-storage/tests/repositorio_de_sesiones.rs
+    - step: 14
+      action: 'Write the cell tests and repair the five existing test files that construct a Motor and
+          will not compile against the new signature. The three new behaviours are the restart tests,
+          and a restart test that never drops the first engine proves nothing: build engine one against
+          a temporary sessions.db, process an event, DROP IT ALONG WITH ITS POOLS, build engine two
+          against the SAME file, and only then assert. Cover: an event processed leaves conversation and
+          message rows under the right internal identifier (AC-6); the same deduplication identifier
+          after that restart is discarded without reaching the processor (AC-7); the same contact after
+          that restart lands on the same conversation with its previous history intact (AC-8); the
+          readiness combinator over all eight input combinations (AC-10, pure part); and the binary
+          answering 200 on /health/ready and an error once a database file is removed underneath it
+          (AC-10, end-to-end part). salud_http.rs must stop asserting the HEX-006 placeholder body it
+          currently checks for.'
+      files:
+        - crates/hexcell/tests/comun/mod.rs
+        - crates/hexcell/tests/persistencia.rs
+        - crates/hexcell/tests/preparacion.rs
+        - crates/hexcell/tests/salud_http.rs
+        - crates/hexcell/tests/motor.rs
+        - crates/hexcell/tests/continuidad_de_hilo.rs
+        - crates/hexcell/tests/deduplicacion.rs
+        - crates/hexcell/tests/politica_fuera_de_ventana.rs
+    - step: 15
+      action: 'Write docs/adr/adr-0003-persistencia-dual.md, in Spanish, dated 2026-07-30, and flip its
+          row in docs/adr/README.md from "Tomada en el PRD, por formalizar" to Vigente. THE NUMBER IS
+          0003, NOT 0017 - see RISK-2; do not create adr-0017 and do not renumber, reorder or edit any
+          other ADR. The record covers the dual separation and why FR-05 demands two files, the driver
+          and pool choice with the r2d2 and sqlx rejections, the pool sizes, and each of WAL,
+          busy_timeout 5000, synchronous NORMAL and foreign_keys ON with its trade stated rather than
+          asserted. Add the rejected alternatives to docs/bitacora-de-descartes.md? NO - that file is
+          NOT in the touch list for this task; record the rejections inside the ADR itself, which is
+          where adr-0003 was always meant to hold them. Add two Definido entries to docs/STATUS.md dated
+          2026-07-30 and attributed to HEX-006 (adr-0003 formalised; dedup and history now persisted),
+          and one Pendiente entry recording that the synchronous = NORMAL trade must be revisited when
+          A-4 writes financial accounting, because losing a reservation record is not the same as losing
+          a chat line. Do NOT write anything marking etapa A-2 as closed, and do not touch the existing
+          Pendiente entry about the deduplication window value.'
+      files:
+        - docs/adr/adr-0003-persistencia-dual.md
+        - docs/adr/README.md
+        - docs/STATUS.md
+risks:
+    - 'RISK-1, THE BIGGEST MISMATCH BETWEEN THE SPEC AND THE TREE, and the one that decides a design.
+      Both 00-spec.yaml ("el estado de sesion que ya expone el trait ChannelAdapter", "ya expuesto por
+      el trait desde HEX-002/HEX-004") and the A-2 plan assume the port already reports channel session
+      state. Verified false on 2026-07-30 in crates/hexcell-core/src/canal.rs: ChannelAdapter declares
+      exactly two methods, send and estado_ventana, and NOTHING else. estado_ventana is the 24 h SERVICE
+      WINDOW OF ONE CONVERSATION, which is a different question from whether the channel session is
+      alive, and conflating them would make readiness answer a question nobody asked. CicloDeVidaSesion
+      is the only session-shaped trait, declares only iniciar_emparejamiento and cerrar_sesion, and
+      grep confirms it is implemented by NOBODY - AdaptadorSimulado implements ChannelAdapter alone.
+      The spec is the human''s and is NOT rewritten; the mismatch is recorded here. Resolution: do NOT
+      reopen hexcell-core. Adding a method there would contradict AC-12, would reopen a trait closed by
+      HEX-002 which adr-0016 went out of its way to avoid reopening, and would break the contract
+      battery and the simulated adapter for a signal that has no real producer until A-3. Readiness
+      takes the session state as a third input declared in crates/hexcell (SesionDelCanal) and supplied
+      at composition time. AC-10 already concedes the point in its own wording - "el criterio se
+      ejercita en tests forzando la caida de cada pool por separado, no forzando una sesion caida" - so
+      the end-to-end session-down branch is DEFERRED by the spec itself, not skipped by this blueprint;
+      the pure combinator is unit-tested over all combinations so the term is provably load-bearing.'
+    - 'RISK-2, ADR NUMBERING, where the obvious answer is the wrong one. The assignment stated the next
+      free index is 0017. It is free, but it is not the right number for this decision. docs/adr/README.md
+      - which the repository declares to be the source of truth for numbering - ALREADY reserves
+      adr-0003-persistencia-dual.md for "Persistencia dual SQLite (sessions.db + knowledge_live.db) y
+      parametros de SQLite elegidos", assigns it to stage A-2, and marks it "Tomada en el PRD, por
+      formalizar". Independently, the risk table of docs/plan/fase-a-2-nucleo-persistencia.md says the
+      SQLite parameters are to be documented "en adr-0003" by name. Writing adr-0017 would leave 0003
+      permanently orphaned on the same subject and would break the one rule the repository is strictest
+      about. Using a reserved slot is not reuse: 0003 has never belonged to another decision. 0017 stays
+      free for whatever claims it next.'
+    - 'RISK-3, A TOOLCHAIN TRAP THAT ONLY APPEARS AT BUILD TIME. rusqlite 0.40.1 is the current release
+      on crates.io as of 2026-07-30 and is what cargo add picks by default. It does NOT build here: it
+      pulls libsqlite3-sys 0.38.1, whose build.rs uses cfg_select!, still unstable on the toolchain that
+      rust-toolchain.toml pins to 1.92.0, so the build script fails to compile with E0658 before a
+      single line of this task''s code is reached. Verified by building both. rusqlite 0.39 pulls
+      libsqlite3-sys 0.37.0, builds clean and passes. Pin "0.39" in [workspace.dependencies] and note
+      the reason in the comment, or the next person to run cargo update reintroduces the failure.'
+    - 'RISK-4, THE READINESS CHECK THAT PASSES WHEN IT SHOULD FAIL. Verified empirically on 2026-07-30:
+      on Linux, std::fs::remove_file on an open SQLite database does not disturb the open connection at
+      all - the same SELECT keeps returning the same rows from the unlinked inode. A vitality probe
+      built only from a query therefore keeps answering 200 OK after the file AC-10 asks the test to
+      remove, and the acceptance criterion passes for the wrong reason or fails inexplicably depending
+      on how the test is written. The probe must check file existence AND run a query. This is called
+      out because it is the single most likely way to implement AC-10 and get a green test that means
+      nothing.'
+    - 'RISK-5, BLOCKING SQL ON A SINGLE-THREADED RUNTIME, accepted with its bound written down. The
+      binary runs #[tokio::main(flavor = "current_thread")], so a synchronous rusqlite call in the
+      engine loop stalls the health server for its duration. Accepted for four reasons: there is exactly
+      one writer connection, so the write lock is never contended and busy_timeout cannot fire in this
+      stage; WAL readers never block on the writer, and readiness has its own read connection; a small
+      INSERT under WAL with synchronous = NORMAL costs tens of microseconds on the target hardware for a
+      cell serving one client; and spawn_blocking would cost an extra OS thread plus a handoff per
+      message against a stall that does not exist yet, on an 80 MB per-cell budget. REVISIT TRIGGER,
+      stated so it is not rediscovered under load: HEX-008 adds VACUUM INTO backups, which introduces a
+      SECOND connection and therefore the first real chance for busy_timeout to fire and freeze
+      readiness for up to five seconds. That is where spawn_blocking or a dedicated writer thread gets
+      decided, with a measurement rather than a guess.'
+    - 'RISK-6, UNAVOIDABLE SIGNATURE CHURN. Once SQL is the source of truth, historial cannot keep
+      returning a borrowed &[EventoDeHistorial]; it becomes Result<Vec<EventoDeHistorial>,
+      ErrorDeAlmacen> on both EstadoDeConversaciones and Motor, procesar on RegistroDeDeduplicacion
+      returns a Result, and Motor::nuevo takes a fifth parameter. Five existing test files -
+      tests/motor.rs, continuidad_de_hilo.rs, deduplicacion.rs, politica_fuera_de_ventana.rs,
+      salud_http.rs - will not compile untouched, and repairing them is IN SCOPE, not scope creep. The
+      spec permits this: "no tiene por que cambiar de forma incompatible" is permissive, not prohibitive.
+      What must NOT change is the observable semantics those tests assert.'
+    - 'RISK-7, THE bundled FEATURE COMPILES SQLITE FROM C. It needs a C compiler at build time. CI runs
+      ubuntu-latest, which has one, and the local build was verified on 2026-07-30 (SQLite 3.51.3). The
+      alternative, linking the system libsqlite3, was rejected: it would put a system package in the
+      A-6 container image and make the SQLite version differ between the developer machine, CI and
+      production, which is precisely the variability rust-toolchain.toml exists to remove for rustc.
+      Recorded so A-6 provisions a compiler in the build stage rather than discovering it there. Expect
+      first-build time to grow by roughly a minute and the stripped binary by around a megabyte.'
+    - 'RISK-8, DEFERRED REPLIES ARE NOT PERSISTED, on purpose and out of scope: the spec names the
+      deduplication registry and the conversation history, and nothing else. The residual is bounded and
+      argued in step 9 rather than left silent - the queue only drains when the client writes again, and
+      a client writing after a restart produces a fresh reply anyway. If review wants it persisted, it
+      is a new task, not a widening of this one.'
+    - 'RISK-9, knowledge_live.db IS BOOTSTRAPPED, NOT DESIGNED, HERE. Its real content schema -
+      documents, chunks, embeddings - belongs to A-5 and the Shadow DB epoch machinery, which is an
+      explicit non-goal. This task creates the file with one metadata table if it is absent, purely so
+      the read-only pool has something to open and probe: opening a nonexistent file with
+      SQLITE_OPEN_READ_ONLY fails, verified. Whoever writes A-5 owns migration 0002 onward and must not
+      read this minimal table as a design commitment.'
+    - 'RISK-10, THE CALCULATED RISK SCORE WILL DISAGREE WITH THE SPEC, exactly as it did for HEX-005.
+      Cargo.lock is touched again and matches sensitive_path_match in complexity-score, so the computed
+      risk reads high while 00-spec.yaml declares medium. The divergence is expected and is not to be
+      resolved by hand-editing Cargo.lock, which must be regenerated by cargo and committed verbatim.'
+    - 'RISK-11, A TEMPTING WRONG WIRING. estado_ventana is available on the adapter and looks like a
+      readiness signal. It is not: it answers whether ONE CONVERSATION is inside its 24 h service
+      window, a per-conversation policy question that the own channel never even produces. Wiring it
+      into /health/ready would make a cell report itself unhealthy because a customer went quiet for a
+      day. Readiness must not call it.'
+test_scenarios:
+    - statement: Applying the sessions.db migrations to an empty temporary database creates contactos,
+          conversaciones, mensajes, parametros_de_plantilla, deduplicacion and estado_del_motor with
+          their indexes, and leaves PRAGMA user_version at the current schema version.
+      covers:
+        - AC-3
+    - statement: Running the migration process a second time against an already-migrated sessions.db
+          returns Ok, applies nothing, and leaves the table list, the index list and user_version
+          byte-identical to what the first run produced.
+      covers:
+        - AC-5
+    - statement: Walking every table of the migrated sessions.db through pragma_table_info, and the
+          stored schema text through sqlite_schema, finds no column name and no schema fragment matching
+          the transport-identifier deny list (jid, wa_id, waid, telefono, phone, msisdn, numero, e164,
+          remote_jid, chat_id); the only conversation key present is the internal opaque one.
+      covers:
+        - AC-4
+    - statement: The pool manager opens sessions.db read/write and knowledge_live.db read-only as two
+          independent pools, both report PRAGMA journal_mode = wal, and a write attempted on a
+          knowledge_live.db connection is rejected by SQLite.
+      covers:
+        - AC-1
+    - statement: Every connection handed out by either pool reports the configured busy_timeout of 5000
+          ms and synchronous = NORMAL, so the documented values are the values actually in force rather
+          than a comment describing an intention.
+      covers:
+        - AC-2
+    - statement: The vitality check reports Sana for both pools while their files are on disk, and
+          reports Caida naming the affected pool once the database file is deleted from disk even though
+          the already-open connection would still answer queries.
+      covers:
+        - AC-10
+    - statement: 'The repository round-trips history faithfully: a RespuestaLibre and a Plantilla with
+          two positional parameters, written and read back, return the same MensajeSaliente values in
+          insertion order, with the template parameters restored from their child table.'
+      covers:
+        - AC-6
+        - AC-8
+    - statement: A canonical event injected by the simulated adapter and processed by the engine against
+          a temporary migrated sessions.db leaves a conversacion row, a contacto row and both the
+          incoming and the outgoing mensajes rows under the correct internal conversation identifier.
+      covers:
+        - AC-6
+    - statement: After the first engine and its pools are DROPPED and a second engine is built against
+          the same sessions.db file, an event carrying a deduplication identifier already processed
+          before the restart is discarded as a duplicate without reaching the processor and without any
+          new outgoing send.
+      covers:
+        - AC-7
+    - statement: After that same restart, a new event from the same contact is assigned the same
+          internal conversation identifier and the history read back contains the pre-restart messages
+          followed by the new ones, in order.
+      covers:
+        - AC-8
+    - statement: The deduplication window is still pruned against the maximum received timestamp and
+          never against a system clock - an event whose timestamp is far in the past does not move the
+          horizon backwards - and HEXCELL_VENTANA_DEDUPLICACION_SEGUNDOS still overrides a default that
+          is still one hour.
+      covers:
+        - AC-9
+    - statement: The pure readiness combinator returns ready only when the sessions pool, the knowledge
+          pool and the channel session are all healthy, and returns not-ready naming the failed
+          component for each of the seven remaining input combinations, including the session-down
+          combination that no adapter can produce in this stage.
+      covers:
+        - AC-10
+    - statement: The running binary answers 200 on GET /health/ready with both databases in place and
+          the simulated channel reporting an active session, and answers an error status once one of the
+          two database files is removed from the data directory underneath it.
+      covers:
+        - AC-10
+    - statement: GET /health/live keeps answering 200 without consulting either pool, and an unknown
+          route keeps answering 404, so making readiness real did not change liveness.
+      covers:
+        - AC-10
+    - statement: 'cargo fmt --check, cargo clippy --workspace --all-targets -- -D warnings and cargo
+          test --workspace all finish clean, and crates/hexcell-core/Cargo.toml still has an empty
+          [dependencies] table with no SQLite crate, no pool crate, no tokio and no HTTP crate.'
+      covers:
+        - AC-11
+        - AC-12
+    - statement: 'The diff contains no LLM provider interface, no SIGTERM or signal handling, no
+          structured-logging crate, no VACUUM INTO and no backup or restore mechanism, and docs/STATUS.md
+          contains nothing marking etapa A-2 as closed.'
+      covers:
+        - AC-13
