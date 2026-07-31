@@ -158,6 +158,13 @@ impl BinarioDePrueba {
             .clone()
     }
 
+    /// PID del proceso hijo, para tests que necesitan leer `/proc/<pid>/status` (línea base de
+    /// RSS, HEX-009). Es el mismo valor que ya usa internamente `enviar_sigterm`; este método
+    /// solo lo expone.
+    pub fn pid(&self) -> u32 {
+        self.proceso.id()
+    }
+
     /// Envía `SIGTERM` al proceso hijo con `/bin/kill`.
     ///
     /// No se añade `libc` como dependencia de test solo para invocar una función: el mismo trato
