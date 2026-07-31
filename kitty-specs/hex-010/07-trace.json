@@ -1,0 +1,26 @@
+{
+  "attempts": [],
+  "completed_at": null,
+  "context_overflows": [],
+  "events": [
+    {
+      "declared_risk": "medium",
+      "event": "risk_level_calculated",
+      "level": "medium",
+      "reasons": [
+        "file_count_high: 15"
+      ],
+      "signals": {
+        "files_count": 15,
+        "sensitive_matches": [],
+        "symbols_count": 0
+      }
+    }
+  ],
+  "outcome": null,
+  "started_at": "2026-07-31T05:42:01Z",
+  "summary": "Protocolo IPC núcleo-sidecar (documento versionado) y esqueleto del sidecar Go con whatsmeow. Tareas 1 y 2 de la etapa A-3.",
+  "task_id": "HEX-010",
+  "total_cost_usd": 0,
+  "violations": []
+}

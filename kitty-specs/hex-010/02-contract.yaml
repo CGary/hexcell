@@ -1,0 +1,81 @@
+acceptance:
+    human_gate: true
+execution:
+    branch: ai/HEX-010
+    mode: worktree_edit
+forbid:
+    behaviors:
+        - 'Do not modify any Rust source, manifest or toolchain file: AC-4 requires the existing workspace to stay untouched and green.'
+        - Do not write docs/adr/adr-0011-whatsmeow-sidecar-e-ipc.md. Its declared scope also covers session persistence and the anti-ban policy (A-3 tasks 5 and 14), which are out of scope; a half-scoped ADR would have to be rewritten, and ADRs are never rewritten in this repo.
+        - Do not open a real WhatsApp connection, do not call Connect on a live socket in any test, do not implement QR or pairing-code pairing, and do not persist session state in a sqlstore. Those are A-3 tasks 4, 5 and 15.
+        - Do not implement the durable outbox, the socket listener, the reconnection loop or the disconnection taxonomy. The protocol document DECLARES their semantics; A-3 tasks 3, 6 and 7 implement them.
+        - Do not let any raw transport identifier (JID, device id, phone number) appear in the incoming-event message of the protocol. The core receives already-translated internal identifiers only; the JID-to-internal mapping is A-3 task 9 and lives inside the adapter.
+        - Do not use nesting deeper than one level in the wire format, and do not use arrays of objects. The Rust workspace has no serde, so the core must be able to parse this format by hand.
+        - 'Do not forward whatsmeow Debugf output to the log at or above the configured threshold: whatsmeow debug lines can carry message content, and adr-0019 makes the closed field set a structural privacy boundary.'
+        - 'Do not add a Go logging dependency: use the standard library log/slog with a JSON handler.'
+        - Do not change the whatsmeow pin in go.mod. It stays fixed to commit e9a033b24933; only the direct/indirect require markers may change as a mechanical consequence of using the library.
+        - Write every artifact in Spanish (document prose, code comments, commit messages). Conventional Commits in Spanish, no AI co-authorship attribution. Absolute dates only, e.g. 2026-07-31.
+        - Never write that Phase B replaces, supersedes or closes Phase A, nor that the sidecar is retired. The sidecar is a permanent cost (adr-0014).
+        - Do not edit 00-spec.yaml or any file under .ai/tasks/. The human owns the spec.
+        - 'Do not change the normative content or the version number of docs/contrato-ipc-respaldo-del-sqlstore.md: add only a forward reference to the new protocol document.'
+    files:
+        - crates/**
+        - Cargo.toml
+        - Cargo.lock
+        - rust-toolchain.toml
+        - docs/plan/**
+        - docs/adr/**
+        - docs/PRD.md
+        - docs/bitacora-de-descartes.md
+        - .ai/tasks/**
+        - '**/*.db'
+        - '**/*.db-wal'
+        - '**/*.db-shm'
+        - .env*
+goal: 'Deliver A-3 tasks 1 and 2: a versioned Spanish design document at docs/protocolo-ipc-nucleo-sidecar.md fixing message format, Unix domain socket transport, delivery-confirmation semantics and both-endpoint reconnection; and a whatsmeow sidecar skeleton under sidecar/ covering startup, client wiring, raw event reception and structured logging, with unit tests that pass without any WhatsApp number, pairing or live connection. No durable outbox, no pairing, no sqlstore persistence and no Rust-side adapter.'
+limits:
+    max_diff_lines: 2200
+    max_files_changed: 18
+read:
+    - docs/plan/fase-a-3-adaptador-whatsmeow.md
+    - docs/contrato-ipc-respaldo-del-sqlstore.md
+    - docs/adr/adr-0010-puerto-de-canal.md
+    - docs/adr/adr-0019-registro-estructurado.md
+    - docs/adr/adr-0016-convencion-de-entrega-de-eventos.md
+    - docs/adr/adr-0014-canal-propio-permanente.md
+    - docs/adr/README.md
+    - crates/hexcell-core/src/canal.rs
+    - crates/hexcell/src/registro.rs
+    - sidecar/go.sum
+    - CLAUDE.md
+retry_policy:
+    escalate_after: 2
+    max_attempts: 2
+summary: Write the versioned core-sidecar IPC protocol document and the whatsmeow Go sidecar skeleton with unit tests. Docs plus sidecar/ only; the Rust workspace is read-only.
+task_id: HEX-010
+touch:
+    - docs/protocolo-ipc-nucleo-sidecar.md
+    - docs/STATUS.md
+    - docs/contrato-ipc-respaldo-del-sqlstore.md
+    - sidecar/main.go
+    - sidecar/go.mod
+    - sidecar/go.sum
+    - sidecar/internal/configuracion/configuracion.go
+    - sidecar/internal/configuracion/configuracion_test.go
+    - sidecar/internal/registro/registro.go
+    - sidecar/internal/registro/registro_test.go
+    - sidecar/internal/ipc/mensajes.go
+    - sidecar/internal/ipc/mensajes_test.go
+    - sidecar/internal/ipc/documento_test.go
+    - sidecar/internal/canal/canal.go
+    - sidecar/internal/canal/canal_test.go
+    - .github/workflows/ci.yml
+verify:
+    commands:
+        - cargo fmt --check
+        - cargo clippy --workspace -- -D warnings
+        - cargo test --workspace
+        - bash -c 'cd sidecar && go build ./... && go vet ./... && go test ./... -count=1'
+        - bash -c 'cd sidecar && test "$(go test ./... -count=1 -v 2>&1 | grep -c -- "^--- PASS")" -ge 12'
+        - bash -c 'test -f docs/protocolo-ipc-nucleo-sidecar.md && ! git diff --name-only HEAD -- crates Cargo.toml Cargo.lock docs/adr docs/plan | grep .'
+    target_s: 60

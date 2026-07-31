@@ -1,0 +1,84 @@
+task_id: HEX-010
+summary: Wrote the versioned core-sidecar IPC protocol document and built the whatsmeow Go sidecar skeleton with 24 passing unit tests. Docs plus sidecar/ only; the Rust workspace is untouched.
+tdd_red_runs:
+  - acceptance_id: AC-1
+    command: test -f docs/protocolo-ipc-nucleo-sidecar.md
+    red_exit_code: 1
+  - acceptance_id: AC-3
+    command: cd sidecar && go test ./internal/... -count=1
+    red_exit_code: 1
+  - acceptance_id: AC-3
+    command: cd sidecar && test "$(go test ./... -count=1 -v 2>&1 | grep -c -- '^--- PASS')" -ge 12
+    red_exit_code: 1
+entries:
+  - changed_files:
+      - docs/protocolo-ipc-nucleo-sidecar.md
+    notes:
+      - Version 1.0 fixed 2026-07-31, header mirroring the A-2 backup contract.
+      - Covers the four mandatory aspects, plus versioning handshake, the closed six-type set, the sqlstore backup operation and the reserved session-state shape.
+      - Wire format is one depth-1 JSON object per line, closed field set per type, string or integer values only, all fields always present in fixed order, 128 KiB line cap.
+      - Transport is an AF_UNIX SOCK_STREAM socket on the shared cell volume; sidecar listens, core connects and retries; stale-socket unlink is gated on a connect probe.
+      - Confirmations reference the durable deduplication identifier, never a per-connection sequence number; at-least-once with core-side deduplication.
+      - No message type carries a raw transport identifier, so the JID cannot cross the port.
+      - States explicitly that ChannelAdapter does not reserve a session-state field today, correcting the plan's claim at lines 97-100.
+    verify_pending: true
+  - changed_files:
+      - sidecar/internal/configuracion/configuracion.go
+      - sidecar/internal/configuracion/configuracion_test.go
+    notes:
+      - Configuration value object loaded from an injected environment lookup, so tests never mutate process state.
+      - Socket path, log level and cell id with documented defaults; empty socket path and unknown level are rejected.
+    verify_pending: true
+  - changed_files:
+      - sidecar/internal/registro/registro.go
+      - sidecar/internal/registro/registro_test.go
+    notes:
+      - Structured logging over log/slog with a JSON handler and no logging dependency.
+      - Field set is the closed set of adr-0019; the slog time attribute is dropped so both cell endpoints emit the same fields.
+      - AdaptadorWaLog satisfies waLog.Logger and drops Debugf while the configured threshold is above debug, because whatsmeow debug lines can carry message content.
+      - 'The residual limit is documented rather than hidden: Infof, Warnf and Errorf are forwarded.'
+    verify_pending: true
+  - changed_files:
+      - sidecar/internal/ipc/mensajes.go
+      - sidecar/internal/ipc/mensajes_test.go
+    notes:
+      - Typed value objects for the six message types plus pure Codificar and Decodificar functions; no socket, no listener, no outbox.
+      - The Cuerpo interface has unexported methods, so a seventh type cannot be added from outside the package.
+      - Encoding is hand-written so field order and depth 1 are properties of the code, not of a serialization library.
+      - Decoding rejects version mismatch, unknown type, malformed line, empty line, nested or non-scalar values, missing fields and unknown fields with distinct sentinel errors.
+      - Tests assert the closed field set of every type contains no JID-shaped or raw-transport name.
+      - Tests assert the sqlstore order and acknowledgement carry exactly the A-2 contract fields, with absence encoded as empty string or zero.
+    verify_pending: true
+  - changed_files:
+      - sidecar/internal/ipc/documento_test.go
+    notes:
+      - Reads the protocol document via a relative path and asserts the four mandatory section headings, the Unix domain socket statement and the versioned header with an absolute date.
+      - Makes AC-1 mechanically checkable instead of asserted in prose.
+    verify_pending: true
+  - changed_files:
+      - sidecar/internal/canal/canal.go
+      - sidecar/internal/canal/canal_test.go
+    notes:
+      - Session skeleton built against store.NoopDevice with the logger injected and a raw event handler that logs only the event type.
+      - Conectar is exposed but never called by tests; no pairing, no sqlstore persistence, no live connection.
+      - Tests assert the client is neither connected nor logged in, so they pass with no WhatsApp number.
+    verify_pending: true
+  - changed_files:
+      - sidecar/main.go
+    notes:
+      - Rewritten as wiring only, with SIGTERM and SIGINT handling for ordered shutdown.
+      - The blank whatsmeow import is gone now that the dependency is used for real.
+      - go.mod and go.sum needed no change; go mod tidy produced an empty diff and the commit pin e9a033b24933 is untouched.
+    verify_pending: true
+  - changed_files:
+      - .github/workflows/ci.yml
+      - docs/STATUS.md
+      - docs/contrato-ipc-respaldo-del-sqlstore.md
+    notes:
+      - Added go test to the CI Go job plus a minimum passing-case guard, because go test exits 0 on a module with no test files.
+      - Recorded the protocol document and the sidecar skeleton as Definido, and the three parameters the protocol leaves open as Pendiente.
+      - Added only a forward reference to the A-2 backup contract; its normative content and version 1.0 are unchanged.
+      - 'Deviation from the skill template: the commit message is Spanish Conventional Commits, as the repository CLAUDE.md and the task contract both require, instead of the English example in the skill.'
+      - 'Deviation from the blueprint: canal_test.go dropped one planned test that duplicated the debug-drop and JSON-shape assertions already covered in registro_test.go, to fit the 2200-line diff limit. Final diff is 2198 lines across 14 files.'
+      - 'Contract conflict noted: 00-spec.yaml says the Rust workspace has five crates while Cargo.toml declares seven. AC-4 was read as the whole workspace staying green, per the blueprint risk entry. No Rust file was modified.'
+    verify_pending: true

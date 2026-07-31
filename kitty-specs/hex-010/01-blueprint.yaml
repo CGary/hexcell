@@ -1,0 +1,156 @@
+affected_files:
+    - docs/protocolo-ipc-nucleo-sidecar.md
+    - sidecar/main.go
+    - sidecar/internal/configuracion/configuracion.go
+    - sidecar/internal/configuracion/configuracion_test.go
+    - sidecar/internal/registro/registro.go
+    - sidecar/internal/registro/registro_test.go
+    - sidecar/internal/ipc/mensajes.go
+    - sidecar/internal/ipc/mensajes_test.go
+    - sidecar/internal/ipc/documento_test.go
+    - sidecar/internal/canal/canal.go
+    - sidecar/internal/canal/canal_test.go
+    - sidecar/go.mod
+    - .github/workflows/ci.yml
+    - docs/STATUS.md
+    - docs/contrato-ipc-respaldo-del-sqlstore.md
+dependencies:
+    - docs/plan/fase-a-3-adaptador-whatsmeow.md
+    - docs/contrato-ipc-respaldo-del-sqlstore.md
+    - docs/adr/adr-0010-puerto-de-canal.md
+    - docs/adr/adr-0019-registro-estructurado.md
+    - docs/adr/adr-0016-convencion-de-entrega-de-eventos.md
+    - crates/hexcell-core/src/canal.rs
+    - crates/hexcell/src/registro.rs
+    - sidecar/go.sum
+risks:
+    - 'SPEC DRIFT (do not act on the spec figure): 00-spec.yaml and CLAUDE.md say the Rust workspace has five crates; Cargo.toml declares SEVEN (hexcell, hexcell-admin, hexcell-core, hexcell-storage, hexcell-meta, hexcell-canal-simulado, hexcell-canal-contrato). adr-0002 also still says five. AC-4 must be read as the whole workspace staying green, not as a crate count.'
+    - 'PLAN DRIFT, load-bearing: fase-a-3 lines 97-100 claim the ChannelAdapter trait already reserves the session-state field and that the simulated adapter reported it always active. It does NOT: crates/hexcell-core/src/canal.rs lines 169-188 exposes only send and estado_ventana, and CicloDeVidaSesion only iniciar_emparejamiento and cerrar_sesion. The protocol document must declare the session-state message it will carry WITHOUT claiming the Rust port already reserves it; adding it is A-3 task 7 and 10 work.'
+    - 'adr-0011-whatsmeow-sidecar-e-ipc.md is still unwritten and the A-2 contract section 6 explicitly defers the transport and serialization choice to it. This task fixes both in docs/protocolo-ipc-nucleo-sidecar.md, so the A-2 pointer stays dangling until adr-0011 is written later in A-3 (it also needs session persistence and the anti-ban policy, tasks 5 and 14, out of scope here). Mitigation: the new document states that adr-0011 will record this decision and cites it; do not write a half-scoped adr-0011 now.'
+    - 'NO SERDE IN THE WORKSPACE: no crate declares serde or serde_json, and adr-0019 rejected a serializer on budget grounds for logging. The Rust side of this protocol (A-3 task 10) will have to PARSE, which is strictly harder than the hand-written serialization adr-0019 chose. The wire format is therefore restricted to depth-1 flat objects with a closed field set and string or integer values only, to keep hand-parsing tractable and leave the dependency decision to adr-0011. Deeper nesting in the document would silently create that dependency.'
+    - 'FALSE-GREEN RISK (HEX-009 lesson): go test ./... exits 0 when a module has zero test files, and the sidecar currently has none. verify.commands therefore asserts a minimum count of PASS lines, not just exit status.'
+    - 'CI GAP: .github/workflows/ci.yml runs only go build and go vet for the Go job; it has no go test step. Adding tests without adding that step leaves AC-3 unenforced in CI.'
+    - 'DEFERRED BY DESIGN, do not flag as a gap: no real websocket connection, no pairing (QR or pairing code), no sqlstore persistence, no durable outbox and no Rust-side adapter are exercised here. whatsmeow cannot complete a login without pairing, so a live connection is impossible at this stage; it belongs to A-3 tasks 4, 5, 3 and 15. The skeleton builds the client against store.NoopDevice and never dials.'
+    - 'LOG LEAK RISK: whatsmeow waLog debug output can carry message content, which adr-0019 makes a structural privacy boundary for the Rust core. The Go adapter must drop Debugf below the configured threshold rather than forwarding everything to slog.'
+    - 'The sidecar is a permanent cost of the own channel: no wording in the document may suggest Phase B replaces, supersedes or closes Phase A, nor that the sidecar is retired (adr-0014).'
+    - No prior failed task overlaps these files (quorum analyze failure-lookup returned null), so there is no inherited failure context to carry into the contract.
+strategy:
+    - action: 'Write the versioned protocol design document (Application Service boundary spec, Spanish, absolute dates). Mirror the header style of the A-2 contract: version 1.0 fixed 2026-07-31, stage that writes it, stage that implements each part. Cover the four mandatory aspects plus protocol versioning, the closed message-type set, the sqlstore backup operation, and the reserved session-state and disconnection-taxonomy shape.'
+      files:
+        - docs/protocolo-ipc-nucleo-sidecar.md
+      step: 1
+    - action: 'Fix the wire format in that document: one depth-1 JSON object per line, UTF-8, newline-terminated, closed field set per message type, values limited to strings and integers. State explicitly that the depth-1 restriction exists so the Rust core can parse it without pulling a serialization crate, and that whether task 10 hand-parses or adds a dependency is deferred to adr-0011.'
+      files:
+        - docs/protocolo-ipc-nucleo-sidecar.md
+      step: 2
+    - action: 'Fix transport and roles in the document: SOCK_STREAM Unix domain socket on the shared cell volume, sidecar listens, core connects and retries. Specify stale-socket unlink on sidecar startup, the version handshake as the first message of every connection, and reconnection behavior for each restart order.'
+      files:
+        - docs/protocolo-ipc-nucleo-sidecar.md
+      step: 3
+    - action: 'Fix the persist-first delivery semantics in the document: the sidecar persists before delivering, the core confirms explicitly, and confirmations reference the durable deduplication identifier rather than a per-connection sequence number so a restart in either order cannot misalign them. Declare at-least-once delivery and core-side deduplication per FR-12. The outbox itself is A-3 task 3 and is declared, not implemented.'
+      files:
+        - docs/protocolo-ipc-nucleo-sidecar.md
+      step: 4
+    - action: 'Create the Go package layout under sidecar/internal and add the configuration Value Object: socket path and log level from the environment with documented defaults and validation.'
+      files:
+        - sidecar/internal/configuracion/configuracion.go
+        - sidecar/internal/configuracion/configuracion_test.go
+      step: 5
+    - action: Implement structured logging over log/slog with a JSON handler, mirroring the closed field discipline of adr-0019, plus an adapter satisfying the whatsmeow waLog.Logger interface that keeps debug output below the configured threshold so message content never reaches a log.
+      files:
+        - sidecar/internal/registro/registro.go
+        - sidecar/internal/registro/registro_test.go
+      step: 6
+    - action: 'Implement the IPC envelope types and codec (Value Objects plus pure functions): protocol version constant, closed message-type set, encode and decode with typed errors for version mismatch, unknown type and malformed input. No socket, no listener, no outbox: this is the typed representation of the document, not the transport.'
+      files:
+        - sidecar/internal/ipc/mensajes.go
+        - sidecar/internal/ipc/mensajes_test.go
+      step: 7
+    - action: Add the document-structure test that reads docs/protocolo-ipc-nucleo-sidecar.md via a relative path and asserts the four mandatory sections and the Unix domain socket transport statement are present, so AC-1 is mechanically checked instead of asserted in prose.
+      files:
+        - sidecar/internal/ipc/documento_test.go
+      step: 8
+    - action: 'Implement the whatsmeow session skeleton: build the client against the non-persisting device store, inject the logger, and register the raw event handler that logs each received event by type. Do not dial, do not pair, do not persist; expose the connect entry point but leave it uncalled by tests.'
+      files:
+        - sidecar/internal/canal/canal.go
+        - sidecar/internal/canal/canal_test.go
+      step: 9
+    - action: 'Rewrite main.go as wiring only: load configuration, build logger, build session, register handler, and handle SIGTERM and SIGINT for ordered shutdown. Remove the blank whatsmeow import now that the dependency is used for real.'
+      files:
+        - sidecar/main.go
+        - sidecar/go.mod
+      step: 10
+    - action: Add a go test step to the CI Go job so the new unit tests are actually enforced, record the protocol document and the open calibration parameters in STATUS.md, and add a forward reference from the A-2 sqlstore contract to the new protocol document without changing its normative content or version.
+      files:
+        - .github/workflows/ci.yml
+        - docs/STATUS.md
+        - docs/contrato-ipc-respaldo-del-sqlstore.md
+      step: 11
+summary: 'Specify the core-sidecar IPC protocol as a versioned doc and build the whatsmeow Go sidecar skeleton: startup, client wiring, raw events, structured logging. A-3 tasks 1-2.'
+symbols:
+    - ipc.VersionProtocolo
+    - ipc.Sobre
+    - ipc.TipoMensaje
+    - ipc.Codificar
+    - ipc.Decodificar
+    - ipc.EventoEntrante
+    - ipc.Confirmacion
+    - ipc.OrdenRespaldoSqlstore
+    - ipc.AcuseRespaldoSqlstore
+    - ipc.EstadoSesion
+    - ipc.Saludo
+    - registro.Registro
+    - registro.Nuevo
+    - registro.AdaptadorWaLog
+    - canal.Sesion
+    - canal.NuevaSesion
+    - canal.Sesion.RegistrarManejador
+    - configuracion.Configuracion
+    - configuracion.Cargar
+task_id: HEX-010
+test_scenarios:
+    - covers:
+        - AC-1
+      statement: The protocol document declares all four mandatory aspects (message format, Unix domain socket transport, delivery-confirmation semantics, both-endpoint reconnection); a Go test reads the doc and asserts each required section heading and the transport statement are present.
+    - covers:
+        - AC-1
+      statement: The document-structure test fails if any of the four mandatory sections is removed, so AC-1 cannot go green on a stub document.
+    - covers:
+        - AC-2
+        - AC-3
+      statement: Encoding an envelope and decoding it back yields the identical message for every declared message type (round-trip over the closed type set).
+    - covers:
+        - AC-3
+      statement: Decoding rejects an envelope whose protocol version differs from ipc.VersionProtocolo, returning a typed version-mismatch error rather than a partially-populated message.
+    - covers:
+        - AC-3
+      statement: Decoding rejects an unknown message type, a malformed line, and an empty line without panicking.
+    - covers:
+        - AC-3
+      statement: The encoded form of every message is a single-line, depth-1 JSON object terminated by a newline, so the Rust core can parse it without a serialization crate.
+    - covers:
+        - AC-3
+      statement: The incoming-event message carries only already-translated internal identifiers; a test asserts the encoded field set is exactly the declared closed set and contains no JID-shaped or raw-transport field.
+    - covers:
+        - AC-1
+        - AC-3
+      statement: The sqlstore backup order and its acknowledgement encode exactly the fields the A-2 contract fixes (orden, destino, identificador_de_ronda; identificador_de_ronda, resultado, ruta_de_la_copia, bytes, motivo), so the A-2 contract fits this protocol unchanged.
+    - covers:
+        - AC-3
+      statement: The structured logger emits one JSON object per line with the closed field set of adr-0019, and a test asserts JSON escaping of quotes and backslashes is correct.
+    - covers:
+        - AC-3
+      statement: The waLog adapter satisfies the whatsmeow logger interface and routes Debugf below the configured threshold, so whatsmeow debug output carrying message content never reaches the log.
+    - covers:
+        - AC-2
+        - AC-3
+      statement: Building a session with the non-persisting device store returns a client with the event handler registered, without opening any network connection; the test passes with no WhatsApp number and no pairing.
+    - covers:
+        - AC-3
+      statement: Configuration loads the socket path and log level from the environment, applies documented defaults, and rejects an empty socket path.
+    - covers:
+        - AC-2
+      statement: go build ./... and go vet ./... exit clean on the sidecar module after the skeleton is added.
+    - covers:
+        - AC-4
+      statement: cargo fmt --check, cargo clippy --workspace -- -D warnings and cargo test --workspace stay green; no Rust file is modified by this task.

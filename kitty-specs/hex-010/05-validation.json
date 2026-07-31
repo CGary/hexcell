@@ -1,0 +1,44 @@
+{
+  "task_id": "HEX-010",
+  "executed_at": "2026-07-31T00:00:00Z",
+  "overall_result": "passed",
+  "commands": [
+    {
+      "command": "cargo fmt --check",
+      "exit_code": 0,
+      "duration_s": 0.138,
+      "output_excerpt": "passed"
+    },
+    {
+      "command": "cargo clippy --workspace -- -D warnings",
+      "exit_code": 0,
+      "duration_s": 0.100,
+      "output_excerpt": "passed"
+    },
+    {
+      "command": "cargo test --workspace",
+      "exit_code": 0,
+      "duration_s": 2.574,
+      "output_excerpt": "43 integration tests passed"
+    },
+    {
+      "command": "bash -c 'cd sidecar && go build ./... && go vet ./... && go test ./... -count=1'",
+      "exit_code": 0,
+      "duration_s": 0.749,
+      "output_excerpt": "4 Go packages passed"
+    },
+    {
+      "command": "bash -c 'cd sidecar && test \"$(go test ./... -count=1 -v 2>&1 | grep -c -- \\\"^--- PASS\\\")\" -ge 12'",
+      "exit_code": 0,
+      "duration_s": 0.292,
+      "output_excerpt": "24 PASS lines found (>=12 required)"
+    },
+    {
+      "command": "bash -c 'test -f docs/protocolo-ipc-nucleo-sidecar.md && ! git diff --name-only HEAD -- crates Cargo.toml Cargo.lock docs/adr docs/plan | grep .'",
+      "exit_code": 0,
+      "duration_s": 0.001,
+      "output_excerpt": "protocol doc present, forbidden files unchanged"
+    }
+  ],
+  "summary": "6/6 commands passed in 3.854s total"
+}

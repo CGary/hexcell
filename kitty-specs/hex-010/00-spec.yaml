@@ -1,0 +1,79 @@
+task_id: HEX-010
+summary: Specify core-sidecar IPC protocol and build whatsmeow sidecar skeleton (A-3 tasks 1-2). Risk medium.
+goal: >-
+  Cover the first two tasks of stage A-3 (fase-a-3-adaptador-whatsmeow.md): (1) write a design
+  document specifying the IPC protocol between the Rust core and the Go sidecar over a Unix domain
+  socket on the shared cell volume, before any implementation; (2) build the whatsmeow sidecar
+  skeleton in the existing sidecar/ module (created in HEX-003): process startup, websocket
+  connection, raw event reception, and structured logging. No real WhatsApp pairing, no durable
+  outbox, no sqlstore persistence, and no Rust-side ChannelAdapter implementation are part of this
+  task; those are later A-3 tasks.
+invariants:
+  - The Rust core never learns about the WhatsApp transport; the IPC protocol document must not
+    leak whatsmeow-specific transport identifiers (e.g. JID) across the port boundary.
+  - The IPC transport is a Unix domain socket over the shared cell volume, not TCP, HTTP, or any
+    other transport.
+  - The protocol document specifies message format, transport, delivery-confirmation semantics, and
+    reconnection behavior for either endpoint restarting first; all four aspects must be covered
+    for the spec to be considered complete.
+  - The whatsmeow dependency in sidecar/go.mod stays pinned to an exact commit, never a tag or a
+    version range.
+  - The sidecar skeleton must not attempt real pairing (QR or pairing code) or persist session
+    state; it only starts, connects the websocket, receives raw events, and logs them structurely.
+  - The existing Rust workspace (five crates plus ChannelAdapter port from HEX-002) remains
+    unmodified and green; this task touches only sidecar/ and documentation/ADR artifacts.
+  - All produced artifacts (design document, code comments, commit messages) are written in
+    Spanish, per repository convention; commit messages follow Conventional Commits in Spanish
+    with no AI co-authorship attribution.
+acceptance:
+  - id: AC-1
+    statement: A written IPC protocol design document exists and covers message format, transport,
+      delivery-confirmation semantics, and reconnection behavior for either endpoint.
+    given: stage A-3 task 1 is undertaken with no prior IPC design document in the repository
+    when: the design document is completed and committed
+    then: the document explicitly addresses all four required aspects (format, transport,
+      confirmation, reconnection) and states the Unix domain socket as transport
+  - id: AC-2
+    statement: The Go sidecar module builds and passes static checks after adding the whatsmeow
+      skeleton.
+    given: the sidecar/ module as it exists after HEX-003 (main.go, go.mod with whatsmeow pinned by
+      commit)
+    when: 'the skeleton (startup, websocket connection, raw event reception, structured logging) is
+      added and `cd sidecar && go build ./... && go vet ./...` is run'
+    then: both commands exit successfully with no errors
+  - id: AC-3
+    statement: Unit tests for the sidecar skeleton exist and pass without requiring a real
+      WhatsApp channel or number.
+    given: the sidecar skeleton implemented under this task
+    when: the Go test suite is run
+    then: all skeleton-level unit tests pass without any live WhatsApp connection, pairing, or
+      laboratory number
+  - id: AC-4
+    statement: The pre-existing Rust workspace remains intact and green.
+    given: the five-crate Rust workspace with the ChannelAdapter port from HEX-002
+    when: 'cargo build --workspace, cargo test --workspace, cargo fmt --check, and cargo clippy
+      --workspace -- -D warnings are run'
+    then: all four commands succeed with no regressions introduced by this task
+risk: medium
+non_goals:
+  - Durable outbox implementation in the sidecar (A-3 task 3).
+  - QR-code or pairing-code pairing implementation (A-3 task 4).
+  - sqlstore persistence of whatsmeow session state (A-3 task 5).
+  - Automatic reconnection with exponential backoff and temporary-ban handling policy (A-3 task 6).
+  - Disconnection taxonomy exposed over the IPC (A-3 task 7).
+  - Canonical translation of protocol events to the port's normalized format (A-3 task 8).
+  - JID-to-internal-identifier mapping and its dedicated identity store (A-3 task 9).
+  - The Rust-side WhatsmeowAdapter implementation of the ChannelAdapter trait (A-3 task 10).
+  - Any test or acceptance criterion requiring a real WhatsApp number or completed login/pairing
+    (A-3 task 15); the skeleton cannot complete login without pairing, so real-channel connection
+    criteria are deferred by design.
+constraints:
+  - All artifacts (protocol document, source comments, commit messages) are written in Spanish.
+  - Never version *.db, *.db-wal, *.db-shm, or .env* files; no API key or secret reaches the public
+    repository.
+  - Dates in documentation are absolute (e.g. 2026-07-31), never relative.
+  - Never state or imply that Phase B replaces, supersedes, or closes Phase A, nor that the sidecar
+    is being retired; the sidecar is a permanent cost.
+  - whatsmeow in sidecar/go.mod stays pinned by exact commit (already the case); no upgrade of that
+    pin is in scope for this task.
+  - Quorum artifacts are written only under .ai/tasks/ at the repository root.
