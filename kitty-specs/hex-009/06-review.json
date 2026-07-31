@@ -1,0 +1,19 @@
+{
+  "contract_compliance": true,
+  "forbidden_files_touched": [],
+  "functional_risk": "low",
+  "missing_tests": [],
+  "notes": [
+    "Touch exacto: crates/hexcell/tests/rss_linea_base.rs, crates/hexcell/tests/comun/mod.rs, docs/STATUS.md (3 archivos, limite del contrato). Diff real: 77 lineas insertadas, 0 borradas (limite 180). Ningun archivo forbid tocado; no se creo scripts/; ningun src/ de produccion tocado; Cargo.toml/Cargo.lock intactos.",
+    "Reproduccion independiente de los 4 comandos de verify desde el worktree ai/HEX-009 (commit aff1e38): cargo fmt --check exit 0, cargo clippy --workspace -D warnings exit 0, cargo test --workspace exit 0 con 90 passed/1 ignored/0 failed (el ignored es exactamente mide_rss_linea_base_en_reposo, confirma AC-1), y cargo test --workspace -- --ignored rss_linea_base --nocapture exit 0 imprimiendo linea_base_rss_hexcell_en_reposo_mb=6, igual al valor 6 MB registrado en STATUS.md.",
+    "El test es anti-vacuo de verdad: lanzar_binario_con_ruta_de_datos (comun/mod.rs) bloquea hasta 5s esperando la linea real 'salud_vinculada' del proceso hijo real (Child::spawn con CARGO_BIN_EXE_hexcell), y solo entonces el test duerme 500ms y lee /proc/\u003cpid\u003e/status con el pid real via el nuevo BinarioDePrueba::pid(). Si el proceso no arrancara, esperar_linea hace panic (falla el test); si VmRSS fuera 0, el assert!(mb \u003e 0) falla. No hay cota superior explicita para un valor absurdamente grande, pero eso no lo exige ni el blueprint (RISK-5, solo exige entero positivo) ni el contrato/spec (AC-3 solo pide entero positivo); no es un gap contractual, es una posible mejora futura.",
+    "Desviacion declarada (nombre del test) verificada como real y no cosmetica: el nombre 'mide_rss_linea_base_en_reposo' SI contiene el substring 'rss_linea_base' (mide_[rss_linea_base]_en_reposo) y el filtro --ignored rss_linea_base lo selecciona y ejecuta (1 passed, confirmado en repeticion). El nombre del blueprint 'medir_rss_en_reposo' NO contiene ese substring, asi que con ese nombre el mismo filtro habria dado 0 tests seleccionados con exit 0 (falso verde), exactamente el riesgo que el implementador senala. Cambio correcto y justificado.",
+    "STATUS.md solo aniade texto al final de la seccion '## Definido' (verificado en el diff: hunk unicamente con lineas +, ningun contexto de borrado/reordenamiento); cierra la frase pendiente de docs/plan/fase-a-2-nucleo-persistencia.md linea 300 ('El consumo de memoria residente... queda medido y registrado'); declara el cierre de A-2 diferido correctamente a A-3 solo para lo dependiente del sidecar (copia IPC del sqlstore, restauracion extremo a extremo con respuesta real del bot, ensayo device_removed), sin inventar cierres no ejecutados ni tocar el lenguaje de Fase A/Fase B. Fecha 2026-07-30 absoluta, HEX-009 referenciado.",
+    "Invariantes: commit en espanol, conventional commit 'feat(a2): ...' sin Co-Authored-By ni atribucion de AI; sin *.db/.env* tocados; sin secretos; hexcell-core no tocado; ningun identificador de transporte introducido.",
+    "Observacion menor, no bloqueante: 05-validation.json trae un output_excerpt de 'cargo test --workspace' que dice '42 passed; 0 failed; 0 ignored' pero la reproduccion real da 90 passed/1 ignored (el ignored es justamente el nuevo test, lo esperado). El exit_code 0 y overall_result 'passed' del artefacto son correctos y coinciden con lo reproducido; solo el excerpt textual esta desactualizado/es aproximado, no afecta la aceptacion de este diff."
+  ],
+  "summary": "Test #[ignore] real que mide VmRSS del binario hexcell tras readiness y registra 6 MB en STATUS.md; cumple spec/blueprint/contrato, filtro de deviacion verificado.",
+  "task_id": "HEX-009",
+  "unrequested_refactor": false,
+  "verdict": "approve"
+}

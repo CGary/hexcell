@@ -1,0 +1,52 @@
+task_id: HEX-009
+summary: Crear procedimiento reproducible para medir RSS del binario hexcell en reposo y registrar línea base de NFR-01. Riesgo bajo.
+goal: >
+  Cumplir el único criterio de aceptación pendiente de la etapa A-2: medir reproduciblemente
+  el consumo de memoria residente (RSS) del proceso hexcell en reposo (arrancado con adaptador
+  simulado, motor ocioso, sin eventos) y registrar el valor medido como línea base para NFR-01
+  en docs/STATUS.md con fecha absoluta 2026-07-30.
+invariants:
+  - Todos los commits en español con conventional commits (sin Co-Authored-By ni atribución de AI).
+  - Fechas en formato absoluto (2026-07-30), nunca relativas.
+  - Nunca versionar *.db, *.db-wal, *.db-shm, .env*.
+  - Ninguna API key o secreto en el repositorio.
+  - El núcleo nunca conoce el transporte; hexcell-core sin dependencias.
+  - Nunca escribir que Fase B sustituye a Fase A ni que sidecar se retira.
+  - Artefactos viven en raíz .ai/tasks/, NUNCA bajo worktrees/.
+non_goals:
+  - Validación del presupuesto ≤80 MB por célula sobre canal propio (requiere sidecar, etapa A-3).
+  - Medición bajo carga sostenida (etapa A-5).
+  - Creación de planificadores, CLI o herramientas administrativas.
+  - Integración con infraestructura de monitoreo externo.
+constraints:
+  - El procedimiento debe ser reproducible sin dependencias externas, solo `cargo`, shell estándar y acceso a /proc/<pid>/status.
+  - La medición debe ejecutarse sobre el proceso iniciado con adaptador simulado (no hardware real).
+  - El motor debe estar ocioso; no hay eventos de usuarios ni operaciones LLM en curso.
+  - El valor RSS se registra en MB en STATUS.md con precisión entera.
+acceptance:
+  - id: AC-1
+    statement: "`cargo test --workspace` sigue en verde tras todos los cambios."
+    given: el repositorio con los cambios de HEX-009
+    when: se ejecuta cargo test --workspace
+    then: todos los tests pasan sin errores
+  - id: AC-2
+    statement: Existe un procedimiento reproducible (script o test #[ignore]) que mide RSS de hexcell en reposo.
+    given: el procedimiento en scripts/ o hexcell tests
+    when: se ejecuta (bash script o cargo test --ignored)
+    then: el procedimiento arranca el proceso, aguarda estabilización, lee /proc/<pid>/status (VmRSS) y lo reporta en MB
+  - id: AC-3
+    statement: El procedimiento ejecuta sin errores y produce un valor numérico válido en MB.
+    given: el procedimiento ejecutado
+    when: el proceso termina normalmente
+    then: la salida contiene un número entero positivo representando MB de memoria residente
+  - id: AC-4
+    statement: El valor medido se registra en docs/STATUS.md bajo la sección Definido con fecha 2026-07-30 y referencia HEX-009.
+    given: docs/STATUS.md
+    when: se inspecciona la sección Definido
+    then: existe un párrafo que registra el valor RSS (ej. "Línea base RSS de hexcell en reposo (sin sidecar, adaptador simulado) 42 MB, medido 2026-07-30 vía HEX-009")
+  - id: AC-5
+    statement: STATUS.md anota que quedan cumplidos todos los criterios de aceptación de etapa A-2 ejecutables en A-2.
+    given: docs/STATUS.md
+    when: se inspecciona la sección de etapa A-2
+    then: la anotación declara que todos los criterios ejecutables en esta etapa están cumplidos y refiere los diferidos a A-3
+risk: low

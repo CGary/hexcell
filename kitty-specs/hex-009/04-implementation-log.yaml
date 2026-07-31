@@ -1,0 +1,20 @@
+entries:
+    - changed_files:
+        - crates/hexcell/tests/comun/mod.rs
+      notes:
+        - Added pub fn pid(&self) -> u32 to BinarioDePrueba, returning self.proceso.id() — the same value enviar_sigterm already reads internally. Purely additive accessor, no behavior change to any existing test.
+      verify_pending: false
+    - changed_files:
+        - crates/hexcell/tests/rss_linea_base.rs
+      notes:
+        - 'New #[ignore] test mide_rss_linea_base_en_reposo: launches the real hexcell binary via lanzar_binario_con_ruta_de_datos (simulated adapter, no injected startup event, engine idle), waits past the salud_vinculada readiness line with a 500ms settle sleep, reads /proc/<pid>/status, parses VmRSS, converts kB to MB by integer truncation (kB/1024), asserts the result is a positive integer, and prints "linea_base_rss_hexcell_en_reposo_mb=<N>" for manual transcription.'
+        - Test function name deliberately includes the literal substring "rss_linea_base" (not just "medir_rss_en_reposo" as the blueprint symbols section names it) so that the exact contract verify command `cargo test --workspace -- --ignored rss_linea_base --nocapture` actually selects and runs it — verified the blueprint-suggested name alone left the test filtered out (0 tests run, exit 0) under that exact filter, which would have silently satisfied the command without ever measuring anything.
+        - 'Actually executed: `cargo test --workspace -- --ignored rss_linea_base --nocapture` from the worktree. Real measured value: VmRSS = 6 MB (hexcell process alone, simulated adapter, no sidecar, idle engine).'
+      verify_pending: false
+    - changed_files:
+        - docs/STATUS.md
+      notes:
+        - 'Appended two dated bullets (2026-07-30, HEX-009) to the end of the existing "## Definido" section, no existing text edited or reordered: (1) the measured 6 MB RSS baseline for NFR-01, with an explicit note that this figure is the hexcell process alone without a sidecar and does not validate the <=80MB per-cell budget (that needs the sidecar, deferred to A-3); (2) a closure statement that every stage-A-2 acceptance criterion executable within A-2 is now satisfied, deferring the sidecar-dependent items (real IPC sqlstore copy execution, end-to-end restore with a real bot reply, device_removed branch rehearsal) to stage A-3, mirroring the existing HEX-008 deferral language already in that section.'
+      verify_pending: false
+summary: Add a reproducible
+task_id: HEX-009

@@ -1,0 +1,53 @@
+task_id: HEX-009
+summary: Add an #[ignore] integration test that spawns the real hexcell binary against the simulated adapter, reads VmRSS from /proc/<pid>/status after stabilization, and record the measured baseline plus A-2 acceptance closure in docs/STATUS.md.
+affected_files:
+  - crates/hexcell/tests/rss_linea_base.rs
+  - crates/hexcell/tests/comun/mod.rs
+  - docs/STATUS.md
+symbols:
+  - BinarioDePrueba::pid
+  - medir_rss_en_reposo
+dependencies:
+  - .ai/tasks/active/HEX-009-new-spec/00-spec.yaml
+  - crates/hexcell/src/main.rs
+  - crates/hexcell/src/configuracion.rs
+  - crates/hexcell/tests/salud_http.rs
+  - crates/hexcell/tests/apagado_ordenado.rs
+  - docs/plan/fase-a-2-nucleo-persistencia.md
+  - docs/STATUS.md
+risks:
+  - 'RISK-1, SCRIPT VS. RUST TEST. The spec leaves the choice open between a script in scripts/ and a #[ignore] integration test. Verified on 2026-07-30: crates/hexcell/tests/comun/mod.rs already owns a complete real-process harness (BinarioDePrueba::lanzar_binario_con_ruta_de_datos spawns env!("CARGO_BIN_EXE_hexcell") with HEXCELL_DIRECCION_SALUD=127.0.0.1:0, drains stdout/stderr on background threads, and blocks until the salud_vinculada log line appears), already reused by apagado_ordenado.rs, salud_http.rs, continuidad_de_hilo.rs and configuracion.rs for exactly this kind of real-process assertion. A shell script in scripts/ would duplicate that spawning/env-var/readiness-wait logic in bash and drift from it over time. The chosen procedure is a new #[ignore] test file, crates/hexcell/tests/rss_linea_base.rs, that reuses the existing harness instead of adding a second way to launch the binary. scripts/ does not exist yet in this repo (verified with find); creating it only for this would be a new convention with no other consumer.'
+  - 'RISK-2, PID ACCESS IS NOT EXPOSED TODAY. BinarioDePrueba keeps `proceso: Child` private; the only current user of the pid is the private enviar_sigterm method via self.proceso.id(). The new test needs the pid to read /proc/<pid>/status, so this task adds one small accessor, `pub fn pid(&self) -> u32`, to crates/hexcell/tests/comun/mod.rs. This is the only change to shared test infrastructure; it is additive and does not alter the behavior of any existing test that already passes.'
+  - 'RISK-3, STABILIZATION IS A FIXED SLEEP, NOT A SIGNAL. Unlike salud_vinculada (an explicit log line the harness already waits on), "reposo, motor ocioso" has no observable event to wait for: the engine is idle by construction once the health server is up and no event was injected (HEXCELL_EVENTO_SIMULADO_DE_ARRANQUE left unset). The test therefore waits on the existing salud_vinculada line (proves the process finished startup) and then sleeps a short fixed duration (e.g. 500 ms) before reading VmRSS, to let allocator pages settle. This makes the test inherently host- and timing-dependent, which is exactly why AC-2/AC-3 require it to be #[ignore] rather than part of the default `cargo test --workspace` run (AC-1 stays green because #[ignore] tests are skipped by default).'
+  - 'RISK-4, /proc/<pid>/status IS LINUX-ONLY. Reading VmRSS this way only works on Linux; the spec constraint explicitly names /proc/<pid>/status, and CLAUDE.md/README already target Linux hardware (i7, Docker) as the deployment and CI target, so no #[cfg(target_os)] gate is added — the test simply requires Linux, consistent with the rest of this workspace which does not attempt macOS/Windows portability.'
+  - 'RISK-5, MB CONVERSION AND PRECISION. /proc/<pid>/status reports VmRSS in kB (base 1024, per Linux kernel documentation), and AC-3/AC-4 require an integer MB value. The test converts with integer division (kB / 1024) truncating toward zero, which is a conservative (slightly-under, never inflated) baseline figure, and prints it to stdout in a clearly labelled line so a human running `cargo test --workspace -- --ignored rss_linea_base --nocapture` can read and transcribe it into docs/STATUS.md by hand; the test itself does not write docs/STATUS.md, because writing documentation from an automated test run is out of scope and the AC-4 value must be a human-recorded, dated fact, not a self-updating one.'
+  - 'RISK-6, WHERE IN STATUS.md THE TWO NEW SENTENCES GO. docs/STATUS.md has one "## Definido" section (from line 20) and one "## Pendiente" section (from line 314); it has no dedicated "stage A-2" subsection to append a closing note to. This task adds two short, dated (2026-07-30) bullets to the end of "## Definido": one recording the measured RSS baseline for NFR-01 (closing the sentence already present in docs/plan/fase-a-2-nucleo-persistencia.md line 300, "El consumo de memoria residente del proceso en reposo queda medido y registrado como línea base para NFR-01"), and one declaring that every stage-A-2 acceptance criterion executable within A-2 is now satisfied, explicitly deferring the sidecar-dependent items (IPC IPC copy execution, end-to-end restore with a real bot reply, device_removed branch rehearsal) to stage A-3, mirroring the existing deferral language already used at STATUS.md lines 108-115 for the backup split between A-2 and A-3. No existing STATUS.md text is edited or reordered.'
+strategy:
+  - step: 1
+    action: Add a pub fn pid(&self) -> u32 accessor to BinarioDePrueba in crates/hexcell/tests/comun/mod.rs, returning self.proceso.id(), reusing the same pattern already used internally by enviar_sigterm.
+    files:
+      - crates/hexcell/tests/comun/mod.rs
+  - step: 2
+    action: Create crates/hexcell/tests/rss_linea_base.rs with a single #[ignore] test that creates a DirectorioTemporal, launches the binary via lanzar_binario_con_ruta_de_datos (simulated adapter, no injected startup event, engine idle), sleeps briefly past the salud_vinculada line to let RSS settle, reads /proc/<pid>/status, parses the VmRSS line, converts kB to MB by integer division, asserts the value is a positive integer, and prints it labelled for manual transcription.
+    files:
+      - crates/hexcell/tests/rss_linea_base.rs
+  - step: 3
+    action: Run the new test with cargo test --workspace -- --ignored rss_linea_base --nocapture, read the printed MB value, and append two dated bullets to the end of the "## Definido" section of docs/STATUS.md, referencing HEX-009 and 2026-07-30, following the format sample already given in 00-spec.yaml AC-4/AC-5.
+    files:
+      - docs/STATUS.md
+test_scenarios:
+  - statement: cargo test --workspace stays green after all changes, because the new test is #[ignore] and therefore not part of the default run.
+    covers:
+      - AC-1
+  - statement: cargo test --workspace -- --ignored rss_linea_base spawns the real hexcell binary against a temporary data directory with the simulated adapter, waits for the salud_vinculada line, and reads VmRSS from /proc/<pid>/status.
+    covers:
+      - AC-2
+  - statement: The test exits successfully and its stdout contains one positive integer labelled as the RSS value in MB.
+    covers:
+      - AC-3
+  - statement: docs/STATUS.md's "## Definido" section gains a bullet stating the measured RSS baseline in MB, dated 2026-07-30 and attributed to HEX-009.
+    covers:
+      - AC-4
+  - statement: docs/STATUS.md's "## Definido" section gains a bullet declaring every stage-A-2 acceptance criterion executable within A-2 satisfied, with sidecar-dependent items explicitly deferred to A-3.
+    covers:
+      - AC-5

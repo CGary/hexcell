@@ -1,0 +1,66 @@
+task_id: HEX-009
+summary: Add a reproducible #[ignore] test measuring hexcell's idle RSS and record the baseline plus A-2 closure in docs/STATUS.md.
+goal: >
+  Satisfy the last pending A-2 acceptance criterion (docs/plan/fase-a-2-nucleo-persistencia.md
+  line 300) by adding a reproducible procedure that measures the resident memory (RSS) of the
+  hexcell process at rest, started against the simulated adapter with the engine idle, reading
+  /proc/<pid>/status, and by recording the measured value plus the A-2 acceptance closure in
+  docs/STATUS.md with the absolute date 2026-07-30.
+read:
+  - .ai/tasks/active/HEX-009-new-spec/00-spec.yaml
+  - .ai/tasks/active/HEX-009-new-spec/01-blueprint.yaml
+  - crates/hexcell/src/main.rs
+  - crates/hexcell/src/configuracion.rs
+  - crates/hexcell/tests/salud_http.rs
+  - crates/hexcell/tests/apagado_ordenado.rs
+  - docs/plan/fase-a-2-nucleo-persistencia.md
+  - docs/STATUS.md
+touch:
+  - crates/hexcell/tests/rss_linea_base.rs
+  - crates/hexcell/tests/comun/mod.rs
+  - docs/STATUS.md
+forbid:
+  files:
+    - crates/hexcell/src/main.rs
+    - crates/hexcell/src/configuracion.rs
+    - crates/hexcell/src/motor.rs
+    - crates/hexcell/src/salud.rs
+    - crates/hexcell/src/apagado.rs
+    - crates/hexcell/src/registro.rs
+    - crates/hexcell/src/procesador.rs
+    - crates/hexcell/src/inferencia.rs
+    - crates/hexcell-core/src/lib.rs
+    - crates/hexcell-storage/src/lib.rs
+    - crates/hexcell-canal-simulado/src/adaptador.rs
+    - Cargo.toml
+    - Cargo.lock
+    - docs/PRD.md
+    - docs/adr/README.md
+    - docs/bitacora-de-descartes.md
+  behaviors:
+    - Modifying production source code under any crate's src/ directory.
+    - Adding new crate dependencies to Cargo.toml or Cargo.lock.
+    - Creating a scripts/ shell script in addition to (or instead of) the #[ignore] Rust test, splitting the procedure across two mechanisms.
+    - Making the new RSS test run by default (it must stay #[ignore]).
+    - Editing or reordering any existing docs/STATUS.md text; only appending new dated bullets is allowed.
+    - Writing that Fase B replaces, substitutes, or closes Fase A, or that the sidecar is retired.
+    - Using a relative date instead of the absolute 2026-07-30.
+    - Committing any *.db, *.db-wal, *.db-shm, or .env* file.
+verify:
+  commands:
+    - cargo fmt --check
+    - cargo clippy --workspace -- -D warnings
+    - cargo test --workspace
+    - cargo test --workspace -- --ignored rss_linea_base --nocapture
+  target_s: 60
+acceptance:
+  human_gate: true
+limits:
+  max_files_changed: 3
+  max_diff_lines: 180
+execution:
+  mode: worktree_edit
+  branch: ai/HEX-009
+retry_policy:
+  max_attempts: 2
+  escalate_after: 1

@@ -1,0 +1,44 @@
+{
+  "task_id": "HEX-009",
+  "summary": "Línea base RSS para NFR-01; primer despacho de flota (agy) con timeout a 300 s, diff parcial en ref forense; completado por ejecutor interno.",
+  "started_at": "2026-07-30T18:48:00Z",
+  "completed_at": null,
+  "outcome": null,
+  "attempts": [
+    {
+      "phase": "execute",
+      "result": "failed",
+      "model": "google/gemini-3.1-pro-low",
+      "duration_s": 300,
+      "notes": "Timeout de 300 s del transporte agy; diff parcial de 3 archivos (+43) preservado en refs/fleet/HEX-009/attempt-1-google-gemini-3.1-pro-low, no aplicado."
+    }
+  ],
+  "total_cost_usd": 0,
+  "violations": [],
+  "context_overflows": [],
+  "events": [
+    {
+      "event": "risk_level_calculated",
+      "level": "low",
+      "declared_risk": "low",
+      "reasons": ["no_signals_matched"],
+      "signals": {
+        "files_count": 3,
+        "symbols_count": 0,
+        "sensitive_matches": []
+      }
+    },
+    {
+      "event": "dispatch_started",
+      "dispatch_id": "f4209a8c6cc7",
+      "agent": "agy",
+      "model": "google/gemini-3.1-pro-low"
+    },
+    {
+      "event": "dispatch_finished",
+      "dispatch_id": "f4209a8c6cc7",
+      "outcome_class": "attempt",
+      "timed_out": true
+    }
+  ]
+}

@@ -1,0 +1,63 @@
+{
+  "task_id": "HEX-009",
+  "phase": "accept",
+  "executed_at": "2026-07-30T22:45:00Z",
+  "verdict": "ready",
+  "gates": {
+    "00-spec": {
+      "status": "valid",
+      "notes": "Specification defines measurement of RSS baseline for NFR-01 in quiescent state (simulated adapter, no startup event, idle motor). Five acceptance criteria: AC-1 (cargo test --workspace passes), AC-2 (reproducible procedure exists), AC-3 (procedure runs error-free with numeric output), AC-4 (value recorded in STATUS.md with date 2026-07-30), AC-5 (A-2 closure declared). Risk: low."
+    },
+    "01-blueprint": {
+      "status": "valid",
+      "notes": "Blueprint specifies test #[ignore] rss_linea_base in crates/hexcell/tests/, spawns hexcell binary with simulated adapter, awaits 'salud_vinculada' startup line, sleeps 500ms for allocator pages to settle, reads VmRSS from /proc/<pid>/status, converts to MB via integer division (RISK-5 conservative rounding), asserts positive value. Complexity: L (3 files, 77 lines, one test)."
+    },
+    "02-contract": {
+      "status": "valid",
+      "notes": "Contract specifies 3 files touched: crates/hexcell/tests/rss_linea_base.rs (new 57 lines), crates/hexcell/tests/comun/mod.rs (modified 7 lines for BinarioDePrueba::pid access), docs/STATUS.md (modified 13 lines appending Definido section closure). Forbid: no hexcell-core changes, no Cargo.toml edits, no databases versioned, no secrets. Verify commands: cargo fmt/clippy/test, test name contains 'rss_linea_base', procedure spawns real child process, reads real /proc/<pid>/status, outputs numeric value. Max diff: 77 lines < 180 max, 3 files < 30 max."
+    },
+    "04-implementation-log": {
+      "status": "complete",
+      "notes": "Implementation log recorded: (1) Test #[ignore] mide_rss_linea_base_en_reposo added to rss_linea_base.rs with full documentation; (2) Procedure calls lanzar_binario_con_ruta_de_datos from comun/mod.rs (launches real hexcell via CARGO_BIN_EXE_hexcell), awaits 'salud_vinculada' startup signal, sleeps 500ms, reads /proc/<pid>/status via new BinarioDePrueba::pid() method; (3) Parses VmRSS line, extracts kB value, converts to MB via kb/1024 integer division, asserts mb > 0, prints linea_base_rss_hexcell_en_reposo_mb=6; (4) STATUS.md Definido section extended with baseline value (6 MB), measurement date (2026-07-30), reference to test procedure, and closure of A-2 deferring sidecar-dependent ACs to A-3; (5) All commits Spanish, conventional commits (feat(a2):...), no Co-Authored-By; (6) No TDD red runs."
+    },
+    "05-validation": {
+      "status": "passed",
+      "result": "4/4 verify commands PASS, all exit 0",
+      "summary": "All four verification commands executed successfully: cargo fmt --check exit 0, cargo clippy --workspace -- -D warnings exit 0, cargo test --workspace exit 0 (90 passed, 1 ignored: mide_rss_linea_base_en_reposo), cargo test --workspace -- --ignored rss_linea_base --nocapture exit 0 producing linea_base_rss_hexcell_en_reposo_mb=6. Test filter 'rss_linea_base' selects exactly one test as required (AC-2 deviation name verified real, not cosmetic). Limits maintained: 3 files / 77 lines < max 180 / 30. Zero violations."
+    },
+    "06-review": {
+      "status": "approved",
+      "contract_compliance": true,
+      "summary": "Contract compliance verified: 3 files touched within scope, zero forbidden files accessed, 4/4 validation commands passed, all tests passed. AC-1 verified: cargo test --workspace passes with 90 passed/1 ignored (the ignored test is exactly mide_rss_linea_base_en_reposo, confirming ignorance via contract). AC-2 verified: reproducible procedure exists as test function with full documentation, spawns real hexcell process via CARGO_BIN_EXE_hexcell, awaits 'salud_vinculada' line from real child. AC-3 verified: procedure runs without error on validation pass, outputs linea_base_rss_hexcell_en_reposo_mb=6 (numeric, positive, integer). AC-4 verified: STATUS.md extended in Definido section (no deletions, only appends per review note), records baseline 6 MB, date 2026-07-30 absolute, references HEX-009 and test procedure. AC-5 verified: STATUS.md declares closure of all A-2 executable criteria as of 2026-07-30, correctly defers sidecar-dependent work (real IPC sqlstore copy, end-to-end restore with bot response, device_removed branch testing) to A-3. Workspace clean: cargo fmt/clippy/test exit 0. hexcell-core invariant verified: no core changes. Manifest unchanged: no Cargo.toml edits, no new dependencies. Forbidden list respected: no *.db, no .env*, no secrets. Unrequested refactor: none. Fix tasks pending: 0.",
+      "fix_tasks_resolved": 0,
+      "fix_tasks_pending": 0
+    },
+    "07-trace": {
+      "status": "complete",
+      "notes": "Trace recorded dispatch phase completion. Fleet dispatch to agy timed out at 300s during execute phase; diff preserved in refs/fleet/HEX-009/attempt-1-google-gemini-3.1-pro-low. Risk level declared low (low risk per spec authority), no signals matched. Calculated risk low (no files triggering high-risk patterns, 3 files / 77 lines nominal). All five ACs covered in blueprint test scenarios matching contract constraints. Deferred barriers properly marked: integration with sidecar (A-3), concurrent SQLITE_BUSY testing (deferred per HEX-008 precedent, not in scope for RSS baseline), remote destination testing (deferred per A-3 closure note). No prior failures in .ai/tasks/failed/. All dates absolute (2026-07-30), Spanish prose, no Fase A substitution language."
+    }
+  },
+  "summary": "HEX-009 implementation complete: reproducible test #[ignore] mide_rss_linea_base_en_reposo spawns hexcell against simulated adapter, awaits startup, reads VmRSS from /proc/<pid>/status, converts to MB (6 MB baseline), prints output (linea_base_rss_hexcell_en_reposo_mb=6). Baseline registered in STATUS.md Definido section with date 2026-07-30 and test reference. All five acceptance criteria satisfied: AC-1 (cargo test --workspace passes, 90 passed/1 ignored), AC-2 (procedure exists as real test), AC-3 (procedure executes successfully with numeric output 6 MB), AC-4 (value recorded in STATUS.md), AC-5 (A-2 executable criteria closure declared, A-3 deferred work noted). Workspace clean (cargo fmt/clippy/test exit 0), hexcell-core unchanged, scope boundary respected (zero A-3 work, zero sidecar integration). Three files touched (77 lines total), within contract limits.",
+  "merge_readiness": {
+    "all_tests_pass": true,
+    "contract_compliant": true,
+    "review_approved": true,
+    "forbidden_files_untouched": true,
+    "all_acceptance_criteria_satisfied": true,
+    "risk_aligned": true,
+    "ready_for_merge": true
+  },
+  "notes": [
+    "All five ACs satisfied: AC-1 cargo test --workspace passes (90 passed/1 ignored), AC-2 reproducible procedure exists (test #[ignore]), AC-3 procedure runs successfully producing numeric output (6 MB), AC-4 value recorded in STATUS.md (2026-07-30 absolute), AC-5 A-2 executable criteria closure declared, A-3 work deferred",
+    "Validation: 4/4 commands PASS, all exit 0, test output linea_base_rss_hexcell_en_reposo_mb=6 matches STATUS.md baseline",
+    "Review: approved, contract_compliance true, fix_tasks_pending 0, forbidden_files_untouched true",
+    "Implementation log: complete, three files documented, verify_pending false, no TDD red runs",
+    "Test procedure real: spawns hexcell via CARGO_BIN_EXE_hexcell, awaits 'salud_vinculada' startup line from live child process, reads /proc/<pid>/status with actual pid from BinarioDePrueba::pid(), parses VmRSS, converts kb to MB via integer division",
+    "Test filter 'rss_linea_base': name is mide_[rss_linea_base]_en_reposo, contains substring, selection verified real (not cosmetic)",
+    "STATUS.md Definido section extended (13 lines appended, no deletions/reordering): baseline 6 MB, simulated adapter, idle motor, no sidecar, quiescent state, date 2026-07-30, reference HEX-009, test procedure documented, A-2 closure declared with A-3 deferrals explicit (real sqlstore copy via IPC, end-to-end restore with bot response, device_removed branch testing)",
+    "Manifest: only hexcell/tests files touched, comun/mod.rs gains BinarioDePrueba::pid() method, rss_linea_base.rs new, STATUS.md only doc change, no Cargo.toml edits",
+    "Invariants: commit Spanish conventional commit 'feat(a2):...', no Co-Authored-By, no *.db versioned, no secrets, hexcell-core unchanged, no Fase B substitution language, date 2026-07-30 absolute",
+    "Risk: declared low per spec (low per domain), calculated low (no high-risk signals), proper alignment",
+    "All dates absolute (2026-07-30), all prose Spanish, adr-0010 untouched (identity mapping remains in adapter, not in core)"
+  ]
+}
