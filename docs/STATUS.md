@@ -310,6 +310,19 @@ adicional cuando aparezca un cliente que lo justifique. Ver [plan/README.md](pla
   restauración con su bifurcación ante `device_removed` (`docs/runbook-restauracion-de-celula.md`)
   quedan redactados y versionados; su ejecución real contra un sidecar desplegado sigue siendo de
   la etapa A-3.
+* **Línea base de RSS del proceso `hexcell` en reposo, medida y registrada para NFR-01** (2026-07-30,
+  HEX-009). Arrancado con el adaptador simulado, sin evento de arranque inyectado y motor ocioso,
+  el proceso consume **6 MB** de memoria residente (`VmRSS` de `/proc/<pid>/status`), medidos con
+  el test reproducible `#[ignore]` `crates/hexcell/tests/rss_linea_base.rs`
+  (`cargo test --workspace -- --ignored rss_linea_base --nocapture`). Esta cifra es la del proceso
+  `hexcell` solo, sin sidecar: no valida el presupuesto de ≤ 80 MB por célula sobre canal propio,
+  que requiere el sidecar desplegado y queda para la etapa A-3.
+* **Criterios de aceptación de la etapa A-2 ejecutables en esta etapa, cumplidos** (2026-07-30,
+  HEX-009). Con la línea base de RSS anterior queda cerrado el último criterio pendiente de A-2
+  que no dependía del sidecar. Siguen diferidos a la etapa A-3, tal como ya declaraba esta misma
+  sección para el respaldo: la ejecución real de la copia IPC del `sqlstore`, la restauración
+  extremo a extremo con respuesta real del bot, y el ensayo de la rama `device_removed` del
+  runbook de restauración.
 
 ## Pendiente
 * **Destino remoto real del respaldo por célula, fuera del disco del servidor** (2026-07-30,
