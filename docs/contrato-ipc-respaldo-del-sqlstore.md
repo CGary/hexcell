@@ -111,6 +111,14 @@ debe leerse como una elección ya tomada. Los tests de esta tarea, y los de la e
   etapa A-3. En el commit de esta tarea no existe ningún cliente ni servidor que lo hable.
 * El destino remoto real fuera del servidor: decisión de negocio pendiente en `docs/STATUS.md`.
 
+> **Nota posterior, 2026-07-31 (no altera este contrato ni su versión).** El primer punto de esta
+> lista ya tiene respuesta: el mecanismo de transporte y de serialización lo fija
+> `docs/protocolo-ipc-nucleo-sidecar.md`, versión 1.0, redactado en la tarea 1 de la etapa A-3, y
+> los campos de las secciones 1 y 3 de esta página encajan en él **sin cambio alguno**. Esta nota
+> es una referencia hacia adelante y nada más: lo que este contrato fija —el mensaje, el
+> responsable, la frecuencia y el destino— sigue exactamente igual, y `adr-0011` continúa siendo
+> el ADR que registrará la decisión.
+
 ## Referencias
 
 * `docs/adr/adr-0010-puerto-de-canal.md`, punto 7 (las cuatro bases del respaldo).
@@ -118,3 +126,5 @@ debe leerse como una elección ya tomada. Los tests de esta tarea, y los de la e
 * `docs/runbook-restauracion-de-celula.md` (procedimiento de restauración, con la bifurcación antes
   de tocar el `sqlstore`).
 * `docs/plan/fase-a-3-adaptador-whatsmeow.md` (ejecución real de este contrato).
+* `docs/protocolo-ipc-nucleo-sidecar.md` (transporte y formato sobre los que viajan estos
+  mensajes, sección 7 de ese documento).

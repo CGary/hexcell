@@ -1,6 +1,6 @@
 # Estado del Proyecto
 
-> Registro vivo del avance. Última actualización: 2026-07-30.
+> Registro vivo del avance. Última actualización: 2026-07-31.
 
 ## Fase actual
 **Canal propio en producción — etapa A-1, fundaciones.** Ya existe el workspace Rust con sus cinco
@@ -323,6 +323,30 @@ adicional cuando aparezca un cliente que lo justifique. Ver [plan/README.md](pla
   sección para el respaldo: la ejecución real de la copia IPC del `sqlstore`, la restauración
   extremo a extremo con respuesta real del bot, y el ensayo de la rama `device_removed` del
   runbook de restauración.
+* **Protocolo IPC entre el núcleo y el sidecar, especificado y versionado** (2026-07-31, HEX-010,
+  `docs/protocolo-ipc-nucleo-sidecar.md`, versión 1.0). Fija los cuatro aspectos que exige la tarea
+  1 de la etapa A-3: **formato** —un objeto JSON plano de profundidad 1 por línea, valores solo
+  cadena o entero, campos cerrados por tipo y siempre presentes—, **transporte** —socket de dominio
+  Unix `SOCK_STREAM` sobre el volumen compartido, sidecar de servidor y núcleo de cliente que
+  reintenta—, **confirmación de entrega** —persistir primero con `fsync`, acuse explícito que
+  referencia el identificador **durable** de deduplicación y nunca un número de secuencia por
+  conexión, entrega al menos una vez— y **reconexión** de cualquiera de los dos extremos en los
+  tres órdenes posibles. La profundidad 1 no es estética: el workspace Rust no declara `serde` en
+  ningún crate (`adr-0019`) y el otro extremo tendrá que **analizar** estas líneas, no solo
+  emitirlas. Seis tipos cerrados, ninguno con campo capaz de llevar un JID. La orden y el acuse del
+  respaldo del `sqlstore` encajan con los campos exactos del contrato de la etapa A-2
+  (`docs/contrato-ipc-respaldo-del-sqlstore.md`), que no cambia ni de contenido ni de versión.
+* **Esqueleto del sidecar Go con whatsmeow en pie** (2026-07-31, HEX-010). El módulo `sidecar/`
+  deja de ser un `main` de una línea: paquetes `internal/configuracion`, `internal/registro`,
+  `internal/ipc` e `internal/canal`, registro estructurado sobre `log/slog` con el conjunto cerrado
+  de campos de `adr-0019`, y puente hacia el registrador de whatsmeow que **descarta su salida de
+  depuración** por encima del umbral configurado, porque esas líneas pueden llevar contenido de
+  mensaje. El cliente se construye contra `store.NoopDevice` y **no se conecta**: sin emparejamiento
+  (tarea 4) ni persistencia de sesión (tarea 5) whatsmeow no puede completar un inicio de sesión,
+  así que toda la batería corre sin número de WhatsApp, sin teléfono y sin red. La dependencia sigue
+  fijada por commit (`e9a033b24933`). La CI pasa a ejecutar `go test` y a exigir un mínimo de casos
+  superados: `go test ./...` sale con código 0 sobre un módulo sin tests, y ese verde vacío es justo
+  el que había antes.
 
 ## Pendiente
 * **Destino remoto real del respaldo por célula, fuera del disco del servidor** (2026-07-30,
@@ -364,6 +388,16 @@ adicional cuando aparezca un cliente que lo justifique. Ver [plan/README.md](pla
 * **Calibrar los parámetros anti-baneo de la etapa A-3**: TTL absoluto de la cola de salida, latencia
   mínima de respuesta y horario de atención por defecto. El plan fija el mecanismo; los valores se
   calibran con tráfico real. — *Etapa A-3.*
+* **Parámetros y vocabularios que el protocolo IPC deja declarados sin cerrar** (2026-07-31,
+  HEX-010). Tres, y ninguno se inventó al escribir la especificación: (1) los valores del retroceso
+  de reconexión del núcleo hacia el socket —espera inicial, factor y techo—, de la tarea 6; (2) el
+  **vocabulario cerrado del campo `causa`** del estado de sesión y **cómo se proyecta la pausa por
+  baneo temporal**, que el plan exige distinguir de «reconectando» sin enumerarla entre los tres
+  estados que declara, de la tarea 7; y (3) la frecuencia numérica exacta del respaldo del
+  `sqlstore`, que el contrato de A-2 dejó en el orden de magnitud (horas, no días). Se anota además
+  que **el trait `ChannelAdapter` no reserva hoy ningún campo de estado de sesión**, contra lo que
+  afirma de pasada el texto de la etapa A-3: incorporarlo al puerto y a `GET /health/ready` es
+  trabajo de las tareas 7 y 10. — *Etapa A-3; ninguno bloquea el esqueleto ya entregado.*
 * **Prueba de carga sostenida y techo de células por servidor** (NFR-01): convertir los 80 MB en un
   objetivo medido con límites de cgroup, y descubrir si el cuello real es la memoria o la CPU y la
   E/S. — *Bloquea escalar la cartera más allá de las primeras células.*
