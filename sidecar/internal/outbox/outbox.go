@@ -116,6 +116,11 @@ type Outbox struct {
 	cerrado   bool
 }
 
+// construirDSN genera la cadena de conexión DSN para SQLite con los pragmas de durabilidad y configuración requeridos.
+func construirDSN(ruta string) string {
+	return fmt.Sprintf("file:%s?_pragma=journal_mode(WAL)&_pragma=synchronous(FULL)&_pragma=busy_timeout(5000)", ruta)
+}
+
 // Abrir inicializa o conecta con el buzón de salida SQLite en la ruta especificada.
 func Abrir(opciones Opciones) (*Outbox, error) {
 	ruta := opciones.Ruta
@@ -127,7 +132,7 @@ func Abrir(opciones Opciones) (*Outbox, error) {
 		retencion = RetencionPorOmision
 	}
 
-	dsn := fmt.Sprintf("file:%s?_pragma=journal_mode(WAL)&_pragma=synchronous(FULL)&_pragma=busy_timeout(5000)", ruta)
+	dsn := construirDSN(ruta)
 
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {

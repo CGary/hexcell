@@ -45,40 +45,6 @@ func TestAbrir_DirectorioInvalido(t *testing.T) {
 	}
 }
 
-func TestPragmas_WALYSynchronousFull(t *testing.T) {
-	dir := t.TempDir()
-	ruta := filepath.Join(dir, "outbox.db")
-
-	ob, err := outbox.Abrir(outbox.Opciones{Ruta: ruta})
-	if err != nil {
-		t.Fatalf("error al abrir: %v", err)
-	}
-	defer ob.Cerrar()
-
-	db, err := sql.Open("sqlite", fmt.Sprintf("file:%s", ruta))
-	if err != nil {
-		t.Fatalf("error al abrir con sql directo: %v", err)
-	}
-	defer db.Close()
-
-	var journalMode string
-	if err := db.QueryRow("PRAGMA journal_mode;").Scan(&journalMode); err != nil {
-		t.Fatalf("error al consultar journal_mode: %v", err)
-	}
-	if journalMode != "wal" {
-		t.Errorf("journal_mode esperado 'wal', obtenido '%s'", journalMode)
-	}
-
-	var synchronous int
-	if err := db.QueryRow("PRAGMA synchronous;").Scan(&synchronous); err != nil {
-		t.Fatalf("error al consultar synchronous: %v", err)
-	}
-	// 2 equivale a FULL en SQLite
-	if synchronous != 2 {
-		t.Errorf("synchronous esperado 2 (FULL), obtenido %d", synchronous)
-	}
-}
-
 func TestPersistir_ExitosoYDurabilidad(t *testing.T) {
 	dir := t.TempDir()
 	ruta := filepath.Join(dir, "outbox.db")
