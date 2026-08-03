@@ -1,0 +1,110 @@
+task_id: HEX-011
+summary: Implement the sidecar's durable outbox (SQLite, fsync-first write, redelivery, purge). Risk medium.
+goal: >
+  Build the sidecar/internal/outbox package: an SQLite-backed durable outbox on the cell's
+  shared volume that persists every websocket event with fsync as the first action before
+  any translation or delivery, exposes pending entries in persistence order, marks an entry
+  processed only on the core's confirmation keyed by the durable id_deduplicacion (never a
+  per-connection sequence number), redelivers everything unconfirmed at process startup, and
+  purges already-confirmed entries under a configurable retention policy. This implements the
+  at-least-once delivery semantics already fixed in docs/protocolo-ipc-nucleo-sidecar.md
+  section 4; it does not redefine them.
+invariants:
+  - An event is durably persisted with fsync before it is translated, before it is delivered
+    to the core socket, and before any other action touches it.
+  - An outbox entry is marked processed only upon receiving a confirmacion message whose
+    id_deduplicacion matches the entry; no other signal (delivery attempt, socket write,
+    timeout) marks an entry processed.
+  - The processed/purge decision never keys off a per-connection sequence number; only the
+    durable, global id_deduplicacion (FR-12) identifies an entry across restarts and
+    reconnections.
+  - At startup, every unconfirmed entry is returned for redelivery in the exact order it was
+    persisted, before any new event is emitted.
+  - Reading pending entries (for redelivery or inspection) does not mutate their state; only
+    an explicit confirmation call transitions an entry to processed.
+  - Redelivery of an already-processed event is harmless from the outbox's own bookkeeping,
+    since the package never claims exactly-once delivery, only at-least-once with core-side
+    dedup.
+  - The retention/purge window for confirmed entries is a configurable parameter with a
+    documented default, never a constant embedded in code logic.
+non_goals:
+  - The Unix domain socket server and the delivery loop that reads from the outbox and writes
+    to the socket (separate later task).
+  - Translation of raw websocket events to the canonical event format with its
+    id_deduplicacion (task 8); this task treats the identifier as an opaque input it receives
+    and stores.
+  - Websocket wiring and the real whatsmeow connection (tasks 4 and 15).
+  - whatsmeow's own sqlstore session persistence (task 5); the outbox is a separate SQLite
+    database from sqlstore.
+  - The end-to-end desynchronized-restart acceptance test that exercises both the sidecar and
+    the core process together; that is a stage-level (A-3) acceptance criterion requiring both
+    ends, not a package-level unit-test criterion for this task.
+  - Choosing the concrete SQLite driver for sidecar/go.mod (currently absent) — this is an open
+    decision the blueprint phase must resolve and justify, weighing that the same driver choice
+    also binds task 5 (whatsmeow sqlstore, which needs a database/sql driver) and the A-6
+    container image, and that the Rust side chose rusqlite with the bundled feature specifically
+    to avoid depending on the host's libsqlite3 (see the comment in the root Cargo.toml and
+    adr-0003). Do not assume a driver is already decided.
+acceptance:
+  - id: AC-1
+    statement: An incoming event is durably written to the outbox with fsync before anything
+      else happens to it, proven by an automated test rather than by code inspection alone.
+    given: a websocket event has just been received by the sidecar
+    when: the outbox's write path is invoked with that event
+    then: the event is fsynced to the SQLite outbox before the function returns control for
+      translation or delivery, verified by a test that fails if the persist step is skipped or
+      reordered (e.g. by asserting durability before any other side effect is observable)
+  - id: AC-2
+    statement: An outbox entry is marked processed only upon a confirmation carrying its
+      id_deduplicacion, never by any other signal.
+    given: a pending entry with a known id_deduplicacion exists in the outbox
+    when: the outbox receives a confirmation call with a matching id_deduplicacion
+    then: that entry, and only that entry, transitions to processed; a confirmation with a
+      non-matching or absent id_deduplicacion changes nothing
+  - id: AC-3
+    statement: After a restart, everything unconfirmed is returned for redelivery in
+      persistence order.
+    given: an outbox with a mix of processed and unconfirmed entries persisted in a known order
+    when: the outbox is reopened (simulating a process restart) and pending entries are read
+    then: exactly the unconfirmed entries are returned, in the same order they were originally
+      persisted, and no processed entry is included
+  - id: AC-4
+    statement: Confirmed entries are purged according to the configurable retention parameter.
+    given: entries marked processed longer ago than the configured retention window, and
+      other processed entries still inside that window
+    when: the purge routine runs
+    then: only entries older than the configured retention window are removed; entries inside
+      the window and any unconfirmed entry survive the purge
+  - id: AC-5
+    statement: Reading pending entries is idempotent from the outbox's side and does not
+      mutate them.
+    given: a set of unconfirmed entries in the outbox
+    when: the pending-entries read API is called multiple times without an intervening
+      confirmation
+    then: each call returns the same entries in the same state and order; no entry's state,
+      content, or position changes as a result of being read
+  - Package builds and vets cleanly (go build ./... && go vet ./... from sidecar/) with no
+    changes required outside sidecar/internal/outbox and its go.mod/go.sum dependency additions.
+  - A non-vacuity guard on the test run enforces a minimum number of passing tests sized to
+    this task's real surface (at least AC-1 through AC-5 each need dedicated coverage, plus
+    schema/init and edge cases); the blueprint must fix the concrete minimum and carry it into
+    verify.commands, following the HEX-010 precedent (>= 12) rather than leaving go test ./...
+    unguarded.
+risk: medium
+constraints:
+  - No requirement invented beyond docs/plan/fase-a-3-adaptador-whatsmeow.md (lines 79-93, 230,
+    252-257, 347-353) and docs/protocolo-ipc-nucleo-sidecar.md section 4; anything not traceable
+    to those sources or to docs/PRD.md FR-12 is recorded as an open decision, not assumed.
+  - The outbox is implemented as its own package before event translation (task 8) exists, per
+    the plan's explicit ordering rationale — if persist-first arrives after translation, the
+    guarantee becomes an intention rather than a property of the code.
+  - The confirmation-to-processed link is keyed exclusively by id_deduplicacion; a
+    per-connection sequence number as that key is explicitly prohibited by the IPC protocol
+    (section 4) and must not appear anywhere in the design.
+  - The retention/purge window is a documented, configurable parameter to calibrate, matching
+    the treatment of the task 12 TTL; if a default value is proposed, it must be marked
+    explicitly as a starting value to calibrate, never stated as if the documentation fixed it.
+  - The SQLite driver for sidecar/go.mod is not chosen here; the blueprint phase records and
+    justifies that choice as an open decision (see non_goals).
+  - All artifact prose is English per protocol; all code, comments, and commit messages the
+    later implementation phase produces must be in Spanish per repository convention.

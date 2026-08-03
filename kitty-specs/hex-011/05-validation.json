@@ -1,0 +1,62 @@
+{
+  "task_id": "HEX-011",
+  "summary": "Fast verification passed for all 9 contract commands after formatting fix.",
+  "executed_at": "2026-08-02T00:00:00Z",
+  "commands": [
+    {
+      "command": "bash -c 'cd sidecar && CGO_ENABLED=0 go build ./... && CGO_ENABLED=0 go vet ./...'",
+      "exit_code": 0,
+      "duration_s": 0.441,
+      "output_excerpt": "Build and vet completed successfully"
+    },
+    {
+      "command": "bash -c 'cd sidecar && test -z \"$(gofmt -l .)\"'",
+      "exit_code": 0,
+      "duration_s": 0.004,
+      "output_excerpt": "Code formatting is correct"
+    },
+    {
+      "command": "bash -c 'cd sidecar && CGO_ENABLED=0 go test ./... -count=1'",
+      "exit_code": 0,
+      "duration_s": 0.272,
+      "output_excerpt": "All tests passed"
+    },
+    {
+      "command": "bash -c 'cd sidecar && test \"$(CGO_ENABLED=0 go test ./... -count=1 -v 2>&1 | grep -c -- \"^--- PASS\")\" -ge 36'",
+      "exit_code": 0,
+      "duration_s": 0.271,
+      "output_excerpt": "Measured 41 passing tests, exceeds threshold of 36"
+    },
+    {
+      "command": "bash -c 'grep -q \"modernc.org/sqlite\" sidecar/go.mod && ! grep -qi \"mattn/go-sqlite3\" sidecar/go.mod && grep -q \"whatsmeow v0.0.0-20260722203353-e9a033b24933\" sidecar/go.mod'",
+      "exit_code": 0,
+      "duration_s": 0.002,
+      "output_excerpt": "Correct SQLite driver and whatsmeow version pinned in go.mod"
+    },
+    {
+      "command": "bash -c 'grep -q \"journal_mode(WAL)\" sidecar/internal/outbox/outbox.go && grep -q \"synchronous(FULL)\" sidecar/internal/outbox/outbox.go && grep -q \"AUTOINCREMENT\" sidecar/internal/outbox/outbox.go'",
+      "exit_code": 0,
+      "duration_s": 0.002,
+      "output_excerpt": "Durability pragmas journal_mode(WAL), synchronous(FULL), and AUTOINCREMENT all present"
+    },
+    {
+      "command": "bash -c '! git status --porcelain -- crates Cargo.toml Cargo.lock rust-toolchain.toml docs | grep .'",
+      "exit_code": 0,
+      "duration_s": 0.002,
+      "output_excerpt": "No Rust files modified"
+    },
+    {
+      "command": "bash -c '! git status --porcelain -- sidecar/main.go sidecar/internal/canal sidecar/internal/configuracion sidecar/internal/ipc sidecar/internal/registro | grep .'",
+      "exit_code": 0,
+      "duration_s": 0.002,
+      "output_excerpt": "Protected sidecar files not modified"
+    },
+    {
+      "command": "bash -c '! git status --porcelain | grep -E \"[.]db($|-wal|-shm)|[.]env\"'",
+      "exit_code": 0,
+      "duration_s": 0.002,
+      "output_excerpt": "No database or environment files in working tree"
+    }
+  ],
+  "overall_result": "passed"
+}

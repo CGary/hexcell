@@ -1,0 +1,3 @@
+entries: []
+summary: Build sidecar/internal/outbox, the durable SQLite outbox of the Go sidecar, with fsync-first persist, confirmation keyed by id_deduplicacion, ordered redelivery and configurable purge.
+task_id: HEX-011

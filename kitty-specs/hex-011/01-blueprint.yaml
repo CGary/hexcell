@@ -1,0 +1,288 @@
+task_id: HEX-011
+summary: >-
+  Add sidecar/internal/outbox: SQLite durable outbox (modernc pure-Go driver, WAL + synchronous=FULL)
+  with fsync-first persist, id_deduplicacion-keyed confirm, ordered redelivery and retention purge.
+
+affected_files:
+  - sidecar/internal/outbox/outbox.go
+  - sidecar/internal/outbox/outbox_test.go
+  - sidecar/go.mod
+  - sidecar/go.sum
+  - .github/workflows/ci.yml
+
+symbols:
+  - outbox.Outbox
+  - outbox.Opciones
+  - outbox.Entrada
+  - outbox.Abrir
+  - outbox.Outbox.Persistir
+  - outbox.Outbox.Pendientes
+  - outbox.Outbox.Confirmar
+  - outbox.Outbox.Purgar
+  - outbox.Outbox.Cerrar
+  - outbox.RetencionPorOmision
+  - outbox.RutaPorOmision
+  - outbox.ErrOutboxCerrado
+  - outbox.EventoPersistido
+  - outbox.EventoConfirmado
+  - outbox.EventoPurgado
+
+dependencies:
+  - sidecar/internal/registro/registro.go
+  - sidecar/internal/ipc/mensajes.go
+  - sidecar/go.mod
+  - sidecar/go.sum
+  - .github/workflows/ci.yml
+  - docs/protocolo-ipc-nucleo-sidecar.md
+  - docs/plan/fase-a-3-adaptador-whatsmeow.md
+
+test_scenarios:
+  - statement: >-
+      Persistir returns only after the entry is committed under synchronous=FULL, and a reopen of
+      the same file from a second handle immediately sees the entry; a test asserts durability is
+      observable before any translation or delivery side effect could have run.
+    covers: [AC-1]
+  - statement: >-
+      A test reads back PRAGMA journal_mode and PRAGMA synchronous on a live connection from the
+      pool and asserts wal/2, so a DSN edit that silently drops the durability pragmas fails.
+    covers: [AC-1]
+  - statement: >-
+      Confirmar with a matching id_deduplicacion marks exactly that entry processed and leaves
+      every sibling pending.
+    covers: [AC-2]
+  - statement: >-
+      Confirmar with an unknown or empty id_deduplicacion changes nothing, reports that it matched
+      no entry, and is not an error condition that stops the caller.
+    covers: [AC-2]
+  - statement: >-
+      Confirmar is idempotent: confirming the same id_deduplicacion twice leaves the first
+      confirmation timestamp intact and does not resurrect or duplicate the entry.
+    covers: [AC-2]
+  - statement: >-
+      After Cerrar and a fresh Abrir on the same path (simulating a process restart), Pendientes
+      returns exactly the unconfirmed entries, in the original persistence order, with no confirmed
+      entry included.
+    covers: [AC-3]
+  - statement: >-
+      Persistence order survives an interleaving of confirmations and a purge: entries persisted
+      before a purge still precede entries persisted after it in the Pendientes sequence.
+    covers: [AC-3]
+  - statement: >-
+      Purgar removes only entries confirmed longer ago than Opciones.Retencion; entries confirmed
+      inside the window and every unconfirmed entry survive, regardless of age.
+    covers: [AC-4]
+  - statement: >-
+      Purgar with the default retention on an outbox whose entries are all recent removes nothing,
+      and Purgar reports how many rows it deleted.
+    covers: [AC-4]
+  - statement: >-
+      Calling Pendientes repeatedly without an intervening Confirmar returns identical entries in
+      identical order and state; reading never mutates the store.
+    covers: [AC-5]
+  - statement: >-
+      Abrir on a non-existent file creates the schema; Abrir again on the same file is idempotent
+      and preserves existing rows.
+  - statement: >-
+      Persistir with an id_deduplicacion that already exists is idempotent: it does not insert a
+      second row, does not change the stored payload, does not alter the entry's position, and does
+      not clear an existing confirmation.
+  - statement: >-
+      Persistir rejects an empty id_deduplicacion with a typed error and writes nothing.
+  - statement: >-
+      Operations on a closed Outbox return ErrOutboxCerrado instead of panicking, and Cerrar is
+      safe to call twice.
+  - statement: >-
+      Abrir on an unwritable directory returns an error rather than a partially constructed Outbox.
+
+strategy:
+  - step: 1
+    action: >-
+      Add the SQLite driver to the Go module. DECISION (this phase resolves the open decision the
+      spec delegated): use modernc.org/sqlite v1.51.0, the pure-Go SQLite, registered with
+      database/sql under the driver name "sqlite". Run go get modernc.org/sqlite@v1.51.0 and go mod
+      tidy from sidecar/. Do not change the whatsmeow pin. Expected mechanical delta: modernc.org/sqlite
+      becomes a direct require, plus 8 indirect requires (modernc.org/libc, modernc.org/mathutil,
+      modernc.org/memory, github.com/dustin/go-humanize, github.com/ncruces/go-strftime,
+      github.com/petermattis/goid, github.com/remyoudompheng/bigfft, golang.org/x/exp) and about 28
+      new go.sum lines.
+    files:
+      - sidecar/go.mod
+      - sidecar/go.sum
+  - step: 2
+    action: >-
+      Create sidecar/internal/outbox/outbox.go with the package doc comment carrying the driver and
+      durability rationale, in the same register as internal/ipc and internal/registro. The comment
+      must record WHY pure Go and WHY these pragmas, because adr-0011 will later absorb this text
+      and this task is forbidden from writing that ADR. Rationale to record verbatim in substance,
+      all of it verified against this repository and this pinned dependency, not from memory:
+      (a) whatsmeow's sqlstore takes a dialect STRING and calls dbutil.ParseDialect, which accepts
+      any engine whose lowercase name starts with "sqlite"; the driver name "sqlite" that
+      modernc registers therefore resolves to dbutil.SQLite, so task 5 can call
+      sqlstore.New(ctx, "sqlite", dsn, log) on this same driver. This was verified by compiling and
+      running against the pinned whatsmeow, not inferred.
+      (b) The CGO alternative github.com/mattn/go-sqlite3 registers its driver under
+      CGO_ENABLED=0 but every connection fails at Ping with "go-sqlite3 requires cgo to work. This
+      is a stub"; it therefore forces CGO_ENABLED=1, a C toolchain in the A-6 build image, and the
+      loss of the static binary. The Rust side chose rusqlite with bundled for the mirror-image
+      reason (root Cargo.toml, adr-0003): do not depend on the host's libsqlite3. Pure Go is the
+      Go-side equivalent of that decision.
+      (c) The honest cost of pure Go, measured here and not asserted: the driver adds about 6.9 MB
+      to the binary (a hello-world Go binary is 2.4 MB, the same binary with modernc.org/sqlite is
+      9.3 MB). That is an A-6 image-size cost, NOT an NFR-01 cost: NFR-01 budgets resident memory,
+      not image bytes. Do not claim it is free.
+    files:
+      - sidecar/internal/outbox/outbox.go
+  - step: 3
+    action: >-
+      Fix the DSN and the durability pragmas. Open with
+      file:<ruta>?_pragma=journal_mode(WAL)&_pragma=synchronous(FULL)&_pragma=busy_timeout(5000).
+      DECISION and its justification, which the code comment must state concretely:
+      synchronous=FULL in WAL mode is what forces one real fsync of the WAL per committed
+      transaction; synchronous=NORMAL in WAL mode fsyncs only at checkpoints, so a committed event
+      can be lost to a power cut, which would make the spec's "persist with fsync first" a lie.
+      Measured on this machine on btrfs, 200 single-row commits: WAL+NORMAL 0.010 ms/commit,
+      WAL+FULL 0.909 ms/commit, DELETE+FULL 3.169 ms/commit. The ~90x jump from NORMAL to FULL is
+      the fsync becoming real; the further 3.5x from WAL to DELETE is the rollback journal's extra
+      syncs plus writer/reader serialisation, which buys nothing here. WAL is kept because the
+      later delivery loop reads pending entries while the websocket receiver writes.
+      FOOTGUN to handle explicitly: journal_mode is persisted in the database file, but synchronous
+      is PER CONNECTION. database/sql pools connections, so the pragma must live in the DSN (where
+      every new pooled connection applies it) and must never be issued as a one-off Exec after
+      Abrir. Set SetMaxOpenConns(1) so the single-writer outbox cannot produce SQLITE_BUSY against
+      itself.
+    files:
+      - sidecar/internal/outbox/outbox.go
+  - step: 4
+    action: >-
+      Define the schema in one CREATE TABLE IF NOT EXISTS executed by Abrir. Columns: secuencia
+      INTEGER PRIMARY KEY AUTOINCREMENT (persistence order), id_deduplicacion TEXT NOT NULL UNIQUE,
+      carga BLOB NOT NULL (the opaque payload; this task does NOT model the canonical event fields,
+      that is task 8), persistido_en_ms INTEGER NOT NULL, confirmado_en_ms INTEGER NULL. Pending
+      means confirmado_en_ms IS NULL. Use AUTOINCREMENT deliberately, not a bare INTEGER PRIMARY
+      KEY: without it SQLite assigns max(rowid)+1 and reuses values freed by the purge, so
+      monotonicity of the delivery order would rest on an argument about which rows the purge
+      happened to remove rather than on a property of the schema. This repository's rule is that
+      the order is a property of the code, not an intention.
+    files:
+      - sidecar/internal/outbox/outbox.go
+  - step: 5
+    action: >-
+      Implement Opciones and Abrir. Opciones carries Ruta (default RutaPorOmision, a path on the
+      cell's shared volume) and Retencion (a time.Duration, default RetencionPorOmision). The
+      retention default MUST be documented in the comment as a starting value to calibrate, in the
+      same words the plan uses for the task 12 TTL, and never as a figure the documentation fixes.
+      Retention must be read from Opciones at purge time; a literal duration inside the purge query
+      violates the spec invariant. Abrir applies the zero-value defaults, opens the database,
+      creates the schema, and returns a typed error rather than a half-built Outbox on failure.
+    files:
+      - sidecar/internal/outbox/outbox.go
+  - step: 6
+    action: >-
+      Implement Persistir(ctx, idDeduplicacion, carga). It performs exactly one committed INSERT
+      and returns only after that commit, which under synchronous=FULL means after the fsync. It
+      must be the first thing the caller does with an event; nothing in this function may translate,
+      format or deliver. Duplicate id_deduplicacion is idempotent, not an error: use INSERT ... ON
+      CONFLICT(id_deduplicacion) DO NOTHING so a re-received event neither duplicates a row nor
+      clears an existing confirmation. Empty id_deduplicacion is a typed error and writes nothing.
+      Log with registro at info level using a constant event name; never put carga or any part of it
+      in the log, the same structural privacy boundary adr-0019 imposes.
+    files:
+      - sidecar/internal/outbox/outbox.go
+  - step: 7
+    action: >-
+      Implement Pendientes(ctx) returning []Entrada from SELECT ... WHERE confirmado_en_ms IS NULL
+      ORDER BY secuencia ASC. It is a pure read: no UPDATE, no leasing, no visibility timeout, no
+      in-flight marking. This is what makes AC-5 hold and what makes redelivery after a restart
+      correct without any recovery step. Implement Confirmar(ctx, idDeduplicacion) as UPDATE ... SET
+      confirmado_en_ms = ? WHERE id_deduplicacion = ? AND confirmado_en_ms IS NULL, returning
+      whether a row matched. A non-matching or empty identifier changes nothing and is not fatal.
+      Confirmar is the ONLY transition to processed: no delivery attempt, socket write, timeout or
+      sequence number may call it, and no per-connection sequence number may appear anywhere in this
+      package, which section 4 of the IPC protocol prohibits outright.
+    files:
+      - sidecar/internal/outbox/outbox.go
+  - step: 8
+    action: >-
+      Implement Purgar(ctx, ahora) as DELETE WHERE confirmado_en_ms IS NOT NULL AND
+      confirmado_en_ms < (ahora - Opciones.Retencion), returning the number of rows removed. Take
+      the reference instant as a parameter rather than calling time.Now inside, so the retention
+      window is testable without sleeping. Unconfirmed entries are never eligible for purge at any
+      age. Implement Cerrar as idempotent, and make every operation on a closed Outbox return
+      ErrOutboxCerrado rather than panic.
+    files:
+      - sidecar/internal/outbox/outbox.go
+  - step: 9
+    action: >-
+      Write sidecar/internal/outbox/outbox_test.go covering the test_scenarios above. Use t.TempDir
+      for every database so no test touches a real volume and nothing is ever committed: *.db,
+      *.db-wal and *.db-shm are git-ignored and must stay uncommitted. Tests must need no WhatsApp
+      number, no network and no live connection, exactly as the HEX-010 suite does. Write at least
+      12 TOP-LEVEL test functions: the CI non-vacuity guard greps '^--- PASS' anchored at line
+      start, so subtests do NOT count towards the threshold.
+    files:
+      - sidecar/internal/outbox/outbox_test.go
+  - step: 10
+    action: >-
+      Raise the CI non-vacuity floor in .github/workflows/ci.yml from 12 to 36. This file is touched
+      deliberately: its own comment at lines 60-62 states that 12 is a floor that rises when the
+      stage adds tasks and never drops silently, so leaving it at 12 while adding a package would
+      let the guard rot. The measured baseline on this branch is 24 top-level PASS lines; 36 means
+      this task contributes at least 12 new top-level tests. Update the surrounding comment to say
+      so. Change only that number and its comment; do not restructure the workflow.
+    files:
+      - .github/workflows/ci.yml
+
+risks:
+  - >-
+    DRIVER COMPATIBILITY: CONFIRMED, not assumed. dbutil.ParseDialect
+    (go.mau.fi/util@v0.9.12-0.20260717235539-f9ffa7eca58d/dbutil/database.go lines 39-49) returns
+    dbutil.SQLite for any engine string whose lowercase form starts with "sqlite", and modernc
+    registers exactly "sqlite". A throwaway program built with CGO_ENABLED=0 against the pinned
+    whatsmeow ran sqlstore.New(ctx, "sqlite", dsn, nil) successfully, including the schema upgrade
+    and NewDevice. Task 5 can therefore reuse this driver.
+  - >-
+    TASK 5 CONSTRAINT discovered while validating the driver: sqlstore.Container.Upgrade refuses to
+    run on SQLite unless PRAGMA foreign_keys is ON, returning "foreign keys are not enabled". The
+    sqlstore DSN of task 5 must therefore carry _pragma=foreign_keys(1). It is recorded here because
+    it was found now; it is NOT this task's to implement, and the outbox does not need foreign keys.
+  - >-
+    BINARY SIZE: modernc.org/sqlite adds about 6.9 MB to the sidecar binary (2.4 MB to 9.3 MB,
+    measured). This is an A-6 container image cost, not an NFR-01 cost, since NFR-01 budgets
+    resident memory. It has not been measured whether the pure-Go driver's resident memory differs
+    materially from the CGO one; NFR-01's 80 MB is itself still an unvalidated design estimate.
+  - >-
+    THROUGHPUT: WAL + synchronous=FULL measured at 0.909 ms per committed event on btrfs on the
+    development machine, i.e. roughly 1100 events/s. That is far above any plausible per-cell load,
+    but it has NOT been measured on the target hardware (the 10-year-old i7) nor on the container
+    volume. The durability guarantee also assumes the cell's shared volume honours fsync; a volume
+    driver or filesystem that lies about fsync silently weakens the guarantee.
+  - >-
+    OPEN DECISION deliberately NOT taken here: the outbox database path and retention window are
+    exposed as outbox.Opciones with documented defaults, and are NOT added as environment variables
+    to internal/configuracion. Section 2 of docs/protocolo-ipc-nucleo-sidecar.md documents the
+    sidecar's environment surface and fixes only HEXCELL_SOCKET_IPC; adding undocumented variables
+    now would desynchronise that section. The task that wires the socket server and the delivery
+    loop should add the variables and update section 2 in the same change.
+  - >-
+    KNOWN DOCUMENTATION INCONSISTENCIES, already identified during HEX-010, NOT to be rediscovered
+    or fixed by this task, and left for the human: (1) docs/adr/adr-0011-whatsmeow-sidecar-e-ipc.md
+    is still unwritten and a pointer in the A-2 backup contract dangles deliberately until the end
+    of stage A-3, which is why this task records its driver rationale in the blueprint instead;
+    (2) the A-3 plan around lines 96-100 states that the ChannelAdapter trait already reserves a
+    session-state field, but crates/hexcell-core/src/canal.rs exposes only send and estado_ventana
+    and adding that field is A-3 task 7; (3) several documents say "cinco crates" while Cargo.toml
+    declares seven.
+  - >-
+    SUPPLY CHAIN: the driver brings 8 new indirect modules and about 28 new go.sum lines into a
+    public repository. modernc.org/libc is a large machine-translated C surface. This is the price
+    of not shipping a C toolchain in the A-6 image and is judged worth it, but it is a real
+    increase in dependency surface and should be stated as such rather than glossed over.
+  - >-
+    ROWID REUSE: a bare INTEGER PRIMARY KEY would let the purge free rowids that a later insert
+    reuses. Analysis says surviving pending rows would still order correctly, because SQLite assigns
+    max(rowid)+1, but the correctness of AC-3 would then depend on that argument rather than on the
+    schema. AUTOINCREMENT is specified instead so monotonicity is structural. Do not "optimise" it
+    away.
+  - >-
+    NO PRIOR FAILURES: quorum analyze failure-lookup over these affected files returned null, and
+    .ai/tasks/failed/ is empty. There is no prior-failure lesson to carry into this contract.

@@ -1,0 +1,168 @@
+task_id: HEX-011
+summary: >-
+  Build sidecar/internal/outbox, the durable SQLite outbox of the Go sidecar, with fsync-first
+  persist, confirmation keyed by id_deduplicacion, ordered redelivery and configurable purge.
+
+goal: >-
+  Deliver task 3 of stage A-3: a new Go package sidecar/internal/outbox implementing the durable
+  outbox that section 4 of docs/protocolo-ipc-nucleo-sidecar.md already specifies. It persists every
+  websocket event to SQLite on the cell's shared volume with an fsync as the FIRST action, before
+  any translation or delivery; exposes unconfirmed entries in persistence order without mutating
+  them; marks an entry processed ONLY on a confirmation carrying its id_deduplicacion; and purges
+  confirmed entries under a configurable retention window. The SQLite driver decision is already
+  taken in 01-blueprint.yaml and is binding: modernc.org/sqlite (pure Go, driver name "sqlite"),
+  opened with journal_mode=WAL and synchronous=FULL. Out of scope: the Unix socket server and the
+  delivery loop, the translation of raw events to the canonical format, whatsmeow pairing and
+  sqlstore session persistence, and any Rust-side change. Everything is written in Spanish.
+
+read:
+  - .ai/tasks/active/HEX-011-new-spec/00-spec.yaml
+  - .ai/tasks/active/HEX-011-new-spec/01-blueprint.yaml
+  - docs/protocolo-ipc-nucleo-sidecar.md
+  - docs/plan/fase-a-3-adaptador-whatsmeow.md
+  - docs/adr/adr-0019-registro-estructurado.md
+  - docs/adr/adr-0003-persistencia-dual.md
+  - sidecar/internal/ipc/mensajes.go
+  - sidecar/internal/registro/registro.go
+  - sidecar/internal/configuracion/configuracion.go
+  - sidecar/internal/canal/canal.go
+  - sidecar/internal/ipc/mensajes_test.go
+  - sidecar/main.go
+  - sidecar/go.mod
+  - .github/workflows/ci.yml
+  - CLAUDE.md
+
+touch:
+  - sidecar/internal/outbox/outbox.go
+  - sidecar/internal/outbox/outbox_test.go
+  - sidecar/internal/outbox/**
+  - sidecar/go.mod
+  - sidecar/go.sum
+  - .github/workflows/ci.yml
+
+forbid:
+  files:
+    - crates/**
+    - Cargo.toml
+    - Cargo.lock
+    - rust-toolchain.toml
+    - docs/**
+    - .ai/tasks/**
+    - sidecar/main.go
+    - sidecar/internal/canal/**
+    - sidecar/internal/configuracion/**
+    - sidecar/internal/ipc/**
+    - sidecar/internal/registro/**
+    - '**/*.db'
+    - '**/*.db-wal'
+    - '**/*.db-shm'
+    - .env*
+  behaviors:
+    - >-
+      Do not write docs/adr/adr-0011-whatsmeow-sidecar-e-ipc.md or any other ADR. adr-0011 is
+      scheduled for the END of stage A-3 and its scope spans several tasks; a half-scoped ADR would
+      have to be rewritten, and this repository never rewrites an ADR. The driver and durability
+      rationale belongs in the package doc comment and in 01-blueprint.yaml, which adr-0011 will
+      later absorb.
+    - >-
+      Do not change the SQLite driver decision. Use modernc.org/sqlite, the pure-Go driver
+      registered with database/sql under the name "sqlite". Do NOT use github.com/mattn/go-sqlite3
+      or any other CGO driver: it forces CGO_ENABLED=1, a C toolchain in the A-6 build image, and
+      the loss of the static binary, and under CGO_ENABLED=0 every connection fails at Ping with
+      "go-sqlite3 requires cgo to work. This is a stub".
+    - >-
+      Do not weaken the durability pragmas. journal_mode must be WAL and synchronous must be FULL,
+      set through the DSN. synchronous=NORMAL in WAL mode fsyncs only at checkpoints, so a committed
+      event can be lost to a power cut; that would turn the specification's "persist with fsync
+      first" into a false claim. synchronous is a PER-CONNECTION pragma and database/sql pools
+      connections, so it must live in the DSN and must not be issued as a one-off Exec after opening.
+    - >-
+      Do not mark an entry processed by any signal other than an explicit confirmation carrying a
+      matching id_deduplicacion. A delivery attempt, a socket write, a timeout, a read of pending
+      entries or a lease expiry must never transition an entry to processed.
+    - >-
+      Do not introduce a per-connection sequence number anywhere in this package, in the schema, or
+      in any API, and do not key confirmation or purge off one. Section 4 of the IPC protocol
+      prohibits it outright, because a per-connection counter resets with the connection and after a
+      reconnection acknowledgement number 7 and event number 7 can be different things.
+    - >-
+      Do not make reading pending entries mutate them. No leasing, no visibility timeout, no
+      in-flight flag, no dequeue-on-read. Pendientes is a pure SELECT.
+    - >-
+      Do not embed the retention window as a literal inside the purge logic. It is a configurable
+      parameter with a documented default, and the default must be described as a starting value to
+      calibrate, never as a figure the documentation fixes.
+    - >-
+      Do not implement the Unix domain socket server, the delivery loop, the reconnection loop or
+      the disconnection taxonomy. Do not translate raw whatsmeow events into the canonical event
+      format. Do not implement QR or pairing-code pairing and do not persist session state in a
+      whatsmeow sqlstore. Those are other A-3 tasks.
+    - >-
+      Do not open a real WhatsApp connection and do not call Connect in any test. The whole suite
+      must pass with no WhatsApp number, no phone, no network and no live socket, exactly as the
+      existing sidecar suite does.
+    - >-
+      Do not log the stored payload, or any fragment of it, at any level. The outbox holds opaque
+      event content; adr-0019 makes the closed log field set a structural privacy boundary. Use the
+      existing internal/registro package with constant event names; free text goes only in the
+      detalle field and only when it is the process's own text.
+    - >-
+      Do not add a logging, ORM, migration or test-assertion dependency. Reuse internal/registro and
+      the standard library, including database/sql and the standard testing package. The only new
+      module is the SQLite driver and its transitive requirements.
+    - >-
+      Do not change the whatsmeow pin in sidecar/go.mod. It stays at
+      v0.0.0-20260722203353-e9a033b24933; only the direct and indirect require markers may change as
+      a mechanical consequence of go mod tidy.
+    - >-
+      Do not duplicate code that already exists. The message types and the exact field spelling
+      id_deduplicacion live in sidecar/internal/ipc; structured logging lives in
+      sidecar/internal/registro. Read them and reuse them; they are forbidden to edit.
+    - >-
+      Do not commit any database file or its sidecars. Every test must create its database under
+      t.TempDir. Files matching *.db, *.db-wal and *.db-shm are git-ignored and must stay that way.
+      The repository is public: never commit a secret or a credential.
+    - >-
+      Write every artifact in Spanish: code comments, package documentation, error messages and
+      commit messages. Use Conventional Commits in Spanish, for example
+      "feat(a3): implementar el outbox durable del sidecar". Never add an AI attribution or a
+      Co-Authored-By trailer. Write dates in absolute form, for example 2026-07-31.
+    - >-
+      Never write that Phase B replaces, supersedes or closes Phase A, nor that the sidecar is a
+      transitional scaffold. The sidecar is a permanent cost of the own channel.
+    - >-
+      Do not edit 00-spec.yaml, 01-blueprint.yaml or anything under .ai/tasks/. The human owns the
+      specification.
+
+verify:
+  commands:
+    - bash -c 'cd sidecar && CGO_ENABLED=0 go build ./... && CGO_ENABLED=0 go vet ./...'
+    - bash -c 'cd sidecar && test -z "$(gofmt -l .)"'
+    - bash -c 'cd sidecar && CGO_ENABLED=0 go test ./... -count=1'
+    - bash -c 'cd sidecar && test "$(CGO_ENABLED=0 go test ./... -count=1 -v 2>&1 | grep -c -- "^--- PASS")" -ge 36'
+    - bash -c 'grep -q "modernc.org/sqlite" sidecar/go.mod && ! grep -qi "mattn/go-sqlite3" sidecar/go.mod && grep -q "whatsmeow v0.0.0-20260722203353-e9a033b24933" sidecar/go.mod'
+    - bash -c 'grep -q "journal_mode(WAL)" sidecar/internal/outbox/outbox.go && grep -q "synchronous(FULL)" sidecar/internal/outbox/outbox.go && grep -q "AUTOINCREMENT" sidecar/internal/outbox/outbox.go'
+    - bash -c '! git status --porcelain -- crates Cargo.toml Cargo.lock rust-toolchain.toml docs | grep .'
+    - bash -c '! git status --porcelain -- sidecar/main.go sidecar/internal/canal sidecar/internal/configuracion sidecar/internal/ipc sidecar/internal/registro | grep .'
+    - bash -c '! git status --porcelain | grep -E "[.]db($|-wal|-shm)|[.]env"'
+  target_s: 60
+
+acceptance:
+  human_gate: true
+
+limits:
+  max_files_changed: 8
+  max_diff_lines: 1600
+  per_class:
+    - glob: sidecar/internal/outbox/outbox_test.go
+      max_diff_lines: 700
+    - glob: .github/workflows/ci.yml
+      max_diff_lines: 12
+
+execution:
+  mode: worktree_edit
+  branch: ai/HEX-011
+
+retry_policy:
+  max_attempts: 2
+  escalate_after: 2
