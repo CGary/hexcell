@@ -58,11 +58,11 @@ jobs:
 
       # `go test ./...` sale con código 0 cuando un módulo no tiene ningún archivo de test, que
       # es exactamente como estaba el sidecar antes de la etapa A-3. Un verde así no dice nada,
-      # así que se comprueba también que la batería tiene un mínimo de casos que pasan. El 12 es
+      # así que se comprueba también que la batería tiene un mínimo de casos que pasan. El 36 es
       # un suelo, no el conteo exacto: sube cuando la etapa añada tareas, nunca baja en silencio.
       - name: La batería del sidecar no está vacía
         working-directory: sidecar
         run: |
           conteo="$(go test ./... -count=1 -v 2>&1 | grep -c -- '^--- PASS')"
           echo "casos de test superados: ${conteo}"
-          test "${conteo}" -ge 12
+          test "${conteo}" -ge 36
