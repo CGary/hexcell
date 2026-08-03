@@ -27,12 +27,22 @@ levels:
       - diagnose_verify_failure
       - small_corrections
     primary: openai/gpt-5.5-medium
-    fallback: google/gemini-3.1-pro-low
+    # Corregido 2026-08-02 (decisión humana, HEX-011): el fallback era
+    # google/gemini-3.1-pro-low, que SOLO existe en el transporte agy
+    # (mode: oneshot) y por tanto core.Route lo descarta en silencio para la
+    # fase implement — el nivel 1 quedaba de facto reducido a codex, con
+    # no_viable_candidate al excluirlo. gemini-3.6-flash-high sí está en
+    # agy_edit (mode: agentic, smoke 3/3 del 2026-07-31), así que el fallback
+    # "$0 en suscripción" que este comentario siempre describió ahora existe
+    # de verdad para implement. gemini-3.1-pro-low baja a secondary: sigue
+    # siendo útil para los use_for de un solo disparo (review, diagnose).
+    fallback: google/gemini-3.6-flash-high
     # gpt-5.6 free-tier cells (2026-07-22): listed in the order the human gave
     # them; no capability ranking between terra and luna is asserted. They sit
     # in secondary so the proven gpt-5.5-medium primary and the $0 agy fallback
     # are enumerated first — codex free credits are finite.
     secondary:
+      - google/gemini-3.1-pro-low
       - openai/gpt-5.6-terra-medium
       - openai/gpt-5.6-luna-medium
     max_cost_per_call_usd: 0.50
@@ -65,8 +75,15 @@ policies:
   # mechanical-single-file fallback), then codex (reactivated 2026-07-22 on
   # finite free-tier credits) and claude (inactive) last.
   # A transport absent from this list is unreachable via `fleet route`.
+  # agy_edit añadido 2026-08-02 (decisión humana, HEX-011): estaba ausente, y
+  # por la regla de la línea anterior era INALCANZABLE. Como agy es oneshot y
+  # la fase implement exige transporte agentic, la ausencia dejaba al nivel 1
+  # reducido de facto a codex. Va inmediatamente después de agy para no alterar
+  # las fases de un solo disparo: en los modelos compartidos, agy sigue
+  # ganando el desempate salvo en implement, donde queda filtrado por oneshot.
   fleet_transport_order:
     - agy
+    - agy_edit
     - opencode
     - aider
     - codex
