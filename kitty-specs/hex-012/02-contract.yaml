@@ -1,0 +1,235 @@
+task_id: HEX-012
+summary: >-
+  Sidecar whatsmeow pairing (QR + 8-char code) over a real sqlstore device store with automatic
+  session resumption, plus IPC document v1.1 / wire version 2 and its three pairing message types.
+
+goal: >-
+  Deliver A-3 tasks 4 and 5 as one unit, sidecar side only. Replace store.NoopDevice with a real
+  whatsmeow sqlstore.Container opened at a configurable path on the cell volume; implement pairing by
+  QR and by eight-character pairing code; persist credentials and resume the session automatically on
+  restart. Raise docs/protocolo-ipc-nucleo-sidecar.md to version 1.1, adding three pairing message
+  types to section 6's closed set (six becomes nine) with field tables in the existing style, and bump
+  the wire `version` integer from 1 to 2 because section 6 states that extending the set changes the
+  protocol version. Section 3 keeps its rule unchanged in substance: strict integer equality in both
+  directions, mismatch closes the connection and logs both versions, no negotiation and no partial
+  degradation. The cell's own phone number is read from configuration and NEVER travels on the wire.
+  The Rust core-side consumer is A-3 task 10 and is out of scope. Everything is written in Spanish.
+
+read:
+  - .ai/tasks/active/HEX-012-new-spec/00-spec.yaml
+  - .ai/tasks/active/HEX-012-new-spec/01-blueprint.yaml
+  - docs/protocolo-ipc-nucleo-sidecar.md
+  - docs/contrato-ipc-respaldo-del-sqlstore.md
+  - docs/plan/fase-a-3-adaptador-whatsmeow.md
+  - docs/adr/README.md
+  - docs/adr/adr-0010-puerto-de-canal.md
+  - docs/adr/adr-0019-registro-estructurado.md
+  - docs/bitacora-de-descartes.md
+  - docs/STATUS.md
+  - crates/hexcell-core/src/canal.rs
+  - sidecar/internal/ipc/mensajes.go
+  - sidecar/internal/ipc/mensajes_test.go
+  - sidecar/internal/ipc/documento_test.go
+  - sidecar/internal/canal/canal.go
+  - sidecar/internal/canal/canal_test.go
+  - sidecar/internal/configuracion/configuracion.go
+  - sidecar/internal/outbox/outbox.go
+  - sidecar/internal/registro/registro.go
+  - sidecar/main.go
+  - sidecar/go.mod
+  - CLAUDE.md
+
+touch:
+  - docs/protocolo-ipc-nucleo-sidecar.md
+  - docs/STATUS.md
+  - sidecar/internal/ipc/mensajes.go
+  - sidecar/internal/ipc/mensajes_test.go
+  - sidecar/internal/ipc/documento_test.go
+  - sidecar/internal/canal/**
+  - sidecar/internal/configuracion/configuracion.go
+  - sidecar/internal/configuracion/configuracion_test.go
+  - sidecar/main.go
+  - sidecar/go.mod
+  - sidecar/go.sum
+
+forbid:
+  files:
+    - crates/**
+    - Cargo.toml
+    - Cargo.lock
+    - rust-toolchain.toml
+    - docs/adr/**
+    - docs/plan/**
+    - docs/PRD.md
+    - docs/bitacora-de-descartes.md
+    - docs/contrato-ipc-respaldo-del-sqlstore.md
+    - README.md
+    - .ai/tasks/**
+    - .github/workflows/**
+    - sidecar/internal/outbox/**
+    - sidecar/internal/registro/**
+    - '**/*.db'
+    - '**/*.db-wal'
+    - '**/*.db-shm'
+    - .env*
+  behaviors:
+    - >-
+      Do not touch crates/ or any Rust file. The core-side consumer of the v1.1 pairing messages is
+      A-3 task 10, a separate task. crates/hexcell-core/src/canal.rs is READ ONLY here: its enum
+      Emparejamiento, with the variants CodigoQr(String) and CodigoDeVinculacion(String), is the
+      consumer contract the new messages must fit, not a file to edit.
+    - >-
+      Do not put the phone number, a JID, a device identifier or any other transport identifier in ANY
+      IPC message field, in any direction. sidecar/internal/ipc/mensajes_test.go already asserts that
+      no field name of any declared type contains "jid", "telefono", "phone", "dispositivo", "device"
+      or "numero". That guard is LOAD BEARING: do not delete it, do not shorten its list, do not scope
+      it to fewer types, and do not evade it by giving a phone-number field an innocuous name. The
+      cell's own number is read from configuration.
+    - >-
+      Do not weaken the version rule of section 3. Version equality stays strict in both directions; a
+      mismatch closes the connection and logs both versions. Do not add negotiation, capability
+      exchange, downgrade, feature flags or partial degradation, and do not make the sidecar speak
+      wire version 1 when it detects an old peer.
+    - >-
+      Do not leave the wire `version` integer at 1. Section 6 states "Ampliarlo es cambiar la versión
+      del protocolo", so adding message types forces ipc.VersionProtocolo to 2. Leaving it at 1 would
+      move the failure from the handshake to the first unknown `tipo` mid-stream, which is exactly
+      what section 3's rationale rejects. The DOCUMENT is version 1.1 and the WIRE is version 2; the
+      document must state that mapping explicitly instead of leaving the reader to guess.
+    - >-
+      Do not rewrite, renumber or reinterpret the six existing v1.0 message types. The bump is
+      ADDITIVE: saludo, evento_entrante, confirmacion, estado_sesion, orden_respaldo_sqlstore and
+      acuse_respaldo_sqlstore keep their exact field sets, order and semantics.
+    - >-
+      Do not write docs/adr/adr-0011-whatsmeow-sidecar-e-ipc.md or any other ADR, and do not renumber
+      anything in docs/adr/README.md. adr-0011 is listed as "Por escribir" and the protocol document
+      says it is written only once the stage also has the behaviour discipline of task 14 in front of
+      it, which is out of scope here. A half-scoped ADR would have to be rewritten, and this
+      repository never rewrites an ADR. Highest number allocated is adr-0020.
+    - >-
+      Do not add any new module dependency. The QR arrives from whatsmeow as a plain string and it
+      travels as a plain string; rendering it to a terminal, an image or a PNG belongs to whoever
+      displays it (A-3 task 10 / stage A-6). Do not add a QR rendering library, a logging library, a
+      serialization library, an ORM, a migration tool or a test-assertion library. Use whatsmeow,
+      modernc.org/sqlite, internal/registro and the standard library. If some alternative is
+      considered and discarded, it must be recorded in docs/bitacora-de-descartes.md, which this
+      contract forbids editing, so simply do not introduce one.
+    - >-
+      Do not change the whatsmeow pin in sidecar/go.mod. It stays at
+      v0.0.0-20260722203353-e9a033b24933; only direct/indirect require markers may shift as a
+      mechanical consequence of go mod tidy. Do not switch the SQLite driver: modernc.org/sqlite,
+      pure Go, registered under the driver name "sqlite". A CGO driver breaks CGO_ENABLED=0.
+    - >-
+      Do not omit foreign keys from the sqlstore DSN. whatsmeow's Container.Upgrade HARD-FAILS with
+      "foreign keys are not enabled" unless they are on. With modernc.org/sqlite the syntax is
+      `_pragma=foreign_keys(1)`; whatsmeow's documented `?_foreign_keys=on` is mattn/go-sqlite3 syntax
+      and does nothing here. Keep journal_mode(WAL), synchronous(FULL) and busy_timeout in the DSN
+      string too, matching the outbox: synchronous is per-connection and database/sql pools
+      connections, so it must live in the DSN and never be issued as a one-off Exec.
+    - >-
+      Do not hardcode the sqlstore path. It is configured through configuracion.Cargar(consultar) with
+      the same precedence rules as the socket path, with a documented default on the cell volume. No
+      ad hoc os.Getenv anywhere: nobody reads the environment outside internal/configuracion.
+    - >-
+      Do not leave store.NoopDevice on the pairing path. It is declared with ID = &types.EmptyJID,
+      which is NON-nil, so whatsmeow refuses GetQRChannel with ErrQRStoreContainsID and the sidecar is
+      structurally incapable of pairing until a real store replaces it.
+    - >-
+      Do not log the QR payload or the eight-character pairing code, at any level, in any field,
+      including `detalle`. Both are credential material. adr-0019 makes the closed log field set the
+      privacy mechanism: `evento` is always a code constant and `detalle` carries only the process's
+      own text. Do not lower the default log threshold below "info": whatsmeow's debug output is the
+      documented leak vector.
+    - >-
+      Do not open a real WhatsApp connection and do not call Connect, ConnectContext or a live
+      PairPhone round trip in any test. The whole suite must pass with no network, no phone, no QR
+      scan and no WhatsApp account. Every database must be created under t.TempDir. Note that
+      GetQRChannel does NOT connect, so it is legitimate to call in a test; PairPhone's phone-number
+      validation also runs before any I/O and is legitimate to exercise for its rejection paths.
+    - >-
+      Do not widen a package's public API to serve a test. Assertions over the container, the device
+      or any unexported session state belong in an internal test file declared `package canal`, not
+      behind a new exported accessor handing out the raw store or the raw *sql.DB.
+    - >-
+      Do not write an acceptance criterion or a test of the form "exactly N exported symbols". Declare
+      what must EXIST; never ban extras.
+    - >-
+      Do not implement anything belonging to another A-3 task: no Unix socket server or delivery loop,
+      no reconnection with backoff and no temporary-ban pause (task 6), no disconnection taxonomy and
+      no `causa` vocabulary (task 7), no translation of whatsmeow events to the canonical format
+      (task 8), no JID-to-internal-identifier mapping and no adapter identity store (task 9), no STOP
+      list, outbound TTL queue or channel behaviour discipline (tasks 12-14), no PairPhone runbook
+      (task 16), no real-number testing (task 15).
+    - >-
+      Do not introduce mass-sending folklore. No jitter, no warm-up protocol, no proxy, no VPN and no
+      IP rotation. The temporary-ban risk of the own channel is structural, not behavioural.
+    - >-
+      Write every artifact in Spanish: document prose, code comments, package documentation, error
+      messages, test names and commit messages. Use Conventional Commits in Spanish, for example
+      "feat(a3): implementar el emparejamiento y la persistencia de sesión del sidecar". NEVER add an
+      AI attribution or a Co-Authored-By trailer. Write dates in absolute form, for example
+      2026-08-04, never relative.
+    - >-
+      Never write that Phase B replaces, supersedes or closes Phase A, nor that the sidecar is a
+      transitional scaffold. The sidecar is a permanent cost of the own channel (adr-0014).
+    - >-
+      Do not commit any database file or its sidecars, and never commit a secret, a credential or an
+      API key: this repository is PUBLIC. Files matching *.db, *.db-wal and *.db-shm stay git-ignored.
+    - >-
+      Do not edit 00-spec.yaml, 01-blueprint.yaml or anything under .ai/tasks/. The human owns the
+      specification.
+
+verify:
+  commands:
+    - bash -c 'cd sidecar && CGO_ENABLED=0 go build ./... && CGO_ENABLED=0 go vet ./...'
+    - bash -c 'cd sidecar && test -z "$(gofmt -l .)"'
+    - bash -c 'cd sidecar && CGO_ENABLED=0 go test ./... -count=1'
+    - bash -c 'cd sidecar && test "$(CGO_ENABLED=0 go test ./... -count=1 -v 2>&1 | grep -c -- "^--- PASS")" -ge 50'
+    - bash -c 'grep -q "Versión de este protocolo:\*\* 1.1" docs/protocolo-ipc-nucleo-sidecar.md && ! grep -q "Versión de este protocolo:\*\* 1.0" docs/protocolo-ipc-nucleo-sidecar.md'
+    - bash -c 'grep -qE "VersionProtocolo int64 = 2" sidecar/internal/ipc/mensajes.go'
+    - bash -c 'for t in orden_emparejar codigo_emparejamiento acuse_emparejamiento; do grep -q "$t" docs/protocolo-ipc-nucleo-sidecar.md || exit 1; grep -q "$t" sidecar/internal/ipc/mensajes.go || exit 1; done'
+    - bash -c 'grep -qF "\"jid\", \"telefono\", \"phone\", \"dispositivo\", \"device\", \"numero\"" sidecar/internal/ipc/mensajes_test.go'
+    - bash -c '! grep -nE "\{\"(jid|telefono|phone|numero|dispositivo|device)[a-z_]*\", clase" sidecar/internal/ipc/mensajes.go'
+    - bash -c 'grep -rq "foreign_keys(1)" sidecar/internal/canal/ && grep -rq "journal_mode(WAL)" sidecar/internal/canal/ && grep -rq "synchronous(FULL)" sidecar/internal/canal/'
+    - bash -c '! grep -rq "store.NoopDevice" sidecar/internal/canal/'
+    - bash -c 'grep -q "VariableRutaSqlstore" sidecar/internal/configuracion/configuracion.go && grep -q "RutaSqlstore" sidecar/main.go && ! grep -rq "/var/lib/hexcell" sidecar/internal/canal/'
+    - bash -c '! grep -rE "os\.(Getenv|LookupEnv)" sidecar/internal/canal/ sidecar/internal/ipc/'
+    - bash -c '! test -f docs/adr/adr-0011-whatsmeow-sidecar-e-ipc.md && test -z "$(git status --porcelain -- docs/adr docs/plan docs/PRD.md docs/bitacora-de-descartes.md docs/contrato-ipc-respaldo-del-sqlstore.md README.md)"'
+    - bash -c 'grep -q "HEX-012" docs/STATUS.md'
+    - bash -c 'test -z "$(git status --porcelain -- crates Cargo.toml Cargo.lock rust-toolchain.toml .github)"'
+    - bash -c '! git status --porcelain | grep -E "[.]db($|-wal|-shm)|[.]env"'
+  target_s: 60
+
+acceptance:
+  human_gate: true
+
+limits:
+  # Enmendado por el orquestador el 2026-08-04, de 14 a 15, tras el dispatch externo.
+  # Motivo: el contrato era internamente inconsistente. Su lista `touch` autoriza
+  # explícitamente `sidecar/go.mod` y `sidecar/go.sum`, pero el límite se calculó
+  # sobre los 13 `affected_files` del blueprint más uno de holgura, sin contar esos
+  # dos. Importar `whatsmeow/store/sqlstore` — que es el núcleo de la tarea 5 —
+  # arrastra dependencias indirectas y obliga a tocarlos. La enmienda alinea el
+  # límite con lo que el propio `touch` ya permitía; NO amplía el alcance en un
+  # solo archivo. Ningún archivo fuera de `touch` quedó habilitado.
+  max_files_changed: 15
+  max_diff_lines: 1700
+  per_class:
+    - glob: docs/protocolo-ipc-nucleo-sidecar.md
+      max_diff_lines: 300
+    - glob: sidecar/internal/canal/canal_test.go
+      max_diff_lines: 300
+    - glob: sidecar/internal/canal/emparejamiento_test.go
+      max_diff_lines: 300
+    - glob: sidecar/internal/ipc/mensajes_test.go
+      max_diff_lines: 180
+    - glob: docs/STATUS.md
+      max_diff_lines: 30
+
+execution:
+  mode: worktree_edit
+  branch: ai/HEX-012
+
+retry_policy:
+  max_attempts: 2
+  escalate_after: 2

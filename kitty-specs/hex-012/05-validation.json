@@ -1,0 +1,110 @@
+{
+  "commands": [
+    {
+      "command": "bash -c 'cd sidecar \u0026\u0026 CGO_ENABLED=0 go build ./... \u0026\u0026 CGO_ENABLED=0 go vet ./...'",
+      "duration_s": 0.489,
+      "exit_code": 0,
+      "output_excerpt": "sin salida; exit 0"
+    },
+    {
+      "command": "bash -c 'cd sidecar \u0026\u0026 test -z \"$(gofmt -l .)\"'",
+      "duration_s": 0.007,
+      "exit_code": 0,
+      "output_excerpt": "sin salida; exit 0"
+    },
+    {
+      "command": "bash -c 'cd sidecar \u0026\u0026 CGO_ENABLED=0 go test ./... -count=1'",
+      "duration_s": 0.375,
+      "exit_code": 0,
+      "output_excerpt": "ok  \tgithub.com/CGary/hexcell/sidecar/internal/registro\t0.002s"
+    },
+    {
+      "command": "bash -c 'cd sidecar \u0026\u0026 test \"$(CGO_ENABLED=0 go test ./... -count=1 -v 2\u003e\u00261 | grep -c -- \"^--- PASS\")\" -ge 50'",
+      "duration_s": 0.38,
+      "exit_code": 0,
+      "output_excerpt": "sin salida; exit 0"
+    },
+    {
+      "command": "bash -c 'grep -q \"Versión de este protocolo:\\*\\* 1.1\" docs/protocolo-ipc-nucleo-sidecar.md \u0026\u0026 ! grep -q \"Versión de este protocolo:\\*\\* 1.0\" docs/protocolo-ipc-nucleo-sidecar.md'",
+      "duration_s": 0.003,
+      "exit_code": 0,
+      "output_excerpt": "sin salida; exit 0"
+    },
+    {
+      "command": "bash -c 'grep -qE \"VersionProtocolo int64 = 2\" sidecar/internal/ipc/mensajes.go'",
+      "duration_s": 0.002,
+      "exit_code": 0,
+      "output_excerpt": "sin salida; exit 0"
+    },
+    {
+      "command": "bash -c 'for t in orden_emparejar codigo_emparejamiento acuse_emparejamiento; do grep -q \"$t\" docs/protocolo-ipc-nucleo-sidecar.md || exit 1; grep -q \"$t\" sidecar/internal/ipc/mensajes.go || exit 1; done'",
+      "duration_s": 0.005,
+      "exit_code": 0,
+      "output_excerpt": "sin salida; exit 0"
+    },
+    {
+      "command": "bash -c 'grep -qF \"\\\"jid\\\", \\\"telefono\\\", \\\"phone\\\", \\\"dispositivo\\\", \\\"device\\\", \\\"numero\\\"\" sidecar/internal/ipc/mensajes_test.go'",
+      "duration_s": 0.002,
+      "exit_code": 0,
+      "output_excerpt": "sin salida; exit 0"
+    },
+    {
+      "command": "bash -c '! grep -nE \"\\{\\\"(jid|telefono|phone|numero|dispositivo|device)[a-z_]*\\\", clase\" sidecar/internal/ipc/mensajes.go'",
+      "duration_s": 0.002,
+      "exit_code": 0,
+      "output_excerpt": "sin salida; exit 0"
+    },
+    {
+      "command": "bash -c 'grep -rq \"foreign_keys(1)\" sidecar/internal/canal/ \u0026\u0026 grep -rq \"journal_mode(WAL)\" sidecar/internal/canal/ \u0026\u0026 grep -rq \"synchronous(FULL)\" sidecar/internal/canal/'",
+      "duration_s": 0.003,
+      "exit_code": 0,
+      "output_excerpt": "sin salida; exit 0"
+    },
+    {
+      "command": "bash -c '! grep -rq \"store.NoopDevice\" sidecar/internal/canal/'",
+      "duration_s": 0.002,
+      "exit_code": 0,
+      "output_excerpt": "sin salida; exit 0"
+    },
+    {
+      "command": "bash -c 'grep -q \"VariableRutaSqlstore\" sidecar/internal/configuracion/configuracion.go \u0026\u0026 grep -q \"RutaSqlstore\" sidecar/main.go \u0026\u0026 ! grep -rq \"/var/lib/hexcell\" sidecar/internal/canal/'",
+      "duration_s": 0.003,
+      "exit_code": 0,
+      "output_excerpt": "sin salida; exit 0"
+    },
+    {
+      "command": "bash -c '! grep -rE \"os\\.(Getenv|LookupEnv)\" sidecar/internal/canal/ sidecar/internal/ipc/'",
+      "duration_s": 0.002,
+      "exit_code": 0,
+      "output_excerpt": "sin salida; exit 0"
+    },
+    {
+      "command": "bash -c '! test -f docs/adr/adr-0011-whatsmeow-sidecar-e-ipc.md \u0026\u0026 test -z \"$(git status --porcelain -- docs/adr docs/plan docs/PRD.md docs/bitacora-de-descartes.md docs/contrato-ipc-respaldo-del-sqlstore.md README.md)\"'",
+      "duration_s": 0.003,
+      "exit_code": 0,
+      "output_excerpt": "sin salida; exit 0"
+    },
+    {
+      "command": "bash -c 'grep -q \"HEX-012\" docs/STATUS.md'",
+      "duration_s": 0.002,
+      "exit_code": 0,
+      "output_excerpt": "sin salida; exit 0"
+    },
+    {
+      "command": "bash -c 'test -z \"$(git status --porcelain -- crates Cargo.toml Cargo.lock rust-toolchain.toml .github)\"'",
+      "duration_s": 0.003,
+      "exit_code": 0,
+      "output_excerpt": "sin salida; exit 0"
+    },
+    {
+      "command": "bash -c '! git status --porcelain | grep -E \"[.]db($|-wal|-shm)|[.]env\"'",
+      "duration_s": 0.004,
+      "exit_code": 0,
+      "output_excerpt": "sin salida; exit 0"
+    }
+  ],
+  "executed_at": "2026-08-04T21:44:28Z",
+  "overall_result": "passed",
+  "summary": "Los 17 comandos de verify del contrato pasan; 55 tests con --- PASS frente al umbral de 50.",
+  "task_id": "HEX-012"
+}

@@ -1,0 +1,79 @@
+task_id: HEX-012
+summary: Sidecar-side whatsmeow pairing (QR + pairing code) and sqlstore-backed session persistence, plus IPC protocol v1.1 pairing messages (sidecar half only).
+goal: >
+  Cover A-3 tasks 4 and 5 as one unit: implement whatsmeow pairing by QR code and by
+  eight-character pairing code through an operation surface that requires no access to the
+  server terminal, backed by a real device store (whatsmeow sqlstore) persisted on the cell
+  volume, with automatic session resumption on process restart. Raise
+  docs/protocolo-ipc-nucleo-sidecar.md from version 1.0 to 1.1 by adding the new pairing
+  message types to the closed set in section 6, with their field tables, plus whatever
+  section 3's version handshake needs so a 1.0 peer and a 1.1 peer negotiate predictably.
+  Implement only the sidecar side of the new v1.1 messages; the Rust core-side consumer is
+  a separate task (A-3 task 10, HEX not yet cut).
+invariants:
+  - Pairing has no existence independent of the device store; sqlstore.New(...) -> GetFirstDevice() -> client.Connect() is the sequence that opens the QR/pairing-code channel, so pairing and persistence ship together, never split.
+  - docs/protocolo-ipc-nucleo-sidecar.md's set of message types in section 6 stays closed and versioned; adding pairing messages requires bumping the document to version 1.1, never silently extending version 1.0's closed set.
+  - A 1.0 peer and a 1.1 peer negotiate predictably at the version handshake in section 3; no partial degradation.
+  - The Rust workspace (crates/) is untouched by this task; the core-side consumer of the v1.1 pairing messages is out of scope here.
+  - The whatsmeow JID never crosses the channel-port boundary and is never written into sessions.db.
+  - The full Go test suite is verifiable with no network access, no real phone, and no WhatsApp account.
+  - The sqlstore path is configurable through the same mechanism sidecar/internal/configuracion/configuracion.go already uses for the socket path, never hardcoded.
+acceptance:
+  - id: AC-1
+    statement: The device store on the cell volume replaces store.NoopDevice with a real whatsmeow sqlstore-backed implementation.
+    given: sidecar/internal/canal/canal.go currently documents store.NoopDevice as a placeholder
+    when: this task's sidecar changes land
+    then: the sidecar constructs its whatsmeow client from a real sqlstore.Container rooted at a configurable path on the cell volume, and no placeholder device store remains on the pairing path
+  - id: AC-2
+    statement: Pairing by QR code is implemented and exposed without requiring access to the server terminal.
+    given: an unpaired sidecar instance with no persisted session
+    when: a QR pairing is requested through the sidecar's operation surface (not a server-local terminal command)
+    then: the sidecar produces the QR payload for that operation surface to relay, without requiring shell access to the host running the sidecar
+  - id: AC-3
+    statement: Pairing by eight-character pairing code is implemented and exposed without requiring access to the server terminal.
+    given: an unpaired sidecar instance with no persisted session
+    when: pairing-code pairing is requested through the sidecar's operation surface, supplying the phone number
+    then: the sidecar returns the eight-character pairing code for that operation surface to relay, without requiring shell access to the host running the sidecar
+  - id: AC-4
+    statement: Session credentials survive a process restart without re-pairing.
+    given: a sidecar process that has completed pairing and persisted credentials to a temp sqlstore path
+    when: the process is stopped and a new process starts pointed at the same sqlstore path
+    then: a test proves the device store reloads the previously-persisted credentials and the session resumes automatically, with no new QR or pairing-code request issued
+  - id: AC-5
+    statement: docs/protocolo-ipc-nucleo-sidecar.md is raised to version 1.1 with new pairing message types added to section 6's closed set, including field tables.
+    given: version 1.0 of the document defines a closed set of exactly six message types in section 6 with no pairing message and no mention of pairing in section 9's deliberate-omissions list
+    then: version 1.1 of the document declares the pairing message set (core-to-sidecar pairing request, sidecar-to-core pairing payload carrying either the QR data or the eight-character code, and sidecar-to-core pairing acknowledgment), each with a field table matching the style of the existing section 6 entries
+  - id: AC-6
+    statement: Section 3's version handshake is updated so a 1.0 peer and a 1.1 peer negotiate predictably.
+    given: section 3 currently specifies that a version mismatch closes the connection with no negotiation or partial degradation
+    when: the document is raised to 1.1
+    then: section 3 states explicitly what happens when a 1.0 sidecar or core meets a 1.1 peer, consistent with the no-degradation rule already established, so the behavior is not left ambiguous by the version bump
+  - id: AC-7
+    statement: The v1.1 protocol document and the sidecar implementation agree exactly on the message set.
+    then: no message type is implemented in the sidecar that the v1.1 document does not declare, and no message type the document declares is left unimplemented on the sidecar side (the core side is explicitly deferred, not a mismatch)
+  - id: AC-8
+    statement: The sqlstore path is configurable through the existing configuration mechanism.
+    given: sidecar/internal/configuracion/configuracion.go already exposes the socket path as a configurable value
+    when: the sqlstore path is added
+    then: it follows the same configuration mechanism (same loading/precedence rules), not a separate ad hoc lookup
+  - The full Go test suite (go test ./... -v under CGO_ENABLED=0) runs green with a non-zero count of `--- PASS` lines, requiring no network access, no real phone, and no WhatsApp account.
+  - No acceptance criterion in this task requires a real WhatsApp number, a real phone, or a real QR scan; those are explicitly deferred to A-3 task 15 and are out of scope here.
+  - End-to-end usability of the pairing operation surface (an actual human completing pairing through it) is explicitly deferred to A-3 task 10 (Rust core-side consumer) and is not acceptance criteria for this task.
+risk: medium
+non_goals:
+  - Any change to crates/ (the Rust workspace). The core-side consumer of the v1.1 pairing IPC messages is A-3 task 10, a separate task.
+  - Reconnection with exponential backoff and the temporary-ban pause (A-3 task 6).
+  - The disconnection taxonomy and the causa vocabulary (A-3 task 7).
+  - Translation of WhatsApp events to the canonical format (A-3 task 8).
+  - JID-to-internal-identifier mapping and the adapter's own identity store (A-3 task 9).
+  - STOP list, outbound queue with TTL, and channel behavior discipline (A-3 tasks 12-14).
+  - The PairPhone() re-pairing runbook (A-3 task 16).
+  - Testing against a real WhatsApp number (A-3 task 15).
+  - Freezing message names as final; orden_emparejar, codigo_emparejamiento, and acuse_emparejamiento are a human-sketched starting point for the blueprint to refine, not a frozen decision.
+constraints:
+  - No API keys or secrets committed anywhere; this repository is public.
+  - Do not version *.db, *.db-wal, *.db-shm, or .env* files.
+  - All prose in docs/protocolo-ipc-nucleo-sidecar.md and any commit messages must be in Spanish, using conventional commits with no AI attribution.
+  - Any scope beyond what is stated here must trace to docs/PRD.md FR-01/FR-12 or be registered as a pending decision in docs/STATUS.md; do not invent additional requirements.
+  - The protocol document version bump must be additive to the existing closed set (six v1.0 message types remain unchanged); this is not a breaking rewrite of the v1.0 messages.
+  - No mass-sending folklore, proxies, VPN, or IP rotation introduced as part of this task.

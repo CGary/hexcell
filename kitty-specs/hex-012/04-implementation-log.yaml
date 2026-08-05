@@ -1,0 +1,17 @@
+task_id: HEX-012
+summary: Sidecar whatsmeow pairing (QR + 8-char code) over a real sqlstore device store with automatic session resumption, plus IPC document v1.1 / wire version 2 and its three pairing message types.
+entries:
+  - changed_files:
+      - sidecar/internal/canal/emparejamiento.go
+      - sidecar/internal/canal/emparejamiento_test.go
+      - sidecar/internal/canal/almacen_interno_test.go
+      - docs/STATUS.md
+      - docs/protocolo-ipc-nucleo-sidecar.md
+      - sidecar/internal/ipc/mensajes_test.go
+    notes:
+      - "Revision pass discharging the three fix_tasks of 06-review.json; no other scope touched."
+      - "Fix 1: extracted the unexported helper Sesion.traducirItemQr in package canal so the QR log-emitting step is independently invocable; the goroutine now delegates to it. Added two internal tests in almacen_interno_test.go (package canal) that assert a sentinel payload 2@SENTINELA never reaches the buffer at any level, and that the digit string of the rejected phone number never reaches it either. Both tests first assert the log line WAS emitted, so they cannot pass on an empty buffer. Removed the vacuous external test TestNingunPayloadDeEmparejamientoLlegaAlRegistro and left a comment explaining why the assertion cannot live outside the package. No exported API was widened."
+      - "Mutation proof performed: interpolating item.Code into Detalle made the sentinel test fail; interpolating telefono into Detalle made the phone test fail; both passed again after reverting."
+      - "Fix 2: docs/STATUS.md diff reduced from 37 to 20 lines, restoring the CI paragraph about go test and the minimum passing-case count, and rewording the session claim to resumable-without-re-pairing with connection deferred to a later A-3 task."
+      - "Fix 3: section 4 of docs/protocolo-ipc-nucleo-sidecar.md now says nine closed types, agreeing with section 6; the stale six-type comment in mensajes_test.go was updated. The executable privacy guard itself was left intact."
+    verify_pending: false

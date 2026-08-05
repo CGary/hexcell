@@ -1,0 +1,259 @@
+task_id: HEX-012
+summary: >-
+  Sidecar whatsmeow pairing (QR + 8-char code) on a real sqlstore device store, automatic session
+  resumption, and IPC protocol doc v1.1 / wire version 2 with three new pairing message types.
+
+affected_files:
+  - docs/protocolo-ipc-nucleo-sidecar.md
+  - docs/STATUS.md
+  - sidecar/internal/ipc/mensajes.go
+  - sidecar/internal/ipc/mensajes_test.go
+  - sidecar/internal/ipc/documento_test.go
+  - sidecar/internal/canal/canal.go
+  - sidecar/internal/canal/emparejamiento.go
+  - sidecar/internal/canal/canal_test.go
+  - sidecar/internal/canal/emparejamiento_test.go
+  - sidecar/internal/canal/almacen_interno_test.go
+  - sidecar/internal/configuracion/configuracion.go
+  - sidecar/internal/configuracion/configuracion_test.go
+  - sidecar/main.go
+
+symbols:
+  - ipc.VersionProtocolo
+  - ipc.TipoOrdenEmparejar
+  - ipc.TipoCodigoEmparejamiento
+  - ipc.TipoAcuseEmparejamiento
+  - ipc.OrdenEmparejar
+  - ipc.CodigoEmparejamiento
+  - ipc.AcuseEmparejamiento
+  - ipc.MetodoQr
+  - ipc.MetodoCodigoDeVinculacion
+  - ipc.ResultadoEmparejamientoCompletado
+  - ipc.ResultadoEmparejamientoExpirado
+  - ipc.ResultadoEmparejamientoFallido
+  - ipc.TiposDeclarados
+  - ipc.CamposDe
+  - canal.NuevaSesion
+  - canal.AbrirAlmacenDeDispositivo
+  - canal.Sesion.EstaEmparejada
+  - canal.Sesion.IniciarEmparejamientoQr
+  - canal.Sesion.SolicitarCodigoDeVinculacion
+  - canal.Sesion.Cerrar
+  - canal.ErrYaEmparejada
+  - canal.ErrTelefonoNoConfigurado
+  - configuracion.VariableRutaSqlstore
+  - configuracion.VariableTelefonoCelula
+  - configuracion.RutaSqlstorePorOmision
+  - configuracion.Configuracion.RutaSqlstore
+  - configuracion.Configuracion.TelefonoCelula
+
+dependencies:
+  - go.mau.fi/whatsmeow/store/sqlstore
+  - go.mau.fi/whatsmeow/store
+  - modernc.org/sqlite
+  - sidecar/internal/registro/registro.go
+  - sidecar/internal/outbox/outbox.go
+  - crates/hexcell-core/src/canal.rs
+  - docs/plan/fase-a-3-adaptador-whatsmeow.md
+  - docs/adr/adr-0019-registro-estructurado.md
+  - docs/adr/adr-0010-puerto-de-canal.md
+  - docs/bitacora-de-descartes.md
+
+test_scenarios:
+  - statement: "sqlstore.New with dialect 'sqlite' and a t.TempDir DSN opens and upgrades offline; the DSN string carries _pragma=foreign_keys(1)."
+    covers: ["AC-1"]
+  - statement: "A freshly opened empty device store yields a device whose ID is nil, so the sidecar classifies itself as unpaired and no placeholder store.NoopDevice remains on the pairing path."
+    covers: ["AC-1"]
+  - statement: "GetQRChannel on an unpaired client returns a live channel with no network, no Connect and no WhatsApp account; the emitted QR payload is relayed as an opaque string."
+    covers: ["AC-2"]
+  - statement: "Requesting QR pairing on an already-paired session is refused with ErrYaEmparejada, mirroring whatsmeow's ErrQRStoreContainsID, so pairing is never restarted over live credentials."
+    covers: ["AC-2", "AC-4"]
+  - statement: "The pairing-code request rejects a phone number shorter than seven digits and one starting with zero before any network call, using whatsmeow's pre-flight validation."
+    covers: ["AC-3"]
+  - statement: "The pairing-code request fails with ErrTelefonoNoConfigurado when the cell's own number is absent from configuration, instead of sending an empty number to the transport."
+    covers: ["AC-3", "AC-8"]
+  - statement: "A synthetic device persisted with PutDevice under t.TempDir survives closing the container; reopening the same path returns it with ID set and Initialized true, and no QR or pairing-code request is issued."
+    covers: ["AC-4"]
+  - statement: "The protocol document declares version 1.1 with an absolute date and maps document version 1.1 to wire version 2."
+    covers: ["AC-5", "AC-6"]
+  - statement: "Section 6 of the document declares exactly the message types that ipc.TiposDeclarados returns, checked by parsing the document, so neither side can drift."
+    covers: ["AC-5", "AC-7"]
+  - statement: "Each new type's field list from ipc.CamposDe matches the document's field table exactly, in order: orden_emparejar, codigo_emparejamiento and acuse_emparejamiento."
+    covers: ["AC-5", "AC-7"]
+  - statement: "Decodificar rejects a line carrying version 1 with ErrVersionIncompatible now that the wire version is 2, which is the no-degradation rule of section 3 applied to the bump."
+    covers: ["AC-6"]
+  - statement: "No field name of any declared type contains jid, telefono, phone, dispositivo, device or numero; the existing guard keeps passing unmodified after the three types are added."
+    covers: ["AC-7"]
+  - statement: "Emitting a QR payload and an eight-character pairing code through the registro writes neither value into the captured log buffer, at any level."
+    covers: ["AC-2", "AC-3"]
+  - statement: "Cargar reads the sqlstore path and the cell's own phone number through the same consultar function and precedence rules as the socket path, with a documented default for the path."
+    covers: ["AC-8"]
+  - statement: "The whole sidecar suite runs green under CGO_ENABLED=0 with no network, no phone and no WhatsApp account, and reports a non-zero count of --- PASS lines."
+    covers: ["AC-1", "AC-2", "AC-3", "AC-4"]
+
+strategy:
+  - step: 1
+    action: >-
+      Value objects and closed set (ipc). Add the three pairing types to the closed set, taking it
+      from six to nine, and raise VersionProtocolo from 1 to 2. orden_emparejar carries only metodo;
+      codigo_emparejamiento carries metodo, valor and expira_en_ms; acuse_emparejamiento carries
+      resultado and motivo. Register them in descriptores and TiposDeclarados so CamposDe and the
+      compiler-enforced Cuerpo interface keep the set closed.
+    files:
+      - sidecar/internal/ipc/mensajes.go
+  - step: 2
+    action: >-
+      Normative document (v1.1). Raise the header to version 1.1 with an absolute date, add an
+      explicit document-version to wire-version mapping table (1.0 to 1, 1.1 to 2), restate section 3
+      as strict integer equality with the new value and no degradation, extend section 6's table and
+      add the three field tables in the existing style, and state that the pairing payload carries no
+      transport identifier and that the cell's own number never travels on the wire.
+    files:
+      - docs/protocolo-ipc-nucleo-sidecar.md
+  - step: 3
+    action: >-
+      Configuration (application service). Add the sqlstore path and the cell's own phone number to
+      Configuracion through the same Cargar(consultar) mechanism and precedence rules as the socket
+      path, with a documented default path on the cell volume and no default for the number.
+    files:
+      - sidecar/internal/configuracion/configuracion.go
+  - step: 4
+    action: >-
+      Real device store (entity). Replace store.NoopDevice with a sqlstore.Container opened at the
+      configured path with dialect "sqlite" and a DSN carrying foreign_keys(1), journal_mode(WAL),
+      synchronous(FULL) and busy_timeout, mirroring the outbox's DSN discipline. NuevaSesion takes
+      the device store; the session classifies itself as paired or unpaired by whether the device ID
+      is nil.
+    files:
+      - sidecar/internal/canal/canal.go
+  - step: 5
+    action: >-
+      Pairing operations (application service). QR pairing subscribes to the whatsmeow QR channel and
+      republishes each code as a codigo_emparejamiento with an absolute expiry, superseding the
+      previous one; pairing-code pairing validates the configured number and returns the eight
+      character code once. Both refuse to run on an already-paired session. Neither logs the payload.
+    files:
+      - sidecar/internal/canal/emparejamiento.go
+  - step: 6
+    action: >-
+      Wiring. main.go opens the device store from configuration, passes it to NuevaSesion, closes it
+      on shutdown, and reports the wire protocol version it speaks without emitting any credential.
+    files:
+      - sidecar/main.go
+  - step: 7
+    action: >-
+      Tests (validators). Extend the ipc suite with samples and field-set assertions for the three
+      types and a document-versus-code agreement test; add offline canal tests using t.TempDir
+      sqlstore paths and a synthetic device for persistence and resumption; put assertions over
+      unexported state in an internal test file declared package canal; add the log-privacy test.
+    files:
+      - sidecar/internal/ipc/mensajes_test.go
+      - sidecar/internal/ipc/documento_test.go
+      - sidecar/internal/canal/canal_test.go
+      - sidecar/internal/canal/emparejamiento_test.go
+      - sidecar/internal/canal/almacen_interno_test.go
+      - sidecar/internal/configuracion/configuracion_test.go
+  - step: 8
+    action: >-
+      Living record. Add a docs/STATUS.md entry moving the IPC protocol decision from version 1.0 to
+      version 1.1 with an absolute date and the HEX-012 reference, and note that pairing and session
+      persistence are no longer pending.
+    files:
+      - docs/STATUS.md
+
+risks:
+  - >-
+    RESOLVED BY EVIDENCE, question B (QR rendering): crates/hexcell-core/src/canal.rs:154-159 already
+    declares Emparejamiento::CodigoQr(String), documented as "Contenido a codificar como QR para que
+    el usuario lo escanee". The port already models the QR as data someone else encodes, and
+    whatsmeow hands it out as QRChannelItem.Code, a plain string. The string travels over IPC and
+    rendering belongs to the consumer (A-3 task 10 / stage A-6). NO new dependency is introduced,
+    consistent with the bitacora's repeated rejection of dependencies a few lines already cover
+    (D-17 tracing, D-18 tokio-util). The bitacora has NO entry on QR rendering, so nothing is being
+    reopened.
+  - >-
+    RESOLVED, question A (version negotiation): the wire field `version` is an integer and cannot
+    express "1.1". Section 6 states "Ampliarlo es cambiar la versión del protocolo", so growing the
+    type set forces the integer to bump to 2, while the DOCUMENT becomes 1.1 as 00-spec requires.
+    Keeping the wire at 1 would move the failure from the handshake to the first unknown `tipo`
+    mid-stream, which is exactly what section 3's rationale rejects. The rule itself does not change:
+    strict equality, both directions, close and log both integers, no negotiation and no partial
+    degradation. Decodificar already enforces it via ErrVersionIncompatible.
+  - >-
+    De-risking fact for the version bump: there is NO deployed v1.0 wire peer. grep confirms the
+    sidecar opens no socket (no net.Listen anywhere under sidecar/) and no Rust crate implements an
+    IPC client; the document itself says so at line 10. A 1.1 sidecar therefore cannot meet a 1.0
+    core in practice: A-3 task 10 writes the core client directly against wire version 2. The
+    document must still specify the mismatch behaviour because a mixed deployment becomes possible
+    once both halves ship.
+  - >-
+    HUMAN DECISION NEEDED, question D versus AC-3: sidecar/internal/ipc/mensajes_test.go:201 is an
+    EXISTING, machine-enforced guard asserting that no field name of ANY declared type contains
+    "jid", "telefono", "phone", "dispositivo", "device" or "numero". A `telefono` field in
+    orden_emparejar would require RELAXING that guard, which would weaken a structural privacy
+    invariant to serve a feature. This blueprint therefore takes the cell's own phone number from
+    CONFIGURATION, through the same mechanism AC-8 mandates for the sqlstore path, so it never
+    touches the wire, the log, or a compromised core. AC-3's wording "supplying the phone number" is
+    read as supplied to the operation surface, not as an IPC field; requesting the pairing still
+    needs no server terminal. If the human intends the number to travel in the message instead, the
+    guard at mensajes_test.go:201 must be amended deliberately and that decision recorded.
+  - >-
+    RESOLVED, question C (asymmetric modes): one payload type with a `metodo` discriminant maps 1:1
+    onto the Rust enum's two variants, which iniciar_emparejamiento returns as a single value; two
+    separate payload types would force the Rust side to unify them again. The asymmetry is expressed
+    as CARDINALITY, not shape: metodo=qr emits N messages over a session, each superseding the last
+    with its own absolute expira_en_ms; metodo=codigo_de_vinculacion emits exactly one, with
+    expira_en_ms=0 because whatsmeow documents the pairing-code expiry as unknown. acuse_emparejamiento
+    stays separate because the terminal outcome shares no field with the payload.
+  - >-
+    RESOLVED, question E (testability offline): every step was executed against the pinned whatsmeow
+    before writing this blueprint. sqlstore.New(ctx,"sqlite",dsn,nil) opens and upgrades under a temp
+    dir; an empty store yields ID==nil; GetQRChannel on an unpaired client returns a live channel with
+    no Connect and no network; PutDevice persists a synthetic device and a reopen returns it with ID
+    set and Initialized=true; a persisted device makes GetQRChannel fail with ErrQRStoreContainsID,
+    which is the runtime-checkable "resume, do not pair" predicate; PairPhone validates the number
+    before any I/O. No network, no phone, no WhatsApp account at any point.
+  - >-
+    TRAP measured, not guessed: sqlstore Container.Upgrade HARD-FAILS with "foreign keys are not
+    enabled" unless the DSN enables them. With modernc.org/sqlite the syntax is
+    `_pragma=foreign_keys(1)`, NOT whatsmeow's documented `?_foreign_keys=on`, which is
+    mattn/go-sqlite3 syntax. Omitting it makes every open fail.
+  - >-
+    TRAP measured: Container.PutDevice dereferences device.Account with no nil check and panics on a
+    device built by NewDevice. A persistence test must set Account with correctly sized fields, or
+    the SQLite CHECK constraints reject it: adv_account_sig 64 bytes, adv_account_sig_key 32 bytes,
+    adv_device_sig 64 bytes (store/sqlstore/upgrades/00-latest-schema.sql:19-21).
+  - >-
+    BREAKING existing test, must be in touch: sidecar/internal/ipc/documento_test.go:63 asserts the
+    literal string "**Versión de este protocolo:** 1.0, fijada el 2026-07-31.". Raising the document
+    to 1.1 fails that test until it is updated. sidecar/internal/canal/canal_test.go also breaks
+    because NuevaSesion gains the device store parameter, and mensajes_test.go's cuerposDeMuestra
+    must gain a sample per new type or its len check against TiposDeclarados fails.
+  - >-
+    MISMATCH with the current skeleton, confirming 00-spec's premise: store.NoopDevice is declared
+    with ID = &types.EmptyJID, which is NON-nil, so the present sidecar returns ErrQRStoreContainsID
+    from GetQRChannel and is structurally incapable of pairing. Replacing the store is not an
+    improvement, it is the precondition.
+  - >-
+    docs/STATUS.md IS included in touch, deliberately. docs/STATUS.md:326 registers the IPC protocol
+    v1.0 as "Definido", and CLAUDE.md's documentary hierarchy requires updating STATUS.md "cuando una
+    decisión cambie de estado"; a version bump of a registered decision is exactly that. HEX-011
+    forbade STATUS.md and left an undischarged documentation debt after merge; this task discharges
+    it in the same commit, under a tight per-class line cap so it cannot balloon into a rewrite.
+  - >-
+    docs/adr/adr-0011-whatsmeow-sidecar-e-ipc.md stays UNWRITTEN and is forbidden. docs/adr/README.md
+    lists it as "Por escribir" for stage A-3, and the protocol document (lines 15-19) says it is
+    written only once the stage also has session persistence AND the behaviour discipline of task 14
+    in front of it. Task 14 is out of scope here, so writing it now would produce a half-scoped ADR
+    that this repository would then be forbidden to rewrite. Highest ADR allocated is adr-0020; do
+    not renumber.
+  - >-
+    The QR payload and the eight-character code are credential material. adr-0019 makes the closed
+    log field set the privacy mechanism: `evento` is always a code constant and `detalle` carries only
+    the process's own text. Neither pairing value may reach any log at any level, and whatsmeow's own
+    debug output stays below the default threshold ("info"), which is the documented reason that
+    default exists.
+  - >-
+    Do not widen the public API to serve a test (HEX-011 defect). Assertions over the container, the
+    device or any unexported session state belong in an internal test file declared `package canal`,
+    never behind a new exported accessor handing out the raw store.
