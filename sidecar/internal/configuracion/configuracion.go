@@ -21,6 +21,11 @@ const (
 	VariableNivelDeRegistro = "HEXCELL_NIVEL_REGISTRO"
 	// VariableIdCelula fija el identificador opaco de la célula estampado en cada línea.
 	VariableIdCelula = "HEXCELL_ID_CELULA"
+	// VariableRutaSqlstore fija la ruta del archivo de la base de datos sqlstore de whatsmeow.
+	VariableRutaSqlstore = "HEXCELL_RUTA_SQLSTORE"
+	// VariableTelefonoCelula fija el número de teléfono de la célula, sin el prefijo +,
+	// necesario para el emparejamiento por código de vinculación. Nunca viaja en el cable IPC.
+	VariableTelefonoCelula = "HEXCELL_TELEFONO_CELULA"
 )
 
 // Valores por omisión, documentados en docs/protocolo-ipc-nucleo-sidecar.md, sección 2.
@@ -33,6 +38,8 @@ const (
 	// IdCelulaPorOmision documenta el caso de un arranque sin identificador configurado en vez
 	// de abortarlo: una célula sin nombre sigue siendo diagnosticable, solo peor.
 	IdCelulaPorOmision = "sin-configurar"
+	// RutaSqlstorePorOmision es la ruta del archivo sqlstore en el volumen compartido.
+	RutaSqlstorePorOmision = "/var/lib/hexcell/sqlstore.db"
 )
 
 // ErrRutaSocketVacia se devuelve cuando la variable del socket está definida pero vacía.
@@ -41,6 +48,9 @@ const (
 // vacía es casi siempre una plantilla de despliegue que no sustituyó su marcador. Arrancar así
 // dejaría al sidecar escuchando en ningún sitio y al núcleo reintentando para siempre.
 var ErrRutaSocketVacia = errors.New("configuracion: la ruta del socket IPC está vacía")
+
+// ErrRutaSqlstoreVacia se devuelve cuando la variable del sqlstore está definida pero vacía.
+var ErrRutaSqlstoreVacia = errors.New("configuracion: la ruta del sqlstore está vacía")
 
 // ErrNivelDeRegistroDesconocido se devuelve ante un umbral de registro que no está en la tabla.
 var ErrNivelDeRegistroDesconocido = errors.New("configuracion: nivel de registro desconocido")
@@ -63,6 +73,12 @@ type Configuracion struct {
 	NivelDeRegistro slog.Level
 	// IdCelula es el identificador opaco estampado en cada línea de registro.
 	IdCelula string
+	// RutaSqlstore es la ruta del archivo de la base de datos sqlstore de whatsmeow.
+	RutaSqlstore string
+	// TelefonoCelula es el número de teléfono de la célula, sin prefijo +. Solo es necesario
+	// para el emparejamiento por código de vinculación. Vacío es válido: significa que ese
+	// método no está disponible.
+	TelefonoCelula string
 }
 
 // Cargar construye la configuración a partir de una función de consulta del entorno.
@@ -93,9 +109,24 @@ func Cargar(consultar func(string) (string, bool)) (Configuracion, error) {
 		idCelula = valor
 	}
 
+	rutaSqlstore := RutaSqlstorePorOmision
+	if valor, presente := consultar(VariableRutaSqlstore); presente {
+		if valor == "" {
+			return Configuracion{}, ErrRutaSqlstoreVacia
+		}
+		rutaSqlstore = valor
+	}
+
+	telefonoCelula := ""
+	if valor, presente := consultar(VariableTelefonoCelula); presente && valor != "" {
+		telefonoCelula = valor
+	}
+
 	return Configuracion{
 		RutaSocket:      rutaSocket,
 		NivelDeRegistro: nivel,
 		IdCelula:        idCelula,
+		RutaSqlstore:    rutaSqlstore,
+		TelefonoCelula:  telefonoCelula,
 	}, nil
 }

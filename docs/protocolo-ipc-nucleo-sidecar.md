@@ -1,6 +1,6 @@
 # Protocolo IPC entre el núcleo y el sidecar
 
-* **Versión de este protocolo:** 1.0, fijada el 2026-07-31.
+* **Versión de este protocolo:** 1.1, fijada el 2026-08-04.
 * **Etapa que lo redacta:** A-3 (tarea 1 de `docs/plan/fase-a-3-adaptador-whatsmeow.md`).
 * **Etapa que lo implementa:** A-3, repartida entre varias tareas. Este documento **declara** la
   semántica completa; el código que la cumple llega después y por partes: el outbox durable
@@ -20,6 +20,13 @@
   La sección 6 del contrato `docs/contrato-ipc-respaldo-del-sqlstore.md` difiere a ese mismo ADR
   la elección de transporte y de serialización; lo que aquí se fija es exactamente esa elección,
   y el ADR la recogerá sin cambiarla.
+
+* **Correspondencia versión de documento → versión de cable:**
+
+| Versión del documento | Versión de cable (`version` en el saludo) |
+| :--- | :--- |
+| 1.0 | `1` |
+| 1.1 | `2` |
 
 ---
 
@@ -69,8 +76,8 @@ Los dos primeros campos de **toda** línea son siempre los mismos y en este orde
 
 | Campo | Tipo | Descripción |
 | :--- | :--- | :--- |
-| `version` | entero | Versión del protocolo. En esta especificación, `1`. |
-| `tipo` | cadena | Uno de los seis tipos cerrados de la sección 6. |
+| `version` | entero | Versión de cable del protocolo. En esta especificación, `2`. |
+| `tipo` | cadena | Uno de los nueve tipos cerrados de la sección 6. |
 
 ### Por qué JSON y no un formato binario, y qué se difiere a `adr-0011`
 
@@ -148,6 +155,12 @@ y registra el desajuste con las dos versiones. No hay negociación ni degradaci�
 desajuste de versión es un error de despliegue —una imagen que no se actualizó con la otra— y
 tratarlo como tal, con la célula caída y un mensaje claro, es mucho más barato que descubrirlo
 semanas después por un campo que se leía torcido.
+
+Con la versión 1.1 del documento, la versión de cable pasa de `1` a `2`. La regla no cambia de
+sustancia: sigue siendo igualdad estricta del entero, en las dos direcciones, sin negociación ni
+degradación. Si un sidecar que habla la versión 2 recibe un saludo con versión 1, cierra la
+conexión e informa; el caso inverso es simétrico. En la práctica, este desajuste indica que una
+imagen del contenedor se actualizó y la otra no, y el remedio es actualizar, no negociar.
 
 El saludo no lleva ninguna credencial: la autorización es el permiso del archivo del socket
 (sección 2), no un dato del protocolo.
@@ -242,7 +255,8 @@ desconexión del canal por baneo temporal, no.
 
 ## 6. Conjunto cerrado de tipos de mensaje
 
-Seis tipos, ni uno más. Ampliarlo es cambiar la versión del protocolo.
+Nueve tipos. Los seis de la versión 1.0 se conservan intactos; los tres nuevos llegan con la
+versión 1.1. Ampliarlo es cambiar la versión del protocolo.
 
 | `tipo` | Dirección | Propósito |
 | :--- | :--- | :--- |
@@ -252,12 +266,15 @@ Seis tipos, ni uno más. Ampliarlo es cambiar la versión del protocolo.
 | `estado_sesion` | sidecar → núcleo | Estado de la sesión de WhatsApp y su causa. |
 | `orden_respaldo_sqlstore` | núcleo → sidecar | Orden de copia del `sqlstore` (sección 7). |
 | `acuse_respaldo_sqlstore` | sidecar → núcleo | Desenlace de esa copia (sección 7). |
+| `orden_emparejar` | núcleo → sidecar | Orden de iniciar un emparejamiento por QR o por código de vinculación. |
+| `codigo_emparejamiento` | sidecar → núcleo | Código QR o código de vinculación de ocho caracteres. |
+| `acuse_emparejamiento` | sidecar → núcleo | Resultado terminal del emparejamiento. |
 
 ### `saludo`
 
 | Campo | Tipo | Descripción |
 | :--- | :--- | :--- |
-| `version` | entero | `1`. |
+| `version` | entero | `2`. |
 | `tipo` | cadena | `saludo`. |
 | `emisor` | cadena | `nucleo` o `sidecar`. |
 | `id_celula` | cadena | Identificador opaco de la célula, para correlacionar registros. |
@@ -266,7 +283,7 @@ Seis tipos, ni uno más. Ampliarlo es cambiar la versión del protocolo.
 
 | Campo | Tipo | Descripción |
 | :--- | :--- | :--- |
-| `version` | entero | `1`. |
+| `version` | entero | `2`. |
 | `tipo` | cadena | `evento_entrante`. |
 | `id_deduplicacion` | cadena | Identificador durable del evento (FR-12). Es lo que el acuse referencia. |
 | `id_conversacion` | cadena | Identificador **interno** del hilo, opaco para el núcleo. |
@@ -289,7 +306,7 @@ contra el que ese TTL existe.
 
 | Campo | Tipo | Descripción |
 | :--- | :--- | :--- |
-| `version` | entero | `1`. |
+| `version` | entero | `2`. |
 | `tipo` | cadena | `confirmacion`. |
 | `id_deduplicacion` | cadena | El mismo que llegó en el `evento_entrante`. Nunca un número de secuencia. |
 
@@ -297,7 +314,7 @@ contra el que ese TTL existe.
 
 | Campo | Tipo | Descripción |
 | :--- | :--- | :--- |
-| `version` | entero | `1`. |
+| `version` | entero | `2`. |
 | `tipo` | cadena | `estado_sesion`. |
 | `estado` | cadena | `activa`, `reconectando` o `desvinculada`. |
 | `causa` | cadena | Variante cruda de la taxonomía de desconexión; `""` si no aplica. |
@@ -319,6 +336,43 @@ Dos precisiones que este documento **no** puede saltarse:
   pausa por baneo temporal, que el plan exige distinguir de «reconectando», es una decisión de esa
   tarea y no se inventa aquí.
 
+### `orden_emparejar`
+
+| Campo | Tipo | Descripción |
+| :--- | :--- | :--- |
+| `version` | entero | `2`. |
+| `tipo` | cadena | `orden_emparejar`. |
+| `metodo` | cadena | `qr` o `codigo_de_vinculacion`. |
+
+El número de teléfono de la célula **no viaja en este mensaje**. Si el método es
+`codigo_de_vinculacion`, el sidecar lo lee de su configuración (`HEXCELL_TELEFONO_CELULA`), donde
+lo fijó el procedimiento de alta de la célula. Poner el número en un campo IPC lo expondría a un
+núcleo comprometido y violaría la guardia de `mensajes_test.go` que prohíbe campos con nombres de
+identificador de transporte.
+
+### `codigo_emparejamiento`
+
+| Campo | Tipo | Descripción |
+| :--- | :--- | :--- |
+| `version` | entero | `2`. |
+| `tipo` | cadena | `codigo_emparejamiento`. |
+| `metodo` | cadena | `qr` o `codigo_de_vinculacion`. Indica de qué tipo es `valor`. |
+| `valor` | cadena | Dato opaco: la cadena a codificar como QR, o el código de ocho caracteres. |
+| `expira_en_ms` | entero | Milisegundos desde la época Unix en que este código deja de ser válido. `0` si la expiración es desconocida (caso del código de vinculación, cuya caducidad whatsmeow no expone). |
+
+Cada emisión de `codigo_emparejamiento` con `metodo=qr` **sustituye al anterior**: el consumidor
+muestra solo el último y descarta los previos. Con `metodo=codigo_de_vinculacion` se emite
+exactamente uno.
+
+### `acuse_emparejamiento`
+
+| Campo | Tipo | Descripción |
+| :--- | :--- | :--- |
+| `version` | entero | `2`. |
+| `tipo` | cadena | `acuse_emparejamiento`. |
+| `resultado` | cadena | `completado`, `expirado` o `fallido`. |
+| `motivo` | cadena | Descripción legible si `resultado` es `fallido`; `""` en caso contrario. **Nunca lleva la cadena QR, el código de vinculación ni ningún otro dato de credencial.** |
+
 ---
 
 ## 7. La operación de respaldo del `sqlstore`
@@ -332,7 +386,7 @@ contrato sin modificarlo**: los campos de las dos tablas siguientes son exactame
 
 | Campo | Tipo | Descripción |
 | :--- | :--- | :--- |
-| `version` | entero | `1`. |
+| `version` | entero | `2`. |
 | `tipo` | cadena | `orden_respaldo_sqlstore`. |
 | `orden` | cadena | Cadena fija `respaldar_sqlstore`. |
 | `destino` | cadena | Directorio de destino ya resuelto por quien dispara la orden. |
@@ -342,7 +396,7 @@ contrato sin modificarlo**: los campos de las dos tablas siguientes son exactame
 
 | Campo | Tipo | Descripción |
 | :--- | :--- | :--- |
-| `version` | entero | `1`. |
+| `version` | entero | `2`. |
 | `tipo` | cadena | `acuse_respaldo_sqlstore`. |
 | `identificador_de_ronda` | cadena | El mismo recibido en la orden. |
 | `resultado` | cadena | `completado` o `fallido`. |
@@ -394,6 +448,9 @@ ofensor; **nunca la línea recibida**, que podría contener el texto de un mensa
   La versión 1.0 cubre la dirección entrante, el estado de sesión y el respaldo; la saliente se
   añade con el número de versión que corresponda cuando la tarea 8 la tenga delante. Declararla
   ahora, sin la traducción escrita, sería inventar campos.
+* **El emparejamiento por QR y por código de vinculación**, que la versión 1.0 omitía, queda
+  cubierto con la versión 1.1 por los tres tipos `orden_emparejar`, `codigo_emparejamiento` y
+  `acuse_emparejamiento`.
 
 ---
 

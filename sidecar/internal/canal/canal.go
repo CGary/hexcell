@@ -1,17 +1,16 @@
-// Package canal construye la sesión de whatsmeow del sidecar y recibe sus eventos crudos.
+// Package canal construye la sesión de whatsmeow del sidecar, gestiona el almacén de dispositivo
+// real (sqlstore) y recibe los eventos crudos del canal.
 //
-// # Qué hace y qué no hace todavía
+// # Almacén de dispositivo
 //
-// Esta es la tarea 2 del plan de la etapa A-3: arranque, cableado del cliente, recepción de
-// eventos crudos y registro estructurado. Deliberadamente **no** hay emparejamiento por QR ni por
-// código (tarea 4), **no** hay persistencia de sesión en el `sqlstore` (tarea 5), **no** hay
-// reconexión con retroceso (tarea 6) y **no** hay traducción al formato canónico del puerto
-// (tarea 8). El almacén de dispositivo es `store.NoopDevice`, que no persiste nada.
+// El almacén es un sqlstore.Container abierto en la ruta configurada por el paquete
+// configuracion, con el dialecto "sqlite" (modernc.org/sqlite, Go puro, CGO_ENABLED=0).
+// El DSN lleva foreign_keys(1), journal_mode(WAL), synchronous(FULL) y busy_timeout(5000),
+// las mismas pragmas que el outbox del paquete outbox usa por el mismo motivo.
 //
-// La consecuencia es que este esqueleto **no puede completar un inicio de sesión**: whatsmeow
-// necesita credenciales emparejadas y aquí no las hay. Eso no es una carencia que corregir con
-// prisa, es lo que hace que toda la batería de tests corra sin ningún número de WhatsApp, sin
-// teléfono y sin red.
+// La sesión se clasifica como emparejada o no emparejada según si el dispositivo del almacén
+// tiene un ID no nulo. Un almacén vacío devuelve un dispositivo con ID nulo, que es lo que
+// permite a whatsmeow abrir el canal QR y emparejar.
 //
 // # Por qué el manejador de eventos solo registra el tipo
 //
@@ -23,11 +22,15 @@ package canal
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 
 	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/store"
+	"go.mau.fi/whatsmeow/store/sqlstore"
+
+	_ "modernc.org/sqlite"
 
 	"github.com/CGary/hexcell/sidecar/internal/registro"
 )
@@ -35,9 +38,12 @@ import (
 // Nombres fijos de suceso que este paquete emite. Son constantes por el motivo de adr-0019:
 // ningún valor construido en tiempo de ejecución puede acabar en el campo `evento`.
 const (
-	EventoSesionConstruida = "canal.sesion_construida"
-	EventoCrudoRecibido    = "canal.evento_crudo_recibido"
-	EventoSesionCerrada    = "canal.sesion_cerrada"
+	EventoSesionConstruida      = "canal.sesion_construida"
+	EventoCrudoRecibido         = "canal.evento_crudo_recibido"
+	EventoSesionCerrada         = "canal.sesion_cerrada"
+	EventoAlmacenAbierto        = "canal.almacen_abierto"
+	EventoDispositivoEncontrado = "canal.dispositivo_encontrado"
+	EventoDispositivoNuevo      = "canal.dispositivo_nuevo"
 )
 
 // ModuloWhatsmeow es el nombre de módulo raíz con el que la biblioteca aparece en el registro.
@@ -48,33 +54,89 @@ var ErrRegistroNoEspecificado = errors.New("canal: la sesión necesita un regist
 
 // Sesion es el cliente de whatsmeow del sidecar junto al registro con el que informa.
 type Sesion struct {
-	cliente  *whatsmeow.Client
-	registro *registro.Registro
+	cliente     *whatsmeow.Client
+	registro    *registro.Registro
+	dispositivo *store.Device
+	ctx         context.Context
 }
 
-// NuevaSesion construye el cliente de whatsmeow sin abrir ninguna conexión. El almacén de
-// dispositivo es `store.NoopDevice`: no persiste nada y no tiene credenciales, de modo que la
-// sesión puede construirse, inspeccionarse y cerrarse en un test sin tocar la red.
-func NuevaSesion(reg *registro.Registro) (*Sesion, error) {
+// AbrirAlmacenDeDispositivo abre el sqlstore.Container en la ruta dada con el dialecto "sqlite"
+// y las pragmas de durabilidad requeridas. Devuelve el contenedor listo para usar; el llamador
+// es responsable de cerrarlo cuando termine.
+//
+// El DSN incluye foreign_keys(1), journal_mode(WAL), synchronous(FULL) y busy_timeout(5000),
+// las mismas pragmas que el outbox del paquete outbox usa por el mismo motivo. La diferencia
+// con mattn/go-sqlite3 es que la sintaxis es _pragma=X en lugar de ?_X=valor.
+func AbrirAlmacenDeDispositivo(ctx context.Context, ruta string, reg *registro.Registro) (*sqlstore.Container, error) {
+	dsn := fmt.Sprintf(
+		"file:%s?_pragma=foreign_keys(1)&_pragma=journal_mode(WAL)&_pragma=synchronous(FULL)&_pragma=busy_timeout(5000)",
+		ruta,
+	)
+
+	puente := registro.NuevoAdaptadorWaLog(reg, "sqlstore")
+
+	contenedor, err := sqlstore.New(ctx, "sqlite", dsn, puente)
+	if err != nil {
+		return nil, fmt.Errorf("canal: no se pudo abrir el almacén de dispositivo: %w", err)
+	}
+
+	reg.Info(EventoAlmacenAbierto, registro.Campos{
+		Detalle: "almacén sqlstore abierto y actualizado",
+	})
+
+	return contenedor, nil
+}
+
+// NuevaSesion construye el cliente de whatsmeow a partir de un almacén de dispositivo real.
+// Si el almacén no tiene un dispositivo previo, se crea uno nuevo (con ID nulo, que habilita
+// el emparejamiento). Si ya tiene uno, se reutiliza (sesión emparejada, reanudación automática).
+func NuevaSesion(ctx context.Context, contenedor *sqlstore.Container, reg *registro.Registro) (*Sesion, error) {
 	if reg == nil {
 		return nil, ErrRegistroNoEspecificado
 	}
 
+	dispositivo, err := contenedor.GetFirstDevice(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("canal: no se pudo obtener el dispositivo del almacén: %w", err)
+	}
+
+	emparejada := dispositivo.ID != nil
+	if emparejada {
+		reg.Info(EventoDispositivoEncontrado, registro.Campos{
+			Detalle: "dispositivo existente encontrado; sesión reanudable sin emparejamiento",
+		})
+	} else {
+		reg.Info(EventoDispositivoNuevo, registro.Campos{
+			Detalle: "almacén vacío; se requiere emparejamiento para conectar",
+		})
+	}
+
 	puente := registro.NuevoAdaptadorWaLog(reg, ModuloWhatsmeow)
-	cliente := whatsmeow.NewClient(store.NoopDevice, puente)
+	cliente := whatsmeow.NewClient(dispositivo, puente)
 
 	reg.Info(EventoSesionConstruida, registro.Campos{
-		Detalle: "cliente whatsmeow construido sobre almacén no persistente; sin conexión",
+		Detalle: "cliente whatsmeow construido sobre almacén sqlstore; sin conexión",
 	})
-	return &Sesion{cliente: cliente, registro: reg}, nil
+	return &Sesion{
+		cliente:     cliente,
+		registro:    reg,
+		dispositivo: dispositivo,
+		ctx:         ctx,
+	}, nil
 }
 
 // Cliente devuelve el cliente de whatsmeow subyacente.
 //
-// Se expone para que las tareas posteriores de la etapa —emparejamiento, persistencia,
-// reconexión— construyan sobre él sin que este paquete tenga que anticipar su superficie.
+// Se expone para que las tareas posteriores de la etapa —reconexión, traducción— construyan
+// sobre él sin que este paquete tenga que anticipar su superficie.
 func (s *Sesion) Cliente() *whatsmeow.Client {
 	return s.cliente
+}
+
+// EstaEmparejada devuelve verdadero si el almacén contiene un dispositivo con ID no nulo,
+// lo que indica que hay credenciales emparejadas y la sesión puede reanudarse sin QR.
+func (s *Sesion) EstaEmparejada() bool {
+	return s.dispositivo.ID != nil
 }
 
 // RegistrarManejador engancha el manejador de eventos crudos y devuelve su identificador.
@@ -104,4 +166,13 @@ func (s *Sesion) Conectar(ctx context.Context) error {
 func (s *Sesion) Cerrar() {
 	s.cliente.Disconnect()
 	s.registro.Info(EventoSesionCerrada, registro.Campos{})
+}
+
+// CerrarDB cierra la conexión a la base de datos del sqlstore. Es una función auxiliar para
+// que main.go cierre el almacén durante el apagado ordenado.
+func CerrarDB(db *sql.DB) error {
+	if db == nil {
+		return nil
+	}
+	return db.Close()
 }

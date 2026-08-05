@@ -3,12 +3,10 @@
 //
 // El sidecar es un **coste permanente** del canal propio (adr-0014), no un andamio de transición.
 //
-// Este archivo es cableado y nada más: carga la configuración, construye el registro, construye
-// la sesión de whatsmeow, engancha el manejador de eventos crudos y espera una señal de parada
-// para cerrar de forma ordenada. La conexión real al canal está fuera de esta tarea (tarea 2 del
-// plan de la etapa A-3): sin credenciales emparejadas —tareas 4 y 5— whatsmeow no puede completar
-// un inicio de sesión, así que llamar a Conectar aquí solo produciría un fallo garantizado en el
-// arranque. El punto de entrada existe en internal/canal.
+// Este archivo es cableado y nada más: carga la configuración, abre el almacén de dispositivo,
+// construye el registro, construye la sesión de whatsmeow y engancha el manejador de eventos
+// crudos. La conexión real al canal está fuera de esta tarea (tarea 2 del plan de la etapa A-3):
+// sin credenciales emparejadas whatsmeow no puede completar un inicio de sesión.
 //
 // El servidor del socket IPC de docs/protocolo-ipc-nucleo-sidecar.md tampoco se abre aquí: es la
 // tarea 3, junto con el outbox durable que le da sentido. Lo que sí existe ya es la representación
@@ -16,6 +14,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/signal"
@@ -45,12 +44,21 @@ func main() {
 	reg := registro.Nuevo(os.Stdout, cfg.NivelDeRegistro, cfg.IdCelula)
 	reg.Info(eventoArranque, registro.Campos{
 		Detalle: fmt.Sprintf(
-			"protocolo IPC versión %d; socket previsto en %s; sin conexión al canal todavía",
-			ipc.VersionProtocolo, cfg.RutaSocket,
+			"protocolo IPC versión %d; socket previsto en %s; sqlstore en %s",
+			ipc.VersionProtocolo, cfg.RutaSocket, cfg.RutaSqlstore,
 		),
 	})
 
-	sesion, err := canal.NuevaSesion(reg)
+	ctx := context.Background()
+
+	contenedor, err := canal.AbrirAlmacenDeDispositivo(ctx, cfg.RutaSqlstore, reg)
+	if err != nil {
+		reg.Error(eventoParada, registro.Campos{Detalle: err.Error()})
+		os.Exit(1)
+	}
+	defer contenedor.Close()
+
+	sesion, err := canal.NuevaSesion(ctx, contenedor, reg)
 	if err != nil {
 		reg.Error(eventoParada, registro.Campos{Detalle: err.Error()})
 		os.Exit(1)

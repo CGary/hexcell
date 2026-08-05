@@ -78,3 +78,47 @@ func TestCargarRechazaUnNivelDeRegistroDesconocido(t *testing.T) {
 		t.Fatalf("error = %v, se esperaba ErrNivelDeRegistroDesconocido", err)
 	}
 }
+
+func TestCargarLeeRutaSqlstoreYTelefonoCelula(t *testing.T) {
+	t.Parallel()
+
+	cfg, err := configuracion.Cargar(entornoFalso(map[string]string{
+		configuracion.VariableRutaSqlstore:   "/tmp/celula/sqlstore.db",
+		configuracion.VariableTelefonoCelula: "5491155551234",
+	}))
+	if err != nil {
+		t.Fatalf("no se esperaba error: %v", err)
+	}
+	if cfg.RutaSqlstore != "/tmp/celula/sqlstore.db" {
+		t.Errorf("ruta del sqlstore = %q", cfg.RutaSqlstore)
+	}
+	if cfg.TelefonoCelula != "5491155551234" {
+		t.Errorf("teléfono de la célula = %q", cfg.TelefonoCelula)
+	}
+}
+
+func TestCargarAplicaValorPorOmisionDelSqlstore(t *testing.T) {
+	t.Parallel()
+
+	cfg, err := configuracion.Cargar(entornoFalso(map[string]string{}))
+	if err != nil {
+		t.Fatalf("no se esperaba error: %v", err)
+	}
+	if cfg.RutaSqlstore != configuracion.RutaSqlstorePorOmision {
+		t.Errorf("ruta del sqlstore = %q, se esperaba %q", cfg.RutaSqlstore, configuracion.RutaSqlstorePorOmision)
+	}
+	if cfg.TelefonoCelula != "" {
+		t.Errorf("teléfono de la célula = %q, se esperaba vacío", cfg.TelefonoCelula)
+	}
+}
+
+func TestCargarRechazaUnaRutaDeSqlstoreVacia(t *testing.T) {
+	t.Parallel()
+
+	_, err := configuracion.Cargar(entornoFalso(map[string]string{
+		configuracion.VariableRutaSqlstore: "",
+	}))
+	if !errors.Is(err, configuracion.ErrRutaSqlstoreVacia) {
+		t.Fatalf("error = %v, se esperaba ErrRutaSqlstoreVacia", err)
+	}
+}

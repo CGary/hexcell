@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/CGary/hexcell/sidecar/internal/ipc"
 )
 
 // rutaDelDocumento es la ruta del documento del protocolo relativa a este paquete
@@ -60,10 +62,50 @@ func TestElDocumentoDelProtocoloEstaVersionadoYFechadoEnAbsoluto(t *testing.T) {
 	t.Parallel()
 
 	documento := leerDocumento(t)
-	if !strings.Contains(documento, "**Versión de este protocolo:** 1.0, fijada el 2026-07-31.") {
+	if !strings.Contains(documento, "**Versión de este protocolo:** 1.1, fijada el 2026-08-04.") {
 		t.Errorf("el documento no lleva cabecera de versión con fecha absoluta")
 	}
 	if !strings.Contains(documento, "docs/contrato-ipc-respaldo-del-sqlstore.md") {
 		t.Errorf("el documento no referencia el contrato de respaldo de la etapa A-2")
+	}
+}
+
+func TestElDocumentoDeclaraLosNueveTiposQueElCodigoRegistra(t *testing.T) {
+	t.Parallel()
+
+	documento := leerDocumento(t)
+	for _, tipo := range ipc.TiposDeclarados() {
+		if !strings.Contains(documento, "| `"+string(tipo)+"` |") {
+			t.Errorf("el documento no declara el tipo %q en la tabla de la sección 6", tipo)
+		}
+	}
+}
+
+func TestLosCamposDelDocumentoCoincidentConElCodigo(t *testing.T) {
+	t.Parallel()
+
+	documento := leerDocumento(t)
+	for _, tipo := range ipc.TiposDeclarados() {
+		campos := ipc.CamposDe(tipo)
+		for _, campo := range campos {
+			if campo == "version" || campo == "tipo" {
+				continue
+			}
+			if !strings.Contains(documento, "| `"+campo+"` |") {
+				t.Errorf("el tipo %q declara el campo %q en el código pero no en el documento", tipo, campo)
+			}
+		}
+	}
+}
+
+func TestElDocumentoDeclaraLaCorrespondenciaDeVersiones(t *testing.T) {
+	t.Parallel()
+
+	documento := leerDocumento(t)
+	if !strings.Contains(documento, "| 1.1 | `2` |") {
+		t.Errorf("el documento no declara la correspondencia 1.1 → cable 2")
+	}
+	if !strings.Contains(documento, "| 1.0 | `1` |") {
+		t.Errorf("el documento no declara la correspondencia 1.0 → cable 1")
 	}
 }

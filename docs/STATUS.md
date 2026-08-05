@@ -1,6 +1,6 @@
 # Estado del Proyecto
 
-> Registro vivo del avance. Última actualización: 2026-07-31.
+> Registro vivo del avance. Última actualización: 2026-08-04.
 
 ## Fase actual
 **Canal propio en producción — etapa A-1, fundaciones.** Ya existe el workspace Rust con sus cinco
@@ -323,8 +323,9 @@ adicional cuando aparezca un cliente que lo justifique. Ver [plan/README.md](pla
   sección para el respaldo: la ejecución real de la copia IPC del `sqlstore`, la restauración
   extremo a extremo con respuesta real del bot, y el ensayo de la rama `device_removed` del
   runbook de restauración.
-* **Protocolo IPC entre el núcleo y el sidecar, especificado y versionado** (2026-07-31, HEX-010,
-  `docs/protocolo-ipc-nucleo-sidecar.md`, versión 1.0). Fija los cuatro aspectos que exige la tarea
+* **Protocolo IPC entre el núcleo y el sidecar, especificado y versionado** (2026-07-31, HEX-010;
+  actualizado a versión 1.1 el 2026-08-04, HEX-012,
+  `docs/protocolo-ipc-nucleo-sidecar.md`). Fija los cuatro aspectos que exige la tarea
   1 de la etapa A-3: **formato** —un objeto JSON plano de profundidad 1 por línea, valores solo
   cadena o entero, campos cerrados por tipo y siempre presentes—, **transporte** —socket de dominio
   Unix `SOCK_STREAM` sobre el volumen compartido, sidecar de servidor y núcleo de cliente que
@@ -333,7 +334,9 @@ adicional cuando aparezca un cliente que lo justifique. Ver [plan/README.md](pla
   conexión, entrega al menos una vez— y **reconexión** de cualquiera de los dos extremos en los
   tres órdenes posibles. La profundidad 1 no es estética: el workspace Rust no declara `serde` en
   ningún crate (`adr-0019`) y el otro extremo tendrá que **analizar** estas líneas, no solo
-  emitirlas. Seis tipos cerrados, ninguno con campo capaz de llevar un JID. La orden y el acuse del
+  emitirlas. **Nueve tipos cerrados** (los seis de la 1.0 más `orden_emparejar`,
+  `codigo_emparejamiento` y `acuse_emparejamiento`), ninguno con campo capaz de llevar un JID ni un
+  número de teléfono; la versión de cable pasa de `1` a `2`. La orden y el acuse del
   respaldo del `sqlstore` encajan con los campos exactos del contrato de la etapa A-2
   (`docs/contrato-ipc-respaldo-del-sqlstore.md`), que no cambia ni de contenido ni de versión.
 * **Esqueleto del sidecar Go con whatsmeow en pie** (2026-07-31, HEX-010). El módulo `sidecar/`
@@ -341,9 +344,12 @@ adicional cuando aparezca un cliente que lo justifique. Ver [plan/README.md](pla
   `internal/ipc` e `internal/canal`, registro estructurado sobre `log/slog` con el conjunto cerrado
   de campos de `adr-0019`, y puente hacia el registrador de whatsmeow que **descarta su salida de
   depuración** por encima del umbral configurado, porque esas líneas pueden llevar contenido de
-  mensaje. El cliente se construye contra `store.NoopDevice` y **no se conecta**: sin emparejamiento
-  (tarea 4) ni persistencia de sesión (tarea 5) whatsmeow no puede completar un inicio de sesión,
-  así que toda la batería corre sin número de WhatsApp, sin teléfono y sin red. La dependencia sigue
+  mensaje. El cliente se construye ya contra un almacén `sqlstore` real (2026-08-04, HEX-012),
+  abierto con `foreign_keys(1)`, `journal_mode(WAL)`, `synchronous(FULL)` y `busy_timeout`, y el
+  emparejamiento por QR y por código de ocho caracteres está implementado: las credenciales se
+  persisten y se releen al arrancar, de modo que la sesión queda **reanudable sin volver a
+  emparejar**. Conectar es tarea posterior de la A-3 y todavía no ocurre, así que toda la batería
+  sigue corriendo sin número de WhatsApp, sin teléfono y sin red. La dependencia sigue
   fijada por commit (`e9a033b24933`). La CI pasa a ejecutar `go test` y a exigir un mínimo de casos
   superados: `go test ./...` sale con código 0 sobre un módulo sin tests, y ese verde vacío es justo
   el que había antes.

@@ -1,7 +1,7 @@
 // Package ipc es la representación tipada del protocolo que fija
-// `docs/protocolo-ipc-nucleo-sidecar.md`, versión 1.0.
+// `docs/protocolo-ipc-nucleo-sidecar.md`, versión 1.1 (versión de cable 2).
 //
-// Aquí no hay socket, ni escucha, ni outbox: solo los objetos de valor de los seis tipos de
+// Aquí no hay socket, ni escucha, ni outbox: solo los objetos de valor de los nueve tipos de
 // mensaje y dos funciones puras, [Codificar] y [Decodificar]. El transporte llega con la tarea 3
 // del plan de la etapa A-3; separarlo permite comprobar el formato con tests normales, sin abrir
 // ningún descriptor, por el mismo motivo por el que `registro::formatear` está separado de
@@ -29,7 +29,7 @@ import (
 )
 
 // VersionProtocolo es la versión que este binario habla. Un desajuste cierra la conexión.
-const VersionProtocolo int64 = 1
+const VersionProtocolo int64 = 2
 
 // LongitudMaximaDeLinea es el techo de una línea del protocolo, en bytes, salto de línea
 // incluido. Existe para que el lector del otro extremo dimensione un búfer acotado.
@@ -41,10 +41,10 @@ const (
 	CampoTipo    = "tipo"
 )
 
-// TipoMensaje es el conjunto cerrado de tipos de la sección 6 del documento.
+// TipoMensaje es el conjunto cerrado de tipos del documento.
 type TipoMensaje string
 
-// Los seis tipos del protocolo, ni uno más.
+// Los nueve tipos del protocolo, ni uno más.
 const (
 	TipoSaludo                TipoMensaje = "saludo"
 	TipoEventoEntrante        TipoMensaje = "evento_entrante"
@@ -52,6 +52,9 @@ const (
 	TipoEstadoSesion          TipoMensaje = "estado_sesion"
 	TipoOrdenRespaldoSqlstore TipoMensaje = "orden_respaldo_sqlstore"
 	TipoAcuseRespaldoSqlstore TipoMensaje = "acuse_respaldo_sqlstore"
+	TipoOrdenEmparejar        TipoMensaje = "orden_emparejar"
+	TipoCodigoEmparejamiento  TipoMensaje = "codigo_emparejamiento"
+	TipoAcuseEmparejamiento   TipoMensaje = "acuse_emparejamiento"
 )
 
 // Valores cerrados del campo `emisor` de un saludo.
@@ -76,6 +79,19 @@ const OrdenRespaldarSqlstore = "respaldar_sqlstore"
 const (
 	ResultadoCompletado = "completado"
 	ResultadoFallido    = "fallido"
+)
+
+// Valores cerrados del campo `metodo` de una orden de emparejamiento y su payload.
+const (
+	MetodoQr                  = "qr"
+	MetodoCodigoDeVinculacion = "codigo_de_vinculacion"
+)
+
+// Valores cerrados del campo `resultado` de un acuse de emparejamiento.
+const (
+	ResultadoEmparejamientoCompletado = "completado"
+	ResultadoEmparejamientoExpirado   = "expirado"
+	ResultadoEmparejamientoFallido    = "fallido"
 )
 
 // Errores de protocolo. Cualquiera de ellos cierra la conexión: una vez que el delimitado por
@@ -108,8 +124,8 @@ type declaracion struct {
 }
 
 // Cuerpo es el contenido de un mensaje. La interfaz tiene métodos no exportados a propósito:
-// ningún paquete de fuera puede añadir un séptimo tipo sin tocar este archivo, de modo que el
-// conjunto cerrado de la sección 6 del documento lo impone el compilador y no la revisión.
+// ningún paquete de fuera puede añadir un décimo tipo sin tocar este archivo, de modo que el
+// conjunto cerrado del documento lo impone el compilador y no la revisión.
 type Cuerpo interface {
 	tipo() TipoMensaje
 	valores() []any
@@ -195,6 +211,39 @@ func (AcuseRespaldoSqlstore) tipo() TipoMensaje { return TipoAcuseRespaldoSqlsto
 func (a AcuseRespaldoSqlstore) valores() []any {
 	return []any{a.IdentificadorDeRonda, a.Resultado, a.RutaDeLaCopia, a.Bytes, a.Motivo}
 }
+
+// OrdenEmparejar es la orden del núcleo al sidecar para iniciar un emparejamiento.
+// El número de teléfono de la célula NO viaja en el mensaje: se lee de la configuración
+// (adr-0010, invariante de que el JID nunca cruza la frontera del puerto).
+type OrdenEmparejar struct {
+	Metodo string
+}
+
+func (OrdenEmparejar) tipo() TipoMensaje { return TipoOrdenEmparejar }
+func (o OrdenEmparejar) valores() []any  { return []any{o.Metodo} }
+
+// CodigoEmparejamiento es el payload del emparejamiento: un código QR o un código de vinculación
+// de ocho caracteres, según el método solicitado. La cadena viaja como dato opaco: quien la
+// consume decide si la codifica como imagen QR o la muestra como texto.
+type CodigoEmparejamiento struct {
+	Metodo     string
+	Valor      string
+	ExpiraEnMs int64
+}
+
+func (CodigoEmparejamiento) tipo() TipoMensaje { return TipoCodigoEmparejamiento }
+func (c CodigoEmparejamiento) valores() []any {
+	return []any{c.Metodo, c.Valor, c.ExpiraEnMs}
+}
+
+// AcuseEmparejamiento es el resultado terminal del proceso de emparejamiento.
+type AcuseEmparejamiento struct {
+	Resultado string
+	Motivo    string
+}
+
+func (AcuseEmparejamiento) tipo() TipoMensaje { return TipoAcuseEmparejamiento }
+func (a AcuseEmparejamiento) valores() []any  { return []any{a.Resultado, a.Motivo} }
 
 // descriptor declara los campos del cuerpo de un tipo y cómo reconstruirlo al decodificar.
 type descriptor struct {
@@ -282,6 +331,35 @@ var descriptores = map[TipoMensaje]descriptor{
 			}
 		},
 	},
+	TipoOrdenEmparejar: {
+		campos: []declaracion{{"metodo", claseCadena}},
+		construir: func(cadenas []string, _ []int64) Cuerpo {
+			return OrdenEmparejar{Metodo: cadenas[0]}
+		},
+	},
+	TipoCodigoEmparejamiento: {
+		campos: []declaracion{
+			{"metodo", claseCadena},
+			{"valor", claseCadena},
+			{"expira_en_ms", claseEntero},
+		},
+		construir: func(cadenas []string, enteros []int64) Cuerpo {
+			return CodigoEmparejamiento{
+				Metodo:     cadenas[0],
+				Valor:      cadenas[1],
+				ExpiraEnMs: enteros[0],
+			}
+		},
+	},
+	TipoAcuseEmparejamiento: {
+		campos: []declaracion{
+			{"resultado", claseCadena},
+			{"motivo", claseCadena},
+		},
+		construir: func(cadenas []string, _ []int64) Cuerpo {
+			return AcuseEmparejamiento{Resultado: cadenas[0], Motivo: cadenas[1]}
+		},
+	},
 }
 
 // TiposDeclarados devuelve el conjunto cerrado de tipos del protocolo, en orden estable.
@@ -289,6 +367,7 @@ func TiposDeclarados() []TipoMensaje {
 	return []TipoMensaje{
 		TipoSaludo, TipoEventoEntrante, TipoConfirmacion,
 		TipoEstadoSesion, TipoOrdenRespaldoSqlstore, TipoAcuseRespaldoSqlstore,
+		TipoOrdenEmparejar, TipoCodigoEmparejamiento, TipoAcuseEmparejamiento,
 	}
 }
 

@@ -10,7 +10,7 @@ import (
 	"github.com/CGary/hexcell/sidecar/internal/ipc"
 )
 
-// cuerposDeMuestra devuelve un cuerpo poblado por cada uno de los seis tipos declarados.
+// cuerposDeMuestra devuelve un cuerpo poblado por cada uno de los nueve tipos declarados.
 func cuerposDeMuestra() map[ipc.TipoMensaje]ipc.Cuerpo {
 	return map[ipc.TipoMensaje]ipc.Cuerpo{
 		ipc.TipoSaludo: ipc.Saludo{
@@ -44,6 +44,18 @@ func cuerposDeMuestra() map[ipc.TipoMensaje]ipc.Cuerpo {
 			RutaDeLaCopia:        "/respaldos/ronda-42/sqlstore.db",
 			Bytes:                262144,
 			Motivo:               "",
+		},
+		ipc.TipoOrdenEmparejar: ipc.OrdenEmparejar{
+			Metodo: ipc.MetodoQr,
+		},
+		ipc.TipoCodigoEmparejamiento: ipc.CodigoEmparejamiento{
+			Metodo:     ipc.MetodoQr,
+			Valor:      "2@abc123,defgh456,ijklmn789",
+			ExpiraEnMs: 1_722_816_000_000,
+		},
+		ipc.TipoAcuseEmparejamiento: ipc.AcuseEmparejamiento{
+			Resultado: ipc.ResultadoEmparejamientoCompletado,
+			Motivo:    "",
 		},
 	}
 }
@@ -133,7 +145,7 @@ func TestCodificarProduceUnObjetoPlanoDeProfundidadUnoPorLinea(t *testing.T) {
 func TestDecodificarRechazaUnaVersionIncompatible(t *testing.T) {
 	t.Parallel()
 
-	linea := []byte(`{"version":2,"tipo":"confirmacion","id_deduplicacion":"dedup-7"}` + "\n")
+	linea := []byte(`{"version":1,"tipo":"confirmacion","id_deduplicacion":"dedup-7"}` + "\n")
 	sobre, err := ipc.Decodificar(linea)
 	if !errors.Is(err, ipc.ErrVersionIncompatible) {
 		t.Fatalf("error = %v, se esperaba ErrVersionIncompatible", err)
@@ -146,7 +158,7 @@ func TestDecodificarRechazaUnaVersionIncompatible(t *testing.T) {
 func TestDecodificarRechazaUnTipoDesconocido(t *testing.T) {
 	t.Parallel()
 
-	linea := []byte(`{"version":1,"tipo":"mensaje_saliente","texto":"hola"}` + "\n")
+	linea := []byte(`{"version":2,"tipo":"mensaje_saliente","texto":"hola"}` + "\n")
 	if _, err := ipc.Decodificar(linea); !errors.Is(err, ipc.ErrTipoDesconocido) {
 		t.Fatalf("error = %v, se esperaba ErrTipoDesconocido", err)
 	}
@@ -163,16 +175,16 @@ func TestDecodificarRechazaLineasMalformadasSinEntrarEnPanico(t *testing.T) {
 		{"vacía", "", ipc.ErrLineaVacia},
 		{"solo salto de línea", "\n", ipc.ErrLineaVacia},
 		{"no es JSON", "esto no es json\n", ipc.ErrLineaMalformada},
-		{"objeto sin cerrar", `{"version":1,"tipo":"saludo"` + "\n", ipc.ErrLineaMalformada},
-		{"no es un objeto", `["version",1]` + "\n", ipc.ErrLineaMalformada},
-		{"dos objetos en la línea", `{"version":1,"tipo":"saludo","emisor":"nucleo","id_celula":"c"} {"version":1}` + "\n", ipc.ErrLineaMalformada},
-		{"valor anidado", `{"version":1,"tipo":"saludo","emisor":{"quien":"nucleo"},"id_celula":"c"}` + "\n", ipc.ErrValorNoEscalar},
-		{"valor en lista", `{"version":1,"tipo":"saludo","emisor":["nucleo"],"id_celula":"c"}` + "\n", ipc.ErrValorNoEscalar},
-		{"valor booleano", `{"version":1,"tipo":"saludo","emisor":true,"id_celula":"c"}` + "\n", ipc.ErrValorNoEscalar},
-		{"valor nulo", `{"version":1,"tipo":"saludo","emisor":null,"id_celula":"c"}` + "\n", ipc.ErrValorNoEscalar},
-		{"entero con coma", `{"version":1,"tipo":"confirmacion","id_deduplicacion":"d","extra":1.5}` + "\n", ipc.ErrValorNoEscalar},
-		{"campo ausente", `{"version":1,"tipo":"saludo","emisor":"nucleo"}` + "\n", ipc.ErrCampoAusente},
-		{"campo desconocido", `{"version":1,"tipo":"confirmacion","id_deduplicacion":"d","secuencia":7}` + "\n", ipc.ErrCampoDesconocido},
+		{"objeto sin cerrar", `{"version":2,"tipo":"saludo"` + "\n", ipc.ErrLineaMalformada},
+		{"no es un objeto", `["version",2]` + "\n", ipc.ErrLineaMalformada},
+		{"dos objetos en la línea", `{"version":2,"tipo":"saludo","emisor":"nucleo","id_celula":"c"} {"version":2}` + "\n", ipc.ErrLineaMalformada},
+		{"valor anidado", `{"version":2,"tipo":"saludo","emisor":{"quien":"nucleo"},"id_celula":"c"}` + "\n", ipc.ErrValorNoEscalar},
+		{"valor en lista", `{"version":2,"tipo":"saludo","emisor":["nucleo"],"id_celula":"c"}` + "\n", ipc.ErrValorNoEscalar},
+		{"valor booleano", `{"version":2,"tipo":"saludo","emisor":true,"id_celula":"c"}` + "\n", ipc.ErrValorNoEscalar},
+		{"valor nulo", `{"version":2,"tipo":"saludo","emisor":null,"id_celula":"c"}` + "\n", ipc.ErrValorNoEscalar},
+		{"entero con coma", `{"version":2,"tipo":"confirmacion","id_deduplicacion":"d","extra":1.5}` + "\n", ipc.ErrValorNoEscalar},
+		{"campo ausente", `{"version":2,"tipo":"saludo","emisor":"nucleo"}` + "\n", ipc.ErrCampoAusente},
+		{"campo desconocido", `{"version":2,"tipo":"confirmacion","id_deduplicacion":"d","secuencia":7}` + "\n", ipc.ErrCampoDesconocido},
 	}
 
 	for _, caso := range casos {
@@ -197,7 +209,7 @@ func TestElEventoEntranteNoTransportaNingunIdentificadorDeTransporte(t *testing.
 	}
 
 	// El conjunto cerrado es lo que hace verificable que el JID no cruza el puerto: ninguna de
-	// estas subcadenas puede aparecer en un nombre de campo de ninguno de los seis tipos.
+	// estas subcadenas puede aparecer en un nombre de campo de ninguno de los nueve tipos.
 	prohibidas := []string{"jid", "telefono", "phone", "dispositivo", "device", "numero"}
 	for _, tipo := range ipc.TiposDeclarados() {
 		for _, nombre := range ipc.CamposDe(tipo) {
