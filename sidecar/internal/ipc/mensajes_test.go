@@ -158,7 +158,7 @@ func TestDecodificarRechazaUnaVersionIncompatible(t *testing.T) {
 func TestDecodificarRechazaUnTipoDesconocido(t *testing.T) {
 	t.Parallel()
 
-	linea := []byte(`{"version":2,"tipo":"mensaje_saliente","texto":"hola"}` + "\n")
+	linea := []byte(`{"version":3,"tipo":"mensaje_saliente","texto":"hola"}` + "\n")
 	if _, err := ipc.Decodificar(linea); !errors.Is(err, ipc.ErrTipoDesconocido) {
 		t.Fatalf("error = %v, se esperaba ErrTipoDesconocido", err)
 	}
@@ -175,16 +175,16 @@ func TestDecodificarRechazaLineasMalformadasSinEntrarEnPanico(t *testing.T) {
 		{"vacía", "", ipc.ErrLineaVacia},
 		{"solo salto de línea", "\n", ipc.ErrLineaVacia},
 		{"no es JSON", "esto no es json\n", ipc.ErrLineaMalformada},
-		{"objeto sin cerrar", `{"version":2,"tipo":"saludo"` + "\n", ipc.ErrLineaMalformada},
+		{"objeto sin cerrar", `{"version":3,"tipo":"saludo"` + "\n", ipc.ErrLineaMalformada},
 		{"no es un objeto", `["version",2]` + "\n", ipc.ErrLineaMalformada},
-		{"dos objetos en la línea", `{"version":2,"tipo":"saludo","emisor":"nucleo","id_celula":"c"} {"version":2}` + "\n", ipc.ErrLineaMalformada},
-		{"valor anidado", `{"version":2,"tipo":"saludo","emisor":{"quien":"nucleo"},"id_celula":"c"}` + "\n", ipc.ErrValorNoEscalar},
-		{"valor en lista", `{"version":2,"tipo":"saludo","emisor":["nucleo"],"id_celula":"c"}` + "\n", ipc.ErrValorNoEscalar},
-		{"valor booleano", `{"version":2,"tipo":"saludo","emisor":true,"id_celula":"c"}` + "\n", ipc.ErrValorNoEscalar},
-		{"valor nulo", `{"version":2,"tipo":"saludo","emisor":null,"id_celula":"c"}` + "\n", ipc.ErrValorNoEscalar},
-		{"entero con coma", `{"version":2,"tipo":"confirmacion","id_deduplicacion":"d","extra":1.5}` + "\n", ipc.ErrValorNoEscalar},
-		{"campo ausente", `{"version":2,"tipo":"saludo","emisor":"nucleo"}` + "\n", ipc.ErrCampoAusente},
-		{"campo desconocido", `{"version":2,"tipo":"confirmacion","id_deduplicacion":"d","secuencia":7}` + "\n", ipc.ErrCampoDesconocido},
+		{"dos objetos en la línea", `{"version":3,"tipo":"saludo","emisor":"nucleo","id_celula":"c"} {"version":3}` + "\n", ipc.ErrLineaMalformada},
+		{"valor anidado", `{"version":3,"tipo":"saludo","emisor":{"quien":"nucleo"},"id_celula":"c"}` + "\n", ipc.ErrValorNoEscalar},
+		{"valor en lista", `{"version":3,"tipo":"saludo","emisor":["nucleo"],"id_celula":"c"}` + "\n", ipc.ErrValorNoEscalar},
+		{"valor booleano", `{"version":3,"tipo":"saludo","emisor":true,"id_celula":"c"}` + "\n", ipc.ErrValorNoEscalar},
+		{"valor nulo", `{"version":3,"tipo":"saludo","emisor":null,"id_celula":"c"}` + "\n", ipc.ErrValorNoEscalar},
+		{"entero con coma", `{"version":3,"tipo":"confirmacion","id_deduplicacion":"d","extra":1.5}` + "\n", ipc.ErrValorNoEscalar},
+		{"campo ausente", `{"version":3,"tipo":"saludo","emisor":"nucleo"}` + "\n", ipc.ErrCampoAusente},
+		{"campo desconocido", `{"version":3,"tipo":"confirmacion","id_deduplicacion":"d","secuencia":7}` + "\n", ipc.ErrCampoDesconocido},
 	}
 
 	for _, caso := range casos {
@@ -296,5 +296,31 @@ func TestElLimiteDeLineaSeAplicaEnLasDosDirecciones(t *testing.T) {
 	larga := append(bytes.Repeat([]byte("x"), ipc.LongitudMaximaDeLinea+1), '\n')
 	if _, err := ipc.Decodificar(larga); !errors.Is(err, ipc.ErrLineaDemasiadoLarga) {
 		t.Errorf("Decodificar devolvió %v, se esperaba ErrLineaDemasiadoLarga", err)
+	}
+}
+
+func TestCausasDeclaradas_OchoElementosEnOrdenAlfabetico(t *testing.T) {
+	t.Parallel()
+	causas := ipc.CausasDeclaradas()
+	if len(causas) != 8 {
+		t.Fatalf("CausasDeclaradas() tiene %d elementos, se esperaban 8", len(causas))
+	}
+	for i := 1; i < len(causas); i++ {
+		if causas[i] < causas[i-1] {
+			t.Fatalf("CausasDeclaradas() no está en orden: %q antes de %q", causas[i-1], causas[i])
+		}
+	}
+}
+
+func TestEstadosDeclarados_CuatroElementosEnOrdenAlfabetico(t *testing.T) {
+	t.Parallel()
+	estados := ipc.EstadosDeclarados()
+	if len(estados) != 4 {
+		t.Fatalf("EstadosDeclarados() tiene %d elementos, se esperaban 4", len(estados))
+	}
+	for i := 1; i < len(estados); i++ {
+		if estados[i] < estados[i-1] {
+			t.Fatalf("EstadosDeclarados() no está en orden: %q antes de %q", estados[i-1], estados[i])
+		}
 	}
 }

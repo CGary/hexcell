@@ -1,5 +1,5 @@
 // Package ipc es la representación tipada del protocolo que fija
-// `docs/protocolo-ipc-nucleo-sidecar.md`, versión 1.1 (versión de cable 2).
+// `docs/protocolo-ipc-nucleo-sidecar.md`, versión 1.2 (versión de cable 3).
 //
 // Aquí no hay socket, ni escucha, ni outbox: solo los objetos de valor de los nueve tipos de
 // mensaje y dos funciones puras, [Codificar] y [Decodificar]. El transporte llega con la tarea 3
@@ -29,7 +29,7 @@ import (
 )
 
 // VersionProtocolo es la versión que este binario habla. Un desajuste cierra la conexión.
-const VersionProtocolo int64 = 2
+const VersionProtocolo int64 = 3
 
 // LongitudMaximaDeLinea es el techo de una línea del protocolo, en bytes, salto de línea
 // incluido. Existe para que el lector del otro extremo dimensione un búfer acotado.
@@ -69,6 +69,21 @@ const (
 	EstadoActiva       = "activa"
 	EstadoReconectando = "reconectando"
 	EstadoDesvinculada = "desvinculada"
+	EstadoPausada      = "pausada"
+)
+
+// Valores cerrados del campo `causa` de un estado de sesión. El vocabulario
+// lo cierra la versión 1.2 del documento, con una variante por cada rama de la
+// taxonomía de desconexión de whatsmeow.
+const (
+	CausaDispositivoRemovido     = "desvinculada_dispositivo_removido"
+	CausaSesionCerrada           = "desvinculada_sesion_cerrada"
+	CausaBaneoTemporal           = "baneo_temporal"
+	CausaSesionReemplazada       = "sesion_reemplazada"
+	CausaFalloDeConexion         = "fallo_de_conexion"
+	CausaErrorDeFlujo            = "error_de_flujo"
+	CausaDesconexionDeTransporte = "desconexion_de_transporte"
+	CausaClienteObsoleto         = "cliente_obsoleto"
 )
 
 // OrdenRespaldarSqlstore es la cadena fija que el contrato de la etapa A-2 exige en el campo
@@ -360,6 +375,33 @@ var descriptores = map[TipoMensaje]descriptor{
 			return AcuseEmparejamiento{Resultado: cadenas[0], Motivo: cadenas[1]}
 		},
 	},
+}
+
+// CausasDeclaradas devuelve el vocabulario cerrado de causas en orden estable,
+// para los mismos usos que TiposDeclarados(): tests de documento, tests de
+// coherencia y generación de tablas.
+func CausasDeclaradas() []string {
+	return []string{
+		CausaBaneoTemporal,
+		CausaClienteObsoleto,
+		CausaDesconexionDeTransporte,
+		CausaDispositivoRemovido,
+		CausaSesionCerrada,
+		CausaErrorDeFlujo,
+		CausaFalloDeConexion,
+		CausaSesionReemplazada,
+	}
+}
+
+// EstadosDeclarados devuelve los cuatro valores del campo `estado` en orden
+// estable.
+func EstadosDeclarados() []string {
+	return []string{
+		EstadoActiva,
+		EstadoDesvinculada,
+		EstadoPausada,
+		EstadoReconectando,
+	}
 }
 
 // TiposDeclarados devuelve el conjunto cerrado de tipos del protocolo, en orden estable.

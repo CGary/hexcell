@@ -66,6 +66,12 @@ func TestAlmacenVacioDevuelveDispositivoSinIdYLaSesionEsNoEmparejada(t *testing.
 	if sesion.Cliente().IsConnected() {
 		t.Errorf("el cliente aparece conectado sin que nadie haya llamado a Conectar")
 	}
+	if sesion.Cliente().EnableAutoReconnect || sesion.Cliente().InitialAutoReconnect {
+		t.Errorf("la autoreconexion propia de whatsmeow quedó activa")
+	}
+	if sesion.Cliente().AutoReconnectHook == nil || sesion.Cliente().AutoReconnectHook(errors.New("fallo")) {
+		t.Errorf("el gancho de autoreconexion de whatsmeow permite reintentar")
+	}
 
 	if !strings.Contains(salida.String(), canal.EventoDispositivoNuevo) {
 		t.Errorf("no se registró que el almacén está vacío: %s", salida.String())

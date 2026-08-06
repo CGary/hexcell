@@ -63,7 +63,8 @@ func main() {
 		reg.Error(eventoParada, registro.Campos{Detalle: err.Error()})
 		os.Exit(1)
 	}
-	sesion.RegistrarManejador()
+	supervisor := canal.NuevoSupervisor(reg, cfg.Retroceso, sesion.Conectar, nil)
+	sesion.RegistrarManejador(supervisor)
 
 	// Parada ordenada: SIGTERM es la señal con la que un runtime de contenedores detiene el
 	// proceso y SIGINT la de una ejecución en terminal. Las dos cierran la sesión antes de salir,

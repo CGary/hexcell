@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strconv"
 )
 
 // Nombres de las variables de entorno que el sidecar reconoce. No hay más.
@@ -26,6 +27,16 @@ const (
 	// VariableTelefonoCelula fija el número de teléfono de la célula, sin el prefijo +,
 	// necesario para el emparejamiento por código de vinculación. Nunca viaja en el cable IPC.
 	VariableTelefonoCelula = "HEXCELL_TELEFONO_CELULA"
+	// VariableRetrocesoInicialMs fija el intervalo inicial de retroceso exponencial, en milisegundos.
+	VariableRetrocesoInicialMs = "HEXCELL_RETROCESO_INICIAL_MS"
+	// VariableRetrocesoFactor fija el multiplicador entero del retroceso exponencial.
+	VariableRetrocesoFactor = "HEXCELL_RETROCESO_FACTOR"
+	// VariableRetrocesoMaximoMs fija el techo del retroceso exponencial, en milisegundos.
+	VariableRetrocesoMaximoMs = "HEXCELL_RETROCESO_MAXIMO_MS"
+	// VariableRetrocesoBaneoInicialMs fija el intervalo inicial de retroceso largo por baneo temporal.
+	VariableRetrocesoBaneoInicialMs = "HEXCELL_RETROCESO_BANEO_INICIAL_MS"
+	// VariableRetrocesoBaneoMaximoMs fija el techo del retroceso largo por baneo temporal.
+	VariableRetrocesoBaneoMaximoMs = "HEXCELL_RETROCESO_BANEO_MAXIMO_MS"
 )
 
 // Valores por omisión, documentados en docs/protocolo-ipc-nucleo-sidecar.md, sección 2.
@@ -40,6 +51,21 @@ const (
 	IdCelulaPorOmision = "sin-configurar"
 	// RutaSqlstorePorOmision es la ruta del archivo sqlstore en el volumen compartido.
 	RutaSqlstorePorOmision = "/var/lib/hexcell/sqlstore.db"
+	// RetrocesoInicialMsPorOmision es el intervalo inicial del retroceso exponencial.
+	// PENDIENTE DE CALIBRACIÓN: valor inicial razonable, no validado bajo carga.
+	RetrocesoInicialMsPorOmision int64 = 1000
+	// RetrocesoFactorPorOmision es el multiplicador entero del retroceso.
+	// PENDIENTE DE CALIBRACIÓN.
+	RetrocesoFactorPorOmision int64 = 2
+	// RetrocesoMaximoMsPorOmision es el techo del retroceso exponencial.
+	// PENDIENTE DE CALIBRACIÓN.
+	RetrocesoMaximoMsPorOmision int64 = 60000
+	// RetrocesoBaneoInicialMsPorOmision es el intervalo inicial del retroceso largo por baneo.
+	// PENDIENTE DE CALIBRACIÓN.
+	RetrocesoBaneoInicialMsPorOmision int64 = 30000
+	// RetrocesoBaneoMaximoMsPorOmision es el techo del retroceso largo por baneo.
+	// PENDIENTE DE CALIBRACIÓN.
+	RetrocesoBaneoMaximoMsPorOmision int64 = 300000
 )
 
 // ErrRutaSocketVacia se devuelve cuando la variable del socket está definida pero vacía.
@@ -55,6 +81,10 @@ var ErrRutaSqlstoreVacia = errors.New("configuracion: la ruta del sqlstore está
 // ErrNivelDeRegistroDesconocido se devuelve ante un umbral de registro que no está en la tabla.
 var ErrNivelDeRegistroDesconocido = errors.New("configuracion: nivel de registro desconocido")
 
+// ErrRetrocesoInvalido se devuelve cuando un parámetro de retroceso no es numérico, es cero,
+// negativo o el techo es menor que el intervalo inicial.
+var ErrRetrocesoInvalido = errors.New("configuracion: parámetro de retroceso inválido")
+
 // nivelesReconocidos es el conjunto cerrado de umbrales admitidos, en español como el resto del
 // repositorio. Un valor fuera de la tabla es un error y no se degrada en silencio a «info».
 var nivelesReconocidos = map[string]slog.Level{
@@ -62,6 +92,22 @@ var nivelesReconocidos = map[string]slog.Level{
 	"info":       slog.LevelInfo,
 	"aviso":      slog.LevelWarn,
 	"error":      slog.LevelError,
+}
+
+// Retroceso agrupa los parámetros de retroceso exponencial del sidecar.
+// Todos los intervalos están en milisegundos y el factor es un entero, porque este
+// repositorio no admite punto flotante en ningún sitio y el protocolo IPC lo prohíbe.
+type Retroceso struct {
+	// IntervaloInicial es el primer intervalo de espera, en milisegundos.
+	IntervaloInicial int64
+	// Factor es el multiplicador entero que se aplica en cada intento.
+	Factor int64
+	// IntervaloMaximo es el techo del retroceso exponencial, en milisegundos.
+	IntervaloMaximo int64
+	// BaneoInicial es el primer intervalo de espera tras un baneo temporal, en milisegundos.
+	BaneoInicial int64
+	// BaneoMaximo es el techo del retroceso largo por baneo temporal, en milisegundos.
+	BaneoMaximo int64
 }
 
 // Configuracion son los parámetros de arranque del sidecar, ya validados.
@@ -79,6 +125,8 @@ type Configuracion struct {
 	// para el emparejamiento por código de vinculación. Vacío es válido: significa que ese
 	// método no está disponible.
 	TelefonoCelula string
+	// Retroceso agrupa los parámetros de retroceso exponencial.
+	Retroceso Retroceso
 }
 
 // Cargar construye la configuración a partir de una función de consulta del entorno.
@@ -122,11 +170,89 @@ func Cargar(consultar func(string) (string, bool)) (Configuracion, error) {
 		telefonoCelula = valor
 	}
 
+	retroceso, err := cargarRetroceso(consultar)
+	if err != nil {
+		return Configuracion{}, err
+	}
+
 	return Configuracion{
 		RutaSocket:      rutaSocket,
 		NivelDeRegistro: nivel,
 		IdCelula:        idCelula,
 		RutaSqlstore:    rutaSqlstore,
 		TelefonoCelula:  telefonoCelula,
+		Retroceso:       retroceso,
 	}, nil
+}
+
+// cargarRetroceso lee y valida los cinco parámetros de retroceso del entorno.
+func cargarRetroceso(consultar func(string) (string, bool)) (Retroceso, error) {
+	inicial, err := enteroDelEntorno(consultar, VariableRetrocesoInicialMs, RetrocesoInicialMsPorOmision)
+	if err != nil {
+		return Retroceso{}, err
+	}
+	factor, err := enteroDelEntorno(consultar, VariableRetrocesoFactor, RetrocesoFactorPorOmision)
+	if err != nil {
+		return Retroceso{}, err
+	}
+	maximo, err := enteroDelEntorno(consultar, VariableRetrocesoMaximoMs, RetrocesoMaximoMsPorOmision)
+	if err != nil {
+		return Retroceso{}, err
+	}
+	baneoInicial, err := enteroDelEntorno(consultar, VariableRetrocesoBaneoInicialMs, RetrocesoBaneoInicialMsPorOmision)
+	if err != nil {
+		return Retroceso{}, err
+	}
+	baneoMaximo, err := enteroDelEntorno(consultar, VariableRetrocesoBaneoMaximoMs, RetrocesoBaneoMaximoMsPorOmision)
+	if err != nil {
+		return Retroceso{}, err
+	}
+
+	// Validación: ningún valor puede ser cero o negativo.
+	for _, par := range []struct {
+		nombre string
+		valor  int64
+	}{
+		{VariableRetrocesoInicialMs, inicial},
+		{VariableRetrocesoFactor, factor},
+		{VariableRetrocesoMaximoMs, maximo},
+		{VariableRetrocesoBaneoInicialMs, baneoInicial},
+		{VariableRetrocesoBaneoMaximoMs, baneoMaximo},
+	} {
+		if par.valor <= 0 {
+			return Retroceso{}, fmt.Errorf("%w: %s debe ser positivo, recibido %d", ErrRetrocesoInvalido, par.nombre, par.valor)
+		}
+	}
+
+	// Validación: el techo no puede ser menor que el intervalo inicial.
+	if maximo < inicial {
+		return Retroceso{}, fmt.Errorf("%w: %s (%d) es menor que %s (%d)",
+			ErrRetrocesoInvalido, VariableRetrocesoMaximoMs, maximo, VariableRetrocesoInicialMs, inicial)
+	}
+	if baneoMaximo < baneoInicial {
+		return Retroceso{}, fmt.Errorf("%w: %s (%d) es menor que %s (%d)",
+			ErrRetrocesoInvalido, VariableRetrocesoBaneoMaximoMs, baneoMaximo, VariableRetrocesoBaneoInicialMs, baneoInicial)
+	}
+
+	return Retroceso{
+		IntervaloInicial: inicial,
+		Factor:           factor,
+		IntervaloMaximo:  maximo,
+		BaneoInicial:     baneoInicial,
+		BaneoMaximo:      baneoMaximo,
+	}, nil
+}
+
+// enteroDelEntorno lee un valor entero de una variable de entorno, usando el valor por omisión
+// si la variable está ausente o vacía.
+func enteroDelEntorno(consultar func(string) (string, bool), variable string, porOmision int64) (int64, error) {
+	valor, presente := consultar(variable)
+	if !presente || valor == "" {
+		return porOmision, nil
+	}
+	entero, err := strconv.ParseInt(valor, 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("%w: %s no es un entero válido: %q", ErrRetrocesoInvalido, variable, valor)
+	}
+	return entero, nil
 }
