@@ -1,0 +1,188 @@
+{
+  "commands": [
+    {
+      "command": "bash -c 'cd sidecar \u0026\u0026 CGO_ENABLED=0 go build ./... \u0026\u0026 CGO_ENABLED=0 go vet ./...'",
+      "duration_s": 0.496,
+      "exit_code": 0,
+      "output_excerpt": "sin salida; exit 0"
+    },
+    {
+      "command": "bash -c 'cd sidecar \u0026\u0026 test -z \"$(gofmt -l .)\"'",
+      "duration_s": 0.007,
+      "exit_code": 0,
+      "output_excerpt": "sin salida; exit 0"
+    },
+    {
+      "command": "bash -c 'cd sidecar \u0026\u0026 CGO_ENABLED=0 go test ./... -count=1'",
+      "duration_s": 0.383,
+      "exit_code": 0,
+      "output_excerpt": "ok  \tgithub.com/CGary/hexcell/sidecar/internal/registro\t0.002s"
+    },
+    {
+      "command": "bash -c 'cd sidecar \u0026\u0026 test \"$(CGO_ENABLED=0 go test ./... -count=1 -v 2\u003e\u00261 | grep -c -- \"^--- PASS\")\" -ge 68'",
+      "duration_s": 0.383,
+      "exit_code": 0,
+      "output_excerpt": "sin salida; exit 0"
+    },
+    {
+      "command": "bash -c 'cd sidecar \u0026\u0026 test \"$(CGO_ENABLED=0 go test ./... -count=1 -v 2\u003e\u00261 | grep -cE -- \"^[[:space:]]*--- PASS\")\" -ge 92'",
+      "duration_s": 0.368,
+      "exit_code": 0,
+      "output_excerpt": "sin salida; exit 0"
+    },
+    {
+      "command": "bash -c 'grep -q \"Versión de este protocolo:\\*\\* 1.2, fijada el 2026-08-05\" docs/protocolo-ipc-nucleo-sidecar.md'",
+      "duration_s": 0.002,
+      "exit_code": 0,
+      "output_excerpt": "sin salida; exit 0"
+    },
+    {
+      "command": "bash -c 'grep -qF \"| 1.2 | \\`3\\` |\" docs/protocolo-ipc-nucleo-sidecar.md \u0026\u0026 grep -qF \"| 1.1 | \\`2\\` |\" docs/protocolo-ipc-nucleo-sidecar.md \u0026\u0026 grep -qF \"| 1.0 | \\`1\\` |\" docs/protocolo-ipc-nucleo-sidecar.md'",
+      "duration_s": 0.003,
+      "exit_code": 0,
+      "output_excerpt": "sin salida; exit 0"
+    },
+    {
+      "command": "bash -c 'grep -qE \"VersionProtocolo int64 = 3\" sidecar/internal/ipc/mensajes.go'",
+      "duration_s": 0.002,
+      "exit_code": 0,
+      "output_excerpt": "sin salida; exit 0"
+    },
+    {
+      "command": "bash -c '! grep -q \"\\\"version\\\":2\" sidecar/internal/ipc/mensajes_test.go'",
+      "duration_s": 0.002,
+      "exit_code": 0,
+      "output_excerpt": "sin salida; exit 0"
+    },
+    {
+      "command": "bash -c 'grep -q \"pausada\" docs/protocolo-ipc-nucleo-sidecar.md \u0026\u0026 grep -q \"EstadoPausada\" sidecar/internal/ipc/mensajes.go'",
+      "duration_s": 0.002,
+      "exit_code": 0,
+      "output_excerpt": "sin salida; exit 0"
+    },
+    {
+      "command": "bash -c 'grep -q \"CausasDeclaradas\" sidecar/internal/ipc/mensajes.go \u0026\u0026 grep -q \"CausasDeclaradas\" sidecar/internal/ipc/documento_test.go'",
+      "duration_s": 0.003,
+      "exit_code": 0,
+      "output_excerpt": "sin salida; exit 0"
+    },
+    {
+      "command": "bash -c 'grep -q \"EstadosDeclarados\" sidecar/internal/ipc/mensajes.go'",
+      "duration_s": 0.002,
+      "exit_code": 0,
+      "output_excerpt": "sin salida; exit 0"
+    },
+    {
+      "command": "bash -c 'cd sidecar \u0026\u0026 test \"$(grep -c \"TipoMensaje = \\\"\" internal/ipc/mensajes.go)\" -eq 9'",
+      "duration_s": 0.002,
+      "exit_code": 0,
+      "output_excerpt": "sin salida; exit 0"
+    },
+    {
+      "command": "bash -c 'grep -qF \"\\\"jid\\\", \\\"telefono\\\", \\\"phone\\\", \\\"dispositivo\\\", \\\"device\\\", \\\"numero\\\"\" sidecar/internal/ipc/mensajes_test.go \u0026\u0026 grep -q \"TiposDeclarados()\" sidecar/internal/ipc/mensajes_test.go'",
+      "duration_s": 0.002,
+      "exit_code": 0,
+      "output_excerpt": "sin salida; exit 0"
+    },
+    {
+      "command": "bash -c '! grep -nE \"\\{\\\"(jid|telefono|phone|numero|dispositivo|device)[a-z_]*\\\", clase\" sidecar/internal/ipc/mensajes.go'",
+      "duration_s": 0.002,
+      "exit_code": 0,
+      "output_excerpt": "sin salida; exit 0"
+    },
+    {
+      "command": "bash -c 'grep -qE \"\\{\\\"estado\\\", claseCadena\\}\" sidecar/internal/ipc/mensajes.go \u0026\u0026 grep -qE \"\\{\\\"causa\\\", claseCadena\\}\" sidecar/internal/ipc/mensajes.go \u0026\u0026 grep -qE \"\\{\\\"expira_en_ms\\\", claseEntero\\}\" sidecar/internal/ipc/mensajes.go'",
+      "duration_s": 0.003,
+      "exit_code": 0,
+      "output_excerpt": "sin salida; exit 0"
+    },
+    {
+      "command": "bash -c 'grep -rq \"OnConnect\" sidecar/internal/canal/ \u0026\u0026 grep -rq \"TemporaryBan\" sidecar/internal/canal/ \u0026\u0026 grep -rq \"StreamReplaced\" sidecar/internal/canal/ \u0026\u0026 grep -rq \"ConnectFailure\" sidecar/internal/canal/'",
+      "duration_s": 0.004,
+      "exit_code": 0,
+      "output_excerpt": "sin salida; exit 0"
+    },
+    {
+      "command": "bash -c 'grep -rqE \"clasificarDesconexion\" sidecar/internal/canal/ \u0026\u0026 ! grep -rqE \"func ClasificarDesconexion\" sidecar/internal/canal/'",
+      "duration_s": 0.003,
+      "exit_code": 0,
+      "output_excerpt": "sin salida; exit 0"
+    },
+    {
+      "command": "bash -c 'ls sidecar/internal/canal/*_interno_test.go \u003e/dev/null \u0026\u0026 grep -lq \"^package canal$\" sidecar/internal/canal/*_interno_test.go'",
+      "duration_s": 0.002,
+      "exit_code": 0,
+      "output_excerpt": "sin salida; exit 0"
+    },
+    {
+      "command": "bash -c '! grep -rq \"time.Sleep\" sidecar/internal/canal/ sidecar/internal/configuracion/'",
+      "duration_s": 0.002,
+      "exit_code": 0,
+      "output_excerpt": "sin salida; exit 0"
+    },
+    {
+      "command": "bash -c 'grep -rqE \"EnableAutoReconnect\" sidecar/internal/canal/'",
+      "duration_s": 0.002,
+      "exit_code": 0,
+      "output_excerpt": "sin salida; exit 0"
+    },
+    {
+      "command": "bash -c 'grep -qE \"VariableRetroceso\" sidecar/internal/configuracion/configuracion.go \u0026\u0026 grep -qE \"Retroceso\" sidecar/internal/configuracion/configuracion_test.go'",
+      "duration_s": 0.002,
+      "exit_code": 0,
+      "output_excerpt": "sin salida; exit 0"
+    },
+    {
+      "command": "bash -c '! grep -rE \"os\\.(Getenv|LookupEnv)\" sidecar/internal/canal/ sidecar/internal/ipc/'",
+      "duration_s": 0.002,
+      "exit_code": 0,
+      "output_excerpt": "sin salida; exit 0"
+    },
+    {
+      "command": "bash -c '! grep -rq \"math/rand\" sidecar/internal/canal/'",
+      "duration_s": 0.002,
+      "exit_code": 0,
+      "output_excerpt": "sin salida; exit 0"
+    },
+    {
+      "command": "bash -c '! test -f docs/adr/adr-0011-whatsmeow-sidecar-e-ipc.md'",
+      "duration_s": 0.001,
+      "exit_code": 0,
+      "output_excerpt": "sin salida; exit 0"
+    },
+    {
+      "command": "bash -c 'test -z \"$(git status --porcelain -- docs/adr docs/plan docs/PRD.md docs/bitacora-de-descartes.md docs/contrato-ipc-respaldo-del-sqlstore.md docs/runbook-restauracion-de-celula.md README.md)\"'",
+      "duration_s": 0.003,
+      "exit_code": 0,
+      "output_excerpt": "sin salida; exit 0"
+    },
+    {
+      "command": "bash -c 'test -z \"$(git status --porcelain -- sidecar/internal/canal/emparejamiento.go sidecar/internal/canal/emparejamiento_test.go sidecar/internal/canal/almacen_interno_test.go sidecar/internal/outbox sidecar/internal/registro sidecar/go.mod sidecar/go.sum)\"'",
+      "duration_s": 0.003,
+      "exit_code": 0,
+      "output_excerpt": "sin salida; exit 0"
+    },
+    {
+      "command": "bash -c 'grep -q \"HEX-013\" docs/STATUS.md \u0026\u0026 grep -q \"2026-08-05\" docs/STATUS.md'",
+      "duration_s": 0.002,
+      "exit_code": 0,
+      "output_excerpt": "sin salida; exit 0"
+    },
+    {
+      "command": "bash -c 'test -z \"$(git status --porcelain -- crates Cargo.toml Cargo.lock rust-toolchain.toml .github)\"'",
+      "duration_s": 0.003,
+      "exit_code": 0,
+      "output_excerpt": "sin salida; exit 0"
+    },
+    {
+      "command": "bash -c '! git status --porcelain | grep -E \"[.]db($|-wal|-shm)|[.]env\"'",
+      "duration_s": 0.003,
+      "exit_code": 0,
+      "output_excerpt": "sin salida; exit 0"
+    }
+  ],
+  "executed_at": "2026-08-06T19:35:54Z",
+  "overall_result": "passed",
+  "summary": "Los 30 comandos de verify pasan sobre el estado final tras las tres revisiones; 84 casos --- PASS.",
+  "task_id": "HEX-013"
+}

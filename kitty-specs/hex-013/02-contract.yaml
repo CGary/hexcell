@@ -1,0 +1,327 @@
+task_id: HEX-013
+summary: >-
+  Sidecar disconnection taxonomy and reconnection backoff with a temporary-ban pause, plus IPC
+  document v1.2 / wire 3 adding the pausada estado and closing the causa vocabulary.
+
+goal: >-
+  Deliver A-3 tasks 6 and 7 as one unit, sidecar side only. Implement the disconnection taxonomy as a
+  PURE UNEXPORTED classifier over whatsmeow events, with every variant instrumented separately and
+  projected onto a session estado that travels ALONGSIDE the raw causa, never in its place. Implement
+  reconnection with exponential backoff and a real ceiling, a distinct logged record of every retry
+  attempt and every estado transition, and a clear split between a transient error and an invalid
+  session. Add a separate temporary-ban branch that moves the cell to the new pausada estado under
+  long backoff toward the declared expiry with NO automatic reactivation: returning to service
+  requires a human-initiated process restart, guaranteed by construction because no code path and no
+  IPC message can do it. Raise docs/protocolo-ipc-nucleo-sidecar.md to version 1.2 dated 2026-08-05
+  with wire version 3, adding pausada to the estado enum and closing the causa vocabulary the
+  document itself deferred to this task. The closed message-type set STAYS AT NINE. The Rust
+  core-side consumer is A-3 task 10 and is out of scope. Everything is written in Spanish.
+
+read:
+  - .ai/tasks/active/HEX-013-new-spec/00-spec.yaml
+  - .ai/tasks/active/HEX-013-new-spec/01-blueprint.yaml
+  - docs/protocolo-ipc-nucleo-sidecar.md
+  - docs/plan/fase-a-3-adaptador-whatsmeow.md
+  - docs/adr/README.md
+  - docs/adr/adr-0010-puerto-de-canal.md
+  - docs/adr/adr-0015-politica-de-convivencia-con-el-baneo.md
+  - docs/adr/adr-0019-registro-estructurado.md
+  - docs/adr/adr-0020-respaldo-y-restauracion-por-celula.md
+  - docs/bitacora-de-descartes.md
+  - docs/runbook-restauracion-de-celula.md
+  - docs/STATUS.md
+  - sidecar/internal/ipc/mensajes.go
+  - sidecar/internal/ipc/mensajes_test.go
+  - sidecar/internal/ipc/documento_test.go
+  - sidecar/internal/canal/canal.go
+  - sidecar/internal/canal/canal_test.go
+  - sidecar/internal/canal/almacen_interno_test.go
+  - sidecar/internal/configuracion/configuracion.go
+  - sidecar/internal/outbox/outbox.go
+  - sidecar/internal/registro/registro.go
+  - sidecar/internal/registro/registro_test.go
+  - sidecar/main.go
+  - sidecar/go.mod
+  - CLAUDE.md
+
+touch:
+  - docs/protocolo-ipc-nucleo-sidecar.md
+  - docs/STATUS.md
+  - sidecar/internal/ipc/mensajes.go
+  - sidecar/internal/ipc/mensajes_test.go
+  - sidecar/internal/ipc/documento_test.go
+  - sidecar/internal/canal/**
+  - sidecar/internal/configuracion/configuracion.go
+  - sidecar/internal/configuracion/configuracion_test.go
+  - sidecar/main.go
+
+forbid:
+  files:
+    - crates/**
+    - Cargo.toml
+    - Cargo.lock
+    - rust-toolchain.toml
+    - docs/adr/**
+    - docs/plan/**
+    - docs/PRD.md
+    - docs/bitacora-de-descartes.md
+    - docs/contrato-ipc-respaldo-del-sqlstore.md
+    - docs/runbook-restauracion-de-celula.md
+    - README.md
+    - .ai/tasks/**
+    - .github/**
+    - sidecar/internal/outbox/**
+    - sidecar/internal/registro/**
+    - sidecar/go.mod
+    - sidecar/go.sum
+    - '**/*.db'
+    - '**/*.db-wal'
+    - '**/*.db-shm'
+    - .env*
+  behaviors:
+    - >-
+      Do not touch crates/ or any Rust file. The core-side consumer of the v1.2 protocol is A-3 task
+      10, a separate task. pausada and the closed causa vocabulary deliberately have NO consumer
+      during this task; that is expected and is not a reason to reach into the Rust core, into
+      GET /health/ready or into the hexcell CLI (crates/hexcell-admin), all of which defer to task 10.
+    - >-
+      Do not add a tenth IPC message type. The closed set stays at NINE, and reactivation after a
+      temporary ban is by PROCESS RESTART only. Do not add a reactivation, resume, unpause or
+      reconnect-now message in either direction, and do not add an exported method, a signal handler
+      or an environment variable that resumes a paused cell. The guarantee must hold BY
+      CONSTRUCTION: if no code path can reactivate, no test can be fooled into thinking one is safe.
+    - >-
+      Do not change the field set of estado_sesion. version, tipo, estado, causa, codigo and
+      expira_en_ms already exist and already carry the raw signal alongside its projection; that is
+      exactly why this protocol bump is cheap. Adding, renaming or reordering a field would change
+      CamposDe() and put the JID guard at risk for no benefit.
+    - >-
+      Do not weaken the transport-identifier guard in sidecar/internal/ipc/mensajes_test.go. It
+      iterates ipc.TiposDeclarados() and forbids any field name containing "jid", "telefono",
+      "phone", "dispositivo", "device" or "numero" across all nine types. Do not delete it, do not
+      shorten its list, do not scope it to fewer types, and do not evade it by giving a transport
+      identifier an innocuous name. No JID, device identifier or phone number may cross the IPC in
+      any direction, including inside causa, detalle or any log field.
+    - >-
+      Do not collapse the taxonomy. Each variant gets its OWN causa value: LoggedOut with
+      OnConnect=false (the device_removed signature), LoggedOut with OnConnect=true, TemporaryBan,
+      StreamReplaced, ConnectFailure, StreamError, Disconnected and ClientOutdated. A generic
+      "desconectado" bucket that swallows two or more of them fails the stage's acceptance criterion.
+      The projection to estado never replaces or deletes causa, codigo or expira_en_ms: raw and
+      projection travel together in the same line.
+    - >-
+      Do not key the device_removed branch on a Reason value. PROBED against the pinned whatsmeow
+      v0.0.0-20260722203353-e9a033b24933: device_removed is NOT a field and NOT a Reason constant, it
+      is an internal conflictType attribute, and the library dispatches
+      events.LoggedOut{OnConnect:false, Reason:ConnectFailureLoggedOut} for it. The connect-failure
+      path dispatches the SAME Reason 401 with OnConnect=true. The discriminator is OnConnect. Keying
+      on Reason alone silently merges the two and misroutes the adr-0020 restoration branch.
+    - >-
+      Do not assign events.TemporaryBan.Expire straight into expira_en_ms. PROBED: Expire is a
+      RELATIVE time.Duration, expira_en_ms is ABSOLUTE Unix epoch milliseconds. Convert with ahoraMs
+      + Expire.Milliseconds(), and map the documented Expire==0 unknown-expiry case to
+      expira_en_ms==0, the protocol's not-applicable encoding, never to a bare ahoraMs.
+    - >-
+      Do not dereference the Raw *waBinary.Node field of events.ConnectFailure or events.StreamError
+      in the classifier. Tests construct those variants with Raw:nil, which is what keeps the whole
+      taxonomy injectable with no client and no network; dereferencing Raw makes the suite panic and
+      forces a live connection.
+    - >-
+      Do not leave whatsmeow's own auto-reconnect enabled on the reconnection path. PROBED:
+      Client.EnableAutoReconnect defaults to TRUE and autoReconnect() waits AutoReconnectErrors*2
+      seconds, a LINEAR schedule with NO ceiling. Two competing reconnection policies make this
+      task's backoff neither authoritative nor testable, and the no-reconnect-loop guarantee must not
+      rest on library internals. Disable it (or return false from AutoReconnectHook) so exactly one
+      policy exists and it is ours.
+    - >-
+      Do not make the classifier impure. clasificarDesconexion and proyectarEstado must be UNEXPORTED
+      pure functions callable with a synthetic event and an explicit ahoraMs parameter, with no
+      client, no socket, no network and no internal wall-clock read. This is the only thing that
+      makes the taxonomy testable at all, and it follows the existing Outbox.Purgar(ctx, ahora)
+      precedent, the repository's sole clock seam.
+    - >-
+      Do not write a test that really sleeps. The backoff schedule is a pure function returning a
+      duration, and the supervisor consumes an INJECTED waiter that records requested durations and
+      returns immediately. A test that waits minutes to prove a ceiling is a slow, flaky test; assert
+      on the recorded duration sequence instead. Do not use time.Sleep in any new test.
+    - >-
+      Do not assert an absence without first asserting the corresponding presence. This is the
+      recurring defect of this stage: HEX-011 asserted a SQLite pragma the driver sets by default,
+      and HEX-012 drained a channel non-blockingly so the branch under test never ran and the
+      assertion inspected an empty buffer. Every "no reactivation", "no reconnect loop" and "no causa
+      X" test must FIRST assert the pause was genuinely entered (the transition happened, estado is
+      pausada, the expiry was recorded) and only THEN assert nothing followed within a driven window.
+      Include the transient twin that proves the counters can actually move.
+    - >-
+      Do not hardcode backoff parameters at the use site. The initial interval, the multiplier, the
+      ceiling and the separate long-backoff values for the ban branch all flow through
+      configuracion.Cargar(consultar), the same mechanism that already carries the socket path, the
+      sqlstore path and the phone number. No ad hoc os.Getenv anywhere: nobody reads the environment
+      outside internal/configuracion. Keep the multiplier an INTEGER; this codebase admits no
+      floating point and the IPC format forbids it outright.
+    - >-
+      Do not present the default backoff values as validated. They are PENDING CALIBRATION and must be
+      documented as such, in the same spirit as the other uncalibrated stage parameters. Do not invent
+      a measured-looking justification for a number nobody has measured under load.
+    - >-
+      Do not add a log field. registro.Campos is a CLOSED struct of four fields and
+      registro_test.go asserts the exact seven-key output set, so a new field breaks a test in a
+      package this contract forbids touching. Carry the backoff interval in latencia_ms and the
+      attempt detail in detalle, and make every evento name a package-level constant per adr-0019.
+      Never log message content, a QR payload, a pairing code, a JID or a phone number.
+    - >-
+      Do not open a Unix socket server or a delivery loop. No socket exists yet and none is in scope:
+      the protocol document states plainly that no socket is open and no Rust endpoint exists.
+      Exposing the state "over IPC" here means producing an ipc.EstadoSesion and encoding it with
+      ipc.Codificar into an injected sink. Standing up a real server is uncontracted scope.
+    - >-
+      Do not rewrite the historical rows of the version correspondence table. The bump is ADDITIVE:
+      keep 1.0 -> 1 and 1.1 -> 2 exactly as they are and APPEND 1.2 -> 3. Do not renumber, reorder or
+      reinterpret the nine existing message types or the six v1.0 ones; their field sets, order and
+      semantics are unchanged.
+    - >-
+      Do not leave the wire version at 2. Document 1.2 corresponds to wire 3, following the
+      convention HEX-012 established one day earlier. Section 3's rule is unchanged in substance:
+      strict integer equality in both directions, a mismatch closes the connection and logs both
+      versions, no negotiation, no capability exchange, no downgrade and no partial degradation.
+      There are exactly TEN hardcoded "version":2 literals in mensajes_test.go plus the assertions in
+      documento_test.go; a partial bump leaves the suite red.
+    - >-
+      Do not write docs/adr/adr-0011-whatsmeow-sidecar-e-ipc.md or any other ADR, and do not renumber
+      anything in docs/adr/README.md. adr-0011 is listed as "Por escribir" and is written at the END
+      of stage A-3, once the stage also has session persistence and the behaviour discipline of task
+      14 in front of it. Highest number allocated is adr-0020. A half-scoped ADR would have to be
+      rewritten, and this repository never rewrites an ADR: a superseded decision gets a NEW one.
+    - >-
+      Do not introduce mass-sending folklore. No randomised jitter to look human, no warm-up
+      protocol, no proxy, no VPN, no IP rotation. D-08 in docs/bitacora-de-descartes.md discards all
+      of it as a design principle with documented cause, marked "No reabrir", and that same entry
+      discards aggressive reconnection after a temporary ban and automatic reactivation of a banned
+      cell, which is precisely what this task implements. Exponential backoff with a ceiling is
+      standard transient-failure handling explicitly mandated by the plan and is NOT jitter folklore;
+      do not conflate them. Mechanically: the backoff schedule is DETERMINISTIC, so
+      sidecar/internal/canal/ must not import math/rand; the existing crypto/rand import in
+      almacen_interno_test.go is unrelated pairing-test material and stays. The ban risk is
+      STRUCTURAL, not behavioural: a ban is an EXPECTED EVENT, never a failure, and every measure is
+      marked [causa documentada] or [precautorio], never a guarantee.
+    - >-
+      Do not implement anything belonging to another A-3 task: no translation of whatsmeow events or
+      acks to the canonical format (task 8), no JID-to-internal-identifier mapping and no adapter
+      identity store (task 9), no Rust WhatsmeowAdapter (task 10), no STOP list, outbound TTL queue
+      or channel behaviour discipline (tasks 12-14), no real-number or real-ban testing (task 15), no
+      PairPhone re-pairing runbook (task 16), no channel runbook, commit pinning or whatsmeow update
+      window (task 17). The taxonomy itself IS documented inside the IPC specification, and that is
+      this task's deliverable.
+    - >-
+      Do not open a real WhatsApp connection and do not call Connect, ConnectContext or a live
+      PairPhone round trip in any test. The whole suite must pass with CGO_ENABLED=0 and no network,
+      no phone, no QR scan and no WhatsApp account. Every taxonomy variant is exercised by INJECTION
+      of a synthetic struct literal. Every database must be created under t.TempDir.
+    - >-
+      Do not widen a package's exported API to serve a test. Assertions over the unexported
+      classifier, the unexported projection, the unexported backoff schedule or any unexported
+      supervisor state belong in an internal test file declared `package canal`, following the
+      almacen_interno_test.go precedent. canal_test.go and emparejamiento_test.go are `package
+      canal_test` and cannot reach unexported state; that is a reason to add an internal test file,
+      never to export something.
+    - >-
+      Do not write an acceptance criterion or a test of the form "exactly N exported symbols".
+      Declare what must EXIST; never ban extras.
+    - >-
+      Do not change sidecar/go.mod or sidecar/go.sum. No new dependency is needed: the taxonomy uses
+      the already-pinned whatsmeow, the backoff uses the standard library, and the tests use
+      internal/registro and the standard library. Do not change the whatsmeow pin; it stays at
+      v0.0.0-20260722203353-e9a033b24933. Do not add a logging library, a serialization library, an
+      assertion library or a mocking framework.
+    - >-
+      Do not modify sidecar/internal/canal/emparejamiento.go, emparejamiento_test.go or
+      almacen_interno_test.go. They belong to the pairing work of HEX-012 and are unrelated to this
+      task; the canal glob is open so new files can be added, not so existing pairing code can drift.
+    - >-
+      Write every artifact in Spanish: document prose, code comments, package documentation, error
+      messages, test names and commit messages. Use Conventional Commits in Spanish, for example
+      "feat(a3): implementar la taxonomia de desconexion y el retroceso de reconexion". NEVER add an
+      AI attribution or a Co-Authored-By trailer. Write dates in absolute form, 2026-08-05, never
+      relative.
+    - >-
+      Never write that Phase B replaces, supersedes or closes Phase A, nor that the sidecar is a
+      transitional scaffold. The sidecar is a permanent cost of the own channel (adr-0014).
+    - >-
+      Do not commit any database file or its sidecars, and never commit a secret, a credential or an
+      API key: this repository is PUBLIC. Files matching *.db, *.db-wal and *.db-shm stay
+      git-ignored.
+    - >-
+      Do not edit 00-spec.yaml, 01-blueprint.yaml or anything under .ai/tasks/. The human owns the
+      specification.
+
+verify:
+  commands:
+    - bash -c 'cd sidecar && CGO_ENABLED=0 go build ./... && CGO_ENABLED=0 go vet ./...'
+    - bash -c 'cd sidecar && test -z "$(gofmt -l .)"'
+    - bash -c 'cd sidecar && CGO_ENABLED=0 go test ./... -count=1'
+    - bash -c 'cd sidecar && test "$(CGO_ENABLED=0 go test ./... -count=1 -v 2>&1 | grep -c -- "^--- PASS")" -ge 68'
+    - bash -c 'cd sidecar && test "$(CGO_ENABLED=0 go test ./... -count=1 -v 2>&1 | grep -cE -- "^[[:space:]]*--- PASS")" -ge 92'
+    - bash -c 'grep -q "Versión de este protocolo:\*\* 1.2, fijada el 2026-08-05" docs/protocolo-ipc-nucleo-sidecar.md'
+    - bash -c 'grep -qF "| 1.2 | \`3\` |" docs/protocolo-ipc-nucleo-sidecar.md && grep -qF "| 1.1 | \`2\` |" docs/protocolo-ipc-nucleo-sidecar.md && grep -qF "| 1.0 | \`1\` |" docs/protocolo-ipc-nucleo-sidecar.md'
+    - bash -c 'grep -qE "VersionProtocolo int64 = 3" sidecar/internal/ipc/mensajes.go'
+    - bash -c '! grep -q "\"version\":2" sidecar/internal/ipc/mensajes_test.go'
+    - bash -c 'grep -q "pausada" docs/protocolo-ipc-nucleo-sidecar.md && grep -q "EstadoPausada" sidecar/internal/ipc/mensajes.go'
+    - bash -c 'grep -q "CausasDeclaradas" sidecar/internal/ipc/mensajes.go && grep -q "CausasDeclaradas" sidecar/internal/ipc/documento_test.go'
+    - bash -c 'grep -q "EstadosDeclarados" sidecar/internal/ipc/mensajes.go'
+    - bash -c 'cd sidecar && test "$(grep -c "TipoMensaje = \"" internal/ipc/mensajes.go)" -eq 9'
+    - bash -c 'grep -qF "\"jid\", \"telefono\", \"phone\", \"dispositivo\", \"device\", \"numero\"" sidecar/internal/ipc/mensajes_test.go && grep -q "TiposDeclarados()" sidecar/internal/ipc/mensajes_test.go'
+    - bash -c '! grep -nE "\{\"(jid|telefono|phone|numero|dispositivo|device)[a-z_]*\", clase" sidecar/internal/ipc/mensajes.go'
+    - bash -c 'grep -qE "\{\"estado\", claseCadena\}" sidecar/internal/ipc/mensajes.go && grep -qE "\{\"causa\", claseCadena\}" sidecar/internal/ipc/mensajes.go && grep -qE "\{\"expira_en_ms\", claseEntero\}" sidecar/internal/ipc/mensajes.go'
+    - bash -c 'grep -rq "OnConnect" sidecar/internal/canal/ && grep -rq "TemporaryBan" sidecar/internal/canal/ && grep -rq "StreamReplaced" sidecar/internal/canal/ && grep -rq "ConnectFailure" sidecar/internal/canal/'
+    - bash -c 'grep -rqE "clasificarDesconexion" sidecar/internal/canal/ && ! grep -rqE "func ClasificarDesconexion" sidecar/internal/canal/'
+    - bash -c 'ls sidecar/internal/canal/*_interno_test.go >/dev/null && grep -lq "^package canal$" sidecar/internal/canal/*_interno_test.go'
+    - bash -c '! grep -rq "time.Sleep" sidecar/internal/canal/ sidecar/internal/configuracion/'
+    - bash -c 'grep -rqE "EnableAutoReconnect" sidecar/internal/canal/'
+    - bash -c 'grep -qE "VariableRetroceso" sidecar/internal/configuracion/configuracion.go && grep -qE "Retroceso" sidecar/internal/configuracion/configuracion_test.go'
+    - bash -c '! grep -rE "os\.(Getenv|LookupEnv)" sidecar/internal/canal/ sidecar/internal/ipc/'
+    - bash -c '! grep -rq "math/rand" sidecar/internal/canal/'
+    - bash -c '! test -f docs/adr/adr-0011-whatsmeow-sidecar-e-ipc.md'
+    - bash -c 'test -z "$(git status --porcelain -- docs/adr docs/plan docs/PRD.md docs/bitacora-de-descartes.md docs/contrato-ipc-respaldo-del-sqlstore.md docs/runbook-restauracion-de-celula.md README.md)"'
+    - bash -c 'test -z "$(git status --porcelain -- sidecar/internal/canal/emparejamiento.go sidecar/internal/canal/emparejamiento_test.go sidecar/internal/canal/almacen_interno_test.go sidecar/internal/outbox sidecar/internal/registro sidecar/go.mod sidecar/go.sum)"'
+    - bash -c 'grep -q "HEX-013" docs/STATUS.md && grep -q "2026-08-05" docs/STATUS.md'
+    - bash -c 'test -z "$(git status --porcelain -- crates Cargo.toml Cargo.lock rust-toolchain.toml .github)"'
+    - bash -c '! git status --porcelain | grep -E "[.]db($|-wal|-shm)|[.]env"'
+  target_s: 60
+
+acceptance:
+  human_gate: true
+
+limits:
+  # max_files_changed cuenta TODO lo que `touch` autoriza, no solo los affected_files
+  # del blueprint. El glob `sidecar/internal/canal/**` cubre 5 archivos existentes
+  # (canal.go, canal_test.go, emparejamiento.go, emparejamiento_test.go,
+  # almacen_interno_test.go) y hasta 4 nuevos (taxonomia.go, taxonomia_interno_test.go,
+  # reconexion.go, reconexion_interno_test.go) = 9. Más 5 explícitos fuera de canal
+  # (el documento, STATUS.md, mensajes.go, mensajes_test.go, documento_test.go) y 3
+  # más (configuracion.go, configuracion_test.go, main.go) = 17. go.mod y go.sum
+  # quedan FUERA de `touch` a propósito: esta tarea no añade ninguna dependencia.
+  max_files_changed: 17
+  max_diff_lines: 1900
+  per_class:
+    - glob: docs/protocolo-ipc-nucleo-sidecar.md
+      max_diff_lines: 300
+    - glob: docs/STATUS.md
+      max_diff_lines: 70
+    - glob: sidecar/internal/ipc/mensajes.go
+      max_diff_lines: 160
+    - glob: sidecar/internal/ipc/mensajes_test.go
+      max_diff_lines: 160
+    - glob: sidecar/internal/ipc/documento_test.go
+      max_diff_lines: 200
+    - glob: sidecar/internal/configuracion/configuracion.go
+      max_diff_lines: 200
+    - glob: sidecar/main.go
+      max_diff_lines: 60
+
+execution:
+  mode: worktree_edit
+  branch: ai/HEX-013
+
+retry_policy:
+  max_attempts: 2
+  escalate_after: 2

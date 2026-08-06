@@ -1,0 +1,340 @@
+task_id: HEX-013
+summary: >-
+  Sidecar disconnection taxonomy plus reconnection backoff with a temporary-ban pause, and IPC
+  protocol v1.2 (wire 3) adding the pausada estado and closing the causa vocabulary.
+
+affected_files:
+  - docs/protocolo-ipc-nucleo-sidecar.md
+  - docs/STATUS.md
+  - sidecar/internal/ipc/mensajes.go
+  - sidecar/internal/ipc/mensajes_test.go
+  - sidecar/internal/ipc/documento_test.go
+  - sidecar/internal/canal/canal.go
+  - sidecar/internal/canal/canal_test.go
+  - sidecar/internal/canal/taxonomia.go
+  - sidecar/internal/canal/taxonomia_interno_test.go
+  - sidecar/internal/canal/reconexion.go
+  - sidecar/internal/canal/reconexion_interno_test.go
+  - sidecar/internal/configuracion/configuracion.go
+  - sidecar/internal/configuracion/configuracion_test.go
+  - sidecar/main.go
+
+symbols:
+  - "ipc.VersionProtocolo (Value Object constant: 2 -> 3, the wire integer of document v1.2)"
+  - "ipc.EstadoPausada (fourth value of the estado enum, alongside EstadoActiva/Reconectando/Desvinculada)"
+  - "ipc.CausaDispositivoRemovido (LoggedOut with OnConnect=false, the device_removed signature)"
+  - "ipc.CausaSesionCerrada (LoggedOut with OnConnect=true, carrying its ConnectFailureReason)"
+  - "ipc.CausaBaneoTemporal (TemporaryBan, carries Code and the converted absolute expiry)"
+  - "ipc.CausaSesionReemplazada (StreamReplaced)"
+  - "ipc.CausaFalloDeConexion (ConnectFailure, carries its Reason as codigo)"
+  - "ipc.CausaErrorDeFlujo (StreamError, unknown stream code)"
+  - "ipc.CausaDesconexionDeTransporte (Disconnected, the ordinary transient websocket close)"
+  - "ipc.CausaClienteObsoleto (ClientOutdated)"
+  - "ipc.CausasDeclaradas() []string (enumerator mirroring TiposDeclarados(), stable order)"
+  - "ipc.EstadosDeclarados() []string (enumerator of the four estado values, stable order)"
+  - "canal.clasificarDesconexion (UNEXPORTED pure func: (evento any, ahoraMs int64) -> (desconexion, bool))"
+  - "canal.proyectarEstado (UNEXPORTED pure func: causa string -> estado string, total over the closed vocabulary)"
+  - "canal.desconexion (UNEXPORTED value object: Causa, Codigo, ExpiraEnMs)"
+  - "canal.intervaloDeRetroceso (UNEXPORTED pure func: attempt + params -> time.Duration, clamped at the ceiling)"
+  - "canal.Espera (injectable waiter seam: func(context.Context, time.Duration) error)"
+  - "canal.SumideroDeEstado (injectable sink seam: func(ipc.EstadoSesion))"
+  - "canal.Supervisor / canal.NuevoSupervisor (Application Service owning retry attempts and estado transitions)"
+  - "configuracion.Retroceso (Value Object: IntervaloInicial, Factor, IntervaloMaximo, BaneoInicial, BaneoMaximo)"
+  - "configuracion.VariableRetrocesoInicialMs / VariableRetrocesoFactor / VariableRetrocesoMaximoMs"
+  - "configuracion.VariableRetrocesoBaneoInicialMs / VariableRetrocesoBaneoMaximoMs"
+  - "configuracion.ErrRetrocesoInvalido (rejects non-numeric, zero or inverted ceiling values)"
+
+dependencies:
+  - sidecar/internal/registro/registro.go
+  - sidecar/internal/canal/emparejamiento.go
+  - sidecar/internal/canal/almacen_interno_test.go
+  - sidecar/internal/outbox/outbox.go
+  - docs/plan/fase-a-3-adaptador-whatsmeow.md
+  - docs/adr/adr-0015-politica-de-convivencia-con-el-baneo.md
+  - docs/adr/adr-0019-registro-estructurado.md
+  - docs/bitacora-de-descartes.md
+
+test_scenarios:
+  - statement: >-
+      PROBED API, TRAP 1. device_removed is NOT a Reason value in the pinned whatsmeow. Injecting
+      events.LoggedOut{OnConnect:false, Reason:ConnectFailureLoggedOut} yields
+      causa=desvinculada_dispositivo_removido, while events.LoggedOut{OnConnect:true,
+      Reason:ConnectFailureLoggedOut} yields causa=desvinculada_sesion_cerrada. The test asserts the
+      two causa values DIFFER even though the Reason field is identical, so the OnConnect
+      discriminator is proven load bearing and cannot be silently dropped.
+    covers: ["AC-2"]
+  - statement: >-
+      Table-driven injection of one synthetic event per taxonomy variant (LoggedOut both branches,
+      TemporaryBan, StreamReplaced, ConnectFailure, StreamError, Disconnected, ClientOutdated).
+      Each yields its own causa; the test collects the produced set and asserts it contains NO
+      duplicate, so no variant collapses into another or into a generic disconnected value.
+    covers: ["AC-2"]
+  - statement: >-
+      PROBED API, TRAP 2. events.TemporaryBan.Expire is a RELATIVE time.Duration, but the IPC field
+      expira_en_ms is absolute Unix epoch milliseconds. Injecting TemporaryBan{Expire:30m} with a
+      fixed ahoraMs asserts expira_en_ms == ahoraMs + 1800000, and a SECOND case injects
+      TemporaryBan{Expire:0} (whatsmeow's documented unknown-expiry case) and asserts expira_en_ms
+      == 0, the protocol's not-applicable encoding, NOT ahoraMs.
+    covers: ["AC-3", "AC-2"]
+  - statement: >-
+      ABSENCE SCENARIO, ORDERED, AC-3. Step 1 (POSITIVE, proves the branch actually ran): inject
+      TemporaryBan and assert estado == pausada, causa == baneo_temporal, codigo == the TempBanReason
+      and expira_en_ms == the converted absolute expiry, read off the ENCODED ipc line. Step 2 (only
+      then): drive the injected Espera recorder across the whole pre-expiry window and assert the
+      connect-attempt counter is still zero and no estado_sesion carrying reconectando was emitted.
+      Asserting step 2 without step 1 is forbidden: it would pass if the code never ran.
+    covers: ["AC-3"]
+  - statement: >-
+      ANTI-VACUITY TWIN of the previous scenario. The SAME harness, given a transient
+      events.Disconnected instead of a ban, MUST show the connect-attempt counter incrementing and a
+      reconectando estado emitted. This proves the counter can move and the observation window is
+      live, so the zero observed in the ban scenario is a real absence and not a dead harness.
+    covers: ["AC-3", "AC-6"]
+  - statement: >-
+      No code path reactivates a paused cell. After the pause is entered (asserted positively
+      first), driving the waiter past the declared expiry still produces zero connection attempts and
+      no transition out of pausada; returning to service requires a process restart, and the test
+      asserts the supervisor exposes no exported method that resumes it.
+    covers: ["AC-3"]
+  - statement: >-
+      AC-4 with NO sleeping. The pure intervaloDeRetroceso grows strictly across attempts 1..N,
+      reaches the configured ceiling, and STAYS at that exact ceiling for several further attempts
+      (N..N+5), which is what proves the ceiling is real rather than merely a large value. Zero wall
+      time is consumed because the function computes a duration and does not wait.
+    covers: ["AC-4"]
+  - statement: >-
+      The supervisor loop consumes an injected Espera that RECORDS the requested durations and
+      returns immediately. The test asserts the recorded duration sequence matches the schedule and
+      never exceeds the ceiling. The suite must not actually sleep: total verify wall time stays
+      inside target_s.
+    covers: ["AC-4", "AC-6"]
+  - statement: >-
+      AC-6. A transient error and an invalid session take DISTINCT branches: the transient path emits
+      a retry-attempt log line per attempt plus a reconectando transition, and the invalid-session
+      path emits a desvinculada transition and NO further retry. Both are asserted positively; the
+      test reads the captured log buffer and requires at least one line per retry attempt and one per
+      estado transition, with the interval carried in the existing latencia_ms field.
+    covers: ["AC-6"]
+  - statement: >-
+      AC-5 FORWARD (code -> document). For every value of ipc.CausasDeclaradas(), documento_test.go
+      asserts the v1.2 document contains its table row, reusing the exact pattern already used for
+      ipc.TiposDeclarados() and ipc.CamposDe().
+    covers: ["AC-5"]
+  - statement: >-
+      AC-5 REVERSE (document -> code). The test PARSES the causa table out of the document between
+      its delimiters, extracts every declared value, and asserts each one is present in
+      ipc.CausasDeclaradas(). This is the direction the existing document tests lack, and it is what
+      makes a value declared in prose but absent from the code a CI failure.
+    covers: ["AC-5"]
+  - statement: >-
+      AC-5 PRODUCIBILITY, the third direction. Agreement between the document and a constant list
+      does not prove the code can EMIT each causa. The classifier test collects the union of causa
+      values actually produced over the injected event corpus and asserts it equals
+      ipc.CausasDeclaradas() minus the empty not-applicable value, so no declared causa is
+      unproducible.
+    covers: ["AC-5", "AC-2"]
+  - statement: >-
+      The document is versioned and dated in absolute form: documento_test.go asserts the header
+      reads version 1.2 fijada el 2026-08-05 and that the correspondence table gained the row for
+      document 1.2 -> wire 3 WHILE KEEPING the existing rows for 1.0 -> 1 and 1.1 -> 2. The table is
+      historical and is never rewritten.
+    covers: ["AC-5"]
+  - statement: >-
+      The closed message-type set stays at NINE and the estado_sesion field set is UNCHANGED
+      (version, tipo, estado, causa, codigo, expira_en_ms). The existing guard in mensajes_test.go
+      forbidding field names containing jid/telefono/phone/dispositivo/device/numero must still
+      iterate ipc.TiposDeclarados() and still cover all nine types. No new IPC message type is added
+      for reactivation.
+    covers: ["AC-1", "AC-5"]
+  - statement: >-
+      Backoff parameters come from configuracion.Cargar(consultar) with documented defaults, never
+      from hardcoded constants at the use site. Tests cover: defaults applied when the variables are
+      absent, override when present, and rejection of a non-numeric value, of zero, and of a ceiling
+      below the initial interval.
+    covers: ["AC-6", "AC-1"]
+  - statement: >-
+      AC-1 no-network property. The entire suite runs with CGO_ENABLED=0 and no network, phone or
+      WhatsApp account: every taxonomy variant is a synthetic struct literal, no whatsmeow Client is
+      constructed for the classifier tests, no socket is opened, and the top-level passing-case count
+      rises strictly above the 56 measured on main.
+    covers: ["AC-1"]
+
+strategy:
+  - step: 1
+    action: >-
+      Value Objects first. In the ipc package add the fourth estado constant EstadoPausada, the eight
+      Causa constants, and the two enumerators CausasDeclaradas() and EstadosDeclarados(), modelled
+      exactly on the existing TiposDeclarados(). Bump VersionProtocolo from 2 to 3. Do NOT change the
+      EstadoSesion struct or its descriptor: the four fields estado/causa/codigo/expira_en_ms already
+      exist and already carry the raw signal alongside its projection, so CamposDe() is unchanged and
+      the JID guard stays intact and reachable by construction.
+    files:
+      - sidecar/internal/ipc/mensajes.go
+  - step: 2
+    action: >-
+      Propagate the wire bump. There are exactly TEN hardcoded "version":2 literals in
+      mensajes_test.go plus the VersionProtocolo assertions; every one must become 3 or the suite
+      breaks. Add tests for the two new enumerators. A partial bump is the single most likely way to
+      leave the tree red.
+    files:
+      - sidecar/internal/ipc/mensajes_test.go
+  - step: 3
+    action: >-
+      Domain logic, the classifier seam. Create taxonomia.go with the UNEXPORTED pure function
+      clasificarDesconexion(evento any, ahoraMs int64) (desconexion, bool) and the UNEXPORTED pure
+      projection proyectarEstado(causa) estado. Pure means: no client, no socket, no network, no
+      wall-clock read inside; ahoraMs is a parameter, following the existing Outbox.Purgar(ctx,
+      ahora) precedent, which is the only clock seam in the repository. The classifier must switch on
+      the whatsmeow event TYPE and, for LoggedOut, on the OnConnect discriminator. It must never
+      dereference the Raw *waBinary.Node pointer of ConnectFailure or StreamError, so tests can pass
+      Raw:nil. The projection maps baneo_temporal -> pausada, the two desvinculada causes ->
+      desvinculada, and the transient causes -> reconectando; it never overwrites or deletes causa.
+    files:
+      - sidecar/internal/canal/taxonomia.go
+  - step: 4
+    action: >-
+      Test the classifier from an INTERNAL test file declared `package canal`, following the
+      almacen_interno_test.go precedent. The external canal_test.go / emparejamiento_test.go are
+      `package canal_test` and cannot reach an unexported function; the answer is an internal test
+      file, never widening the package API to serve a test.
+    files:
+      - sidecar/internal/canal/taxonomia_interno_test.go
+  - step: 5
+    action: >-
+      Application Service, the reconnection supervisor. Create reconexion.go with the pure
+      intervaloDeRetroceso(attempt, params) clamped at the ceiling, the injectable Espera waiter
+      seam, the injectable SumideroDeEstado sink, and the Supervisor that owns retry attempts and
+      estado transitions. The supervisor holds the clock and the attempt counter; the classifier
+      stays pure and stateless. The ban branch enters pausada, uses the long-backoff parameters and
+      NEVER schedules a reconnection, and no exported method resumes it.
+    files:
+      - sidecar/internal/canal/reconexion.go
+  - step: 6
+    action: >-
+      Drive the supervisor synchronously from an internal test with a recording Espera and a
+      recording sink. Every absence assertion is preceded by its positive assertion, and the
+      transient twin proves the counters can move. No test may sleep, and no test may drain a channel
+      non-blockingly and then assert on the empty buffer.
+    files:
+      - sidecar/internal/canal/reconexion_interno_test.go
+  - step: 7
+    action: >-
+      Configuration. Add the five backoff variables and their defaults to configuracion.go through
+      the SAME Cargar(consultar) mechanism that already carries the socket, sqlstore and phone
+      values, with validation rejecting non-numeric, zero and inverted-ceiling values. Keep the
+      multiplier an INTEGER: this codebase admits no floating point anywhere, and the IPC format
+      forbids it outright. Document every default as PENDING CALIBRATION, never as a validated
+      number.
+    files:
+      - sidecar/internal/configuracion/configuracion.go
+      - sidecar/internal/configuracion/configuracion_test.go
+  - step: 8
+    action: >-
+      Wiring. In canal.go route the existing AddEventHandler closure through the classifier and the
+      supervisor, and DISABLE whatsmeow's own auto-reconnect (Client.EnableAutoReconnect defaults to
+      true and runs an uncapped linear schedule) so exactly one reconnection policy exists and ours
+      is the one under test. In main.go pass the configured backoff parameters through. Do NOT open a
+      Unix socket server: none exists yet and it is not this task.
+    files:
+      - sidecar/internal/canal/canal.go
+      - sidecar/internal/canal/canal_test.go
+      - sidecar/main.go
+  - step: 9
+    action: >-
+      Raise the normative document to version 1.2 dated 2026-08-05: add the correspondence row 1.2 ->
+      wire 3 keeping the historical rows, add pausada to the estado enum, add the closed causa table
+      with one row per declared value, document the taxonomy and the two API traps (device_removed is
+      the OnConnect=false signature, and Expire is relative and must be converted), and remove from
+      section 9 the deferral that said the causa vocabulary is closed by this task. Then update
+      STATUS.md: the date line, the protocol version clause, and the pending bullet whose items (1)
+      and (2) this task closes.
+    files:
+      - docs/protocolo-ipc-nucleo-sidecar.md
+      - docs/STATUS.md
+
+risks:
+  - >-
+    TRAP, PROBED. `device_removed` does NOT exist as a field or a Reason value anywhere in the pinned
+    whatsmeow v0.0.0-20260722203353-e9a033b24933. It is an internal conflictType XML attribute in
+    connectionevents.go, and its ONLY observable signature at the event level is
+    events.LoggedOut{OnConnect:false, Reason:ConnectFailureLoggedOut} — which is also the library's
+    ONLY dispatch site with OnConnect=false. The discriminator is therefore OnConnect, NOT the Reason
+    value, because the connect-failure path can carry the identical Reason 401 with OnConnect=true.
+    The plan's wording "LoggedOut con su razon, device_removed incluida" is API-inaccurate; the code
+    must key on OnConnect and the document must say so, or the restoration branch of adr-0020 will
+    silently select the wrong path.
+  - >-
+    TRAP, PROBED. events.TemporaryBan.Expire is a RELATIVE time.Duration (built as
+    time.Duration(expire)*time.Second), while the IPC field expira_en_ms is documented as ABSOLUTE
+    Unix epoch milliseconds. A direct assignment is a silent bug. Conversion is ahoraMs +
+    Expire.Milliseconds(), and the documented Expire==0 unknown-expiry case MUST map to
+    expira_en_ms==0 (the protocol's not-applicable encoding), not to ahoraMs.
+  - >-
+    TRAP, PROBED. Two disjoint code spaces feed the single integer field codigo: TempBanReason is
+    101..106 and ConnectFailureReason is 400..503. They do not overlap numerically, but the v1.2
+    document must state explicitly which space codigo carries for each causa, or a reader cannot tell
+    what 402 means without guessing.
+  - >-
+    TRAP, PROBED. whatsmeow ships its OWN auto-reconnect: Client.EnableAutoReconnect defaults to TRUE
+    and autoReconnect() waits AutoReconnectErrors*2 seconds — a LINEAR schedule with NO ceiling,
+    which is neither the exponential backoff the plan mandates nor capped. Unless it is disabled (or
+    AutoReconnectHook returns false), two competing reconnection loops exist and the contract's own
+    backoff is neither authoritative nor testable. The no-reconnect-loop guarantee must not rest on
+    library internals.
+  - >-
+    CONSTRUCTIBILITY, PROBED. Every taxonomy variant IS constructible in a test with no client and no
+    network: StreamReplaced, Disconnected and ClientOutdated are empty structs; LoggedOut and
+    TemporaryBan carry only scalars. ConnectFailure and StreamError carry Raw *waBinary.Node, which
+    tests will set to nil — so the classifier MUST NOT dereference Raw, or the tests panic.
+  - >-
+    registro.Campos is a CLOSED struct of four fields and registro_test.go asserts the exact
+    seven-key output set, so ANY new log field breaks an existing test in a package this contract
+    forbids touching. Backoff intervals and attempt numbers must ride in the existing latencia_ms and
+    detalle fields, and every evento name must be a package-level constant per adr-0019.
+  - >-
+    The wire bump has a measured blast radius: exactly TEN hardcoded "version":2 literals in
+    sidecar/internal/ipc/mensajes_test.go, plus documento_test.go's assertion on the header string
+    "1.1, fijada el 2026-08-04" and on the correspondence row for 1.1. A partial bump leaves the
+    suite red; rewriting the historical 1.0 and 1.1 rows instead of appending 1.2 destroys the
+    convention HEX-012 established.
+  - >-
+    NO IPC SOCKET SERVER EXISTS YET. The protocol document states plainly that no socket is open and
+    no Rust endpoint exists, and main.go opens none. "Exposed over IPC" in this task therefore means
+    producing an ipc.EstadoSesion and encoding it with ipc.Codificar, delivered to an injected sink —
+    NOT standing up a Unix socket server, which is a different task and would be large uncontracted
+    scope. Tests should assert on the ENCODED line, which is the strongest available proof.
+  - >-
+    adr-0011 (whatsmeow-sidecar-e-ipc) is listed in docs/adr/README.md as "Por escribir" and the
+    protocol document states it is written only once the stage also has session persistence and the
+    behaviour discipline of task 14 in front of it. It must NOT be written here. Highest ADR number
+    allocated is adr-0020; nothing may be renumbered.
+  - >-
+    D-08 in docs/bitacora-de-descartes.md discards aggressive reconnection after a temporary ban and
+    automatic reactivation of a banned cell, and is marked "principio de diseno con causa
+    documentada. No reabrir." This task IMPLEMENTS that prohibition. The same entry discards jitter
+    and warm-up protocols, so no randomised jitter may be added; exponential backoff with a ceiling
+    is standard transient-failure handling and is explicitly mandated by the plan, not folklore.
+  - >-
+    The plan never uses the word `pausada`; it says "en pausa" and lists only three estado values.
+    The fourth value is a ratified human decision for this task, and STATUS.md's pending bullet
+    explicitly flags "como se proyecta la pausa por baneo temporal" as open. The document must
+    therefore introduce pausada as a deliberate closure, not present it as pre-existing.
+  - >-
+    sidecar/main.go has NO test file (`go test` reports "no test files" for the root package), so any
+    wiring added there is unverified by the suite. Keep main.go changes to a minimum and put the
+    logic in canal, where it is tested.
+  - >-
+    docs/STATUS.md is flat prose bullets, not a table, so the edit is a paragraph rewrite rather than
+    a cell change: the date line, the protocol-version clause of the IPC bullet, and the pending
+    bullet whose items (1) backoff values and (2) the causa vocabulary and pause projection this task
+    closes. HEX-012 undersized this same file's cap and had to squeeze; it is sized larger here.
+  - >-
+    The non-vacuity guard counts only TOP-LEVEL `^--- PASS` lines: main measures 56 top-level and 69
+    including subtests. Table-driven subtests raise the second number but not the first, so the
+    contract asserts BOTH thresholds; an implementer who writes one giant table test would otherwise
+    move neither meaningfully.
+  - >-
+    The recurring defect of this stage is a test that passes every verify command while asserting
+    nothing: HEX-011 asserted a pragma the driver sets by default, HEX-012 drained a channel
+    non-blockingly so the branch under test never ran. This task is dense with absence assertions, so
+    the rule is binding: a test asserting an absence MUST first assert the expected thing happened.

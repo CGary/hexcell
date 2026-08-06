@@ -1,0 +1,149 @@
+task_id: HEX-013
+summary: Sidecar reconnection with exponential backoff and temporary-ban stop (A-3
+  task 6), plus the disconnection taxonomy and unlink detection (A-3 task 7), and
+  IPC protocol v1.2 pausada state. Risk medium.
+goal: Bundle A-3 tasks 6 and 7 as a single unit because task 6 cannot be built
+  without the taxonomy task 7 produces. Implement, in the whatsmeow sidecar,
+  reconnection with exponential backoff and an upper wait ceiling, a distinct
+  logged record of every retry attempt and every session-state transition, and a
+  clear split between a transient error and an invalid session. Separately,
+  implement the disconnection taxonomy with each variant instrumented on its own
+  (LoggedOut with its reason including device_removed, temporary ban with its
+  declared expiry, StreamReplaced, and connection failure with its code), exposed
+  over IPC toward the core alongside its projection onto a session estado. Add a
+  fourth estado value, pausada, to the IPC protocol (raised to document version
+  1.2, wire integer 3) for the temporary-ban branch, long backoff, wait for the
+  declared expiry, and no automatic reactivation. Reactivation is by process
+  restart only; no new IPC message type is added for it.
+invariants:
+  - The sidecar never auto-reactivates a cell after a temporary ban; returning to
+    service requires a human-initiated restart of the sidecar process/container,
+    never a code path or an IPC order.
+  - The pausada estado is distinct from desvinculada and from reconectando and
+    must never collapse into either — desvinculada keeps meaning only "logged
+    out", reconectando keeps meaning only "retries in flight".
+  - The raw disconnection cause (causa, codigo, expira_en_ms) always travels
+    alongside its estado projection over IPC; the projection never replaces or
+    deletes the raw signal.
+  - No new IPC message type is introduced for reactivation; the closed set of
+    IPC message types remains at nine.
+  - Backoff parameters (initial interval, multiplier, ceiling, and the separate
+    long-backoff values for the ban branch) are configurable through the
+    existing configuration mechanism in
+    sidecar/internal/configuracion/configuracion.go, never hardcoded constants.
+  - Every taxonomy variant (LoggedOut with its reason, temporary ban with its
+    expiry, StreamReplaced, connection failure with its code) is logged and
+    IPC-exposed as its own distinct causa value; none collapses into a generic
+    "disconnected".
+  - All test coverage for taxonomy variants, including the temporary ban, is
+    achieved by injection in the test harness; no real network, phone, or
+    WhatsApp account is required or used.
+  - The causa vocabulary declared in docs/protocolo-ipc-nucleo-sidecar.md and the
+    causa values the sidecar code can actually emit stay in exact agreement.
+acceptance:
+  - id: AC-1
+    statement: The full Go suite runs green with no network, phone, or WhatsApp
+      account, and raises the passing-case count above the 56 measured on main.
+    given: main measures 56 passing Go test cases with no network dependency
+    when: this task's implementation and tests are added
+    then: CGO_ENABLED=0 go test ./... -v passes with a passing-case count
+      strictly greater than 56, with no network, phone, or WhatsApp account
+      required
+  - id: AC-2
+    statement: Each disconnection taxonomy variant is injected and verified
+      distinguishable from the others, with LoggedOut carrying its reason.
+    given: a sidecar test harness able to inject whatsmeow disconnect events
+    when: each taxonomy variant (LoggedOut with device_removed and other
+      reasons, temporary ban, StreamReplaced, connection failure with its code)
+      is injected in turn
+    then: each produces its own distinct causa value over IPC, none collapses
+      into another, and LoggedOut additionally carries its reason
+  - id: AC-3
+    statement: A temporary ban moves the cell to pausada under long backoff
+      toward the declared expiry with no automatic reactivation.
+    given: a test injects a temporary-ban disconnect variant with a declared
+      expira_en_ms
+    when: the sidecar processes it
+    then: the cell's estado_sesion transitions to pausada, the retry interval
+      grows under the long-backoff schedule, no reconnection attempt happens
+      before the declared expiry, and no code path automatically reactivates
+      the cell without a process restart
+  - id: AC-4
+    statement: The exponential backoff has a real ceiling that stops the wait
+      from growing further.
+    given: repeated transient connection failures
+    when: exponential-backoff retries continue past several attempts
+    then: a test verifies the wait interval stops growing once it reaches the
+      configured ceiling
+  - id: AC-5
+    statement: The v1.2 IPC document and the sidecar implementation agree
+      exactly on the causa vocabulary.
+    given: docs/protocolo-ipc-nucleo-sidecar.md raised to version 1.2 (wire
+      version 3), declaring the closed causa vocabulary and the four-value
+      estado enum including pausada
+    when: the document's declared causa values are compared against what the
+      sidecar code emits
+    then: no causa value emitted by the code is undeclared in the document, and
+      no causa value declared in the document is unproducible by the code
+  - id: AC-6
+    statement: Transient errors and invalid sessions are handled and logged
+      distinctly, and every retry attempt and every estado_sesion transition is
+      recorded.
+    given: a reconnection sequence encountering both a transient error and an
+      invalid-session condition
+    when: the sidecar processes each
+    then: the code treats them through distinct branches, and every retry
+      attempt and every estado_sesion transition is written to the structured
+      log
+risk: medium
+non_goals:
+  - Any change to crates/ (the Rust core). The core-side consumer of the v1.2
+    protocol is A-3 task 10.
+  - Translation of WhatsApp events and acks to the canonical format (task 8).
+  - JID-to-internal-identifier mapping and the adapter's own identity store
+    (task 9).
+  - STOP list, outbound TTL queue, and channel behavior discipline (tasks
+    12-14).
+  - Testing against a real WhatsApp number, and provoking a real ban (task 15).
+  - The PairPhone() re-pairing runbook (task 16).
+  - The channel runbook, commit pinning, and whatsmeow update window (task 17),
+    except that the disconnection taxonomy itself is documented inside the IPC
+    specification as this task's deliverable.
+  - Adding any new IPC message type for reactivation.
+  - Validating default backoff parameter values under real or sustained load;
+    defaults are documented as pending calibration, not as validated numbers.
+  - CLI observability of the session state. The hexcell CLI is Rust
+    (crates/hexcell-admin), out of scope here; this task's obligation is limited
+    to emitting the state over IPC and into the structured log, deferring
+    visible CLI consumption to task 10.
+constraints:
+  - All prose this task produces (spec text where applicable, docs, commit
+    messages) is written in Spanish; conventional commits only, no AI
+    attribution of any kind.
+  - No API keys or secrets anywhere; this repository is public.
+  - Never version *.db, *.db-wal, *.db-shm, or .env* files.
+  - Backoff configuration (initial interval, multiplier, ceiling, long-backoff
+    values for the ban branch) must flow through the same configuration
+    mechanism that already carries the socket path, the sqlstore path, and the
+    phone number (sidecar/internal/configuracion/configuracion.go); no separate
+    ad hoc config path.
+  - Any Go test needing unexported sidecar state lives in an internal test file
+    (package canal, not canal_test), following the existing precedent in
+    sidecar/internal/canal/almacen_interno_test.go.
+  - No test may assert an absence (e.g. "causa X never reaches the log")
+    without first asserting the expected line was emitted for the
+    corresponding positive case.
+  - Do not phrase any acceptance criterion as "exactly N exported symbols";
+    declare only symbols that must exist, never a ban on extras.
+  - The docs/protocolo-ipc-nucleo-sidecar.md version bump follows the same
+    document-version-to-wire-integer convention established one day earlier
+    (HEX-012) — document 1.2 corresponds to wire version 3, per the document's
+    own version correspondence table.
+  - No mass-sending folklore (jitter as fake-human imitation, warm-up
+    protocols, proxies, VPN, IP rotation). Exponential backoff on reconnection
+    is standard transient-failure handling, explicitly mandated by the plan,
+    and is not folklore.
+  - The temporary-ban stop-reconnecting behavior is a blocking acceptance
+    criterion of the plan, not an operational recommendation, marked [causa
+    documentada] per faq.whatsapp.com/1848531392146538 — persisting with the
+    unofficial client during a temporary ban escalates it to permanent.

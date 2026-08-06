@@ -1,0 +1,27 @@
+task_id: HEX-013
+summary: Sidecar disconnection taxonomy and reconnection backoff with a temporary-ban pause, plus IPC document v1.2 / wire 3 adding the pausada estado and closing the causa vocabulary.
+entries:
+  - changed_files:
+      - sidecar/internal/canal/reconexion.go
+      - sidecar/internal/canal/reconexion_interno_test.go
+      - docs/STATUS.md
+    notes:
+      - Revision pass discharging the four fix_tasks from 06-review.json.
+      - Made the temporary-ban pause a persistent one-way terminal field on Supervisor, set before any state is emitted; every later event is ignored and logged. No exported clearer exists.
+      - Guarded all mutable supervisor state with sync.Mutex and added a single-live-policy reservation so two concurrent events cannot open two reconnection loops.
+      - The pause check and the connect call share one critical section, so no ban can slip between the check and a connection attempt.
+      - Added backoff coverage for a ceiling that is not a multiple of the schedule and for the ban long-backoff clamp against the declared expiry.
+      - Restored a Pendiente entry in docs/STATUS.md recording the five HEXCELL_RETROCESO_* defaults as uncalibrated under real traffic.
+    verify_pending: true
+  - changed_files:
+      - sidecar/internal/canal/reconexion.go
+      - sidecar/internal/canal/reconexion_interno_test.go
+    notes:
+      - Narrow revision pass for the single substantive item of the second review; supersedes the previous entry's claim that the pause check and the connect call share one critical section.
+      - Moved the connect call OUT of the supervisor critical section. The pause flag is read and the single-policy reservation is taken under the lock, the lock is released, then the connection is attempted.
+      - Reason the previous design was wrong - ConnectContext carries no deadline and whatsmeow builds its websocket HTTP client with no Timeout field, so the upgrade is unbounded and a silent peer would hold the mutex forever, blocking every whatsmeow event goroutine in the pause helpers and leaking one goroutine per event.
+      - No context deadline is used to bound the attempt - whatsmeow adopts the dial context as the session context, so a deadline would tear down the live session on expiry.
+      - The pause flag is re-read under the lock after the connect returns, so a ban that arrived during the attempt still wins and no state is written on top of the pause.
+      - Documented the residual race honestly in Spanish at that exact place - exactly one in-flight attempt may still overlap a ban, it is irreducible because the remote server decides the ban, and the previous design only traded it for an unbounded lock hold.
+      - Added an internal concurrency test that processes a temporary ban while one connection attempt is in flight; it asserts the pause was genuinely entered with its absolute expiry before asserting that no state was emitted on top of it and that no new attempt started.
+    verify_pending: true
