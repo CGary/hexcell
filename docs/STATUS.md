@@ -1,6 +1,6 @@
 # Estado del Proyecto
 
-> Registro vivo del avance. Última actualización: 2026-08-04.
+> Registro vivo del avance. Última actualización: 2026-08-05.
 
 ## Fase actual
 **Canal propio en producción — etapa A-1, fundaciones.** Ya existe el workspace Rust con sus cinco
@@ -324,7 +324,7 @@ adicional cuando aparezca un cliente que lo justifique. Ver [plan/README.md](pla
   extremo a extremo con respuesta real del bot, y el ensayo de la rama `device_removed` del
   runbook de restauración.
 * **Protocolo IPC entre el núcleo y el sidecar, especificado y versionado** (2026-07-31, HEX-010;
-  actualizado a versión 1.1 el 2026-08-04, HEX-012,
+  actualizado a versión 1.2 el 2026-08-05, HEX-013,
   `docs/protocolo-ipc-nucleo-sidecar.md`). Fija los cuatro aspectos que exige la tarea
   1 de la etapa A-3: **formato** —un objeto JSON plano de profundidad 1 por línea, valores solo
   cadena o entero, campos cerrados por tipo y siempre presentes—, **transporte** —socket de dominio
@@ -336,7 +336,9 @@ adicional cuando aparezca un cliente que lo justifique. Ver [plan/README.md](pla
   ningún crate (`adr-0019`) y el otro extremo tendrá que **analizar** estas líneas, no solo
   emitirlas. **Nueve tipos cerrados** (los seis de la 1.0 más `orden_emparejar`,
   `codigo_emparejamiento` y `acuse_emparejamiento`), ninguno con campo capaz de llevar un JID ni un
-  número de teléfono; la versión de cable pasa de `1` a `2`. La orden y el acuse del
+  número de teléfono; la versión de cable pasa a `3`. La versión 1.2 añade el cuarto estado
+  `pausada`, cierra el vocabulario de `causa` de `estado_sesion` y fija la proyección de la pausa
+  por baneo temporal sin añadir ningún tipo IPC de reactivación. La orden y el acuse del
   respaldo del `sqlstore` encajan con los campos exactos del contrato de la etapa A-2
   (`docs/contrato-ipc-respaldo-del-sqlstore.md`), que no cambia ni de contenido ni de versión.
 * **Esqueleto del sidecar Go con whatsmeow en pie** (2026-07-31, HEX-010). El módulo `sidecar/`
@@ -353,6 +355,14 @@ adicional cuando aparezca un cliente que lo justifique. Ver [plan/README.md](pla
   fijada por commit (`e9a033b24933`). La CI pasa a ejecutar `go test` y a exigir un mínimo de casos
   superados: `go test ./...` sale con código 0 sobre un módulo sin tests, y ese verde vacío es justo
   el que había antes.
+* **Taxonomía de desconexión y retroceso de reconexión del sidecar** (2026-08-05, HEX-013). El
+  sidecar clasifica por separado `LoggedOut` con firma `device_removed`, cierre de sesión en
+  `LoggedOut` sobre conexión, baneo temporal con expiración declarada, `StreamReplaced`, fallo de
+  conexión, error de flujo, cierre de transporte y cliente obsoleto. Cada variante emite su `causa`
+  junto a la proyección de `estado_sesion`, registra la transición y conserva el código o
+  expiración cuando aplica. El baneo temporal entra en `pausada`, usa retroceso largo configurable y
+  no tiene camino de reactivación automática: volver al servicio exige reiniciar el proceso o
+  contenedor por decisión humana.
 
 ## Pendiente
 * **Destino remoto real del respaldo por célula, fuera del disco del servidor** (2026-07-30,
@@ -394,16 +404,18 @@ adicional cuando aparezca un cliente que lo justifique. Ver [plan/README.md](pla
 * **Calibrar los parámetros anti-baneo de la etapa A-3**: TTL absoluto de la cola de salida, latencia
   mínima de respuesta y horario de atención por defecto. El plan fija el mecanismo; los valores se
   calibran con tráfico real. — *Etapa A-3.*
-* **Parámetros y vocabularios que el protocolo IPC deja declarados sin cerrar** (2026-07-31,
-  HEX-010). Tres, y ninguno se inventó al escribir la especificación: (1) los valores del retroceso
-  de reconexión del núcleo hacia el socket —espera inicial, factor y techo—, de la tarea 6; (2) el
-  **vocabulario cerrado del campo `causa`** del estado de sesión y **cómo se proyecta la pausa por
-  baneo temporal**, que el plan exige distinguir de «reconectando» sin enumerarla entre los tres
-  estados que declara, de la tarea 7; y (3) la frecuencia numérica exacta del respaldo del
-  `sqlstore`, que el contrato de A-2 dejó en el orden de magnitud (horas, no días). Se anota además
-  que **el trait `ChannelAdapter` no reserva hoy ningún campo de estado de sesión**, contra lo que
-  afirma de pasada el texto de la etapa A-3: incorporarlo al puerto y a `GET /health/ready` es
-  trabajo de las tareas 7 y 10. — *Etapa A-3; ninguno bloquea el esqueleto ya entregado.*
+* **Calibrar los cinco parámetros de retroceso de reconexión del sidecar** (2026-07-31, HEX-010;
+  mecanismo entregado por HEX-013 el 2026-08-05). `HEXCELL_RETROCESO_INICIAL_MS`,
+  `HEXCELL_RETROCESO_FACTOR`, `HEXCELL_RETROCESO_MAXIMO_MS`, `HEXCELL_RETROCESO_BANEO_INICIAL_MS` y
+  `HEXCELL_RETROCESO_BANEO_MAXIMO_MS` son configurables y sus valores por omisión están marcados
+  **pendientes de calibración** en el código: son un punto de partida razonable, no una medición
+  bajo tráfico real. — *Etapa A-3; no bloquea nada ya entregado.*
+* **Frecuencia numérica exacta del respaldo del `sqlstore`** (2026-07-31, HEX-010; acotado por
+  HEX-013). El contrato de A-2 la dejó en el orden de magnitud —horas, no días—, pero el número de
+  producción sigue sin calibrarse. Se anota además que **el trait `ChannelAdapter` no reserva hoy
+  ningún campo de estado de sesión**, contra lo que afirma de pasada el texto de la etapa A-3:
+  incorporarlo al puerto y a `GET /health/ready` es trabajo de la tarea 10. — *Etapa A-3; no
+  bloquea el esqueleto ya entregado.*
 * **Prueba de carga sostenida y techo de células por servidor** (NFR-01): convertir los 80 MB en un
   objetivo medido con límites de cgroup, y descubrir si el cuello real es la memoria o la CPU y la
   E/S. — *Bloquea escalar la cartera más allá de las primeras células.*

@@ -1,13 +1,13 @@
 # Protocolo IPC entre el núcleo y el sidecar
 
-* **Versión de este protocolo:** 1.1, fijada el 2026-08-04.
+* **Versión de este protocolo:** 1.2, fijada el 2026-08-05.
 * **Etapa que lo redacta:** A-3 (tarea 1 de `docs/plan/fase-a-3-adaptador-whatsmeow.md`).
 * **Etapa que lo implementa:** A-3, repartida entre varias tareas. Este documento **declara** la
   semántica completa; el código que la cumple llega después y por partes: el outbox durable
-  (tarea 3), la reconexión (tarea 6), la taxonomía de desconexión (tarea 7), el mapeo de identidad
-  (tarea 9) y el cliente Rust del protocolo dentro de `WhatsmeowAdapter` (tarea 10). En el commit
-  que introduce esta página existe el esqueleto del sidecar y la representación tipada de estos
-  mensajes en Go, pero **no existe todavía ningún socket abierto ni ningún extremo Rust**.
+  (tarea 3), la reconexión y la taxonomía de desconexión (tareas 6 y 7, cerradas por esta versión
+  para el lado sidecar), el mapeo de identidad (tarea 9) y el cliente Rust del protocolo dentro de
+  `WhatsmeowAdapter` (tarea 10). No existe todavía ningún socket abierto ni ningún extremo Rust:
+  el estado se produce como `estado_sesion` codificable y se entrega a un sumidero inyectado.
 * **Procesos que hablan este protocolo:** el binario `hexcell` (núcleo Rust) y el binario
   `hexcell-sidecar` (Go, whatsmeow), los dos contenedores de una misma célula sobre canal propio.
   El sidecar es un **coste permanente** de ese canal (`adr-0014`): este protocolo no es un
@@ -27,6 +27,7 @@
 | :--- | :--- |
 | 1.0 | `1` |
 | 1.1 | `2` |
+| 1.2 | `3` |
 
 ---
 
@@ -76,7 +77,7 @@ Los dos primeros campos de **toda** línea son siempre los mismos y en este orde
 
 | Campo | Tipo | Descripción |
 | :--- | :--- | :--- |
-| `version` | entero | Versión de cable del protocolo. En esta especificación, `2`. |
+| `version` | entero | Versión de cable del protocolo. En esta especificación, `3`. |
 | `tipo` | cadena | Uno de los nueve tipos cerrados de la sección 6. |
 
 ### Por qué JSON y no un formato binario, y qué se difiere a `adr-0011`
@@ -156,9 +157,9 @@ desajuste de versión es un error de despliegue —una imagen que no se actualiz
 tratarlo como tal, con la célula caída y un mensaje claro, es mucho más barato que descubrirlo
 semanas después por un campo que se leía torcido.
 
-Con la versión 1.1 del documento, la versión de cable pasa de `1` a `2`. La regla no cambia de
+Con la versión 1.2 del documento, la versión de cable pasa de `2` a `3`. La regla no cambia de
 sustancia: sigue siendo igualdad estricta del entero, en las dos direcciones, sin negociación ni
-degradación. Si un sidecar que habla la versión 2 recibe un saludo con versión 1, cierra la
+degradación. Si un sidecar que habla la versión 3 recibe un saludo con versión 2, cierra la
 conexión e informa; el caso inverso es simétrico. En la práctica, este desajuste indica que una
 imagen del contenedor se actualizó y la otra no, y el remedio es actualizar, no negociar.
 
@@ -243,20 +244,26 @@ Es el caso anterior con el reintento del núcleo empezando antes: no hay nada es
 El invariante que sostiene los tres casos es el mismo: **el estado que importa está en disco, no en
 la conexión**.
 
-### Lo que no se fija aquí
+### Retroceso configurable del sidecar
 
-Los valores concretos del retroceso —espera inicial, factor y techo— son parámetros de calibración
-de la tarea 6, y la política ante un baneo temporal —retroceso largo, célula en pausa, sin
-reactivación automática— es comportamiento del sidecar frente a **WhatsApp**, no frente a este
-socket. No se confunden: una desconexión del socket local se reintenta con normalidad; una
-desconexión del canal por baneo temporal, no.
+La política propia del sidecar usa retroceso exponencial determinista con techo. Sus valores se
+leen por la misma configuración que el socket y el `sqlstore`, nunca desde un camino ad hoc:
+`HEXCELL_RETROCESO_INICIAL_MS`, `HEXCELL_RETROCESO_FACTOR`,
+`HEXCELL_RETROCESO_MAXIMO_MS`, `HEXCELL_RETROCESO_BANEO_INICIAL_MS` y
+`HEXCELL_RETROCESO_BANEO_MAXIMO_MS`. Los valores por omisión existen para arrancar el proceso,
+pero quedan **pendientes de calibración** bajo tráfico real.
+
+No se confunden dos planos: una desconexión del socket local se reintenta con normalidad; una
+desconexión del canal por baneo temporal entra en `pausada`, usa el retroceso largo y no ejecuta
+reactivación automática.
 
 ---
 
 ## 6. Conjunto cerrado de tipos de mensaje
 
-Nueve tipos. Los seis de la versión 1.0 se conservan intactos; los tres nuevos llegan con la
-versión 1.1. Ampliarlo es cambiar la versión del protocolo.
+Nueve tipos. Los seis de la versión 1.0 se conservan intactos; los tres tipos de emparejamiento
+llegan con la versión 1.1. La versión 1.2 no añade tipos: solo cierra el vocabulario de
+`estado_sesion`. Ampliar el conjunto de tipos es cambiar la versión del protocolo.
 
 | `tipo` | Dirección | Propósito |
 | :--- | :--- | :--- |
@@ -274,7 +281,7 @@ versión 1.1. Ampliarlo es cambiar la versión del protocolo.
 
 | Campo | Tipo | Descripción |
 | :--- | :--- | :--- |
-| `version` | entero | `2`. |
+| `version` | entero | `3`. |
 | `tipo` | cadena | `saludo`. |
 | `emisor` | cadena | `nucleo` o `sidecar`. |
 | `id_celula` | cadena | Identificador opaco de la célula, para correlacionar registros. |
@@ -283,7 +290,7 @@ versión 1.1. Ampliarlo es cambiar la versión del protocolo.
 
 | Campo | Tipo | Descripción |
 | :--- | :--- | :--- |
-| `version` | entero | `2`. |
+| `version` | entero | `3`. |
 | `tipo` | cadena | `evento_entrante`. |
 | `id_deduplicacion` | cadena | Identificador durable del evento (FR-12). Es lo que el acuse referencia. |
 | `id_conversacion` | cadena | Identificador **interno** del hilo, opaco para el núcleo. |
@@ -306,7 +313,7 @@ contra el que ese TTL existe.
 
 | Campo | Tipo | Descripción |
 | :--- | :--- | :--- |
-| `version` | entero | `2`. |
+| `version` | entero | `3`. |
 | `tipo` | cadena | `confirmacion`. |
 | `id_deduplicacion` | cadena | El mismo que llegó en el `evento_entrante`. Nunca un número de secuencia. |
 
@@ -314,11 +321,11 @@ contra el que ese TTL existe.
 
 | Campo | Tipo | Descripción |
 | :--- | :--- | :--- |
-| `version` | entero | `2`. |
+| `version` | entero | `3`. |
 | `tipo` | cadena | `estado_sesion`. |
-| `estado` | cadena | `activa`, `reconectando` o `desvinculada`. |
+| `estado` | cadena | `activa`, `reconectando`, `desvinculada` o `pausada`. |
 | `causa` | cadena | Variante cruda de la taxonomía de desconexión; `""` si no aplica. |
-| `codigo` | entero | Código del fallo de conexión cuando lo hay; `0` si no aplica. |
+| `codigo` | entero | Código de la rama de desconexión cuando lo hay; `0` si no aplica. |
 | `expira_en_ms` | entero | Expiración declarada de un baneo temporal, en milisegundos desde la época Unix; `0` si no aplica. |
 
 Dos precisiones que este documento **no** puede saltarse:
@@ -326,21 +333,51 @@ Dos precisiones que este documento **no** puede saltarse:
 * **El puerto Rust no reserva hoy ningún campo de estado de sesión.** El trait `ChannelAdapter`
   (`crates/hexcell-core/src/canal.rs`) declara exactamente dos métodos, `send` y `estado_ventana`,
   y el sub-trait `CicloDeVidaSesion` otros dos, `iniciar_emparejamiento` y `cerrar_sesion`.
-  Incorporar este estado al puerto y a `GET /health/ready` es trabajo de las tareas 7 y 10 de esta
-  misma etapa, no algo ya hecho en A-2. Se deja escrito para que nadie lo dé por existente.
-* **El vocabulario de `causa` lo cierra la tarea 7**, la que produce la taxonomía de desconexión
-  con cada variante instrumentada por separado —`LoggedOut` con su razón, `device_removed` entre
-  ellas; baneo temporal con su expiración; `StreamReplaced`; fallo de conexión con su código—. Aquí
-  se fija que la señal cruda **viaja junto a** su proyección a `estado`, nunca en su lugar:
-  colapsarlas destruiría la única señal de aviso previo que suele existir. Cómo se proyecta la
-  pausa por baneo temporal, que el plan exige distinguir de «reconectando», es una decisión de esa
-  tarea y no se inventa aquí.
+  Incorporar este estado al puerto y a `GET /health/ready` es trabajo de la tarea 10 de esta misma
+  etapa, no algo ya hecho en A-2. Se deja escrito para que nadie lo dé por existente.
+* **El vocabulario de `causa` queda cerrado en la versión 1.2**, con cada variante instrumentada
+  por separado. La señal cruda **viaja junto a** su proyección a `estado`, nunca en su lugar:
+  colapsarlas destruiría la única señal de aviso previo que suele existir.
+
+Estados declarados:
+
+| Valor | Significado |
+| :--- | :--- |
+| `activa` | Sesión de WhatsApp operativa. |
+| `reconectando` | Desconexión transitoria con reintentos en curso. |
+| `desvinculada` | Sesión inválida por `LoggedOut`; requiere recuperación humana. |
+| `pausada` | Baneo temporal detectado; no hay reactivación automática. |
+
+<!-- inicio-causas-estado-sesion -->
+| `causa` | Proyección a `estado` | `codigo` | `expira_en_ms` |
+| :--- | :--- | :--- | :--- |
+| `baneo_temporal` | `pausada` | Código `TempBanReason` de whatsmeow (101..106). | Expiración absoluta Unix epoch ms; `0` si whatsmeow no declara expiración. |
+| `cliente_obsoleto` | `reconectando` | `0`. | `0`. |
+| `desconexion_de_transporte` | `reconectando` | `0`. | `0`. |
+| `desvinculada_dispositivo_removido` | `desvinculada` | Código `ConnectFailureReason` recibido en `LoggedOut`. | `0`. |
+| `desvinculada_sesion_cerrada` | `desvinculada` | Código `ConnectFailureReason` recibido en `LoggedOut`. | `0`. |
+| `error_de_flujo` | `reconectando` | Código numérico del `StreamError` si es interpretable; `0` si no aplica. | `0`. |
+| `fallo_de_conexion` | `reconectando` | Código `ConnectFailureReason` de whatsmeow (400..503). | `0`. |
+| `sesion_reemplazada` | `reconectando` | `0`. | `0`. |
+<!-- fin-causas-estado-sesion -->
+
+Dos trampas de la API quedan documentadas porque cambian el comportamiento:
+
+* `device_removed` no existe como razón pública de `LoggedOut`. La firma observable es
+  `LoggedOut{OnConnect:false}`; `LoggedOut{OnConnect:true}` puede traer la misma razón numérica y
+  se clasifica como `desvinculada_sesion_cerrada`.
+* `TemporaryBan.Expire` es una duración relativa. El sidecar la convierte a milisegundos absolutos
+  con `ahora_ms + Expire.Milliseconds()`. Si `Expire == 0`, `expira_en_ms` queda en `0`.
+
+La rama `baneo_temporal` entra en `pausada`, usa el retroceso largo configurado y no ejecuta ningún
+camino de reactivación automática. Volver al servicio exige reiniciar el proceso o contenedor por
+decisión humana; no existe mensaje IPC de reanudación.
 
 ### `orden_emparejar`
 
 | Campo | Tipo | Descripción |
 | :--- | :--- | :--- |
-| `version` | entero | `2`. |
+| `version` | entero | `3`. |
 | `tipo` | cadena | `orden_emparejar`. |
 | `metodo` | cadena | `qr` o `codigo_de_vinculacion`. |
 
@@ -354,7 +391,7 @@ identificador de transporte.
 
 | Campo | Tipo | Descripción |
 | :--- | :--- | :--- |
-| `version` | entero | `2`. |
+| `version` | entero | `3`. |
 | `tipo` | cadena | `codigo_emparejamiento`. |
 | `metodo` | cadena | `qr` o `codigo_de_vinculacion`. Indica de qué tipo es `valor`. |
 | `valor` | cadena | Dato opaco: la cadena a codificar como QR, o el código de ocho caracteres. |
@@ -368,7 +405,7 @@ exactamente uno.
 
 | Campo | Tipo | Descripción |
 | :--- | :--- | :--- |
-| `version` | entero | `2`. |
+| `version` | entero | `3`. |
 | `tipo` | cadena | `acuse_emparejamiento`. |
 | `resultado` | cadena | `completado`, `expirado` o `fallido`. |
 | `motivo` | cadena | Descripción legible si `resultado` es `fallido`; `""` en caso contrario. **Nunca lleva la cadena QR, el código de vinculación ni ningún otro dato de credencial.** |
@@ -386,7 +423,7 @@ contrato sin modificarlo**: los campos de las dos tablas siguientes son exactame
 
 | Campo | Tipo | Descripción |
 | :--- | :--- | :--- |
-| `version` | entero | `2`. |
+| `version` | entero | `3`. |
 | `tipo` | cadena | `orden_respaldo_sqlstore`. |
 | `orden` | cadena | Cadena fija `respaldar_sqlstore`. |
 | `destino` | cadena | Directorio de destino ya resuelto por quien dispara la orden. |
@@ -396,7 +433,7 @@ contrato sin modificarlo**: los campos de las dos tablas siguientes son exactame
 
 | Campo | Tipo | Descripción |
 | :--- | :--- | :--- |
-| `version` | entero | `2`. |
+| `version` | entero | `3`. |
 | `tipo` | cadena | `acuse_respaldo_sqlstore`. |
 | `identificador_de_ronda` | cadena | El mismo recibido en la orden. |
 | `resultado` | cadena | `completado` o `fallido`. |
@@ -436,8 +473,9 @@ ofensor; **nunca la línea recibida**, que podría contener el texto de un mensa
 
 * **El esquema del outbox durable** y su retención y purga: tarea 3. Aquí se fija la semántica que
   debe cumplir, no sus tablas.
-* **Los valores del retroceso de reconexión** y la política ante baneo temporal: tarea 6.
-* **El vocabulario cerrado de `causa`** y su proyección a `estado`: tarea 7.
+* **La calibración real de los valores por omisión del retroceso de reconexión.** La versión 1.2
+  declara las variables y la forma del algoritmo; los números son pendientes de calibración bajo
+  tráfico real.
 * **La traducción de los eventos del protocolo de WhatsApp** a `evento_entrante`: tarea 8. Este
   protocolo transporta el resultado de esa traducción, no la describe.
 * **El mapeo JID → identificador interno** y su almacén propio: tarea 9. La única huella de esa
@@ -449,7 +487,7 @@ ofensor; **nunca la línea recibida**, que podría contener el texto de un mensa
   añade con el número de versión que corresponda cuando la tarea 8 la tenga delante. Declararla
   ahora, sin la traducción escrita, sería inventar campos.
 * **El emparejamiento por QR y por código de vinculación**, que la versión 1.0 omitía, queda
-  cubierto con la versión 1.1 por los tres tipos `orden_emparejar`, `codigo_emparejamiento` y
+  cubierto desde la versión 1.1 por los tres tipos `orden_emparejar`, `codigo_emparejamiento` y
   `acuse_emparejamiento`.
 
 ---

@@ -113,9 +113,12 @@ func NuevaSesion(ctx context.Context, contenedor *sqlstore.Container, reg *regis
 
 	puente := registro.NuevoAdaptadorWaLog(reg, ModuloWhatsmeow)
 	cliente := whatsmeow.NewClient(dispositivo, puente)
+	cliente.EnableAutoReconnect = false
+	cliente.InitialAutoReconnect = false
+	cliente.AutoReconnectHook = func(error) bool { return false }
 
 	reg.Info(EventoSesionConstruida, registro.Campos{
-		Detalle: "cliente whatsmeow construido sobre almacén sqlstore; sin conexión",
+		Detalle: "cliente whatsmeow construido sobre almacén sqlstore; sin conexión; autoreconexion de whatsmeow desactivada",
 	})
 	return &Sesion{
 		cliente:     cliente,
@@ -145,11 +148,18 @@ func (s *Sesion) EstaEmparejada() bool {
 // canónico del puerto, con su identificador de deduplicación, es la tarea 8; el paso previo —
 // persistir en el outbox durable antes de cualquier otra cosa— es la tarea 3, y este manejador
 // será el punto donde se enganche.
-func (s *Sesion) RegistrarManejador() uint32 {
+func (s *Sesion) RegistrarManejador(supervisores ...*Supervisor) uint32 {
+	var supervisor *Supervisor
+	if len(supervisores) > 0 {
+		supervisor = supervisores[0]
+	}
 	return s.cliente.AddEventHandler(func(evento any) {
 		s.registro.Info(EventoCrudoRecibido, registro.Campos{
 			Detalle: fmt.Sprintf("%T", evento),
 		})
+		if supervisor != nil {
+			supervisor.procesarEvento(s.ctx, evento)
+		}
 	})
 }
 

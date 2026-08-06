@@ -3,6 +3,7 @@ package ipc_test
 import (
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 
@@ -62,7 +63,7 @@ func TestElDocumentoDelProtocoloEstaVersionadoYFechadoEnAbsoluto(t *testing.T) {
 	t.Parallel()
 
 	documento := leerDocumento(t)
-	if !strings.Contains(documento, "**Versión de este protocolo:** 1.1, fijada el 2026-08-04.") {
+	if !strings.Contains(documento, "**Versión de este protocolo:** 1.2, fijada el 2026-08-05.") {
 		t.Errorf("el documento no lleva cabecera de versión con fecha absoluta")
 	}
 	if !strings.Contains(documento, "docs/contrato-ipc-respaldo-del-sqlstore.md") {
@@ -102,10 +103,73 @@ func TestElDocumentoDeclaraLaCorrespondenciaDeVersiones(t *testing.T) {
 	t.Parallel()
 
 	documento := leerDocumento(t)
+	if !strings.Contains(documento, "| 1.2 | `3` |") {
+		t.Errorf("el documento no declara la correspondencia 1.2 → cable 3")
+	}
 	if !strings.Contains(documento, "| 1.1 | `2` |") {
 		t.Errorf("el documento no declara la correspondencia 1.1 → cable 2")
 	}
 	if !strings.Contains(documento, "| 1.0 | `1` |") {
 		t.Errorf("el documento no declara la correspondencia 1.0 → cable 1")
 	}
+}
+
+func TestElDocumentoDeclaraLasCausasDelCodigo(t *testing.T) {
+	t.Parallel()
+
+	documento := leerDocumento(t)
+	for _, causa := range ipc.CausasDeclaradas() {
+		if !strings.Contains(documento, "| `"+causa+"` |") {
+			t.Errorf("el documento no declara la causa %q", causa)
+		}
+	}
+}
+
+func TestElDocumentoNoDeclaraCausasQueElCodigoNoConoce(t *testing.T) {
+	t.Parallel()
+
+	declaradasEnDocumento := causasDelDocumento(t, leerDocumento(t))
+	declaradasEnCodigo := append([]string(nil), ipc.CausasDeclaradas()...)
+	sort.Strings(declaradasEnDocumento)
+	sort.Strings(declaradasEnCodigo)
+	if strings.Join(declaradasEnDocumento, ",") != strings.Join(declaradasEnCodigo, ",") {
+		t.Fatalf("causas del documento = %v, causas del código = %v", declaradasEnDocumento, declaradasEnCodigo)
+	}
+}
+
+func TestElDocumentoDeclaraLosCuatroEstadosDelCodigo(t *testing.T) {
+	t.Parallel()
+
+	documento := leerDocumento(t)
+	for _, estado := range ipc.EstadosDeclarados() {
+		if !strings.Contains(documento, "`"+estado+"`") {
+			t.Errorf("el documento no declara el estado %q", estado)
+		}
+	}
+}
+
+func causasDelDocumento(t *testing.T, documento string) []string {
+	t.Helper()
+	inicio := strings.Index(documento, "<!-- inicio-causas-estado-sesion -->")
+	fin := strings.Index(documento, "<!-- fin-causas-estado-sesion -->")
+	if inicio < 0 || fin < 0 || fin <= inicio {
+		t.Fatalf("no se encontraron los delimitadores de la tabla de causas")
+	}
+	seccion := documento[inicio:fin]
+	var causas []string
+	for _, linea := range strings.Split(seccion, "\n") {
+		linea = strings.TrimSpace(linea)
+		if !strings.HasPrefix(linea, "| `") {
+			continue
+		}
+		partes := strings.Split(linea, "|")
+		if len(partes) < 3 {
+			continue
+		}
+		causa := strings.Trim(strings.TrimSpace(partes[1]), "`")
+		if causa != "" && causa != "causa" {
+			causas = append(causas, causa)
+		}
+	}
+	return causas
 }

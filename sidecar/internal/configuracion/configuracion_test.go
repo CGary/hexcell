@@ -122,3 +122,103 @@ func TestCargarRechazaUnaRutaDeSqlstoreVacia(t *testing.T) {
 		t.Fatalf("error = %v, se esperaba ErrRutaSqlstoreVacia", err)
 	}
 }
+
+func TestCargarAplicaValoresPorOmisionDelRetroceso(t *testing.T) {
+	t.Parallel()
+
+	cfg, err := configuracion.Cargar(entornoFalso(map[string]string{}))
+	if err != nil {
+		t.Fatalf("no se esperaba error: %v", err)
+	}
+	if cfg.Retroceso.IntervaloInicial != configuracion.RetrocesoInicialMsPorOmision {
+		t.Errorf("IntervaloInicial = %d, se esperaba %d", cfg.Retroceso.IntervaloInicial, configuracion.RetrocesoInicialMsPorOmision)
+	}
+	if cfg.Retroceso.Factor != configuracion.RetrocesoFactorPorOmision {
+		t.Errorf("Factor = %d, se esperaba %d", cfg.Retroceso.Factor, configuracion.RetrocesoFactorPorOmision)
+	}
+	if cfg.Retroceso.IntervaloMaximo != configuracion.RetrocesoMaximoMsPorOmision {
+		t.Errorf("IntervaloMaximo = %d, se esperaba %d", cfg.Retroceso.IntervaloMaximo, configuracion.RetrocesoMaximoMsPorOmision)
+	}
+	if cfg.Retroceso.BaneoInicial != configuracion.RetrocesoBaneoInicialMsPorOmision {
+		t.Errorf("BaneoInicial = %d, se esperaba %d", cfg.Retroceso.BaneoInicial, configuracion.RetrocesoBaneoInicialMsPorOmision)
+	}
+	if cfg.Retroceso.BaneoMaximo != configuracion.RetrocesoBaneoMaximoMsPorOmision {
+		t.Errorf("BaneoMaximo = %d, se esperaba %d", cfg.Retroceso.BaneoMaximo, configuracion.RetrocesoBaneoMaximoMsPorOmision)
+	}
+}
+
+func TestCargarLeeRetrocesoDelEntorno(t *testing.T) {
+	t.Parallel()
+
+	cfg, err := configuracion.Cargar(entornoFalso(map[string]string{
+		configuracion.VariableRetrocesoInicialMs:      "500",
+		configuracion.VariableRetrocesoFactor:         "3",
+		configuracion.VariableRetrocesoMaximoMs:       "30000",
+		configuracion.VariableRetrocesoBaneoInicialMs: "10000",
+		configuracion.VariableRetrocesoBaneoMaximoMs:  "120000",
+	}))
+	if err != nil {
+		t.Fatalf("no se esperaba error: %v", err)
+	}
+	if cfg.Retroceso.IntervaloInicial != 500 {
+		t.Errorf("IntervaloInicial = %d", cfg.Retroceso.IntervaloInicial)
+	}
+	if cfg.Retroceso.Factor != 3 {
+		t.Errorf("Factor = %d", cfg.Retroceso.Factor)
+	}
+	if cfg.Retroceso.IntervaloMaximo != 30000 {
+		t.Errorf("IntervaloMaximo = %d", cfg.Retroceso.IntervaloMaximo)
+	}
+	if cfg.Retroceso.BaneoInicial != 10000 {
+		t.Errorf("BaneoInicial = %d", cfg.Retroceso.BaneoInicial)
+	}
+	if cfg.Retroceso.BaneoMaximo != 120000 {
+		t.Errorf("BaneoMaximo = %d", cfg.Retroceso.BaneoMaximo)
+	}
+}
+
+func TestCargarRechazaRetrocesoNoNumerico(t *testing.T) {
+	t.Parallel()
+
+	_, err := configuracion.Cargar(entornoFalso(map[string]string{
+		configuracion.VariableRetrocesoInicialMs: "no-un-entero",
+	}))
+	if !errors.Is(err, configuracion.ErrRetrocesoInvalido) {
+		t.Fatalf("error = %v, se esperaba ErrRetrocesoInvalido", err)
+	}
+}
+
+func TestCargarRechazaRetrocesoCero(t *testing.T) {
+	t.Parallel()
+
+	_, err := configuracion.Cargar(entornoFalso(map[string]string{
+		configuracion.VariableRetrocesoInicialMs: "0",
+	}))
+	if !errors.Is(err, configuracion.ErrRetrocesoInvalido) {
+		t.Fatalf("error = %v, se esperaba ErrRetrocesoInvalido", err)
+	}
+}
+
+func TestCargarRechazaTechoMenorQueIntervaloInicial(t *testing.T) {
+	t.Parallel()
+
+	_, err := configuracion.Cargar(entornoFalso(map[string]string{
+		configuracion.VariableRetrocesoInicialMs: "5000",
+		configuracion.VariableRetrocesoMaximoMs:  "1000",
+	}))
+	if !errors.Is(err, configuracion.ErrRetrocesoInvalido) {
+		t.Fatalf("error = %v, se esperaba ErrRetrocesoInvalido", err)
+	}
+}
+
+func TestCargarRechazaTechoDeBaneoMenorQueInicialDeBaneo(t *testing.T) {
+	t.Parallel()
+
+	_, err := configuracion.Cargar(entornoFalso(map[string]string{
+		configuracion.VariableRetrocesoBaneoInicialMs: "60000",
+		configuracion.VariableRetrocesoBaneoMaximoMs:  "10000",
+	}))
+	if !errors.Is(err, configuracion.ErrRetrocesoInvalido) {
+		t.Fatalf("error = %v, se esperaba ErrRetrocesoInvalido", err)
+	}
+}
