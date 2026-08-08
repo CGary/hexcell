@@ -1,0 +1,90 @@
+task_id: HEX-014
+summary: Add sidecar identity store mapping contacts (PN-anchored, LID alias) to internal IDs, and translate incoming whatsmeow messages to evento_entrante via persist-first outbox. Risk medium.
+goal: >
+  Implement stage A-3 task 9 in full and the incoming half of task 8 from
+  docs/plan/fase-a-3-adaptador-whatsmeow.md (lines 276-284). Add a new Go
+  package in the sidecar holding an identity store: a SQLite database file on
+  the cell volume, separate from the sqlstore, that maps a contact to an
+  internal opaque identifier anchored on the phone-number JID (PN), with the
+  LID (if any) stored as an alias inside this same store. This store is the
+  fourth base of the stage A-2 backup and this task declares its schema. Wire
+  the sidecar chain so an incoming whatsmeow message event resolves its
+  sender/recipient JIDs through this store, builds the canonical
+  evento_entrante wire message (existing wire version 3, document 1.2; fields
+  unchanged), and hands it first to outbox.Persistir (keyed by the same
+  deduplication identifier used for evento_entrante) and then to an injected
+  sink, following the established estado_sesion convention instead of a live
+  IPC transport. Extend/preserve the existing executable guard that forbids
+  any JID, device id, or phone number from crossing the IPC message surface.
+  Update section 9 of docs/protocolo-ipc-nucleo-sidecar.md to reflect that the
+  acknowledgement half of task 8 (sent/delivered/read/failed) is deferred to
+  A-3 task 12, and record that scope change in docs/STATUS.md.
+invariants:
+  - No JID, device identifier, or raw phone number ever crosses the ChannelAdapter/IPC port boundary; the executable guard at sidecar/internal/ipc/mensajes_test.go (iterating ipc.TiposDeclarados() and ipc.CamposDe(tipo) against the forbidden field-name list) must keep covering every declared IPC message type, including any new or modified ones.
+  - The identity store legitimately stores JIDs internally (that is its whole job); the privacy guard applies only to the IPC message surface, never to the adapter's private identity store, and implementers must not weaken the guard to accommodate this nor refuse to store the JID where it belongs.
+  - The identity store persists in its own SQLite file on the cell volume, physically separate from the sqlstore, so that whatsmeow wiping the sqlstore on any LoggedOut (device_removed or otherwise) never discards the contact-to-identity mapping.
+  - The contact anchor is the phone-number JID (PN); the LID is stored only as an alias inside our own store and is never treated as a substitute anchor, because whatsmeow's own LID<->PN table lives inside the sqlstore and stops answering after Device.Delete.
+  - When an incoming event carries only an unknown LID with no resolvable PN yet, the store creates a provisional identity for it and merges that identity once the (LID, PN) pair is later observed, without ever losing or duplicating the underlying contact's history.
+  - evento_entrante is persisted via outbox.Persistir before being handed to the sink (persist-first), using the exact same deduplication identifier value as the outbox's primary key idDeduplicacion.
+  - marca_temporal_ms on the translated evento_entrante is always the timestamp of the original incoming event, never the timestamp of enqueue or translation.
+  - The evento_entrante wire contract stays at wire version 3 / document 1.2 with its existing seven fields (version, tipo, id_deduplicacion, id_conversacion, id_remitente, contenido, marca_temporal_ms); translation only fills these fields, it adds none and changes no wire version.
+  - Any state that gates a decision during event handling is a guarded field consulted at every decision point, never a position inferred from call-stack ordering, because every whatsmeow event dispatches in its own goroutine with no serialization.
+  - The new SQLite store's DSN includes the modernc.org/sqlite-compatible foreign-keys pragma (not the mattn/go-sqlite3-only ?_foreign_keys=on syntax), following the construirDSN pattern already established in sidecar/internal/outbox/outbox.go.
+acceptance:
+  - id: AC-1
+    statement: A new Go package implements a SQLite-backed identity store in its own database file on the cell volume, separate from the sqlstore, with a declared schema mapping contact to internal opaque identifier anchored on PN and storing LID as an alias.
+    given: the sidecar boots with a configured cell volume path and no existing identity store file
+    when: the identity store package initializes its database
+    then: a database file distinct from the sqlstore file is created or opened, with a schema anchored on PN that can also record an LID alias for the same contact
+  - id: AC-2
+    statement: An incoming whatsmeow message event is translated into a valid evento_entrante with all JIDs resolved to internal identifiers via the identity store, and no wire-format field is added, removed, or changed from the existing version-3 contract.
+    given: a whatsmeow message event with a known or resolvable sender JID
+    when: the sidecar translates the event
+    then: the resulting evento_entrante has id_remitente populated with an internal identifier (never a raw JID or phone number) and its other six wire fields match the existing wire-version-3 schema
+  - id: AC-3
+    statement: >-
+      An incoming event whose sender is known only by an unknown LID mints a provisional
+      identity, and once the (LID, PN) pair is later observed the two identities are merged
+      into ONE, without losing history recorded under whichever identifier was already emitted
+      across the port. The survivor is the OLDEST identity by creation time, which in this
+      scenario is the provisional one, precisely because an identifier already emitted to the
+      core cannot be retracted; the younger identity is tombstoned and repointed at the
+      survivor. Human decision of 2026-08-06 - this clause was corrected during the analyze
+      phase, because the original wording made the PN-anchored identity survive
+      unconditionally, contradicting this same statement's own history-preservation
+      requirement whenever the provisional identifier had already been emitted.
+    given: an incoming event referencing a LID with no PN yet resolvable in the identity store, under which one or more events have already been emitted across the port
+    when: a later event or resolution reveals the PN corresponding to that LID
+    then: the store merges the two identities keeping the OLDEST as survivor, tombstones the younger with a pointer to the survivor, and subsequent lookups for EITHER the LID or the PN resolve to the survivor's internal identifier, so no already-emitted identifier is ever retracted
+  - id: AC-4
+    statement: evento_entrante is persisted through outbox.Persistir before being handed to the sink, keyed by the same deduplication identifier used as the outbox primary key.
+    given: a translated evento_entrante ready to be delivered
+    when: the sidecar wiring processes it
+    then: outbox.Persistir is called with the evento_entrante's id_deduplicacion value before the encodable message is handed to the injected sink, and that value equals the outbox's idDeduplicacion primary key for the same event
+  - id: AC-5
+    statement: The executable IPC privacy guard (sidecar/internal/ipc/mensajes_test.go) passes for all declared message types, including any added or modified by this task, with no JID/telefono/phone/dispositivo/device/numero field present on the IPC surface.
+    given: the full set of ipc.TiposDeclarados() after this task's changes
+    when: the guard test iterates ipc.CamposDe(tipo) for each declared type
+    then: no field name in the forbidden list appears on any declared IPC message type
+  - id: AC-6
+    statement: docs/protocolo-ipc-nucleo-sidecar.md section 9 documents the task-8 scope split, and docs/STATUS.md records the deferral of the acknowledgement half of task 8 to A-3 task 12, without any change to the document version / wire version correspondence table.
+    given: the current text of protocolo-ipc-nucleo-sidecar.md section 9 and docs/STATUS.md
+    when: this task's documentation changes are applied
+    then: section 9 states that only incoming-message-to-canonical-event translation is covered here and that sent/delivered/read/failed acknowledgements are deferred to A-3 task 12, docs/STATUS.md reflects this as a recorded scope change, and the document stays at 1.2 / wire 3
+  - "New and existing sidecar Go tests pass under go test -v ./... from sidecar/ (counting --- PASS lines, not just exit code), go vet ./... is clean, and gofmt -l . reports no files."
+  - Mutation-proof tests for the identity store's concurrency-sensitive state (e.g. provisional-identity merge) live in an internal test file (package matching the implementation, not an external _test package), following the convention of sidecar/internal/canal/almacen_interno_test.go and sidecar/internal/outbox/pragmas_internos_test.go.
+risk: medium
+non_goals:
+  - Implement the acknowledgement half of task 8 (sent/delivered/read/failed translation) — deferred to A-3 task 12, which owns the outbound queue, the outbound correlation identifier, and SendResponse/error handling that acknowledgements depend on.
+  - Send any message at all, including the outbound queue itself — deferred to A-3 tasks 11 and 12.
+  - Implement the Rust WhatsmeowAdapter or any Rust-side IPC consumption — deferred to A-3 task 10.
+  - Implement the IPC socket server/transport — sidecar/internal/ipc remains a codec only; this task produces an encodable value handed to an injected sink, per the estado_sesion convention, not a live transport.
+  - Change the evento_entrante wire format or its version — the document stays at 1.2 / wire 3 with the existing seven fields.
+  - Correct docs/runbook-restauracion-de-celula.md's known-wrong branching rule about LoggedOut vs device_removed — recorded documentary debt, explicitly out of this task's scope.
+  - Test against a real WhatsApp number (A-3 task 15) or run the restore rehearsal (A-3 task 18) — both require capabilities this task does not build.
+constraints:
+  - All prose, identifiers, comments, and test names in the implementation and documentation changes are in Spanish, per repository convention; this spec's own field values are in English per the /q-brief protocol.
+  - "Touch surface is limited to the Go sidecar and documentation: a new sidecar package for the identity store, changes to the sidecar event-handling/wiring path (including main.go) to invoke it and wire the outbox, and updates to docs/protocolo-ipc-nucleo-sidecar.md and docs/STATUS.md. No Rust workspace changes belong to this task."
+  - The new SQLite identity store must use the same DSN/pragma convention as sidecar/internal/outbox/outbox.go's construirDSN (modernc.org/sqlite foreign-keys pragma), not the mattn/go-sqlite3-only query-string syntax.
+  - Any verify command that runs Go must export a writable GOCACHE (e.g. GOCACHE=/tmp/hexcell-go-cache), since the execution sandbox cannot write the default one.
+  - "go test ./... alone is not sufficient evidence of test execution (it exits 0 with zero tests); verification must use the -v flag and confirm --- PASS lines are present."

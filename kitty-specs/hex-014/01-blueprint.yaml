@@ -1,0 +1,247 @@
+task_id: HEX-014
+summary: "New identidad SQLite package (PN anchor, LID alias, provisional+merge) and canal Traductor mapping events.Message to evento_entrante, persisted to outbox before an injected sink. Wire 3 unchanged."
+
+affected_files:
+  - sidecar/internal/identidad/identidad.go
+  - sidecar/internal/identidad/identidad_test.go
+  - sidecar/internal/identidad/fusion_interno_test.go
+  - sidecar/internal/canal/traduccion.go
+  - sidecar/internal/canal/traduccion_test.go
+  - sidecar/internal/canal/traduccion_interno_test.go
+  - sidecar/internal/canal/canal.go
+  - sidecar/internal/configuracion/configuracion.go
+  - sidecar/internal/configuracion/configuracion_test.go
+  - sidecar/main.go
+  - docs/protocolo-ipc-nucleo-sidecar.md
+  - docs/STATUS.md
+
+symbols:
+  - "identidad.Almacen (struct: db *sql.DB, registro, mu sync.RWMutex, cerrado bool — guarded state as FIELDS, never call-stack position)"
+  - "identidad.Opciones (Ruta, Registro)"
+  - "identidad.Abrir(Opciones) (*Almacen, error) — opens its OWN SQLite file, applies DDL, SetMaxOpenConns(1)"
+  - "identidad.construirDSN(ruta string) string — _pragma=foreign_keys(1)&_pragma=journal_mode(WAL)&_pragma=synchronous(FULL)&_pragma=busy_timeout(5000)"
+  - "identidad.RutaPorOmision = \"/var/lib/hexcell/identidad.db\" — the FOURTH BASE of the A-2 backup"
+  - "identidad.PrefijoIdentidad = \"ct-\" — opaque id = \"ct-\" + hex(crypto/rand 16 bytes), 35 chars total"
+  - "identidad.EstadoProvisional / EstadoAnclada / EstadoFusionada — the three states of the machine"
+  - "identidad.DireccionPN / DireccionLID — closed vocabulary of the direccion.tipo column"
+  - "identidad.Observacion (struct: PN types.JID, LID types.JID — either may be empty)"
+  - "identidad.Identidad (struct: IdInterno string, Estado string, ConflictoDeAlias bool)"
+  - "identidad.Almacen.Resolver(ctx, Observacion) (Identidad, error) — SINGLE atomic entry point: lookup, mint, anchor and merge all happen in ONE transaction"
+  - "identidad.Almacen.DireccionDe(ctx, idInterno string) (types.JID, error) — reverse map internal id -> JID; the reason the identifier is opaque and not an HMAC"
+  - "identidad.Almacen.Cerrar() error — idempotent, mirrors outbox.Outbox.Cerrar"
+  - "identidad.generarIdInterno() (string, error) — crypto/rand, never time-seeded, never derived from the phone number"
+  - "identidad.ErrAlmacenCerrado / ErrObservacionVacia"
+  - "identidad.EventoIdentidadCreada / EventoIdentidadAnclada / EventoIdentidadFusionada / EventoConflictoDeAlias — fixed event names, adr-0019"
+  - "canal.SumideroDeEvento func(ipc.EventoEntrante) — mirrors the existing canal.SumideroDeEstado injected-sink convention"
+  - "canal.BuzonDurable interface { Persistir(ctx, string, []byte) error } — *outbox.Outbox satisfies it; a spy proves persist-first ordering"
+  - "canal.ResolutorDeAlias interface { AliasDe(ctx, types.JID) (types.JID, error) } — production impl is store.Device.GetAltJID; nil is legal"
+  - "canal.Traductor (struct: almacen, buzon, sumidero, resolutor, registro, ahoraMs — all collaborators as FIELDS)"
+  - "canal.NuevoTraductor(almacen, buzon, sumidero, resolutor, reg) *Traductor"
+  - "canal.Traductor.procesarMensaje(ctx, *events.Message) — the chain; unexported"
+  - "canal.admisible(info types.MessageInfo) (string, bool) — PURE allow-list filter, mirrors clasificarDesconexion purity"
+  - "canal.extraerTexto(*waE2E.Message) (string, bool) — PURE; only Conversation and ExtendedTextMessage.Text"
+  - "canal.construirIdDeduplicacion(idInterno, idMensaje string) string — idInterno + \":\" + Info.ID"
+  - "canal.EventoMensajeTraducido / EventoMensajeDescartado"
+  - "canal.Sesion.RegistrarTraductor(*Traductor) uint32 — ADDITIVE second AddEventHandler; RegistrarManejador signature untouched"
+  - "configuracion.VariableRutaIdentidad = \"HEXCELL_RUTA_IDENTIDAD\" / RutaIdentidadPorOmision / ErrRutaIdentidadVacia / Configuracion.RutaIdentidad"
+
+dependencies:
+  - sidecar/internal/outbox/outbox.go
+  - sidecar/internal/ipc/mensajes.go
+  - sidecar/internal/ipc/mensajes_test.go
+  - sidecar/internal/ipc/documento_test.go
+  - sidecar/internal/canal/reconexion.go
+  - sidecar/internal/canal/taxonomia.go
+  - sidecar/internal/canal/canal_test.go
+  - sidecar/internal/registro/registro.go
+  - sidecar/internal/outbox/pragmas_internos_test.go
+  - sidecar/internal/canal/almacen_interno_test.go
+  - docs/adr/adr-0010-puerto-de-canal.md
+  - docs/adr/adr-0020-respaldo-y-restauracion-por-celula.md
+  - docs/plan/fase-a-3-adaptador-whatsmeow.md
+
+test_scenarios:
+  - statement: "Abrir creates a database file at a path distinct from RutaSqlstore and applies the two-table schema (identidad, direccion) with its indices; reopening the same path is idempotent and preserves rows."
+    covers: ["AC-1"]
+  - statement: "construirDSN carries _pragma=foreign_keys(1), journal_mode(WAL), synchronous(FULL) and busy_timeout(5000), and never the mattn-only ?_foreign_keys=on syntax (internal test, mirrors outbox/pragmas_internos_test.go)."
+    covers: ["AC-1"]
+  - statement: "A generated internal identifier starts with \"ct-\", is 35 characters, is pure lowercase hex after the prefix, and two consecutive calls never collide; no character of the source JID or phone number appears in it."
+    covers: ["AC-1", "AC-2"]
+  - statement: "Resolver with only a PN mints an identity in estado anclada; Resolver with only an unknown LID mints an identity in estado provisional."
+    covers: ["AC-1", "AC-3"]
+  - statement: "Resolver called twice with the same PN returns the same IdInterno; Resolver called with (PN, LID) after a PN-only mint attaches the LID alias to the SAME identity without minting a second one."
+    covers: ["AC-1", "AC-3"]
+  - statement: "Merge preserves the OLDEST identity: when a provisional LID identity created first is later observed paired with a PN identity created second, the survivor is the provisional one (already emitted to the core), the younger is tombstoned with estado fusionada and fusionada_en pointing at the survivor, and both addresses resolve to the survivor's IdInterno."
+    covers: ["AC-3"]
+  - statement: "A lookup that lands on a tombstoned identity follows fusionada_en exactly one hop and returns the survivor; chains never exceed depth 1 because absorbing an identity repoints every row already pointing at it in the same transaction."
+    covers: ["AC-3"]
+  - statement: "Conflicting observation: a LID already bound to an identity holding PN p1 is observed paired with a different PN p2; the store does NOT rebind and does NOT merge, returns the identity resolved from the PN with ConflictoDeAlias true, and emits EventoConflictoDeAlias (internal test on the unexported merge path)."
+    covers: ["AC-3"]
+  - statement: "Concurrency: N goroutines call Resolver simultaneously with the same PN under -race; exactly one identity row exists afterwards and every goroutine received the same IdInterno (UNIQUE PRIMARY KEY on direccion plus INSERT ... ON CONFLICT DO NOTHING inside one transaction is the enforcement point)."
+    covers: ["AC-1", "AC-3"]
+  - statement: "DireccionDe returns the PN for an anchored identity and the LID for a provisional one, proving the internal-id -> JID reverse mapping the reply path (A-3 tasks 11-12) requires."
+    covers: ["AC-1"]
+  - statement: "A plain text events.Message from an unknown DM sender produces an ipc.EventoEntrante whose id_remitente and id_conversacion are the same opaque internal identifier, whose contenido is the message text, and whose marca_temporal_ms is Info.Timestamp.UnixMilli() and NOT the enqueue clock."
+    covers: ["AC-2"]
+  - statement: "The produced ipc.EventoEntrante round-trips through ipc.Codificar/ipc.Decodificar unchanged and its encoded line declares exactly the seven wire-3 fields, with no field added and version still 3."
+    covers: ["AC-2", "AC-6"]
+  - statement: "No value placed on any evento_entrante field contains '@', the s.whatsapp.net or lid server strings, or the digit run of the source phone number (mutation-proof privacy assertion over the translated value, complementing the field-name guard)."
+    covers: ["AC-2", "AC-5"]
+  - statement: "Persist-first ordering: a spy BuzonDurable and a spy sink record their call order; Persistir is always recorded before the sink, the string passed to Persistir equals the EventoEntrante.IdDeduplicacion, and when Persistir returns an error the sink is NEVER called (internal test)."
+    covers: ["AC-4"]
+  - statement: "The same events.Message delivered twice produces the identical IdDeduplicacion, and against a real *outbox.Outbox the second Persistir leaves exactly one row (ON CONFLICT DO NOTHING), proving stability across sidecar restarts."
+    covers: ["AC-4"]
+  - statement: "Filter allow-list: messages with IsFromMe true, IsGroup true, a chat server other than s.whatsapp.net or lid (broadcast, status, newsletter), Info.Edit non-empty, or a non-text body (image, sticker, reaction, location, document-with-caption) are all dropped — no outbox row, no sink call — and each drop logs EventoMensajeDescartado with a fixed reason and no JID."
+    covers: ["AC-2", "AC-4"]
+  - statement: "A text extraction that yields an empty string after trimming is dropped rather than emitted as an empty contenido."
+    covers: ["AC-2"]
+  - statement: "A ResolutorDeAlias returning an error (the ErrDeviceDeleted NoopStore case after any LoggedOut) is non-fatal: translation continues with a provisional identity and the message is still emitted."
+    covers: ["AC-3"]
+  - statement: "The existing ipc guard TestElEventoEntranteNoTransportaNingunIdentificadorDeTransporte still passes untouched over all nine declared types, and the count of declared types is still nine."
+    covers: ["AC-5"]
+  - statement: "docs/protocolo-ipc-nucleo-sidecar.md still contains sections 1, 2, 4 and 5 and the unchanged 1.2 -> 3 version row, so ipc/documento_test.go stays green after section 9 is edited."
+    covers: ["AC-6"]
+  - statement: "configuracion.Cargar returns RutaIdentidadPorOmision when HEXCELL_RUTA_IDENTIDAD is absent, the supplied value when present, and ErrRutaIdentidadVacia when present but empty (same absent-vs-empty distinction the other paths use)."
+    covers: ["AC-1"]
+
+strategy:
+  - step: 1
+    action: >
+      Value Object / Entity layer. Create package identidad with its DDL as a package constant.
+      Two tables, deliberately generalized so no migration is ever needed on this file (it is the
+      FOURTH BASE of the A-2 backup and lives on customer volumes):
+      identidad(id_interno TEXT PRIMARY KEY, estado TEXT NOT NULL CHECK (estado IN
+      ('provisional','anclada','fusionada')), fusionada_en TEXT NULL REFERENCES
+      identidad(id_interno) ON DELETE RESTRICT, creada_en_ms INTEGER NOT NULL, actualizada_en_ms
+      INTEGER NOT NULL, CHECK ((estado = 'fusionada') = (fusionada_en IS NOT NULL)));
+      direccion(tipo TEXT NOT NULL CHECK (tipo IN ('pn','lid')), usuario TEXT NOT NULL, servidor
+      TEXT NOT NULL, id_interno TEXT NOT NULL REFERENCES identidad(id_interno) ON DELETE CASCADE,
+      observada_en_ms INTEGER NOT NULL, PRIMARY KEY (tipo, usuario, servidor));
+      plus CREATE INDEX idx_direccion_identidad ON direccion(id_interno) and CREATE INDEX
+      idx_identidad_fusionada ON identidad(fusionada_en). The addresses are stored as
+      JID.ToNonAD() components (usuario, servidor) so a device suffix can never fork a contact.
+      Write the schema rationale into the package doc comment in Spanish: A-2's backup script must
+      be able to read this schema from the code.
+    files:
+      - sidecar/internal/identidad/identidad.go
+  - step: 2
+    action: >
+      Application Service. Implement Abrir (construirDSN with foreign_keys(1) — the outbox omits it
+      because the outbox has no FK, this schema does; SetMaxOpenConns(1) like the outbox, which
+      serializes writers and removes SQLITE_BUSY against ourselves) and the single entry point
+      Resolver, executed entirely inside ONE sql.Tx. Resolver algorithm: (a) normalize each present
+      JID with ToNonAD; (b) SELECT the identity for each present address, following fusionada_en at
+      most one hop; (c) if neither resolves, generate a new id with crypto/rand and INSERT identidad
+      + INSERT INTO direccion ... ON CONFLICT(tipo,usuario,servidor) DO NOTHING, then re-SELECT
+      inside the same transaction and adopt whatever is stored, discarding the generated id if a
+      concurrent transaction won; (d) if only one resolves and the other address is free, attach the
+      free address to it and, if a PN was attached to a provisional identity, move estado to
+      anclada; (e) if both resolve to DIFFERENT identities, apply the merge rule of step 3.
+    files:
+      - sidecar/internal/identidad/identidad.go
+  - step: 3
+    action: >
+      The merge state machine, the hard part. SURVIVOR RULE, state it verbatim in the code comment:
+      the survivor is the identity with the SMALLEST creada_en_ms, ties broken by the lexicographic
+      order of id_interno so the outcome is deterministic regardless of arrival order. Rationale:
+      the oldest identity is the one whose identifier the core has ALREADY seen, and an identifier
+      already emitted across the port cannot be retracted. This means a PN-anchored identity can
+      legitimately be absorbed into a provisional one; that is correct and must NOT be inverted —
+      PN is the authoritative ADDRESS anchor, not a rule about which row survives. The merge, in the
+      same transaction: UPDATE direccion SET id_interno = survivor WHERE id_interno = absorbed;
+      UPDATE identidad SET fusionada_en = survivor WHERE fusionada_en = absorbed (keeps chains at
+      depth 1); UPDATE identidad SET estado='fusionada', fusionada_en=survivor on the absorbed row;
+      recompute the survivor's estado (anclada if it now owns a pn address). CONFLICT RULE: if both
+      identities already own DIFFERENT pn addresses, REFUSE — do not merge, do not rebind, keep both
+      bindings, return the PN-resolved identity with ConflictoDeAlias true and log
+      EventoConflictoDeAlias. A wrong merge mixes two customers' histories and is unrecoverable; a
+      stale alias is merely suboptimal. Implement DireccionDe and the idempotent Cerrar.
+    files:
+      - sidecar/internal/identidad/identidad.go
+  - step: 4
+    action: >
+      Validators, as PURE unexported functions mirroring taxonomia.go's clasificarDesconexion.
+      admisible is an ALLOW-LIST, not a deny-list: accept only when !IsFromMe, !IsGroup,
+      Info.Chat.Server is s.whatsapp.net or lid, Info.Chat is not a broadcast list, and Info.Edit is
+      EditAttributeEmpty. extraerTexto reads ONLY Message.GetConversation() and
+      Message.GetExtendedTextMessage().GetText(), trims, and rejects empty; every other body kind
+      (image, video, audio, document, sticker, reaction, location, contact, poll, protocol) is
+      dropped. Captions are NOT harvested: a caption without its media is a mutilated message, and a
+      placeholder string would be indistinguishable from a customer literally typing it and would
+      feed the LLM a fabricated utterance. events.UndecryptableMessage is not handled at all — it
+      carries no waE2E.Message.
+    files:
+      - sidecar/internal/canal/traduccion.go
+  - step: 5
+    action: >
+      Orchestration, kept out of the domain functions. Traductor holds every collaborator as a
+      FIELD (the HEX-013 defect was state inferred from call-stack position; there is none here).
+      procesarMensaje chain, in this exact order: type-assert *events.Message -> admisible ->
+      extraerTexto -> build identidad.Observacion from Info.Sender/Info.SenderAlt using
+      AddressingMode to decide which is the PN and which is the LID, consulting ResolutorDeAlias
+      ONLY when SenderAlt is empty and treating its error as non-fatal -> almacen.Resolver ->
+      construirIdDeduplicacion -> build ipc.EventoEntrante with MarcaTemporalMs =
+      Info.Timestamp.UnixMilli() -> ipc.Codificar(ipc.NuevoSobre(evento)) -> buzon.Persistir(ctx,
+      idDeduplicacion, linea) -> ONLY on success, sumidero(evento). NO lock is held across any of
+      it and the path performs NO network I/O: the only whatsmeow call permitted is the local
+      device-store alias read, done BEFORE the store transaction opens (whatsmeow's websocket
+      upgrade is unbounded and its dial context becomes the session context, so a lock or deadline
+      around a network call would tear down the live session).
+    files:
+      - sidecar/internal/canal/traduccion.go
+  - step: 6
+    action: >
+      Wiring. Add configuracion.VariableRutaIdentidad / RutaIdentidadPorOmision /
+      ErrRutaIdentidadVacia / Configuracion.RutaIdentidad, following the exact absent-vs-empty
+      pattern of RutaSqlstore. Add the ADDITIVE Sesion.RegistrarTraductor so RegistrarManejador's
+      signature and canal_test.go stay untouched. In main.go open identidad.Abrir and outbox.Abrir
+      (using outbox.RutaPorOmision — a config variable for the outbox path is deliberately NOT added
+      here), build the Traductor with a sink that logs (there is no IPC socket server yet, exactly
+      as estado_sesion does today per protocolo-ipc-nucleo-sidecar.md line 10), register it, and
+      close both stores on the ordered shutdown path.
+    files:
+      - sidecar/internal/canal/canal.go
+      - sidecar/internal/configuracion/configuracion.go
+      - sidecar/main.go
+  - step: 7
+    action: >
+      Tests, split by the repo's established reachability rule. External packages
+      (identidad_test, canal_test) cover the public API, the wire round-trip and the filter matrix.
+      INTERNAL test files (package identidad, package canal) cover what an external package cannot
+      reach: construirDSN pragmas, generarIdInterno's shape, the survivor rule, the conflict refusal,
+      the depth-1 chain invariant, the concurrent-mint race under -race, and the persist-first
+      ordering with spies. Follow almacen_interno_test.go, pragmas_internos_test.go and
+      reconexion_interno_test.go. No test may open a whatsmeow client or a socket; events.Message
+      values are constructed literally, exactly as taxonomia_interno_test.go constructs
+      events.LoggedOut.
+    files:
+      - sidecar/internal/identidad/identidad_test.go
+      - sidecar/internal/identidad/fusion_interno_test.go
+      - sidecar/internal/canal/traduccion_test.go
+      - sidecar/internal/canal/traduccion_interno_test.go
+  - step: 8
+    action: >
+      Documentation. In docs/protocolo-ipc-nucleo-sidecar.md section 9 ONLY: rewrite the two bullets
+      about task 8 and task 9 to say that HEX-014 covers the incoming half (message to
+      evento_entrante) and the identity mapping, and that the sent/delivered/read/failed
+      acknowledgements are deferred to A-3 task 12, which owns the outbound queue and the
+      correlation identifier they depend on. Do NOT touch the version table, any section heading, or
+      any of sections 1 to 8 — ipc/documento_test.go asserts sections 1, 2, 4, 5, the 1.2 -> 3 row,
+      the nine types, the field lists, the causes and the states. Record the same scope split in
+      docs/STATUS.md and state there that the identity store at /var/lib/hexcell/identidad.db is the
+      fourth base of the A-2 backup, with its schema declared in this task.
+    files:
+      - docs/protocolo-ipc-nucleo-sidecar.md
+      - docs/STATUS.md
+
+risks:
+  - "DEDUPLICATION ACROSS A MERGE (most consequential). id_deduplicacion is idInterno + \":\" + Info.ID. Info.ID alone is documented unique per sender, not globally, so a composite is mandatory; and the sender ADDRESS cannot be the second ingredient because the same message can be redelivered addressed by PN in one delivery and by LID in another, which is precisely what the identity unifies. Residual: if the same whatsmeow message is redelivered ACROSS a merge boundary, the pre-merge dedup id (tombstoned identity) and the post-merge one (survivor) differ, so the core would see it twice. Bounded to at most the merge instant per contact, and covered by the declared at-least-once contract (exactly-once is not promised). Do NOT invent a mechanism to close it in this task; A-3 task 12 owns redelivery."
+  - "SURVIVOR RULE IS COUNTER-INTUITIVE AND WILL BE INVERTED IF NOT READ. Oldest-created wins, which can mean a provisional LID-only identity absorbs a PN-anchored one. That is correct: the oldest is the identifier the core already holds and an emitted identifier cannot be retracted. An implementer who 'fixes' this so PN always wins silently breaks the spec invariant about not losing history."
+  - "MEDIA IS DROPPED SILENTLY — PRODUCT RISK A HUMAN SHOULD SEE. A customer who sends only a photo, sticker, audio note or reaction gets NO reply at all, which reads as a broken bot to a real piloto-01 client. The decision is deliberate (a placeholder is indistinguishable from a customer typing it, and A-3 has no media pipeline), but it should be revisited before a real number is connected in A-3 task 15."
+  - "store.LIDs STOPS ANSWERING AFTER ANY LoggedOut. Device.Delete calls SetAllStores(&NoopStore{ErrDeviceDeleted}) (store/store.go:294) and whatsmeow_lid_map lives inside the sqlstore, so the alias resolver returns errors after any logout. Verified. Mitigation is designed in: ResolutorDeAlias errors are non-fatal and the identity store reconstructs the contact by itself from its own direccion rows."
+  - "estado IS DERIVED-BUT-STORED. The estado column duplicates information recoverable from direccion rows and fusionada_en. It is kept because it makes the state machine queryable and testable, but it MUST be updated in the same transaction as every address change or it drifts, and drift would be invisible until A-3 task 18 restores real data. The CHECK constraint only catches the fusionada case."
+  - "adr-0020 DOES NOT YET NAME THIS FILE. This task fixes the fourth base's path (/var/lib/hexcell/identidad.db) and schema, but the A-2 backup procedure and docs/runbook-restauracion-de-celula.md are not updated here (explicit non-goal). A-3 task 18 must add this file to the backup set or the restore rehearsal will silently pass while losing every contact mapping."
+  - "runbook-restauracion-de-celula.md's LoggedOut-vs-device_removed branching rule is known-wrong and is a declared non-goal of this task, but the identity store's whole justification depends on the correct rule (whatsmeow wipes the sqlstore on ANY LoggedOut, not only device_removed). The documentary debt now has a code dependency."
+  - "-race REQUIRES CGO. The concurrent-mint scenario is only meaningful under -race, and -race is silently unavailable if CGO_ENABLED=0 or no C toolchain is present. Never add CGO_ENABLED=0 to the race command; a failure there is environmental, not a code defect."
+  - "BASELINE TEST COUNT IS AMBIGUOUS: on main the sidecar suite reports 84 top-level '--- PASS' lines (grep '^--- PASS') and 113 including subtests (grep -- '--- PASS'). Both numbers are correct depending on the anchor. Verification must confirm no regression and must not treat a bare exit code as evidence, since go test exits 0 with zero tests."
+  - "NO PRIOR FAILED TASK OVERLAPS: quorum analyze failure-lookup returned null for canal.go, main.go, outbox.go and ipc/mensajes.go, so no inherited failure lesson applies."

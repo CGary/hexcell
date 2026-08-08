@@ -1,0 +1,38 @@
+{
+  "commands": [
+    {
+      "command": "bash -c 'cd sidecar && GOCACHE=/tmp/hexcell-go-cache go build ./...'",
+      "duration_s": 0.52,
+      "exit_code": 0,
+      "output_excerpt": "sin salida; exit 0"
+    },
+    {
+      "command": "bash -c 'cd sidecar && GOCACHE=/tmp/hexcell-go-cache go vet ./...'",
+      "duration_s": 0.06,
+      "exit_code": 0,
+      "output_excerpt": "sin salida; exit 0"
+    },
+    {
+      "command": "bash -c 'cd sidecar && test -z \"$(gofmt -l .)\"'",
+      "duration_s": 0.01,
+      "exit_code": 0,
+      "output_excerpt": "sin salida; exit 0"
+    },
+    {
+      "command": "bash -c 'cd sidecar && GOCACHE=/tmp/hexcell-go-cache go test -v ./...'",
+      "duration_s": 0.45,
+      "exit_code": 0,
+      "output_excerpt": "121 lineas '--- PASS', 0 FAIL, 8 paquetes ok; estable en 10 corridas con -count=1"
+    },
+    {
+      "command": "bash -c 'cd sidecar && GOCACHE=/tmp/hexcell-go-cache go test -race ./internal/identidad/... ./internal/canal/...'",
+      "duration_s": 2.21,
+      "exit_code": 0,
+      "output_excerpt": "PASS con detector de carreras en identidad y canal"
+    }
+  ],
+  "executed_at": "2026-08-07T00:34:23Z",
+  "overall_result": "passed",
+  "summary": "Los 5 comandos de verify pasan sobre el estado FINAL de HEX-014 (tras revision y re-revision): 121 casos '--- PASS', 0 FAIL, 8 paquetes ok, estable en 10 corridas repetidas con -count=1.",
+  "task_id": "HEX-014"
+}

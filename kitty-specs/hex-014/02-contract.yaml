@@ -1,0 +1,153 @@
+task_id: HEX-014
+summary: "Add sidecar identidad SQLite store (PN anchor, LID alias, provisional+merge) and canal Traductor building evento_entrante persisted to the outbox before an injected sink. Wire 3 frozen."
+goal: >
+  Implement stage A-3 task 9 in full and the incoming half of task 8. Create the new Go package
+  sidecar/internal/identidad: a SQLite database in its OWN file on the cell volume
+  (/var/lib/hexcell/identidad.db), physically separate from the sqlstore so a LoggedOut of any kind
+  cannot take the contact mapping with it, holding two tables (identidad, direccion) that map a
+  contact anchored on its phone-number JID — with the LID kept as an alias — to an OPAQUE
+  crypto/rand internal identifier, and implementing the provisional / anchored / merged state
+  machine with a deterministic oldest-wins survivor rule and an explicit refusal to merge on
+  conflicting observations. Create sidecar/internal/canal/traduccion.go: a Traductor that filters
+  incoming events.Message through a pure allow-list, extracts text, resolves the sender through the
+  identity store, builds the existing wire-3 ipc.EventoEntrante with marca_temporal_ms taken from
+  the incoming event, persists the encoded line to outbox.Persistir keyed by the same
+  id_deduplicacion, and only then hands the value to an injected sink following the estado_sesion
+  convention. Wire the whole chain in main.go with a new HEXCELL_RUTA_IDENTIDAD configuration
+  variable, and update section 9 of docs/protocolo-ipc-nucleo-sidecar.md plus docs/STATUS.md to
+  record that the acknowledgement half of task 8 is deferred to A-3 task 12. The IPC wire format,
+  its version and its executable privacy guard are frozen.
+
+read:
+  - .ai/tasks/active/HEX-014-new-spec/00-spec.yaml
+  - .ai/tasks/active/HEX-014-new-spec/01-blueprint.yaml
+  - sidecar/internal/outbox/outbox.go
+  - sidecar/internal/outbox/pragmas_internos_test.go
+  - sidecar/internal/ipc/mensajes.go
+  - sidecar/internal/ipc/mensajes_test.go
+  - sidecar/internal/ipc/documento_test.go
+  - sidecar/internal/canal/canal.go
+  - sidecar/internal/canal/reconexion.go
+  - sidecar/internal/canal/taxonomia.go
+  - sidecar/internal/canal/taxonomia_interno_test.go
+  - sidecar/internal/canal/reconexion_interno_test.go
+  - sidecar/internal/canal/almacen_interno_test.go
+  - sidecar/internal/canal/canal_test.go
+  - sidecar/internal/registro/registro.go
+  - sidecar/internal/configuracion/configuracion.go
+  - sidecar/main.go
+  - docs/protocolo-ipc-nucleo-sidecar.md
+  - docs/STATUS.md
+  - docs/plan/fase-a-3-adaptador-whatsmeow.md
+  - docs/adr/adr-0010-puerto-de-canal.md
+  - docs/adr/adr-0020-respaldo-y-restauracion-por-celula.md
+  - CLAUDE.md
+
+touch:
+  - sidecar/internal/identidad/identidad.go
+  - sidecar/internal/identidad/identidad_test.go
+  - sidecar/internal/identidad/fusion_interno_test.go
+  - sidecar/internal/canal/traduccion.go
+  - sidecar/internal/canal/traduccion_test.go
+  - sidecar/internal/canal/traduccion_interno_test.go
+  - sidecar/internal/canal/canal.go
+  - sidecar/internal/configuracion/configuracion.go
+  - sidecar/internal/configuracion/configuracion_test.go
+  - sidecar/main.go
+  - docs/protocolo-ipc-nucleo-sidecar.md
+  - docs/STATUS.md
+
+forbid:
+  files:
+    - sidecar/internal/ipc/mensajes.go
+    - sidecar/internal/ipc/mensajes_test.go
+    - sidecar/internal/ipc/documento_test.go
+    - sidecar/internal/outbox/outbox.go
+    - sidecar/internal/outbox/outbox_test.go
+    - sidecar/internal/outbox/pragmas_internos_test.go
+    - sidecar/internal/canal/reconexion.go
+    - sidecar/internal/canal/taxonomia.go
+    - sidecar/internal/canal/emparejamiento.go
+    - sidecar/internal/canal/canal_test.go
+    - sidecar/internal/canal/emparejamiento_test.go
+    - sidecar/internal/canal/almacen_interno_test.go
+    - sidecar/internal/canal/reconexion_interno_test.go
+    - sidecar/internal/canal/taxonomia_interno_test.go
+    - sidecar/internal/registro/registro.go
+    - sidecar/internal/registro/registro_test.go
+    - sidecar/go.mod
+    - sidecar/go.sum
+    - Cargo.toml
+    - Cargo.lock
+    - crates/**
+    - docs/PRD.md
+    - README.md
+    - docs/adr/**
+    - docs/plan/**
+    - docs/runbook-restauracion-de-celula.md
+    - docs/contrato-ipc-respaldo-del-sqlstore.md
+    - docs/bitacora-de-descartes.md
+    - .ai/tasks/active/HEX-014-new-spec/00-spec.yaml
+    - .agents/policies/**
+  behaviors:
+    - "Do NOT change the IPC wire: ipc.VersionProtocolo stays 3, the nine declared types stay nine, and evento_entrante keeps exactly its seven fields. If the design seems to need a wire change, STOP and report it instead of bumping the version."
+    - "Do NOT weaken, delete, skip, rename or narrow TestElEventoEntranteNoTransportaNingunIdentificadorDeTransporte in sidecar/internal/ipc/mensajes_test.go, and do NOT shrink its forbidden-substring list {jid, telefono, phone, dispositivo, device, numero}."
+    - "Do NOT refuse to store the JID inside sidecar/internal/identidad: that store legitimately holds JIDs, which is its entire purpose. The privacy guard governs the IPC message surface only, never the adapter's private store."
+    - "Do NOT let any JID, phone number, device identifier or push name reach an ipc.* value, a registro.Campos value, or the id_deduplicacion string."
+    - "Do NOT derive the internal identifier from the phone number by hash, HMAC, keyed derivation, encryption or any other deterministic function. It MUST come from crypto/rand. A reverse map is required regardless (DireccionDe), so determinism buys nothing while making a leaked key a rainbow table away from plaintext over a ~10^10 number space."
+    - "Do NOT place the identity mapping inside the sqlstore file, inside any whatsmeow_* table, or inside the outbox database. It is a separate file, and it is the fourth base of the A-2 backup."
+    - "Do NOT use the mattn/go-sqlite3-only ?_foreign_keys=on query syntax; modernc.org/sqlite silently ignores it. Use _pragma=foreign_keys(1) as sidecar/internal/canal/canal.go already does."
+    - "Do NOT call the injected sink before outbox.Persistir has returned nil. Persist-first is the property the whole ordering of A-3 tasks 3 and 8 exists to guarantee."
+    - "Do NOT use time.Now() or the enqueue instant for marca_temporal_ms; it is Info.Timestamp of the incoming event, because it measures the outbound queue's absolute TTL in A-3 task 12."
+    # AMENDED 2026-08-06 by human ruling. The clause originally read "ties broken lexicographically
+    # by id_interno". That rule is DEFECTIVE and was replaced, not relaxed. Evidence: creada_en_ms is
+    # time.Now().UnixMilli(), so two identities for the same contact created within one millisecond
+    # tie — which is the NORMAL race here, because whatsmeow dispatches every event in its own
+    # goroutine and a LID-only event can land alongside a PN event. On a tie, id_interno comes from
+    # crypto/rand, so a lexicographic comparison picks the survivor AT RANDOM and violates AC-3's
+    # "an already-emitted identifier is never retracted" roughly half the time. Measured: reverting
+    # to the lexicographic rule made TestResolver_FusionConservaElMasAntiguo and
+    # TestResolver_BusquedaDeFusionadaSigueUnSalto fail, and an independent reviewer measured 18/30
+    # failures across repeated runs. SQLite's rowid IS the insertion sequence, which is exactly what
+    # "oldest" means, so it is the correct tie-break. The rowid is read once at merge time and the
+    # outcome is persisted immediately, so a later VACUUM cannot alter a completed merge.
+    - "Do NOT invert the survivor rule: the merge survivor is the OLDEST identity by creada_en_ms (ties broken by SQLite rowid, i.e. true insertion order, NEVER lexicographically by id_interno, which is crypto/rand and therefore arbitrary), even when that means a provisional LID-only identity absorbs a PN-anchored one. An identifier already emitted across the port cannot be retracted."
+    - "Do NOT rebind or delete an address that already belongs to a different identity holding a different PN. Refuse the merge, keep both bindings, and report it through ConflictoDeAlias plus a fixed log event."
+    - "Do NOT infer any decision state from call-stack position or from the order in which handlers were invoked. Every gating value is a struct FIELD read under its guard at each decision point; whatsmeow dispatches every event in its own goroutine."
+    - "Do NOT hold any mutex across a whatsmeow network call, and do NOT pass a deadline or timeout context to Connect or to the dial path: whatsmeow's dial context becomes the session context, so a deadline would tear down the live session."
+    - "Do NOT add a Go module dependency; sidecar/go.mod and sidecar/go.sum are forbidden files. modernc.org/sqlite, go.mau.fi/whatsmeow and the standard library already cover everything this task needs."
+    - "Do NOT set CGO_ENABLED=0 on any command that runs the race detector, and do NOT drop -race from the verification commands."
+    - "Do NOT rely on a bare `go test ./...` exit code as evidence: it exits 0 with zero tests. Use -v and confirm the '--- PASS' lines."
+    - "Do NOT implement out-of-scope work: no acknowledgements (sent/delivered/read/failed), no outbound sending, no outbound queue, no IPC socket server or transport, no Rust WhatsmeowAdapter, no group or media support."
+    - "Do NOT edit any heading, the version-correspondence table, or sections 1 to 8 of docs/protocolo-ipc-nucleo-sidecar.md. Only the section 9 deferral text changes, and the document stays at 1.2 / wire 3."
+    - "Do NOT modify 00-spec.yaml, and do NOT run git merge."
+    - "All Go identifiers, comments, doc comments, test names and documentation prose MUST be in Spanish, per repository convention. Conventional commit messages in Spanish with no AI attribution."
+
+verify:
+  commands:
+    - "cd sidecar && GOCACHE=/tmp/hexcell-go-cache go build ./..."
+    - "cd sidecar && GOCACHE=/tmp/hexcell-go-cache go vet ./..."
+    - "cd sidecar && test -z \"$(gofmt -l .)\""
+    - "cd sidecar && GOCACHE=/tmp/hexcell-go-cache go test -v ./..."
+    - "cd sidecar && GOCACHE=/tmp/hexcell-go-cache go test -race ./internal/identidad/... ./internal/canal/..."
+  target_s: 60
+
+acceptance:
+  human_gate: true
+
+limits:
+  max_files_changed: 12
+  max_diff_lines: 1600
+  per_class:
+    - glob: "sidecar/**/*_test.go"
+      max_diff_lines: 850
+    - glob: "docs/*.md"
+      max_diff_lines: 130
+
+execution:
+  mode: worktree_edit
+  branch: ai/HEX-014
+
+retry_policy:
+  max_attempts: 2
+  escalate_after: 1

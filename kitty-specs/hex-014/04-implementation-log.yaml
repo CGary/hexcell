@@ -1,0 +1,3 @@
+entries: []
+summary: Add sidecar identidad SQLite store (PN anchor, LID alias, provisional+merge) and canal Traductor building evento_entrante persisted to the outbox before an injected sink. Wire 3 frozen.
+task_id: HEX-014
