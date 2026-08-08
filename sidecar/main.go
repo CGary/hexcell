@@ -22,7 +22,9 @@ import (
 
 	"github.com/CGary/hexcell/sidecar/internal/canal"
 	"github.com/CGary/hexcell/sidecar/internal/configuracion"
+	"github.com/CGary/hexcell/sidecar/internal/identidad"
 	"github.com/CGary/hexcell/sidecar/internal/ipc"
+	"github.com/CGary/hexcell/sidecar/internal/outbox"
 	"github.com/CGary/hexcell/sidecar/internal/registro"
 )
 
@@ -65,6 +67,31 @@ func main() {
 	}
 	supervisor := canal.NuevoSupervisor(reg, cfg.Retroceso, sesion.Conectar, nil)
 	sesion.RegistrarManejador(supervisor)
+
+	almacenIdentidad, err := identidad.Abrir(identidad.Opciones{
+		Ruta:     cfg.RutaIdentidad,
+		Registro: reg,
+	})
+	if err != nil {
+		reg.Error(eventoParada, registro.Campos{Detalle: err.Error()})
+		os.Exit(1)
+	}
+	defer almacenIdentidad.Cerrar()
+
+	buzon, err := outbox.Abrir(outbox.Opciones{Ruta: outbox.RutaPorOmision, Registro: reg})
+	if err != nil {
+		reg.Error(eventoParada, registro.Campos{Detalle: err.Error()})
+		os.Exit(1)
+	}
+	defer buzon.Cerrar()
+
+	sumideroEvento := func(evento ipc.EventoEntrante) {
+		reg.Info("canal.evento_entrante_listo", registro.Campos{
+			IdEvento: evento.IdDeduplicacion,
+		})
+	}
+	traductor := canal.NuevoTraductor(almacenIdentidad, buzon, sumideroEvento, nil, reg)
+	sesion.RegistrarTraductor(traductor)
 
 	// Parada ordenada: SIGTERM es la señal con la que un runtime de contenedores detiene el
 	// proceso y SIGINT la de una ejecución en terminal. Las dos cierran la sesión antes de salir,

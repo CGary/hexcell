@@ -123,6 +123,43 @@ func TestCargarRechazaUnaRutaDeSqlstoreVacia(t *testing.T) {
 	}
 }
 
+func TestCargar_RutaIdentidadPorOmision(t *testing.T) {
+	t.Parallel()
+
+	cfg, err := configuracion.Cargar(entornoFalso(map[string]string{}))
+	if err != nil {
+		t.Fatalf("no se esperaba error: %v", err)
+	}
+	if cfg.RutaIdentidad != configuracion.RutaIdentidadPorOmision {
+		t.Errorf("ruta de identidad = %q, se esperaba %q", cfg.RutaIdentidad, configuracion.RutaIdentidadPorOmision)
+	}
+}
+
+func TestCargar_RutaIdentidadPersonalizada(t *testing.T) {
+	t.Parallel()
+
+	cfg, err := configuracion.Cargar(entornoFalso(map[string]string{
+		configuracion.VariableRutaIdentidad: "/tmp/celula/identidad.db",
+	}))
+	if err != nil {
+		t.Fatalf("no se esperaba error: %v", err)
+	}
+	if cfg.RutaIdentidad != "/tmp/celula/identidad.db" {
+		t.Errorf("ruta de identidad = %q, se esperaba %q", cfg.RutaIdentidad, "/tmp/celula/identidad.db")
+	}
+}
+
+func TestCargar_RutaIdentidadVacia(t *testing.T) {
+	t.Parallel()
+
+	_, err := configuracion.Cargar(entornoFalso(map[string]string{
+		configuracion.VariableRutaIdentidad: "",
+	}))
+	if !errors.Is(err, configuracion.ErrRutaIdentidadVacia) {
+		t.Fatalf("error = %v, se esperaba ErrRutaIdentidadVacia", err)
+	}
+}
+
 func TestCargarAplicaValoresPorOmisionDelRetroceso(t *testing.T) {
 	t.Parallel()
 

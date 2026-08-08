@@ -1,6 +1,6 @@
 # Estado del Proyecto
 
-> Registro vivo del avance. Última actualización: 2026-08-05.
+> Registro vivo del avance. Última actualización: 2026-08-06.
 
 ## Fase actual
 **Canal propio en producción — etapa A-1, fundaciones.** Ya existe el workspace Rust con sus cinco
@@ -363,6 +363,7 @@ adicional cuando aparezca un cliente que lo justifique. Ver [plan/README.md](pla
   expiración cuando aplica. El baneo temporal entra en `pausada`, usa retroceso largo configurable y
   no tiene camino de reactivación automática: volver al servicio exige reiniciar el proceso o
   contenedor por decisión humana.
+* **Almacén de identidad y eventos entrantes** (2026-08-06, HEX-014). HEX-014 implementa el almacén de identidad y la traducción de mensaje entrante a `evento_entrante`. El almacén de identidad en `/var/lib/hexcell/identidad.db` es la cuarta base del respaldo de la etapa A-2, con su esquema declarado en esta tarea. La mitad de acuses de la tarea 8 (`sent`/`delivered`/`read`/`failed`) queda diferida a la tarea 12 de la etapa A-3.
 
 ## Pendiente
 * **Destino remoto real del respaldo por célula, fuera del disco del servidor** (2026-07-30,
