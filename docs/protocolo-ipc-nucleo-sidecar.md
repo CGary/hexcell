@@ -476,16 +476,11 @@ ofensor; **nunca la línea recibida**, que podría contener el texto de un mensa
 * **La calibración real de los valores por omisión del retroceso de reconexión.** La versión 1.2
   declara las variables y la forma del algoritmo; los números son pendientes de calibración bajo
   tráfico real.
-* **La traducción de los eventos del protocolo de WhatsApp** a `evento_entrante`: tarea 8. Este
-  protocolo transporta el resultado de esa traducción, no la describe.
-* **El mapeo JID → identificador interno** y su almacén propio: tarea 9. La única huella de esa
-  decisión aquí es una ausencia: no existe campo que pueda llevar un JID.
+* **La traducción de los eventos de WhatsApp y el mapeo de identidad (tareas 8 y 9).** HEX-014 cubre la mitad entrante de la tarea 8 (el mensaje hacia `evento_entrante`) y el mapeo completo de identidad (tarea 9). `evento_entrante` se persiste en el outbox antes de su entrega al sumidero, siguiendo la convención de persistir primero.
+* **El almacén de identidad.** Mapea los contactos anclados en el JID de número de teléfono hacia identificadores internos opacos, guardando el LID como un alias, en su propio archivo SQLite en `/var/lib/hexcell/identidad.db`, separado del `sqlstore`.
 * **Cómo analiza estas líneas el lado Rust** —a mano o con una dependencia nueva—: tarea 10, con la
   decisión registrada en `adr-0011`.
-* **La dirección saliente**: el mensaje a enviar y los acuses `sent`/`delivered`/`read`/`failed`.
-  La versión 1.0 cubre la dirección entrante, el estado de sesión y el respaldo; la saliente se
-  añade con el número de versión que corresponda cuando la tarea 8 la tenga delante. Declararla
-  ahora, sin la traducción escrita, sería inventar campos.
+* **La dirección saliente y los acuses.** Los acuses `sent`/`delivered`/`read`/`failed` quedan diferidos a la tarea 12 de la etapa A-3, que es la dueña de la cola de salida y del identificador de correlación del que dependen.
 * **El emparejamiento por QR y por código de vinculación**, que la versión 1.0 omitía, queda
   cubierto desde la versión 1.1 por los tres tipos `orden_emparejar`, `codigo_emparejamiento` y
   `acuse_emparejamiento`.

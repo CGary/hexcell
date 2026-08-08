@@ -24,6 +24,8 @@ const (
 	VariableIdCelula = "HEXCELL_ID_CELULA"
 	// VariableRutaSqlstore fija la ruta del archivo de la base de datos sqlstore de whatsmeow.
 	VariableRutaSqlstore = "HEXCELL_RUTA_SQLSTORE"
+	// VariableRutaIdentidad fija la ruta del almacén de identidad.
+	VariableRutaIdentidad = "HEXCELL_RUTA_IDENTIDAD"
 	// VariableTelefonoCelula fija el número de teléfono de la célula, sin el prefijo +,
 	// necesario para el emparejamiento por código de vinculación. Nunca viaja en el cable IPC.
 	VariableTelefonoCelula = "HEXCELL_TELEFONO_CELULA"
@@ -51,6 +53,8 @@ const (
 	IdCelulaPorOmision = "sin-configurar"
 	// RutaSqlstorePorOmision es la ruta del archivo sqlstore en el volumen compartido.
 	RutaSqlstorePorOmision = "/var/lib/hexcell/sqlstore.db"
+	// RutaIdentidadPorOmision es la ruta del archivo del almacén de identidad en el volumen compartido.
+	RutaIdentidadPorOmision = "/var/lib/hexcell/identidad.db"
 	// RetrocesoInicialMsPorOmision es el intervalo inicial del retroceso exponencial.
 	// PENDIENTE DE CALIBRACIÓN: valor inicial razonable, no validado bajo carga.
 	RetrocesoInicialMsPorOmision int64 = 1000
@@ -77,6 +81,9 @@ var ErrRutaSocketVacia = errors.New("configuracion: la ruta del socket IPC está
 
 // ErrRutaSqlstoreVacia se devuelve cuando la variable del sqlstore está definida pero vacía.
 var ErrRutaSqlstoreVacia = errors.New("configuracion: la ruta del sqlstore está vacía")
+
+// ErrRutaIdentidadVacia se devuelve cuando la variable del almacén de identidad está definida pero vacía.
+var ErrRutaIdentidadVacia = errors.New("configuracion: la ruta del almacén de identidad está vacía")
 
 // ErrNivelDeRegistroDesconocido se devuelve ante un umbral de registro que no está en la tabla.
 var ErrNivelDeRegistroDesconocido = errors.New("configuracion: nivel de registro desconocido")
@@ -121,6 +128,8 @@ type Configuracion struct {
 	IdCelula string
 	// RutaSqlstore es la ruta del archivo de la base de datos sqlstore de whatsmeow.
 	RutaSqlstore string
+	// RutaIdentidad es la ruta del archivo del almacén de identidad.
+	RutaIdentidad string
 	// TelefonoCelula es el número de teléfono de la célula, sin prefijo +. Solo es necesario
 	// para el emparejamiento por código de vinculación. Vacío es válido: significa que ese
 	// método no está disponible.
@@ -165,6 +174,14 @@ func Cargar(consultar func(string) (string, bool)) (Configuracion, error) {
 		rutaSqlstore = valor
 	}
 
+	rutaIdentidad := RutaIdentidadPorOmision
+	if valor, presente := consultar(VariableRutaIdentidad); presente {
+		if valor == "" {
+			return Configuracion{}, ErrRutaIdentidadVacia
+		}
+		rutaIdentidad = valor
+	}
+
 	telefonoCelula := ""
 	if valor, presente := consultar(VariableTelefonoCelula); presente && valor != "" {
 		telefonoCelula = valor
@@ -180,6 +197,7 @@ func Cargar(consultar func(string) (string, bool)) (Configuracion, error) {
 		NivelDeRegistro: nivel,
 		IdCelula:        idCelula,
 		RutaSqlstore:    rutaSqlstore,
+		RutaIdentidad:   rutaIdentidad,
 		TelefonoCelula:  telefonoCelula,
 		Retroceso:       retroceso,
 	}, nil
