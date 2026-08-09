@@ -1,0 +1,3 @@
+entries: []
+summary: Gate MensajeSaliente behind a TestigoDeEntrante witness with a compile_fail doctest and a rejection counter, and add an AST-based Go sentinel guarding the sidecar's send-path absence.
+task_id: HEX-016

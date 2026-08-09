@@ -1,0 +1,154 @@
+task_id: HEX-016
+summary: "Enforce reply-only invariant in the type system (A-3 item 11): witness
+  type gates MensajeSaliente, compile_fail proof, rejection counter, Go
+  sentinel guarding sidecar's send-path absence. Risk medium."
+goal: Add a witness type in crates/hexcell-core/src/canal.rs (Spanish name, e.g.
+  TestigoDeEntrante) obtainable only from a real EventoEntrante, and make it the
+  only way to reach a public constructor of MensajeSaliente (canal.rs line 74),
+  so no code path in any crate can fabricate an outbound message without first
+  holding proof that an inbound event was received. Prove the invariant three
+  ways in Rust, a compile_fail doctest (no trybuild, zero new dependencies) that
+  fails to compile when it tries to build an outbound message without the
+  witness; an exposed counter that records rejected construction attempts as a
+  second line of defense; and a deliberate-attempt test that exercises the
+  rejection path at runtime. Migrate every existing construction site of
+  MensajeSaliente across hexcell-canal-simulado, hexcell-canal-whatsmeow,
+  hexcell-canal-contrato (bateria.rs), and the crates/hexcell call sites
+  (procesador.rs, motor.rs, conversaciones.rs, sesiones.rs) and their test
+  suites to go through the witness-gated constructor, using the compiler as the
+  migration net. Separately, add a Go sentinel test under sidecar/ that fails if
+  a message-send path (e.g. a call resembling SendMessage/Enviar against the
+  whatsmeow client) appears anywhere in the sidecar outside the future
+  outbound-queue module (sidecar/internal/outbox, which A-3 plan item 12 will
+  extend with the actual send call); today sidecar/internal has zero such
+  matches, and the sentinel protects that fact so task 12 can deliberately
+  extend it rather than have to delete it.
+invariants:
+  - A MensajeSaliente value can only be constructed by code that holds a
+    TestigoDeEntrante (or equivalent witness), and a TestigoDeEntrante can only
+    be obtained from a real EventoEntrante; no public API in any crate offers a
+    path to fabricate an outbound message from nothing.
+  - The witness-gated constructor is the sole public way to build a
+    MensajeSaliente from outside crates/hexcell-core; direct construction of
+    the enum's variants (RespuestaLibre, Plantilla) from other crates no longer
+    compiles once this task lands.
+  - The compile_fail doctest is part of the test battery exercised by
+    cargo test --workspace, not a standalone or ignored example; it must fail
+    to compile today's intended-broken code and continue to run on every
+    workspace test invocation.
+  - The rejection counter is exposed (not a private debug-only field) and its
+    value is only observable to increase when a genuine unwitnessed-construction
+    attempt is rejected, never on the successful witnessed path.
+  - Today's absence of a message-send path anywhere in sidecar/internal outside
+    sidecar/internal/outbox remains true and is guarded by an automated Go test,
+    not by convention or code review alone.
+  - The IPC wire (sidecar/internal/ipc/mensajes.go and
+    docs/protocolo-ipc-nucleo-sidecar.md, wire version 3) is untouched by this
+    task; no message type, field, or semantic changes.
+  - Fase B never appears described as replacing, closing, or superseding Fase A;
+    this task does not touch that boundary at all, but no artifact it produces
+    may imply it.
+acceptance:
+  - id: AC-1
+    statement: A TestigoDeEntrante value is obtainable only from a real
+      EventoEntrante, and gates the sole public constructor path to
+      MensajeSaliente.
+    given: crates/hexcell-core/src/canal.rs after this task's changes
+    when: a caller in any crate attempts to build a MensajeSaliente
+    then: >-
+      the only compiling path requires first holding a TestigoDeEntrante
+      produced from an EventoEntrante value; no public function offers an
+      alternate path. Human decision of 2026-08-09: fabricating an
+      EventoEntrante by hand remains POSSIBLE (its fields are public and
+      sealing it is a declared non-goal; the contract battery depends on that
+      path) and is accepted because it is explicit and greppable — the
+      guarantee is that no MensajeSaliente exists without a witness derived
+      from an EventoEntrante value, not that events cannot be fabricated
+  - id: AC-2
+    statement: A compile_fail doctest proves the compiler rejects construction
+      of an outbound message without a witness.
+    given: a doctest annotated with the compile_fail attribute inside
+      crates/hexcell-core/src/canal.rs (or its public docs) that attempts to
+      build a MensajeSaliente without a TestigoDeEntrante
+    when: cargo test --workspace runs the doctest battery
+    then: the doctest is present, is not marked ignore, is exercised by
+      cargo test --workspace, and fails to compile as intended (rustdoc
+      reports the expected compile failure, making the overall doctest pass)
+  - id: AC-3
+    statement: An exposed rejection counter increases exactly when an
+      unwitnessed-construction attempt is rejected, and a deliberate-attempt
+      test exercises that path.
+    given: a test that deliberately attempts to construct or reach a
+      MensajeSaliente without a valid witness through the crate's public API
+    when: the attempt is rejected
+    then: the exposed rejection counter's value increases by the expected
+      amount, and the same test asserts the counter does not increase on a
+      normal witnessed construction in the same run
+  - id: AC-4
+    statement: Every existing call site across the affected crates compiles
+      against the new witness-gated constructor with no behavior regression.
+    given: hexcell-canal-simulado, hexcell-canal-whatsmeow,
+      hexcell-canal-contrato (bateria.rs), and crates/hexcell (procesador.rs,
+      motor.rs, conversaciones.rs, sesiones.rs) and their existing test suites
+    when: cargo build --workspace and cargo test --workspace run after the
+      migration
+    then: the workspace builds and the full existing test suite passes with no
+      test removed or weakened to accommodate the change
+  - id: AC-5
+    statement: cargo fmt --check and cargo clippy --workspace --all-targets
+      -- -D warnings pass clean after the change.
+    given: the modified workspace
+    when: cargo fmt --check and cargo clippy --workspace --all-targets
+      -- -D warnings run
+    then: both commands exit 0 with no findings
+  - id: AC-6
+    statement: A Go sentinel test fails if a send-shaped call appears in the
+      sidecar outside sidecar/internal/outbox.
+    given: sidecar/internal today has zero SendMessage/Enviar-shaped matches
+      anywhere (verified before this task)
+    when: the new sentinel test runs as part of go test ./...
+    then: it passes today (no such call exists outside sidecar/internal/outbox),
+      and is written so that a future send-shaped call added outside
+      sidecar/internal/outbox by A-3 task 12 or later would fail it, while a
+      call added inside sidecar/internal/outbox does not fail it
+  - id: AC-7
+    statement: The sidecar Go suite remains green with the new sentinel added.
+    given: the sidecar module after this task's changes
+    when: cd sidecar && go build ./... && go vet ./... && go test ./... runs
+    then: all three commands exit 0, including the new sentinel test
+risk: medium
+non_goals:
+  - Building the actual outbound-queue module (sidecar/internal/outbox's send
+    logic, TTL, retries) — that is A-3 plan item 12, not this task.
+  - A runtime rejection counter or any Go-side enforcement mechanism in the
+    sidecar; the sentinel here is a static/structural guard test only, not a
+    runtime invariant.
+  - Any change to sidecar/internal/ipc/mensajes.go or to
+    docs/protocolo-ipc-nucleo-sidecar.md; the IPC wire (version 3) is frozen for
+    this task.
+  - Adding trybuild or any other new dependency to prove the compile-failure
+    invariant; the compile_fail doctest is the only mechanism in scope.
+  - Any change to crates/hexcell-canal-contrato/src/banco.rs.
+  - Redesigning EventoEntrante's fields or the ChannelAdapter trait signature
+    beyond what is strictly needed to introduce the witness type.
+  - Any statement, doc change, or ADR implying Fase B replaces, closes, or
+    supersedes Fase A, or that the sidecar is being retired.
+constraints:
+  - All identifiers, comments, and doc comments this task adds or edits are
+    written in Spanish; commit messages follow conventional commits with no AI
+    attribution.
+  - Zero new Cargo or Go dependencies. The compile-failure proof uses a
+    compile_fail doctest, not trybuild or any other crate.
+  - Do not edit crates/hexcell-canal-contrato/src/banco.rs.
+  - Do not edit sidecar/internal/ipc/mensajes.go or
+    docs/protocolo-ipc-nucleo-sidecar.md.
+  - Never version *.db, *.db-wal, *.db-shm, or .env* files.
+  - "Verify with: cargo fmt --check, cargo build --workspace,
+    cargo clippy --workspace --all-targets -- -D warnings,
+    cargo test --workspace (Rust); cd sidecar && go build ./... &&
+    go vet ./... && go test ./... (Go)."
+  - The Go sentinel test must be written so that A-3 task 12 can legitimately
+    extend or relax it when it adds the real send path inside
+    sidecar/internal/outbox, rather than being forced to delete it outright.
+  - No mass-sending folklore (jitter, warm-up protocols, proxies, VPN, IP
+    rotation) introduced anywhere in this task's scope.

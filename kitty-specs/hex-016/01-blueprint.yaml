@@ -1,0 +1,299 @@
+task_id: HEX-016
+summary: "Witness gates MensajeSaliente via non_exhaustive struct variants, with
+  a compile_fail doctest, a rejection counter, and an AST-based Go sentinel over
+  the sidecar's send-path absence."
+affected_files:
+  - crates/hexcell-core/src/canal.rs
+  - crates/hexcell/src/procesador.rs
+  - crates/hexcell/src/motor.rs
+  - crates/hexcell/src/conversaciones.rs
+  - crates/hexcell-storage/src/sesiones.rs
+  - crates/hexcell-canal-simulado/src/adaptador.rs
+  - crates/hexcell-canal-whatsmeow/src/adaptador.rs
+  - crates/hexcell-canal-contrato/src/bateria.rs
+  - crates/hexcell-core/tests/testigo_de_entrante.rs
+  - crates/hexcell/tests/deduplicacion.rs
+  - crates/hexcell/tests/continuidad_de_hilo.rs
+  - crates/hexcell/tests/apagado_ordenado.rs
+  - crates/hexcell/tests/motor.rs
+  - crates/hexcell/tests/inferencia.rs
+  - crates/hexcell/tests/persistencia.rs
+  - crates/hexcell/tests/politica_fuera_de_ventana.rs
+  - crates/hexcell/tests/respaldo_y_restauracion.rs
+  - crates/hexcell-canal-simulado/tests/adaptador_simulado.rs
+  - crates/hexcell-canal-whatsmeow/tests/contrato_del_puerto.rs
+  - crates/hexcell-storage/tests/repositorio_de_sesiones.rs
+  - sidecar/internal/outbox/centinela_rutas_de_envio_test.go
+  - docs/STATUS.md
+  - docs/bitacora-de-descartes.md
+  - docs/adr/adr-0021-testigo-de-entrante.md
+  - docs/adr/README.md
+symbols:
+  - hexcell_core::canal::TestigoDeEntrante
+  - hexcell_core::canal::TestigoDeEntrante::observar
+  - hexcell_core::canal::TestigoDeEntrante::conversacion
+  - hexcell_core::canal::MensajeSaliente::RespuestaLibre
+  - hexcell_core::canal::MensajeSaliente::Plantilla
+  - hexcell_core::canal::MensajeSaliente::respuesta_libre
+  - hexcell_core::canal::MensajeSaliente::plantilla
+  - hexcell_core::canal::RechazoDeConstruccion
+  - hexcell_core::canal::rechazos_de_construccion
+  - hexcell_storage::sesiones::SalienteHistorico
+  - hexcell_storage::sesiones::EventoDeHistorial::Saliente
+  - TestCentinelaSinRutasDeEnvioFueraDelOutbox
+  - TestCentinelaDetectaUnaRutaDeEnvioSintetica
+dependencies:
+  - crates/hexcell-canal-contrato/src/banco.rs
+  - crates/hexcell-core/src/identidad.rs
+  - crates/hexcell-core/Cargo.toml
+  - sidecar/internal/outbox/outbox.go
+  - sidecar/internal/ipc/documento_test.go
+  - docs/adr/adr-0010-puerto-de-canal.md
+test_scenarios:
+  - statement: "TestigoDeEntrante::observar(&EventoEntrante) is the only public
+      constructor and the type carries no public field, so no crate outside
+      hexcell-core can build a witness by struct literal."
+    covers: ["AC-1"]
+  - statement: "Both MensajeSaliente variants are struct variants marked
+      #[non_exhaustive], so a struct-literal build from any other crate fails
+      with E0639 and the witness-gated constructors are the only compiling path."
+    covers: ["AC-1"]
+  - statement: "A compile_fail doctest in canal.rs attempts to build
+      MensajeSaliente::RespuestaLibre without a witness and is reported by
+      cargo test --workspace as 'compile fail ... ok', never as ignored."
+    covers: ["AC-2"]
+  - statement: "A positive doctest in the same doc block builds a MensajeSaliente
+      through the witnessed constructor and passes, so renaming or deleting the
+      API breaks loudly instead of letting the compile_fail doctest keep passing
+      for an unrelated reason."
+    covers: ["AC-2"]
+  - statement: "In crates/hexcell-core/tests/testigo_de_entrante.rs, building a
+      reply with a witness whose conversation differs from the destination is
+      rejected and increases rechazos_de_construccion() by exactly one, measured
+      as a delta and never as an absolute value."
+    covers: ["AC-3"]
+  - statement: "The same test asserts that a witnessed construction for the
+      matching conversation succeeds and leaves rechazos_de_construccion()
+      unchanged within the same run."
+    covers: ["AC-3"]
+  - statement: "cargo build --workspace and cargo test --workspace pass after
+      migrating every construction and match site in hexcell, hexcell-storage,
+      hexcell-canal-simulado, hexcell-canal-whatsmeow and bateria.rs, with no
+      existing test removed, ignored or weakened."
+    covers: ["AC-4"]
+  - statement: "banco.rs stays byte-identical: bateria.rs builds its own
+      EventoEntrante locally to derive a witness, because
+      BancoDeCanal::inyectar_evento returns unit and cannot supply one."
+    covers: ["AC-4"]
+  - statement: "cargo fmt --check and cargo clippy --workspace --all-targets
+      -- -D warnings both exit 0, and cargo tree -p hexcell-core still prints
+      exactly one line, proving hexcell-core gained no dependency."
+    covers: ["AC-5"]
+  - statement: "The Go sentinel parses every non-test .go file under sidecar/
+      with go/ast, skips sidecar/internal/outbox, and reports zero send-shaped
+      calls today."
+    covers: ["AC-6"]
+  - statement: "The sentinel's detector is self-tested against a synthetic source
+      string containing a SendMessage call, so a detector that silently stopped
+      matching fails the suite instead of passing forever."
+    covers: ["AC-6"]
+  - statement: "The sentinel does not fire on the sidecar's Spanish prose
+      comments nor on IPC socket writes such as conn.Write or json Encode,
+      because it matches an explicit call-name allowlist over the AST rather
+      than raw text."
+    covers: ["AC-6"]
+  - statement: "cd sidecar && go build ./... && go vet ./... && go test ./...
+      all exit 0 with the sentinel added."
+    covers: ["AC-7"]
+strategy:
+  - step: 1
+    action: "In canal.rs, add TestigoDeEntrante as a Value Object with a PRIVATE
+      field holding the conversation cloned from the event, and a single public
+      constructor observar(evento: &EventoEntrante) -> Self plus a read-only
+      accessor conversacion(). A private field is what makes the type unforgeable
+      by struct literal from any other crate; do not derive Default and do not
+      add a new() or a From<IdConversacion>, either of which reopens the hole."
+    files:
+      - crates/hexcell-core/src/canal.rs
+  - step: 2
+    action: "Convert MensajeSaliente's variants to STRUCT variants and mark each
+      one #[non_exhaustive]: RespuestaLibre { texto: String } and Plantilla { id,
+      parametros }. The tuple form RespuestaLibre(String) CANNOT be used: it was
+      empirically verified on rustc 1.92.0 that #[non_exhaustive] on a tuple
+      variant makes it fully private (E0603) and unmatchable from other crates,
+      whereas the struct form blocks construction (E0639) while still allowing
+      external reads as `RespuestaLibre { texto, .. }`. Document in the enum's
+      doc comment why this enum takes the attribute while the sibling
+      ResultadoEnvio deliberately does not (that reasoning at canal.rs lines
+      93-96 is about exhaustive matching and is NOT derogated by this task)."
+    files:
+      - crates/hexcell-core/src/canal.rs
+  - step: 3
+    action: "Add the witness-gated Application Service constructors
+      respuesta_libre(testigo, conversacion, texto) and plantilla(testigo,
+      conversacion, id, parametros), both returning Result<MensajeSaliente,
+      RechazoDeConstruccion>. Reject with RechazoDeConstruccion when the
+      witness's conversation differs from the destination: that mismatch is the
+      only-reply violation the type system alone cannot see, since both sides are
+      IdConversacion. On the rejection branch, and ONLY there, increment a
+      module-level static AtomicU64 exposed by the public function
+      rechazos_de_construccion() -> u64. Use std::sync::atomic with Relaxed
+      ordering so hexcell-core keeps an empty [dependencies] table."
+    files:
+      - crates/hexcell-core/src/canal.rs
+  - step: 4
+    action: "Add the two doctests on MensajeSaliente: one fenced
+      ```compile_fail,E0639``` that tries the struct literal without a witness,
+      and one ordinary doctest that succeeds through the witnessed constructor.
+      Both are required. It was empirically verified that on stable rustc 1.92.0
+      the E0639 annotation is NOT enforced (a doctest failing for an unrelated
+      reason still passes), so the positive doctest is the guard that keeps the
+      negative one honest. Keep the compile_fail body to a single statement so
+      there is little room for it to fail for the wrong reason, and never mark
+      either doctest ignore or no_run."
+    files:
+      - crates/hexcell-core/src/canal.rs
+  - step: 5
+    action: "Split the persistence replay type in hexcell-storage: introduce
+      SalienteHistorico (its own enum, storage-local, mirroring the two shapes)
+      and make EventoDeHistorial::Saliente carry it instead of MensajeSaliente.
+      This is the load-bearing decision of the task. historial() rebuilds rows
+      read from SQLite where NO EventoEntrante exists, so keeping MensajeSaliente
+      there would force a second public un-witnessed constructor in hexcell-core
+      and break spec invariant 2. A replayed history entry is a RECORD of what
+      was sent, not a sendable message, and must not be re-sendable without a
+      fresh witness. registrar_saliente keeps taking &MensajeSaliente, since
+      reading a message never requires constructing one."
+    files:
+      - crates/hexcell-storage/src/sesiones.rs
+  - step: 6
+    action: "Migrate the production call sites with the compiler as the net:
+      procesador.rs builds its reply from the &EventoEntrante it already
+      receives (the witness is free there, which is the whole point);
+      motor.rs and conversaciones.rs thread the value through without
+      fabricating one; the simulado and whatsmeow adapters only match and store
+      MensajeSaliente, so they need the `..` pattern update and no new witness.
+      Do NOT redesign whatsmeow's send buffering into memory, which A-3 task 12
+      owns."
+    files:
+      - crates/hexcell/src/procesador.rs
+      - crates/hexcell/src/motor.rs
+      - crates/hexcell/src/conversaciones.rs
+      - crates/hexcell-canal-simulado/src/adaptador.rs
+      - crates/hexcell-canal-whatsmeow/src/adaptador.rs
+  - step: 7
+    action: "Migrate bateria.rs's eight construction sites WITHOUT touching
+      banco.rs. BancoDeCanal::inyectar_evento returns unit and its doc comment
+      states the battery does not observe the injected event, so the battery
+      cannot receive a witness from the bank. It must build its own local
+      EventoEntrante (all five fields are public) and derive the witness from it.
+      Changing inyectar_evento's return type is forbidden by the spec."
+    files:
+      - crates/hexcell-canal-contrato/src/bateria.rs
+  - step: 8
+    action: "Add crates/hexcell-core/tests/testigo_de_entrante.rs as its OWN
+      integration test file, which Cargo compiles into its own process. The
+      rejection counter is a process-wide static shared by every test in a
+      binary, so this test must read rechazos_de_construccion() before and after
+      each attempt and assert on the DELTA; asserting an absolute value would be
+      flaky under parallel execution. Cover both branches in one run: the
+      cross-conversation attempt increments by one, the matching-conversation
+      construction succeeds and leaves the counter untouched."
+    files:
+      - crates/hexcell-core/tests/testigo_de_entrante.rs
+  - step: 9
+    action: "Update the eleven existing test files for the new variant shape and
+      the witnessed constructors. Every external match arm must become
+      `RespuestaLibre { texto, .. }` / `Plantilla { id, .. }` because
+      #[non_exhaustive] makes the `..` mandatory (E0638). Do not delete, ignore
+      or relax any existing assertion to make the migration easier."
+    files:
+      - crates/hexcell/tests/deduplicacion.rs
+      - crates/hexcell/tests/continuidad_de_hilo.rs
+      - crates/hexcell/tests/apagado_ordenado.rs
+      - crates/hexcell/tests/motor.rs
+      - crates/hexcell/tests/inferencia.rs
+      - crates/hexcell/tests/persistencia.rs
+      - crates/hexcell/tests/politica_fuera_de_ventana.rs
+      - crates/hexcell/tests/respaldo_y_restauracion.rs
+      - crates/hexcell-canal-simulado/tests/adaptador_simulado.rs
+      - crates/hexcell-canal-whatsmeow/tests/contrato_del_puerto.rs
+      - crates/hexcell-storage/tests/repositorio_de_sesiones.rs
+  - step: 10
+    action: "Write the Go sentinel in sidecar/internal/outbox as an external test
+      file, following the filesystem-reading precedent of
+      sidecar/internal/ipc/documento_test.go. It walks sidecar/ from the package
+      directory, skips the outbox directory and every _test.go file, and parses
+      each remaining file with go/parser + go/ast (all stdlib, zero new
+      dependencies). Detection MUST be AST-based over an explicit call-name
+      allowlist (SendMessage, SendPresence, SendChatPresence, SendReceipt,
+      Enviar*): a raw text grep would false-positive immediately, because the
+      sidecar's Spanish prose comments use enviar/envia throughout, and it would
+      also have to distinguish IPC socket writes (conn.Write, json Encode) which
+      legitimately exist and are NOT WhatsApp sends. Place it in the outbox
+      package precisely so A-3 task 12 extends the allowlist or the exempt
+      directory in place rather than being forced to delete the guard; say so in
+      the file's doc comment."
+    files:
+      - sidecar/internal/outbox/centinela_rutas_de_envio_test.go
+  - step: 11
+    action: "Add the second sentinel test that runs the SAME detector against a
+      synthetic in-memory source containing a SendMessage call and asserts it
+      fires. Without this positive control a detector that silently stopped
+      matching would report a clean sidecar forever, which is the Go analogue of
+      the unenforced doctest error code."
+    files:
+      - sidecar/internal/outbox/centinela_rutas_de_envio_test.go
+  - step: 12
+    action: "Record the decisions in Spanish with absolute dates (2026-08-09):
+      adr-0021 for the witness and the non_exhaustive variants, registered in the
+      docs/adr/README.md table with its correlative number; D-21 in
+      docs/bitacora-de-descartes.md for the discard of trybuild, with its
+      reopening condition, since the project rule requires a discard to be
+      written in the same commit it is made; and the corresponding STATUS.md
+      entry. No artifact may state or imply that Fase B replaces, closes or
+      supersedes Fase A."
+    files:
+      - docs/adr/adr-0021-testigo-de-entrante.md
+      - docs/adr/README.md
+      - docs/bitacora-de-descartes.md
+      - docs/STATUS.md
+risks:
+  - "VERIFIED ON rustc 1.92.0: the E0639 code in ```compile_fail,E0639``` is NOT
+    enforced on stable. A doctest rewritten to fail for a completely unrelated
+    reason (undefined symbol) still reports 'ok'. The compile_fail doctest alone
+    is therefore weaker proof than AC-2's wording suggests; the paired positive
+    doctest in step 4 is the mitigation and must not be dropped."
+  - "SPEC TENSION, may need a human ruling: EventoEntrante has five public fields
+    and stays publicly constructible, because sealing it is an explicit non_goal.
+    Any crate can therefore fabricate an EventoEntrante and derive a valid
+    witness, so AC-1's literal 'no public API in any crate offers a path to
+    fabricate an outbound message from nothing' is NOT fully achievable within
+    the declared non_goals. What this task actually delivers is that fabricating
+    an outbound message becomes explicit, deliberate and greppable rather than
+    impossible. Step 7 depends on this being acceptable, since bateria.rs uses
+    exactly that path."
+  - "VERIFIED: #[non_exhaustive] on a TUPLE variant makes it fully private
+    (E0603) and unmatchable from other crates, so RespuestaLibre(String) must
+    become RespuestaLibre { texto: String }. This shape change cascades to every
+    match site in the workspace and is the main driver of the diff size."
+  - "hexcell-storage rehydration is the sharpest constraint: sesiones.rs
+    historial() rebuilds MensajeSaliente from SQLite rows with no EventoEntrante
+    in scope. Step 5 answers it with a storage-local SalienteHistorico. The
+    tempting fallback, a public rehydration constructor in hexcell-core, would
+    literally violate spec invariant 2 and must not be taken silently."
+  - "BancoDeCanal::inyectar_evento returns unit, so bateria.rs cannot obtain a
+    witness from the bank and must fabricate its own EventoEntrante. Widening
+    that return type would edit banco.rs, which the spec forbids."
+  - "The rejection counter is a process-wide AtomicU64. Any test asserting an
+    absolute value will be flaky as soon as a second test in the same binary
+    touches the rejection path; only deltas in a dedicated integration test file
+    are safe."
+  - "A text-matching Go sentinel would false-positive on the sidecar's Spanish
+    comments from the first run and would have to be neutered to go green, which
+    is exactly the failure mode the sentinel is meant to prevent. AST parsing is
+    mandatory, not a refinement."
+  - "sidecar/internal/outbox ALREADY EXISTS as the durable SQLite queue (Abrir,
+    Persistir, Pendientes, Confirmar, Purgar, Cerrar) and today contains no send
+    path. The spec's wording 'future outbound-queue module' describes task 12's
+    send call, not a directory to be created."

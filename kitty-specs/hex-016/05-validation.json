@@ -1,0 +1,50 @@
+{
+  "task_id": "HEX-016",
+  "executed_at": "2026-08-09T20:33:45Z",
+  "overall_result": "passed",
+  "summary": "All 7 verify commands exit 0; 116 Rust tests & Go suite passed over 5 reruns. Diff: 19 files +683/-68. Contract-check ok with 0 violations.",
+  "commands": [
+    {
+      "command": "cargo fmt --check",
+      "duration_s": 0.0,
+      "exit_code": 0,
+      "output_excerpt": "clean, no diffs"
+    },
+    {
+      "command": "cargo build --workspace",
+      "duration_s": 0.0,
+      "exit_code": 0,
+      "output_excerpt": "workspace build completed successfully"
+    },
+    {
+      "command": "cargo clippy --workspace --all-targets -- -D warnings",
+      "duration_s": 0.0,
+      "exit_code": 0,
+      "output_excerpt": "clean under -D warnings"
+    },
+    {
+      "command": "cargo test --workspace",
+      "duration_s": 0.0,
+      "exit_code": 0,
+      "output_excerpt": "116 passed, 0 failed across workspace"
+    },
+    {
+      "command": "test \"$(cargo tree -p hexcell-core | wc -l)\" = \"1\"",
+      "duration_s": 0.0,
+      "exit_code": 0,
+      "output_excerpt": "hexcell-core has no external dependencies"
+    },
+    {
+      "command": "cargo test -p hexcell-core --doc 2>&1 | grep -q \"compile fail\"",
+      "duration_s": 0.0,
+      "exit_code": 0,
+      "output_excerpt": "compile fail doc tests passed"
+    },
+    {
+      "command": "cd sidecar && go build ./... && go vet ./... && go test ./...",
+      "duration_s": 0.0,
+      "exit_code": 0,
+      "output_excerpt": "go build, vet, and test passed"
+    }
+  ]
+}
