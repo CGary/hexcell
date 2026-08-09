@@ -126,3 +126,69 @@ fn health_ready_degrada_a_503_cuando_desaparece_la_base_de_conocimiento() {
         "la respuesta debe nombrar el componente que falló: {degradada}"
     );
 }
+
+#[test]
+fn reconectando_produce_no_lista_con_componente_sesion() {
+    match evaluar_preparacion(
+        Vitalidad::Sana,
+        Vitalidad::Sana,
+        &SesionDelCanal::reconectando(),
+    ) {
+        Preparacion::NoLista { componente, motivo } => {
+            assert_eq!(componente, COMPONENTE_SESION_DEL_CANAL);
+            assert!(
+                motivo.contains("reconectando"),
+                "el motivo debe mencionar reconectando: {motivo}"
+            );
+        }
+        Preparacion::Lista => panic!("con la sesión reconectando no puede estar lista"),
+    }
+}
+
+#[test]
+fn desvinculada_produce_no_lista_con_componente_sesion() {
+    match evaluar_preparacion(
+        Vitalidad::Sana,
+        Vitalidad::Sana,
+        &SesionDelCanal::desvinculada(),
+    ) {
+        Preparacion::NoLista { componente, motivo } => {
+            assert_eq!(componente, COMPONENTE_SESION_DEL_CANAL);
+            assert!(
+                motivo.contains("desvinculada"),
+                "el motivo debe mencionar desvinculada: {motivo}"
+            );
+        }
+        Preparacion::Lista => panic!("con la sesión desvinculada no puede estar lista"),
+    }
+}
+
+#[test]
+fn pausada_produce_no_lista_con_componente_sesion() {
+    match evaluar_preparacion(Vitalidad::Sana, Vitalidad::Sana, &SesionDelCanal::pausada()) {
+        Preparacion::NoLista { componente, motivo } => {
+            assert_eq!(componente, COMPONENTE_SESION_DEL_CANAL);
+            assert!(
+                motivo.contains("pausada"),
+                "el motivo debe mencionar pausada: {motivo}"
+            );
+        }
+        Preparacion::Lista => panic!("con la sesión pausada no puede estar lista"),
+    }
+}
+
+#[test]
+fn activa_produce_lista_con_vitalidades_sanas() {
+    match evaluar_preparacion(
+        Vitalidad::Sana,
+        Vitalidad::Sana,
+        &SesionDelCanal::siempre_activa(),
+    ) {
+        Preparacion::Lista => {}
+        Preparacion::NoLista { componente, motivo } => {
+            panic!(
+                "con la sesión activa y vitalidades sanas debe estar lista, pero: {componente}: {motivo}"
+            )
+        }
+    }
+}
