@@ -24,6 +24,7 @@
 //! falsificable por un test: un término que ningún test puede tumbar es decoración, no una
 //! comprobación.
 
+use hexcell_core::canal::EstadoSesion;
 use hexcell_storage::Vitalidad;
 
 /// Estado de la sesión del canal, tal y como lo conoce la raíz de composición.
@@ -31,7 +32,7 @@ use hexcell_storage::Vitalidad;
 /// Es un tipo propio de este crate y no del puerto a propósito (ver la nota del módulo).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SesionDelCanal {
-    activa: bool,
+    estado: EstadoSesion,
 }
 
 impl SesionDelCanal {
@@ -41,7 +42,9 @@ impl SesionDelCanal {
     /// perder, y el canal propio todavía no está integrado. La etapa A-3 sustituye este
     /// constructor por la señal real que publique el sidecar, sin tocar el combinador.
     pub fn siempre_activa() -> Self {
-        Self { activa: true }
+        Self {
+            estado: EstadoSesion::Activa,
+        }
     }
 
     /// Sesión caída.
@@ -50,12 +53,40 @@ impl SesionDelCanal {
     /// término de la conjunción sea comprobable: sin este constructor, la parte de la preparación
     /// que depende de la sesión no podría falsificarse desde ningún test.
     pub fn caida() -> Self {
-        Self { activa: false }
+        Self {
+            estado: EstadoSesion::Desvinculada,
+        }
+    }
+
+    pub fn reconectando() -> Self {
+        Self {
+            estado: EstadoSesion::Reconectando,
+        }
+    }
+
+    pub fn desvinculada() -> Self {
+        Self {
+            estado: EstadoSesion::Desvinculada,
+        }
+    }
+
+    pub fn pausada() -> Self {
+        Self {
+            estado: EstadoSesion::Pausada,
+        }
+    }
+
+    pub fn desde_estado(estado: EstadoSesion) -> Self {
+        Self { estado }
     }
 
     /// ¿Está la sesión del canal en pie?
     pub fn esta_activa(&self) -> bool {
-        self.activa
+        matches!(self.estado, EstadoSesion::Activa)
+    }
+
+    pub fn estado(&self) -> EstadoSesion {
+        self.estado
     }
 }
 
@@ -97,9 +128,27 @@ pub fn evaluar_preparacion(
     }
 
     if !sesion.esta_activa() {
+        // Match total, sin `unreachable!()`: `esta_activa()` ya descartó `Activa` arriba, pero
+        // un panic en el camino de `/health/ready` es un mal modo de fallo para un proceso de
+        // larga vida (hallazgo de revisión). Si `esta_activa()` cambiara de definición y dejara
+        // de ser el espejo exacto de esta rama, esta respuesta sigue siendo segura en vez de
+        // tumbar el proceso.
+        let motivo = match sesion.estado() {
+            EstadoSesion::Reconectando => "la sesión del canal está reconectando".to_string(),
+            EstadoSesion::Desvinculada => {
+                "la sesión del canal está desvinculada; requiere recuperación humana".to_string()
+            }
+            EstadoSesion::Pausada => {
+                "la sesión del canal está pausada por baneo temporal".to_string()
+            }
+            EstadoSesion::Activa => {
+                "la sesión del canal se reporta activa pero no lo está; estado inconsistente"
+                    .to_string()
+            }
+        };
         return Preparacion::NoLista {
             componente: COMPONENTE_SESION_DEL_CANAL,
-            motivo: "la sesión del canal no está activa".to_string(),
+            motivo,
         };
     }
 

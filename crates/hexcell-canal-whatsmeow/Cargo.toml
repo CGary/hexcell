@@ -1,0 +1,31 @@
+[package]
+name = "hexcell-canal-whatsmeow"
+description = "Adaptador ChannelAdapter sobre IPC con el sidecar whatsmeow: cliente de socket Unix que habla la versión 3 del protocolo."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+# Dependencias del adaptador IPC:
+#
+# tokio: runtime asíncrono para la E/S del socket Unix. Las características se mantienen en el
+# mínimo que compila: `net` para UnixStream, `io-util` para las lecturas con búfer acotado,
+# `sync` para la difusión de estado (watch), `time` para el retroceso de reconexión y `rt`
+# porque la tarea lectora se lanza con spawn. NO se activa `macros` ni `rt-multi-thread` aquí:
+# son andamiaje de test y van en dev-dependencies.
+#
+# serde y serde_json: análisis de las líneas JSON del protocolo IPC. La justificación de
+# reconciliación con adr-0019 vive en la tabla [workspace.dependencies] del Cargo.toml raíz
+# y en docs/adr/adr-0011-whatsmeow-sidecar-e-ipc.md.
+[dependencies]
+tokio = { workspace = true, features = ["net", "io-util", "sync", "time", "rt"] }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+hexcell-core = { path = "../hexcell-core" }
+
+# Solo de test: la batería de contrato es andamiaje de pruebas y nunca debe viajar dentro del
+# binario de la célula. `macros` y `rt-multi-thread` habilitan el atributo #[tokio::test] con
+# el runtime multi-hilo que necesitan los tests de reconexión concurrente.
+[dev-dependencies]
+hexcell-canal-contrato = { path = "../hexcell-canal-contrato" }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

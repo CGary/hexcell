@@ -8,6 +8,7 @@ members = [
     "crates/hexcell-meta",
     "crates/hexcell-canal-simulado",
     "crates/hexcell-canal-contrato",
+    "crates/hexcell-canal-whatsmeow",
 ]
 
 # Metadatos comunes a los cinco crates. Cada manifiesto los hereda con `.workspace = true`
@@ -53,6 +54,16 @@ bytes = "1.12"
 # También se descarta el crate de directorios temporales para tests: crates/hexcell/tests/ ya
 # construye los suyos con temp_dir() y process::id(), y esta tarea extiende ese patrón.
 rusqlite = { version = "0.39", features = ["bundled"] }
+
+# Justificación explícita frente al adr-0019, el cual rechazó incorporar un serializador
+# por el presupuesto de memoria NFR-01: adr-0019 gobierna la EMISIÓN de líneas de registro
+# (registro.rs se sigue escribiendo a mano y permanece intacto). Por el contrario, esta
+# tarea PARSEA entrada adversaria en una frontera de confianza, donde `contenido` transporta
+# texto de usuario hostil arbitrario (escapes, \uXXXX, pares subrogados). Parsear JSON de
+# forma correcta y segura sin una librería probada es estrictamente más difícil que emitirlo.
+serde = { version = "1", features = ["derive"] }
+# Comparte la misma justificación frente a adr-0019 para interpretar el JSON de forma segura.
+serde_json = "1"
 
 # Perfil de release orientado a tamaño de binario, coherente con NFR-01 y con el hardware
 # objetivo (i7 de 10 años, 8 GB RAM): en ese hardware el tamaño del binario y el arranque

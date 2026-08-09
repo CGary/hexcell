@@ -158,6 +158,23 @@ pub enum Emparejamiento {
     CodigoDeVinculacion(String),
 }
 
+/// Representa los cuatro estados de sesión de la conexión de WhatsApp del sidecar.
+/// Solo `Activa` significa que la célula puede procesar mensajes.
+/// El detalle específico de transporte del wire (causa, codigo, expira_en_ms del protocolo IPC)
+/// NO pertenece aquí — se queda dentro del crate del adaptador porque ponerlo en el puerto
+/// empujaría el conocimiento del transporte hacia el núcleo.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EstadoSesion {
+    /// Sesión de WhatsApp operativa; la célula puede procesar mensajes.
+    Activa,
+    /// Desconexión transitoria con reintentos en curso.
+    Reconectando,
+    /// Sesión inválida por cierre o eliminación de dispositivo; requiere recuperación humana.
+    Desvinculada,
+    /// Baneo temporal detectado; no hay reactivación automática.
+    Pausada,
+}
+
 /// Puerto de canal: toda integración de WhatsApp se implementa detrás de este trait.
 ///
 /// El núcleo lo consume sin saber qué hay debajo, y por eso sumar un canal es escribir un
@@ -204,4 +221,7 @@ pub trait CicloDeVidaSesion {
 
     /// Cierra la sesión y desvincula el dispositivo.
     fn cerrar_sesion(&self) -> impl Future<Output = Result<(), Self::Error>> + Send;
+
+    /// Consulta el estado actual de la sesión del canal.
+    fn estado_sesion(&self) -> EstadoSesion;
 }
