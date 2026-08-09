@@ -384,7 +384,7 @@ impl ChannelAdapter for AdaptadorSimulado {
                 let ahora = self.reloj.ahora();
                 match &mensaje {
                     MensajeSaliente::Plantilla { .. } => ResultadoEnvio::Aceptado,
-                    MensajeSaliente::RespuestaLibre(_) => {
+                    MensajeSaliente::RespuestaLibre { .. } => {
                         match estado.anclas_de_ventana.get(conversacion) {
                             Some(ancla) if ahora >= *ancla + DURACION_VENTANA_SERVICIO => {
                                 ResultadoEnvio::FueraDeVentana

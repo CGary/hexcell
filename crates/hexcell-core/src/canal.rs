@@ -33,9 +33,28 @@
 //! `docs/adr/adr-0002-estructura-workspace.md`: el trait no es compatible con objetos de trait,
 //! de modo que `Box<dyn ChannelAdapter>` no compila y la selección de canal es estática.
 
+use std::fmt;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, SystemTime};
 
 use crate::identidad::{IdConversacion, IdDeduplicacion, IdRemitente};
+
+/// Contador global de intentos de construcción rechazados por desajuste de conversación.
+///
+/// Solo se incrementa en la rama de rechazo de los constructores con testigo
+/// ([`MensajeSaliente::respuesta_libre`], [`MensajeSaliente::plantilla`]), nunca en la rama
+/// exitosa. Se lee con [`rechazos_de_construccion`]. Usa `Relaxed` porque es un contador de
+/// diagnóstico, no una barrera de sincronización, y así `hexcell-core` no necesita dependencias.
+static RECHAZOS_DE_CONSTRUCCION: AtomicU64 = AtomicU64::new(0);
+
+/// Número acumulado de intentos de construcción rechazados por desajuste de conversación.
+///
+/// Es un contador de proceso (estático), no de instancia. Los tests deben leerlo antes y después
+/// de cada operación y comparar el **delta**, nunca asertar un valor absoluto, porque otros tests
+/// del mismo binario pueden incrementarlo en paralelo.
+pub fn rechazos_de_construccion() -> u64 {
+    RECHAZOS_DE_CONSTRUCCION.load(Ordering::Relaxed)
+}
 
 /// Duración de la ventana de servicio del caso restrictivo: 24 horas.
 ///
@@ -65,22 +84,174 @@ pub struct EventoEntrante {
     pub deduplicacion: IdDeduplicacion,
 }
 
+/// Testigo de que un evento entrante fue recibido (HEX-016, 2026-08-09).
+///
+/// El único constructor público es [`TestigoDeEntrante::observar`], que exige una referencia a un
+/// [`EventoEntrante`] real. El campo `conversacion` es **privado**, así que ningún crate externo
+/// puede fabricar un testigo por literal de estructura. No se deriva `Default` ni se ofrece
+/// `new()` ni `From<IdConversacion>`: cualquiera de esas vías reabre el agujero que este tipo
+/// existe para cerrar.
+///
+/// El testigo es un *Value Object*: clonar uno no amplía su alcance, solo permite usarlo en más
+/// de un punto del mismo flujo. Sellar `Clone` no haría daño, pero tampoco compra nada, porque
+/// el tipo ya no es fabricable sin un evento real.
+#[derive(Clone, Debug)]
+pub struct TestigoDeEntrante {
+    /// Conversación del evento que originó este testigo. Privada a propósito: la única vía de
+    /// obtener un `TestigoDeEntrante` es a través de un `EventoEntrante`, y la única vía de
+    /// inspeccionar la conversación es el accesor [`TestigoDeEntrante::conversacion`].
+    conversacion: IdConversacion,
+}
+
+impl TestigoDeEntrante {
+    /// Observa un evento entrante y produce el testigo que habilita la construcción de un
+    /// [`MensajeSaliente`] para esa misma conversación.
+    pub fn observar(evento: &EventoEntrante) -> Self {
+        Self {
+            conversacion: evento.conversacion.clone(),
+        }
+    }
+
+    /// Conversación del evento que originó este testigo (lectura).
+    pub fn conversacion(&self) -> &IdConversacion {
+        &self.conversacion
+    }
+}
+
+/// Error devuelto cuando se intenta construir un [`MensajeSaliente`] con un testigo cuya
+/// conversación no coincide con la conversación de destino.
+///
+/// Es el único caso de rechazo: si la conversación del testigo coincide con la de destino,
+/// la construcción siempre tiene éxito.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RechazoDeConstruccion {
+    /// Conversación que el testigo portaba.
+    pub conversacion_del_testigo: IdConversacion,
+    /// Conversación a la que se intentaba enviar.
+    pub conversacion_de_destino: IdConversacion,
+}
+
+impl fmt::Display for RechazoDeConstruccion {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "el testigo porta la conversación '{}' pero el destino es '{}': \
+             un MensajeSaliente solo se puede construir para la misma conversación \
+             que originó el evento entrante",
+            self.conversacion_del_testigo.como_str(),
+            self.conversacion_de_destino.como_str()
+        )
+    }
+}
+
+impl std::error::Error for RechazoDeConstruccion {}
+
 /// Mensaje saliente tipado (FR-12, elemento 2).
 ///
 /// La distinción no es cosmética: fuera de la ventana de servicio, la Cloud API solo acepta
 /// plantillas previamente aprobadas. Un `String` suelto no podría expresar esa diferencia y
 /// obligaría al núcleo a adivinarla.
+///
+/// # Variantes con `#[non_exhaustive]` (HEX-016, 2026-08-09)
+///
+/// Las variantes son **struct variants** marcadas `#[non_exhaustive]` para que ningún crate
+/// externo pueda construirlas por literal de estructura (E0639) sin pasar por los constructores
+/// con testigo ([`MensajeSaliente::respuesta_libre`], [`MensajeSaliente::plantilla`]). La lectura
+/// externa sí es posible con el patrón `RespuestaLibre { texto, .. }`.
+///
+/// `ResultadoEnvio` **no** lleva este atributo a propósito (líneas de documentación del enum):
+/// su diseño cerrado permite un `match` sin brazo comodín que rompe la compilación al añadir
+/// una variante, y esa garantía es exactamente la que un enumerado abierto anularía.
+///
+/// # Construcción con testigo
+///
+/// El único camino público desde fuera de `hexcell-core` para obtener un `MensajeSaliente` es
+/// a través de [`MensajeSaliente::respuesta_libre`] o [`MensajeSaliente::plantilla`], que exigen
+/// un [`TestigoDeEntrante`] cuya conversación coincida con la de destino.
+///
+/// ```compile_fail,E0639
+/// // Intento de construcción por literal de estructura sin testigo: no compila (E0639).
+/// let _ = hexcell_core::canal::MensajeSaliente::RespuestaLibre { texto: String::new() };
+/// ```
+///
+/// ```
+/// // Construcción legítima a través del constructor con testigo.
+/// use hexcell_core::canal::{EventoEntrante, MensajeSaliente, TestigoDeEntrante};
+/// use hexcell_core::identidad::{IdConversacion, IdDeduplicacion, IdRemitente};
+/// use std::time::SystemTime;
+///
+/// let evento = EventoEntrante {
+///     remitente: IdRemitente::nuevo("rem"),
+///     conversacion: IdConversacion::nuevo("conv"),
+///     contenido: "hola".to_string(),
+///     marca_temporal: SystemTime::UNIX_EPOCH,
+///     deduplicacion: IdDeduplicacion::nuevo("dedup"),
+/// };
+/// let testigo = TestigoDeEntrante::observar(&evento);
+/// let mensaje = MensajeSaliente::respuesta_libre(
+///     &testigo,
+///     &IdConversacion::nuevo("conv"),
+///     "hola de vuelta".to_string(),
+/// ).expect("la conversación coincide");
+/// ```
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum MensajeSaliente {
     /// Texto libre. Es lo que el canal propio envía siempre.
-    RespuestaLibre(String),
+    #[non_exhaustive]
+    RespuestaLibre {
+        /// Contenido textual de la respuesta.
+        texto: String,
+    },
     /// Plantilla previamente aprobada, con sus parámetros posicionales.
+    #[non_exhaustive]
     Plantilla {
         /// Nombre de la plantilla tal y como está aprobada en el canal.
         id: String,
         /// Valores de los parámetros variables, en orden.
         parametros: Vec<String>,
     },
+}
+
+impl MensajeSaliente {
+    /// Construye una respuesta libre, validando que el testigo corresponde a la conversación
+    /// de destino.
+    ///
+    /// Si la conversación del testigo no coincide con `conversacion`, el intento se rechaza con
+    /// [`RechazoDeConstruccion`] y se incrementa [`rechazos_de_construccion`].
+    pub fn respuesta_libre(
+        testigo: &TestigoDeEntrante,
+        conversacion: &IdConversacion,
+        texto: String,
+    ) -> Result<Self, RechazoDeConstruccion> {
+        if testigo.conversacion() != conversacion {
+            RECHAZOS_DE_CONSTRUCCION.fetch_add(1, Ordering::Relaxed);
+            return Err(RechazoDeConstruccion {
+                conversacion_del_testigo: testigo.conversacion().clone(),
+                conversacion_de_destino: conversacion.clone(),
+            });
+        }
+        Ok(MensajeSaliente::RespuestaLibre { texto })
+    }
+
+    /// Construye una plantilla, validando que el testigo corresponde a la conversación de destino.
+    ///
+    /// Si la conversación del testigo no coincide con `conversacion`, el intento se rechaza con
+    /// [`RechazoDeConstruccion`] y se incrementa [`rechazos_de_construccion`].
+    pub fn plantilla(
+        testigo: &TestigoDeEntrante,
+        conversacion: &IdConversacion,
+        id: String,
+        parametros: Vec<String>,
+    ) -> Result<Self, RechazoDeConstruccion> {
+        if testigo.conversacion() != conversacion {
+            RECHAZOS_DE_CONSTRUCCION.fetch_add(1, Ordering::Relaxed);
+            return Err(RechazoDeConstruccion {
+                conversacion_del_testigo: testigo.conversacion().clone(),
+                conversacion_de_destino: conversacion.clone(),
+            });
+        }
+        Ok(MensajeSaliente::Plantilla { id, parametros })
+    }
 }
 
 /// Resultado tipado del envío (FR-12, elemento 3).

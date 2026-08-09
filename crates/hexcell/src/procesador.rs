@@ -29,7 +29,7 @@
 //! algo que resolver de paso. Este procesador simplemente no genera respuesta (`None`); es el
 //! motor quien decide qué se registra sobre ese evento.
 
-use hexcell_core::canal::{EventoEntrante, MensajeSaliente};
+use hexcell_core::canal::{EventoEntrante, MensajeSaliente, TestigoDeEntrante};
 use hexcell_core::inferencia::{PeticionDeInferencia, ProveedorDeInferencia};
 
 /// Puerto del procesador de mensajes, local a este binario.
@@ -57,7 +57,15 @@ pub struct ProcesadorDeEco;
 
 impl ProcesadorDeMensajes for ProcesadorDeEco {
     async fn procesar(&self, evento: &EventoEntrante) -> Option<MensajeSaliente> {
-        Some(MensajeSaliente::RespuestaLibre(evento.contenido.clone()))
+        let testigo = TestigoDeEntrante::observar(evento);
+        Some(
+            MensajeSaliente::respuesta_libre(
+                &testigo,
+                &evento.conversacion,
+                evento.contenido.clone(),
+            )
+            .expect("la conversación coincide siempre"),
+        )
     }
 }
 
@@ -93,7 +101,17 @@ where
         };
 
         match self.proveedor.generar(peticion).await {
-            Ok(respuesta) => Some(MensajeSaliente::RespuestaLibre(respuesta.contenido)),
+            Ok(respuesta) => {
+                let testigo = TestigoDeEntrante::observar(evento);
+                Some(
+                    MensajeSaliente::respuesta_libre(
+                        &testigo,
+                        &evento.conversacion,
+                        respuesta.contenido,
+                    )
+                    .expect("la conversación coincide siempre"),
+                )
+            }
             Err(_averia) => None,
         }
     }

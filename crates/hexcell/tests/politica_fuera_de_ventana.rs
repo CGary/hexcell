@@ -121,15 +121,17 @@ async fn una_respuesta_fuera_de_ventana_se_difiere_y_se_reenvia_antes_que_la_nue
         "se esperan tres llamadas a send: el intento diferido, su reintento y la respuesta nueva"
     );
     assert_eq!(capturas[0].2, ResultadoEnvio::FueraDeVentana);
+    let MensajeSaliente::RespuestaLibre { texto, .. } = &capturas[1].1 else {
+        panic!("el reintento debe ser una respuesta libre");
+    };
     assert_eq!(
-        capturas[1].1,
-        MensajeSaliente::RespuestaLibre("hola".to_string()),
+        texto, "hola",
         "el reintento debe ser la respuesta diferida del primer evento, no la del segundo"
     );
     assert_eq!(capturas[1].2, ResultadoEnvio::Aceptado);
-    assert_eq!(
-        capturas[2].1,
-        MensajeSaliente::RespuestaLibre("hola de nuevo".to_string())
-    );
+    let MensajeSaliente::RespuestaLibre { texto, .. } = &capturas[2].1 else {
+        panic!("el tercer envío debe ser una respuesta libre");
+    };
+    assert_eq!(texto, "hola de nuevo");
     assert_eq!(capturas[2].2, ResultadoEnvio::Aceptado);
 }

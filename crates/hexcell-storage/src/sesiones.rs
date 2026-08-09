@@ -56,6 +56,28 @@ pub enum VeredictoDeDeduplicacion {
     Duplicado,
 }
 
+/// Registro histórico de un mensaje saliente, reconstruido desde SQLite (HEX-016, 2026-08-09).
+///
+/// No es un `MensajeSaliente` porque un registro histórico no es un mensaje reenviable: reconstruirlo
+/// desde SQLite no produce un testigo de evento entrante, y ofrecer un constructor de `MensajeSaliente`
+/// sin testigo violaría el invariante de spec 2. `registrar_saliente` sigue tomando `&MensajeSaliente`
+/// porque leer un mensaje para persistirlo no requiere construir uno.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum SalienteHistorico {
+    /// Texto libre que se envió.
+    RespuestaLibre {
+        /// Contenido textual.
+        texto: String,
+    },
+    /// Plantilla que se envió.
+    Plantilla {
+        /// Nombre de la plantilla.
+        id: String,
+        /// Parámetros posicionales.
+        parametros: Vec<String>,
+    },
+}
+
 /// Un elemento del historial de una conversación: lo que entró y lo que salió, en el orden en que
 /// el motor los procesó.
 ///
@@ -68,7 +90,7 @@ pub enum EventoDeHistorial {
     /// Contenido textual ya normalizado de un evento entrante procesado para esta conversación.
     Entrante(String),
     /// Un mensaje saliente que el motor envió (o intentó enviar) para esta conversación.
-    Saliente(MensajeSaliente),
+    Saliente(SalienteHistorico),
 }
 
 /// Acceso de alto nivel a `sessions.db` para el motor de mensajería.
@@ -236,7 +258,7 @@ impl RepositorioDeSesiones {
     ) -> Result<(), ErrorDeAlmacen> {
         let marca_ms = a_milisegundos(marca_temporal);
         let (clase, contenido) = match mensaje {
-            MensajeSaliente::RespuestaLibre(texto) => (CLASE_TEXTO, texto.as_str()),
+            MensajeSaliente::RespuestaLibre { texto, .. } => (CLASE_TEXTO, texto.as_str()),
             MensajeSaliente::Plantilla { id, .. } => (CLASE_PLANTILLA, id.as_str()),
         };
 
@@ -304,7 +326,7 @@ impl RepositorioDeSesiones {
                     historial.push(EventoDeHistorial::Entrante(contenido));
                 } else if clase == CLASE_PLANTILLA {
                     let parametros = leer_parametros_de_plantilla(conexion, id_mensaje)?;
-                    historial.push(EventoDeHistorial::Saliente(MensajeSaliente::Plantilla {
+                    historial.push(EventoDeHistorial::Saliente(SalienteHistorico::Plantilla {
                         id: contenido,
                         parametros,
                     }));
@@ -312,7 +334,7 @@ impl RepositorioDeSesiones {
                     // La restricción CHECK de la columna `direccion` solo admite dos valores, así
                     // que llegar aquí significa saliente; y la de `clase`, que es texto libre.
                     historial.push(EventoDeHistorial::Saliente(
-                        MensajeSaliente::RespuestaLibre(contenido),
+                        SalienteHistorico::RespuestaLibre { texto: contenido },
                     ));
                 }
             }

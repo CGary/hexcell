@@ -11,7 +11,7 @@ use std::time::{Duration, SystemTime};
 use hexcell_canal_simulado::{AdaptadorSimulado, Reloj, RelojDePrueba};
 use hexcell_core::canal::{
     ChannelAdapter, DURACION_VENTANA_SERVICIO, EstadoVentanaServicio, EventoEntrante,
-    MensajeSaliente, ResultadoEnvio,
+    MensajeSaliente, ResultadoEnvio, TestigoDeEntrante,
 };
 use hexcell_core::identidad::{IdConversacion, IdDeduplicacion, IdRemitente};
 use hexcell_storage::AlmacenDeIdentidad;
@@ -57,6 +57,11 @@ fn evento_de_prueba(conversacion: &IdConversacion, marca_temporal: SystemTime) -
     }
 }
 
+fn testigo_local(conversacion: &IdConversacion) -> TestigoDeEntrante {
+    let evento = evento_de_prueba(conversacion, SystemTime::UNIX_EPOCH);
+    TestigoDeEntrante::observar(&evento)
+}
+
 #[tokio::test]
 async fn la_ventana_expira_de_verdad_contra_el_reloj_de_prueba() {
     let reloj = RelojDePrueba::nuevo(SystemTime::UNIX_EPOCH);
@@ -73,7 +78,12 @@ async fn la_ventana_expira_de_verdad_contra_el_reloj_de_prueba() {
     let resultado_dentro = adaptador
         .send(
             &conversacion,
-            MensajeSaliente::RespuestaLibre("hola de vuelta".to_string()),
+            MensajeSaliente::respuesta_libre(
+                &testigo_local(&conversacion),
+                &conversacion,
+                "hola de vuelta".to_string(),
+            )
+            .expect("la test usa la misma conversación"),
         )
         .await
         .expect("el envío simulado no falla en este test");
@@ -92,7 +102,12 @@ async fn la_ventana_expira_de_verdad_contra_el_reloj_de_prueba() {
     let resultado_fuera = adaptador
         .send(
             &conversacion,
-            MensajeSaliente::RespuestaLibre("hola tarde".to_string()),
+            MensajeSaliente::respuesta_libre(
+                &testigo_local(&conversacion),
+                &conversacion,
+                "hola tarde".to_string(),
+            )
+            .expect("la test usa la misma conversación"),
         )
         .await
         .expect("el envío simulado no falla en este test");
@@ -121,7 +136,12 @@ async fn la_expiracion_es_instantanea_y_reproducible_sin_depender_del_reloj_de_p
     let resultado = adaptador
         .send(
             &conversacion,
-            MensajeSaliente::RespuestaLibre("hola".to_string()),
+            MensajeSaliente::respuesta_libre(
+                &testigo_local(&conversacion),
+                &conversacion,
+                "hola".to_string(),
+            )
+            .expect("la test usa la misma conversación"),
         )
         .await
         .expect("el envío simulado no falla en este test");
@@ -155,7 +175,12 @@ async fn los_cuatro_rechazos_son_disparables_y_distinguibles() {
         let resultado = adaptador
             .send(
                 conversacion,
-                MensajeSaliente::RespuestaLibre("mensaje".to_string()),
+                MensajeSaliente::respuesta_libre(
+                    &testigo_local(conversacion),
+                    conversacion,
+                    "mensaje".to_string(),
+                )
+                .expect("la test usa la misma conversación"),
             )
             .await
             .expect("el envío simulado no falla en este test");
@@ -188,7 +213,12 @@ async fn un_rechazo_forzado_solo_se_aplica_a_una_llamada() {
     let primero = adaptador
         .send(
             &conversacion,
-            MensajeSaliente::RespuestaLibre("mensaje uno".to_string()),
+            MensajeSaliente::respuesta_libre(
+                &testigo_local(&conversacion),
+                &conversacion,
+                "mensaje uno".to_string(),
+            )
+            .expect("la test usa la misma conversación"),
         )
         .await
         .expect("el envío simulado no falla en este test");
@@ -197,7 +227,12 @@ async fn un_rechazo_forzado_solo_se_aplica_a_una_llamada() {
     let segundo = adaptador
         .send(
             &conversacion,
-            MensajeSaliente::RespuestaLibre("mensaje dos".to_string()),
+            MensajeSaliente::respuesta_libre(
+                &testigo_local(&conversacion),
+                &conversacion,
+                "mensaje dos".to_string(),
+            )
+            .expect("la test usa la misma conversación"),
         )
         .await
         .expect("el envío simulado no falla en este test");
@@ -214,7 +249,12 @@ async fn forzar_averia_hace_fallar_exactamente_al_siguiente_envio() {
     let resultado = adaptador
         .send(
             &conversacion,
-            MensajeSaliente::RespuestaLibre("mensaje".to_string()),
+            MensajeSaliente::respuesta_libre(
+                &testigo_local(&conversacion),
+                &conversacion,
+                "mensaje".to_string(),
+            )
+            .expect("la test usa la misma conversación"),
         )
         .await;
     assert!(resultado.is_err());
@@ -222,7 +262,12 @@ async fn forzar_averia_hace_fallar_exactamente_al_siguiente_envio() {
     let siguiente = adaptador
         .send(
             &conversacion,
-            MensajeSaliente::RespuestaLibre("mensaje".to_string()),
+            MensajeSaliente::respuesta_libre(
+                &testigo_local(&conversacion),
+                &conversacion,
+                "mensaje".to_string(),
+            )
+            .expect("la test usa la misma conversación"),
         )
         .await
         .expect("la avería ya se consumió, este envío no debe fallar");
@@ -239,7 +284,12 @@ async fn envios_capturados_registra_cada_envio_realizado() {
         .inyectar(evento_de_prueba(&conversacion, reloj.ahora()))
         .await
         .expect("el canal recién creado debe aceptar el evento");
-    let mensaje = MensajeSaliente::RespuestaLibre("capturado".to_string());
+    let mensaje = MensajeSaliente::respuesta_libre(
+        &testigo_local(&conversacion),
+        &conversacion,
+        "capturado".to_string(),
+    )
+    .expect("la test usa la misma conversación");
     adaptador
         .send(&conversacion, mensaje.clone())
         .await

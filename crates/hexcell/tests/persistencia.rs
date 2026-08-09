@@ -20,6 +20,7 @@ use hexcell_core::canal::{
     ChannelAdapter, EstadoVentanaServicio, EventoEntrante, MensajeSaliente, ResultadoEnvio,
 };
 use hexcell_core::identidad::{IdConversacion, IdDeduplicacion, IdRemitente};
+use hexcell_storage::SalienteHistorico;
 
 /// Envoltorio de test: delega en un `Arc<AdaptadorSimulado>` compartido con quien inyecta y
 /// quien, luego, inspecciona `envios_capturados()`.
@@ -235,9 +236,13 @@ async fn el_historial_sobrevive_a_un_reinicio_y_conserva_su_orden() {
         historial,
         vec![
             EventoDeHistorial::Entrante("primero".to_string()),
-            EventoDeHistorial::Saliente(MensajeSaliente::RespuestaLibre("primero".to_string())),
+            EventoDeHistorial::Saliente(SalienteHistorico::RespuestaLibre {
+                texto: "primero".to_string(),
+            }),
             EventoDeHistorial::Entrante("segundo".to_string()),
-            EventoDeHistorial::Saliente(MensajeSaliente::RespuestaLibre("segundo".to_string())),
+            EventoDeHistorial::Saliente(SalienteHistorico::RespuestaLibre {
+                texto: "segundo".to_string(),
+            }),
         ],
         "el historial debe reconstruirse completo y en el mismo orden que se escribió"
     );

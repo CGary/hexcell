@@ -54,6 +54,7 @@ se apoya en un principio de diseño, no.
 | [D-18](#d-18) | `tokio-util::CancellationToken` para el apagado ordenado | Principio de diseño, no reabrir |
 | [D-19](#d-19) | API de respaldo en línea de `rusqlite` (`Connection::backup`) frente a `VACUUM INTO` | Principio de diseño, no reabrir |
 | [D-20](#d-20) | Planificador de respaldo dentro del propio proceso de la célula | Principio de diseño, no reabrir |
+| [D-21](#d-21) | Usar trybuild como mecanismo de prueba compile-failure | Reabrible si cambia semántica de rustc |
 
 ---
 
@@ -378,6 +379,14 @@ copiar `sessions.db`, `knowledge_live.db` y el almacén de identidad del adaptad
 * **Registro normativo:** `docs/adr/adr-0020-respaldo-y-restauracion-por-celula.md`, `docs/STATUS.md`.
 * **Qué tendría que cambiar para reabrirlo:** *principio de diseño.* **No reabrir** antes de que la
   etapa A-6 decida el mecanismo real de planificación de la célula.
+
+### D-21
+**Usar trybuild como mecanismo de prueba compile-failure.**
+
+* **Descartado:** 2026-08-09 (HEX-016).
+* **Por qué se descartó:** el invariante `compile_fail` doctest es suficiente, `trybuild` añadiría una dependencia de desarrollo y un directorio de fixtures; la prueba E0639 no se refuerza en rustc estable 1.92.0 pero se mitiga con un doctest positivo emparejado que rompe si se renombra o elimina la API.
+* **Registro normativo:** `docs/adr/adr-0021-testigo-de-entrante.md`.
+* **Qué tendría que cambiar para reabrirlo:** si el doctest positivo deja de ser mitigación suficiente (p.ej. si rustc cambia la semántica de `compile_fail` en un modo que invalide el emparejamiento) o si se necesita probar más de un error de compilación en el mismo crate.
 
 ---
 

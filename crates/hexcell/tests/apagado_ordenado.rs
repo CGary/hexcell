@@ -6,8 +6,7 @@ mod comun;
 use std::time::Duration;
 
 use comun::{DirectorioTemporal, abrir_persistencia, lanzar_binario_con_variables};
-use hexcell_core::canal::MensajeSaliente;
-use hexcell_storage::EventoDeHistorial;
+use hexcell_storage::{EventoDeHistorial, SalienteHistorico};
 
 /// Contenido del evento de arranque para estos tests: no necesita ser distintivo de contenido
 /// (eso lo cubre `tests/registro_estructurado.rs`), solo distinto entre los dos casos de este
@@ -77,7 +76,7 @@ fn un_evento_en_vuelo_se_completa_antes_de_que_el_proceso_termine_por_sigterm() 
     assert!(
         historial.iter().any(|entrada| matches!(
             entrada,
-            EventoDeHistorial::Saliente(MensajeSaliente::RespuestaLibre(_))
+            EventoDeHistorial::Saliente(SalienteHistorico::RespuestaLibre { .. })
         )),
         "la respuesta al evento en vuelo debe quedar registrada como saliente: {historial:?}"
     );
