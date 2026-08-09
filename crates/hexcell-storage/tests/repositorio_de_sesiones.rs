@@ -9,11 +9,11 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
 use comun::DirectorioTemporal;
-use hexcell_core::canal::MensajeSaliente;
+use hexcell_core::canal::{EventoEntrante, MensajeSaliente, TestigoDeEntrante};
 use hexcell_core::identidad::{IdConversacion, IdDeduplicacion, IdRemitente};
 use hexcell_storage::{
-    EventoDeHistorial, GestorDePools, RepositorioDeSesiones, VeredictoDeDeduplicacion,
-    a_milisegundos, desde_milisegundos,
+    EventoDeHistorial, GestorDePools, RepositorioDeSesiones, SalienteHistorico,
+    VeredictoDeDeduplicacion, a_milisegundos, desde_milisegundos,
 };
 
 const VENTANA: Duration = Duration::from_secs(3600);
@@ -21,6 +21,16 @@ const VENTANA: Duration = Duration::from_secs(3600);
 fn repositorio(directorio: &DirectorioTemporal) -> RepositorioDeSesiones {
     let pools = Arc::new(GestorDePools::abrir(directorio.ruta()).expect("abrir los pools"));
     RepositorioDeSesiones::nuevo(pools)
+}
+
+fn testigo_para(conversacion: &IdConversacion) -> TestigoDeEntrante {
+    TestigoDeEntrante::observar(&EventoEntrante {
+        remitente: IdRemitente::nuevo("rem-historial"),
+        conversacion: conversacion.clone(),
+        contenido: "contenido".to_string(),
+        marca_temporal: SystemTime::UNIX_EPOCH,
+        deduplicacion: IdDeduplicacion::nuevo("dedup-historial"),
+    })
 }
 
 #[test]
@@ -46,22 +56,21 @@ fn una_respuesta_libre_y_una_plantilla_sobreviven_a_la_ida_y_vuelta_por_sqlite()
     repositorio
         .anotar_entrante(&conversacion, &remitente, "hola", instante)
         .expect("anotar el evento entrante");
+    let testigo = testigo_para(&conversacion);
+    let respuesta = MensajeSaliente::respuesta_libre(&testigo, &conversacion, "hola".to_string())
+        .expect("construir la respuesta libre con testigo válido");
+    let plantilla = MensajeSaliente::plantilla(
+        &testigo,
+        &conversacion,
+        "recordatorio_de_cita".to_string(),
+        vec!["martes".to_string(), "10:30".to_string()],
+    )
+    .expect("construir la plantilla con testigo válido");
     repositorio
-        .anotar_saliente(
-            &conversacion,
-            &MensajeSaliente::RespuestaLibre("hola".to_string()),
-            instante,
-        )
+        .anotar_saliente(&conversacion, &respuesta, instante)
         .expect("anotar la respuesta libre");
     repositorio
-        .anotar_saliente(
-            &conversacion,
-            &MensajeSaliente::Plantilla {
-                id: "recordatorio_de_cita".to_string(),
-                parametros: vec!["martes".to_string(), "10:30".to_string()],
-            },
-            instante,
-        )
+        .anotar_saliente(&conversacion, &plantilla, instante)
         .expect("anotar la plantilla");
 
     let historial = repositorio
@@ -71,8 +80,10 @@ fn una_respuesta_libre_y_una_plantilla_sobreviven_a_la_ida_y_vuelta_por_sqlite()
         historial,
         vec![
             EventoDeHistorial::Entrante("hola".to_string()),
-            EventoDeHistorial::Saliente(MensajeSaliente::RespuestaLibre("hola".to_string())),
-            EventoDeHistorial::Saliente(MensajeSaliente::Plantilla {
+            EventoDeHistorial::Saliente(SalienteHistorico::RespuestaLibre {
+                texto: "hola".to_string(),
+            }),
+            EventoDeHistorial::Saliente(SalienteHistorico::Plantilla {
                 id: "recordatorio_de_cita".to_string(),
                 parametros: vec!["martes".to_string(), "10:30".to_string()],
             }),

@@ -11,12 +11,28 @@
 use std::time::Duration;
 
 use hexcell_core::canal::{
-    ChannelAdapter, DURACION_VENTANA_SERVICIO, EstadoVentanaServicio, MensajeSaliente,
-    ResultadoEnvio,
+    ChannelAdapter, DURACION_VENTANA_SERVICIO, EstadoVentanaServicio, EventoEntrante,
+    MensajeSaliente, ResultadoEnvio, TestigoDeEntrante,
 };
-use hexcell_core::identidad::IdConversacion;
+use hexcell_core::identidad::{IdConversacion, IdDeduplicacion, IdRemitente};
 
 use crate::banco::{BancoConRelojControlable, BancoDeCanal};
+
+/// Construye un evento entrante local para la conversación dada y deriva su testigo.
+///
+/// `BancoDeCanal::inyectar_evento` devuelve `()` y la batería no observa el evento inyectado,
+/// así que no puede recibir un testigo del banco. Fabricar un `EventoEntrante` local es explícito
+/// y greppable, no accidental (decisión humana del 2026-08-09, `adr-0021`).
+fn testigo_local(conversacion: &IdConversacion) -> TestigoDeEntrante {
+    let evento = EventoEntrante {
+        remitente: IdRemitente::nuevo("bateria-contrato"),
+        conversacion: conversacion.clone(),
+        contenido: String::new(),
+        marca_temporal: std::time::SystemTime::UNIX_EPOCH,
+        deduplicacion: IdDeduplicacion::nuevo("bateria-contrato"),
+    };
+    TestigoDeEntrante::observar(&evento)
+}
 
 /// Los cuatro rechazos de FR-12 se fuerzan, se producen y se observan de forma distinguible, y
 /// las cuatro variantes resultantes son distintas entre sí (AC-2).
@@ -44,7 +60,12 @@ pub async fn verifica_los_cuatro_rechazos_son_forzables_y_distinguibles<B: Banco
             .adaptador()
             .send(
                 conversacion,
-                MensajeSaliente::RespuestaLibre("contrato".to_string()),
+                MensajeSaliente::respuesta_libre(
+                    &testigo_local(conversacion),
+                    conversacion,
+                    "contrato".to_string(),
+                )
+                .expect("la batería siempre usa la misma conversación"),
             )
             .await
             .expect("el banco no debe producir una avería de transporte en este escenario");
@@ -73,7 +94,12 @@ pub async fn verifica_un_rechazo_forzado_se_aplica_a_una_sola_llamada<B: BancoDe
         .adaptador()
         .send(
             &conversacion,
-            MensajeSaliente::RespuestaLibre("primero".to_string()),
+            MensajeSaliente::respuesta_libre(
+                &testigo_local(&conversacion),
+                &conversacion,
+                "primero".to_string(),
+            )
+            .expect("la batería siempre usa la misma conversación"),
         )
         .await
         .expect("el banco no debe producir una avería de transporte en este escenario");
@@ -83,7 +109,12 @@ pub async fn verifica_un_rechazo_forzado_se_aplica_a_una_sola_llamada<B: BancoDe
         .adaptador()
         .send(
             &conversacion,
-            MensajeSaliente::RespuestaLibre("segundo".to_string()),
+            MensajeSaliente::respuesta_libre(
+                &testigo_local(&conversacion),
+                &conversacion,
+                "segundo".to_string(),
+            )
+            .expect("la batería siempre usa la misma conversación"),
         )
         .await
         .expect("el banco no debe producir una avería de transporte en este escenario");
@@ -107,7 +138,12 @@ pub async fn verifica_plantilla_se_acepta_donde_respuesta_libre_se_rechaza<B: Ba
         .adaptador()
         .send(
             &conversacion,
-            MensajeSaliente::RespuestaLibre("texto libre".to_string()),
+            MensajeSaliente::respuesta_libre(
+                &testigo_local(&conversacion),
+                &conversacion,
+                "texto libre".to_string(),
+            )
+            .expect("la batería siempre usa la misma conversación"),
         )
         .await
         .expect("el banco no debe producir una avería de transporte en este escenario");
@@ -117,10 +153,13 @@ pub async fn verifica_plantilla_se_acepta_donde_respuesta_libre_se_rechaza<B: Ba
         .adaptador()
         .send(
             &conversacion,
-            MensajeSaliente::Plantilla {
-                id: "plantilla-de-contrato".to_string(),
-                parametros: Vec::new(),
-            },
+            MensajeSaliente::plantilla(
+                &testigo_local(&conversacion),
+                &conversacion,
+                "plantilla-de-contrato".to_string(),
+                Vec::new(),
+            )
+            .expect("la batería siempre usa la misma conversación"),
         )
         .await
         .expect("el banco no debe producir una avería de transporte en este escenario");
@@ -140,7 +179,12 @@ pub async fn verifica_estado_ventana_concuerda_con_send<B: BancoDeCanal>(banco: 
         .adaptador()
         .send(
             &conversacion,
-            MensajeSaliente::RespuestaLibre("hola".to_string()),
+            MensajeSaliente::respuesta_libre(
+                &testigo_local(&conversacion),
+                &conversacion,
+                "hola".to_string(),
+            )
+            .expect("la batería siempre usa la misma conversación"),
         )
         .await
         .expect("el banco no debe producir una avería de transporte en este escenario");
@@ -169,7 +213,12 @@ pub async fn verifica_ventana_abierta_acepta_respuesta_libre<B: BancoConRelojCon
         .adaptador()
         .send(
             &conversacion,
-            MensajeSaliente::RespuestaLibre("dentro de ventana".to_string()),
+            MensajeSaliente::respuesta_libre(
+                &testigo_local(&conversacion),
+                &conversacion,
+                "dentro de ventana".to_string(),
+            )
+            .expect("la batería siempre usa la misma conversación"),
         )
         .await
         .expect("el banco no debe producir una avería de transporte en este escenario");
@@ -196,7 +245,12 @@ pub async fn verifica_ventana_expira_tras_duracion_de_servicio<B: BancoConRelojC
         .adaptador()
         .send(
             &conversacion,
-            MensajeSaliente::RespuestaLibre("tarde".to_string()),
+            MensajeSaliente::respuesta_libre(
+                &testigo_local(&conversacion),
+                &conversacion,
+                "tarde".to_string(),
+            )
+            .expect("la batería siempre usa la misma conversación"),
         )
         .await
         .expect("el banco no debe producir una avería de transporte en este escenario");

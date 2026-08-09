@@ -148,7 +148,11 @@ async fn el_motor_envia_la_respuesta_del_proveedor_y_no_el_eco_del_procesador() 
 
     let capturas = adaptador.envios_capturados();
     assert_eq!(capturas.len(), 1);
-    let MensajeSaliente::RespuestaLibre(texto_enviado) = &capturas[0].1 else {
+    let MensajeSaliente::RespuestaLibre {
+        texto: texto_enviado,
+        ..
+    } = &capturas[0].1
+    else {
         panic!("se esperaba una respuesta libre");
     };
     assert_ne!(

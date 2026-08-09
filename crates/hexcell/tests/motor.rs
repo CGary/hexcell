@@ -97,10 +97,10 @@ async fn un_evento_inyectado_se_procesa_y_la_respuesta_se_envia_por_send() {
     let capturas = adaptador.envios_capturados();
     assert_eq!(capturas.len(), 1);
     assert_eq!(capturas[0].0, conversacion);
-    assert_eq!(
-        capturas[0].1,
-        MensajeSaliente::RespuestaLibre("eco de prueba".to_string())
-    );
+    let MensajeSaliente::RespuestaLibre { texto, .. } = &capturas[0].1 else {
+        panic!("se esperaba una respuesta libre");
+    };
+    assert_eq!(texto, "eco de prueba");
     assert_eq!(capturas[0].2, ResultadoEnvio::Aceptado);
 }
 

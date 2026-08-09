@@ -56,7 +56,7 @@ pub use pools::{
 };
 pub use respaldo::{CopiaVerificada, respaldar_base, verificar_destino_disponible};
 pub use sesiones::{
-    EventoDeHistorial, LIMITE_DE_ENTRADAS_RETENIDAS, RepositorioDeSesiones,
+    EventoDeHistorial, LIMITE_DE_ENTRADAS_RETENIDAS, RepositorioDeSesiones, SalienteHistorico,
     VeredictoDeDeduplicacion,
 };
 pub use tiempo::{a_milisegundos, desde_milisegundos};
