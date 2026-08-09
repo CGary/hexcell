@@ -1,0 +1,100 @@
+task_id: HEX-015
+summary: Implement Rust WhatsmeowAdapter as IPC client over ChannelAdapter + CicloDeVidaSesion, tested against a simulated sidecar; write adr-0011.
+goal: >
+  Deliver stage A-3 task 10: a Rust WhatsmeowAdapter that implements the
+  ChannelAdapter trait and its session-lifecycle sub-trait (CicloDeVidaSesion)
+  as an IPC client over the Unix domain socket described by
+  docs/protocolo-ipc-nucleo-sidecar.md (document 1.2, wire version 3): version
+  handshake (section 3), delivery-ack semantics with redelivery tolerance
+  (section 4), reconnection behavior for all three restart orders (section 5),
+  and protocol error handling (section 8). The adapter must represent the four
+  session states (activa / reconectando / desvinculada / pausada) and project
+  them to GET /health/ready, uphold the privacy invariant of adr-0010 (no JID,
+  phone number, device id, or push name crosses the port), and pass the
+  crates/hexcell-canal-contrato battery. Tests exercise a simulated sidecar
+  test double that speaks wire 3 over a Unix socket; the real Go IPC server
+  does not exist yet and is out of scope. This task also writes
+  docs/adr/adr-0011-whatsmeow-sidecar-e-ipc.md (parsing library choice with
+  justification, why the sidecar is a separate process, IPC mechanism
+  formalization, session-persistence design), indexes it in
+  docs/adr/README.md, and updates docs/STATUS.md to reflect it as defined.
+invariants:
+  - hexcell-core stays free of a tokio dependency; the adapter's async runtime usage lives outside hexcell-core.
+  - No JID, phone number, device id, or push name ever appears in adapter state handed to hexcell-core, in logs, or in sessions.db; the wire already carries only opaque ids and the adapter introduces no transport identifiers of its own.
+  - The wire protocol (docs/protocolo-ipc-nucleo-sidecar.md, wire version 3, nine closed message types, seven-field evento_entrante) is consumed as-is; this task makes zero changes to the protocol document and zero changes to sidecar/ Go code.
+  - Session state exposed by the adapter always takes one of exactly four values (activa / reconectando / desvinculada / pausada), matching the vocabulary fixed in HEX-013.
+  - A version mismatch in the handshake (section 3) causes the adapter to close the connection and report the mismatch; it never negotiates or degrades partially.
+  - Redelivered events (section 4 reentrega) are delivered to the core without the adapter inventing new deduplication ids; dedup by id_deduplicacion remains the core's downstream responsibility.
+  - An already-acknowledged event is never lost or resurfaced as unacknowledged after a sidecar crash and reconnection.
+acceptance:
+  - id: AC-1
+    statement: >-
+      The WhatsmeowAdapter passes the four non-temporal scenarios of the
+      crates/hexcell-canal-contrato battery (the ones reachable through BancoDeCanal alone) when
+      run against the simulated sidecar test double. The two clock-advancing scenarios that
+      demand EstadoVentanaServicio::Cerrada are exercised only through the
+      BancoConRelojControlable sub-trait, which this adapter deliberately does NOT implement:
+      the documented policy (adr-0010, canal.rs) is that the own-channel adapter never
+      fabricates a 24-hour window — the TYPE admits the restrictive result, the POLICY of this
+      adapter does not produce it. Human decision of 2026-08-08: this clause was narrowed from
+      "the full battery" during blueprint, because the original wording forced the adapter to
+      fabricate window state the architecture explicitly forbids; the battery itself split the
+      clock-dependent scenarios into a separate sub-trait for exactly this case. Until A-3 task
+      12 provides the outbound wire, send accepts into an in-memory buffer with an exposed
+      counter and a loud log entry (Aceptado already means accepted for later delivery), a
+      bridge recorded in adr-0011 and replaced by task 12 before any real use (task 15).
+    given: a simulated sidecar listening on a Unix domain socket and speaking wire version 3
+    when: the hexcell-canal-contrato battery runs its four non-temporal scenarios against a WhatsmeowAdapter instance connected to it
+    then: all four non-temporal contract-battery scenarios pass, and the adapter does not implement BancoConRelojControlable
+  - id: AC-2
+    statement: Version handshake succeeds on matching version and fails closed on mismatch, per protocol section 3.
+    given: the adapter connects to a simulated sidecar
+    when: the sidecar's saludo carries a version equal to, or different from, the adapter's own wire version
+    then: on equal versions the connection proceeds; on a mismatch the adapter closes the connection and surfaces the mismatch (both versions) without negotiating or degrading
+  - id: AC-3
+    statement: The adapter delivers redelivered events to the core without fabricating new deduplication ids, per protocol section 4.
+    given: a simulated sidecar that reentregas (resends) an unacknowledged event with its original id_deduplicacion after reconnecting
+    when: the adapter receives the redelivered event
+    then: the adapter surfaces it to the core carrying the same id_deduplicacion it originally had, with no new id minted
+  - id: AC-4
+    statement: Sidecar crash is detected, the adapter's session state transitions correctly, and it reconnects per protocol section 5 without losing any already-acked event.
+    given: a WhatsmeowAdapter connected to a simulated sidecar with events already acknowledged
+    when: the simulated sidecar's socket connection is dropped and later re-established
+    then: the adapter's session state reflects reconectando while disconnected, the adapter retries with the documented backoff behavior, reconnects and completes the handshake once the sidecar is back, and no previously acknowledged event reappears as unacknowledged
+  - id: AC-5
+    statement: The four session states, including pausada, are representable on the Rust side and projected to GET /health/ready.
+    given: a WhatsmeowAdapter whose session state is set to each of activa, reconectando, desvinculada, and pausada in turn
+    when: GET /health/ready is evaluated
+    then: the readiness response reflects the corresponding state-specific readiness for each of the four values
+  - id: AC-6
+    statement: No JID-like or other transport identifier appears in any state the adapter hands to hexcell-core.
+    given: a simulated sidecar sending events and session-state updates over the wire (which already carries only opaque internal ids)
+    when: the adapter processes those messages into ChannelAdapter/CicloDeVidaSesion state
+    then: inspecting that state (and any log output produced by the adapter) shows no JID, phone number, device id, or push name
+  - id: AC-7
+    statement: docs/adr/adr-0011-whatsmeow-sidecar-e-ipc.md exists, is indexed in docs/adr/README.md, and docs/STATUS.md reflects it as defined.
+    given: the repository before this task
+    when: this task completes
+    then: docs/adr/adr-0011-whatsmeow-sidecar-e-ipc.md contains the decision (why a separate sidecar process, the IPC mechanism formalized from the existing protocol doc, the session-persistence design, and the serde/serde_json parsing choice with its written justification), docs/adr/README.md's status column for that row no longer reads "Por escribir", and the corresponding pending entry in docs/STATUS.md is flipped to defined
+  - Every new external dependency added to the root Cargo.toml workspace dependency table (serde, serde_json) carries a written justification comment, consistent with the existing convention for that table.
+  - cargo build --workspace, cargo test --workspace, cargo fmt --check, and cargo clippy --workspace -- -D warnings all pass.
+risk: medium
+non_goals:
+  - Implementing the Go-side IPC socket server in sidecar/ (separate future task; the real server does not exist yet).
+  - Acknowledgement types sent/delivered/read/failed and the outbound queue (A-3 task 12).
+  - Enforcing the only-reply-type invariant in the type system (A-3 task 11).
+  - The STOP list (A-3 task 13).
+  - Behavior discipline / anti-ban measures (A-3 task 14).
+  - Testing against a real WhatsApp number (A-3 task 15).
+  - Any change to the wire protocol or docs/protocolo-ipc-nucleo-sidecar.md.
+  - Any change under sidecar/.
+  - "End-to-end tests against the real Go IPC server (impossible: it does not exist yet)."
+  - Restore rehearsal exercises (A-3 task 18).
+constraints:
+  - "Rust workspace facts to respect: 7 crates, edition 2024, rust-version 1.92; crates/hexcell-core stays tokio-free; only crates/hexcell and crates/hexcell-canal-simulado consume tokio."
+  - The ChannelAdapter + CicloDeVidaSesion + EventoEntrante trait surface is declared in crates/hexcell-core/src/canal.rs and must not be redefined incompatibly.
+  - New workspace dependencies (serde, serde_json) go in the root Cargo.toml dependency table with a written justification comment, per existing convention.
+  - Crate layout for the adapter (new crate vs. an existing one) is left open for q-blueprint; the only fixed requirement is that hexcell-core remains tokio-free and the contract battery can exercise the adapter.
+  - No mass-sender folklore (jitter, warm-up sequences, proxies, IP rotation) anywhere in the implementation or its documentation.
+  - All dates in prose/docs use absolute format (e.g. 2026-08-08), never relative.
+  - "Repository language: implementation prose, identifiers, comments, test names, and docs are in Spanish; commit messages are conventional commits in Spanish with no AI attribution."

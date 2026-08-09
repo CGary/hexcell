@@ -1,0 +1,3 @@
+entries: []
+summary: 'Add crates/hexcell-canal-whatsmeow: wire-3 Unix-socket IPC client implementing ChannelAdapter + CicloDeVidaSesion against a simulated sidecar; EstadoSesion, four-state ready, adr-0011. Wire 3 frozen.'
+task_id: HEX-015

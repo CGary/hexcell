@@ -1,0 +1,171 @@
+task_id: HEX-015
+summary: "Add crates/hexcell-canal-whatsmeow: wire-3 Unix-socket IPC client implementing ChannelAdapter + CicloDeVidaSesion against a simulated sidecar; EstadoSesion, four-state ready, adr-0011. Wire 3 frozen."
+goal: >
+  Implement stage A-3 task 10. Create the new workspace crate crates/hexcell-canal-whatsmeow
+  holding AdaptadorWhatsmeow: a Unix-domain-socket CLIENT (the sidecar listens, the core dials)
+  speaking wire version 3 of docs/protocolo-ipc-nucleo-sidecar.md, implementing the
+  hexcell-core ChannelAdapter trait and the CicloDeVidaSesion sub-trait. It performs the
+  section-3 version handshake by strict integer equality and fails closed on mismatch, emits
+  section-4 confirmacion keyed on id_deduplicacion and tolerates redelivery without minting new
+  ids, reconnects per section 5 on deterministic injected backoff, and treats every section-8
+  protocol error as a connection-closing event that never logs the raw line. Add serde and
+  serde_json to the root workspace dependency table, each with a Spanish justification that
+  explicitly reconciles the choice with adr-0019. Add the EstadoSesion enum (activa /
+  reconectando / desvinculada / pausada) to crates/hexcell-core/src/canal.rs and widen
+  crates/hexcell/src/preparacion.rs so GET /health/ready projects all four. Tests drive a
+  simulated sidecar test double under the new crate's tests/comun/. Finally write
+  docs/adr/adr-0011-whatsmeow-sidecar-e-ipc.md, flip its existing docs/adr/README.md row out of
+  "Por escribir", and record it in docs/STATUS.md. Nothing under sidecar/ changes, the protocol
+  document is not edited, and no version is bumped.
+
+read:
+  - .ai/tasks/active/HEX-015-new-spec/00-spec.yaml
+  - .ai/tasks/active/HEX-015-new-spec/01-blueprint.yaml
+  - docs/protocolo-ipc-nucleo-sidecar.md
+  - crates/hexcell-core/src/canal.rs
+  - crates/hexcell-core/src/identidad.rs
+  - crates/hexcell-canal-contrato/src/banco.rs
+  - crates/hexcell-canal-contrato/src/bateria.rs
+  - crates/hexcell-canal-contrato/Cargo.toml
+  - crates/hexcell-canal-simulado/src/adaptador.rs
+  - crates/hexcell-canal-simulado/Cargo.toml
+  - crates/hexcell-canal-simulado/tests/contrato_del_puerto.rs
+  - crates/hexcell/src/salud.rs
+  - crates/hexcell/src/preparacion.rs
+  - crates/hexcell/src/registro.rs
+  - crates/hexcell/src/main.rs
+  - crates/hexcell/tests/comun/mod.rs
+  - crates/hexcell/tests/preparacion.rs
+  - crates/hexcell/tests/salud_http.rs
+  - crates/hexcell/Cargo.toml
+  - Cargo.toml
+  - docs/adr/adr-0009-whatsmeow-adaptador-fase-a.md
+  - docs/adr/adr-0010-puerto-de-canal.md
+  - docs/adr/adr-0019-registro-estructurado.md
+  - docs/adr/README.md
+  - docs/STATUS.md
+  - docs/plan/fase-a-3-adaptador-whatsmeow.md
+  - CLAUDE.md
+
+touch:
+  - crates/hexcell-canal-whatsmeow/Cargo.toml
+  - crates/hexcell-canal-whatsmeow/src/lib.rs
+  - crates/hexcell-canal-whatsmeow/src/mensajes.rs
+  - crates/hexcell-canal-whatsmeow/src/conexion.rs
+  - crates/hexcell-canal-whatsmeow/src/adaptador.rs
+  - crates/hexcell-canal-whatsmeow/src/reconexion.rs
+  - crates/hexcell-canal-whatsmeow/src/error.rs
+  - crates/hexcell-canal-whatsmeow/tests/comun/mod.rs
+  - crates/hexcell-canal-whatsmeow/tests/contrato_del_puerto.rs
+  - crates/hexcell-canal-whatsmeow/tests/protocolo.rs
+  - crates/hexcell-canal-whatsmeow/tests/reconexion.rs
+  - crates/hexcell-canal-whatsmeow/tests/privacidad.rs
+  - crates/hexcell-core/src/canal.rs
+  - crates/hexcell/src/preparacion.rs
+  - crates/hexcell/src/salud.rs
+  - crates/hexcell/src/main.rs
+  - crates/hexcell/tests/preparacion.rs
+  - crates/hexcell/tests/salud_http.rs
+  - Cargo.toml
+  - Cargo.lock
+  - docs/adr/adr-0011-whatsmeow-sidecar-e-ipc.md
+  - docs/adr/README.md
+  - docs/STATUS.md
+
+forbid:
+  files:
+    - sidecar/**
+    - docs/protocolo-ipc-nucleo-sidecar.md
+    - docs/contrato-ipc-respaldo-del-sqlstore.md
+    - crates/hexcell-canal-contrato/src/banco.rs
+    - crates/hexcell-canal-contrato/src/bateria.rs
+    - crates/hexcell-canal-contrato/src/lib.rs
+    - crates/hexcell-canal-contrato/Cargo.toml
+    - crates/hexcell-canal-simulado/**
+    - crates/hexcell-storage/**
+    - crates/hexcell-admin/**
+    - crates/hexcell-meta/**
+    - crates/hexcell-core/src/identidad.rs
+    - crates/hexcell-core/src/inferencia.rs
+    - crates/hexcell-core/src/lib.rs
+    - crates/hexcell-core/Cargo.toml
+    - crates/hexcell-core/tests/**
+    - crates/hexcell/src/registro.rs
+    - crates/hexcell/src/motor.rs
+    - crates/hexcell/src/procesador.rs
+    - crates/hexcell/src/deduplicacion.rs
+    - crates/hexcell/src/respaldo.rs
+    - crates/hexcell/src/apagado.rs
+    - crates/hexcell/tests/rss_linea_base.rs
+    - docs/PRD.md
+    # AMENDED 2026-08-08 by the orchestrator, recorded in 07-trace. The entry "README.md" was
+    # removed from forbid.files: quorum contract-check matches forbid patterns against the
+    # BASENAME first (safeGlobMatch), so it collided with docs/adr/README.md, which this task
+    # MUST touch (the ADR index row) and which is explicitly in the touch list. The root
+    # README.md stays protected by the touch allowlist itself: any file not covered by touch
+    # is already reported as a touch violation, so the forbid entry was redundant protection.
+    - docs/plan/**
+    - docs/bitacora-de-descartes.md
+    - docs/adr/adr-0009-whatsmeow-adaptador-fase-a.md
+    - docs/adr/adr-0010-puerto-de-canal.md
+    - docs/adr/adr-0019-registro-estructurado.md
+    - .agents/policies/**
+    - .ai/tasks/active/HEX-015-new-spec/00-spec.yaml
+  behaviors:
+    - "Do NOT change the IPC wire. It stays at document 1.2 / wire version 3, the nine declared message types stay nine, and evento_entrante keeps exactly its seven fields. If the design seems to need a wire change, STOP and report it instead of bumping any version or adding a type."
+    - "Do NOT edit docs/protocolo-ipc-nucleo-sidecar.md at all. Its section-9 bullet already points the parse decision at adr-0011 and stays accurate once the ADR exists. If you believe it must change, STOP and report it."
+    - "Do NOT touch anything under sidecar/. The Go IPC socket server does not exist yet and is a separate future task (A-3 task 12 and beyond). This task is the Rust side only."
+    - "Do NOT edit crates/hexcell-canal-contrato in any way to make the battery pass. If a battery scenario cannot pass against this adapter, that is a finding to report, not a file to change."
+    - "Do NOT fabricate a 24-hour service window in the whatsmeow adapter. estado_ventana always answers Abierta and send never produces FueraDeVentana or PlantillaRequerida from its own policy. The TYPE admits the restrictive outcome; this adapter's POLICY does not produce it. Consequently the two temporal battery scenarios are out of reach: implement BancoDeCanal only, NOT BancoConRelojControlable, and justify the exclusion in a comment citing crates/hexcell-canal-contrato/src/banco.rs, which split the sub-trait for exactly this case."
+    - "Do NOT let any JID, phone number, device identifier or push name reach hexcell-core state, a log line, or sessions.db. The ids arriving over IPC are ALREADY opaque (minted by the sidecar identity store in HEX-014) and must be passed through byte-for-byte; the adapter adds no transport identifier of its own and derives nothing from one."
+    - "Do NOT mint a new deduplication id for a redelivered event, and do NOT reference an event by a per-connection sequence number anywhere. confirmacion carries the same id_deduplicacion string that arrived in evento_entrante. Deduplication stays the core's downstream responsibility."
+    - "Do NOT negotiate, degrade or partially accept on a version handshake mismatch. Compare the integer for strict equality; on mismatch close the connection and surface BOTH versions."
+    - "Do NOT log the raw offending line on a protocol error. Log the error kind and at most the offending field NAME: a raw line can contain message text (adr-0019). Every protocol error closes the connection; never resynchronise the stream or skip lines."
+    - "Do NOT use an unbounded line reader. tokio's AsyncBufReadExt::read_line grows without limit; the reader must refuse any line exceeding 131072 bytes including the trailing newline and treat the excess as a protocol error. This is a memory-safety property in a process budgeted at 80 MB, not a formality."
+    - "Do NOT model always-present wire fields as Option. Protocol rule 4 states every field is always present, with absence encoded as \"\" or 0. Use plain String and i64. Put #[serde(deny_unknown_fields)] on every message struct: rejecting unknown fields is protocol rule 3, mandatory."
+    - "Do NOT lift the wire's causa, codigo or expira_en_ms fields into hexcell_core::canal::EstadoSesion. They are whatsmeow taxonomy and belong inside the adapter crate; putting them in the port would push transport knowledge into the core. Treat expira_en_ms as an ABSOLUTE Unix-ms instant, never a relative duration."
+    - "Do NOT add a tokio dependency, or any dependency, to crates/hexcell-core. It stays tokio-free; crates/hexcell-core/Cargo.toml is a forbidden file. The adapter's async runtime usage lives entirely in the new crate."
+    - "Do NOT add a method to the ChannelAdapter trait: hexcell-canal-simulado implements it and is a forbidden crate. Adding estado_sesion to CicloDeVidaSesion IS allowed, because no workspace type implements that sub-trait today."
+    - "Do NOT add serde or serde_json without a written Spanish justification comment in the root [workspace.dependencies] table, matching the style of every existing entry. The comment MUST explicitly reconcile the addition with adr-0019, which rejected a serializer on the NFR-01 memory budget: that ruling governs EMITTING logs (registro.rs keeps hand-writing them and is a forbidden file), while this task PARSES hostile input at a trust boundary where contenido carries arbitrary user text. Do NOT supersede, edit or contradict adr-0019."
+    - "Do NOT read the sidecar's HEXCELL_RETROCESO_* environment variables for the core's IPC backoff, and do NOT present any backoff number as calibrated. Those five variables govern the sidecar's own WhatsApp reconnection; the protocol assigns the core's IPC retry no variables and no values, and their calibration is an open decision in docs/STATUS.md. Take the parameters by injection with defaults documented as provisional, which is also what lets the reconnection tests run without sleeping on the wall clock."
+    - "Do NOT put the simulated sidecar test double under src/. It is test scaffolding and lives in tests/comun/mod.rs, following crates/hexcell/tests/comun/mod.rs. It must be a LISTENER on a Unix socket, matching the real topology where the sidecar serves and the core dials - do NOT invert it."
+    - "Do NOT add a temp-directory crate for test socket paths. Build them from temp_dir() and process::id(), the pattern crates/hexcell/tests/ and crates/hexcell-storage/tests/ already use."
+    - "Do NOT append a new row to docs/adr/README.md. The adr-0011 row already exists with status \"Por escribir\"; edit that row's status cell only. The ADR numbering is the source of truth and is never reused or reordered."
+    - "Do NOT introduce mass-sender folklore anywhere, including in the ADR prose: no jitter, no warm-up sequences, no proxies, no VPN, no IP rotation. All dates are absolute (2026-08-08), never relative."
+    - "Do NOT implement out-of-scope work: no acknowledgements (sent/delivered/read/failed), no outbound queue, no Go IPC server, no only-reply-type enforcement in the type system, no STOP list, no behaviour discipline, and no test against a real WhatsApp number."
+    - "All Rust identifiers, comments, doc comments, test names and documentation prose MUST be in Spanish, per repository convention. Conventional commit messages in Spanish with no AI attribution."
+    - "Do NOT modify 00-spec.yaml, and do NOT run git merge."
+
+verify:
+  commands:
+    - "cargo fmt --check"
+    - "cargo build --workspace"
+    - "cargo clippy --workspace --all-targets -- -D warnings"
+    - "cargo test --workspace"
+    - "cargo test -p hexcell-canal-whatsmeow -- --nocapture"
+    - "cargo tree -p hexcell-core | grep -q tokio && echo 'FALLO: hexcell-core arrastra tokio' && exit 1 || echo 'ok: hexcell-core sigue libre de tokio'"
+  target_s: 60
+
+acceptance:
+  human_gate: true
+
+limits:
+  max_files_changed: 24
+  max_diff_lines: 3300
+  per_class:
+    - glob: "**/tests/**"
+      max_diff_lines: 1900
+    - glob: "docs/adr/*.md"
+      max_diff_lines: 230
+    - glob: "docs/*.md"
+      max_diff_lines: 60
+    - glob: "Cargo.lock"
+      max_diff_lines: 160
+
+execution:
+  mode: worktree_edit
+  branch: ai/HEX-015
+
+retry_policy:
+  max_attempts: 2
+  escalate_after: 1

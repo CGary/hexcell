@@ -1,0 +1,239 @@
+task_id: HEX-015
+summary: "New crate hexcell-canal-whatsmeow: wire-3 IPC client over a Unix socket implementing ChannelAdapter + CicloDeVidaSesion against a simulated sidecar. Adds EstadoSesion, four-state ready, adr-0011."
+
+affected_files:
+  - crates/hexcell-canal-whatsmeow/Cargo.toml
+  - crates/hexcell-canal-whatsmeow/src/lib.rs
+  - crates/hexcell-canal-whatsmeow/src/mensajes.rs
+  - crates/hexcell-canal-whatsmeow/src/conexion.rs
+  - crates/hexcell-canal-whatsmeow/src/adaptador.rs
+  - crates/hexcell-canal-whatsmeow/src/reconexion.rs
+  - crates/hexcell-canal-whatsmeow/src/error.rs
+  - crates/hexcell-canal-whatsmeow/tests/comun/mod.rs
+  - crates/hexcell-canal-whatsmeow/tests/contrato_del_puerto.rs
+  - crates/hexcell-canal-whatsmeow/tests/protocolo.rs
+  - crates/hexcell-canal-whatsmeow/tests/reconexion.rs
+  - crates/hexcell-canal-whatsmeow/tests/privacidad.rs
+  - crates/hexcell-core/src/canal.rs
+  - crates/hexcell/src/preparacion.rs
+  - crates/hexcell/src/main.rs
+  - crates/hexcell/tests/preparacion.rs
+  - crates/hexcell/tests/salud_http.rs
+  - Cargo.toml
+  - Cargo.lock
+  - docs/adr/adr-0011-whatsmeow-sidecar-e-ipc.md
+  - docs/adr/README.md
+  - docs/STATUS.md
+
+symbols:
+  - "hexcell_core::canal::EstadoSesion (new Value Object enum: Activa, Reconectando, Desvinculada, Pausada)"
+  - "hexcell_core::canal::CicloDeVidaSesion::estado_sesion (new accessor; safe to add because no workspace type implements this trait today)"
+  - "hexcell_canal_whatsmeow::AdaptadorWhatsmeow (Application Service: implements ChannelAdapter + CicloDeVidaSesion)"
+  - "hexcell_canal_whatsmeow::error::ErrorCanalWhatsmeow (transport averia enum: E/S, DesajusteDeVersion, ErrorDeProtocolo, LineaDemasiadoLarga, SinConexion)"
+  - "hexcell_canal_whatsmeow::mensajes::VERSION_PROTOCOLO (i64 = 3)"
+  - "hexcell_canal_whatsmeow::mensajes::LIMITE_DE_LINEA (usize = 131072)"
+  - "hexcell_canal_whatsmeow::mensajes::MensajeEntrante (closed enum over the sidecar-to-nucleo types, dispatched on the `tipo` field)"
+  - "hexcell_canal_whatsmeow::mensajes::Saludo / EventoEntranteIpc / Confirmacion / EstadoSesionIpc / CodigoEmparejamiento / AcuseEmparejamiento / OrdenEmparejar / OrdenRespaldoSqlstore / AcuseRespaldoSqlstore (serde structs, every one with deny_unknown_fields)"
+  - "hexcell_canal_whatsmeow::conexion::Conexion (Unix stream client: dial, handshake, newline framing, 128 KiB bounded reader)"
+  - "hexcell_canal_whatsmeow::reconexion::Retroceso (deterministic exponential backoff with ceiling, injectable so tests never sleep on the wall clock)"
+  - "hexcell::preparacion::SesionDelCanal (widened from `activa: bool` to wrap EstadoSesion; keeps siempre_activa/caida constructors and gains one per state)"
+  - "hexcell::preparacion::evaluar_preparacion (unchanged signature; the session term now distinguishes four states in its motivo)"
+  - "hexcell::preparacion::COMPONENTE_SESION_DEL_CANAL (unchanged constant, still names the failing term)"
+
+dependencies:
+  - crates/hexcell-canal-contrato/src/banco.rs
+  - crates/hexcell-canal-contrato/src/bateria.rs
+  - crates/hexcell-canal-simulado/Cargo.toml
+  - crates/hexcell-canal-simulado/src/adaptador.rs
+  - crates/hexcell-canal-simulado/tests/contrato_del_puerto.rs
+  - crates/hexcell/src/salud.rs
+  - crates/hexcell/tests/comun/mod.rs
+  - docs/protocolo-ipc-nucleo-sidecar.md
+  - docs/adr/adr-0010-puerto-de-canal.md
+  - docs/adr/adr-0019-registro-estructurado.md
+  - docs/plan/fase-a-3-adaptador-whatsmeow.md
+
+test_scenarios:
+  - statement: "AC-2 handshake match: the simulated sidecar answers `saludo` with version 3; the adapter completes the handshake and proceeds to receive events."
+    covers: ["AC-2"]
+  - statement: "AC-2 handshake mismatch: the simulated sidecar answers `saludo` with version 2; the adapter closes the connection and returns DesajusteDeVersion carrying BOTH versions, without negotiating or degrading."
+    covers: ["AC-2"]
+  - statement: "AC-2 the adapter sends its own `saludo` first, with emisor=nucleo and the configured id_celula, before any other traffic."
+    covers: ["AC-2"]
+  - statement: "AC-3 redelivery: the sidecar resends an unacknowledged `evento_entrante` with its original id_deduplicacion after a reconnect; the adapter hands the core an EventoEntrante whose deduplicacion is byte-identical to the original and mints no new id."
+    covers: ["AC-3"]
+  - statement: "AC-3 the adapter emits `confirmacion` carrying the same id_deduplicacion string, never a per-connection sequence number."
+    covers: ["AC-3"]
+  - statement: "AC-4 sidecar crash: the socket is dropped; the adapter's session state becomes Reconectando, GET-ready projection turns non-ready, and the adapter retries on the injected deterministic backoff without abandoning."
+    covers: ["AC-4", "AC-5"]
+  - statement: "AC-4 reconnection: once the simulated sidecar listens again, the adapter reconnects, re-sends `saludo`, and completes the handshake."
+    covers: ["AC-4"]
+  - statement: "AC-4 no acked event is resurfaced: an event acknowledged before the crash is not delivered to the core a second time after reconnection, and an unacked one is."
+    covers: ["AC-4"]
+  - statement: "AC-5 the four EstadoSesion variants each project onto GET /health/ready: Activa yields 200 lista; Reconectando, Desvinculada and Pausada each yield 503 naming COMPONENTE_SESION_DEL_CANAL with a motivo that distinguishes the state."
+    covers: ["AC-5"]
+  - statement: "AC-5 crates/hexcell/tests/preparacion.rs covers evaluar_preparacion over all four states with the two vitality terms held healthy."
+    covers: ["AC-5"]
+  - statement: "AC-6 privacy guard: a test asserts that the Debug/state surface the adapter hands the core, and every log line it emits, contain none of the substrings jid, telefono, phone, dispositivo, device, numero (mirrors the Go-side guard from HEX-014)."
+    covers: ["AC-6"]
+  - statement: "Protocol section 8: an unknown `tipo`, an unknown field, a null, a float, a nested object, a missing field and a non-JSON line each close the connection and surface ErrorDeProtocolo; the raw offending line is never logged."
+    covers: ["AC-2", "AC-6"]
+  - statement: "Protocol section 1: a line of exactly 131072 bytes is accepted and one byte longer is a protocol error that closes the connection; the reader buffer never grows without bound."
+    covers: ["AC-2"]
+  - statement: "Contract battery: the four non-temporal hexcell-canal-contrato scenarios run against AdaptadorWhatsmeow through a BancoDeCanal implementation in tests/, and pass."
+    covers: ["AC-1"]
+  - statement: "AC-1 the adapter does NOT implement BancoConRelojControlable, so the two clock-advancing scenarios are unreachable by construction rather than skipped at runtime; a comment cites crates/hexcell-canal-contrato/src/banco.rs, which split the sub-trait for exactly this case, and estado_ventana always answers Abierta."
+    covers: ["AC-1"]
+  - statement: "AC-1 interim outbound bridge (human ruling of 2026-08-08): send accepts into an in-memory buffer and returns Aceptado, a test reads the exposed counter to confirm the message was buffered, and a loud log entry records that the outbound wire is pending A-3 task 12."
+    covers: ["AC-1"]
+  - statement: "AC-7 documentation: docs/adr/adr-0011-whatsmeow-sidecar-e-ipc.md exists and covers the four required decisions (separate sidecar process, IPC mechanism, session persistence, serde/serde_json parsing choice reconciled with adr-0019); the existing adr-0011 row in docs/adr/README.md no longer reads \"Por escribir\"; and the corresponding pending entry in docs/STATUS.md is flipped to defined. Verified by reading the three files, since no compiler enforces prose."
+    covers: ["AC-7"]
+
+strategy:
+  - step: 1
+    action: >
+      Add serde and serde_json to the root [workspace.dependencies] table, each with a Spanish
+      justification comment in the style of the existing entries. The comment MUST explicitly
+      reconcile the choice with adr-0019, which rejected pulling in a serializer on the NFR-01
+      memory budget: that rejection governed EMITTING log lines (registro.rs still hand-writes
+      them and is untouched), whereas this task PARSES adversarial input at a trust boundary,
+      where `contenido` carries arbitrary hostile user text (escapes, \uXXXX, surrogate pairs).
+      Register the new crate in [workspace] members, taking the workspace from 7 to 8 crates.
+    files:
+      - Cargo.toml
+      - Cargo.lock
+  - step: 2
+    action: >
+      Add the EstadoSesion Value Object (four variants Activa/Reconectando/Desvinculada/Pausada)
+      to crates/hexcell-core/src/canal.rs, plus an estado_sesion accessor on the CicloDeVidaSesion
+      sub-trait. Both additions are purely additive: no workspace type implements CicloDeVidaSesion
+      today, so nothing breaks. Carry NO transport detail into core: the wire's causa/codigo/
+      expira_en_ms fields stay inside the adapter crate, because they are whatsmeow taxonomy and
+      the port must not learn them. hexcell-core gains no dependency and stays tokio-free.
+    files:
+      - crates/hexcell-core/src/canal.rs
+  - step: 3
+    action: >
+      Create the crate manifest crates/hexcell-canal-whatsmeow/Cargo.toml mirroring the
+      hexcell-canal-simulado precedent: inherited workspace metadata, a Spanish description, and
+      tokio with the narrowest feature set that actually compiles - net (UnixStream), io-util
+      (buffered line reads), sync (state broadcast), time (backoff) and rt (the adapter spawns its
+      own reader task). Put macros and rt-multi-thread in dev-dependencies only, for #[tokio::test].
+      Add hexcell-canal-contrato as a dev-dependency exactly as hexcell-canal-simulado does, so the
+      battery never links into the production library.
+    files:
+      - crates/hexcell-canal-whatsmeow/Cargo.toml
+  - step: 4
+    action: >
+      Write src/mensajes.rs: the wire Value Objects. One serde struct per message type, every one
+      carrying #[serde(deny_unknown_fields)] because protocol rule 3 makes rejecting unknown fields
+      mandatory, not optional. Model the wire honestly: depth 1, only String and i64, every field
+      always present, absence encoded as "" or 0 - so use plain String/i64 and never Option, which
+      would over-model the format. Declare VERSION_PROTOCOLO = 3 and LIMITE_DE_LINEA = 131072.
+      Dispatch incoming lines on the `tipo` field into a closed MensajeEntrante enum.
+    files:
+      - crates/hexcell-canal-whatsmeow/src/mensajes.rs
+  - step: 5
+    action: >
+      Write src/error.rs and src/conexion.rs: the transport layer. Conexion dials the Unix socket
+      (the sidecar listens, the core connects - never the reverse), writes its own `saludo` first,
+      reads the peer `saludo`, compares versions by strict integer equality and on mismatch closes
+      and reports both versions. Framing is one JSON object per line terminated by \n, read through
+      a bounded reader that refuses any line over LIMITE_DE_LINEA instead of growing. Every protocol
+      error closes the connection and logs the error kind and at most the offending field NAME -
+      never the raw line, which could carry message text (adr-0019).
+    files:
+      - crates/hexcell-canal-whatsmeow/src/error.rs
+      - crates/hexcell-canal-whatsmeow/src/conexion.rs
+  - step: 6
+    action: >
+      Write src/reconexion.rs: a deterministic exponential backoff with a ceiling, its parameters
+      injected rather than read from the environment. The protocol document assigns the
+      HEXCELL_RETROCESO_* variables to the SIDECAR's own WhatsApp reconnection policy and gives the
+      core's IPC retry no variables and no numbers, and their calibration is an open decision in
+      docs/STATUS.md - so this task must NOT invent calibrated values nor claim any. Injection is
+      what lets AC-4 be tested without sleeping on the wall clock.
+    files:
+      - crates/hexcell-canal-whatsmeow/src/reconexion.rs
+  - step: 7
+    action: >
+      Write src/adaptador.rs and src/lib.rs: the Application Service. AdaptadorWhatsmeow owns the
+      connection, the reader task, the current EstadoSesion and the delivery sink, and implements
+      ChannelAdapter plus CicloDeVidaSesion. Incoming `evento_entrante` becomes
+      hexcell_core::canal::EventoEntrante with the id fields passed through UNCHANGED (they are
+      already opaque; adr-0010 forbids the adapter adding any transport identifier of its own) and
+      marca_temporal_ms converted to SystemTime. `estado_sesion` maps the wire's four state strings
+      onto EstadoSesion, keeping causa/codigo/expira_en_ms inside the crate. estado_ventana always
+      answers Abierta: this transport imposes no 24-hour window and fabricating one would degrade
+      the product to imitate a channel the cell does not use.
+    files:
+      - crates/hexcell-canal-whatsmeow/src/adaptador.rs
+      - crates/hexcell-canal-whatsmeow/src/lib.rs
+  - step: 8
+    action: >
+      Write tests/comun/mod.rs: the simulated sidecar. It is a Unix-socket LISTENER (matching the
+      real topology, where the sidecar serves and the core dials) that speaks wire 3 and is
+      scriptable enough to drive every scenario - answer a chosen handshake version, emit events,
+      withhold acks, redeliver on reconnect, drop the connection, and emit malformed lines. It
+      lives under tests/ and not under src/, following the crates/hexcell/tests/comun/mod.rs and
+      crates/hexcell-storage/tests/comun/mod.rs precedent, so test scaffolding can never reach the
+      cell binary. Socket paths go in a per-test temporary directory built from temp_dir() and
+      process::id(), the pattern this workspace already uses instead of a temp-dir crate.
+    files:
+      - crates/hexcell-canal-whatsmeow/tests/comun/mod.rs
+  - step: 9
+    action: >
+      Write the four integration test files - protocolo.rs (handshake match/mismatch, the section-8
+      error taxonomy, the 128 KiB bound), reconexion.rs (the three restart orders of section 5,
+      redelivery preserving id_deduplicacion, no acked event resurfacing), privacidad.rs (the AC-6
+      substring guard over adapter state and log output), and contrato_del_puerto.rs (a
+      BancoDeCanal implementation over AdaptadorWhatsmeow running the four non-temporal battery
+      scenarios). See risks: the two temporal battery scenarios are deliberately excluded and the
+      exclusion must be justified in a comment referencing banco.rs, which built the
+      BancoConRelojControlable split for exactly this case.
+    files:
+      - crates/hexcell-canal-whatsmeow/tests/protocolo.rs
+      - crates/hexcell-canal-whatsmeow/tests/reconexion.rs
+      - crates/hexcell-canal-whatsmeow/tests/privacidad.rs
+      - crates/hexcell-canal-whatsmeow/tests/contrato_del_puerto.rs
+  - step: 10
+    action: >
+      Widen crates/hexcell/src/preparacion.rs: SesionDelCanal stops being `activa: bool` and wraps
+      EstadoSesion. Keep siempre_activa() and caida() so the existing call sites and tests keep
+      their meaning, and add a constructor per state. evaluar_preparacion keeps its signature and
+      its component name; only the motivo text distinguishes the four states. Update the single
+      call site in crates/hexcell/src/main.rs and extend crates/hexcell/tests/preparacion.rs and
+      crates/hexcell/tests/salud_http.rs to cover all four states end to end. crates/hexcell/src/
+      salud.rs should need no edit, since it only passes SesionDelCanal through.
+    files:
+      - crates/hexcell/src/preparacion.rs
+      - crates/hexcell/src/main.rs
+      - crates/hexcell/tests/preparacion.rs
+      - crates/hexcell/tests/salud_http.rs
+  - step: 11
+    action: >
+      Write docs/adr/adr-0011-whatsmeow-sidecar-e-ipc.md covering the four deliverables the plan
+      names: why the sidecar is a separate process, the IPC mechanism formalized from the existing
+      protocol document, the session-persistence design, and the serde/serde_json parsing choice
+      with its written justification and its explicit reconciliation with adr-0019. Flip the
+      adr-0011 row in docs/adr/README.md out of "Por escribir" to Vigente with the absolute date
+      2026-08-08 - the row already exists, so no row is added and the numbering is not touched.
+      Record the decision in docs/STATUS.md. No mass-sender folklore anywhere: no jitter, no
+      warm-up, no proxies, no IP rotation.
+    files:
+      - docs/adr/adr-0011-whatsmeow-sidecar-e-ipc.md
+      - docs/adr/README.md
+      - docs/STATUS.md
+
+risks:
+  - "BLOCKING AMBIGUITY, needs a human ruling. AC-1 as literally written ('passes the FULL hexcell-canal-contrato battery') is unsatisfiable. Verified against the tree on 2026-08-08: bateria.rs verificar_contrato_del_puerto is generic over BancoConRelojControlable and runs six scenarios, two of which (verifica_ventana_abierta_acepta_respuesta_libre, verifica_ventana_expira_tras_duracion_de_servicio) advance the clock past DURACION_VENTANA_SERVICIO and assert EstadoVentanaServicio::Cerrada. The whatsmeow adapter's documented policy (canal.rs lines 116-121 and adr-0010) is that this transport imposes NO window and its adapter must never fabricate one. Passing those two scenarios would require inventing a 24-hour window, which CLAUDE.md and the port doc forbid. Recommended resolution, taken by this blueprint: implement BancoDeCanal only (NOT BancoConRelojControlable) and run the four non-temporal scenarios individually instead of the aggregate entry point. banco.rs lines 49-55 documents this exact escape hatch - the sub-trait was split so an adapter that cannot control its clock 'ejecuta todos los escenarios no temporales de la bateria'. The implementer must NOT edit hexcell-canal-contrato to make AC-1 pass."
+  - "BLOCKING AMBIGUITY, needs a human ruling. Wire 3 has NO outbound-send message type. The nine closed types are saludo, evento_entrante, confirmacion, estado_sesion, orden_respaldo_sqlstore, acuse_respaldo_sqlstore, orden_emparejar, codigo_emparejamiento, acuse_emparejamiento; the protocol document's own deferral list states that the outbound direction and its acknowledgements belong to A-3 task 12, which this spec lists as a non-goal. So ChannelAdapter::send has no transport to ride on in this task, yet three of the four battery scenarios this blueprint keeps require a natural send to return ResultadoEnvio::Aceptado. Options: (a) send accepts into an in-memory buffer and returns Aceptado, which is semantically defensible because Aceptado already means 'accepted for later delivery' but SILENTLY DROPS messages in production until task 12 lands; (b) send returns a transport averia naming task 12, which is honest in production but fails those three scenarios. This blueprint assumes (a) plus a loud module-level comment and a docs/STATUS.md line, because the alternative makes AC-1 unreachable by any route - but the safety tradeoff is a product decision, not an implementer's."
+  - "adr-0019 (Vigente) rejected taking a serializer specifically on the NFR-01 memory budget: 'Se descarto por presupuesto: arrastra serde, un serializador JSON y alrededor de una docena de...'. The human has ruled serde+serde_json in for HEX-015. These are reconcilable and adr-0011 must do the reconciling IN WRITING rather than leave the repository self-contradictory: adr-0019 governs EMITTING log lines and registro.rs keeps hand-writing them untouched, whereas this task PARSES hostile input at a trust boundary. adr-0011 must NOT supersede adr-0019, must not silently contradict it, and must state the RSS consequence honestly against the 80 MB per-cell line item, which is measured by crates/hexcell/tests/rss_linea_base.rs and could regress."
+  - "The protocol document specifies NO backoff numbers for the core's IPC reconnection. Its five HEXCELL_RETROCESO_* variables belong to the sidecar's own WhatsApp reconnection policy (section 5 text: 'La politica propia del sidecar usa retroceso exponencial determinista con techo'), and section 235 grants the core only the words 'retroceso exponencial y techo' with no values. Calibrating those defaults is an open decision already recorded in docs/STATUS.md. The adapter must therefore take its backoff parameters by injection with clearly provisional defaults, must not read the sidecar's variables, and must not present any number as calibrated."
+  - "Protocol section 6 carries causa (closed vocabulary of eight values), codigo and expira_en_ms alongside estado. Do NOT lift these into hexcell_core::canal::EstadoSesion: they are whatsmeow taxonomy, and putting them in the port would push transport knowledge into the core and break the abstraction the Cloud API adapter shares. They stay inside the adapter crate. Equally, expira_en_ms is an absolute Unix-ms instant for a temporary ban and must not be treated as a relative duration."
+  - "The 128 KiB line bound is a security property, not a formality: a bounded reader is what stops a hostile or malfunctioning peer from driving unbounded allocation in a process budgeted at 80 MB. tokio's AsyncBufReadExt::read_line grows without limit and must NOT be used bare; use a take/limit-bounded read that errors past LIMITE_DE_LINEA."
+  - "serde_json is not in the local cargo cache today (checked 2026-08-08; only proc-macro2, quote and syn are present), so the first build must reach crates.io. Network egress from the sandbox was verified working against static.crates.io on 2026-08-08, but if the implementer's environment is offline the build will fail on fetch rather than on code."
+  - "Adding estado_sesion to CicloDeVidaSesion is safe only because no workspace type implements that trait today - crates/hexcell/src/preparacion.rs states this explicitly, verified on 2026-08-08. Adding a method to ChannelAdapter would NOT be safe (hexcell-canal-simulado implements it) and is not part of this task."
+  - "docs/adr/README.md already CONTAINS the adr-0011 row with status 'Por escribir'. The task edits that row's status cell; it does not append a row. Appending one would duplicate the entry and violate the rule that the ADR numbering is the source of truth and is never reordered or reused."
+  - "Contract sizing note for reviewers: HEX-014 undersized max_diff_lines at 1600 against an honest 1754. This task is larger - a whole new crate with five test files, two touched crates, a new ADR - so the cap is set from a file-by-file estimate rather than by analogy, and Cargo.lock gets its own per_class budget because its size cannot be predicted before cargo resolves the tree (the HEX-004 precedent)."
+  - "Verified per_class glob semantics empirically on 2026-08-08 rather than trusting prior lore: the matcher tries BOTH the full path and the basename, so 'docs/*.md', 'docs/adr/*.md' and 'crates/**/tests/*.rs' DO match, while a trailing '**' matches only one further segment ('crates/X/tests/**' does NOT match 'crates/X/tests/comun/mod.rs') and a leading '**/' form like '**/tests/*.rs' matches nothing. The globs in 02-contract.yaml were each confirmed against their intended files with quorum analyze contract-check before being written."
