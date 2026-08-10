@@ -1,7 +1,7 @@
 //! Adaptador `ChannelAdapter` de whatsmeow: cliente IPC sobre socket Unix.
 //!
-//! Este crate implementa el lado Rust del protocolo IPC versión 3
-//! (`docs/protocolo-ipc-nucleo-sidecar.md`, documento 1.2) como cliente que conecta al sidecar
+//! Este crate implementa el lado Rust del protocolo IPC versión 4
+//! (`docs/protocolo-ipc-nucleo-sidecar.md`, documento 1.3) como cliente que conecta al sidecar
 //! Go de whatsmeow. El sidecar escucha, el núcleo conecta (sección 2, nunca al revés).
 //!
 //! # Módulos

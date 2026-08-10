@@ -31,6 +31,15 @@ pub enum ErrorCanalWhatsmeow {
     LineaDemasiadoLarga,
     /// Se intentó enviar sin una conexión activa al sidecar.
     SinConexion,
+    /// Se intentó enviar una plantilla, pero este transporte solo admite respuesta libre.
+    PlantillaNoRepresentable,
+    /// Se intentó enviar una respuesta a una conversación sin marca temporal de origen
+    /// conocida: el adaptador nunca vio pasar un evento entrante de esa conversación por su
+    /// bucle de lectura (por ejemplo, justo tras un reinicio del núcleo, ya que el mapa de
+    /// marcas es memoria de proceso y se pierde con él). Se rechaza en vez de inventar una
+    /// marca: un valor centinela de 0 (época Unix) se leería en el sidecar como "ya expirado"
+    /// y descartaría el mensaje sin ningún intento real de envío, silenciosamente.
+    OrigenDesconocido,
 }
 
 impl fmt::Display for ErrorCanalWhatsmeow {
@@ -49,6 +58,11 @@ impl fmt::Display for ErrorCanalWhatsmeow {
                 "la línea recibida supera el límite de 131072 bytes del protocolo IPC"
             ),
             Self::SinConexion => write!(f, "sin conexión activa al sidecar IPC"),
+            Self::PlantillaNoRepresentable => write!(f, "el canal IPC no admite plantillas"),
+            Self::OrigenDesconocido => write!(
+                f,
+                "sin marca temporal de origen conocida para esta conversación"
+            ),
         }
     }
 }

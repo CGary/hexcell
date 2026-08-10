@@ -154,6 +154,15 @@ func Abrir(opciones Opciones) (*Outbox, error) {
 		persistido_en_ms INTEGER NOT NULL,
 		confirmado_en_ms INTEGER NULL
 	);
+	CREATE TABLE IF NOT EXISTS cola_salida (
+		id_mensaje TEXT UNIQUE,
+		id_conversacion TEXT,
+		contenido TEXT,
+		marca_temporal_origen_ms INTEGER,
+		intentos INTEGER DEFAULT 0,
+		id_correlacion TEXT DEFAULT '',
+		enviado_en_ms INTEGER NULL
+	);
 	`
 	if _, err := db.Exec(esquema); err != nil {
 		db.Close()
@@ -318,4 +327,9 @@ func (o *Outbox) Cerrar() error {
 	}
 	o.cerrado = true
 	return o.db.Close()
+}
+
+// DB expone la conexión subyacente para componentes que comparten el mismo archivo SQLite.
+func (o *Outbox) DB() *sql.DB {
+	return o.db
 }

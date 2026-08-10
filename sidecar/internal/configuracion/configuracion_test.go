@@ -259,3 +259,54 @@ func TestCargarRechazaTechoDeBaneoMenorQueInicialDeBaneo(t *testing.T) {
 		t.Fatalf("error = %v, se esperaba ErrRetrocesoInvalido", err)
 	}
 }
+
+func TestCargarAplicaValoresPorOmisionDeSalida(t *testing.T) {
+	t.Parallel()
+
+	cfg, err := configuracion.Cargar(entornoFalso(map[string]string{}))
+	if err != nil {
+		t.Fatalf("no se esperaba error: %v", err)
+	}
+	if cfg.TtlSalidaMs != configuracion.TtlSalidaMsPorOmision {
+		t.Errorf("TtlSalidaMs = %d, se esperaba %d", cfg.TtlSalidaMs, configuracion.TtlSalidaMsPorOmision)
+	}
+	if cfg.IntentosMaximosSalida != configuracion.IntentosMaximosSalidaPorOmision {
+		t.Errorf("IntentosMaximosSalida = %d, se esperaba %d", cfg.IntentosMaximosSalida, configuracion.IntentosMaximosSalidaPorOmision)
+	}
+}
+
+func TestCargarLeeParametrosDeSalidaDelEntorno(t *testing.T) {
+	t.Parallel()
+
+	cfg, err := configuracion.Cargar(entornoFalso(map[string]string{
+		configuracion.VariableTtlSalidaMs:           "60000",
+		configuracion.VariableIntentosMaximosSalida: "5",
+	}))
+	if err != nil {
+		t.Fatalf("no se esperaba error: %v", err)
+	}
+	if cfg.TtlSalidaMs != 60000 {
+		t.Errorf("TtlSalidaMs = %d, se esperaba 60000", cfg.TtlSalidaMs)
+	}
+	if cfg.IntentosMaximosSalida != 5 {
+		t.Errorf("IntentosMaximosSalida = %d, se esperaba 5", cfg.IntentosMaximosSalida)
+	}
+}
+
+func TestCargarRechazaParametrosDeSalidaInvalido(t *testing.T) {
+	t.Parallel()
+
+	_, err := configuracion.Cargar(entornoFalso(map[string]string{
+		configuracion.VariableTtlSalidaMs: "-1",
+	}))
+	if !errors.Is(err, configuracion.ErrParametroSalidaInvalido) {
+		t.Errorf("error = %v, se esperaba ErrParametroSalidaInvalido", err)
+	}
+
+	_, err = configuracion.Cargar(entornoFalso(map[string]string{
+		configuracion.VariableIntentosMaximosSalida: "0",
+	}))
+	if !errors.Is(err, configuracion.ErrParametroSalidaInvalido) {
+		t.Errorf("error = %v, se esperaba ErrParametroSalidaInvalido", err)
+	}
+}

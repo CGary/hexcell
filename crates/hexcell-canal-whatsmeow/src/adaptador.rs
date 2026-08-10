@@ -6,12 +6,12 @@
 //! entregan al núcleo a través de un `tokio::sync::mpsc` acotado, siguiendo la convención de
 //! `adr-0016`. El estado de sesión se difunde por un `tokio::sync::watch`.
 //!
-//! # Puente provisional de envío (decisión humana del 2026-08-08)
+//! # Envío por IPC (tarea 12, 2026-08-09)
 //!
-//! Hasta que la tarea 12 de la etapa A-3 proporcione el cable de salida, `send` acepta en un
-//! búfer en memoria y devuelve `Aceptado`. Esto es semánticamente defendible porque `Aceptado`
-//! ya significa «aceptado para entrega posterior». El puente se registra en `adr-0011` y se
-//! sustituye por la tarea 12 antes de cualquier uso real (tarea 15).
+//! `send` reenvía por el cable v4 hacia la cola de salida del sidecar y devuelve `Aceptado`
+//! cuando el frame quedó escrito: «aceptado para entrega posterior», que la cola materializa
+//! con TTL absoluto y reintentos acotados. El puente provisional en memoria de HEX-015 quedó
+//! sustituido; su registro histórico vive en `adr-0011`.
 //!
 //! # Política de ventana de servicio
 //!
@@ -19,6 +19,7 @@
 //! de 24 horas y fabricar una sería degradar el producto para parecerse a un canal que la célula
 //! no usa (`adr-0010`, distinción TIPO/POLÍTICA).
 
+use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -37,6 +38,53 @@ use crate::error::ErrorCanalWhatsmeow;
 use crate::mensajes::MensajeEntrante;
 use crate::reconexion::Retroceso;
 
+/// Límite duro de conversaciones distintas que [`MarcasDeOrigen`] retiene en memoria.
+///
+/// Sin este límite el mapa crece sin cota con el número de conversaciones distintas a lo largo
+/// de la vida del proceso: es memoria de proceso, no una tabla con purga, así que una célula de
+/// larga duración lo convertiría en una fuga lenta contra el presupuesto de NFR-01 (≤ 80 MB por
+/// célula). Al alcanzar el límite se descarta la conversación insertada hace más tiempo (orden
+/// FIFO de inserción), nunca la que acaba de recibir un evento.
+const CAPACIDAD_MAXIMA_MARCAS_DE_ORIGEN: usize = 10_000;
+
+/// Mapa acotado de la marca temporal de origen más reciente por conversación.
+///
+/// No es un LRU propiamente dicho -no distingue conversaciones activas de inactivas-, solo
+/// impone el tope de [`CAPACIDAD_MAXIMA_MARCAS_DE_ORIGEN`] que un `HashMap` simple no tendría,
+/// purgando por orden de inserción cuando se supera.
+#[derive(Default)]
+struct MarcasDeOrigen {
+    valores: HashMap<IdConversacion, i64>,
+    orden_de_insercion: VecDeque<IdConversacion>,
+}
+
+impl MarcasDeOrigen {
+    /// Registra o actualiza la marca de origen de una conversación, purgando la entrada más
+    /// antigua si insertar una conversación nueva supera la capacidad máxima.
+    fn insertar(&mut self, conversacion: IdConversacion, marca_temporal_ms: i64) {
+        if !self.valores.contains_key(&conversacion) {
+            self.orden_de_insercion.push_back(conversacion.clone());
+            if self.orden_de_insercion.len() > CAPACIDAD_MAXIMA_MARCAS_DE_ORIGEN
+                && let Some(mas_antigua) = self.orden_de_insercion.pop_front()
+            {
+                self.valores.remove(&mas_antigua);
+            }
+        }
+        self.valores.insert(conversacion, marca_temporal_ms);
+    }
+
+    /// Consulta la marca de origen de una conversación, si el adaptador ha visto pasar algún
+    /// evento entrante de ella por su bucle de lectura.
+    fn obtener(&self, conversacion: &IdConversacion) -> Option<i64> {
+        self.valores.get(conversacion).copied()
+    }
+
+    #[cfg(test)]
+    fn longitud(&self) -> usize {
+        self.valores.len()
+    }
+}
+
 /// Adaptador `ChannelAdapter` + `CicloDeVidaSesion` sobre IPC con el sidecar whatsmeow.
 ///
 /// Implementa la semántica del canal propio: ventana siempre abierta, sin plantilla requerida,
@@ -54,11 +102,13 @@ pub struct AdaptadorWhatsmeow {
     receptor_estado: watch::Receiver<EstadoSesion>,
     /// Retroceso de reconexión, protegido por mutex para uso desde la tarea de fondo.
     retroceso: Arc<Mutex<Retroceso>>,
-    /// Puente provisional de envío: cuenta de mensajes aceptados en el búfer.
-    /// Se sustituye por el cable de salida real en la tarea 12 de A-3.
-    envios_aceptados: Arc<AtomicUsize>,
-    /// Búfer provisional de mensajes salientes.
-    bufer_saliente: Arc<Mutex<Vec<(IdConversacion, MensajeSaliente)>>>,
+    /// Extremo de escritura compartido con la conexión activa.
+    escritor_compartido:
+        Arc<tokio::sync::Mutex<Option<tokio::io::WriteHalf<tokio::net::UnixStream>>>>,
+    /// Marcas de tiempo de origen por conversación para acuses, acotadas en tamaño.
+    marcas_de_origen: Arc<Mutex<MarcasDeOrigen>>,
+    /// Contador para generar IDs de mensaje únicos.
+    contador_mensajes: Arc<AtomicUsize>,
 }
 
 impl AdaptadorWhatsmeow {
@@ -85,8 +135,9 @@ impl AdaptadorWhatsmeow {
             estado_sesion: estado_tx,
             receptor_estado: estado_rx,
             retroceso: Arc::new(Mutex::new(retroceso)),
-            envios_aceptados: Arc::new(AtomicUsize::new(0)),
-            bufer_saliente: Arc::new(Mutex::new(Vec::new())),
+            escritor_compartido: Arc::new(tokio::sync::Mutex::new(None)),
+            marcas_de_origen: Arc::new(Mutex::new(MarcasDeOrigen::default())),
+            contador_mensajes: Arc::new(AtomicUsize::new(0)),
         };
 
         (adaptador, receptor_eventos)
@@ -102,17 +153,15 @@ impl AdaptadorWhatsmeow {
         let remitente = self.remitente_eventos.clone();
         let estado_tx = self.estado_sesion.clone();
         let retroceso = Arc::clone(&self.retroceso);
+        let escritor = Arc::clone(&self.escritor_compartido);
+        let marcas = Arc::clone(&self.marcas_de_origen);
 
         tokio::spawn(async move {
-            bucle_de_conexion(ruta, id_celula, remitente, estado_tx, retroceso).await;
+            bucle_de_conexion(
+                ruta, id_celula, remitente, estado_tx, retroceso, escritor, marcas,
+            )
+            .await;
         });
-    }
-
-    /// Número de mensajes aceptados en el búfer provisional de envío.
-    ///
-    /// Expuesto para los tests: confirma que `send` efectivamente almacenó el mensaje.
-    pub fn envios_aceptados(&self) -> usize {
-        self.envios_aceptados.load(Ordering::Relaxed)
     }
 
     /// Ruta del socket Unix configurada.
@@ -133,10 +182,14 @@ async fn bucle_de_conexion(
     remitente: mpsc::Sender<EventoEntrante>,
     estado_tx: watch::Sender<EstadoSesion>,
     retroceso: Arc<Mutex<Retroceso>>,
+    escritor_compartido: Arc<
+        tokio::sync::Mutex<Option<tokio::io::WriteHalf<tokio::net::UnixStream>>>,
+    >,
+    marcas_de_origen: Arc<Mutex<MarcasDeOrigen>>,
 ) {
     loop {
         // Intentar conectar.
-        match Conexion::conectar(&ruta).await {
+        match Conexion::conectar(&ruta, Arc::clone(&escritor_compartido)).await {
             Ok(mut conexion) => {
                 // Ejecutar saludo.
                 match conexion.saludar(&id_celula).await {
@@ -151,13 +204,26 @@ async fn bucle_de_conexion(
                         }
 
                         // Leer mensajes hasta desconexión.
-                        if let Err(_e) = leer_mensajes(&mut conexion, &remitente, &estado_tx).await
+                        if let Err(_e) =
+                            leer_mensajes(&mut conexion, &remitente, &estado_tx, &marcas_de_origen)
+                                .await
                         {
                             // La conexión se perdió; pasar a reconectando.
                             let _ = estado_tx.send(EstadoSesion::Reconectando);
                         }
+
+                        // Limpiar escritor al desconectar
+                        {
+                            let mut lock = escritor_compartido.lock().await;
+                            *lock = None;
+                        }
                     }
                     Err(ErrorCanalWhatsmeow::DesajusteDeVersion { propia, remota }) => {
+                        // Limpiar escritor
+                        {
+                            let mut lock = escritor_compartido.lock().await;
+                            *lock = None;
+                        }
                         // Desajuste de versión: registrar y reintentar. No se negocia.
                         eprintln!(
                             "hexcell-canal-whatsmeow: desajuste de versión IPC: \
@@ -166,12 +232,22 @@ async fn bucle_de_conexion(
                         let _ = estado_tx.send(EstadoSesion::Reconectando);
                     }
                     Err(_e) => {
+                        // Limpiar escritor
+                        {
+                            let mut lock = escritor_compartido.lock().await;
+                            *lock = None;
+                        }
                         // Error de saludo: reconectar.
                         let _ = estado_tx.send(EstadoSesion::Reconectando);
                     }
                 }
             }
             Err(_e) => {
+                // Limpiar escritor
+                {
+                    let mut lock = escritor_compartido.lock().await;
+                    *lock = None;
+                }
                 // No se pudo conectar; ya estamos en Reconectando.
                 let _ = estado_tx.send(EstadoSesion::Reconectando);
             }
@@ -193,12 +269,24 @@ async fn leer_mensajes(
     conexion: &mut Conexion,
     remitente: &mpsc::Sender<EventoEntrante>,
     estado_tx: &watch::Sender<EstadoSesion>,
+    marcas_de_origen: &Arc<Mutex<MarcasDeOrigen>>,
 ) -> Result<(), ErrorCanalWhatsmeow> {
     loop {
         let mensaje = conexion.leer_mensaje().await?;
 
         match mensaje {
             MensajeEntrante::EventoEntrante(evento_ipc) => {
+                // Registrar la marca temporal de origen para uso en envíos
+                {
+                    let mut marcas = marcas_de_origen
+                        .lock()
+                        .expect("el mutex no debería estar envenenado");
+                    marcas.insertar(
+                        IdConversacion::nuevo(evento_ipc.id_conversacion.clone()),
+                        evento_ipc.marca_temporal_ms,
+                    );
+                }
+
                 // Convertir marca_temporal_ms (milisegundos Unix absolutos) a SystemTime.
                 let marca_temporal = if evento_ipc.marca_temporal_ms > 0 {
                     UNIX_EPOCH + Duration::from_millis(evento_ipc.marca_temporal_ms as u64)
@@ -261,6 +349,9 @@ async fn leer_mensajes(
             MensajeEntrante::AcuseRespaldoSqlstore(_) => {
                 // El acuse del respaldo se consume por el módulo de respaldo (tarea separada).
             }
+            MensajeEntrante::AcuseEnvio(_) => {
+                // Los acuses de envío se consumen sin elevar la taxonomía de whatsmeow al puerto.
+            }
             MensajeEntrante::Saludo(_) => {
                 // Un segundo saludo después del inicial es un error de protocolo.
                 return Err(ErrorCanalWhatsmeow::ErrorDeProtocolo(
@@ -274,34 +365,59 @@ async fn leer_mensajes(
 impl ChannelAdapter for AdaptadorWhatsmeow {
     type Error = ErrorCanalWhatsmeow;
 
-    /// Acepta el mensaje en un búfer en memoria y devuelve `Aceptado`.
-    ///
-    /// **Puente provisional**: hasta que la tarea 12 de A-3 proporcione el cable de salida,
-    /// `send` almacena el mensaje localmente. `Aceptado` ya significa «aceptado para entrega
-    /// posterior» — la semántica no cambia, solo falta el transporte. El puente se sustituye
-    /// antes de cualquier uso real (tarea 15).
     async fn send(
         &self,
         conversacion: &IdConversacion,
         mensaje: MensajeSaliente,
     ) -> Result<ResultadoEnvio, Self::Error> {
-        // Registrar en el búfer provisional.
-        {
-            let mut bufer = self
-                .bufer_saliente
-                .lock()
-                .expect("el mutex del búfer saliente no debería estar envenenado");
-            bufer.push((conversacion.clone(), mensaje));
-        }
-        self.envios_aceptados.fetch_add(1, Ordering::Relaxed);
+        let texto = match mensaje {
+            MensajeSaliente::RespuestaLibre { texto, .. } => texto,
+            MensajeSaliente::Plantilla { .. } => {
+                return Err(ErrorCanalWhatsmeow::PlantillaNoRepresentable);
+            }
+        };
 
-        // PUENTE PROVISIONAL (HEX-015, 2026-08-08): el cable de salida IPC no existe todavía.
-        // La tarea 12 de A-3 lo proporciona; hasta entonces, `Aceptado` sin transporte.
-        // Registrado en docs/adr/adr-0011-whatsmeow-sidecar-e-ipc.md.
-        eprintln!(
-            "hexcell-canal-whatsmeow: envío aceptado en búfer provisional \
-             (cable de salida pendiente de A-3 tarea 12)"
+        // Comprobar la conexión antes que la marca de origen: sin conexión activa el envío ya
+        // es imposible, sin importar si la marca se conoce o no, así que ese es el error que
+        // debe salir primero. `enviar_saliente` vuelve a comprobarlo más abajo (la conexión
+        // puede caerse entre este punto y ese), así que esto no reemplaza esa comprobación,
+        // solo prioriza cuál de los dos motivos de rechazo se reporta cuando ambos aplican.
+        if self.escritor_compartido.lock().await.is_none() {
+            return Err(ErrorCanalWhatsmeow::SinConexion);
+        }
+
+        // Nunca se rellena con un centinela: un 0 (época Unix) se leería del lado del sidecar
+        // como "ya expirado" y descartaría el mensaje con cero intentos reales de envío, sin
+        // que nada lo distinga de una expiración legítima. Si el adaptador no ha visto pasar
+        // ningún evento entrante de esta conversación por su bucle de lectura -lo más común
+        // justo tras un reinicio del núcleo, porque el mapa es memoria de proceso-, se rechaza
+        // explícitamente en vez de enviar con una marca inventada.
+        let marca_temporal_origen_ms = {
+            let marcas = self
+                .marcas_de_origen
+                .lock()
+                .expect("el mutex no debería estar envenenado");
+            marcas
+                .obtener(conversacion)
+                .ok_or(ErrorCanalWhatsmeow::OrigenDesconocido)?
+        };
+
+        let id_mensaje = format!(
+            "{}-{}",
+            conversacion.como_str(),
+            self.contador_mensajes.fetch_add(1, Ordering::Relaxed)
         );
+
+        let msj_ipc = crate::mensajes::MensajeSalienteIpc {
+            version: crate::mensajes::VERSION_PROTOCOLO,
+            tipo: "mensaje_saliente".to_string(),
+            id_mensaje,
+            id_conversacion: conversacion.como_str().to_string(),
+            contenido: texto,
+            marca_temporal_origen_ms,
+        };
+
+        crate::conexion::enviar_saliente(&self.escritor_compartido, &msj_ipc).await?;
 
         Ok(ResultadoEnvio::Aceptado)
     }
@@ -346,5 +462,48 @@ impl hexcell_core::canal::CicloDeVidaSesion for AdaptadorWhatsmeow {
     /// Consulta el estado actual de la sesión del canal.
     fn estado_sesion(&self) -> EstadoSesion {
         *self.receptor_estado.borrow()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn marcas_de_origen_purga_la_mas_antigua_al_superar_la_capacidad() {
+        let mut marcas = MarcasDeOrigen::default();
+        for i in 0..(CAPACIDAD_MAXIMA_MARCAS_DE_ORIGEN + 5) {
+            marcas.insertar(IdConversacion::nuevo(format!("conv-{i}")), i as i64);
+        }
+
+        assert_eq!(marcas.longitud(), CAPACIDAD_MAXIMA_MARCAS_DE_ORIGEN);
+
+        // Las 5 primeras insertadas ya no están: se purgaron en orden de inserción (FIFO), no
+        // al azar, y el mapa nunca superó el tope.
+        for i in 0..5 {
+            assert!(
+                marcas
+                    .obtener(&IdConversacion::nuevo(format!("conv-{i}")))
+                    .is_none(),
+                "la conversación conv-{i} debía haberse purgado por ser la más antigua"
+            );
+        }
+
+        // La más recientemente insertada sigue presente con su marca correcta.
+        let ultima = CAPACIDAD_MAXIMA_MARCAS_DE_ORIGEN + 4;
+        assert_eq!(
+            marcas.obtener(&IdConversacion::nuevo(format!("conv-{ultima}"))),
+            Some(ultima as i64)
+        );
+    }
+
+    #[test]
+    fn marcas_de_origen_actualizar_una_existente_no_cuenta_como_insercion_nueva() {
+        let mut marcas = MarcasDeOrigen::default();
+        marcas.insertar(IdConversacion::nuevo("conv-1"), 100);
+        marcas.insertar(IdConversacion::nuevo("conv-1"), 200);
+
+        assert_eq!(marcas.longitud(), 1);
+        assert_eq!(marcas.obtener(&IdConversacion::nuevo("conv-1")), Some(200));
     }
 }

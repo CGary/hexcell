@@ -77,6 +77,14 @@ impl ChannelAdapter for AdaptadorDePrueba {
             }
         }
 
+        // El cable v4 no tiene frame de plantilla: el adaptador real rechaza toda `Plantilla`
+        // con `PlantillaNoRepresentable` por diseño (HEX-017). La batería del contrato ejercita
+        // la asimetría del TIPO, no la capacidad de este transporte, así que el envoltorio
+        // responde `Aceptado` aquí, igual que fuerza los resultados restrictivos.
+        if matches!(mensaje, MensajeSaliente::Plantilla { .. }) {
+            return Ok(ResultadoEnvio::Aceptado);
+        }
+
         // Sin forzado pendiente: camino real del adaptador de producción.
         self.interno.send(conversacion, mensaje).await
     }
@@ -111,7 +119,7 @@ impl BancoWhatsmeow {
 
         sidecar.aceptar_conexion().await;
         let _ = sidecar.leer_saludo().await;
-        sidecar.enviar_saludo(3, "celula-test").await;
+        sidecar.enviar_saludo(4, "celula-test").await;
 
         Self {
             adaptador: AdaptadorDePrueba::nuevo(adaptador_interno),

@@ -25,10 +25,10 @@ async fn apreton_de_manos_exitoso() {
     let saludo_nucleo = sidecar.leer_saludo().await;
     assert_eq!(saludo_nucleo.emisor, "nucleo");
     assert_eq!(saludo_nucleo.id_celula, "celula-1");
-    assert_eq!(saludo_nucleo.version, 3);
+    assert_eq!(saludo_nucleo.version, 4);
 
     // El sidecar responde con su saludo
-    sidecar.enviar_saludo(3, "celula-1").await;
+    sidecar.enviar_saludo(4, "celula-1").await;
 
     // Verificamos que el apretón de manos se completó enviando un evento
     sidecar
@@ -53,8 +53,8 @@ async fn desajuste_de_version_cierra_conexion() {
     sidecar.aceptar_conexion().await;
     let _saludo = sidecar.leer_saludo().await;
 
-    // El sidecar responde con versión 2
-    sidecar.enviar_saludo(2, "celula-1").await;
+    // El sidecar responde con versión 3 (núcleo espera 4)
+    sidecar.enviar_saludo(3, "celula-1").await;
 
     // La conexión debería ser cerrada por el adaptador
     let linea = sidecar.leer_linea().await;
@@ -70,7 +70,8 @@ async fn desajuste_de_version_surge_con_ambas_versiones() {
     let ruta = sidecar.ruta_socket().clone();
 
     let manejador = tokio::spawn(async move {
-        let mut conexion = Conexion::conectar(&ruta)
+        let escritor = std::sync::Arc::new(tokio::sync::Mutex::new(None));
+        let mut conexion = Conexion::conectar(&ruta, escritor)
             .await
             .expect("debe poder conectar");
         conexion.saludar("celula-1").await
@@ -78,7 +79,7 @@ async fn desajuste_de_version_surge_con_ambas_versiones() {
 
     sidecar.aceptar_conexion().await;
     let _ = sidecar.leer_saludo().await;
-    sidecar.enviar_saludo(2, "celula-1").await;
+    sidecar.enviar_saludo(3, "celula-1").await;
 
     let resultado = manejador.await.expect("la tarea no debe entrar en pánico");
     let error = resultado.expect_err("un desajuste de versión debe ser un error");
@@ -86,13 +87,13 @@ async fn desajuste_de_version_surge_con_ambas_versiones() {
 
     match error {
         ErrorCanalWhatsmeow::DesajusteDeVersion { propia, remota } => {
-            assert_eq!(propia, 3);
-            assert_eq!(remota, 2);
+            assert_eq!(propia, 4);
+            assert_eq!(remota, 3);
         }
         otro => panic!("se esperaba DesajusteDeVersion, se obtuvo {otro:?}"),
     }
     assert!(
-        mensaje.contains("propia=3") && mensaje.contains("remota=2"),
+        mensaje.contains("propia=4") && mensaje.contains("remota=3"),
         "el error surgido debe mencionar ambas versiones: {mensaje}"
     );
 }
@@ -110,10 +111,10 @@ async fn error_de_protocolo_tipo_desconocido() {
     adaptador.arrancar();
     sidecar.aceptar_conexion().await;
     let _ = sidecar.leer_saludo().await;
-    sidecar.enviar_saludo(3, "celula-1").await;
+    sidecar.enviar_saludo(4, "celula-1").await;
 
     sidecar
-        .enviar_linea_cruda(r#"{"version":3,"tipo":"desconocido"}"#)
+        .enviar_linea_cruda(r#"{"version":4,"tipo":"desconocido"}"#)
         .await;
 
     let linea = sidecar.leer_linea().await;
@@ -133,10 +134,10 @@ async fn error_de_protocolo_campo_desconocido() {
     adaptador.arrancar();
     sidecar.aceptar_conexion().await;
     let _ = sidecar.leer_saludo().await;
-    sidecar.enviar_saludo(3, "celula-1").await;
+    sidecar.enviar_saludo(4, "celula-1").await;
 
     // Regla 3: deny_unknown_fields
-    sidecar.enviar_linea_cruda(r#"{"version":3,"tipo":"evento_entrante","id_deduplicacion":"d","id_conversacion":"c","id_remitente":"r","contenido":"x","marca_temporal_ms":0,"campo_extra":1}"#).await;
+    sidecar.enviar_linea_cruda(r#"{"version":4,"tipo":"evento_entrante","id_deduplicacion":"d","id_conversacion":"c","id_remitente":"r","contenido":"x","marca_temporal_ms":0,"campo_extra":1}"#).await;
 
     let linea = sidecar.leer_linea().await;
     assert_eq!(linea, "");
@@ -155,9 +156,9 @@ async fn error_de_protocolo_valor_nulo() {
     adaptador.arrancar();
     sidecar.aceptar_conexion().await;
     let _ = sidecar.leer_saludo().await;
-    sidecar.enviar_saludo(3, "celula-1").await;
+    sidecar.enviar_saludo(4, "celula-1").await;
 
-    sidecar.enviar_linea_cruda(r#"{"version":3,"tipo":"evento_entrante","id_deduplicacion":null,"id_conversacion":"c","id_remitente":"r","contenido":"x","marca_temporal_ms":0}"#).await;
+    sidecar.enviar_linea_cruda(r#"{"version":4,"tipo":"evento_entrante","id_deduplicacion":null,"id_conversacion":"c","id_remitente":"r","contenido":"x","marca_temporal_ms":0}"#).await;
 
     let linea = sidecar.leer_linea().await;
     assert_eq!(linea, "");
@@ -176,7 +177,7 @@ async fn error_de_protocolo_linea_demasiado_larga() {
     adaptador.arrancar();
     sidecar.aceptar_conexion().await;
     let _ = sidecar.leer_saludo().await;
-    sidecar.enviar_saludo(3, "celula-1").await;
+    sidecar.enviar_saludo(4, "celula-1").await;
 
     // Supera LIMITE_DE_LINEA (131072 bytes incluyendo el salto de línea final).
     let muy_larga = "a".repeat(131073);

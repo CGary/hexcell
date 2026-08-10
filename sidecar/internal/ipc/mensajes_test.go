@@ -57,6 +57,19 @@ func cuerposDeMuestra() map[ipc.TipoMensaje]ipc.Cuerpo {
 			Resultado: ipc.ResultadoEmparejamientoCompletado,
 			Motivo:    "",
 		},
+		ipc.TipoMensajeSaliente: ipc.MensajeSaliente{
+			IdMensaje:             "msg-123",
+			IdConversacion:        "conv-456",
+			Contenido:             "texto de prueba",
+			MarcaTemporalOrigenMs: 1_767_225_600_000,
+		},
+		ipc.TipoAcuseEnvio: ipc.AcuseEnvio{
+			IdMensaje:       "msg-123",
+			Estado:          ipc.EstadoEnvioEntregado,
+			IdCorrelacion:   "corr-789",
+			Motivo:          "",
+			MarcaTemporalMs: 1_767_225_605_000,
+		},
 	}
 }
 
@@ -158,7 +171,7 @@ func TestDecodificarRechazaUnaVersionIncompatible(t *testing.T) {
 func TestDecodificarRechazaUnTipoDesconocido(t *testing.T) {
 	t.Parallel()
 
-	linea := []byte(`{"version":3,"tipo":"mensaje_saliente","texto":"hola"}` + "\n")
+	linea := []byte(`{"version":4,"tipo":"tipo_inexistente","texto":"hola"}` + "\n")
 	if _, err := ipc.Decodificar(linea); !errors.Is(err, ipc.ErrTipoDesconocido) {
 		t.Fatalf("error = %v, se esperaba ErrTipoDesconocido", err)
 	}
@@ -175,16 +188,16 @@ func TestDecodificarRechazaLineasMalformadasSinEntrarEnPanico(t *testing.T) {
 		{"vacía", "", ipc.ErrLineaVacia},
 		{"solo salto de línea", "\n", ipc.ErrLineaVacia},
 		{"no es JSON", "esto no es json\n", ipc.ErrLineaMalformada},
-		{"objeto sin cerrar", `{"version":3,"tipo":"saludo"` + "\n", ipc.ErrLineaMalformada},
+		{"objeto sin cerrar", `{"version":4,"tipo":"saludo"` + "\n", ipc.ErrLineaMalformada},
 		{"no es un objeto", `["version",2]` + "\n", ipc.ErrLineaMalformada},
-		{"dos objetos en la línea", `{"version":3,"tipo":"saludo","emisor":"nucleo","id_celula":"c"} {"version":3}` + "\n", ipc.ErrLineaMalformada},
-		{"valor anidado", `{"version":3,"tipo":"saludo","emisor":{"quien":"nucleo"},"id_celula":"c"}` + "\n", ipc.ErrValorNoEscalar},
-		{"valor en lista", `{"version":3,"tipo":"saludo","emisor":["nucleo"],"id_celula":"c"}` + "\n", ipc.ErrValorNoEscalar},
-		{"valor booleano", `{"version":3,"tipo":"saludo","emisor":true,"id_celula":"c"}` + "\n", ipc.ErrValorNoEscalar},
-		{"valor nulo", `{"version":3,"tipo":"saludo","emisor":null,"id_celula":"c"}` + "\n", ipc.ErrValorNoEscalar},
-		{"entero con coma", `{"version":3,"tipo":"confirmacion","id_deduplicacion":"d","extra":1.5}` + "\n", ipc.ErrValorNoEscalar},
-		{"campo ausente", `{"version":3,"tipo":"saludo","emisor":"nucleo"}` + "\n", ipc.ErrCampoAusente},
-		{"campo desconocido", `{"version":3,"tipo":"confirmacion","id_deduplicacion":"d","secuencia":7}` + "\n", ipc.ErrCampoDesconocido},
+		{"dos objetos en la línea", `{"version":4,"tipo":"saludo","emisor":"nucleo","id_celula":"c"} {"version":4}` + "\n", ipc.ErrLineaMalformada},
+		{"valor anidado", `{"version":4,"tipo":"saludo","emisor":{"quien":"nucleo"},"id_celula":"c"}` + "\n", ipc.ErrValorNoEscalar},
+		{"valor en lista", `{"version":4,"tipo":"saludo","emisor":["nucleo"],"id_celula":"c"}` + "\n", ipc.ErrValorNoEscalar},
+		{"valor booleano", `{"version":4,"tipo":"saludo","emisor":true,"id_celula":"c"}` + "\n", ipc.ErrValorNoEscalar},
+		{"valor nulo", `{"version":4,"tipo":"saludo","emisor":null,"id_celula":"c"}` + "\n", ipc.ErrValorNoEscalar},
+		{"entero con coma", `{"version":4,"tipo":"confirmacion","id_deduplicacion":"d","extra":1.5}` + "\n", ipc.ErrValorNoEscalar},
+		{"campo ausente", `{"version":4,"tipo":"saludo","emisor":"nucleo"}` + "\n", ipc.ErrCampoAusente},
+		{"campo desconocido", `{"version":4,"tipo":"confirmacion","id_deduplicacion":"d","secuencia":7}` + "\n", ipc.ErrCampoDesconocido},
 	}
 
 	for _, caso := range casos {
@@ -321,6 +334,19 @@ func TestEstadosDeclarados_CuatroElementosEnOrdenAlfabetico(t *testing.T) {
 	for i := 1; i < len(estados); i++ {
 		if estados[i] < estados[i-1] {
 			t.Fatalf("EstadosDeclarados() no está en orden: %q antes de %q", estados[i-1], estados[i])
+		}
+	}
+}
+
+func TestEstadosDeEnvioDeclarados_CuatroElementosEnOrdenAlfabetico(t *testing.T) {
+	t.Parallel()
+	estados := ipc.EstadosDeEnvioDeclarados()
+	if len(estados) != 4 {
+		t.Fatalf("EstadosDeEnvioDeclarados() tiene %d elementos, se esperaban 4", len(estados))
+	}
+	for i := 1; i < len(estados); i++ {
+		if estados[i] < estados[i-1] {
+			t.Fatalf("EstadosDeEnvioDeclarados() no está en orden: %q antes de %q", estados[i-1], estados[i])
 		}
 	}
 }

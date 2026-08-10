@@ -63,7 +63,7 @@ func TestElDocumentoDelProtocoloEstaVersionadoYFechadoEnAbsoluto(t *testing.T) {
 	t.Parallel()
 
 	documento := leerDocumento(t)
-	if !strings.Contains(documento, "**Versión de este protocolo:** 1.2, fijada el 2026-08-05.") {
+	if !strings.Contains(documento, "**Versión de este protocolo:** 1.3, fijada el 2026-08-09.") {
 		t.Errorf("el documento no lleva cabecera de versión con fecha absoluta")
 	}
 	if !strings.Contains(documento, "docs/contrato-ipc-respaldo-del-sqlstore.md") {
@@ -103,6 +103,9 @@ func TestElDocumentoDeclaraLaCorrespondenciaDeVersiones(t *testing.T) {
 	t.Parallel()
 
 	documento := leerDocumento(t)
+	if !strings.Contains(documento, "| 1.3 | `4` |") {
+		t.Errorf("el documento no declara la correspondencia 1.3 → cable 4")
+	}
 	if !strings.Contains(documento, "| 1.2 | `3` |") {
 		t.Errorf("el documento no declara la correspondencia 1.2 → cable 3")
 	}
@@ -144,6 +147,17 @@ func TestElDocumentoDeclaraLosCuatroEstadosDelCodigo(t *testing.T) {
 	for _, estado := range ipc.EstadosDeclarados() {
 		if !strings.Contains(documento, "`"+estado+"`") {
 			t.Errorf("el documento no declara el estado %q", estado)
+		}
+	}
+}
+
+func TestElDocumentoDeclaraLosEstadosDeEnvioDelCodigo(t *testing.T) {
+	t.Parallel()
+
+	documento := leerDocumento(t)
+	for _, estado := range ipc.EstadosDeEnvioDeclarados() {
+		if !strings.Contains(documento, "`"+estado+"`") {
+			t.Errorf("el documento no declara el estado de envío %q", estado)
 		}
 	}
 }

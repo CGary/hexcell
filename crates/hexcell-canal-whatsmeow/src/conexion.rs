@@ -14,6 +14,8 @@
 
 use std::path::Path;
 
+use std::sync::Arc;
+
 use tokio::io::{AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
 
@@ -30,20 +32,27 @@ use crate::mensajes::{
 pub struct Conexion {
     /// Lector con búfer acotado sobre el socket.
     lector: BufReader<tokio::io::ReadHalf<UnixStream>>,
-    /// Extremo de escritura del socket.
-    escritor: tokio::io::WriteHalf<UnixStream>,
+    /// Extremo de escritura del socket, compartido con el adaptador.
+    escritor: Arc<tokio::sync::Mutex<Option<tokio::io::WriteHalf<UnixStream>>>>,
 }
 
 impl Conexion {
     /// Conecta al socket Unix en la ruta dada.
     ///
     /// Solo intenta una vez; el reintento con retroceso es responsabilidad del adaptador.
-    pub async fn conectar(ruta: &Path) -> Result<Self, ErrorCanalWhatsmeow> {
+    pub async fn conectar(
+        ruta: &Path,
+        escritor_compartido: Arc<tokio::sync::Mutex<Option<tokio::io::WriteHalf<UnixStream>>>>,
+    ) -> Result<Self, ErrorCanalWhatsmeow> {
         let flujo = UnixStream::connect(ruta).await?;
         let (lectura, escritura) = tokio::io::split(flujo);
+        {
+            let mut lock = escritor_compartido.lock().await;
+            *lock = Some(escritura);
+        }
         Ok(Self {
             lector: BufReader::new(lectura),
-            escritor: escritura,
+            escritor: escritor_compartido,
         })
     }
 
@@ -132,10 +141,15 @@ impl Conexion {
 
     /// Escribe una línea de texto al socket, terminada en `\n`.
     pub async fn escribir_linea(&mut self, linea: &str) -> Result<(), ErrorCanalWhatsmeow> {
-        self.escritor.write_all(linea.as_bytes()).await?;
-        self.escritor.write_all(b"\n").await?;
-        self.escritor.flush().await?;
-        Ok(())
+        let mut guardia = self.escritor.lock().await;
+        if let Some(escritor) = guardia.as_mut() {
+            escritor.write_all(linea.as_bytes()).await?;
+            escritor.write_all(b"\n").await?;
+            escritor.flush().await?;
+            Ok(())
+        } else {
+            Err(ErrorCanalWhatsmeow::SinConexion)
+        }
     }
 
     /// Envía una confirmación de entrega para el evento con el identificador de deduplicación
@@ -155,5 +169,26 @@ impl Conexion {
             ))
         })?;
         self.escribir_linea(&linea).await
+    }
+}
+
+/// Envía un mensaje saliente a través del extremo de escritura compartido.
+pub async fn enviar_saliente(
+    escritor_compartido: &tokio::sync::Mutex<Option<tokio::io::WriteHalf<UnixStream>>>,
+    mensaje: &crate::mensajes::MensajeSalienteIpc,
+) -> Result<(), ErrorCanalWhatsmeow> {
+    let linea = serde_json::to_string(mensaje).map_err(|e| {
+        ErrorCanalWhatsmeow::ErrorDeProtocolo(format!(
+            "no se pudo serializar mensaje_saliente: {e}"
+        ))
+    })?;
+    let mut guardia = escritor_compartido.lock().await;
+    if let Some(escritor) = guardia.as_mut() {
+        escritor.write_all(linea.as_bytes()).await?;
+        escritor.write_all(b"\n").await?;
+        escritor.flush().await?;
+        Ok(())
+    } else {
+        Err(ErrorCanalWhatsmeow::SinConexion)
     }
 }
