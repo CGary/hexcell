@@ -1,0 +1,118 @@
+task_id: HEX-017
+summary: "Sidecar outbound queue with absolute TTL and idempotent bounded retries, protocol 1.3/wire 4 outbound types and correlated acks, and a Rust adapter forwarding sends over IPC."
+goal: >-
+  Implement A-3 plan task 12 as the owner of the outbound direction. Add a durable outbound queue
+  to the Go sidecar whose absolute TTL is measured from the originating inbound event's timestamp
+  and never from enqueue time, with hard discard on expiry carrying its own log event and its own
+  counter, bounded and idempotent retries, no dead-letter queue and no re-enqueue at startup.
+  Extend the IPC protocol in place from document 1.2 to 1.3 and wire version 3 to 4, adding the
+  outbound message type and the sent/delivered/read/failed acknowledgement carrying the whatsmeow
+  SendResponse correlation identifier to the closed set of section 6, extending sections 1 to 8
+  without rewriting or renumbering them and keeping both ends failing closed on version mismatch.
+  Replace the HEX-015 in-memory send bridge in hexcell-canal-whatsmeow with real IPC forwarding.
+
+read:
+  - .ai/tasks/active/HEX-017-new-spec/00-spec.yaml
+  - .ai/tasks/active/HEX-017-new-spec/01-blueprint.yaml
+  - docs/plan/fase-a-3-adaptador-whatsmeow.md
+  - docs/adr/adr-0010-puerto-de-canal.md
+  - docs/adr/adr-0014-canal-propio-permanente.md
+  - docs/adr/adr-0016-convencion-de-entrega-de-eventos.md
+  - docs/adr/adr-0019-registro-estructurado.md
+  - docs/adr/adr-0021-testigo-de-entrante.md
+  - docs/bitacora-de-descartes.md
+  - docs/contrato-ipc-respaldo-del-sqlstore.md
+  - crates/hexcell-core/src/canal.rs
+  - crates/hexcell-canal-contrato/src/bateria.rs
+  - sidecar/internal/canal/traduccion.go
+  - sidecar/internal/canal/canal.go
+  - sidecar/internal/registro/registro.go
+  - sidecar/internal/outbox/outbox_test.go
+
+touch:
+  - sidecar/internal/outbox/salida.go
+  - sidecar/internal/outbox/transmisor.go
+  - sidecar/internal/outbox/salida_test.go
+  - sidecar/internal/outbox/centinela_rutas_de_envio_test.go
+  - sidecar/internal/outbox/outbox.go
+  - sidecar/internal/ipc/mensajes.go
+  - sidecar/internal/ipc/mensajes_test.go
+  - sidecar/internal/ipc/documento_test.go
+  - sidecar/internal/configuracion/configuracion.go
+  - sidecar/internal/configuracion/configuracion_test.go
+  - sidecar/main.go
+  - crates/hexcell-canal-whatsmeow/src/mensajes.rs
+  - crates/hexcell-canal-whatsmeow/src/conexion.rs
+  - crates/hexcell-canal-whatsmeow/src/adaptador.rs
+  - crates/hexcell-canal-whatsmeow/src/error.rs
+  - crates/hexcell-canal-whatsmeow/src/lib.rs
+  - crates/hexcell-canal-whatsmeow/tests/comun/mod.rs
+  - crates/hexcell-canal-whatsmeow/tests/protocolo.rs
+  - crates/hexcell-canal-whatsmeow/tests/salida.rs
+  - crates/hexcell-canal-whatsmeow/tests/contrato_del_puerto.rs
+  - crates/hexcell-canal-whatsmeow/tests/reconexion.rs
+  - crates/hexcell-canal-whatsmeow/tests/privacidad.rs
+  - docs/protocolo-ipc-nucleo-sidecar.md
+  - docs/STATUS.md
+  - docs/adr/adr-0011-whatsmeow-sidecar-e-ipc.md
+
+forbid:
+  files:
+    - crates/hexcell-canal-contrato/src/banco.rs
+    - crates/hexcell-canal-contrato/src/bateria.rs
+    - crates/hexcell-core/src/canal.rs
+    - crates/hexcell-canal-simulado/src/adaptador.rs
+    - crates/hexcell/src/motor.rs
+    - crates/hexcell/src/procesador.rs
+    - sidecar/internal/canal/canal.go
+    - sidecar/internal/canal/traduccion.go
+  behaviors:
+    - "Do NOT change the shape of the ChannelAdapter port. MensajeSaliente, TestigoDeEntrante, ResultadoEnvio and the trait signatures stay exactly as they are. Widening them to carry the origin timestamp would cascade into crates/hexcell-canal-contrato/src/banco.rs, which the spec forbids touching; take the anchor from adapter-held state fed by the inbound read loop instead."
+    - "Do NOT weaken, disable, skip or delete the send-path sentinel in sidecar/internal/outbox/centinela_rutas_de_envio_test.go. Extend its watch list or its directory exemption only, per the contract stated in its own header comment. Its empty-corpus guard and its synthetic self-test must both keep failing on a real regression, and each newly watched name needs a synthetic case proving it is caught."
+    - "Do NOT introduce a dead-letter queue, a quarantine table, a startup recovery query, or any other mechanism that re-enqueues pending or expired outbound messages when the sidecar starts. Absence of that mechanism is a requirement, not an omission."
+    - "Do NOT measure TTL from enqueue time, from process start, from the last retry, or from any clock reading taken at insertion. The only anchor is the stored absolute origin timestamp of the inbound event, so the expiry verdict is identical before and after a restart."
+    - "Do NOT introduce traffic shaping in code, comments, configuration names, log event names or documentation. No jitter, no warm-up ramp, no volume schedule, no proxy or IP rotation. Retries are error-driven recovery bounded by a failure ceiling, per D-08 of the discard log and adr-0011 item 6."
+    - "Do NOT leave any part of the HEX-015 bridge in the send path: the outbound in-memory buffer, the exposed accepted-sends counter and the provisional bridge log line must all be gone. When no IPC connection is established, send returns an error rather than accepting the message into memory."
+    - "Do NOT rewrite, renumber or reorder sections 1 to 8 of docs/protocolo-ipc-nucleo-sidecar.md. Extend them in place: add the correspondence row, the type rows, the new field tables, and update section 9 to stop deferring the outbound direction. Do not repeat the stale claim that the Rust workspace declares serde in no crate."
+    - "Do NOT let any whatsmeow transport identifier cross the IPC boundary. The SendResponse Sender JID is never copied into an acknowledgement; only SendResponse.ID travels, as id_correlacion. No new field name may contain jid, telefono, phone, dispositivo, device or numero."
+    - "Do NOT hardcode the TTL or the retry bound as hidden constants. Both are documented calibratable parameters read through sidecar/internal/configuracion, with defaults and validation handled the same way the existing backoff parameters are."
+    - "This task RE-DEFERS and does NOT close the HEX-015 at-most-once inbound-ack window recorded in adr-0011 item 7, where the inbound acknowledgement fires after an in-memory handoff instead of after a durable core-side record. That window belongs to the inbound direction and closes only when the core gains its own durable consumption of the event; this task owns the outbound direction. Keep the STATUS entry Pendiente with its closure condition unchanged, and do not silently drop it."
+    - "Do NOT place any real send call outside the outbox module. The whatsmeow-backed transmitter lives in sidecar/internal/outbox/, and the queue's public entry point is Encolar, so that plan task 13's STOP list can later reject a message before it is enqueued without editing the queue."
+    - "Do NOT build the Go IPC socket server in this task. It belongs to plan task 3 and is absent today; verification stays at the wire and library level, with live-channel testing deferred to plan task 15 by the spec's own criterion."
+    - "Do NOT add new third-party dependencies to either the Rust workspace or the Go module. Everything needed is already present."
+    - "All new identifiers, comments and documentation are written in Spanish, and any date written into an artifact is absolute (2026-08-09), never relative."
+
+verify:
+  commands:
+    - cargo fmt --check
+    - cargo build --workspace
+    - cargo clippy --workspace --all-targets -- -D warnings
+    - cargo test --workspace
+    - test "$(cargo tree -p hexcell-core | wc -l)" = "1"
+    - cargo test -p hexcell-core --doc 2>&1 | grep -q "compile fail"
+    - cd sidecar && go build ./... && go vet ./... && go test ./...
+
+limits:
+  max_files_changed: 28
+  max_diff_lines: 3200
+  per_class:
+    - glob: "**/tests/**"
+      max_diff_lines: 780
+    - glob: sidecar/internal/ipc/mensajes.go
+      max_diff_lines: 260
+    - glob: sidecar/internal/outbox/centinela_rutas_de_envio_test.go
+      max_diff_lines: 150
+    - glob: docs/protocolo-ipc-nucleo-sidecar.md
+      max_diff_lines: 230
+    - glob: docs/adr/adr-0011-whatsmeow-sidecar-e-ipc.md
+      max_diff_lines: 90
+    - glob: docs/STATUS.md
+      max_diff_lines: 60
+
+execution:
+  mode: worktree_edit
+  branch: ai/HEX-017
+
+retry_policy:
+  max_attempts: 2
+  escalate_after: 2

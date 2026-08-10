@@ -1,0 +1,3 @@
+entries: []
+summary: Sidecar outbound queue with absolute TTL and idempotent bounded retries, protocol 1.3/wire 4 outbound types and correlated acks, and a Rust adapter forwarding sends over IPC.
+task_id: HEX-017

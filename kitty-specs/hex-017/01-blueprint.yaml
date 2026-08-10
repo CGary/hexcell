@@ -1,0 +1,197 @@
+task_id: HEX-017
+summary: "Sidecar outbound queue with TTL anchored to the inbound timestamp, bounded idempotent retries, protocol 1.3/wire 4 outbound types and correlated acks, Rust adapter forwarding over IPC."
+
+affected_files:
+  - sidecar/internal/outbox/salida.go
+  - sidecar/internal/outbox/transmisor.go
+  - sidecar/internal/outbox/salida_test.go
+  - sidecar/internal/outbox/centinela_rutas_de_envio_test.go
+  - sidecar/internal/outbox/outbox.go
+  - sidecar/internal/ipc/mensajes.go
+  - sidecar/internal/ipc/mensajes_test.go
+  - sidecar/internal/ipc/documento_test.go
+  - sidecar/internal/configuracion/configuracion.go
+  - sidecar/internal/configuracion/configuracion_test.go
+  - sidecar/main.go
+  - crates/hexcell-canal-whatsmeow/src/mensajes.rs
+  - crates/hexcell-canal-whatsmeow/src/conexion.rs
+  - crates/hexcell-canal-whatsmeow/src/adaptador.rs
+  - crates/hexcell-canal-whatsmeow/src/error.rs
+  - crates/hexcell-canal-whatsmeow/src/lib.rs
+  - crates/hexcell-canal-whatsmeow/tests/comun/mod.rs
+  - crates/hexcell-canal-whatsmeow/tests/protocolo.rs
+  - crates/hexcell-canal-whatsmeow/tests/salida.rs
+  - crates/hexcell-canal-whatsmeow/tests/contrato_del_puerto.rs
+  - crates/hexcell-canal-whatsmeow/tests/reconexion.rs
+  - crates/hexcell-canal-whatsmeow/tests/privacidad.rs
+  - docs/protocolo-ipc-nucleo-sidecar.md
+  - docs/STATUS.md
+  - docs/adr/adr-0011-whatsmeow-sidecar-e-ipc.md
+
+symbols:
+  - outbox.ColaDeSalida
+  - outbox.ColaDeSalida.Encolar
+  - outbox.ColaDeSalida.Drenar
+  - outbox.ColaDeSalida.MarcarEnviado
+  - outbox.Transmisor
+  - outbox.TtlPorOmision
+  - outbox.IntentosMaximosPorOmision
+  - outbox.EventoSalidaExpirada
+  - outbox.EventoSalidaEnviada
+  - outbox.EventoSalidaReintentada
+  - outbox.EventoSalidaAgotada
+  - outbox.ContadorExpiradas
+  - ipc.TipoMensajeSaliente
+  - ipc.TipoAcuseEnvio
+  - ipc.MensajeSaliente
+  - ipc.AcuseEnvio
+  - ipc.VersionProtocolo
+  - ipc.EstadosDeEnvioDeclarados
+  - configuracion.VariableTtlSalidaMs
+  - configuracion.VariableIntentosMaximosSalida
+  - hexcell_canal_whatsmeow::mensajes::VERSION_PROTOCOLO
+  - hexcell_canal_whatsmeow::mensajes::MensajeSalienteIpc
+  - hexcell_canal_whatsmeow::mensajes::AcuseEnvioIpc
+  - hexcell_canal_whatsmeow::conexion::Conexion::enviar_saliente
+  - hexcell_canal_whatsmeow::adaptador::AdaptadorWhatsmeow
+
+dependencies:
+  - crates/hexcell-core/src/canal.rs
+  - crates/hexcell-canal-contrato/src/banco.rs
+  - crates/hexcell-canal-contrato/src/bateria.rs
+  - sidecar/internal/canal/traduccion.go
+  - sidecar/internal/registro/registro.go
+  - docs/plan/fase-a-3-adaptador-whatsmeow.md
+  - docs/adr/adr-0010-puerto-de-canal.md
+  - docs/adr/adr-0019-registro-estructurado.md
+  - docs/adr/adr-0021-testigo-de-entrante.md
+  - docs/bitacora-de-descartes.md
+
+test_scenarios:
+  - statement: "An outbound message whose marca_temporal_origen_ms is older than the configured TTL is treated as expired the instant it is evaluated, even though it was enqueued a moment ago."
+    covers: ["AC-1"]
+  - statement: "The TTL anchor is the stored absolute origin timestamp, so reopening the queue database after a process restart yields the same expiry verdict; nothing derives expiry from enqueue time or process uptime."
+    covers: ["AC-1", "AC-4"]
+  - statement: "Processing an expired outbound message discards it, emits the dedicated expiry log event outbox.salida_expirada, and increments the dedicated expiry counter."
+    covers: ["AC-2"]
+  - statement: "An expired outbound message produces zero calls to the injected transmitter and is never scheduled for retry."
+    covers: ["AC-2"]
+  - statement: "A message failing with a retryable error is retried at most the configured bound and then abandoned without a dead-letter row."
+    covers: ["AC-3", "AC-4"]
+  - statement: "Enqueueing the same id_mensaje twice inserts one row, and marking an already-sent row affects zero rows, so a replayed retry never produces a second send to the channel."
+    covers: ["AC-3"]
+  - statement: "Starting the sidecar with pending and expired rows left by a previous run re-enqueues none of them; the queue exposes no startup recovery path and no dead-letter table."
+    covers: ["AC-4"]
+  - statement: "The protocol document declares version 1.3 and wire version 4, the correspondence table gains the 1.3 to 4 row, and the headings of sections 1 to 8 remain present and in order."
+    covers: ["AC-5"]
+  - statement: "The document coherence tests still pass with the enlarged closed set, proving section 6 lists every declared type and a field table for every declared field."
+    covers: ["AC-5", "AC-7"]
+  - statement: "Both ipc.VersionProtocolo in Go and VERSION_PROTOCOLO in Rust equal 4, and no literal wire version 3 survives in either end's greeting path."
+    covers: ["AC-5", "AC-6"]
+  - statement: "A greeting declaring a version other than 4 makes the receiving end close the connection and log both versions, unchanged from the pre-bump behaviour."
+    covers: ["AC-6"]
+  - statement: "Each of the four acknowledgement states enviado, entregado, leido and fallido carries the id_correlacion taken from the whatsmeow SendResponse.ID of that specific send."
+    covers: ["AC-7"]
+  - statement: "An acknowledgement round-trips through encode and decode on both ends with its correlation identifier and origin message identifier unchanged."
+    covers: ["AC-7"]
+  - statement: "Calling the adapter's send writes one mensaje_saliente line to the IPC socket, and the adapter no longer exposes an accepted-sends counter, an in-memory outbound buffer, or the provisional bridge log line."
+    covers: ["AC-8"]
+  - statement: "Calling send while no IPC connection is established returns an error instead of accepting the message into memory, so no message is silently retained core-side."
+    covers: ["AC-8"]
+  - statement: "The send-path sentinel still reports a violation for a watched send call placed outside the outbox module, its corpus guard still fails on an empty walk, and its synthetic self-test still detects a planted call."
+    covers: ["AC-9"]
+  - statement: "The sentinel's watch list, extended with this task's transmitter entry points, detects a synthetic call to each newly watched name, proving the guard was widened and not weakened."
+    covers: ["AC-9"]
+  - statement: "The artifacts state explicitly that this task re-defers the HEX-015 at-most-once inbound-ack window rather than closing it, and STATUS keeps that entry pending with its unchanged closure condition."
+    covers: ["AC-10"]
+  - statement: "No field name of any declared message type contains jid, telefono, phone, dispositivo, device or numero, and the SendResponse Sender JID is never copied into an acknowledgement."
+    covers: ["AC-7", "AC-8"]
+  - statement: "The queue's only entry point is Encolar, so a future STOP-list check can reject a message before it is enqueued without altering the queue's own code."
+    covers: ["AC-3"]
+  - "Plain acceptance criterion 11: cargo fmt --check, cargo build --workspace, cargo clippy --workspace --all-targets -- -D warnings and cargo test --workspace all pass; enforced by verify commands 1 to 4."
+  - "Plain acceptance criterion 12: cd sidecar && go build ./... && go vet ./... && go test ./... passes including the extended sentinel; enforced by verify command 7."
+  - "Plain acceptance criterion 13: live-channel testing (pairing, real send, delivery and read receipts) is explicitly OUT OF SCOPE here and deferred to plan task 15; no verify command exercises a real WhatsApp connection."
+
+strategy:
+  - step: 1
+    action: "Extend the closed protocol set in Go with two new types. Add mensaje_saliente (nucleo to sidecar) with fields id_mensaje, id_conversacion, contenido, marca_temporal_origen_ms; and acuse_envio (sidecar to nucleo) with fields id_mensaje, estado, id_correlacion, motivo, marca_temporal_ms. Add a closed estado vocabulary enviado/entregado/leido/fallido mirroring how estado_sesion closes its own vocabulary, and raise VersionProtocolo to 4. Value objects and descriptor table only, no transport."
+    files:
+      - sidecar/internal/ipc/mensajes.go
+  - step: 2
+    action: "Extend the protocol document in place from 1.2 to 1.3 and wire 3 to 4. Add the 1.3 row to the correspondence table, add the two type rows and their field tables to section 6, restate in section 3 that the bump keeps strict equality and failing closed, and replace the section 9 deferral of the outbound direction with a pointer to the now-implemented semantics. Sections 1 to 8 are extended, never renumbered or rewritten."
+    files:
+      - docs/protocolo-ipc-nucleo-sidecar.md
+  - step: 3
+    action: "Update the Go protocol tests for the enlarged set: sample bodies for the two new types, field-order assertions, the transport-identifier substring guard over the new fields, and the pinned document strings for version 1.3 and the 1.3 to 4 correspondence row."
+    files:
+      - sidecar/internal/ipc/mensajes_test.go
+      - sidecar/internal/ipc/documento_test.go
+  - step: 4
+    action: "Add the outbound queue as an Application Service inside the outbox module, in a new cola_salida table of the existing outbox database file. Columns id_mensaje UNIQUE, id_conversacion, contenido, marca_temporal_origen_ms, intentos, id_correlacion and enviado_en_ms. Encolar is idempotent through ON CONFLICT DO NOTHING; Drenar evaluates expiry as ahora_ms minus marca_temporal_origen_ms greater than the TTL and hard-discards on expiry; MarcarEnviado guards on enviado_en_ms IS NULL so a replayed retry cannot send twice. No startup recovery query and no dead-letter table exist."
+    files:
+      - sidecar/internal/outbox/salida.go
+      - sidecar/internal/outbox/outbox.go
+  - step: 5
+    action: "Define the Transmisor port and its whatsmeow-backed implementation inside the outbox module, so that every real send call stays in the one directory the sentinel exempts. The transmitter returns the SendResponse.ID as the correlation identifier and never copies the SendResponse Sender JID."
+    files:
+      - sidecar/internal/outbox/transmisor.go
+  - step: 6
+    action: "Add TTL and retry-bound configuration as documented calibratable parameters read through the existing configuration loader, never as hidden constants, with defaults and validation matching how the backoff parameters are already handled."
+    files:
+      - sidecar/internal/configuracion/configuracion.go
+      - sidecar/internal/configuracion/configuracion_test.go
+  - step: 7
+    action: "Extend the send-path sentinel by widening its watch list to the transmitter entry points this task introduces, keeping the outbox directory exemption, the empty-corpus guard and the synthetic self-test, and adding a synthetic case per newly watched name. The guard is never weakened, disabled or deleted."
+    files:
+      - sidecar/internal/outbox/centinela_rutas_de_envio_test.go
+  - step: 8
+    action: "Cover the queue with tests for expiry anchored to the origin timestamp across a reopen, hard discard with its dedicated log event and counter, bounded retries, idempotent enqueue and idempotent send-marking, and absence of any startup re-enqueue."
+    files:
+      - sidecar/internal/outbox/salida_test.go
+  - step: 9
+    action: "Wire the queue and its transmitter in the sidecar binary alongside the existing outbox, leaving the enqueue call as the single named seam a future STOP-list check can precede."
+    files:
+      - sidecar/main.go
+  - step: 10
+    action: "Mirror the two new types as Rust value objects with deny_unknown_fields, raise VERSION_PROTOCOLO to 4, and add the acknowledgement variant to the incoming dispatch enum. The outbound message is emitted, the acknowledgement is consumed."
+    files:
+      - crates/hexcell-canal-whatsmeow/src/mensajes.rs
+      - crates/hexcell-canal-whatsmeow/src/lib.rs
+  - step: 11
+    action: "Give the connection an outbound write method and share the socket write half as Arc<tokio::sync::Mutex<Option<WriteHalf>>> between the background loop and the adapter. A std::sync::Mutex guard cannot be held across an await in a Send future, which the trait requires, so the tokio mutex is mandatory rather than stylistic."
+    files:
+      - crates/hexcell-canal-whatsmeow/src/conexion.rs
+      - crates/hexcell-canal-whatsmeow/src/error.rs
+  - step: 12
+    action: "Replace the HEX-015 in-memory bridge in the adapter. Delete the outbound buffer, the exposed accepted-sends counter and the provisional bridge log; make send serialise a mensaje_saliente and write it to the shared write half, returning an error when no connection is established. Track per-conversation the origin timestamp of the last inbound event already flowing through the read loop, and use it to populate marca_temporal_origen_ms without altering the port. Consume acuse_envio without elevating whatsmeow taxonomy into the port."
+    files:
+      - crates/hexcell-canal-whatsmeow/src/adaptador.rs
+  - step: 13
+    action: "Update the Rust test surface for wire 4 and the new outbound path: the fake sidecar greets with 4, accepts outbound lines and emits acknowledgements; protocol, reconnection, port-contract and privacy tests move off the removed counter and off literal version 3; a new salida test file covers the outbound frame and the acknowledgement round-trip."
+    files:
+      - crates/hexcell-canal-whatsmeow/tests/comun/mod.rs
+      - crates/hexcell-canal-whatsmeow/tests/protocolo.rs
+      - crates/hexcell-canal-whatsmeow/tests/salida.rs
+      - crates/hexcell-canal-whatsmeow/tests/contrato_del_puerto.rs
+      - crates/hexcell-canal-whatsmeow/tests/reconexion.rs
+      - crates/hexcell-canal-whatsmeow/tests/privacidad.rs
+  - step: 14
+    action: "Record the outcome in the decision log. Update adr-0011 item 5 to state the interim send bridge is now replaced, leave item 7 standing as re-deferred, and update STATUS so the outbound queue and its TTL move to Definido while the at-most-once ack window stays Pendiente with its closure condition unchanged."
+    files:
+      - docs/adr/adr-0011-whatsmeow-sidecar-e-ipc.md
+      - docs/STATUS.md
+
+risks:
+  - "BLOCKING FOR THE HUMAN, TTL default proposal. This blueprint proposes HEXCELL_TTL_SALIDA_MS with a default of 900000 ms (15 minutes), NOT the 24 h of DURACION_VENTANA_SERVICIO. Rationale: STATUS records the TTL's purpose as anti-ban, because a late retry looks like conversation initiation; the sidecar's ordinary reconnection backoff ceiling is 60000 ms so a bounded retry series resolves inside about two minutes, leaving 15 minutes roughly a sevenfold margin over the real recovery envelope; and reusing the 24 h constant would import a Cloud API restriction into the own channel, contradicting the TYPE versus POLICY distinction of adr-0010. The value is a calibratable configuration parameter, and STATUS already lists it as pending calibration under real traffic. Requires human ratification before implementation."
+  - "BLOCKING FOR THE HUMAN, AC-10 disposition. This task RE-DEFERS the HEX-015 at-most-once inbound-ack window (adr-0011 item 7) and does not close it. The window is in the INBOUND direction: the adapter acknowledges an evento_entrante after handing it to an in-memory mpsc channel rather than after a durable core-side record. Its closure condition recorded in adr-0011 and STATUS is that the core gains its own durable consumption of the event, which lives in crates/hexcell (deduplication and persistence) and is outside this task, whose scope is the outbound direction per section 9 of the protocol. Closing it here would mean adding core-side durable inbound storage to an already large task. STATUS keeps the entry Pendiente with its closure condition unchanged."
+  - "SPEC VERSUS REALITY, no Go IPC socket server exists. sidecar/main.go states the socket server belongs to plan task 3, and no net.Listen, ListenUnix or Accept call exists anywhere in sidecar/. The Rust end is a complete IPC client that dials a socket nothing in Go opens. AC-8 is therefore satisfiable only at the wire level: the Rust adapter genuinely writes mensaje_saliente frames, verified against the fake sidecar server already present in tests/comun/mod.rs, and the Go queue is verified as a library, but no live end-to-end loop is exercised. This matches the spec's own third plain criterion deferring live-channel verification to plan task 15. Building the server here would add roughly 700 lines plus its own test surface and push this task past a single implement."
+  - "The protocol document's section 1 rationale asserts that the Rust workspace declares serde in no crate. That is stale: crates/hexcell-canal-whatsmeow already depends on serde and serde_json, reconciled in adr-0011 item 4. The extension must not repeat the stale claim when adding the new types; correcting that sentence is in scope as an extension of section 1, not a rewrite."
+  - "MensajeSaliente::Plantilla is not representable on this wire. Depth 1 forbids the parameter list that the variant carries, and the own channel never requires templates because estado_ventana always answers Abierta. The adapter must reject the variant explicitly with a typed error rather than invent a flattened encoding; the wire carries only the free-response text."
+  - "The port cannot supply the inbound origin timestamp. ChannelAdapter::send receives only the conversation and the message, and TestigoDeEntrante carries only the conversation, so the anchor must come from adapter-held state fed by the read loop. Widening MensajeSaliente or the trait is rejected because it would cascade into crates/hexcell-canal-contrato/src/banco.rs, which the spec forbids touching. The per-conversation map is bounded state and is not an outbound buffer, so it does not reintroduce what AC-8 removes."
+  - "Task 14 will add a minimum response latency and business hours, both of which consume TTL budget measured from the same inbound timestamp. A message answered after business hours reopen would exceed any short TTL. That interaction is task 14's to resolve when it lands, and is recorded here so the TTL default is not later blamed for discarding out-of-hours replies."
+  - "The temporary-ban backoff ceiling is 300000 ms, longer than a short TTL, so messages caught in a pausada session will expire rather than be delivered on resumption. This is the intended behaviour under D-08 and the pausada taxonomy, which forbid automatic reactivation, but it must be stated so the expiry counter is not misread as a defect."
+  - "The queue shares the existing outbox.db file through a new cola_salida table rather than a fifth database. The inbound outbox table is not migrated and its schema is untouched. Note that outbox.db is already outside the four databases covered by the A-2 backup contract; this task does not change that, and does not widen the backup contract."
+  - "The sentinel flags any call whose name begins with Enviar anywhere outside a directory named outbox, and today the sidecar contains no such call at all. Any transmitter or queue entry point named with that prefix and invoked from main.go or from internal/canal will fail the sentinel. Naming is therefore load-bearing: the enqueue seam is Encolar and the real send stays inside the outbox directory."
+  - "Empirically validated in a throwaway workspace on 2026-08-09, not assumed. A std::sync::Mutex guard held across an await makes the send future non-Send and fails to compile against the trait bound; tokio::sync::Mutex compiles. ON CONFLICT(id_mensaje) DO NOTHING makes a repeated enqueue affect zero rows; an UPDATE guarded by enviado_en_ms IS NULL makes a replayed retry affect zero rows; and the expiry verdict computed from the stored origin timestamp is identical after closing and reopening the database."
+  - "Retries here are error-driven recovery only. No jitter, no warm-up ramp, no proxy or IP rotation may appear in code, comments, configuration names or documentation, per D-08 of the discard log and adr-0011 item 6. The retry bound is a failure ceiling, never a traffic-shaping schedule."
+  - "No prior failed task overlaps this file set: .ai/tasks/failed/ is empty."

@@ -1,0 +1,99 @@
+task_id: HEX-017
+summary: "Outbound queue with absolute TTL and idempotent retries in the sidecar; protocol v1.3/wire 4 adds outbound types and correlated acks; Rust adapter stops buffering and forwards over IPC."
+goal: >-
+  Implement plan task 12 (fase-a-3-adaptador-whatsmeow.md, item 12) as the owner of the
+  outbound direction: a sidecar-side (Go) outbound queue whose absolute TTL is measured from
+  the originating inbound event's timestamp, never from enqueue time, with hard discard on
+  expiry and no dead-letter re-enqueue at startup; bounded, idempotent retries; a protocol
+  extension (doc 1.2 to 1.3, wire version 3 to 4) that adds new outbound message types to the
+  closed set defined in section 6 of docs/protocolo-ipc-nucleo-sidecar.md, extending sections
+  1 to 8 without rewriting them, deferred there in its section 9 from HEX-014; delivery
+  acknowledgements sent, delivered, read and failed carrying the whatsmeow SendResponse
+  correlation identifier; and updating the Rust adapter (hexcell-canal-whatsmeow) so it stops
+  buffering sends in memory (the HEX-015 bridge recorded in adr-0011) and forwards them over
+  IPC instead.
+invariants:
+  - "TTL is measured from the inbound evento_entrante's marca_temporal_ms field, never from the moment the message was enqueued in the outbound queue."
+  - "A message whose TTL has expired is hard-discarded (never retried, never silently dropped): the discard emits its own dedicated log line and increments its own dedicated counter."
+  - "There is no dead-letter queue for this outbound path. Nothing re-enqueues pending or expired outbound messages at sidecar startup."
+  - "Retries are bounded in count and idempotent: replaying a retry never causes a duplicate send to the WhatsApp channel."
+  - "Retries are strictly error-driven recovery, never traffic shaping. No jitter, warm-up schedule, proxy rotation, or IP rotation language or behavior is introduced anywhere in this task."
+  - "The protocol's closed set of message types (section 6 of docs/protocolo-ipc-nucleo-sidecar.md) is extended, not reopened generally: only the new outbound message types and their fields this task needs are added. Existing sections 1 through 8 are extended in place, never rewritten or renumbered."
+  - "The wire version advances from 3 to 4 and the document version from 1.2 to 1.3. Both the core and sidecar ends keep failing closed on any version mismatch, exactly as they do today."
+  - "Every sent, delivered, read and failed acknowledgement carries the whatsmeow SendResponse correlation identifier so the core can match it to the outbound message it refers to."
+  - "The Rust adapter (hexcell-canal-whatsmeow) no longer buffers outbound sends in an in-memory structure. Every call to send is forwarded over the IPC connection to the sidecar's outbound queue."
+  - "The existing Go sentinel sidecar/internal/outbox/centinela_rutas_de_envio_test.go keeps failing on send calls placed outside the outbox module. This task may extend its watch list or add an explicit exemption for a new directory it introduces, but never weakens, deletes, or disables the guard."
+  - "crates/hexcell-canal-contrato/src/banco.rs is never modified by this task."
+  - "The TTL value itself is a documented, calibratable parameter (config or equivalent), never a hidden constant baked into the code. This spec does not fix its default value; the default is proposed by the blueprint phase with technical rationale and must be ratified by the human before implementation begins."
+  - "The design leaves room for a pre-queue check to run ahead of the outbound queue: nothing in this task's data flow or code structure precludes plan task 13 (STOP list) from later intercepting a send before it reaches this queue."
+  - "This task explicitly states, in its own artifacts, whether it closes the at-most-once inbound-ack window recorded by HEX-015 (adr-0011 item 7 and STATUS: the inbound ack currently fires after an in-memory handoff, which can lose an ack on core crash) or explicitly re-defers it to a later task. It must not be silently left unaddressed."
+acceptance:
+  - id: AC-1
+    statement: "The outbound queue computes TTL expiry from the inbound event's timestamp, not from enqueue time."
+    given: "an outbound message built from an inbound event whose marca_temporal_ms is older than the configured TTL at the moment the message is enqueued"
+    when: "the outbound queue evaluates the message for sending"
+    then: "the message is treated as already expired based on the inbound event's timestamp, even though it was just enqueued"
+  - id: AC-2
+    statement: "An expired outbound message is hard-discarded with its own log line and its own counter, and is never retried."
+    given: "an outbound message whose TTL (measured from its inbound event's timestamp) has elapsed"
+    when: "the outbound queue processes it"
+    then: "the message is discarded, a dedicated expiry log line is emitted, a dedicated expiry counter is incremented, and no send attempt or retry occurs for it"
+  - id: AC-3
+    statement: "Retries are bounded in count and idempotent: no duplicate send reaches the channel after a retry."
+    given: "an outbound message whose first send attempt failed with a retryable error"
+    when: "the outbound queue retries it up to the configured bound"
+    then: "at most the configured number of retry attempts occur, and replaying the same message's retry path never produces two sends of the same message to the channel"
+  - id: AC-4
+    statement: "Nothing is re-enqueued from a previous run when the sidecar starts."
+    given: "outbound messages that were pending or expired when the sidecar process last stopped"
+    when: "the sidecar process starts again"
+    then: "none of those prior pending or expired messages are re-enqueued; there is no dead-letter queue feeding them back in"
+  - id: AC-5
+    statement: "The protocol document is extended in place (1.2 to 1.3, wire 3 to 4) with the new outbound message types, and existing sections 1 to 8 remain intact aside from the extension."
+    given: "docs/protocolo-ipc-nucleo-sidecar.md at version 1.2 with wire version 3"
+    when: "this task's protocol extension is applied"
+    then: "the document declares version 1.3 and wire version 4, section 6's closed set includes the new outbound message types with their field tables, and sections 1 through 8's existing content is otherwise unchanged"
+  - id: AC-6
+    statement: "Both ends still fail closed on a version mismatch after the bump to wire version 4."
+    given: "a core process and a sidecar process each declaring a mismatched version in their saludo"
+    when: "the greeting exchange happens"
+    then: "the end that detects the mismatch closes the connection and logs the fact, exactly as the existing version-mismatch behavior requires"
+  - id: AC-7
+    statement: "Sent, delivered, read and failed acknowledgements each carry the whatsmeow SendResponse correlation identifier."
+    given: "an outbound message that was sent through the sidecar"
+    when: "the sidecar emits a sent, delivered, read or failed acknowledgement for it over IPC"
+    then: "the acknowledgement message includes the correlation identifier tying it back to the SendResponse of that specific send"
+  - id: AC-8
+    statement: "The Rust adapter forwards send calls over IPC instead of buffering them in memory."
+    given: "a call to the WhatsmeowAdapter's send method with a witnessed Outbound value"
+    when: "the call executes"
+    then: "the message is written to the IPC connection toward the sidecar's outbound queue, and no in-memory buffer, exposed counter, or loud log placeholder from the HEX-015 bridge remains in the send path"
+  - id: AC-9
+    statement: "The existing send-path sentinel test keeps guarding the outbox module after this task's changes."
+    given: "sidecar/internal/outbox/centinela_rutas_de_envio_test.go as extended (watch list additions or directory exemptions only) by this task"
+    when: "a send call is introduced outside the outbox module (or its explicitly exempted extension) in a follow-up check"
+    then: "the sentinel test fails, exactly as it did before this task, proving the guard was extended and not weakened or deleted"
+  - id: AC-10
+    statement: "The spec's own artifacts state explicitly whether the HEX-015 at-most-once inbound-ack window is closed by this task or re-deferred."
+    given: "the blueprint and contract produced from this spec"
+    when: "the human reads them"
+    then: "one of the two artifacts contains an explicit sentence naming the HEX-015 in-memory handoff window and stating whether this task closes it or defers it, with no silent omission"
+  - "cargo fmt --check, cargo build --workspace, cargo clippy --workspace --all-targets -- -D warnings and cargo test --workspace all pass on the affected Rust crates."
+  - "cd sidecar && go build ./... && go vet ./... && go test ./... all pass, including the extended outbox sentinel test."
+  - "Testing against a real WhatsApp channel (pairing, live send/delivery/read receipts) is explicitly deferred to plan task 15 and is out of scope for this task's verification."
+risk: medium
+non_goals:
+  - "Implementing the STOP list (plan task 13). This task only ensures the queue design does not preclude a future pre-queue check."
+  - "Any traffic-shaping mechanism (jitter, warm-up ramp, proxy or IP rotation) for outbound sends."
+  - "A dead-letter queue or any re-enqueue-at-startup mechanism for expired or abandoned outbound messages."
+  - "Testing against a real WhatsApp number or live channel; that is plan task 15."
+  - "Calibrating or hardcoding the TTL default value; the default is proposed at blueprint time and ratified by the human, not decided in this spec."
+  - "Behavioral discipline features (typing indicator, response latency, circuit breaker handoff message) from plan task 14."
+  - "Rewriting or renumbering existing ADRs or the protocol document's sections 1 through 8 beyond the extension this task adds."
+constraints:
+  - "All repository content (code comments, docs, commit messages) is written in Spanish; commit messages follow conventional commits with no AI attribution."
+  - "Dates in any written artifact are absolute (2026-08-09), never relative."
+  - "crates/hexcell-canal-contrato/src/banco.rs is forbidden to touch."
+  - "docs/protocolo-ipc-nucleo-sidecar.md is touchable for this task only, and only to extend sections 1 through 8 (new outbound types, ack fields, version bump); it is never rewritten wholesale."
+  - "ADR numbering is never reordered or reused; any new decision gets a new ADR."
+  - "Verification commands: cargo fmt --check; cargo build --workspace; cargo clippy --workspace --all-targets -- -D warnings; cargo test --workspace; the hexcell-core dependency-freedom check; cd sidecar && go build ./... && go vet ./... && go test ./..."
