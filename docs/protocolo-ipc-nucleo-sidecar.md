@@ -1,6 +1,6 @@
 # Protocolo IPC entre el núcleo y el sidecar
 
-* **Versión de este protocolo:** 1.2, fijada el 2026-08-05.
+* **Versión de este protocolo:** 1.3, fijada el 2026-08-09.
 * **Etapa que lo redacta:** A-3 (tarea 1 de `docs/plan/fase-a-3-adaptador-whatsmeow.md`).
 * **Etapa que lo implementa:** A-3, repartida entre varias tareas. Este documento **declara** la
   semántica completa; el código que la cumple llega después y por partes: el outbox durable
@@ -28,6 +28,7 @@
 | 1.0 | `1` |
 | 1.1 | `2` |
 | 1.2 | `3` |
+| 1.3 | `4` |
 
 ---
 
@@ -39,7 +40,7 @@ heredaría un formato elegido por la comodidad de la biblioteca de serializació
 —anidamiento, listas, valores nulos, tipos mezclados— que el lado Rust tendría que consumir sin
 ninguna de esas comodidades.
 
-Ese desequilibrio es concreto: **el workspace Rust no declara `serde` en ningún crate**, y
+Ese desequilibrio es concreto: **el workspace Rust solo declara `serde` en `hexcell-canal-whatsmeow`**, y
 `adr-0019` rechazó explícitamente arrastrar un serializador por presupuesto de memoria (NFR-01,
 ≤ 80 MB por célula sobre canal propio). Escribir JSON a mano es barato; **analizarlo** a mano es
 estrictamente más caro. Por eso el formato de la sección 1 no se elige por lo que es cómodo de
@@ -157,9 +158,9 @@ desajuste de versión es un error de despliegue —una imagen que no se actualiz
 tratarlo como tal, con la célula caída y un mensaje claro, es mucho más barato que descubrirlo
 semanas después por un campo que se leía torcido.
 
-Con la versión 1.2 del documento, la versión de cable pasa de `2` a `3`. La regla no cambia de
+Con la versión 1.2 del documento, la versión de cable pasa de `2` a `3`. Con la versión 1.3, pasa de `3` a `4`. La regla no cambia de
 sustancia: sigue siendo igualdad estricta del entero, en las dos direcciones, sin negociación ni
-degradación. Si un sidecar que habla la versión 3 recibe un saludo con versión 2, cierra la
+degradación. Si un sidecar que habla la versión 4 recibe un saludo con versión 3, cierra la
 conexión e informa; el caso inverso es simétrico. En la práctica, este desajuste indica que una
 imagen del contenedor se actualizó y la otra no, y el remedio es actualizar, no negociar.
 
@@ -261,9 +262,10 @@ reactivación automática.
 
 ## 6. Conjunto cerrado de tipos de mensaje
 
-Nueve tipos. Los seis de la versión 1.0 se conservan intactos; los tres tipos de emparejamiento
+Once tipos. Los seis de la versión 1.0 se conservan intactos; los tres tipos de emparejamiento
 llegan con la versión 1.1. La versión 1.2 no añade tipos: solo cierra el vocabulario de
-`estado_sesion`. Ampliar el conjunto de tipos es cambiar la versión del protocolo.
+`estado_sesion`. La versión 1.3 añade dos tipos para la dirección saliente: `mensaje_saliente` y `acuse_envio`.
+Ampliar el conjunto de tipos es cambiar la versión del protocolo.
 
 | `tipo` | Dirección | Propósito |
 | :--- | :--- | :--- |
@@ -276,12 +278,14 @@ llegan con la versión 1.1. La versión 1.2 no añade tipos: solo cierra el voca
 | `orden_emparejar` | núcleo → sidecar | Orden de iniciar un emparejamiento por QR o por código de vinculación. |
 | `codigo_emparejamiento` | sidecar → núcleo | Código QR o código de vinculación de ocho caracteres. |
 | `acuse_emparejamiento` | sidecar → núcleo | Resultado terminal del emparejamiento. |
+| `mensaje_saliente` | núcleo → sidecar | Mensaje que el núcleo envía hacia el canal. |
+| `acuse_envio` | sidecar → núcleo | Notificación de progreso o fallo de un mensaje saliente. |
 
 ### `saludo`
 
 | Campo | Tipo | Descripción |
 | :--- | :--- | :--- |
-| `version` | entero | `3`. |
+| `version` | entero | `4`. |
 | `tipo` | cadena | `saludo`. |
 | `emisor` | cadena | `nucleo` o `sidecar`. |
 | `id_celula` | cadena | Identificador opaco de la célula, para correlacionar registros. |
@@ -290,7 +294,7 @@ llegan con la versión 1.1. La versión 1.2 no añade tipos: solo cierra el voca
 
 | Campo | Tipo | Descripción |
 | :--- | :--- | :--- |
-| `version` | entero | `3`. |
+| `version` | entero | `4`. |
 | `tipo` | cadena | `evento_entrante`. |
 | `id_deduplicacion` | cadena | Identificador durable del evento (FR-12). Es lo que el acuse referencia. |
 | `id_conversacion` | cadena | Identificador **interno** del hilo, opaco para el núcleo. |
@@ -313,7 +317,7 @@ contra el que ese TTL existe.
 
 | Campo | Tipo | Descripción |
 | :--- | :--- | :--- |
-| `version` | entero | `3`. |
+| `version` | entero | `4`. |
 | `tipo` | cadena | `confirmacion`. |
 | `id_deduplicacion` | cadena | El mismo que llegó en el `evento_entrante`. Nunca un número de secuencia. |
 
@@ -321,7 +325,7 @@ contra el que ese TTL existe.
 
 | Campo | Tipo | Descripción |
 | :--- | :--- | :--- |
-| `version` | entero | `3`. |
+| `version` | entero | `4`. |
 | `tipo` | cadena | `estado_sesion`. |
 | `estado` | cadena | `activa`, `reconectando`, `desvinculada` o `pausada`. |
 | `causa` | cadena | Variante cruda de la taxonomía de desconexión; `""` si no aplica. |
@@ -377,7 +381,7 @@ decisión humana; no existe mensaje IPC de reanudación.
 
 | Campo | Tipo | Descripción |
 | :--- | :--- | :--- |
-| `version` | entero | `3`. |
+| `version` | entero | `4`. |
 | `tipo` | cadena | `orden_emparejar`. |
 | `metodo` | cadena | `qr` o `codigo_de_vinculacion`. |
 
@@ -391,7 +395,7 @@ identificador de transporte.
 
 | Campo | Tipo | Descripción |
 | :--- | :--- | :--- |
-| `version` | entero | `3`. |
+| `version` | entero | `4`. |
 | `tipo` | cadena | `codigo_emparejamiento`. |
 | `metodo` | cadena | `qr` o `codigo_de_vinculacion`. Indica de qué tipo es `valor`. |
 | `valor` | cadena | Dato opaco: la cadena a codificar como QR, o el código de ocho caracteres. |
@@ -405,10 +409,33 @@ exactamente uno.
 
 | Campo | Tipo | Descripción |
 | :--- | :--- | :--- |
-| `version` | entero | `3`. |
+| `version` | entero | `4`. |
 | `tipo` | cadena | `acuse_emparejamiento`. |
 | `resultado` | cadena | `completado`, `expirado` o `fallido`. |
 | `motivo` | cadena | Descripción legible si `resultado` es `fallido`; `""` en caso contrario. **Nunca lleva la cadena QR, el código de vinculación ni ningún otro dato de credencial.** |
+
+### `mensaje_saliente`
+
+| Campo | Tipo | Descripción |
+| :--- | :--- | :--- |
+| `version` | entero | `4`. |
+| `tipo` | cadena | `mensaje_saliente`. |
+| `id_mensaje` | cadena | Identificador global del mensaje originado en el núcleo. |
+| `id_conversacion` | cadena | Identificador interno de la conversación destino. |
+| `contenido` | cadena | Texto del mensaje a enviar. |
+| `marca_temporal_origen_ms` | entero | Milisegundos desde la época Unix en que el núcleo originó el mensaje. |
+
+### `acuse_envio`
+
+| Campo | Tipo | Descripción |
+| :--- | :--- | :--- |
+| `version` | entero | `4`. |
+| `tipo` | cadena | `acuse_envio`. |
+| `id_mensaje` | cadena | El mismo identificador global del `mensaje_saliente`. |
+| `estado` | cadena | Estado de la entrega: `enviado`, `entregado`, `leido` o `fallido`. |
+| `id_correlacion` | cadena | Identificador asignado por el canal subyacente (ej. whatsmeow) al enviar; `""` si el estado es `fallido` temprano. |
+| `motivo` | cadena | Descripción legible del error si el estado es `fallido`; `""` en caso contrario. |
+| `marca_temporal_ms` | entero | Momento del suceso en milisegundos desde la época Unix. |
 
 ---
 
@@ -423,7 +450,7 @@ contrato sin modificarlo**: los campos de las dos tablas siguientes son exactame
 
 | Campo | Tipo | Descripción |
 | :--- | :--- | :--- |
-| `version` | entero | `3`. |
+| `version` | entero | `4`. |
 | `tipo` | cadena | `orden_respaldo_sqlstore`. |
 | `orden` | cadena | Cadena fija `respaldar_sqlstore`. |
 | `destino` | cadena | Directorio de destino ya resuelto por quien dispara la orden. |
@@ -433,7 +460,7 @@ contrato sin modificarlo**: los campos de las dos tablas siguientes son exactame
 
 | Campo | Tipo | Descripción |
 | :--- | :--- | :--- |
-| `version` | entero | `3`. |
+| `version` | entero | `4`. |
 | `tipo` | cadena | `acuse_respaldo_sqlstore`. |
 | `identificador_de_ronda` | cadena | El mismo recibido en la orden. |
 | `resultado` | cadena | `completado` o `fallido`. |
@@ -480,7 +507,7 @@ ofensor; **nunca la línea recibida**, que podría contener el texto de un mensa
 * **El almacén de identidad.** Mapea los contactos anclados en el JID de número de teléfono hacia identificadores internos opacos, guardando el LID como un alias, en su propio archivo SQLite en `/var/lib/hexcell/identidad.db`, separado del `sqlstore`.
 * **Cómo analiza estas líneas el lado Rust** —a mano o con una dependencia nueva—: tarea 10, con la
   decisión registrada en `adr-0011`.
-* **La dirección saliente y los acuses.** Los acuses `sent`/`delivered`/`read`/`failed` quedan diferidos a la tarea 12 de la etapa A-3, que es la dueña de la cola de salida y del identificador de correlación del que dependen.
+* **La dirección saliente y los acuses.** Se implementaron en la versión 1.3 de este documento (`mensaje_saliente` y `acuse_envio` en la sección 6) mediante la tarea 12 de la etapa A-3.
 * **El emparejamiento por QR y por código de vinculación**, que la versión 1.0 omitía, queda
   cubierto desde la versión 1.1 por los tres tipos `orden_emparejar`, `codigo_emparejamiento` y
   `acuse_emparejamiento`.

@@ -85,7 +85,7 @@ impl SidecarSimulado {
         marca_temporal_ms: i64,
     ) {
         let evento = hexcell_canal_whatsmeow::mensajes::EventoEntranteIpc {
-            version: 3,
+            version: 4,
             tipo: "evento_entrante".to_string(),
             id_deduplicacion: id_deduplicacion.to_string(),
             id_conversacion: id_conversacion.to_string(),
@@ -112,7 +112,7 @@ impl SidecarSimulado {
         expira_en_ms: i64,
     ) {
         let estado_sesion = hexcell_canal_whatsmeow::mensajes::EstadoSesionIpc {
-            version: 3,
+            version: 4,
             tipo: "estado_sesion".to_string(),
             estado: estado.to_string(),
             causa: causa.to_string(),
@@ -129,6 +129,36 @@ impl SidecarSimulado {
         con.1.write_all(linea.as_bytes()).await.unwrap();
         con.1.write_all(b"\n").await.unwrap();
         con.1.flush().await.unwrap();
+    }
+
+    /// Lee y devuelve un mensaje saliente del núcleo.
+    pub async fn leer_mensaje_saliente(
+        &mut self,
+    ) -> hexcell_canal_whatsmeow::mensajes::MensajeSalienteIpc {
+        let linea = self.leer_linea().await;
+        serde_json::from_str(&linea).expect("no se pudo parsear el mensaje saliente")
+    }
+
+    /// Envía un acuse de envío.
+    pub async fn enviar_acuse_envio(
+        &mut self,
+        id_mensaje: &str,
+        estado: &str,
+        id_correlacion: &str,
+        motivo: &str,
+        marca_temporal_ms: i64,
+    ) {
+        let acuse = hexcell_canal_whatsmeow::mensajes::AcuseEnvioIpc {
+            version: 4,
+            tipo: "acuse_envio".to_string(),
+            id_mensaje: id_mensaje.to_string(),
+            estado: estado.to_string(),
+            id_correlacion: id_correlacion.to_string(),
+            motivo: motivo.to_string(),
+            marca_temporal_ms,
+        };
+        let linea = serde_json::to_string(&acuse).unwrap();
+        self.enviar_linea_cruda(&linea).await;
     }
 
     /// Lee una línea cruda del núcleo.

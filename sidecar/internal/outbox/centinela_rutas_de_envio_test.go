@@ -31,7 +31,7 @@ func detectarLlamadasDeEnvio(ruta string, codigoSintetico string) ([]string, int
 	// una violación: enviar solo se permite dentro del módulo outbox.
 	esRutaDeEnvioVigilada := func(nombre string) bool {
 		switch nombre {
-		case "SendMessage", "SendPresence", "SendChatPresence", "SendReceipt":
+		case "SendMessage", "SendPresence", "SendChatPresence", "SendReceipt", "Transmitir":
 			return true
 		default:
 			return strings.HasPrefix(nombre, "Enviar")
@@ -129,6 +129,7 @@ import "fmt"
 
 func EnviarMensajeTramposo() {
 	cliente.SendMessage(ctx, jid, mensaje)
+	transmisor.Transmitir(ctx, conv, cont)
 }
 `
 	violaciones, _, err := detectarLlamadasDeEnvio("trampa.go", codigoSintetico)
@@ -136,7 +137,7 @@ func EnviarMensajeTramposo() {
 		t.Fatalf("error al procesar el código sintético: %v", err)
 	}
 
-	if len(violaciones) != 1 {
-		t.Fatalf("se esperaba exactamente 1 violación, se encontraron %d: %v", len(violaciones), violaciones)
+	if len(violaciones) != 2 {
+		t.Fatalf("se esperaban exactamente 2 violaciones, se encontraron %d: %v", len(violaciones), violaciones)
 	}
 }

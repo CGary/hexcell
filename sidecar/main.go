@@ -19,6 +19,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/CGary/hexcell/sidecar/internal/canal"
 	"github.com/CGary/hexcell/sidecar/internal/configuracion"
@@ -30,9 +31,16 @@ import (
 
 // Nombres fijos de suceso del arranque y de la parada del proceso.
 const (
-	eventoArranque = "sidecar.arrancado"
-	eventoParada   = "sidecar.detenido"
+	eventoArranque   = "sidecar.arrancado"
+	eventoParada     = "sidecar.detenido"
+	eventoErrorDreno = "outbox.error_drenaje"
 )
+
+// intervaloDrenajeSalida es la cadencia mecánica del bucle que procesa la cola de salida:
+// expira lo vencido e intenta transmitir lo pendiente. No es un parámetro de calibración de
+// negocio ni una técnica anti-baneo, es solo el paso del bucle de fondo; el TTL y el límite de
+// reintentos, esos sí calibrables, se leen de configuracion.
+const intervaloDrenajeSalida = 2 * time.Second
 
 func main() {
 	cfg, err := configuracion.Cargar(os.LookupEnv)
@@ -85,6 +93,18 @@ func main() {
 	}
 	defer buzon.Cerrar()
 
+	// La ColaDeSalida comparte el archivo y la conexión con el outbox.
+	// La llamada a Encolar() será la única costura nombrada para el futuro chequeo de lista STOP.
+	// El transmisor real vive dentro del paquete outbox (transmisor.go); aquí solo se inyecta el
+	// cliente whatsmeow de la sesión activa y el almacén de identidad como resolutor de
+	// direcciones.
+	transmisor := outbox.NuevoTransmisorWhatsmeow(sesion.Cliente(), almacenIdentidad)
+	colaSalida := outbox.NuevaColaDeSalida(buzon.DB(), cfg.TtlSalidaMs, cfg.IntentosMaximosSalida, reg, transmisor)
+
+	ctxDrenaje, detenerDrenaje := context.WithCancel(ctx)
+	defer detenerDrenaje()
+	go bucleDeDrenajeSalida(ctxDrenaje, colaSalida, reg)
+
 	sumideroEvento := func(evento ipc.EventoEntrante) {
 		reg.Info("canal.evento_entrante_listo", registro.Campos{
 			IdEvento: evento.IdDeduplicacion,
@@ -102,4 +122,24 @@ func main() {
 
 	sesion.Cerrar()
 	reg.Info(eventoParada, registro.Campos{Detalle: senal.String()})
+}
+
+// bucleDeDrenajeSalida ejecuta ColaDeSalida.Drenar a intervalos regulares hasta que ctx se
+// cancela en la parada ordenada. Cada vuelta expira lo vencido e intenta transmitir lo
+// pendiente; un error de una vuelta se registra y no detiene el bucle, exactamente como el
+// resto del proceso sobrevive a un fallo de un solo evento.
+func bucleDeDrenajeSalida(ctx context.Context, cola *outbox.ColaDeSalida, reg *registro.Registro) {
+	ticker := time.NewTicker(intervaloDrenajeSalida)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if err := cola.Drenar(ctx, time.Now().UnixMilli()); err != nil && reg != nil {
+				reg.Error(eventoErrorDreno, registro.Campos{Detalle: err.Error()})
+			}
+		}
+	}
 }

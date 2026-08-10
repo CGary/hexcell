@@ -11,8 +11,8 @@
 
 use serde::{Deserialize, Serialize};
 
-/// Versión de cable del protocolo. En esta implementación, `3` (documento 1.2).
-pub const VERSION_PROTOCOLO: i64 = 3;
+/// Versión de cable del protocolo. En esta implementación, `4` (documento 1.3).
+pub const VERSION_PROTOCOLO: i64 = 4;
 
 /// Límite de línea del protocolo: 131 072 bytes (128 KiB), contando el salto de línea final.
 /// Una línea más larga es un error de protocolo y cierra la conexión.
@@ -159,6 +159,44 @@ pub struct Confirmacion {
     pub id_deduplicacion: String,
 }
 
+/// Mensaje saliente (sección 4): un mensaje que el núcleo envía para ser entregado.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MensajeSalienteIpc {
+    /// Versión de cable.
+    pub version: i64,
+    /// Tipo de mensaje: siempre `"mensaje_saliente"`.
+    pub tipo: String,
+    /// Identificador opaco de este mensaje para acuses.
+    pub id_mensaje: String,
+    /// Identificador de la conversación de destino.
+    pub id_conversacion: String,
+    /// Contenido textual.
+    pub contenido: String,
+    /// Marca temporal de origen en milisegundos absolutos, tomada del estado del hilo.
+    pub marca_temporal_origen_ms: i64,
+}
+
+/// Acuse de envío del sidecar (sección 4): el resultado de procesar un `mensaje_saliente`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AcuseEnvioIpc {
+    /// Versión de cable.
+    pub version: i64,
+    /// Tipo de mensaje: siempre `"acuse_envio"`.
+    pub tipo: String,
+    /// El mismo identificador enviado en el `mensaje_saliente`.
+    pub id_mensaje: String,
+    /// Estado: `"enviado"`, `"entregado"`, `"leido"` o `"fallido"`.
+    pub estado: String,
+    /// Identificador que el canal acuñó para este mensaje, si lo hay.
+    pub id_correlacion: String,
+    /// Motivo legible si falló; de lo contrario `""`.
+    pub motivo: String,
+    /// Momento del acuse según el transporte en milisegundos desde la época Unix.
+    pub marca_temporal_ms: i64,
+}
+
 /// Orden de emparejar (sección 6): orden de iniciar un emparejamiento.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -210,6 +248,8 @@ pub enum MensajeEntrante {
     AcuseEmparejamiento(AcuseEmparejamiento),
     /// Acuse del respaldo del `sqlstore`.
     AcuseRespaldoSqlstore(AcuseRespaldoSqlstore),
+    /// Acuse de envío de un mensaje saliente.
+    AcuseEnvio(AcuseEnvioIpc),
 }
 
 /// Analiza una línea JSON ya validada en tamaño y la despacha al tipo concreto por el campo
@@ -265,10 +305,15 @@ pub fn analizar_mensaje_entrante(linea: &str) -> Result<MensajeEntrante, String>
                 .map_err(|e| format!("acuse_respaldo_sqlstore inválido: {e}"))?;
             Ok(MensajeEntrante::AcuseRespaldoSqlstore(msg))
         }
+        "acuse_envio" => {
+            let msg: AcuseEnvioIpc =
+                serde_json::from_str(linea).map_err(|e| format!("acuse_envio inválido: {e}"))?;
+            Ok(MensajeEntrante::AcuseEnvio(msg))
+        }
         // Los tipos que el núcleo ENVÍA no se esperan como entrantes.
-        "confirmacion" | "orden_emparejar" | "orden_respaldo_sqlstore" => Err(format!(
-            "tipo '{tipo}' no es un mensaje entrante válido del sidecar"
-        )),
+        "confirmacion" | "orden_emparejar" | "orden_respaldo_sqlstore" | "mensaje_saliente" => Err(
+            format!("tipo '{tipo}' no es un mensaje entrante válido del sidecar"),
+        ),
         _ => Err(format!("tipo desconocido: '{tipo}'")),
     }
 }

@@ -1,5 +1,5 @@
 // Package ipc es la representación tipada del protocolo que fija
-// `docs/protocolo-ipc-nucleo-sidecar.md`, versión 1.2 (versión de cable 3).
+// `docs/protocolo-ipc-nucleo-sidecar.md`, versión 1.3 (versión de cable 4).
 //
 // Aquí no hay socket, ni escucha, ni outbox: solo los objetos de valor de los nueve tipos de
 // mensaje y dos funciones puras, [Codificar] y [Decodificar]. El transporte llega con la tarea 3
@@ -29,7 +29,7 @@ import (
 )
 
 // VersionProtocolo es la versión que este binario habla. Un desajuste cierra la conexión.
-const VersionProtocolo int64 = 3
+const VersionProtocolo int64 = 4
 
 // LongitudMaximaDeLinea es el techo de una línea del protocolo, en bytes, salto de línea
 // incluido. Existe para que el lector del otro extremo dimensione un búfer acotado.
@@ -55,6 +55,8 @@ const (
 	TipoOrdenEmparejar        TipoMensaje = "orden_emparejar"
 	TipoCodigoEmparejamiento  TipoMensaje = "codigo_emparejamiento"
 	TipoAcuseEmparejamiento   TipoMensaje = "acuse_emparejamiento"
+	TipoMensajeSaliente       TipoMensaje = "mensaje_saliente"
+	TipoAcuseEnvio            TipoMensaje = "acuse_envio"
 )
 
 // Valores cerrados del campo `emisor` de un saludo.
@@ -70,6 +72,14 @@ const (
 	EstadoReconectando = "reconectando"
 	EstadoDesvinculada = "desvinculada"
 	EstadoPausada      = "pausada"
+)
+
+// Valores cerrados del campo `estado` de un acuse de envío.
+const (
+	EstadoEnvioEnviado   = "enviado"
+	EstadoEnvioEntregado = "entregado"
+	EstadoEnvioLeido     = "leido"
+	EstadoEnvioFallido   = "fallido"
 )
 
 // Valores cerrados del campo `causa` de un estado de sesión. El vocabulario
@@ -260,6 +270,33 @@ type AcuseEmparejamiento struct {
 func (AcuseEmparejamiento) tipo() TipoMensaje { return TipoAcuseEmparejamiento }
 func (a AcuseEmparejamiento) valores() []any  { return []any{a.Resultado, a.Motivo} }
 
+// MensajeSaliente es un mensaje que el núcleo envía hacia el canal.
+type MensajeSaliente struct {
+	IdMensaje             string
+	IdConversacion        string
+	Contenido             string
+	MarcaTemporalOrigenMs int64
+}
+
+func (MensajeSaliente) tipo() TipoMensaje { return TipoMensajeSaliente }
+func (m MensajeSaliente) valores() []any {
+	return []any{m.IdMensaje, m.IdConversacion, m.Contenido, m.MarcaTemporalOrigenMs}
+}
+
+// AcuseEnvio es la notificación de progreso o fallo de un mensaje saliente.
+type AcuseEnvio struct {
+	IdMensaje       string
+	Estado          string
+	IdCorrelacion   string
+	Motivo          string
+	MarcaTemporalMs int64
+}
+
+func (AcuseEnvio) tipo() TipoMensaje { return TipoAcuseEnvio }
+func (a AcuseEnvio) valores() []any {
+	return []any{a.IdMensaje, a.Estado, a.IdCorrelacion, a.Motivo, a.MarcaTemporalMs}
+}
+
 // descriptor declara los campos del cuerpo de un tipo y cómo reconstruirlo al decodificar.
 type descriptor struct {
 	campos    []declaracion
@@ -375,6 +412,40 @@ var descriptores = map[TipoMensaje]descriptor{
 			return AcuseEmparejamiento{Resultado: cadenas[0], Motivo: cadenas[1]}
 		},
 	},
+	TipoMensajeSaliente: {
+		campos: []declaracion{
+			{"id_mensaje", claseCadena},
+			{"id_conversacion", claseCadena},
+			{"contenido", claseCadena},
+			{"marca_temporal_origen_ms", claseEntero},
+		},
+		construir: func(cadenas []string, enteros []int64) Cuerpo {
+			return MensajeSaliente{
+				IdMensaje:             cadenas[0],
+				IdConversacion:        cadenas[1],
+				Contenido:             cadenas[2],
+				MarcaTemporalOrigenMs: enteros[0],
+			}
+		},
+	},
+	TipoAcuseEnvio: {
+		campos: []declaracion{
+			{"id_mensaje", claseCadena},
+			{"estado", claseCadena},
+			{"id_correlacion", claseCadena},
+			{"motivo", claseCadena},
+			{"marca_temporal_ms", claseEntero},
+		},
+		construir: func(cadenas []string, enteros []int64) Cuerpo {
+			return AcuseEnvio{
+				IdMensaje:       cadenas[0],
+				Estado:          cadenas[1],
+				IdCorrelacion:   cadenas[2],
+				Motivo:          cadenas[3],
+				MarcaTemporalMs: enteros[0],
+			}
+		},
+	},
 }
 
 // CausasDeclaradas devuelve el vocabulario cerrado de causas en orden estable,
@@ -404,12 +475,24 @@ func EstadosDeclarados() []string {
 	}
 }
 
+// EstadosDeEnvioDeclarados devuelve los cuatro valores del campo `estado`
+// de un acuse de envío en orden estable.
+func EstadosDeEnvioDeclarados() []string {
+	return []string{
+		EstadoEnvioEntregado,
+		EstadoEnvioEnviado,
+		EstadoEnvioFallido,
+		EstadoEnvioLeido,
+	}
+}
+
 // TiposDeclarados devuelve el conjunto cerrado de tipos del protocolo, en orden estable.
 func TiposDeclarados() []TipoMensaje {
 	return []TipoMensaje{
 		TipoSaludo, TipoEventoEntrante, TipoConfirmacion,
 		TipoEstadoSesion, TipoOrdenRespaldoSqlstore, TipoAcuseRespaldoSqlstore,
 		TipoOrdenEmparejar, TipoCodigoEmparejamiento, TipoAcuseEmparejamiento,
+		TipoMensajeSaliente, TipoAcuseEnvio,
 	}
 }
 

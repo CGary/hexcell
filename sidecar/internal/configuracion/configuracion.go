@@ -39,6 +39,10 @@ const (
 	VariableRetrocesoBaneoInicialMs = "HEXCELL_RETROCESO_BANEO_INICIAL_MS"
 	// VariableRetrocesoBaneoMaximoMs fija el techo del retroceso largo por baneo temporal.
 	VariableRetrocesoBaneoMaximoMs = "HEXCELL_RETROCESO_BANEO_MAXIMO_MS"
+	// VariableTtlSalidaMs fija el tiempo máximo de vida de un mensaje saliente antes de expirar.
+	VariableTtlSalidaMs = "HEXCELL_TTL_SALIDA_MS"
+	// VariableIntentosMaximosSalida fija el máximo de intentos de entrega de un mensaje saliente.
+	VariableIntentosMaximosSalida = "HEXCELL_INTENTOS_MAXIMOS_SALIDA"
 )
 
 // Valores por omisión, documentados en docs/protocolo-ipc-nucleo-sidecar.md, sección 2.
@@ -70,6 +74,16 @@ const (
 	// RetrocesoBaneoMaximoMsPorOmision es el techo del retroceso largo por baneo.
 	// PENDIENTE DE CALIBRACIÓN.
 	RetrocesoBaneoMaximoMsPorOmision int64 = 300000
+	// TtlSalidaMsPorOmision es el TTL por omisión para mensajes salientes (15 min). Es la única
+	// fuente de este literal: sidecar/internal/outbox reexporta esta misma constante como
+	// outbox.TtlPorOmision en vez de repetirla.
+	// PENDIENTE DE CALIBRACIÓN: punto de partida razonable, no validado bajo tráfico real.
+	TtlSalidaMsPorOmision int64 = 900000
+	// IntentosMaximosSalidaPorOmision es el límite de intentos por omisión. Es la única fuente
+	// de este literal: sidecar/internal/outbox reexporta esta misma constante como
+	// outbox.IntentosMaximosPorOmision en vez de repetirla.
+	// PENDIENTE DE CALIBRACIÓN.
+	IntentosMaximosSalidaPorOmision int64 = 3
 )
 
 // ErrRutaSocketVacia se devuelve cuando la variable del socket está definida pero vacía.
@@ -91,6 +105,9 @@ var ErrNivelDeRegistroDesconocido = errors.New("configuracion: nivel de registro
 // ErrRetrocesoInvalido se devuelve cuando un parámetro de retroceso no es numérico, es cero,
 // negativo o el techo es menor que el intervalo inicial.
 var ErrRetrocesoInvalido = errors.New("configuracion: parámetro de retroceso inválido")
+
+// ErrParametroSalidaInvalido se devuelve cuando un parámetro de salida es inválido.
+var ErrParametroSalidaInvalido = errors.New("configuracion: parámetro de salida inválido")
 
 // nivelesReconocidos es el conjunto cerrado de umbrales admitidos, en español como el resto del
 // repositorio. Un valor fuera de la tabla es un error y no se degrada en silencio a «info».
@@ -136,6 +153,10 @@ type Configuracion struct {
 	TelefonoCelula string
 	// Retroceso agrupa los parámetros de retroceso exponencial.
 	Retroceso Retroceso
+	// TtlSalidaMs es el tiempo máximo de vida de un mensaje saliente antes de expirar.
+	TtlSalidaMs int64
+	// IntentosMaximosSalida es el número máximo de intentos para enviar un mensaje saliente.
+	IntentosMaximosSalida int64
 }
 
 // Cargar construye la configuración a partir de una función de consulta del entorno.
@@ -192,14 +213,32 @@ func Cargar(consultar func(string) (string, bool)) (Configuracion, error) {
 		return Configuracion{}, err
 	}
 
+	ttlSalida, err := enteroDelEntorno(consultar, VariableTtlSalidaMs, TtlSalidaMsPorOmision)
+	if err != nil {
+		return Configuracion{}, err
+	}
+	if ttlSalida <= 0 {
+		return Configuracion{}, fmt.Errorf("%w: %s debe ser positivo, recibido %d", ErrParametroSalidaInvalido, VariableTtlSalidaMs, ttlSalida)
+	}
+
+	intentosSalida, err := enteroDelEntorno(consultar, VariableIntentosMaximosSalida, IntentosMaximosSalidaPorOmision)
+	if err != nil {
+		return Configuracion{}, err
+	}
+	if intentosSalida <= 0 {
+		return Configuracion{}, fmt.Errorf("%w: %s debe ser positivo, recibido %d", ErrParametroSalidaInvalido, VariableIntentosMaximosSalida, intentosSalida)
+	}
+
 	return Configuracion{
-		RutaSocket:      rutaSocket,
-		NivelDeRegistro: nivel,
-		IdCelula:        idCelula,
-		RutaSqlstore:    rutaSqlstore,
-		RutaIdentidad:   rutaIdentidad,
-		TelefonoCelula:  telefonoCelula,
-		Retroceso:       retroceso,
+		RutaSocket:            rutaSocket,
+		NivelDeRegistro:       nivel,
+		IdCelula:              idCelula,
+		RutaSqlstore:          rutaSqlstore,
+		RutaIdentidad:         rutaIdentidad,
+		TelefonoCelula:        telefonoCelula,
+		Retroceso:             retroceso,
+		TtlSalidaMs:           ttlSalida,
+		IntentosMaximosSalida: intentosSalida,
 	}, nil
 }
 
