@@ -94,12 +94,13 @@ func main() {
 	defer buzon.Cerrar()
 
 	// La ColaDeSalida comparte el archivo y la conexión con el outbox.
-	// La llamada a Encolar() será la única costura nombrada para el futuro chequeo de lista STOP.
-	// El transmisor real vive dentro del paquete outbox (transmisor.go); aquí solo se inyecta el
+	// El transmisor real vive dentro del paquete outbox (transmisor.go); aquí se inyecta el
 	// cliente whatsmeow de la sesión activa y el almacén de identidad como resolutor de
-	// direcciones.
+	// direcciones y control de baja.
 	transmisor := outbox.NuevoTransmisorWhatsmeow(sesion.Cliente(), almacenIdentidad)
-	colaSalida := outbox.NuevaColaDeSalida(buzon.DB(), cfg.TtlSalidaMs, cfg.IntentosMaximosSalida, reg, transmisor)
+	colaSalida := outbox.NuevaColaDeSalida(buzon.DB(), cfg.TtlSalidaMs, cfg.IntentosMaximosSalida, reg, transmisor, almacenIdentidad)
+	portero := outbox.NuevoPorteroDeSalida(colaSalida, almacenIdentidad, reg)
+	detectorBaja := canal.NuevoDetectorDeBaja(cfg.PalabrasDeBaja, cfg.TextoConfirmacionDeBaja, almacenIdentidad, portero)
 
 	ctxDrenaje, detenerDrenaje := context.WithCancel(ctx)
 	defer detenerDrenaje()
@@ -110,7 +111,7 @@ func main() {
 			IdEvento: evento.IdDeduplicacion,
 		})
 	}
-	traductor := canal.NuevoTraductor(almacenIdentidad, buzon, sumideroEvento, nil, reg)
+	traductor := canal.NuevoTraductor(almacenIdentidad, buzon, sumideroEvento, nil, reg, detectorBaja)
 	sesion.RegistrarTraductor(traductor)
 
 	// Parada ordenada: SIGTERM es la señal con la que un runtime de contenedores detiene el

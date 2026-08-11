@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strconv"
+	"strings"
 )
 
 // Nombres de las variables de entorno que el sidecar reconoce. No hay más.
@@ -43,6 +44,10 @@ const (
 	VariableTtlSalidaMs = "HEXCELL_TTL_SALIDA_MS"
 	// VariableIntentosMaximosSalida fija el máximo de intentos de entrega de un mensaje saliente.
 	VariableIntentosMaximosSalida = "HEXCELL_INTENTOS_MAXIMOS_SALIDA"
+	// VariablePalabrasDeBaja fija la lista de palabras clave (separadas por coma) para opt-out.
+	VariablePalabrasDeBaja = "HEXCELL_PALABRAS_DE_BAJA"
+	// VariableTextoConfirmacionDeBaja fija el texto de la única confirmación tras la baja.
+	VariableTextoConfirmacionDeBaja = "HEXCELL_TEXTO_CONFIRMACION_BAJA"
 )
 
 // Valores por omisión, documentados en docs/protocolo-ipc-nucleo-sidecar.md, sección 2.
@@ -84,6 +89,10 @@ const (
 	// outbox.IntentosMaximosPorOmision en vez de repetirla.
 	// PENDIENTE DE CALIBRACIÓN.
 	IntentosMaximosSalidaPorOmision int64 = 3
+	// PalabrasDeBajaPorOmision es la lista separada por comas de palabras clave de baja por defecto.
+	PalabrasDeBajaPorOmision = "baja,stop"
+	// TextoConfirmacionDeBajaPorOmision es el texto por omisión de confirmación de baja.
+	TextoConfirmacionDeBajaPorOmision = "Baja confirmada. No volverás a recibir mensajes de este número."
 )
 
 // ErrRutaSocketVacia se devuelve cuando la variable del socket está definida pero vacía.
@@ -108,6 +117,9 @@ var ErrRetrocesoInvalido = errors.New("configuracion: parámetro de retroceso in
 
 // ErrParametroSalidaInvalido se devuelve cuando un parámetro de salida es inválido.
 var ErrParametroSalidaInvalido = errors.New("configuracion: parámetro de salida inválido")
+
+// ErrParametroDeBajaInvalido se devuelve cuando un parámetro de baja está definido pero vacío.
+var ErrParametroDeBajaInvalido = errors.New("configuracion: parámetro de baja inválido")
 
 // nivelesReconocidos es el conjunto cerrado de umbrales admitidos, en español como el resto del
 // repositorio. Un valor fuera de la tabla es un error y no se degrada en silencio a «info».
@@ -157,6 +169,10 @@ type Configuracion struct {
 	TtlSalidaMs int64
 	// IntentosMaximosSalida es el número máximo de intentos para enviar un mensaje saliente.
 	IntentosMaximosSalida int64
+	// PalabrasDeBaja es la lista de palabras clave configuradas para solicitar la baja.
+	PalabrasDeBaja []string
+	// TextoConfirmacionDeBaja es el texto que se enviará como confirmación de la baja.
+	TextoConfirmacionDeBaja string
 }
 
 // Cargar construye la configuración a partir de una función de consulta del entorno.
@@ -229,17 +245,62 @@ func Cargar(consultar func(string) (string, bool)) (Configuracion, error) {
 		return Configuracion{}, fmt.Errorf("%w: %s debe ser positivo, recibido %d", ErrParametroSalidaInvalido, VariableIntentosMaximosSalida, intentosSalida)
 	}
 
+	palabrasBaja, err := cargarPalabrasDeBaja(consultar)
+	if err != nil {
+		return Configuracion{}, err
+	}
+
+	textoConfirmacion, err := cargarTextoConfirmacion(consultar)
+	if err != nil {
+		return Configuracion{}, err
+	}
+
 	return Configuracion{
-		RutaSocket:            rutaSocket,
-		NivelDeRegistro:       nivel,
-		IdCelula:              idCelula,
-		RutaSqlstore:          rutaSqlstore,
-		RutaIdentidad:         rutaIdentidad,
-		TelefonoCelula:        telefonoCelula,
-		Retroceso:             retroceso,
-		TtlSalidaMs:           ttlSalida,
-		IntentosMaximosSalida: intentosSalida,
+		RutaSocket:              rutaSocket,
+		NivelDeRegistro:         nivel,
+		IdCelula:                idCelula,
+		RutaSqlstore:            rutaSqlstore,
+		RutaIdentidad:           rutaIdentidad,
+		TelefonoCelula:          telefonoCelula,
+		Retroceso:               retroceso,
+		TtlSalidaMs:             ttlSalida,
+		IntentosMaximosSalida:   intentosSalida,
+		PalabrasDeBaja:          palabrasBaja,
+		TextoConfirmacionDeBaja: textoConfirmacion,
 	}, nil
+}
+
+func cargarPalabrasDeBaja(consultar func(string) (string, bool)) ([]string, error) {
+	valor, presente := consultar(VariablePalabrasDeBaja)
+	if !presente {
+		valor = PalabrasDeBajaPorOmision
+	} else if valor == "" {
+		return nil, ErrParametroDeBajaInvalido
+	}
+
+	partes := strings.Split(valor, ",")
+	var palabras []string
+	for _, p := range partes {
+		recortada := strings.TrimSpace(p)
+		if recortada != "" {
+			palabras = append(palabras, recortada)
+		}
+	}
+	if len(palabras) == 0 {
+		return nil, ErrParametroDeBajaInvalido
+	}
+	return palabras, nil
+}
+
+func cargarTextoConfirmacion(consultar func(string) (string, bool)) (string, error) {
+	valor, presente := consultar(VariableTextoConfirmacionDeBaja)
+	if !presente {
+		return TextoConfirmacionDeBajaPorOmision, nil
+	}
+	if valor == "" || strings.TrimSpace(valor) == "" {
+		return "", ErrParametroDeBajaInvalido
+	}
+	return valor, nil
 }
 
 // cargarRetroceso lee y valida los cinco parámetros de retroceso del entorno.

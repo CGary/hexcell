@@ -1,10 +1,11 @@
 // Package outbox_test implementa el centinela de rutas de envío.
 //
-// NOTA PARA LA ETAPA A-3 TAREA 12:
+// NOTA PARA LA ETAPA A-3 TAREAS 12 Y 13:
 // Este archivo actúa como centinela para asegurar que todas las llamadas de envío
-// pasen a través del buzón de salida (outbox) y no se invoquen directamente en otras partes del código.
-// La tarea 12 de la etapa A-3 puede extender la lista de llamadas vigiladas
-// o eximir algún directorio en su lugar, pero no debe borrar ni deshabilitar esta guardia.
+// pasen a través del buzón de salida (outbox / portero) y no se invoquen directamente en otras partes del código.
+// La tarea 13 de la etapa A-3 extiende la lista de llamadas vigiladas para incluir Encolar directo fuera del outbox.
+// Las tareas futuras pueden extender la lista de llamadas vigiladas o eximir algún directorio
+// en su lugar, pero no deben borrar ni deshabilitar esta guardia.
 // Fecha: 2026-08-09.
 package outbox_test
 
@@ -31,7 +32,7 @@ func detectarLlamadasDeEnvio(ruta string, codigoSintetico string) ([]string, int
 	// una violación: enviar solo se permite dentro del módulo outbox.
 	esRutaDeEnvioVigilada := func(nombre string) bool {
 		switch nombre {
-		case "SendMessage", "SendPresence", "SendChatPresence", "SendReceipt", "Transmitir":
+		case "SendMessage", "SendPresence", "SendChatPresence", "SendReceipt", "Transmitir", "Encolar":
 			return true
 		default:
 			return strings.HasPrefix(nombre, "Enviar")
@@ -139,5 +140,25 @@ func EnviarMensajeTramposo() {
 
 	if len(violaciones) != 2 {
 		t.Fatalf("se esperaban exactamente 2 violaciones, se encontraron %d: %v", len(violaciones), violaciones)
+	}
+}
+
+func TestCentinelaDetectaLlamadaDirectaAEncolar(t *testing.T) {
+	t.Parallel()
+
+	codigoSintetico := `
+package trampa
+
+func EncolarDirecto() {
+	cola.Encolar(ctx, idMensaje, conv, cont, ts)
+}
+`
+	violaciones, _, err := detectarLlamadasDeEnvio("trampa_encolar.go", codigoSintetico)
+	if err != nil {
+		t.Fatalf("error al procesar el código sintético: %v", err)
+	}
+
+	if len(violaciones) != 1 {
+		t.Fatalf("se esperaba exactamente 1 violación por Encolar directo, se encontraron %d: %v", len(violaciones), violaciones)
 	}
 }
