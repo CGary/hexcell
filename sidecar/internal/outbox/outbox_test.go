@@ -451,3 +451,24 @@ func TestRegistroEstructurado(t *testing.T) {
 		t.Errorf("EL REGISTRO VIOLÓ LA PRIVACIDAD E INCLUYÓ LA CARGA: %s", salida)
 	}
 }
+
+func TestEsquemaIncluyeVolumenDiario(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	ruta := filepath.Join(dir, "outbox.db")
+
+	ob, err := outbox.Abrir(outbox.Opciones{Ruta: ruta})
+	if err != nil {
+		t.Fatalf("error al abrir: %v", err)
+	}
+	defer ob.Cerrar()
+
+	var nombreTabla string
+	err = ob.DB().QueryRow("SELECT name FROM sqlite_master WHERE type='table' AND name='volumen_diario'").Scan(&nombreTabla)
+	if err != nil {
+		t.Fatalf("no se encontró la tabla volumen_diario en el esquema: %v", err)
+	}
+	if nombreTabla != "volumen_diario" {
+		t.Fatalf("nombre de tabla inesperado: %s", nombreTabla)
+	}
+}

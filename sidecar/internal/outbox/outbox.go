@@ -163,6 +163,10 @@ func Abrir(opciones Opciones) (*Outbox, error) {
 		id_correlacion TEXT DEFAULT '',
 		enviado_en_ms INTEGER NULL
 	);
+	CREATE TABLE IF NOT EXISTS volumen_diario (
+		dia TEXT PRIMARY KEY,
+		envios INTEGER DEFAULT 0
+	);
 	`
 	if _, err := db.Exec(esquema); err != nil {
 		db.Close()

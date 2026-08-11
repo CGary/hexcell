@@ -10,11 +10,13 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/proto/waE2E"
 	"go.mau.fi/whatsmeow/types"
 
+	"github.com/CGary/hexcell/sidecar/internal/configuracion"
 	"github.com/CGary/hexcell/sidecar/internal/outbox"
 	"github.com/CGary/hexcell/sidecar/internal/registro"
 	_ "modernc.org/sqlite"
@@ -36,6 +38,10 @@ func abrirDbPruebaSalida(t *testing.T) (*sql.DB, string) {
 		intentos INTEGER DEFAULT 0,
 		id_correlacion TEXT DEFAULT '',
 		enviado_en_ms INTEGER NULL
+	);
+	CREATE TABLE IF NOT EXISTS volumen_diario (
+		dia TEXT PRIMARY KEY,
+		envios INTEGER DEFAULT 0
 	);
 	`
 	if _, err := db.Exec(esquema); err != nil {
@@ -69,6 +75,28 @@ func (t *transmisorFalso) contador() int {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	return t.llamadas
+}
+
+type emisorPresenciaFalso struct {
+	mu       sync.Mutex
+	llamadas int
+	fallar   bool
+}
+
+func (e *emisorPresenciaFalso) EmitirEscribiendo(_ context.Context, _ string) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.llamadas++
+	if e.fallar {
+		return errors.New("fallo simulado emisor presencia")
+	}
+	return nil
+}
+
+func (e *emisorPresenciaFalso) contador() int {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.llamadas
 }
 
 func TestEncolarEsIdempotente(t *testing.T) {
@@ -474,5 +502,344 @@ func TestDrenarTransmiteConfirmacionDeBajaAContactoDadoDeBaja(t *testing.T) {
 	db.QueryRow("SELECT COUNT(*) FROM cola_salida WHERE id_mensaje='msg-ordinario'").Scan(&cuentaOrdinario)
 	if cuentaOrdinario != 0 {
 		t.Fatalf("el mensaje ordinario no permitido debía eliminarse")
+	}
+}
+
+func TestDrenarAplicaLatenciaMinima(t *testing.T) {
+	t.Parallel()
+	db, _ := abrirDbPruebaSalida(t)
+	falso := &transmisorFalso{idCorrelacion: "corr-1"}
+	cfg := configuracion.Disciplina{
+		LatenciaMinimaMs: 3000,
+		Ventana: configuracion.VentanaDeAtencion{
+			HoraApertura: 0, MinutoApertura: 0,
+			HoraCierre: 23, MinutoCierre: 59,
+			Dias: []int{1, 2, 3, 4, 5, 6, 7},
+			Zona: time.UTC,
+		},
+		Rampa: configuracion.RampaDeVolumen{DiariaInicial: 100, IncrementoSemanal: 10, Semanas: 4},
+	}
+	disc := outbox.NuevaDisciplinaDeSalida(cfg)
+	cola := outbox.NuevaColaDeSalida(db, 60000, 3, nil, falso, nil).ConDisciplina(disc, nil)
+	ctx := context.Background()
+
+	// Encolado en t=1000
+	cola.Encolar(ctx, "msg-lat", "conv-1", "hola", 1000)
+
+	// Drenar en t=2500 (transcurrieron 1500 ms < 3000 ms): debe quedar pendiente sin incrementar intentos
+	prevAplazadas := outbox.ContadorAplazadasPorLatencia.Load()
+	if err := cola.Drenar(ctx, 2500); err != nil {
+		t.Fatalf("error al drenar: %v", err)
+	}
+	if falso.contador() != 0 {
+		t.Errorf("no debía transmitirse antes del suelo de latencia, llamadas=%d", falso.contador())
+	}
+	if outbox.ContadorAplazadasPorLatencia.Load() <= prevAplazadas {
+		t.Errorf("ContadorAplazadasPorLatencia no se incrementó")
+	}
+
+	var intentos int64
+	var enviadoEn sql.NullInt64
+	db.QueryRow("SELECT intentos, enviado_en_ms FROM cola_salida WHERE id_mensaje='msg-lat'").Scan(&intentos, &enviadoEn)
+	if intentos != 0 {
+		t.Errorf("los intentos no debían incrementarse por aplazamiento, intentos=%d", intentos)
+	}
+	if enviadoEn.Valid {
+		t.Errorf("el mensaje no debía marcarse como enviado")
+	}
+
+	// Drenar en t=4000 (transcurrieron 3000 ms >= 3000 ms): debe transmitirse
+	if err := cola.Drenar(ctx, 4000); err != nil {
+		t.Fatalf("error al drenar en t=4000: %v", err)
+	}
+	if falso.contador() != 1 {
+		t.Errorf("debía transmitirse tras cumplirse la latencia, llamadas=%d", falso.contador())
+	}
+	db.QueryRow("SELECT enviado_en_ms FROM cola_salida WHERE id_mensaje='msg-lat'").Scan(&enviadoEn)
+	if !enviadoEn.Valid {
+		t.Errorf("debía quedar marcado como enviado")
+	}
+}
+
+func TestDrenarAplicaVentanaDeAtencion(t *testing.T) {
+	t.Parallel()
+	db, _ := abrirDbPruebaSalida(t)
+	falso := &transmisorFalso{idCorrelacion: "corr-1"}
+	loc, _ := time.LoadLocation("America/Argentina/Buenos_Aires")
+	cfg := configuracion.Disciplina{
+		LatenciaMinimaMs: 1000,
+		Ventana: configuracion.VentanaDeAtencion{
+			HoraApertura: 9, MinutoApertura: 0,
+			HoraCierre: 19, MinutoCierre: 0,
+			Dias: []int{1, 2, 3, 4, 5},
+			Zona: loc,
+		},
+		Rampa: configuracion.RampaDeVolumen{DiariaInicial: 100, IncrementoSemanal: 10, Semanas: 4},
+	}
+	disc := outbox.NuevaDisciplinaDeSalida(cfg)
+	cola := outbox.NuevaColaDeSalida(db, 86400000, 3, nil, falso, nil).ConDisciplina(disc, nil)
+	ctx := context.Background()
+
+	// Martes 2026-08-11 08:00 BA (11:00 UTC)
+	tFuera := time.Date(2026, 8, 11, 11, 0, 0, 0, time.UTC).UnixMilli()
+	cola.Encolar(ctx, "msg-horario", "conv-1", "hola", tFuera-5000)
+
+	prevHorario := outbox.ContadorAplazadasPorHorario.Load()
+	if err := cola.Drenar(ctx, tFuera); err != nil {
+		t.Fatalf("error al drenar fuera de horario: %v", err)
+	}
+	if falso.contador() != 0 {
+		t.Errorf("no debía transmitirse fuera de horario")
+	}
+	if outbox.ContadorAplazadasPorHorario.Load() <= prevHorario {
+		t.Errorf("ContadorAplazadasPorHorario no se incrementó")
+	}
+
+	var intentos int64
+	db.QueryRow("SELECT intentos FROM cola_salida WHERE id_mensaje='msg-horario'").Scan(&intentos)
+	if intentos != 0 {
+		t.Errorf("intentos no debía moverse, obtenido: %d", intentos)
+	}
+
+	// Martes 2026-08-11 10:00 BA (13:00 UTC) - dentro de horario
+	tDentro := time.Date(2026, 8, 11, 13, 0, 0, 0, time.UTC).UnixMilli()
+	if err := cola.Drenar(ctx, tDentro); err != nil {
+		t.Fatalf("error al drenar dentro de horario: %v", err)
+	}
+	if falso.contador() != 1 {
+		t.Errorf("debía transmitirse dentro de horario, llamadas=%d", falso.contador())
+	}
+}
+
+func TestDrenarInteraccionHorarioYTtl(t *testing.T) {
+	t.Parallel()
+	db, _ := abrirDbPruebaSalida(t)
+	var buf bytes.Buffer
+	reg := registro.Nuevo(&buf, slog.LevelInfo, "celula-test")
+	falso := &transmisorFalso{idCorrelacion: "corr-1"}
+	loc, _ := time.LoadLocation("America/Argentina/Buenos_Aires")
+	cfg := configuracion.Disciplina{
+		LatenciaMinimaMs: 1000,
+		Ventana: configuracion.VentanaDeAtencion{
+			HoraApertura: 9, MinutoApertura: 0,
+			HoraCierre: 19, MinutoCierre: 0,
+			Dias: []int{1, 2, 3, 4, 5},
+			Zona: loc,
+		},
+		Rampa: configuracion.RampaDeVolumen{DiariaInicial: 100, IncrementoSemanal: 10, Semanas: 4},
+	}
+	disc := outbox.NuevaDisciplinaDeSalida(cfg)
+	// TTL de 15 minutos (900000 ms)
+	cola := outbox.NuevaColaDeSalida(db, 900000, 3, reg, falso, nil).ConDisciplina(disc, nil)
+	ctx := context.Background()
+
+	// Mensaje recibido a las 20:00 BA (fuera de horario)
+	tOrigen := time.Date(2026, 8, 11, 23, 0, 0, 0, time.UTC).UnixMilli()
+	cola.Encolar(ctx, "msg-vencido", "conv-1", "hola", tOrigen)
+
+	// A las 09:30 BA del día siguiente (12:30 UTC): la ventana abre pero pasaron 13.5 horas > 15 min TTL
+	tManana := time.Date(2026, 8, 12, 12, 30, 0, 0, time.UTC).UnixMilli()
+	if err := cola.Drenar(ctx, tManana); err != nil {
+		t.Fatalf("error al drenar: %v", err)
+	}
+
+	if falso.contador() != 0 {
+		t.Errorf("un mensaje retenido que excedió el TTL nunca debe transmitirse")
+	}
+
+	var count int
+	db.QueryRow("SELECT COUNT(*) FROM cola_salida WHERE id_mensaje='msg-vencido'").Scan(&count)
+	if count != 0 {
+		t.Errorf("el mensaje debía ser descartado con dureza por TTL, count=%d", count)
+	}
+	if !strings.Contains(buf.String(), outbox.EventoSalidaExpirada) {
+		t.Errorf("se esperaba outbox.salida_expirada en el registro")
+	}
+}
+
+func TestDrenarEmitePresenciaSoloPorLatencia(t *testing.T) {
+	t.Parallel()
+	db, _ := abrirDbPruebaSalida(t)
+	falso := &transmisorFalso{idCorrelacion: "corr-1"}
+	emisor := &emisorPresenciaFalso{}
+	loc, _ := time.LoadLocation("America/Argentina/Buenos_Aires")
+	cfg := configuracion.Disciplina{
+		LatenciaMinimaMs: 3000,
+		Ventana: configuracion.VentanaDeAtencion{
+			HoraApertura: 9, MinutoApertura: 0,
+			HoraCierre: 19, MinutoCierre: 0,
+			Dias: []int{1, 2, 3, 4, 5},
+			Zona: loc,
+		},
+		Rampa: configuracion.RampaDeVolumen{DiariaInicial: 20, IncrementoSemanal: 20, Semanas: 4},
+	}
+	disc := outbox.NuevaDisciplinaDeSalida(cfg)
+	cola := outbox.NuevaColaDeSalida(db, 60000, 3, nil, falso, nil).ConDisciplina(disc, emisor)
+	ctx := context.Background()
+
+	// Caso 1: Retenido fuera de horario -> NO debe emitir presencia
+	tFuera := time.Date(2026, 8, 11, 11, 0, 0, 0, time.UTC).UnixMilli()
+	cola.Encolar(ctx, "msg-fuera", "conv-1", "hola fuera", tFuera-500)
+	cola.Drenar(ctx, tFuera)
+	if emisor.contador() != 0 {
+		t.Errorf("no debía emitir presencia fuera de horario, llamadas=%d", emisor.contador())
+	}
+
+	// Caso 2: Dentro de horario, retenido únicamente por latencia mínima -> DEBE emitir presencia exactamente una vez
+	tDentro := time.Date(2026, 8, 11, 14, 0, 0, 0, time.UTC).UnixMilli()
+	cola.Encolar(ctx, "msg-lat", "conv-1", "hola lat", tDentro)
+	cola.Drenar(ctx, tDentro+1000)
+	if emisor.contador() != 1 {
+		t.Errorf("debía emitir presencia por latencia mínima, llamadas=%d", emisor.contador())
+	}
+
+	// Segundo ciclo antes de que expire la latencia: no debe duplicar la emisión (en memoria)
+	cola.Drenar(ctx, tDentro+2000)
+	if emisor.contador() != 1 {
+		t.Errorf("no debía duplicar la emisión de presencia para el mismo mensaje, llamadas=%d", emisor.contador())
+	}
+}
+
+func TestPresenciaSeLiberaTrasEnviarLaFila(t *testing.T) {
+	t.Parallel()
+	db, _ := abrirDbPruebaSalida(t)
+	falso := &transmisorFalso{idCorrelacion: "corr-1"}
+	emisor := &emisorPresenciaFalso{}
+	cfg := configuracion.Disciplina{
+		LatenciaMinimaMs: 3000,
+		Ventana: configuracion.VentanaDeAtencion{
+			HoraApertura: 0, MinutoApertura: 0,
+			HoraCierre: 23, MinutoCierre: 59,
+			Dias: []int{1, 2, 3, 4, 5, 6, 7},
+			Zona: time.UTC,
+		},
+		Rampa: configuracion.RampaDeVolumen{DiariaInicial: 100, IncrementoSemanal: 10, Semanas: 4},
+	}
+	disc := outbox.NuevaDisciplinaDeSalida(cfg)
+	cola := outbox.NuevaColaDeSalida(db, 60000, 3, nil, falso, nil).ConDisciplina(disc, emisor)
+	ctx := context.Background()
+
+	cola.Encolar(ctx, "msg-pres-liberada", "conv-1", "hola", 1000)
+
+	// t=1500: aplazado por latencia, se anuncia presencia y queda el marcador en memoria.
+	cola.Drenar(ctx, 1500)
+	if emisor.contador() != 1 {
+		t.Fatalf("debía emitir presencia por latencia mínima, llamadas=%d", emisor.contador())
+	}
+	if cola.PresenciasPendientesParaPruebas() != 1 {
+		t.Fatalf("el marcador debía conservar exactamente 1 entrada tras el aplazamiento, obtenido %d", cola.PresenciasPendientesParaPruebas())
+	}
+
+	// t=4500: se cumple la latencia y la fila se transmite y marca enviada.
+	if err := cola.Drenar(ctx, 4500); err != nil {
+		t.Fatalf("error al drenar: %v", err)
+	}
+	if falso.contador() != 1 {
+		t.Fatalf("debía transmitirse tras cumplirse la latencia, llamadas=%d", falso.contador())
+	}
+	if cola.PresenciasPendientesParaPruebas() != 0 {
+		t.Errorf("el marcador de presencia debía liberarse tras enviar la fila, quedaron %d entradas", cola.PresenciasPendientesParaPruebas())
+	}
+}
+
+func TestDrenarFalloDePresenciaEsNoFatal(t *testing.T) {
+	t.Parallel()
+	db, _ := abrirDbPruebaSalida(t)
+	falso := &transmisorFalso{idCorrelacion: "corr-1"}
+	emisor := &emisorPresenciaFalso{fallar: true}
+	cfg := configuracion.Disciplina{
+		LatenciaMinimaMs: 2000,
+		Ventana: configuracion.VentanaDeAtencion{
+			HoraApertura: 0, MinutoApertura: 0,
+			HoraCierre: 23, MinutoCierre: 59,
+			Dias: []int{1, 2, 3, 4, 5, 6, 7},
+			Zona: time.UTC,
+		},
+		Rampa: configuracion.RampaDeVolumen{DiariaInicial: 100, IncrementoSemanal: 10, Semanas: 4},
+	}
+	disc := outbox.NuevaDisciplinaDeSalida(cfg)
+	cola := outbox.NuevaColaDeSalida(db, 60000, 3, nil, falso, nil).ConDisciplina(disc, emisor)
+	ctx := context.Background()
+
+	cola.Encolar(ctx, "msg-pres-fallo", "conv-1", "hola", 1000)
+
+	// En t=1500 falla presencia, mensaje sigue vivo
+	cola.Drenar(ctx, 1500)
+	if emisor.contador() != 1 {
+		t.Errorf("debía intentar emitir presencia, llamadas=%d", emisor.contador())
+	}
+
+	// En t=3500 se transmite con éxito
+	cola.Drenar(ctx, 3500)
+	if falso.contador() != 1 {
+		t.Errorf("debía transmitirse a pesar del fallo previo de presencia, llamadas=%d", falso.contador())
+	}
+}
+
+func TestDrenarAplicaRampaDeVolumenYPersisteContador(t *testing.T) {
+	t.Parallel()
+	db, dsn := abrirDbPruebaSalida(t)
+	falso := &transmisorFalso{idCorrelacion: "corr-exito"}
+	cfg := configuracion.Disciplina{
+		LatenciaMinimaMs: 1000,
+		Ventana: configuracion.VentanaDeAtencion{
+			HoraApertura: 0, MinutoApertura: 0,
+			HoraCierre: 23, MinutoCierre: 59,
+			Dias: []int{1, 2, 3, 4, 5, 6, 7},
+			Zona: time.UTC,
+		},
+		Rampa: configuracion.RampaDeVolumen{
+			DiariaInicial:     2,
+			IncrementoSemanal: 5,
+			Semanas:           4,
+		},
+	}
+	disc := outbox.NuevaDisciplinaDeSalida(cfg)
+	cola := outbox.NuevaColaDeSalida(db, 60000, 3, nil, falso, nil).ConDisciplina(disc, nil)
+	ctx := context.Background()
+
+	ahoraMs := time.Date(2026, 8, 11, 12, 0, 0, 0, time.UTC).UnixMilli()
+
+	// Encolar 3 mensajes
+	cola.Encolar(ctx, "msg-1", "conv-1", "hola 1", ahoraMs-5000)
+	cola.Encolar(ctx, "msg-2", "conv-1", "hola 2", ahoraMs-5000)
+	cola.Encolar(ctx, "msg-3", "conv-1", "hola 3", ahoraMs-5000)
+
+	prevRampa := outbox.ContadorAplazadasPorRampa.Load()
+	if err := cola.Drenar(ctx, ahoraMs); err != nil {
+		t.Fatalf("error al drenar: %v", err)
+	}
+
+	// Cupo es 2 en semana 0: solo los dos primeros deben enviarse
+	if falso.contador() != 2 {
+		t.Errorf("debían transmitirse exactamente 2 mensajes por cupo de rampa, llamadas=%d", falso.contador())
+	}
+	if outbox.ContadorAplazadasPorRampa.Load() <= prevRampa {
+		t.Errorf("ContadorAplazadasPorRampa no se incrementó")
+	}
+
+	var countEnviados, countPendientes int
+	db.QueryRow("SELECT COUNT(*) FROM cola_salida WHERE enviado_en_ms IS NOT NULL").Scan(&countEnviados)
+	db.QueryRow("SELECT COUNT(*) FROM cola_salida WHERE enviado_en_ms IS NULL").Scan(&countPendientes)
+	if countEnviados != 2 || countPendientes != 1 {
+		t.Errorf("enviados=%d (esperado 2), pendientes=%d (esperado 1)", countEnviados, countPendientes)
+	}
+
+	var intentos int64
+	db.QueryRow("SELECT intentos FROM cola_salida WHERE enviado_en_ms IS NULL").Scan(&intentos)
+	if intentos != 0 {
+		t.Errorf("un aplazamiento por rampa no debía mover intentos, obtenido: %d", intentos)
+	}
+
+	// Verificar persistencia en SQLite tras reapertura
+	db2, err := sql.Open("sqlite", dsn)
+	if err != nil {
+		t.Fatalf("error reabriendo bd: %v", err)
+	}
+	defer db2.Close()
+
+	enviosDia, err := outbox.EnviosDelDia(ctx, db2, "2026-08-11")
+	if err != nil || enviosDia != 2 {
+		t.Errorf("envíos persistidos = %d (esperado 2), err=%v", enviosDia, err)
 	}
 }

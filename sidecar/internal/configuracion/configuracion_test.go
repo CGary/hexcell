@@ -3,6 +3,7 @@ package configuracion_test
 import (
 	"errors"
 	"log/slog"
+	"reflect"
 	"testing"
 
 	"github.com/CGary/hexcell/sidecar/internal/configuracion"
@@ -365,5 +366,155 @@ func TestCargarRechazaParametrosDeBajaInvalidos(t *testing.T) {
 				t.Errorf("caso %s: se esperaba ErrParametroDeBajaInvalido, se obtuvo %v", c.nombre, err)
 			}
 		})
+	}
+}
+
+func TestCargarAplicaValoresPorOmisionDeDisciplina(t *testing.T) {
+	t.Parallel()
+
+	cfg, err := configuracion.Cargar(entornoFalso(map[string]string{}))
+	if err != nil {
+		t.Fatalf("no se esperaba error: %v", err)
+	}
+
+	d := cfg.Disciplina
+	if d.LatenciaMinimaMs != configuracion.LatenciaMinimaMsPorOmision {
+		t.Errorf("LatenciaMinimaMs = %d, se esperaba %d", d.LatenciaMinimaMs, configuracion.LatenciaMinimaMsPorOmision)
+	}
+	if d.IntervaloDrenajeMs != configuracion.IntervaloDrenajeMsPorOmision {
+		t.Errorf("IntervaloDrenajeMs = %d, se esperaba %d", d.IntervaloDrenajeMs, configuracion.IntervaloDrenajeMsPorOmision)
+	}
+	if d.Ventana.HoraApertura != 9 || d.Ventana.MinutoApertura != 0 {
+		t.Errorf("Ventana Apertura = %02d:%02d, se esperaba 09:00", d.Ventana.HoraApertura, d.Ventana.MinutoApertura)
+	}
+	if d.Ventana.HoraCierre != 19 || d.Ventana.MinutoCierre != 0 {
+		t.Errorf("Ventana Cierre = %02d:%02d, se esperaba 19:00", d.Ventana.HoraCierre, d.Ventana.MinutoCierre)
+	}
+	if len(d.Ventana.Dias) != 5 || d.Ventana.Dias[0] != 1 || d.Ventana.Dias[4] != 5 {
+		t.Errorf("Ventana Dias = %v, se esperaba [1,2,3,4,5]", d.Ventana.Dias)
+	}
+	if d.Ventana.Zona == nil || d.Ventana.Zona.String() != configuracion.VentanaZonaPorOmision {
+		t.Errorf("Ventana Zona = %v, se esperaba %s", d.Ventana.Zona, configuracion.VentanaZonaPorOmision)
+	}
+	if d.Rampa.DiariaInicial != configuracion.RampaDiariaInicialPorOmision {
+		t.Errorf("Rampa DiariaInicial = %d, se esperaba %d", d.Rampa.DiariaInicial, configuracion.RampaDiariaInicialPorOmision)
+	}
+	if d.Rampa.IncrementoSemanal != configuracion.RampaIncrementoSemanalPorOmision {
+		t.Errorf("Rampa IncrementoSemanal = %d, se esperaba %d", d.Rampa.IncrementoSemanal, configuracion.RampaIncrementoSemanalPorOmision)
+	}
+	if d.Rampa.Semanas != configuracion.RampaSemanasPorOmision {
+		t.Errorf("Rampa Semanas = %d, se esperaba %d", d.Rampa.Semanas, configuracion.RampaSemanasPorOmision)
+	}
+}
+
+func TestCargarLeeParametrosDeDisciplinaDelEntorno(t *testing.T) {
+	t.Parallel()
+
+	cfg, err := configuracion.Cargar(entornoFalso(map[string]string{
+		configuracion.VariableLatenciaMinimaMs:       "5000",
+		configuracion.VariableIntervaloDrenajeMs:     "1000",
+		configuracion.VariableVentanaApertura:        "08:30",
+		configuracion.VariableVentanaCierre:          "18:00",
+		configuracion.VariableVentanaDias:            "1, 2, 3, 4, 5, 6",
+		configuracion.VariableVentanaZona:            "America/Sao_Paulo",
+		configuracion.VariableRampaDiariaInicial:     "30",
+		configuracion.VariableRampaIncrementoSemanal: "15",
+		configuracion.VariableRampaSemanas:           "6",
+	}))
+	if err != nil {
+		t.Fatalf("no se esperaba error: %v", err)
+	}
+
+	d := cfg.Disciplina
+	if d.LatenciaMinimaMs != 5000 {
+		t.Errorf("LatenciaMinimaMs = %d, se esperaba 5000", d.LatenciaMinimaMs)
+	}
+	if d.IntervaloDrenajeMs != 1000 {
+		t.Errorf("IntervaloDrenajeMs = %d, se esperaba 1000", d.IntervaloDrenajeMs)
+	}
+	if d.Ventana.HoraApertura != 8 || d.Ventana.MinutoApertura != 30 {
+		t.Errorf("Ventana Apertura = %02d:%02d, se esperaba 08:30", d.Ventana.HoraApertura, d.Ventana.MinutoApertura)
+	}
+	if d.Ventana.HoraCierre != 18 || d.Ventana.MinutoCierre != 0 {
+		t.Errorf("Ventana Cierre = %02d:%02d, se esperaba 18:00", d.Ventana.HoraCierre, d.Ventana.MinutoCierre)
+	}
+	if len(d.Ventana.Dias) != 6 || d.Ventana.Dias[5] != 6 {
+		t.Errorf("Ventana Dias = %v", d.Ventana.Dias)
+	}
+	if d.Ventana.Zona == nil || d.Ventana.Zona.String() != "America/Sao_Paulo" {
+		t.Errorf("Ventana Zona = %v", d.Ventana.Zona)
+	}
+	if d.Rampa.DiariaInicial != 30 {
+		t.Errorf("Rampa DiariaInicial = %d, se esperaba 30", d.Rampa.DiariaInicial)
+	}
+	if d.Rampa.IncrementoSemanal != 15 {
+		t.Errorf("Rampa IncrementoSemanal = %d, se esperaba 15", d.Rampa.IncrementoSemanal)
+	}
+	if d.Rampa.Semanas != 6 {
+		t.Errorf("Rampa Semanas = %d, se esperaba 6", d.Rampa.Semanas)
+	}
+}
+
+func TestCargarRechazaParametrosDeDisciplinaDegeneradosOInvalidos(t *testing.T) {
+	t.Parallel()
+
+	casos := []struct {
+		nombre  string
+		entorno map[string]string
+	}{
+		{"latencia_cero", map[string]string{configuracion.VariableLatenciaMinimaMs: "0"}},
+		{"latencia_negativa", map[string]string{configuracion.VariableLatenciaMinimaMs: "-100"}},
+		{"latencia_no_numerica", map[string]string{configuracion.VariableLatenciaMinimaMs: "invalido"}},
+		{"latencia_excede_techo", map[string]string{configuracion.VariableLatenciaMinimaMs: "300001"}},
+		{"intervalo_drenaje_cero", map[string]string{configuracion.VariableIntervaloDrenajeMs: "0"}},
+		{"intervalo_drenaje_negativo", map[string]string{configuracion.VariableIntervaloDrenajeMs: "-1"}},
+		{"intervalo_drenaje_excede_techo", map[string]string{configuracion.VariableIntervaloDrenajeMs: "60001"}},
+		{"apertura_vacia", map[string]string{configuracion.VariableVentanaApertura: ""}},
+		{"apertura_invalida", map[string]string{configuracion.VariableVentanaApertura: "25:00"}},
+		{"cierre_vacio", map[string]string{configuracion.VariableVentanaCierre: ""}},
+		{"cierre_invalido", map[string]string{configuracion.VariableVentanaCierre: "09:65"}},
+		{"cierre_anterior_a_apertura", map[string]string{configuracion.VariableVentanaApertura: "19:00", configuracion.VariableVentanaCierre: "09:00"}},
+		{"cierre_igual_a_apertura", map[string]string{configuracion.VariableVentanaApertura: "10:00", configuracion.VariableVentanaCierre: "10:00"}},
+		{"anti_24x7_duracion_mayor_a_16h", map[string]string{configuracion.VariableVentanaApertura: "06:00", configuracion.VariableVentanaCierre: "23:00"}},
+		{"dias_vacio", map[string]string{configuracion.VariableVentanaDias: ""}},
+		{"dias_invalido_cero", map[string]string{configuracion.VariableVentanaDias: "0,1,2"}},
+		{"dias_invalido_ocho", map[string]string{configuracion.VariableVentanaDias: "1,2,8"}},
+		{"zona_vacia", map[string]string{configuracion.VariableVentanaZona: ""}},
+		{"zona_desconocida", map[string]string{configuracion.VariableVentanaZona: "Planeta/Marte"}},
+		{"rampa_inicial_cero", map[string]string{configuracion.VariableRampaDiariaInicial: "0"}},
+		{"rampa_inicial_excede_techo", map[string]string{configuracion.VariableRampaDiariaInicial: "10001"}},
+		{"rampa_incremento_cero", map[string]string{configuracion.VariableRampaIncrementoSemanal: "0"}},
+		{"rampa_incremento_excede_techo", map[string]string{configuracion.VariableRampaIncrementoSemanal: "10001"}},
+		{"rampa_semanas_cero", map[string]string{configuracion.VariableRampaSemanas: "0"}},
+		{"rampa_semanas_excede_techo", map[string]string{configuracion.VariableRampaSemanas: "53"}},
+	}
+
+	for _, c := range casos {
+		t.Run(c.nombre, func(t *testing.T) {
+			_, err := configuracion.Cargar(entornoFalso(c.entorno))
+			if !errors.Is(err, configuracion.ErrParametroDeDisciplinaInvalido) {
+				t.Errorf("caso %s: se esperaba ErrParametroDeDisciplinaInvalido, se obtuvo %v", c.nombre, err)
+			}
+		})
+	}
+}
+
+func TestDisciplinaNoContieneCamposBooleanos(t *testing.T) {
+	t.Parallel()
+
+	tipos := []reflect.Type{
+		reflect.TypeOf(configuracion.Disciplina{}),
+		reflect.TypeOf(configuracion.VentanaDeAtencion{}),
+		reflect.TypeOf(configuracion.RampaDeVolumen{}),
+		reflect.TypeOf(configuracion.Configuracion{}),
+	}
+
+	for _, tp := range tipos {
+		for i := 0; i < tp.NumField(); i++ {
+			f := tp.Field(i)
+			if f.Type.Kind() == reflect.Bool {
+				t.Errorf("el tipo %s contiene un campo booleano (%s): la disciplina no debe admitir apagado booleano", tp.Name(), f.Name)
+			}
+		}
 	}
 }
