@@ -13,6 +13,8 @@ import (
 	"log/slog"
 	"strconv"
 	"strings"
+	"time"
+	_ "time/tzdata"
 )
 
 // Nombres de las variables de entorno que el sidecar reconoce. No hay más.
@@ -48,6 +50,32 @@ const (
 	VariablePalabrasDeBaja = "HEXCELL_PALABRAS_DE_BAJA"
 	// VariableTextoConfirmacionDeBaja fija el texto de la única confirmación tras la baja.
 	VariableTextoConfirmacionDeBaja = "HEXCELL_TEXTO_CONFIRMACION_BAJA"
+	// VariableLatenciaMinimaMs fija el suelo de latencia mínima de respuesta antes de transmitir, en milisegundos.
+	// [causa documentada]
+	VariableLatenciaMinimaMs = "HEXCELL_LATENCIA_MINIMA_MS"
+	// VariableIntervaloDrenajeMs fija la cadencia del bucle de drenaje de salida, en milisegundos.
+	VariableIntervaloDrenajeMs = "HEXCELL_INTERVALO_DRENAJE_MS"
+	// VariableVentanaApertura fija la hora de apertura de la ventana de atención (formato HH:MM).
+	// [causa documentada]
+	VariableVentanaApertura = "HEXCELL_VENTANA_APERTURA"
+	// VariableVentanaCierre fija la hora de cierre de la ventana de atención (formato HH:MM).
+	// [causa documentada]
+	VariableVentanaCierre = "HEXCELL_VENTANA_CIERRE"
+	// VariableVentanaDias fija los días de atención como lista de enteros ISO 1..7 separados por coma.
+	// [causa documentada]
+	VariableVentanaDias = "HEXCELL_VENTANA_DIAS"
+	// VariableVentanaZona fija la zona horaria IANA de la ventana de atención.
+	// [causa documentada]
+	VariableVentanaZona = "HEXCELL_VENTANA_ZONA"
+	// VariableRampaDiariaInicial fija el cupo diario inicial de envíos durante la primera semana.
+	// [precautorio]
+	VariableRampaDiariaInicial = "HEXCELL_RAMPA_DIARIA_INICIAL"
+	// VariableRampaIncrementoSemanal fija el incremento semanal al cupo diario de envíos.
+	// [precautorio]
+	VariableRampaIncrementoSemanal = "HEXCELL_RAMPA_INCREMENTO_SEMANAL"
+	// VariableRampaSemanas fija la cantidad de semanas durante las cuales la rampa incrementa el cupo diario.
+	// [precautorio]
+	VariableRampaSemanas = "HEXCELL_RAMPA_SEMANAS"
 )
 
 // Valores por omisión, documentados en docs/protocolo-ipc-nucleo-sidecar.md, sección 2.
@@ -93,6 +121,58 @@ const (
 	PalabrasDeBajaPorOmision = "baja,stop"
 	// TextoConfirmacionDeBajaPorOmision es el texto por omisión de confirmación de baja.
 	TextoConfirmacionDeBajaPorOmision = "Baja confirmada. No volverás a recibir mensajes de este número."
+
+	// LatenciaMinimaMsPorOmision es el suelo de latencia mínima de respuesta (3s).
+	// [causa documentada]
+	// PENDIENTE DE CALIBRACIÓN.
+	LatenciaMinimaMsPorOmision int64 = 3000
+	// LatenciaMinimaMsMaximo es el techo de la latencia mínima permitida (5 min).
+	LatenciaMinimaMsMaximo int64 = 300000
+
+	// IntervaloDrenajeMsPorOmision es la cadencia por omisión del bucle de drenaje (2s). No es un
+	// parámetro de calibración de negocio ni una técnica anti-baneo, es solo el paso del bucle de fondo.
+	// PENDIENTE DE CALIBRACIÓN.
+	IntervaloDrenajeMsPorOmision int64 = 2000
+	// IntervaloDrenajeMsMaximo es el techo del intervalo de drenaje (1 min).
+	IntervaloDrenajeMsMaximo int64 = 60000
+
+	// VentanaAperturaPorOmision es la hora de apertura por omisión (09:00).
+	// [causa documentada]
+	// PENDIENTE DE CALIBRACIÓN.
+	VentanaAperturaPorOmision = "09:00"
+	// VentanaCierrePorOmision es la hora de cierre por omisión (19:00).
+	// [causa documentada]
+	// PENDIENTE DE CALIBRACIÓN.
+	VentanaCierrePorOmision = "19:00"
+	// VentanaDiasPorOmision son los días hábiles ISO (lunes a viernes).
+	// [causa documentada]
+	// PENDIENTE DE CALIBRACIÓN.
+	VentanaDiasPorOmision = "1,2,3,4,5"
+	// VentanaZonaPorOmision es la zona horaria por omisión.
+	// [causa documentada]
+	// PENDIENTE DE CALIBRACIÓN.
+	VentanaZonaPorOmision = "America/Argentina/Buenos_Aires"
+
+	// RampaDiariaInicialPorOmision es el cupo de envíos diarios inicial (20 msgs/día).
+	// [precautorio]
+	// PENDIENTE DE CALIBRACIÓN.
+	RampaDiariaInicialPorOmision int64 = 20
+	// RampaDiariaInicialMaximo es el techo del cupo diario inicial (10000 msgs/día).
+	RampaDiariaInicialMaximo int64 = 10000
+
+	// RampaIncrementoSemanalPorOmision es el incremento semanal del cupo (20 msgs/día por semana).
+	// [precautorio]
+	// PENDIENTE DE CALIBRACIÓN.
+	RampaIncrementoSemanalPorOmision int64 = 20
+	// RampaIncrementoSemanalMaximo es el techo del incremento semanal (10000 msgs/día).
+	RampaIncrementoSemanalMaximo int64 = 10000
+
+	// RampaSemanasPorOmision es la duración de la rampa en semanas (4 semanas).
+	// [precautorio]
+	// PENDIENTE DE CALIBRACIÓN.
+	RampaSemanasPorOmision int64 = 4
+	// RampaSemanasMaximo es el techo de semanas de rampa (52 semanas).
+	RampaSemanasMaximo int64 = 52
 )
 
 // ErrRutaSocketVacia se devuelve cuando la variable del socket está definida pero vacía.
@@ -121,6 +201,9 @@ var ErrParametroSalidaInvalido = errors.New("configuracion: parámetro de salida
 // ErrParametroDeBajaInvalido se devuelve cuando un parámetro de baja está definido pero vacío.
 var ErrParametroDeBajaInvalido = errors.New("configuracion: parámetro de baja inválido")
 
+// ErrParametroDeDisciplinaInvalido se devuelve cuando un parámetro de disciplina es inválido o viola los límites acotados.
+var ErrParametroDeDisciplinaInvalido = errors.New("configuracion: parámetro de disciplina inválido")
+
 // nivelesReconocidos es el conjunto cerrado de umbrales admitidos, en español como el resto del
 // repositorio. Un valor fuera de la tabla es un error y no se degrada en silencio a «info».
 var nivelesReconocidos = map[string]slog.Level{
@@ -144,6 +227,34 @@ type Retroceso struct {
 	BaneoInicial int64
 	// BaneoMaximo es el techo del retroceso largo por baneo temporal, en milisegundos.
 	BaneoMaximo int64
+}
+
+// VentanaDeAtencion define el horario comercial y los días en que el sidecar tiene permitido transmitir.
+// [causa documentada]
+type VentanaDeAtencion struct {
+	HoraApertura   int
+	MinutoApertura int
+	HoraCierre     int
+	MinutoCierre   int
+	Dias           []int
+	Zona           *time.Location
+}
+
+// RampaDeVolumen define el escalonamiento de envíos diarios para células nuevas.
+// [precautorio]
+type RampaDeVolumen struct {
+	DiariaInicial     int64
+	IncrementoSemanal int64
+	Semanas           int64
+}
+
+// Disciplina agrupa los parámetros de disciplina de salida del sidecar.
+// No contiene ningún campo booleano: la disciplina no es desactivable por configuración.
+type Disciplina struct {
+	LatenciaMinimaMs   int64
+	IntervaloDrenajeMs int64
+	Ventana            VentanaDeAtencion
+	Rampa              RampaDeVolumen
 }
 
 // Configuracion son los parámetros de arranque del sidecar, ya validados.
@@ -173,6 +284,8 @@ type Configuracion struct {
 	PalabrasDeBaja []string
 	// TextoConfirmacionDeBaja es el texto que se enviará como confirmación de la baja.
 	TextoConfirmacionDeBaja string
+	// Disciplina agrupa los parámetros de disciplina de salida.
+	Disciplina Disciplina
 }
 
 // Cargar construye la configuración a partir de una función de consulta del entorno.
@@ -255,6 +368,11 @@ func Cargar(consultar func(string) (string, bool)) (Configuracion, error) {
 		return Configuracion{}, err
 	}
 
+	disciplina, err := cargarDisciplina(consultar)
+	if err != nil {
+		return Configuracion{}, err
+	}
+
 	return Configuracion{
 		RutaSocket:              rutaSocket,
 		NivelDeRegistro:         nivel,
@@ -267,6 +385,7 @@ func Cargar(consultar func(string) (string, bool)) (Configuracion, error) {
 		IntentosMaximosSalida:   intentosSalida,
 		PalabrasDeBaja:          palabrasBaja,
 		TextoConfirmacionDeBaja: textoConfirmacion,
+		Disciplina:              disciplina,
 	}, nil
 }
 
@@ -373,4 +492,167 @@ func enteroDelEntorno(consultar func(string) (string, bool), variable string, po
 		return 0, fmt.Errorf("%w: %s no es un entero válido: %q", ErrRetrocesoInvalido, variable, valor)
 	}
 	return entero, nil
+}
+
+// enteroAcotadoDelEntorno valida, sobre enteroDelEntorno, que el valor caiga en [1, maximo]: el
+// patrón que repiten los cinco parámetros acotados de disciplina.
+func enteroAcotadoDelEntorno(consultar func(string) (string, bool), variable string, porOmision, maximo int64) (int64, error) {
+	valor, err := enteroDelEntorno(consultar, variable, porOmision)
+	if err != nil {
+		return 0, fmt.Errorf("%w: %v", ErrParametroDeDisciplinaInvalido, err)
+	}
+	if valor <= 0 || valor > maximo {
+		return 0, fmt.Errorf("%w: %s debe estar entre 1 y %d, recibido %d", ErrParametroDeDisciplinaInvalido, variable, maximo, valor)
+	}
+	return valor, nil
+}
+
+// cadenaDelEntorno lee una variable opcional que, presente, no puede estar vacía: el patrón que
+// repiten apertura, cierre, días y zona de la ventana de atención.
+func cadenaDelEntorno(consultar func(string) (string, bool), variable, porOmision string) (string, error) {
+	if v, ok := consultar(variable); ok {
+		if v == "" {
+			return "", fmt.Errorf("%w: %s no puede estar vacía", ErrParametroDeDisciplinaInvalido, variable)
+		}
+		return v, nil
+	}
+	return porOmision, nil
+}
+
+func cargarDisciplina(consultar func(string) (string, bool)) (Disciplina, error) {
+	latencia, err := enteroAcotadoDelEntorno(consultar, VariableLatenciaMinimaMs, LatenciaMinimaMsPorOmision, LatenciaMinimaMsMaximo)
+	if err != nil {
+		return Disciplina{}, err
+	}
+
+	intervaloDrenaje, err := enteroAcotadoDelEntorno(consultar, VariableIntervaloDrenajeMs, IntervaloDrenajeMsPorOmision, IntervaloDrenajeMsMaximo)
+	if err != nil {
+		return Disciplina{}, err
+	}
+
+	ventana, err := cargarVentanaDeAtencion(consultar)
+	if err != nil {
+		return Disciplina{}, err
+	}
+
+	rampa, err := cargarRampaDeVolumen(consultar)
+	if err != nil {
+		return Disciplina{}, err
+	}
+
+	return Disciplina{
+		LatenciaMinimaMs:   latencia,
+		IntervaloDrenajeMs: intervaloDrenaje,
+		Ventana:            ventana,
+		Rampa:              rampa,
+	}, nil
+}
+
+func parsearHoraMinuto(s string) (int, int, error) {
+	partes := strings.Split(s, ":")
+	if len(partes) != 2 {
+		return 0, 0, fmt.Errorf("formato debe ser HH:MM, recibido %q", s)
+	}
+	h, err := strconv.Atoi(partes[0])
+	if err != nil || h < 0 || h > 23 {
+		return 0, 0, fmt.Errorf("hora inválida: %q", partes[0])
+	}
+	m, err := strconv.Atoi(partes[1])
+	if err != nil || m < 0 || m > 59 {
+		return 0, 0, fmt.Errorf("minuto inválido: %q", partes[1])
+	}
+	return h, m, nil
+}
+
+func cargarVentanaDeAtencion(consultar func(string) (string, bool)) (VentanaDeAtencion, error) {
+	aperturaStr, err := cadenaDelEntorno(consultar, VariableVentanaApertura, VentanaAperturaPorOmision)
+	if err != nil {
+		return VentanaDeAtencion{}, err
+	}
+	hAp, mAp, err := parsearHoraMinuto(aperturaStr)
+	if err != nil {
+		return VentanaDeAtencion{}, fmt.Errorf("%w: %s: %v", ErrParametroDeDisciplinaInvalido, VariableVentanaApertura, err)
+	}
+
+	cierreStr, err := cadenaDelEntorno(consultar, VariableVentanaCierre, VentanaCierrePorOmision)
+	if err != nil {
+		return VentanaDeAtencion{}, err
+	}
+	hCi, mCi, err := parsearHoraMinuto(cierreStr)
+	if err != nil {
+		return VentanaDeAtencion{}, fmt.Errorf("%w: %s: %v", ErrParametroDeDisciplinaInvalido, VariableVentanaCierre, err)
+	}
+
+	minutosApertura := hAp*60 + mAp
+	minutosCierre := hCi*60 + mCi
+	duracion := minutosCierre - minutosApertura
+
+	if duracion <= 0 {
+		return VentanaDeAtencion{}, fmt.Errorf("%w: la hora de cierre (%s) debe ser posterior a la de apertura (%s)", ErrParametroDeDisciplinaInvalido, cierreStr, aperturaStr)
+	}
+	if duracion > 16*60 {
+		return VentanaDeAtencion{}, fmt.Errorf("%w: la ventana de atención no puede exceder 16 horas (anti-24/7): duración actual %d minutos", ErrParametroDeDisciplinaInvalido, duracion)
+	}
+
+	diasStr, err := cadenaDelEntorno(consultar, VariableVentanaDias, VentanaDiasPorOmision)
+	if err != nil {
+		return VentanaDeAtencion{}, err
+	}
+	partesDias := strings.Split(diasStr, ",")
+	var dias []int
+	for _, p := range partesDias {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			continue
+		}
+		d, err := strconv.Atoi(p)
+		if err != nil || d < 1 || d > 7 {
+			return VentanaDeAtencion{}, fmt.Errorf("%w: día de atención inválido %q (debe ser 1..7)", ErrParametroDeDisciplinaInvalido, p)
+		}
+		dias = append(dias, d)
+	}
+	if len(dias) == 0 {
+		return VentanaDeAtencion{}, fmt.Errorf("%w: %s debe especificar al menos un día válido", ErrParametroDeDisciplinaInvalido, VariableVentanaDias)
+	}
+
+	zonaStr, err := cadenaDelEntorno(consultar, VariableVentanaZona, VentanaZonaPorOmision)
+	if err != nil {
+		return VentanaDeAtencion{}, err
+	}
+	loc, err := time.LoadLocation(zonaStr)
+	if err != nil {
+		return VentanaDeAtencion{}, fmt.Errorf("%w: zona horaria inválida %q: %v", ErrParametroDeDisciplinaInvalido, zonaStr, err)
+	}
+
+	return VentanaDeAtencion{
+		HoraApertura:   hAp,
+		MinutoApertura: mAp,
+		HoraCierre:     hCi,
+		MinutoCierre:   mCi,
+		Dias:           dias,
+		Zona:           loc,
+	}, nil
+}
+
+func cargarRampaDeVolumen(consultar func(string) (string, bool)) (RampaDeVolumen, error) {
+	inicial, err := enteroAcotadoDelEntorno(consultar, VariableRampaDiariaInicial, RampaDiariaInicialPorOmision, RampaDiariaInicialMaximo)
+	if err != nil {
+		return RampaDeVolumen{}, err
+	}
+
+	incremento, err := enteroAcotadoDelEntorno(consultar, VariableRampaIncrementoSemanal, RampaIncrementoSemanalPorOmision, RampaIncrementoSemanalMaximo)
+	if err != nil {
+		return RampaDeVolumen{}, err
+	}
+
+	semanas, err := enteroAcotadoDelEntorno(consultar, VariableRampaSemanas, RampaSemanasPorOmision, RampaSemanasMaximo)
+	if err != nil {
+		return RampaDeVolumen{}, err
+	}
+
+	return RampaDeVolumen{
+		DiariaInicial:     inicial,
+		IncrementoSemanal: incremento,
+		Semanas:           semanas,
+	}, nil
 }

@@ -115,6 +115,7 @@ compartido de la célula. No es TCP sobre `localhost`, ni HTTP, ni una tubería 
 * **Palabras de baja (opt-out):** `baja,stop` por omisión, configurable por célula con la
   variable de entorno `HEXCELL_PALABRAS_DE_BAJA` (lista separada por comas).
 * **Texto de confirmación de baja:** `"Baja confirmada. No volverás a recibir mensajes de este número."` por omisión, configurable por célula con la variable de entorno `HEXCELL_TEXTO_CONFIRMACION_BAJA`.
+* **Disciplina de salida (adr-0015):** variables de entorno para calibrar el suelo de latencia (`HEXCELL_LATENCIA_MINIMA_MS`, 3000ms), cadencia de drenaje (`HEXCELL_INTERVALO_DRENAJE_MS`, 2000ms), ventana comercial (`HEXCELL_VENTANA_APERTURA` "09:00", `HEXCELL_VENTANA_CIERRE` "19:00", `HEXCELL_VENTANA_DIAS` "1,2,3,4,5", `HEXCELL_VENTANA_ZONA` "America/Argentina/Buenos_Aires") y rampa de volumen escalonada (`HEXCELL_RAMPA_DIARIA_INICIAL` 20, `HEXCELL_RAMPA_INCREMENTO_SEMANAL` 20, `HEXCELL_RAMPA_SEMANAS` 4).
 
 ### Papeles: el sidecar escucha, el núcleo conecta
 

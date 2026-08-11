@@ -36,12 +36,6 @@ const (
 	eventoErrorDreno = "outbox.error_drenaje"
 )
 
-// intervaloDrenajeSalida es la cadencia mecánica del bucle que procesa la cola de salida:
-// expira lo vencido e intenta transmitir lo pendiente. No es un parámetro de calibración de
-// negocio ni una técnica anti-baneo, es solo el paso del bucle de fondo; el TTL y el límite de
-// reintentos, esos sí calibrables, se leen de configuracion.
-const intervaloDrenajeSalida = 2 * time.Second
-
 func main() {
 	cfg, err := configuracion.Cargar(os.LookupEnv)
 	if err != nil {
@@ -98,13 +92,16 @@ func main() {
 	// cliente whatsmeow de la sesión activa y el almacén de identidad como resolutor de
 	// direcciones y control de baja.
 	transmisor := outbox.NuevoTransmisorWhatsmeow(sesion.Cliente(), almacenIdentidad)
-	colaSalida := outbox.NuevaColaDeSalida(buzon.DB(), cfg.TtlSalidaMs, cfg.IntentosMaximosSalida, reg, transmisor, almacenIdentidad)
+	disciplina := outbox.NuevaDisciplinaDeSalida(cfg.Disciplina)
+	emisorPresencia := outbox.NuevoEmisorDePresenciaWhatsmeow(sesion.Cliente(), almacenIdentidad, reg)
+	colaSalida := outbox.NuevaColaDeSalida(buzon.DB(), cfg.TtlSalidaMs, cfg.IntentosMaximosSalida, reg, transmisor, almacenIdentidad).ConDisciplina(disciplina, emisorPresencia)
 	portero := outbox.NuevoPorteroDeSalida(colaSalida, almacenIdentidad, reg)
 	detectorBaja := canal.NuevoDetectorDeBaja(cfg.PalabrasDeBaja, cfg.TextoConfirmacionDeBaja, almacenIdentidad, portero)
 
+	intervaloDrenaje := time.Duration(cfg.Disciplina.IntervaloDrenajeMs) * time.Millisecond
 	ctxDrenaje, detenerDrenaje := context.WithCancel(ctx)
 	defer detenerDrenaje()
-	go bucleDeDrenajeSalida(ctxDrenaje, colaSalida, reg)
+	go bucleDeDrenajeSalida(ctxDrenaje, colaSalida, intervaloDrenaje, reg)
 
 	sumideroEvento := func(evento ipc.EventoEntrante) {
 		reg.Info("canal.evento_entrante_listo", registro.Campos{
@@ -129,8 +126,8 @@ func main() {
 // cancela en la parada ordenada. Cada vuelta expira lo vencido e intenta transmitir lo
 // pendiente; un error de una vuelta se registra y no detiene el bucle, exactamente como el
 // resto del proceso sobrevive a un fallo de un solo evento.
-func bucleDeDrenajeSalida(ctx context.Context, cola *outbox.ColaDeSalida, reg *registro.Registro) {
-	ticker := time.NewTicker(intervaloDrenajeSalida)
+func bucleDeDrenajeSalida(ctx context.Context, cola *outbox.ColaDeSalida, intervalo time.Duration, reg *registro.Registro) {
+	ticker := time.NewTicker(intervalo)
 	defer ticker.Stop()
 
 	for {

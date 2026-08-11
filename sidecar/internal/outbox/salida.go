@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"sync"
 	"sync/atomic"
 
 	"github.com/CGary/hexcell/sidecar/internal/configuracion"
@@ -33,12 +34,16 @@ var ContadorExpiradas atomic.Int64
 // mensaje saliente es Encolar, de modo que una futura lista STOP pueda anteponerse sin tocar
 // el resto de esta cola.
 type ColaDeSalida struct {
-	db              *sql.DB
-	ttlMs           int64
-	intentosMaximos int64
-	registro        *registro.Registro
-	transmisor      Transmisor
-	control         ControlDeBaja
+	db                   *sql.DB
+	ttlMs                int64
+	intentosMaximos      int64
+	registro             *registro.Registro
+	transmisor           Transmisor
+	control              ControlDeBaja
+	disciplina           *DisciplinaDeSalida
+	emisorPresencia      EmisorDePresencia
+	muPresencia          sync.Mutex
+	presenciasAnunciadas map[string]struct{}
 }
 
 // NuevaColaDeSalida construye la cola sobre una conexión ya abierta (la misma del outbox
@@ -52,13 +57,30 @@ func NuevaColaDeSalida(db *sql.DB, ttlMs, intentosMaximos int64, reg *registro.R
 		intentosMaximos = IntentosMaximosPorOmision
 	}
 	return &ColaDeSalida{
-		db:              db,
-		ttlMs:           ttlMs,
-		intentosMaximos: intentosMaximos,
-		registro:        reg,
-		transmisor:      transmisor,
-		control:         control,
+		db:                   db,
+		ttlMs:                ttlMs,
+		intentosMaximos:      intentosMaximos,
+		registro:             reg,
+		transmisor:           transmisor,
+		control:              control,
+		presenciasAnunciadas: make(map[string]struct{}),
 	}
+}
+
+// ConDisciplina inyecta, tipados y explícitos (contract behavior 15, ambos nil-legales), la
+// compuerta de disciplina y el emisor de presencia; devuelve la cola para encadenar.
+func (c *ColaDeSalida) ConDisciplina(disciplina *DisciplinaDeSalida, emisorPresencia EmisorDePresencia) *ColaDeSalida {
+	c.disciplina = disciplina
+	c.emisorPresencia = emisorPresencia
+	return c
+}
+
+// PresenciasPendientesParaPruebas expone, solo para pruebas, cuántas entradas conserva en
+// memoria el marcador de presencias anunciadas.
+func (c *ColaDeSalida) PresenciasPendientesParaPruebas() int {
+	c.muPresencia.Lock()
+	defer c.muPresencia.Unlock()
+	return len(c.presenciasAnunciadas)
 }
 
 // Encolar inserta un mensaje saliente de forma idempotente: un id_mensaje repetido no
@@ -113,6 +135,7 @@ func (c *ColaDeSalida) descartarExpiradas(ctx context.Context, limiteMs int64) e
 			return fmt.Errorf("cola de salida: error al leer mensaje expirado: %w", err)
 		}
 		expiradas++
+		c.liberarPresencia(idMensaje)
 		if c.registro != nil {
 			c.registro.Aviso(EventoSalidaExpirada, registro.Campos{
 				IdEvento: idMensaje,
@@ -132,10 +155,11 @@ func (c *ColaDeSalida) descartarExpiradas(ctx context.Context, limiteMs int64) e
 // pendienteSalida es la proyección mínima de una fila pendiente que intentarPendientes
 // necesita para llamar al Transmisor y decidir si reintenta o abandona.
 type pendienteSalida struct {
-	idMensaje      string
-	idConversacion string
-	contenido      string
-	intentos       int64
+	idMensaje             string
+	idConversacion        string
+	contenido             string
+	marcaTemporalOrigenMs int64
+	intentos              int64
 }
 
 // intentarPendientes selecciona lo que sigue pendiente y vigente -no expirado contra el mismo
@@ -147,7 +171,7 @@ func (c *ColaDeSalida) intentarPendientes(ctx context.Context, limiteMs, ahoraMs
 		return nil
 	}
 
-	query := `SELECT id_mensaje, id_conversacion, contenido, intentos FROM cola_salida WHERE enviado_en_ms IS NULL AND marca_temporal_origen_ms >= ?`
+	query := `SELECT id_mensaje, id_conversacion, contenido, marca_temporal_origen_ms, intentos FROM cola_salida WHERE enviado_en_ms IS NULL AND marca_temporal_origen_ms >= ?`
 	filas, err := c.db.QueryContext(ctx, query, limiteMs)
 	if err != nil {
 		return fmt.Errorf("cola de salida: error al seleccionar pendientes: %w", err)
@@ -156,7 +180,7 @@ func (c *ColaDeSalida) intentarPendientes(ctx context.Context, limiteMs, ahoraMs
 	var pendientes []pendienteSalida
 	for filas.Next() {
 		var p pendienteSalida
-		if err := filas.Scan(&p.idMensaje, &p.idConversacion, &p.contenido, &p.intentos); err != nil {
+		if err := filas.Scan(&p.idMensaje, &p.idConversacion, &p.contenido, &p.marcaTemporalOrigenMs, &p.intentos); err != nil {
 			filas.Close()
 			return fmt.Errorf("cola de salida: error al leer mensaje pendiente: %w", err)
 		}
@@ -201,6 +225,13 @@ func (c *ColaDeSalida) intentarUno(ctx context.Context, p pendienteSalida, ahora
 					c.registro.Aviso(EventoSalidaDescartadaPorBaja, registro.Campos{IdEvento: p.idMensaje})
 				}
 			}
+			return
+		}
+	}
+
+	// c.disciplina nil es legal explícitamente (contract behavior 15): ver Decidir sobre D-13.
+	if c.disciplina != nil {
+		if !c.verificarDisciplina(ctx, p.idConversacion, p.idMensaje, p.marcaTemporalOrigenMs, ahoraMs) {
 			return
 		}
 	}
@@ -268,10 +299,14 @@ func (c *ColaDeSalida) MarcarEnviado(ctx context.Context, idMensaje, idCorrelaci
 	if err != nil {
 		return fmt.Errorf("cola de salida: error al obtener filas afectadas al marcar enviado: %w", err)
 	}
-	if filas > 0 && c.registro != nil {
-		c.registro.Info(EventoSalidaEnviada, registro.Campos{
-			IdEvento: idMensaje,
-		})
+	if filas > 0 {
+		c.liberarPresencia(idMensaje)
+		if err := RegistrarEnvioDelDia(ctx, c.db, c.diaEnZonaDeLaVentana(ahoraMs)); err != nil && c.registro != nil {
+			c.registro.Error("outbox.error_registrar_envio_del_dia", registro.Campos{IdEvento: idMensaje, Detalle: err.Error()})
+		}
+		if c.registro != nil {
+			c.registro.Info(EventoSalidaEnviada, registro.Campos{IdEvento: idMensaje})
+		}
 	}
 	return nil
 }
