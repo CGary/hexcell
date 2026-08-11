@@ -1,0 +1,48 @@
+acceptance:
+    - id: AC-1
+      statement: 'Minimum response latency and a business-hours schedule are configurable per cell via sidecar/internal/configuracion env vars, following the existing TTL/retry/opt-out pattern, with documented "a calibrar" defaults. (Traces to parent HEX-019 AC-1.)'
+      given: a cell configured with a minimum latency and a business-hours window
+      when: an inbound event arrives outside business hours or before the minimum latency has elapsed
+      then: the adapter withholds or delays the outbound response accordingly, and the applied values are read from the per-cell configuration, not hardcoded
+    - id: AC-2
+      statement: 'A "typing" indicator is emitted before every outbound response, documented alongside its adr-0015 limitations (zero-cost hygiene, not a proven defense; no warm-up/jitter framing). (Traces to parent HEX-019 AC-2.)'
+    - id: AC-3
+      statement: "A volume ramp for a cell's first weeks is configurable per cell, with a documented \"a calibrar\" default, expressed strictly in the plan's own vocabulary (never as mass-sending throughput/evasion framing). (Traces to parent HEX-019 AC-7.)"
+    - id: AC-4
+      statement: The previously hardcoded intervaloDrenajeSalida (2s, sidecar/main.go) becomes a documented, per-cell configurable parameter exposed as HEXCELL_INTERVALO_DRENAJE_MS, or is explicitly logged as remaining debt if left untouched. (Traces to parent HEX-019 AC-9.)
+    - id: AC-5
+      statement: Each discipline measure implemented in this child (minimum latency, attention window, volume ramp, composing indicator, drain-interval configuration) carries its adr-0015 [documented cause] or [precautionary] mark in the code/doc comments, matching adr-0015's own classification.
+    - id: AC-6
+      statement: The 7 standard verification commands pass (cargo fmt --check, cargo build --workspace, cargo clippy --workspace -- -D warnings, cargo test --workspace, hexcell-core tree isolation check, doc compile-fail test, cd sidecar && test -z "$(gofmt -l .)" && go build ./... && go vet ./... && go test ./...).
+constraints:
+    - No new third-party dependencies, Go or Rust.
+    - No schema changes to existing tables; sessions.db, knowledge_live.db, and sqlstore rules are unchanged.
+    - All discipline parameters are configurable per cell (env vars in sidecar/internal/configuracion), but disabling the discipline is never a configuration option.
+    - Concrete business numbers and texts are SETTLED, not open. The human ratified them on 2026-08-11; the rulings are recorded as human_ruling events in this task's 07-trace.json (topics defaults_numericos, textos, anti_24x7) and are inherited by every child as given. Ratified values are minimum latency 3000 ms; drain interval 2000 ms; attention window 09:00-19:00, ISO weekdays 1-5, zone America/Argentina/Buenos_Aires; volume ramp 20/day initial plus 20/day per week for 4 weeks, then a permanent ceiling; circuit-breaker repetition threshold 3; frustration keywords humano, persona, agente, operador; identification text "Te atiende un asistente automático. Si preferís hablar con una persona, escribí «humano».", handoff text "Te paso con una persona del equipo. En cuanto esté disponible te responde por acá.", and three neutral presentation variants selected deterministically per contact. No child may re-open these as pending ratification or substitute its own values; each ships them as the declared default, still per-cell configurable and still marked "a calibrar" in the sense that field calibration may later change them.
+    - The anti-24/7 rule is ratified and binding. Reject at startup any attention window whose duration exceeds 16 hours, so the schedule measure cannot be disabled through configuration.
+    - No mass-sending-provider vocabulary (jitter, warm-up/calentamiento, proxies, IP rotation); use the plan's own vocabulary, and frame every measure per adr-0015's [documented cause]/[precautionary] classification, never as throughput management or evasion.
+    - Everything user-visible (identifiers, comments, docs, commit message) is written in Spanish; artifact YAML prose stays in English.
+    - Dates are written in absolute format (2026-08-11), never relative.
+    - Consult docs/bitacora-de-descartes.md before proposing anything resembling a previously discarded idea; do not re-litigate a discarded approach without meeting its documented reopening condition.
+depends_on: []
+goal: 'Subset of HEX-019: Outbound gate in internal/outbox: minimum latency floor, attention window, volume ramp, composing indicator, and the drain interval absorbed from main.go. Measures 1, 2, 7 (AC-1, AC-2, AC-7, AC-9).'
+invariants:
+    - No configuration path (env var or otherwise) can fully disable this child's measures (minimum latency, attention window, volume ramp, drain interval); only calibratable, bounded values excluding degenerate ranges are configurable, with no boolean on/off switch.
+    - Every discipline measure implemented in this child is documented inline (or in the accompanying doc) with its adr-0015 classification mark, [documented cause] or [precautionary]; the typing indicator's documentation carries the exact adr-0015 caveat (zero-cost hygiene, not a proven defense) alongside its limitations.
+    - No mass-sending-provider vocabulary (jitter, warm-up, proxies, IP rotation) is introduced; the volume ramp is documented strictly as damage limitation, never as throughput management or ban-evasion.
+non_goals:
+    - Lab-number testing against a real WhatsApp number (A-3 plan task 15).
+    - Reconnection/pairing runbooks (A-3 plan tasks 16-17).
+    - sqlstore backup over IPC (A-3 plan task 18).
+    - Fase B / Cloud API channel work.
+    - Any new re-subscription (opt-in) flow beyond the existing STOP/opt-out mechanism.
+    - Extending the Rust core's knowledge of these measures beyond what the existing IPC contract already carries; the discipline lives in the sidecar (Go) unless the plan text says otherwise.
+    - Fixing the hard portfolio cap or incident-rate threshold (adr-0015 Layer 3); those remain pending business decisions.
+    - The conversational circuit breaker and its human handoff (parent AC-6); that is child HEX-019-b's scope.
+    - Presentation/greeting template variation, the one-outbound-message-per-turn enforcement, bot identification plus first-turn handoff offer, and the group/broadcast/status sentinel extension (parent AC-3, AC-4, AC-5); that is child HEX-019-c's scope.
+    - Updating docs/STATUS.md's open entry "Política anti-ban no desactivable por configuración" (2026-08-08, HEX-015) to closed; that update lands with child HEX-019-c, the last child to complete the discipline.
+    - Real presence-indicator rendering on a live WhatsApp client and the volume ramp's actual effect on Meta's ban detection; both are untestable without a live number and are deferred outside this task's verification.
+parent_task: HEX-019
+risk: medium
+summary: 'Outbound gate in internal/outbox: minimum latency floor, attention window, volume ramp, composing indicator, and the drain interval absorbed from main.go. Measures 1, 2, 7 (AC-1, AC-2, AC-7, AC-9).'
+task_id: HEX-019-a

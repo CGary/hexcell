@@ -1,0 +1,5 @@
+task_id: HEX-019-a
+entries: []
+summary: Implementación externa (agy_edit/gemini-3.6-flash-high, verify verde a la
+  primera) + ronda de arreglos interna con los 6 fix_tasks de la revisión profunda.
+  Detalle en 06-review.json y 07-trace.json.

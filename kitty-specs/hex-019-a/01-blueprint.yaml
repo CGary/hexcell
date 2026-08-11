@@ -1,0 +1,176 @@
+task_id: HEX-019-a
+summary: >-
+  Outbound discipline gate in sidecar/internal/outbox: latency floor, attention window, volume
+  ramp, composing indicator, and the drain-interval config debt. Measures 1, 2, 7 of adr-0015.
+
+affected_files:
+  - sidecar/internal/configuracion/configuracion.go
+  - sidecar/internal/configuracion/configuracion_test.go
+  - sidecar/internal/outbox/disciplina.go
+  - sidecar/internal/outbox/disciplina_test.go
+  - sidecar/internal/outbox/salida.go
+  - sidecar/internal/outbox/salida_test.go
+  - sidecar/internal/outbox/outbox.go
+  - sidecar/internal/outbox/outbox_test.go
+  - sidecar/internal/outbox/presencia.go
+  - sidecar/internal/outbox/presencia_test.go
+  - sidecar/main.go
+  - docs/protocolo-ipc-nucleo-sidecar.md
+
+symbols:
+  - configuracion.Disciplina
+  - configuracion.VentanaDeAtencion
+  - configuracion.RampaDeVolumen
+  - configuracion.cargarDisciplina
+  - configuracion.ErrParametroDeDisciplinaInvalido
+  - outbox.DisciplinaDeSalida
+  - outbox.NuevaDisciplinaDeSalida
+  - outbox.DisciplinaDeSalida.Decidir
+  - outbox.MotivoDeAplazamiento
+  - outbox.ContadorAplazadasPorLatencia
+  - outbox.ContadorAplazadasPorHorario
+  - outbox.ContadorAplazadasPorRampa
+  - outbox.RegistrarEnvioDelDia
+  - outbox.EnviosDelDia
+  - outbox.PrimerDiaConEnvios
+  - outbox.EmisorDePresencia
+  - outbox.NuevoEmisorDePresenciaWhatsmeow
+  - outbox.ClienteDePresencia
+
+dependencies:
+  - .ai/tasks/active/HEX-019-new-spec/01-blueprint.yaml
+  - .ai/tasks/active/HEX-019-new-spec/02-contract.yaml
+  - sidecar/internal/outbox/transmisor.go
+  - sidecar/internal/outbox/portero.go
+  - sidecar/internal/registro/registro.go
+  - sidecar/internal/ipc/mensajes.go
+  - docs/adr/adr-0015-politica-de-convivencia-con-el-baneo.md
+  - docs/bitacora-de-descartes.md
+  - docs/plan/fase-a-3-adaptador-whatsmeow.md
+
+test_scenarios:
+  - statement: "Latency floor: a pending row whose origin is younger than the configured floor is left pending, its attempt counter is NOT incremented, and it transmits on a later drain pass once the floor has elapsed."
+    covers: [AC-1]
+  - statement: "Schedule: with a frozen clock outside the configured attention window, the drain transmits nothing; inside the window the same row transmits, and the applied floor and window come from Configuracion, never a literal."
+    covers: [AC-1]
+  - statement: "Schedule and TTL interact as designed: a row held past its TTL by a closed window is hard-discarded by the existing descartarExpiradas with the existing outbox.salida_expirada event, never transmitted stale (consistent with discard D-13, still 'a determinar' and not reopened here)."
+    covers: [AC-1]
+  - statement: "Latency floor and drain interval each reject a degenerate value: HEXCELL_LATENCIA_MINIMA_MS and HEXCELL_INTERVALO_DRENAJE_MS of 0 or negative are configuration errors, and each has a documented ceiling that is also rejected."
+    covers: [AC-1]
+  - statement: "Anti-24/7 rule: an attention window whose closing minus opening exceeds 16 hours is rejected at configuration load, so the schedule measure cannot be disabled through configuration."
+    covers: [AC-1]
+  - statement: "Typing indicator: a composing chat presence is emitted exactly once for a row deferred solely by the latency floor, and is NOT emitted for a row deferred by the closed schedule or the exhausted volume ramp."
+    covers: [AC-2]
+  - statement: "Typing indicator failure is non-fatal: a presence emitter returning an error logs its event and does not prevent the later transmission of the same row."
+    covers: [AC-2]
+  - statement: "Volume ramp: with the daily cap reached, further pending rows are left pending without an attempt; the counter is incremented only on a transmission that MarcarEnviado actually claimed, and the count survives a restart because it lives in SQLite, not memory."
+    covers: [AC-3]
+  - statement: "Volume ramp week index: the cap grows by the configured weekly increment for the configured number of weeks, computed from the first recorded day of sends, and then holds at its final value permanently."
+    covers: [AC-3]
+  - statement: "Non-disableable discipline, structural: Disciplina exposes no boolean field, and every one of its parameters (latency, drain interval, window bounds, ramp values) rejects both degenerate ends: zero/negative/empty and an explicit ceiling."
+    covers: [AC-1, AC-3]
+  - statement: "Discipline deferral never consumes a retry: a row held back by the latency floor, the closed window, or the exhausted ramp returns from intentarUno without calling registrarFallo, so its attempt counter does not move."
+    covers: [AC-1, AC-3]
+  - statement: "Drain interval: HEXCELL_INTERVALO_DRENAJE_MS is read from configuration, validated positive and bounded, and main.go uses it instead of the previous hardcoded intervaloDrenajeSalida constant."
+    covers: [AC-4]
+  - statement: "Every implemented measure (latency floor, attention window, volume ramp, composing indicator, drain interval) carries its adr-0015 [documented cause] or [precautorio] mark in its own doc comment, matching adr-0015's own classification; the typing indicator's doc comment carries the verbatim 'zero-cost hygiene, not a proven defense' caveat."
+    covers: [AC-5]
+  - statement: "All 7 standard verification commands pass, including the gofmt check inside the sidecar chain (cd sidecar && test -z \"$(gofmt -l .)\" && go build ./... && go vet ./... && go test ./...)."
+    covers: [AC-6]
+
+strategy:
+  - step: 1
+    action: >-
+      Configuration surface. Add a Disciplina struct to Configuracion grouping this child's
+      parameters: the latency floor and drain interval as plain int64 milliseconds, plus nested
+      VentanaDeAtencion (opening, closing, ISO weekdays parsed with the same comma-split pattern
+      already used for HEXCELL_PALABRAS_DE_BAJA, IANA zone) and RampaDeVolumen (initial daily
+      cap, weekly increment, weeks). Validate every parameter against a documented bounded range
+      excluding both degenerate ends: latency and drain interval strictly positive with a
+      ceiling, ramp values strictly positive with a ceiling, and the anti-24/7 rule rejecting a
+      window whose closing minus opening exceeds 16 hours. Import time/tzdata (standard library,
+      no module dependency) so time.LoadLocation resolves inside a minimal container image.
+      Ship the human-ratified defaults verbatim (latency 3000 ms, drain interval 2000 ms, window
+      09:00-19:00 days 1-5 zone America/Argentina/Buenos_Aires, ramp 20/day initial +20/day per
+      week for 4 weeks then a permanent ceiling), each marked PENDIENTE DE CALIBRACIÓN in the
+      existing retroceso/TTL comment style even though the numbers themselves are settled.
+    files:
+      - sidecar/internal/configuracion/configuracion.go
+      - sidecar/internal/configuracion/configuracion_test.go
+  - step: 2
+    action: >-
+      Persistence, new table only. Extend the outbox package's esquema constant with
+      CREATE TABLE IF NOT EXISTS volumen_diario (UTC day as primary key, transmitted counter),
+      shaped like the existing cola_salida table. No column of any existing table (outbox,
+      cola_salida) is added, altered or removed.
+    files:
+      - sidecar/internal/outbox/outbox.go
+      - sidecar/internal/outbox/outbox_test.go
+  - step: 3
+    action: >-
+      Value object, the discipline gate itself. Implement DisciplinaDeSalida holding the
+      validated latency floor, attention window and ramp, with a pure
+      Decidir(ahoraMs, origenMs, enviadosHoy, primerDiaMs int64) (transmitir bool, motivo
+      MotivoDeAplazamiento) that never touches the database itself. Add
+      RegistrarEnvioDelDia (atomic UPSERT claim decided by RowsAffected, mirroring MarcarEnviado),
+      EnviosDelDia and PrimerDiaConEnvios as the small persistence helpers Decidir's caller feeds
+      it. Add the three atomic counters (ContadorAplazadasPorLatencia,
+      ContadorAplazadasPorHorario, ContadorAplazadasPorRampa) mirroring the existing
+      ContadorExpiradas pattern in salida.go.
+    files:
+      - sidecar/internal/outbox/disciplina.go
+      - sidecar/internal/outbox/disciplina_test.go
+  - step: 4
+    action: >-
+      Wire the gate into the drain. Consult DisciplinaDeSalida.Decidir inside intentarUno
+      immediately before Transmitir, after the existing opt-out check and before it calls the
+      transmisor. A deferral returns without calling registrarFallo, so it never consumes a
+      retry attempt, and increments only the matching MotivoDeAplazamiento counter. Increment the
+      daily send counter via RegistrarEnvioDelDia only where MarcarEnviado's own RowsAffected
+      proves the row was actually claimed and sent, never before the send. Document inline that a
+      row later hard-discarded past its TTL by the existing descartarExpiradas is deliberate
+      damage limitation, consistent with discard D-13 (marked 'a determinar', not reopened here).
+    files:
+      - sidecar/internal/outbox/salida.go
+      - sidecar/internal/outbox/salida_test.go
+  - step: 5
+    action: >-
+      Typing indicator, inside the outbox package on purpose. Implement EmisorDePresencia over a
+      narrow ClienteDePresencia interface wrapping whatsmeow's SendChatPresence, shaped exactly
+      like ClienteWhatsmeow in transmisor.go, so the send-path sentinel needs no directory
+      exemption (SendChatPresence is already a watched name and internal/outbox is already
+      exempted from the walk). Call it from intentarUno's caller only when Decidir's motivo is
+      exactly the latency floor, so it never fires for a schedule- or ramp-blocked row, and only
+      once per pending row (in-memory 'already announced' marker, justified inline: presence is
+      best-effort and unverifiable, so a duplicate announcement after a restart is harmless).
+      Document the verbatim adr-0015 [precautorio] caveat ('higiene documentada de coste cero, no
+      una defensa') plus its limitations: delivery is unobservable, the call only reports a
+      transport or login failure, and chat presence depends on the client having a push name and
+      an announced availability.
+    files:
+      - sidecar/internal/outbox/presencia.go
+      - sidecar/internal/outbox/presencia_test.go
+  - step: 6
+    action: >-
+      Wiring and documentation. In main.go, replace the hardcoded intervaloDrenajeSalida constant
+      with cfg.Disciplina's drain interval, and construct plus inject DisciplinaDeSalida and
+      EmisorDePresencia into the send path so both have a real non-test caller. Add the nine new
+      environment variables (latency floor, drain interval, window opening/closing/days/zone,
+      ramp initial/increment/weeks) to section 2 of docs/protocolo-ipc-nucleo-sidecar.md, the
+      documented other end of the configuracion.go contract, without touching the wire version.
+      Mark each measure's doc comment with its adr-0015 classification.
+    files:
+      - sidecar/main.go
+      - docs/protocolo-ipc-nucleo-sidecar.md
+
+risks:
+  - "RATIFIED (human, 2026-08-11; see .ai/tasks/active/HEX-019-new-spec/07-trace.json human_ruling events defaults_numericos and anti_24x7, inherited by this child per 00-spec.yaml constraints): latency floor 3000 ms, drain interval 2000 ms, attention window 09:00-19:00 ISO weekdays 1-5 zone America/Argentina/Buenos_Aires, ramp 20/day initial +20/day per week for 4 weeks then a permanent ceiling, and the anti-24/7 rule rejecting any window over 16 h. This child ships them as the declared default, not as 'pending ratification'."
+  - "RISK (parent, transcribed): the wire carries no correlation between an outbound mensaje_saliente and the inbound event it answers. The minimum latency is measured from marca_temporal_origen_ms, the outbound row's own origin: a floor on the sidecar's hold, not on end-to-end turn latency. Document this limitation in code; do not silently work around it."
+  - "RISK (parent, transcribed): a message held by the closed schedule or the exhausted ramp will normally be hard-discarded by the existing TTL sweep (default 15 min) before the window reopens. This is deliberate (discard D-13, still 'a determinar', not reopened here) and must be documented, not fixed by exempting held rows from the TTL."
+  - "RISK (parent, transcribed): discard D-08 is marked 'no reabrir' and fences off jitter and warm-up protocols. The latency floor must be a deterministic fixed minimum, never randomized; the ramp is a plain configurable daily ceiling, never a warm-up schedule."
+  - "RISK (parent, transcribed): whatsmeow's SendChatPresence returns ErrNotLoggedIn when unpaired and depends on the client having a push name; delivery is entirely unobservable from the sidecar. The measure is [precautorio] in adr-0015 for exactly this reason and must never be logged or documented as a defense."
+  - "RISK (parent, transcribed): time.LoadLocation needs the zoneinfo database, which a minimal container image may not carry. Importing the standard library's time/tzdata for its side effect adds no module dependency; a fixed UTC-offset alternative is rejected as unsafe across daylight-saving transitions."
+  - "CLARIFICATION (this child, self-reported): the sidecar has no IPC socket server yet (plan task 3), so PorteroDeSalida.Admitir has no core-side producer. That risk belongs to child B's portero seam, not this child: DisciplinaDeSalida sits in the drain path (intentarUno), which already runs against whatever ColaDeSalida.Encolar receives today (including the existing opt-out confirmation), so it is fully exercisable and testable without the socket server."
+  - "MISMATCH RISK (this child, self-reported): honest per-file sizing runs somewhat above the parent's 'about 11 files / 1250 lines' estimate once docs/protocolo-ipc-nucleo-sidecar.md is counted as a 12th file and the 9 new environment variables (2 scalar + 4 window + 3 ramp) are validated with the same bounded-range rigor as the existing retroceso/TTL parameters. Point estimate is close to 1400 diff lines across 12 files; 02-contract.yaml sets limits with that headroom rather than an artificially tight cap, following the precedent of HEX-018's post-review amendment from 1250 to 1350 lines."
+  - "SCOPE BOUNDARY (this child, self-reported): sidecar/internal/outbox/centinela_rutas_de_envio_test.go is excluded from this child's touch list. SendChatPresence is already a watched name in the sentinel and internal/outbox is already exempted from its directory walk, so the new presence emitter needs no sentinel change. The group/broadcast/status extension stays child HEX-019-c's scope per 00-spec.yaml non_goals."
+  - "SCOPE BOUNDARY (this child, self-reported): sidecar/internal/identidad/* is excluded from this child's touch list. The parent blueprint places the new daily-counter table (volumen_diario) in the outbox esquema constant, not identidad, so this child's ramp state has no reason to touch the identity store."

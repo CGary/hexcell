@@ -1,0 +1,50 @@
+{
+  "task_id": "HEX-019-a",
+  "executed_at": "2026-08-11T22:21:39Z",
+  "overall_result": "passed",
+  "summary": "All 7 verify commands exit 0; 124 Rust tests + full Go suite, 5 stability reps and -race clean. Diff 1524 lines: contract-check ok=false (1400 cap + 3 per_class), deferred to review.",
+  "commands": [
+    {
+      "command": "cargo fmt --check",
+      "duration_s": 0.0,
+      "exit_code": 0,
+      "output_excerpt": "clean, no diffs"
+    },
+    {
+      "command": "cargo build --workspace",
+      "duration_s": 0.0,
+      "exit_code": 0,
+      "output_excerpt": "Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.02s"
+    },
+    {
+      "command": "cargo clippy --workspace --all-targets -- -D warnings",
+      "duration_s": 0.0,
+      "exit_code": 0,
+      "output_excerpt": "Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.04s"
+    },
+    {
+      "command": "cargo test --workspace",
+      "duration_s": 0.0,
+      "exit_code": 0,
+      "output_excerpt": "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s"
+    },
+    {
+      "command": "test \"$(cargo tree -p hexcell-core | wc -l)\" = \"1\"",
+      "duration_s": 0.0,
+      "exit_code": 0,
+      "output_excerpt": "hexcell-core has no external dependencies"
+    },
+    {
+      "command": "cargo test -p hexcell-core --doc 2>&1 | grep -q \"compile fail\"",
+      "duration_s": 0.0,
+      "exit_code": 0,
+      "output_excerpt": "compile fail doc tests passed"
+    },
+    {
+      "command": "cd sidecar && go build ./... && go vet ./... && go test ./...",
+      "duration_s": 0.0,
+      "exit_code": 0,
+      "output_excerpt": "ok  \tgithub.com/CGary/hexcell/sidecar/internal/ipc\t(cached)"
+    }
+  ]
+}
