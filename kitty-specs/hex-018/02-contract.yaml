@@ -1,0 +1,129 @@
+task_id: HEX-018
+summary: "Opt-out (STOP) list in the sidecar identity store, detected inbound, enforced ahead of Encolar and again at drain, with exactly one confirmation."
+goal: >-
+  Implement A-3 plan task 13. Detect a per-cell configurable opt-out keyword on the sidecar's
+  inbound path, register the contact in a NEW table inside the sidecar's identidad.db (never the
+  whatsmeow sqlstore, so a re-pairing cannot revive an opted-out contact), refuse every outbound
+  send to that contact at the earliest point of the send path that exists today, ahead of
+  ColaDeSalida.Encolar and leaving the seam for the future circuit breaker, and enqueue exactly one
+  confirmation message using the cell's configured text as the only send ever permitted to an
+  opted-out contact. Opt-out takes effect immediately, including for messages already sitting in
+  the outbound queue, and never expires. No re-subscription path exists in this task.
+
+read:
+  - .ai/tasks/active/HEX-018-new-spec/00-spec.yaml
+  - .ai/tasks/active/HEX-018-new-spec/01-blueprint.yaml
+  - docs/plan/fase-a-3-adaptador-whatsmeow.md
+  - docs/adr/adr-0010-puerto-de-canal.md
+  - docs/adr/adr-0011-whatsmeow-sidecar-e-ipc.md
+  - docs/adr/adr-0015-politica-de-convivencia-con-el-baneo.md
+  - docs/adr/adr-0019-registro-estructurado.md
+  - docs/adr/adr-0021-testigo-de-entrante.md
+  - docs/bitacora-de-descartes.md
+  - docs/STATUS.md
+  - crates/hexcell-storage/src/respaldo.rs
+  - sidecar/internal/outbox/outbox.go
+  - sidecar/internal/outbox/transmisor.go
+  - sidecar/internal/outbox/outbox_test.go
+  - sidecar/internal/canal/canal.go
+  - sidecar/internal/registro/registro.go
+  - sidecar/internal/identidad/identidad_test.go
+  - sidecar/internal/identidad/fusion_interno_test.go
+
+touch:
+  - sidecar/internal/identidad/identidad.go
+  - sidecar/internal/identidad/baja.go
+  - sidecar/internal/identidad/baja_test.go
+  - sidecar/internal/outbox/portero.go
+  - sidecar/internal/outbox/portero_test.go
+  - sidecar/internal/outbox/salida.go
+  - sidecar/internal/outbox/salida_test.go
+  - sidecar/internal/outbox/centinela_rutas_de_envio_test.go
+  - sidecar/internal/canal/traduccion.go
+  - sidecar/internal/canal/traduccion_test.go
+  - sidecar/internal/canal/traduccion_interno_test.go
+  - sidecar/internal/configuracion/configuracion.go
+  - sidecar/internal/configuracion/configuracion_test.go
+  - sidecar/main.go
+  - docs/protocolo-ipc-nucleo-sidecar.md
+
+forbid:
+  files:
+    - crates/hexcell-canal-contrato/src/banco.rs
+    - crates/hexcell-canal-contrato/src/bateria.rs
+    - crates/hexcell-core/src/canal.rs
+    - crates/hexcell-canal-simulado/src/adaptador.rs
+    - crates/hexcell-storage/src/respaldo.rs
+    - crates/hexcell-storage/migraciones/identidad/0001-esquema-inicial.sql
+    - sidecar/internal/canal/canal.go
+    - sidecar/internal/outbox/outbox.go
+    - sidecar/internal/outbox/transmisor.go
+    - sidecar/internal/ipc/mensajes.go
+  behaviors:
+    - "Do NOT store the opt-out list, or any part of it, in the whatsmeow sqlstore. It lives only in the sidecar's identidad.db, per discard-log entry D-15 and adr-0010. A device removal wipes the sqlstore, and reviving an opted-out contact that way is precisely the failure this task exists to prevent. Reaching for the sqlstore reopens a settled decision and is an automatic reject."
+    - "Do NOT bump the IPC protocol document version or the wire version. The confirmation rides the existing mensaje_saliente frame and adds no message type, so the versioning rule in that document is not triggered. Only section 2 of docs/protocolo-ipc-nucleo-sidecar.md changes, to document the two new environment variables. If you conclude a wire change is genuinely unavoidable, STOP and report it as a human-blocking question instead of designing it."
+    - "Do NOT weaken, disable, skip or delete the send-path sentinel in sidecar/internal/outbox/centinela_rutas_de_envio_test.go. Extend it only, per the contract in its own header comment: add a direct Encolar call outside the outbox package as a new violation, with a synthetic case proving the new watched name is caught. The empty-corpus guard, the existing watched names and the original synthetic self-test must all keep passing unchanged, and the existing synthetic test's exact expected-count assertion must be updated deliberately rather than loosened."
+    - "Do NOT hardcode the opt-out keyword or the confirmation text anywhere outside sidecar/internal/configuracion. Both are per-cell configurable parameters read from the environment with documented defaults, handled exactly like the existing outbound TTL and retry parameters. A literal keyword or confirmation string in canal, outbox or identidad is a contract violation even if a configuration path also exists."
+    - "Do NOT use substring matching for the opt-out keyword. Matching is exact against the configured set after normalization only (surrounding whitespace trimmed, case folded, surrounding punctuation stripped). Substring matching would opt out any contact who writes the word inside an ordinary sentence, which is a consent failure in the opposite direction and is not acceptable."
+    - "Do NOT enqueue or transmit more than one confirmation per contact, ever, and do NOT permit any other message to an opted-out contact. The exactly-once guarantee must rest on an atomic database claim whose winner is decided by RowsAffected, never on an in-memory flag, a mutex, a cache or a read-then-write check, all of which lose the guarantee across a restart."
+    - "Do NOT implement immediate effect as a purge at registration time alone. intentarPendientes selects pending rows into memory before transmitting, so an opt-out landing after that select would still be followed by a delivery. The permission check must also be taken inside the drain immediately before the transmission attempt, which is the only point that cannot be raced."
+    - "Do NOT relocate, bypass or duplicate the permission rule. EnvioPermitido on the identity store is the single authority deciding whether a message may reach a contact, and both enforcement points call it. Reimplementing the rule inline at either point, or letting the confirmation skip it, defeats the audit story."
+    - "Do NOT break the persist-first convention or the deduplication of the inbound path. An opt-out message is still a real inbound event: it is persisted in the durable inbox with its unchanged dedup id and still reaches the sink. Detection adds a step, it does not replace or short-circuit the existing flow."
+    - "Do NOT implement the circuit breaker, a re-subscription or opt-in-again flow, an expiry or grace period for opt-out records, or any Fase B channel change. Only the seam ahead of the opt-out check is preserved, as a documented comment at the point where the future check belongs."
+    - "Do NOT leave dead wiring. Every new exported symbol must have a real caller, not only a test: the confirmation path must run end to end from inbound detection through the identity store to the outbound queue, wired in main.go. Scaffolding without an engine, an interface with no implementation or call site, and placeholder assignments of the form _ = variable all fail review. The single deliberate exception is PorteroDeSalida.Admitir, whose core-side producer does not exist until the IPC socket server of plan task 3 lands; it must still be fully implemented, wired in main.go and covered by tests."
+    - "Do NOT forget the pre-existing consumer migrations. NuevaColaDeSalida has 10 call sites in sidecar/internal/outbox/salida_test.go and NuevoTraductor has 4 call sites across main.go, traduccion_test.go and traduccion_interno_test.go, including a test named TestNuevoTraductor_ConstruyeConLosCincoColaboradores whose name must change for the sixth collaborator. Leaving any of them stale is a build failure, not a style issue."
+    - "Do NOT introduce traffic-shaping or mass-sending vocabulary in code, comments, configuration names, log event names or documentation. No jitter, no warm-up, no volume schedule, no proxy, VPN or IP rotation. The opt-out list is consent and damage limitation, never throughput management."
+    - "Do NOT add third-party dependencies to the Go module or the Rust workspace, and do NOT touch anything under crates/. The opt-out loop is entirely sidecar-owned; the Rust core never learns that a contact opted out in this task. Accent-folding libraries in particular are not to be added: the normalization rule is deliberately limited to trimming, case folding and surrounding punctuation."
+    - "Do NOT change the schema of an existing table, and do NOT write an imperative migration. The new table is added to the identidad package's esquema constant with CREATE TABLE IF NOT EXISTS, so an existing identidad.db gains it on open with its identity and address rows untouched. Do NOT add or alter columns in cola_salida."
+    - "Do NOT reorder, renumber or rewrite existing ADRs or discard-log entries, and do NOT add new ones in this task. All new identifiers, comments and documentation are written in Spanish, and any date written into an artifact is absolute (2026-08-09), never relative."
+    - "The three unnumbered acceptance criteria of 00-spec.yaml are in scope and NOT deferred: the sentinel extension, the honesty of the A-2 backup contract after the schema change, and all 7 verification commands passing. Each is covered by a named test scenario in 01-blueprint.yaml and must be satisfied."
+
+verify:
+  commands:
+    - cargo fmt --check
+    - cargo build --workspace
+    - cargo clippy --workspace --all-targets -- -D warnings
+    - cargo test --workspace
+    - test "$(cargo tree -p hexcell-core | wc -l)" = "1"
+    - cargo test -p hexcell-core --doc 2>&1 | grep -q "compile fail"
+    - cd sidecar && go build ./... && go vet ./... && go test ./...
+
+limits:
+  max_files_changed: 15
+  # ENMIENDA DEL ORQUESTADOR (2026-08-11): 1250 -> 1350. La revisión profunda exigió una ronda
+  # de arreglos (2 majors: texto de confirmación ratificado y reloj de encolado de la
+  # confirmación; 4 minors, incluido un test nuevo anti-regresión de ~75 líneas y el sqlstore
+  # real en el test de AC-5). El presupuesto original dimensionaba solo la entrega del
+  # delegado, no los arreglos mandados por revisión. Evento contract_amendment en 07-trace.json.
+  max_diff_lines: 1350
+  per_class:
+    - glob: "sidecar/internal/*/*_test.go"
+      max_diff_lines: 700
+    - glob: sidecar/internal/identidad/identidad.go
+      max_diff_lines: 45
+    - glob: sidecar/internal/identidad/baja.go
+      max_diff_lines: 140
+    - glob: sidecar/internal/outbox/portero.go
+      max_diff_lines: 140
+    - glob: sidecar/internal/outbox/salida.go
+      max_diff_lines: 70
+    # ENMIENDA DEL ORQUESTADOR (2026-08-11): 110 -> 125 por la misma ronda de arreglos
+    # (costura ahoraMs cableada + comentarios de invariante del reloj de confirmación).
+    - glob: sidecar/internal/canal/traduccion.go
+      max_diff_lines: 125
+    - glob: sidecar/internal/configuracion/configuracion.go
+      max_diff_lines: 90
+    - glob: sidecar/main.go
+      max_diff_lines: 35
+    - glob: sidecar/internal/outbox/centinela_rutas_de_envio_test.go
+      max_diff_lines: 60
+    - glob: docs/protocolo-ipc-nucleo-sidecar.md
+      max_diff_lines: 45
+
+execution:
+  mode: worktree_edit
+  branch: ai/HEX-018
+
+retry_policy:
+  max_attempts: 2
+  escalate_after: 2

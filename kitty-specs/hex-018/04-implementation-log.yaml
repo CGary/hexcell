@@ -1,0 +1,3 @@
+entries: []
+summary: Lista de exclusión STOP; baja exacta tras normalización, registro idempotente, bloqueo previo a Encolar, confirmación única atómica y descarte en drenaje.
+task_id: HEX-018

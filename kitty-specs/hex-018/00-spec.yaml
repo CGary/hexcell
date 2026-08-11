@@ -1,0 +1,66 @@
+task_id: HEX-018
+summary: Implement opt-out (STOP) exclusion list per cell/contact in the adapter identity store, checked at the earliest send-path point. Risk medium.
+goal: >
+  Implement plan item 13 of fase-a-3-adaptador-whatsmeow.md (Fase A-3): a persistent
+  opt-out list keyed by cell and contact, detected on the inbound path via a
+  configurable keyword, stored in a new table inside the adapter's identity store
+  (identidad.db, sidecar-side, NOT the whatsmeow sqlstore) so that re-pairing can
+  never revive an opted-out contact, enforced at the earliest point of the send
+  path available today (ahead of ColaDeSalida.Encolar, leaving the seam for the
+  future circuit breaker), taking immediate effect with no expiry, and producing
+  exactly one opt-out confirmation message — the sole send ever permitted to an
+  opted-out contact.
+invariants:
+  - Opt-out records live only in identidad.db, never in the whatsmeow sqlstore; a device re-pairing that rebuilds the sqlstore must not revive an opted-out contact.
+  - Once a contact is registered as opted out, every outbound send attempt to that contact is blocked immediately and indefinitely; opt-out records never expire and there is no re-subscription path in this task's scope.
+  - A contact can receive the opt-out confirmation at most once ever; no other message may be sent to an opted-out contact after that confirmation.
+  - The blocking check runs ahead of ColaDeSalida.Encolar, the earliest point of the send path that exists today; the check must be structured so a future circuit breaker can be inserted before it without relocating the opt-out check.
+  - A message already sitting in the outbound queue for a contact at the moment that contact opts out must never be delivered afterward.
+  - The opt-out keyword and the confirmation message text are per-cell configurable parameters, not hardcoded constants.
+acceptance:
+  - id: AC-1
+    statement: An inbound message matching the configured opt-out keyword for a cell registers that contact as opted out in identidad.db.
+    given: an inbound message arrives on the sidecar's inbound path for a cell with a configured opt-out keyword
+    when: the message content matches the keyword
+    then: a persistent opt-out record for that cell and contact is created in an identidad.db table before any further outbound processing for that contact occurs
+  - id: AC-2
+    statement: The send path rejects outbound messages to an opted-out contact ahead of ColaDeSalida.Encolar, before the message can be enqueued.
+    given: a contact already registered as opted out in identidad.db
+    when: the core or adapter attempts to send any non-confirmation message to that contact
+    then: the send is blocked before reaching ColaDeSalida.Encolar and the block is observable (log or counter), without requiring the send path's earliest-check seam to be relocated later for the circuit breaker
+  - id: AC-3
+    statement: The opt-out confirmation is sent exactly once per contact and is the only message ever permitted to an opted-out contact.
+    given: a contact transitions from subscribed to opted out
+    when: the opt-out registration completes
+    then: exactly one confirmation message using the cell's configured confirmation text is sent to that contact, and no further sends of any kind (confirmation or otherwise) to that contact ever succeed afterward
+  - id: AC-4
+    statement: A message already queued for a contact at the moment it opts out is not delivered after the opt-out takes effect.
+    given: a message for a contact is sitting in the outbound queue (enqueued before the opt-out event)
+    when: that contact's opt-out registration lands
+    then: the queued message is never delivered to that contact, whether by purge on registration or by a skip check at drain time
+  - id: AC-5
+    statement: Re-pairing a device (sqlstore rebuild) does not revive an opted-out contact.
+    given: a contact opted out and its record persists in identidad.db
+    when: the device is re-paired and the whatsmeow sqlstore is rebuilt or discarded
+    then: the contact remains blocked from receiving any non-confirmation message, because the opt-out record survives independently of the sqlstore
+  - id: AC-6
+    statement: The opt-out keyword and confirmation text are configurable per cell, with no value hardcoded in source.
+    given: two cells with different configured opt-out keywords and confirmation texts
+    when: each cell processes its own matching inbound message
+    then: each cell's detection and confirmation use its own configured values, not a shared constant
+  - Existing send-path sentinel test (centinela_rutas_de_envio_test.go) is extended, not weakened, to also guard the new opt-out block point.
+  - The A-2 backup contract for identidad.db (the fourth backup base) remains honest after the schema change; any migration is documented.
+  - All 7 verification commands pass (5 Rust cargo commands, hexcell-core dependency-freedom check, compile-fail doctest grep, and cd sidecar && go build ./... && go vet ./... && go test ./...).
+risk: medium
+non_goals:
+  - Implementing the circuit breaker itself (only its seam ahead of the opt-out check is preserved).
+  - Delivering STOP over the real WhatsApp channel end-to-end (deferred to plan item 15).
+  - Any re-subscription or opt-in-again flow for a previously opted-out contact.
+  - Any change to Fase B (Meta Cloud API) channel behavior.
+constraints:
+  - All new/changed table(s) live in the sidecar's identidad.db, not in the whatsmeow sqlstore, and not in crates/hexcell-canal-contrato/src/banco.rs or bateria.rs (both forbidden to touch).
+  - No traffic-shaping or mass-sending vocabulary (no jitter, warm-up, proxy/VPN/IP-rotation language); STOP is damage limitation and consent, not throughput management.
+  - identidad.db is one of the four A-2 backup bases; any schema addition must keep the existing backup contract valid and note whether a migration step is needed.
+  - The wire protocol doc (section 1.3, wire v4) should not need changes if the confirmation rides existing outbound frames; if a wire change turns out unavoidable, flag it as a human-blocking question rather than speccing it.
+  - Do not reorder or renumber existing ADRs.
+  - No default values for the opt-out keyword or confirmation text are fixed in this spec; the blueprint proposes defaults with rationale, subject to human ratification before implementation.

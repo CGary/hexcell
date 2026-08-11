@@ -1,0 +1,158 @@
+task_id: HEX-018
+summary: "Opt-out (STOP) list in the sidecar identity store, detected on the inbound path, enforced by a gatekeeper ahead of Encolar and again at drain, with a single confirmation."
+
+affected_files:
+  - sidecar/internal/identidad/identidad.go
+  - sidecar/internal/identidad/baja.go
+  - sidecar/internal/identidad/baja_test.go
+  - sidecar/internal/outbox/portero.go
+  - sidecar/internal/outbox/portero_test.go
+  - sidecar/internal/outbox/salida.go
+  - sidecar/internal/outbox/salida_test.go
+  - sidecar/internal/outbox/centinela_rutas_de_envio_test.go
+  - sidecar/internal/canal/traduccion.go
+  - sidecar/internal/canal/traduccion_test.go
+  - sidecar/internal/canal/traduccion_interno_test.go
+  - sidecar/internal/configuracion/configuracion.go
+  - sidecar/internal/configuracion/configuracion_test.go
+  - sidecar/main.go
+  - docs/protocolo-ipc-nucleo-sidecar.md
+
+symbols:
+  - "identidad.esquema (add table baja_de_contacto via CREATE TABLE IF NOT EXISTS)"
+  - "identidad.Almacen.RegistrarBaja"
+  - "identidad.Almacen.EnvioPermitido"
+  - "identidad.Almacen.ReclamarConfirmacionDeBaja"
+  - "identidad.ErrBajaNoRegistrada"
+  - "identidad.EventoBajaRegistrada"
+  - "identidad.EventoConfirmacionDeBajaReclamada"
+  - "outbox.PorteroDeSalida"
+  - "outbox.NuevoPorteroDeSalida"
+  - "outbox.PorteroDeSalida.Admitir"
+  - "outbox.PorteroDeSalida.AdmitirConfirmacionDeBaja"
+  - "outbox.ControlDeBaja (interface, satisfied by identidad.Almacen)"
+  - "outbox.ErrContactoDadoDeBaja"
+  - "outbox.ContadorBloqueadasPorBaja"
+  - "outbox.ContadorDescartadasPorBaja"
+  - "outbox.EventoEnvioBloqueadoPorBaja"
+  - "outbox.EventoSalidaDescartadaPorBaja"
+  - "outbox.NuevaColaDeSalida (6th parameter: control ControlDeBaja, nil-legal)"
+  - "outbox.ColaDeSalida.intentarUno (drain-time permission check before Transmitir)"
+  - "canal.ControlDeBaja (interface) and canal.AdmisorDeConfirmacion (interface)"
+  - "canal.NuevoTraductor (6th parameter: baja *canal.DetectorDeBaja, nil-legal)"
+  - "canal.DetectorDeBaja"
+  - "canal.NuevoDetectorDeBaja"
+  - "canal.DetectorDeBaja.Coincide"
+  - "canal.normalizarParaBaja"
+  - "canal.EventoBajaDetectada"
+  - "configuracion.VariablePalabrasDeBaja"
+  - "configuracion.VariableTextoConfirmacionDeBaja"
+  - "configuracion.PalabrasDeBajaPorOmision"
+  - "configuracion.TextoConfirmacionDeBajaPorOmision"
+  - "configuracion.Configuracion.PalabrasDeBaja"
+  - "configuracion.Configuracion.TextoConfirmacionDeBaja"
+  - "configuracion.ErrParametroDeBajaInvalido"
+
+dependencies:
+  - sidecar/internal/outbox/outbox.go
+  - sidecar/internal/outbox/transmisor.go
+  - sidecar/internal/outbox/outbox_test.go
+  - sidecar/internal/canal/canal.go
+  - sidecar/internal/registro/registro.go
+  - sidecar/internal/ipc/mensajes.go
+  - sidecar/internal/identidad/identidad_test.go
+  - sidecar/internal/identidad/fusion_interno_test.go
+  - docs/plan/fase-a-3-adaptador-whatsmeow.md
+  - docs/adr/adr-0010-puerto-de-canal.md
+  - docs/adr/adr-0015-politica-de-convivencia-con-el-baneo.md
+  - docs/bitacora-de-descartes.md
+
+test_scenarios:
+  - statement: "An inbound message whose text matches the cell's configured opt-out keyword creates exactly one row in the identidad.db table baja_de_contacto, keyed by the resolved internal identity id, before any confirmation is enqueued."
+    covers: ["AC-1"]
+  - statement: "Keyword matching is exact after normalization (surrounding whitespace trimmed, case folded, surrounding punctuation stripped): BAJA, baja, ' Baja ' and 'Baja.' all register the opt-out, while 'quiero dar de baja mi servicio' does NOT, proving substring matching was not used."
+    covers: ["AC-1", "AC-6"]
+  - statement: "An inbound opt-out message still honours the persist-first convention and deduplication: the event is persisted in the durable inbox with the unchanged dedup id and forwarded to the sink, and a repeated delivery of the same message id does not create a second opt-out row nor a second confirmation."
+    covers: ["AC-1", "AC-3"]
+  - statement: "PorteroDeSalida.Admitir returns ErrContactoDadoDeBaja for a contact already registered as opted out, and ColaDeSalida.Encolar is never reached: cola_salida still holds zero rows for that conversation."
+    covers: ["AC-2"]
+  - statement: "A blocked send is observable: Admitir emits the log event outbox.envio_bloqueado_por_baja and increments ContadorBloqueadasPorBaja."
+    covers: ["AC-2"]
+  - statement: "Admitir consults the opt-out control BEFORE touching the queue, verified with a spy that records call order, so a future circuit breaker can be inserted ahead of the opt-out check without relocating it."
+    covers: ["AC-2"]
+  - statement: "Fifty concurrent RegistrarBaja calls for the same contact yield exactly one creating call, and fifty concurrent ReclamarConfirmacionDeBaja calls yield exactly one claim, so exactly one confirmation is ever enqueued."
+    covers: ["AC-3"]
+  - statement: "After the confirmation has been claimed and enqueued, a second AdmitirConfirmacionDeBaja for the same contact enqueues nothing and reports the confirmation as already spent."
+    covers: ["AC-3"]
+  - statement: "The enqueued confirmation carries the cell's configured confirmation text verbatim, and its content is not derived from a package-level constant in canal or outbox."
+    covers: ["AC-3", "AC-6"]
+  - statement: "A message enqueued BEFORE the contact opted out is not transmitted at drain time: Transmitir is never called for it, the row is hard-discarded, ContadorDescartadasPorBaja increments and outbox.salida_descartada_por_baja is logged."
+    covers: ["AC-4"]
+  - statement: "The confirmation row itself IS transmitted at drain even though its recipient is opted out, because EnvioPermitido matches the message id stored on the opt-out record; any other message id for the same contact is refused at the same check."
+    covers: ["AC-3", "AC-4"]
+  - statement: "Closing and reopening the identidad.db store, and reopening it against a freshly created empty whatsmeow sqlstore, leaves the contact blocked: EnvioPermitido still refuses, proving the record survives a re-pairing independently of the sqlstore."
+    covers: ["AC-5"]
+  - statement: "Opening a pre-existing identidad.db that only has the identidad and direccion tables succeeds and gains baja_de_contacto through CREATE TABLE IF NOT EXISTS, with existing identity and address rows intact and no separate migration step."
+    covers: ["AC-5"]
+  - statement: "Two stores configured with different keywords and different confirmation texts each act only on their own configured values: a message matching cell A's keyword is inert against cell B's configuration."
+    covers: ["AC-6"]
+  - statement: "configuracion reads the opt-out keyword list and the confirmation text from the environment, applies the documented defaults when the variables are absent, and rejects a defined-but-empty value with ErrParametroDeBajaInvalido, exactly as the existing outbound parameters do."
+    covers: ["AC-6"]
+  - statement: "Send-path sentinel extension (plain acceptance criterion): the sentinel additionally flags a direct Encolar call made outside the outbox package, proven by a new synthetic case, while its empty-corpus guard, its existing watched names and its original synthetic self-test all keep passing unchanged."
+  - statement: "Backup contract honesty (plain acceptance criterion): the A-2 fourth backup base stays file-level, since respaldo copies identidad.db whole via VACUUM INTO and enumerates no table names, so adding baja_de_contacto leaves no stale table list anywhere; a test asserts the new table is present in the same file the backup copies."
+  - statement: "All 7 verification commands pass (plain acceptance criterion): the 5 cargo commands, the hexcell-core dependency-freedom check, the compile-fail doctest grep, and the sidecar build/vet/test command."
+
+strategy:
+  - step: 1
+    action: "Domain/persistence layer. Add the table baja_de_contacto to the identidad package's esquema constant using CREATE TABLE IF NOT EXISTS, so an existing identidad.db gains it on open with no separate migration. Columns: id_interno TEXT PRIMARY KEY referencing identidad(id_interno) ON DELETE CASCADE, dada_de_baja_en_ms INTEGER NOT NULL, id_mensaje_confirmacion TEXT NULL UNIQUE, confirmacion_encolada_en_ms INTEGER NULL. Update the package doc comment that describes the schema for the backup script."
+    files:
+      - sidecar/internal/identidad/identidad.go
+  - step: 2
+    action: "Value-object/repository methods on Almacen, in a new file of the same package so the private *sql.DB stays encapsulated. RegistrarBaja uses INSERT ON CONFLICT DO NOTHING and reports via RowsAffected whether THIS call created the record (empirically exactly one winner among 50 concurrent callers). ReclamarConfirmacionDeBaja uses a guarded UPDATE WHERE confirmacion_encolada_en_ms IS NULL storing the confirmation message id (again exactly one winner). EnvioPermitido is the single authority for the whole task: no row means permitted; a row means permitted only when the candidate message id equals the stored id_mensaje_confirmacion."
+    files:
+      - sidecar/internal/identidad/baja.go
+      - sidecar/internal/identidad/baja_test.go
+  - step: 3
+    action: "Application service on the send path. Add PorteroDeSalida in the outbox package, declaring its own ControlDeBaja interface rather than importing identidad, following the existing ResolutorDeDirecciones convention. Admitir is the guarded entry point: a documented seam comment marks where the future circuit breaker goes, then it consults EnvioPermitido, then it delegates to Encolar. AdmitirConfirmacionDeBaja is the single, named exemption: it claims the confirmation atomically and only then enqueues it."
+    files:
+      - sidecar/internal/outbox/portero.go
+      - sidecar/internal/outbox/portero_test.go
+  - step: 4
+    action: "Second enforcement point for immediate effect. Give NuevaColaDeSalida a sixth nil-legal ControlDeBaja parameter and have intentarUno consult EnvioPermitido immediately before Transmitir, hard-discarding the row exactly like an expired one when refused. This is load-bearing, not decorative: a purge at registration time alone would race with a drain batch already selected into memory, whereas a check taken immediately before the send cannot be raced. Migrate the 10 existing NuevaColaDeSalida call sites in salida_test.go."
+    files:
+      - sidecar/internal/outbox/salida.go
+      - sidecar/internal/outbox/salida_test.go
+  - step: 5
+    action: "Inbound detection. Add DetectorDeBaja to the canal package holding the configured keyword set, the configured confirmation text and the normalization rule, plus a sixth nil-legal parameter on NuevoTraductor. In procesarMensaje, after identity resolution and before persisting, a matching text registers the opt-out first, then the normal persist-first flow continues unchanged, then the confirmation is claimed and enqueued. Registering before persisting is deliberate: a crash between the two loses an inbound event but never loses a consent decision. Migrate the 4 NuevoTraductor call sites, including the test named ConLosCincoColaboradores."
+    files:
+      - sidecar/internal/canal/traduccion.go
+      - sidecar/internal/canal/traduccion_test.go
+      - sidecar/internal/canal/traduccion_interno_test.go
+  - step: 6
+    action: "Per-cell configuration. Add HEXCELL_PALABRAS_DE_BAJA (comma-separated list) and HEXCELL_TEXTO_CONFIRMACION_BAJA with documented defaults and defined-but-empty rejection, mirroring how the outbound TTL and retry parameters are already handled. No keyword or confirmation text may exist as a literal outside this package."
+    files:
+      - sidecar/internal/configuracion/configuracion.go
+      - sidecar/internal/configuracion/configuracion_test.go
+  - step: 7
+    action: "Wiring and sentinel. In main.go build the PorteroDeSalida from the queue and the identity store, pass the store to NuevaColaDeSalida, and build the DetectorDeBaja from configuration, wiring it into the translator so the confirmation path is live end to end. Extend the send-path sentinel so a direct Encolar call outside the outbox package is a violation, with a new synthetic case, and update the header contract note to name task 13."
+    files:
+      - sidecar/main.go
+      - sidecar/internal/outbox/centinela_rutas_de_envio_test.go
+  - step: 8
+    action: "Documentation. Add the two new environment variables and their defaults to section 2 of the IPC protocol document, which is the declared home of the sidecar's configuration defaults. Do NOT bump document 1.3 or wire 4: the confirmation rides the existing outbound frame and adds no message type, so the versioning rule stated in that document is not triggered."
+    files:
+      - docs/protocolo-ipc-nucleo-sidecar.md
+
+risks:
+  - "Name collision between two different stores called identidad.db. The Rust crate migration crates/hexcell-storage/migraciones/identidad/0001-esquema-inicial.sql defines a STRICT table identidades_de_contacto and its own header calls the file adapter_identity.db, while the Go sidecar's sidecar/internal/identidad/identidad.go creates tables identidad and direccion at /var/lib/hexcell/identidad.db. The spec targets the SIDECAR store, so this task touches only the Go schema. Nothing in crates/ is touched, but a reviewer comparing the two schemas will see a real inconsistency that predates this task."
+  - "ColaDeSalida.Encolar has ZERO production call sites today; the only references outside its own definition are tests and the seam comment at sidecar/main.go line 97. The IPC socket server that would feed it belongs to plan task 3 and does not exist. Consequence: this task makes the opt-out confirmation the FIRST real production producer of the outbound queue, which is genuine engine rather than scaffolding, but PorteroDeSalida.Admitir itself will still have no core-side caller until the socket server lands. That is a deliberate, spec-mandated seam and not dead wiring; its liveness is enforced structurally by the extended sentinel, which makes any future direct Encolar call a test failure."
+  - "The exactly-once guarantee is anchored at ENQUEUE, not at physical delivery. Two atomic database claims (INSERT ON CONFLICT DO NOTHING and a guarded UPDATE) each yield exactly one winner, empirically verified with 50 concurrent callers against modernc.org/sqlite. The queue's own bounded retries remain at-least-once at the transport level, unchanged by this task; a retry after a lost transport acknowledgement could still duplicate a physical delivery. Closing that is outside this task's scope and is not claimed."
+  - "Pre-existing consumer migration the implementer must complete, and which comparable tasks have missed: NuevaColaDeSalida has 10 call sites in sidecar/internal/outbox/salida_test.go and NuevoTraductor has 4 call sites across main.go, traduccion_test.go and traduccion_interno_test.go, one of which is a test literally named TestNuevoTraductor_ConstruyeConLosCincoColaboradores and must be renamed for the sixth collaborator. The Go compiler makes a missed call site a build failure rather than a silent defect."
+  - "HEX-017 explicitly forbade touching sidecar/internal/canal/traduccion.go. This task must touch it: procesarMensaje is the only place in the sidecar where inbound message text and the resolved internal identity exist together, and detection cannot be done anywhere else without duplicating identity resolution and deduplication. The earlier prohibition scoped HEX-017 to the outbound direction; HEX-018 owns the inbound detection, so this is a justified reversal rather than a contract violation."
+  - "Immediate effect for already-queued messages is implemented as a permission check at drain time that hard-discards the refused row, NOT as a purge at registration time. A purge alone is insufficient: intentarPendientes selects pending rows into an in-memory slice and then transmits them, so an opt-out landing after the select would still be followed by a delivery. The drain-time check is taken immediately before Transmitir and therefore cannot be raced; discarding the row at that moment also removes the need for a separate purge path."
+  - "identidad.Almacen calls db.SetMaxOpenConns(1), so concurrency inside one process is serialized by the connection pool before it ever reaches SQLite. The concurrency tests therefore prove the claim logic is correct rather than proving contention behaviour, and two sidecar processes sharing one cell's identidad.db is not a supported topology."
+  - "Exact matching after normalization refuses variants outside the normalization rule: an accented or misspelled form, or the keyword embedded in a sentence, does not opt the contact out. This is the deliberate trade: substring matching would opt out anyone writing the word inside ordinary conversation, and both directions of error are consent failures. Mitigated by shipping a keyword SET rather than a single word, and the defaults are subject to human ratification before implementation."
+  - "Cell scoping is structural rather than a column: there is one identidad.db per cell, exactly as the existing identidad and direccion tables already assume, so baja_de_contacto is keyed by internal identity id alone. A reviewer expecting a literal id_celula column will not find one."
+  - "Adding two environment variables forces a touch of docs/protocolo-ipc-nucleo-sidecar.md, because the configuracion package comment declares section 2 of that document as the home of its defaults. This must NOT be read as a protocol change: document version 1.3 and wire version 4 stay put, since that document's own rule bumps the version only when the closed set of message types grows, and the confirmation reuses the existing mensaje_saliente frame."
+  - "The A-2 backup contract is file-level and therefore safe: crates/hexcell-storage/src/respaldo.rs copies each base whole with VACUUM INTO and verifies PRAGMA user_version, enumerating no table names anywhere in docs or code. Adding a table leaves no stale enumeration to update. The residual risk is the one adr-0010 already records, that restoring a stale backup could revive an opted-out contact; this task does not change that and does not claim to."
+  - "Discard-log entry D-15 already forbids storing the opt-out list in the whatsmeow sqlstore, for exactly the re-pairing reason the spec states. This design complies; any implementation drift toward the sqlstore would reopen a settled decision and must be rejected in review."

@@ -1,0 +1,144 @@
+{
+  "attempts": [
+    {
+      "duration_s": 556.569494735,
+      "model": "google/gemini-3.6-flash-high",
+      "notes": "La implementación de la tarea **HEX-018** (Plan A-3 Tarea 13: *Persistent Opt-out / STOP exclusion list*) ha concluido satisfactoriamente respetando estrictamente los límites arquitectónicos, las invariantes de dominio y los contratos definidos.  ---  ### Resumen de la Implementación  1. **Almacén y Persistencia de Identidad (`sidecar/internal/identidad`)**:    - Se añadió la tabla `baja_de_contacto` al esquema en [`identidad.go`](file:///home/gary/dev/hexcell/worktrees/HEX-018/sidecar/internal/identidad/identidad.go) con clave primaria `id_interno` en cascada sobre `identidad`.    - Se implementó [`baja.go`](file:///home/gary/dev/hexcell/worktrees/HEX-018/sidecar/internal/identidad/baja.go) con:      - `RegistrarBaja`: idempotente mediante `INSERT ... ON CONFLICT DO NOTHING`, registrando el evento estructurado `identidad.baja_registrada`.      - `EnvioPermitido`: autoridad única que valida si un contacto tiene permitidos los envíos ordinarios o si el mensaje coincide con la confirmación de baja exenta.      - `ReclamarConfirmacionDeBaja`: actualización atómica y condicional (`UPDATE ... WHERE confirmacion_encolada_en_ms IS NULL`) garantizando una sola confirmación ganadora frente a concurrencia.    - Pruebas exhaustivas en [`baja_test.go`](file:///home/gary/dev/hexcell/worktrees/HEX-018/sidecar/internal/identidad/baja_test.go), incluyendo concurrencia de 50 goroutines, actualización de esquemas legados y resiliencia tras reconstrucción de `sqlstore`.  2. **Portero de Salida y Centinela de Rutas (`sidecar/internal/outbox`)**:    - Se creó [`portero.go`](file:///home/gary/dev/hexcell/worktrees/HEX-018/sidecar/internal/outbox/portero.go) implementando `PorteroDeSalida`, que consulta `EnvioPermitido` antes de admitir cualquier encolado ordinario (dejando preparada la costura para el futuro *circuit breaker*), e implementa `AdmitirConfirmacionDeBaja` con reclamo atómico previo.    - En [`salida.go`](file:///home/gary/dev/hexcell/worktrees/HEX-018/sidec...",
+      "phase": "execute",
+      "result": "passed"
+    }
+  ],
+  "context_overflows": [],
+  "events": [
+    {
+      "declared_risk": "medium",
+      "divergence": false,
+      "event": "risk_level_calculated",
+      "level": "medium",
+      "reasons": [
+        "file_count_high: 15"
+      ],
+      "signals": {
+        "files_count": 15,
+        "sensitive_matches": [],
+        "symbols_count": 0
+      }
+    },
+    {
+      "event": "human_ruling",
+      "ruling": "Conjunto ratificado: {BAJA, STOP}. Coincidencia exacta tras normalizacion (trim, case-fold, puntuacion circundante), nunca subcadena. Configurable por celula. CANCELAR y NO descartados; sin plegado de acentos.",
+      "topic": "keywords_baja",
+      "ts": "2026-08-11"
+    },
+    {
+      "event": "human_ruling",
+      "ruling": "Texto ratificado: 'Baja confirmada. No volveras a recibir mensajes de este numero.' Configurable por celula. Sin promesa de re-alta (flujo inexistente, AC-5).",
+      "topic": "texto_confirmacion",
+      "ts": "2026-08-11"
+    },
+    {
+      "blocked": "",
+      "candidate": {
+        "agent": "agy_edit",
+        "level": 2,
+        "model": "google/gemini-3.6-flash-high"
+      },
+      "dispatch_id": "",
+      "inputs_snapshot": {
+        "complexity_band": "L",
+        "control": {
+          "disabled": null,
+          "updated_at": ""
+        },
+        "exclusions": null,
+        "hashes": {
+          "agents_yaml": "da88cec7aff86186e0974bcf69523dd0fe7ef19266c444f6da8c16709a19a090",
+          "config_yaml": "a40d2c4258971a64d6fd920ec1fe5ed2a116f96aa6fe04374a437006ea740342",
+          "routing_yaml": "b65f9f326b45de9a8ba351e0674e80f8b69ee2d69b415eab6f37d82d0a68637c"
+        },
+        "incumbent_family": "",
+        "level": 2,
+        "phase": "",
+        "risk": "",
+        "router_version": "fleet-route/v1"
+      },
+      "reasons": null,
+      "reroute_budget": 1,
+      "review_family_degraded": false,
+      "ts": "2026-08-11T20:55:07Z",
+      "type": "routing_decision"
+    },
+    {
+      "blocked": "",
+      "candidate": {
+        "agent": "agy_edit",
+        "level": 2,
+        "model": "google/gemini-3.6-flash-high"
+      },
+      "dispatch_id": "",
+      "inputs_snapshot": {
+        "complexity_band": "L",
+        "control": {
+          "disabled": null,
+          "updated_at": ""
+        },
+        "exclusions": null,
+        "hashes": {
+          "agents_yaml": "da88cec7aff86186e0974bcf69523dd0fe7ef19266c444f6da8c16709a19a090",
+          "config_yaml": "a40d2c4258971a64d6fd920ec1fe5ed2a116f96aa6fe04374a437006ea740342",
+          "routing_yaml": "b65f9f326b45de9a8ba351e0674e80f8b69ee2d69b415eab6f37d82d0a68637c"
+        },
+        "incumbent_family": "",
+        "level": 2,
+        "phase": "implement",
+        "risk": "medium",
+        "router_version": "fleet-route/v1"
+      },
+      "reasons": null,
+      "reroute_budget": 1,
+      "review_family_degraded": false,
+      "ts": "2026-08-11T20:55:13Z",
+      "type": "routing_decision"
+    },
+    {
+      "bundle_hash": "602690b77753ef2e1841d692624ab59fe73a83025c709a7e21836b0f39493e09",
+      "dispatch_id": "hex018-d1-602690b77753",
+      "ts": "2026-08-11T20:57:18Z",
+      "type": "dispatch_started"
+    },
+    {
+      "applied": true,
+      "cause": null,
+      "diff_stat": {
+        "deletions": 49,
+        "empty": false,
+        "files_changed": 15,
+        "indeterminate": false,
+        "insertions": 1152
+      },
+      "dispatch_id": "hex018-d1-602690b77753",
+      "forensic_ref": "refs/fleet/HEX-018/attempt-1-google-gemini-3.6-flash-high",
+      "noop": false,
+      "outcome_class": "attempt",
+      "ts": "2026-08-11T21:06:35Z",
+      "type": "dispatch_finished",
+      "usage_source": "none"
+    },
+    {
+      "event": "contract_amendment",
+      "ts": "2026-08-11",
+      "detail": "limits.max_diff_lines 1250->1350 y per_class traduccion.go 110->125. Motivo: ronda de arreglos mandada por la revision profunda (2 majors: texto de confirmacion ratificado; reloj de encolado de la confirmacion via costura ahoraMs. 4 minors: gofmt portero.go, clausula de autoproteccion del centinela, sqlstore real en test AC-5, doc comments) + test anti-regresion nuevo (~75 lineas). El presupuesto original dimensionaba solo la entrega del delegado."
+    },
+    {
+      "event": "accept_gates",
+      "ts": "2026-08-11",
+      "detail": "ready_for_merge=true; 5/5 compuertas pass (validation, review approve/low, trace completo, enmienda comentada, coherencia); 0 blockers. Celula externa agy/gemini-3.6-flash-medium."
+    }
+  ],
+  "execution_mode": "worktree_edit",
+  "started_at": "2026-08-10T02:59:32Z",
+  "summary": "Opt-out (STOP) list in the sidecar identity store, detected inbound, enforced ahead of Encolar and again at drain, with exactly one confirmation.",
+  "task_id": "HEX-018",
+  "total_cost_usd": 0,
+  "violations": []
+}
