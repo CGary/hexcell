@@ -310,3 +310,60 @@ func TestCargarRechazaParametrosDeSalidaInvalido(t *testing.T) {
 		t.Errorf("error = %v, se esperaba ErrParametroSalidaInvalido", err)
 	}
 }
+
+func TestCargarAplicaValoresPorOmisionDeBaja(t *testing.T) {
+	t.Parallel()
+
+	cfg, err := configuracion.Cargar(entornoFalso(map[string]string{}))
+	if err != nil {
+		t.Fatalf("no se esperaba error: %v", err)
+	}
+	if len(cfg.PalabrasDeBaja) != 2 || cfg.PalabrasDeBaja[0] != "baja" || cfg.PalabrasDeBaja[1] != "stop" {
+		t.Errorf("PalabrasDeBaja = %v, se esperaba [baja, stop]", cfg.PalabrasDeBaja)
+	}
+	if cfg.TextoConfirmacionDeBaja != configuracion.TextoConfirmacionDeBajaPorOmision {
+		t.Errorf("TextoConfirmacionDeBaja = %q, se esperaba %q", cfg.TextoConfirmacionDeBaja, configuracion.TextoConfirmacionDeBajaPorOmision)
+	}
+}
+
+func TestCargarLeeParametrosDeBajaDelEntorno(t *testing.T) {
+	t.Parallel()
+
+	cfg, err := configuracion.Cargar(entornoFalso(map[string]string{
+		configuracion.VariablePalabrasDeBaja:          "stop, cancel, salir",
+		configuracion.VariableTextoConfirmacionDeBaja: "Confirmación personalizada",
+	}))
+	if err != nil {
+		t.Fatalf("no se esperaba error: %v", err)
+	}
+	if len(cfg.PalabrasDeBaja) != 3 || cfg.PalabrasDeBaja[0] != "stop" || cfg.PalabrasDeBaja[1] != "cancel" || cfg.PalabrasDeBaja[2] != "salir" {
+		t.Errorf("PalabrasDeBaja = %v", cfg.PalabrasDeBaja)
+	}
+	if cfg.TextoConfirmacionDeBaja != "Confirmación personalizada" {
+		t.Errorf("TextoConfirmacionDeBaja = %q", cfg.TextoConfirmacionDeBaja)
+	}
+}
+
+func TestCargarRechazaParametrosDeBajaInvalidos(t *testing.T) {
+	t.Parallel()
+
+	casos := []struct {
+		nombre  string
+		entorno map[string]string
+	}{
+		{"palabras_vacia", map[string]string{configuracion.VariablePalabrasDeBaja: ""}},
+		{"palabras_solo_espacios", map[string]string{configuracion.VariablePalabrasDeBaja: "   "}},
+		{"palabras_solo_comas", map[string]string{configuracion.VariablePalabrasDeBaja: " , , "}},
+		{"texto_vacio", map[string]string{configuracion.VariableTextoConfirmacionDeBaja: ""}},
+		{"texto_solo_espacios", map[string]string{configuracion.VariableTextoConfirmacionDeBaja: "   "}},
+	}
+
+	for _, c := range casos {
+		t.Run(c.nombre, func(t *testing.T) {
+			_, err := configuracion.Cargar(entornoFalso(c.entorno))
+			if !errors.Is(err, configuracion.ErrParametroDeBajaInvalido) {
+				t.Errorf("caso %s: se esperaba ErrParametroDeBajaInvalido, se obtuvo %v", c.nombre, err)
+			}
+		})
+	}
+}

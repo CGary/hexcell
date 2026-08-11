@@ -38,13 +38,13 @@ type ColaDeSalida struct {
 	intentosMaximos int64
 	registro        *registro.Registro
 	transmisor      Transmisor
+	control         ControlDeBaja
 }
 
 // NuevaColaDeSalida construye la cola sobre una conexión ya abierta (la misma del outbox
-// existente) con el TTL, el límite de reintentos y el transmisor inyectados. transmisor puede
-// ser nil en pruebas que solo ejercitan expiración: Drenar simplemente omite el intento de
-// transmisión cuando no hay ninguno configurado.
-func NuevaColaDeSalida(db *sql.DB, ttlMs, intentosMaximos int64, reg *registro.Registro, transmisor Transmisor) *ColaDeSalida {
+// existente) con el TTL, el límite de reintentos, el transmisor y el control de baja inyectados.
+// transmisor y control pueden ser nil en pruebas que no los ejercitan.
+func NuevaColaDeSalida(db *sql.DB, ttlMs, intentosMaximos int64, reg *registro.Registro, transmisor Transmisor, control ControlDeBaja) *ColaDeSalida {
 	if ttlMs <= 0 {
 		ttlMs = TtlPorOmision
 	}
@@ -57,6 +57,7 @@ func NuevaColaDeSalida(db *sql.DB, ttlMs, intentosMaximos int64, reg *registro.R
 		intentosMaximos: intentosMaximos,
 		registro:        reg,
 		transmisor:      transmisor,
+		control:         control,
 	}
 }
 
@@ -175,8 +176,35 @@ func (c *ColaDeSalida) intentarPendientes(ctx context.Context, limiteMs, ahoraMs
 
 // intentarUno intenta transmitir una única fila pendiente. Un éxito delega en MarcarEnviado,
 // que ya es idempotente frente a una llamada repetida; un fallo cuenta como un intento más y
-// puede agotar la fila.
+// puede agotar la fila. Si el contacto fue dado de baja, se descarta con dureza inmediatamente.
 func (c *ColaDeSalida) intentarUno(ctx context.Context, p pendienteSalida, ahoraMs int64) {
+	if c.control != nil {
+		permitido, err := c.control.EnvioPermitido(ctx, p.idConversacion, p.idMensaje)
+		if err != nil {
+			if c.registro != nil {
+				c.registro.Error("outbox.error_consultar_baja", registro.Campos{IdEvento: p.idMensaje, Detalle: err.Error()})
+			}
+			return
+		}
+		if !permitido {
+			query := `DELETE FROM cola_salida WHERE id_mensaje = ? AND enviado_en_ms IS NULL`
+			res, err := c.db.ExecContext(ctx, query, p.idMensaje)
+			if err != nil {
+				if c.registro != nil {
+					c.registro.Error("outbox.error_descartar_baja", registro.Campos{IdEvento: p.idMensaje, Detalle: err.Error()})
+				}
+				return
+			}
+			if filas, _ := res.RowsAffected(); filas > 0 {
+				ContadorDescartadasPorBaja.Add(filas)
+				if c.registro != nil {
+					c.registro.Aviso(EventoSalidaDescartadaPorBaja, registro.Campos{IdEvento: p.idMensaje})
+				}
+			}
+			return
+		}
+	}
+
 	idCorrelacion, err := c.transmisor.Transmitir(ctx, p.idConversacion, p.contenido)
 	if err != nil {
 		c.registrarFallo(ctx, p)

@@ -74,7 +74,7 @@ func (t *transmisorFalso) contador() int {
 func TestEncolarEsIdempotente(t *testing.T) {
 	t.Parallel()
 	db, _ := abrirDbPruebaSalida(t)
-	cola := outbox.NuevaColaDeSalida(db, 1000, 3, nil, nil)
+	cola := outbox.NuevaColaDeSalida(db, 1000, 3, nil, nil, nil)
 	ctx := context.Background()
 
 	err := cola.Encolar(ctx, "msg-1", "conv-1", "hola", 100)
@@ -98,7 +98,7 @@ func TestEncolarEsIdempotente(t *testing.T) {
 func TestDrenarExpiradosBasadoEnOrigen(t *testing.T) {
 	t.Parallel()
 	db, dsn := abrirDbPruebaSalida(t)
-	cola := outbox.NuevaColaDeSalida(db, 1000, 3, nil, nil)
+	cola := outbox.NuevaColaDeSalida(db, 1000, 3, nil, nil, nil)
 	ctx := context.Background()
 
 	// origen = 100, TTL = 1000. Expira si ahoraMs - 100 > 1000 => ahoraMs > 1100
@@ -131,7 +131,7 @@ func TestDrenarExpiradosBasadoEnOrigen(t *testing.T) {
 		t.Fatalf("error reabriendo bd: %v", err)
 	}
 	defer db2.Close()
-	cola2 := outbox.NuevaColaDeSalida(db2, 1000, 3, nil, nil)
+	cola2 := outbox.NuevaColaDeSalida(db2, 1000, 3, nil, nil, nil)
 
 	cola2.Encolar(ctx, "msg-2", "conv-1", "hola", 200)
 	cola2.Drenar(ctx, 1201)
@@ -146,7 +146,7 @@ func TestDescartarExpiradosRegistraUnaLineaPorMensaje(t *testing.T) {
 	db, _ := abrirDbPruebaSalida(t)
 	var buf bytes.Buffer
 	reg := registro.Nuevo(&buf, slog.LevelInfo, "celula-test")
-	cola := outbox.NuevaColaDeSalida(db, 1000, 3, reg, nil)
+	cola := outbox.NuevaColaDeSalida(db, 1000, 3, reg, nil, nil)
 	ctx := context.Background()
 
 	cola.Encolar(ctx, "msg-1", "conv-1", "hola", 100)
@@ -179,7 +179,7 @@ func TestDescartarExpiradosRegistraUnaLineaPorMensaje(t *testing.T) {
 func TestMarcarEnviadoEsIdempotente(t *testing.T) {
 	t.Parallel()
 	db, _ := abrirDbPruebaSalida(t)
-	cola := outbox.NuevaColaDeSalida(db, 1000, 3, nil, nil)
+	cola := outbox.NuevaColaDeSalida(db, 1000, 3, nil, nil, nil)
 	ctx := context.Background()
 
 	cola.Encolar(ctx, "msg-1", "conv-1", "hola", 100)
@@ -204,7 +204,7 @@ func TestDrenarTransmiteYMarcaEnviado(t *testing.T) {
 	t.Parallel()
 	db, _ := abrirDbPruebaSalida(t)
 	falso := &transmisorFalso{idCorrelacion: "corr-exito"}
-	cola := outbox.NuevaColaDeSalida(db, 1000, 3, nil, falso)
+	cola := outbox.NuevaColaDeSalida(db, 1000, 3, nil, falso, nil)
 	ctx := context.Background()
 
 	cola.Encolar(ctx, "msg-1", "conv-1", "hola", 100)
@@ -243,7 +243,7 @@ func TestDrenarReintentaHastaElLimiteYAbandonaSinColaDeReenvio(t *testing.T) {
 	falso := &transmisorFalso{fallar: true}
 	// TTL deliberadamente amplio: lo que termina esta fila es el agotamiento de intentos, no la
 	// expiración, y las dos rutas de descarte duro no deben confundirse en la prueba.
-	cola := outbox.NuevaColaDeSalida(db, 1_000_000, 2, nil, falso)
+	cola := outbox.NuevaColaDeSalida(db, 1_000_000, 2, nil, falso, nil)
 	ctx := context.Background()
 
 	cola.Encolar(ctx, "msg-1", "conv-1", "hola", 100)
@@ -286,7 +286,7 @@ func TestDrenarNuncaTransmiteUnMensajeYaExpirado(t *testing.T) {
 	t.Parallel()
 	db, _ := abrirDbPruebaSalida(t)
 	falso := &transmisorFalso{idCorrelacion: "no-deberia-usarse"}
-	cola := outbox.NuevaColaDeSalida(db, 1000, 3, nil, falso)
+	cola := outbox.NuevaColaDeSalida(db, 1000, 3, nil, falso, nil)
 	ctx := context.Background()
 
 	// origen=100, TTL=1000: a partir de ahoraMs=1101 el mensaje ya expiró (1101-100=1001>1000).
@@ -394,5 +394,85 @@ func TestTransmisorWhatsmeowPropagaErrorDeEnvio(t *testing.T) {
 	_, err := transmisor.Transmitir(context.Background(), "conv-1", "hola")
 	if err == nil {
 		t.Fatal("se esperaba que el error de SendMessage se propagara")
+	}
+}
+
+func TestDrenarDescartaMensajeEncoladoPrevioALaBaja(t *testing.T) {
+	t.Parallel()
+	db, _ := abrirDbPruebaSalida(t)
+	falso := &transmisorFalso{idCorrelacion: "no-debe-enviarse"}
+	control := &controlDeBajaEspia{permitido: false}
+	var buf bytes.Buffer
+	reg := registro.Nuevo(&buf, slog.LevelInfo, "celula-test")
+	cola := outbox.NuevaColaDeSalida(db, 1000, 3, reg, falso, control)
+	ctx := context.Background()
+
+	cola.Encolar(ctx, "msg-previo-1", "conv-1", "hola previo", 100)
+
+	descartadasPrevias := outbox.ContadorDescartadasPorBaja.Load()
+	if err := cola.Drenar(ctx, 200); err != nil {
+		t.Fatalf("error al drenar: %v", err)
+	}
+
+	if falso.contador() != 0 {
+		t.Fatalf("un mensaje para contacto dado de baja nunca debe transmitirse, llamadas=%d", falso.contador())
+	}
+
+	var cuenta int
+	db.QueryRow("SELECT COUNT(*) FROM cola_salida WHERE id_mensaje='msg-previo-1'").Scan(&cuenta)
+	if cuenta != 0 {
+		t.Fatalf("el mensaje descartado por baja debía eliminarse con dureza, cuenta=%d", cuenta)
+	}
+
+	if outbox.ContadorDescartadasPorBaja.Load() <= descartadasPrevias {
+		t.Errorf("no se incrementó ContadorDescartadasPorBaja")
+	}
+
+	if !strings.Contains(buf.String(), outbox.EventoSalidaDescartadaPorBaja) {
+		t.Errorf("no se registró EventoSalidaDescartadaPorBaja: %s", buf.String())
+	}
+}
+
+type controlDeBajaConExencion struct {
+	idConfirmacionPermitida string
+}
+
+func (c *controlDeBajaConExencion) EnvioPermitido(_ context.Context, _, idMensaje string) (bool, error) {
+	return idMensaje == c.idConfirmacionPermitida, nil
+}
+
+func (c *controlDeBajaConExencion) ReclamarConfirmacionDeBaja(_ context.Context, _, _ string, _ int64) (bool, error) {
+	return false, nil
+}
+
+func TestDrenarTransmiteConfirmacionDeBajaAContactoDadoDeBaja(t *testing.T) {
+	t.Parallel()
+	db, _ := abrirDbPruebaSalida(t)
+	falso := &transmisorFalso{idCorrelacion: "corr-conf"}
+	control := &controlDeBajaConExencion{idConfirmacionPermitida: "msg-conf-1"}
+	cola := outbox.NuevaColaDeSalida(db, 1000, 3, nil, falso, control)
+	ctx := context.Background()
+
+	cola.Encolar(ctx, "msg-ordinario", "conv-1", "hola ordinario", 100)
+	cola.Encolar(ctx, "msg-conf-1", "conv-1", "confirmacion", 100)
+
+	if err := cola.Drenar(ctx, 200); err != nil {
+		t.Fatalf("error al drenar: %v", err)
+	}
+
+	if falso.contador() != 1 {
+		t.Fatalf("se esperaba exactamente 1 transmisión (la confirmación), hubo %d", falso.contador())
+	}
+
+	var enviadoEn sql.NullInt64
+	db.QueryRow("SELECT enviado_en_ms FROM cola_salida WHERE id_mensaje='msg-conf-1'").Scan(&enviadoEn)
+	if !enviadoEn.Valid {
+		t.Fatal("la confirmación debía quedar marcada como enviada")
+	}
+
+	var cuentaOrdinario int
+	db.QueryRow("SELECT COUNT(*) FROM cola_salida WHERE id_mensaje='msg-ordinario'").Scan(&cuentaOrdinario)
+	if cuentaOrdinario != 0 {
+		t.Fatalf("el mensaje ordinario no permitido debía eliminarse")
 	}
 }

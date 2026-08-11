@@ -3,6 +3,8 @@ package canal
 import (
 	"context"
 	"strings"
+	"time"
+	"unicode"
 
 	"go.mau.fi/whatsmeow/proto/waE2E"
 	"go.mau.fi/whatsmeow/types"
@@ -29,21 +31,90 @@ type ResolutorDeAlias interface {
 	AliasDe(ctx context.Context, jid types.JID) (types.JID, error)
 }
 
+// ControlDeBaja registra la baja de un contacto de forma idempotente.
+// Satisfecho por *identidad.Almacen; desacoplado para testear el detector con un espía.
+type ControlDeBaja interface {
+	RegistrarBaja(ctx context.Context, idInterno string, dadaDeBajaEnMs int64) (bool, error)
+}
+
+// AdmisorDeConfirmacion encola la confirmación única de baja tras ganar su reclamo atómico.
+// Satisfecho por *outbox.PorteroDeSalida; desacoplado para testear el detector con un espía.
+type AdmisorDeConfirmacion interface {
+	AdmitirConfirmacionDeBaja(ctx context.Context, idMensaje, idConversacion, contenido string, marcaTemporalOrigenMs int64) (bool, error)
+}
+
 // Nombres fijos de suceso
 const (
 	EventoMensajeTraducido  = "canal.mensaje_traducido"
 	EventoMensajeDescartado = "canal.mensaje_descartado"
+	EventoBajaDetectada     = "canal.baja_detectada"
 )
+
+// normalizarParaBaja recorta espacios, pasa a minúsculas y elimina signos de puntuación circundantes.
+func normalizarParaBaja(texto string) string {
+	return strings.TrimFunc(strings.ToLower(strings.TrimSpace(texto)), func(r rune) bool {
+		return unicode.IsPunct(r) || unicode.IsSpace(r)
+	})
+}
+
+// DetectorDeBaja detecta palabras clave de baja en mensajes entrantes y procesa su confirmación.
+type DetectorDeBaja struct {
+	palabras          map[string]struct{}
+	textoConfirmacion string
+	control           ControlDeBaja
+	admisor           AdmisorDeConfirmacion
+}
+
+// NuevoDetectorDeBaja inicializa el detector con las palabras clave normalizadas y el texto configurado.
+func NuevoDetectorDeBaja(palabras []string, textoConfirmacion string, control ControlDeBaja, admisor AdmisorDeConfirmacion) *DetectorDeBaja {
+	mapa := make(map[string]struct{}, len(palabras))
+	for _, p := range palabras {
+		if norm := normalizarParaBaja(p); norm != "" {
+			mapa[norm] = struct{}{}
+		}
+	}
+	return &DetectorDeBaja{palabras: mapa, textoConfirmacion: textoConfirmacion, control: control, admisor: admisor}
+}
+
+// Coincide verifica si el texto coincide exactamente con alguna palabra clave de baja tras normalización.
+func (d *DetectorDeBaja) Coincide(texto string) bool {
+	if d == nil || len(d.palabras) == 0 {
+		return false
+	}
+	_, ok := d.palabras[normalizarParaBaja(texto)]
+	return ok
+}
+
+// RegistrarBaja delega el registro de la baja en el control inyectado.
+func (d *DetectorDeBaja) RegistrarBaja(ctx context.Context, idInterno string, dadaDeBajaEnMs int64) (bool, error) {
+	if d == nil || d.control == nil {
+		return false, nil
+	}
+	return d.control.RegistrarBaja(ctx, idInterno, dadaDeBajaEnMs)
+}
+
+// ProcesarConfirmacion delega la admisión de la confirmación en el admisor inyectado.
+func (d *DetectorDeBaja) ProcesarConfirmacion(ctx context.Context, idInterno string, marcaTemporalMs int64) (bool, error) {
+	if d == nil || d.admisor == nil {
+		return false, nil
+	}
+	return d.admisor.AdmitirConfirmacionDeBaja(ctx, "conf-"+idInterno, idInterno, d.textoConfirmacion, marcaTemporalMs)
+}
 
 // Traductor convierte eventos entrantes de whatsmeow en EventoEntrante de IPC
 // asegurando persist-first y deduplicación.
 type Traductor struct {
-	almacen   *identidad.Almacen
-	buzon     BuzonDurable
-	sumidero  SumideroDeEvento
-	resolutor ResolutorDeAlias
-	registro  *registro.Registro
-	ahoraMs   func() int64 // no se usa para la marca de tiempo de los mensajes; costura para tests
+	almacen      *identidad.Almacen
+	buzon        BuzonDurable
+	sumidero     SumideroDeEvento
+	resolutor    ResolutorDeAlias
+	registro     *registro.Registro
+	detectorBaja *DetectorDeBaja
+	// ahoraMs es el reloj del traductor, inyectable en tests. Los mensajes conservan su marca
+	// de origen, pero la CONFIRMACIÓN de baja se encola con este reloj: si usara la marca del
+	// mensaje entrante, un STOP entregado del backlog offline tras una caída mayor que el TTL
+	// de salida nacería ya expirado y, con el reclamo único gastado, jamás se reencolaría.
+	ahoraMs func() int64
 }
 
 // NuevoTraductor construye un Traductor con las dependencias inyectadas.
@@ -53,13 +124,16 @@ func NuevoTraductor(
 	sumidero SumideroDeEvento,
 	resolutor ResolutorDeAlias,
 	reg *registro.Registro,
+	baja *DetectorDeBaja,
 ) *Traductor {
 	return &Traductor{
-		almacen:   almacen,
-		buzon:     buzon,
-		sumidero:  sumidero,
-		resolutor: resolutor,
-		registro:  reg,
+		almacen:      almacen,
+		buzon:        buzon,
+		sumidero:     sumidero,
+		resolutor:    resolutor,
+		registro:     reg,
+		detectorBaja: baja,
+		ahoraMs:      func() int64 { return time.Now().UnixMilli() },
 	}
 }
 
@@ -156,6 +230,16 @@ func (t *Traductor) procesarMensaje(ctx context.Context, evt *events.Message) {
 		return
 	}
 
+	esBaja := t.detectorBaja != nil && t.detectorBaja.Coincide(texto)
+	if esBaja {
+		if t.registro != nil {
+			t.registro.Info(EventoBajaDetectada, registro.Campos{IdEvento: ident.IdInterno})
+		}
+		if _, err := t.detectorBaja.RegistrarBaja(ctx, ident.IdInterno, evt.Info.Timestamp.UnixMilli()); err != nil && t.registro != nil {
+			t.registro.Error("canal.error_registro_baja", registro.Campos{Detalle: err.Error()})
+		}
+	}
+
 	idDeduplicacion := construirIdDeduplicacion(ident.IdInterno, evt.Info.ID)
 
 	evento := ipc.EventoEntrante{
@@ -196,6 +280,15 @@ func (t *Traductor) procesarMensaje(ctx context.Context, evt *events.Message) {
 		t.registro.Info(EventoMensajeTraducido, registro.Campos{
 			IdEvento: idDeduplicacion,
 		})
+	}
+
+	if esBaja {
+		// La confirmación se encola con el reloj actual, NUNCA con la marca del mensaje
+		// entrante: un STOP del backlog offline más viejo que el TTL de salida produciría
+		// una fila ya expirada e irrecuperable (el reclamo único ya estaría gastado).
+		if _, err := t.detectorBaja.ProcesarConfirmacion(ctx, ident.IdInterno, t.ahoraMs()); err != nil && t.registro != nil {
+			t.registro.Error("canal.error_confirmacion_baja", registro.Campos{Detalle: err.Error()})
+		}
 	}
 }
 

@@ -112,6 +112,9 @@ compartido de la célula. No es TCP sobre `localhost`, ni HTTP, ni una tubería 
   configuración; el protocolo no la descubre solo.
 * **Permisos:** el archivo del socket se crea con modo `0600` y pertenece al usuario que comparten
   los dos contenedores de la célula. Ningún otro proceso del servidor puede abrirlo.
+* **Palabras de baja (opt-out):** `baja,stop` por omisión, configurable por célula con la
+  variable de entorno `HEXCELL_PALABRAS_DE_BAJA` (lista separada por comas).
+* **Texto de confirmación de baja:** `"Baja confirmada. No volverás a recibir mensajes de este número."` por omisión, configurable por célula con la variable de entorno `HEXCELL_TEXTO_CONFIRMACION_BAJA`.
 
 ### Papeles: el sidecar escucha, el núcleo conecta
 
