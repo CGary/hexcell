@@ -42,5 +42,12 @@
       "type": "decomposition_closed",
       "detail": "All three children (HEX-019-a compuerta de salida, HEX-019-b cortacircuitos, HEX-019-c presentacion/turno/centinela) merged to main (25adab7, b4013c9, 09b39ba). RESIDUAL CHAIN DECLARED EMPTY by HEX-019-c's final deep review (PAT-2026-08-11-000000027): A's residual closed by B, B's residual closed by C, C introduced none. The seven adr-0015 Layer-1 measures are complete; docs/STATUS.md entry 'Pol\u00edtica anti-ban no desactivable por configuraci\u00f3n' closed 2026-08-12. Known documented reading: one-message-per-turn binds sidecar-authored messages only (blueprint reading of AC-3); strict reading remains available as a future task."
     }
-  ]
+  ],
+  "summary": "Parent umbrella of the A-3 task-14 decomposition (discipline of channel behavior); split into HEX-019-a/b/c, all merged, residual chain empty.",
+  "execution_mode": "worktree_edit",
+  "started_at": "2026-08-11T00:00:00Z",
+  "total_cost_usd": 0,
+  "violations": [],
+  "attempts": [],
+  "context_overflows": []
 }
