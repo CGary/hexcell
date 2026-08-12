@@ -76,6 +76,15 @@ const (
 	// VariableRampaSemanas fija la cantidad de semanas durante las cuales la rampa incrementa el cupo diario.
 	// [precautorio]
 	VariableRampaSemanas = "HEXCELL_RAMPA_SEMANAS"
+	// VariableCortacircuitosUmbralRepeticion fija el número de repeticiones consecutivas que disparan el cortacircuitos.
+	// [causa documentada]
+	VariableCortacircuitosUmbralRepeticion = "HEXCELL_CORTACIRCUITOS_UMBRAL_REPETICION"
+	// VariableCortacircuitosPalabrasFrustracion fija la lista de palabras clave (separadas por coma) que disparan el cortacircuitos.
+	// [causa documentada]
+	VariableCortacircuitosPalabrasFrustracion = "HEXCELL_CORTACIRCUITOS_PALABRAS_FRUSTRACION"
+	// VariableCortacircuitosTextoTraspaso fija el texto del único mensaje emitido al dispararse el cortacircuitos.
+	// [causa documentada]
+	VariableCortacircuitosTextoTraspaso = "HEXCELL_CORTACIRCUITOS_TEXTO_TRASPASO"
 )
 
 // Valores por omisión, documentados en docs/protocolo-ipc-nucleo-sidecar.md, sección 2.
@@ -173,6 +182,23 @@ const (
 	RampaSemanasPorOmision int64 = 4
 	// RampaSemanasMaximo es el techo de semanas de rampa (52 semanas).
 	RampaSemanasMaximo int64 = 52
+
+	// CortacircuitosUmbralRepeticionPorOmision es el umbral por omisión de repeticiones (3).
+	// [causa documentada]
+	// PENDIENTE DE CALIBRACIÓN.
+	CortacircuitosUmbralRepeticionPorOmision int64 = 3
+	// CortacircuitosUmbralRepeticionMaximo es el techo del umbral de repeticiones (100).
+	CortacircuitosUmbralRepeticionMaximo int64 = 100
+
+	// CortacircuitosPalabrasFrustracionPorOmision son las palabras de frustración o solicitud humana por omisión.
+	// [causa documentada]
+	// PENDIENTE DE CALIBRACIÓN.
+	CortacircuitosPalabrasFrustracionPorOmision = "humano,persona,agente,operador"
+
+	// CortacircuitosTextoTraspasoPorOmision es el texto por omisión del mensaje de traspaso a humano.
+	// [causa documentada]
+	// PENDIENTE DE CALIBRACIÓN.
+	CortacircuitosTextoTraspasoPorOmision = "Te paso con una persona del equipo. En cuanto esté disponible te responde por acá."
 )
 
 // ErrRutaSocketVacia se devuelve cuando la variable del socket está definida pero vacía.
@@ -257,6 +283,15 @@ type Disciplina struct {
 	Rampa              RampaDeVolumen
 }
 
+// Cortacircuitos agrupa los parámetros del cortacircuitos conversacional.
+// [causa documentada]
+// No contiene ningún campo booleano: el cortacircuitos no es desactivable por configuración.
+type Cortacircuitos struct {
+	UmbralRepeticion    int64
+	PalabrasFrustracion []string
+	TextoTraspaso       string
+}
+
 // Configuracion son los parámetros de arranque del sidecar, ya validados.
 type Configuracion struct {
 	// RutaSocket es la ruta del socket de dominio Unix sobre el volumen compartido.
@@ -286,6 +321,8 @@ type Configuracion struct {
 	TextoConfirmacionDeBaja string
 	// Disciplina agrupa los parámetros de disciplina de salida.
 	Disciplina Disciplina
+	// Cortacircuitos agrupa los parámetros del cortacircuitos conversacional.
+	Cortacircuitos Cortacircuitos
 }
 
 // Cargar construye la configuración a partir de una función de consulta del entorno.
@@ -373,6 +410,11 @@ func Cargar(consultar func(string) (string, bool)) (Configuracion, error) {
 		return Configuracion{}, err
 	}
 
+	cortacircuitos, err := cargarCortacircuitos(consultar)
+	if err != nil {
+		return Configuracion{}, err
+	}
+
 	return Configuracion{
 		RutaSocket:              rutaSocket,
 		NivelDeRegistro:         nivel,
@@ -386,6 +428,7 @@ func Cargar(consultar func(string) (string, bool)) (Configuracion, error) {
 		PalabrasDeBaja:          palabrasBaja,
 		TextoConfirmacionDeBaja: textoConfirmacion,
 		Disciplina:              disciplina,
+		Cortacircuitos:          cortacircuitos,
 	}, nil
 }
 
@@ -654,5 +697,50 @@ func cargarRampaDeVolumen(consultar func(string) (string, bool)) (RampaDeVolumen
 		DiariaInicial:     inicial,
 		IncrementoSemanal: incremento,
 		Semanas:           semanas,
+	}, nil
+}
+
+func listaDelEntorno(consultar func(string) (string, bool), variable, porOmision string) ([]string, error) {
+	valor, presente := consultar(variable)
+	if !presente {
+		valor = porOmision
+	} else if strings.TrimSpace(valor) == "" {
+		return nil, fmt.Errorf("%w: %s no puede estar vacía", ErrParametroDeDisciplinaInvalido, variable)
+	}
+
+	partes := strings.Split(valor, ",")
+	var elementos []string
+	for _, p := range partes {
+		recortada := strings.TrimSpace(p)
+		if recortada != "" {
+			elementos = append(elementos, recortada)
+		}
+	}
+	if len(elementos) == 0 {
+		return nil, fmt.Errorf("%w: %s no contiene elementos válidos", ErrParametroDeDisciplinaInvalido, variable)
+	}
+	return elementos, nil
+}
+
+func cargarCortacircuitos(consultar func(string) (string, bool)) (Cortacircuitos, error) {
+	umbral, err := enteroAcotadoDelEntorno(consultar, VariableCortacircuitosUmbralRepeticion, CortacircuitosUmbralRepeticionPorOmision, CortacircuitosUmbralRepeticionMaximo)
+	if err != nil {
+		return Cortacircuitos{}, err
+	}
+
+	palabras, err := listaDelEntorno(consultar, VariableCortacircuitosPalabrasFrustracion, CortacircuitosPalabrasFrustracionPorOmision)
+	if err != nil {
+		return Cortacircuitos{}, err
+	}
+
+	texto, err := cadenaDelEntorno(consultar, VariableCortacircuitosTextoTraspaso, CortacircuitosTextoTraspasoPorOmision)
+	if err != nil {
+		return Cortacircuitos{}, err
+	}
+
+	return Cortacircuitos{
+		UmbralRepeticion:    umbral,
+		PalabrasFrustracion: palabras,
+		TextoTraspaso:       texto,
 	}, nil
 }

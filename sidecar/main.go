@@ -94,9 +94,16 @@ func main() {
 	transmisor := outbox.NuevoTransmisorWhatsmeow(sesion.Cliente(), almacenIdentidad)
 	disciplina := outbox.NuevaDisciplinaDeSalida(cfg.Disciplina)
 	emisorPresencia := outbox.NuevoEmisorDePresenciaWhatsmeow(sesion.Cliente(), almacenIdentidad, reg)
-	colaSalida := outbox.NuevaColaDeSalida(buzon.DB(), cfg.TtlSalidaMs, cfg.IntentosMaximosSalida, reg, transmisor, almacenIdentidad).ConDisciplina(disciplina, emisorPresencia)
-	portero := outbox.NuevoPorteroDeSalida(colaSalida, almacenIdentidad, reg)
+	colaSalida := outbox.NuevaColaDeSalida(buzon.DB(), cfg.TtlSalidaMs, cfg.IntentosMaximosSalida, reg, transmisor, almacenIdentidad).ConDisciplina(disciplina, emisorPresencia).ConCortacircuitos(almacenIdentidad)
+	portero := outbox.NuevoPorteroDeSalida(colaSalida, almacenIdentidad, almacenIdentidad, reg)
 	detectorBaja := canal.NuevoDetectorDeBaja(cfg.PalabrasDeBaja, cfg.TextoConfirmacionDeBaja, almacenIdentidad, portero)
+	detectorCortacircuitos := canal.NuevoDetectorDeCortacircuitos(
+		cfg.Cortacircuitos.UmbralRepeticion,
+		cfg.Cortacircuitos.PalabrasFrustracion,
+		cfg.Cortacircuitos.TextoTraspaso,
+		almacenIdentidad,
+		portero,
+	)
 
 	intervaloDrenaje := time.Duration(cfg.Disciplina.IntervaloDrenajeMs) * time.Millisecond
 	ctxDrenaje, detenerDrenaje := context.WithCancel(ctx)
@@ -108,7 +115,7 @@ func main() {
 			IdEvento: evento.IdDeduplicacion,
 		})
 	}
-	traductor := canal.NuevoTraductor(almacenIdentidad, buzon, sumideroEvento, nil, reg, detectorBaja)
+	traductor := canal.NuevoTraductor(almacenIdentidad, buzon, sumideroEvento, nil, reg, detectorBaja, detectorCortacircuitos)
 	sesion.RegistrarTraductor(traductor)
 
 	// Parada ordenada: SIGTERM es la señal con la que un runtime de contenedores detiene el

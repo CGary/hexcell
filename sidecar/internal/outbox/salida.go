@@ -24,11 +24,26 @@ const (
 	EventoSalidaEnviada     = "outbox.salida_enviada"
 	EventoSalidaReintentada = "outbox.salida_reintentada"
 	EventoSalidaAgotada     = "outbox.salida_agotada"
+
+	// EventoSalidaDescartadaPorCortacircuitos se emite al descartar en el drenaje una fila ya
+	// encolada antes de dispararse el cortacircuitos (fix cortacircuitos-descarte-en-drenaje,
+	// ENMIENDA 2026-08-11 PAT-022).
+	EventoSalidaDescartadaPorCortacircuitos = "outbox.salida_descartada_por_cortacircuitos"
 )
 
 // ContadorExpiradas cuenta, a través de todas las instancias del proceso, cuántos mensajes
 // salientes se descartaron por expiración de TTL sin haberse transmitido jamás.
 var ContadorExpiradas atomic.Int64
+
+// ContadorDescartadasPorCortacircuitos cuenta, a través de todas las instancias del proceso,
+// filas descartadas con dureza en el drenaje por haberse disparado el cortacircuitos mientras
+// estaban encoladas (admitidas antes del disparo).
+var ContadorDescartadasPorCortacircuitos atomic.Int64
+
+// ContadorAplazadasPorErrorCortacircuitos cuenta, a través de todas las instancias del proceso,
+// intentos de drenaje que aplazaron una fila -sin transmitirla ni descartarla- porque la
+// consulta del estado del cortacircuitos falló (fallo cerrado, ver verificarDisciplina).
+var ContadorAplazadasPorErrorCortacircuitos atomic.Int64
 
 // ColaDeSalida es el buzón de salida durable: el único punto de entrada para encolar un
 // mensaje saliente es Encolar, de modo que una futura lista STOP pueda anteponerse sin tocar
@@ -40,6 +55,7 @@ type ColaDeSalida struct {
 	registro             *registro.Registro
 	transmisor           Transmisor
 	control              ControlDeBaja
+	cortacircuitos       ControlDeCortacircuitos
 	disciplina           *DisciplinaDeSalida
 	emisorPresencia      EmisorDePresencia
 	muPresencia          sync.Mutex
@@ -72,6 +88,16 @@ func NuevaColaDeSalida(db *sql.DB, ttlMs, intentosMaximos int64, reg *registro.R
 func (c *ColaDeSalida) ConDisciplina(disciplina *DisciplinaDeSalida, emisorPresencia EmisorDePresencia) *ColaDeSalida {
 	c.disciplina = disciplina
 	c.emisorPresencia = emisorPresencia
+	return c
+}
+
+// ConCortacircuitos inyecta, tipado y explícito (mismo patrón de ConDisciplina, nil-legal), el
+// control de cortacircuitos que el drenaje re-consulta antes de transmitir una fila ya encolada,
+// para que una respuesta admitida antes del disparo no se transmita después del traspaso
+// (fix cortacircuitos-descarte-en-drenaje, ENMIENDA 2026-08-11 PAT-022). Devuelve la cola para
+// encadenar.
+func (c *ColaDeSalida) ConCortacircuitos(cortacircuitos ControlDeCortacircuitos) *ColaDeSalida {
+	c.cortacircuitos = cortacircuitos
 	return c
 }
 
@@ -229,6 +255,42 @@ func (c *ColaDeSalida) intentarUno(ctx context.Context, p pendienteSalida, ahora
 		}
 	}
 
+	// Recheque del cortacircuitos en el drenaje: espeja el recheque de baja de arriba porque la
+	// admisión (Admitir) ya no basta -una respuesta admitida antes del disparo puede seguir
+	// encolada cuando el cortacircuitos se dispara- así que sin este recheque el bot no queda en
+	// silencio tras el traspaso. Un error de lectura falla CERRADO aplazando (nunca descartando)
+	// la fila, igual que verificarDisciplina; el traspaso mismo pasa porque SalidaPermitida
+	// siempre permite el id_mensaje_traspaso reclamado.
+	// (fix cortacircuitos-descarte-en-drenaje, ENMIENDA 2026-08-11 PAT-022)
+	if c.cortacircuitos != nil {
+		permitido, err := c.cortacircuitos.SalidaPermitida(ctx, p.idConversacion, p.idMensaje)
+		if err != nil {
+			if c.registro != nil {
+				c.registro.Error("outbox.error_consultar_cortacircuitos_en_drenaje", registro.Campos{IdEvento: p.idMensaje, Detalle: err.Error()})
+			}
+			ContadorAplazadasPorErrorCortacircuitos.Add(1)
+			return
+		}
+		if !permitido {
+			query := `DELETE FROM cola_salida WHERE id_mensaje = ? AND enviado_en_ms IS NULL`
+			res, err := c.db.ExecContext(ctx, query, p.idMensaje)
+			if err != nil {
+				if c.registro != nil {
+					c.registro.Error("outbox.error_descartar_cortacircuitos", registro.Campos{IdEvento: p.idMensaje, Detalle: err.Error()})
+				}
+				return
+			}
+			if filas, _ := res.RowsAffected(); filas > 0 {
+				ContadorDescartadasPorCortacircuitos.Add(filas)
+				c.liberarPresencia(p.idMensaje)
+				if c.registro != nil {
+					c.registro.Aviso(EventoSalidaDescartadaPorCortacircuitos, registro.Campos{IdEvento: p.idMensaje})
+				}
+			}
+			return
+		}
+	}
+
 	// c.disciplina nil es legal explícitamente (contract behavior 15): ver Decidir sobre D-13.
 	if c.disciplina != nil {
 		if !c.verificarDisciplina(ctx, p.idConversacion, p.idMensaje, p.marcaTemporalOrigenMs, ahoraMs) {
@@ -267,8 +329,11 @@ func (c *ColaDeSalida) registrarFallo(ctx context.Context, p pendienteSalida) {
 			}
 			return
 		}
-		if filas, _ := res.RowsAffected(); filas > 0 && c.registro != nil {
-			c.registro.Aviso(EventoSalidaAgotada, registro.Campos{IdEvento: p.idMensaje})
+		if filas, _ := res.RowsAffected(); filas > 0 {
+			c.liberarPresencia(p.idMensaje)
+			if c.registro != nil {
+				c.registro.Aviso(EventoSalidaAgotada, registro.Campos{IdEvento: p.idMensaje})
+			}
 		}
 		return
 	}

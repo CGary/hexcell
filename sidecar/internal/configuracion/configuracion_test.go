@@ -499,6 +499,77 @@ func TestCargarRechazaParametrosDeDisciplinaDegeneradosOInvalidos(t *testing.T) 
 	}
 }
 
+func TestCargarAplicaValoresPorOmisionDeCortacircuitos(t *testing.T) {
+	t.Parallel()
+
+	cfg, err := configuracion.Cargar(entornoFalso(map[string]string{}))
+	if err != nil {
+		t.Fatalf("no se esperaba error: %v", err)
+	}
+
+	c := cfg.Cortacircuitos
+	if c.UmbralRepeticion != configuracion.CortacircuitosUmbralRepeticionPorOmision {
+		t.Errorf("UmbralRepeticion = %d, se esperaba %d", c.UmbralRepeticion, configuracion.CortacircuitosUmbralRepeticionPorOmision)
+	}
+	if len(c.PalabrasFrustracion) != 4 || c.PalabrasFrustracion[0] != "humano" || c.PalabrasFrustracion[1] != "persona" || c.PalabrasFrustracion[2] != "agente" || c.PalabrasFrustracion[3] != "operador" {
+		t.Errorf("PalabrasFrustracion = %v, se esperaba [humano, persona, agente, operador]", c.PalabrasFrustracion)
+	}
+	if c.TextoTraspaso != configuracion.CortacircuitosTextoTraspasoPorOmision {
+		t.Errorf("TextoTraspaso = %q, se esperaba %q", c.TextoTraspaso, configuracion.CortacircuitosTextoTraspasoPorOmision)
+	}
+}
+
+func TestCargarLeeParametrosDeCortacircuitosDelEntorno(t *testing.T) {
+	t.Parallel()
+
+	cfg, err := configuracion.Cargar(entornoFalso(map[string]string{
+		configuracion.VariableCortacircuitosUmbralRepeticion:    "5",
+		configuracion.VariableCortacircuitosPalabrasFrustracion: "persona, operador",
+		configuracion.VariableCortacircuitosTextoTraspaso:       "Traspaso personalizado a humano.",
+	}))
+	if err != nil {
+		t.Fatalf("no se esperaba error: %v", err)
+	}
+
+	c := cfg.Cortacircuitos
+	if c.UmbralRepeticion != 5 {
+		t.Errorf("UmbralRepeticion = %d, se esperaba 5", c.UmbralRepeticion)
+	}
+	if len(c.PalabrasFrustracion) != 2 || c.PalabrasFrustracion[0] != "persona" || c.PalabrasFrustracion[1] != "operador" {
+		t.Errorf("PalabrasFrustracion = %v", c.PalabrasFrustracion)
+	}
+	if c.TextoTraspaso != "Traspaso personalizado a humano." {
+		t.Errorf("TextoTraspaso = %q", c.TextoTraspaso)
+	}
+}
+
+func TestCargarRechazaParametrosDeCortacircuitosInvalidos(t *testing.T) {
+	t.Parallel()
+
+	casos := []struct {
+		nombre  string
+		entorno map[string]string
+	}{
+		{"umbral_cero", map[string]string{configuracion.VariableCortacircuitosUmbralRepeticion: "0"}},
+		{"umbral_negativo", map[string]string{configuracion.VariableCortacircuitosUmbralRepeticion: "-1"}},
+		{"umbral_no_numerico", map[string]string{configuracion.VariableCortacircuitosUmbralRepeticion: "tres"}},
+		{"umbral_excede_techo", map[string]string{configuracion.VariableCortacircuitosUmbralRepeticion: "101"}},
+		{"palabras_vacia", map[string]string{configuracion.VariableCortacircuitosPalabrasFrustracion: ""}},
+		{"palabras_solo_espacios", map[string]string{configuracion.VariableCortacircuitosPalabrasFrustracion: "   "}},
+		{"palabras_solo_comas", map[string]string{configuracion.VariableCortacircuitosPalabrasFrustracion: " , , "}},
+		{"texto_vacio", map[string]string{configuracion.VariableCortacircuitosTextoTraspaso: ""}},
+	}
+
+	for _, c := range casos {
+		t.Run(c.nombre, func(t *testing.T) {
+			_, err := configuracion.Cargar(entornoFalso(c.entorno))
+			if !errors.Is(err, configuracion.ErrParametroDeDisciplinaInvalido) {
+				t.Errorf("caso %s: se esperaba ErrParametroDeDisciplinaInvalido, se obtuvo %v", c.nombre, err)
+			}
+		})
+	}
+}
+
 func TestDisciplinaNoContieneCamposBooleanos(t *testing.T) {
 	t.Parallel()
 
@@ -506,6 +577,7 @@ func TestDisciplinaNoContieneCamposBooleanos(t *testing.T) {
 		reflect.TypeOf(configuracion.Disciplina{}),
 		reflect.TypeOf(configuracion.VentanaDeAtencion{}),
 		reflect.TypeOf(configuracion.RampaDeVolumen{}),
+		reflect.TypeOf(configuracion.Cortacircuitos{}),
 		reflect.TypeOf(configuracion.Configuracion{}),
 	}
 

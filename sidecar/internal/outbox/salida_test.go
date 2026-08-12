@@ -461,6 +461,155 @@ func TestDrenarDescartaMensajeEncoladoPrevioALaBaja(t *testing.T) {
 	}
 }
 
+// cortacircuitosConExencion simula la semántica real de identidad.Almacen.SalidaPermitida: antes
+// de disparado permite todo; una vez disparado (campo mutado por la prueba, como lo mutaría un
+// disparo real persistido entre dos llamadas a Drenar) solo permite el id_mensaje_traspaso
+// reclamado.
+type cortacircuitosConExencion struct {
+	disparado           bool
+	idTraspasoPermitido string
+}
+
+func (c *cortacircuitosConExencion) SalidaPermitida(_ context.Context, _, idMensaje string) (bool, error) {
+	if !c.disparado {
+		return true, nil
+	}
+	return idMensaje == c.idTraspasoPermitido, nil
+}
+
+func (c *cortacircuitosConExencion) ReclamarMensajeDeTraspaso(_ context.Context, _, _ string, _ int64) (bool, error) {
+	return false, nil
+}
+
+// cortacircuitosConError simula un ControlDeCortacircuitos cuya consulta en el drenaje falla,
+// para probar el fallo cerrado (aplazar, nunca descartar ni transmitir).
+type cortacircuitosConError struct{}
+
+func (cortacircuitosConError) SalidaPermitida(_ context.Context, _, _ string) (bool, error) {
+	return false, errors.New("fallo simulado de lectura del cortacircuitos")
+}
+
+func (cortacircuitosConError) ReclamarMensajeDeTraspaso(_ context.Context, _, _ string, _ int64) (bool, error) {
+	return false, nil
+}
+
+// TestDrenarDescartaFilaEncoladaAntesDeDispararseCortacircuitos prueba el fix
+// cortacircuitos-descarte-en-drenaje: una respuesta admitida ANTES del disparo (y todavía
+// encolada al dispararse) debe descartarse en el drenaje en vez de transmitirse después del
+// traspaso, y el marcador de presencia anunciada debe liberarse en ese descarte.
+func TestDrenarDescartaFilaEncoladaAntesDeDispararseCortacircuitos(t *testing.T) {
+	t.Parallel()
+	db, _ := abrirDbPruebaSalida(t)
+	falso := &transmisorFalso{idCorrelacion: "corr-traspaso"}
+	emisor := &emisorPresenciaFalso{}
+	var buf bytes.Buffer
+	reg := registro.Nuevo(&buf, slog.LevelInfo, "celula-test")
+	cfg := configuracion.Disciplina{
+		LatenciaMinimaMs: 3000,
+		Ventana: configuracion.VentanaDeAtencion{
+			HoraApertura: 0, MinutoApertura: 0,
+			HoraCierre: 23, MinutoCierre: 59,
+			Dias: []int{1, 2, 3, 4, 5, 6, 7},
+			Zona: time.UTC,
+		},
+		Rampa: configuracion.RampaDeVolumen{DiariaInicial: 100, IncrementoSemanal: 10, Semanas: 4},
+	}
+	disc := outbox.NuevaDisciplinaDeSalida(cfg)
+	corta := &cortacircuitosConExencion{idTraspasoPermitido: "msg-traspaso-1"}
+	cola := outbox.NuevaColaDeSalida(db, 60000, 3, reg, falso, nil).ConDisciplina(disc, emisor).ConCortacircuitos(corta)
+	ctx := context.Background()
+
+	// La respuesta se admite ANTES del disparo: nada del cortacircuitos existía todavía.
+	cola.Encolar(ctx, "msg-reply-1", "conv-1", "respuesta previa al disparo", 1000)
+
+	// t=1500: aplazada por latencia mínima (el disparo aún no ocurrió), queda el marcador de
+	// presencia en memoria.
+	if err := cola.Drenar(ctx, 1500); err != nil {
+		t.Fatalf("error al drenar: %v", err)
+	}
+	if falso.contador() != 0 {
+		t.Fatalf("no debía transmitirse antes de cumplirse la latencia, llamadas=%d", falso.contador())
+	}
+	if cola.PresenciasPendientesParaPruebas() != 1 {
+		t.Fatalf("el marcador de presencia debía quedar activo tras el aplazamiento, obtenido %d", cola.PresenciasPendientesParaPruebas())
+	}
+
+	// El cortacircuitos se dispara mientras tanto y se encola el único traspaso permitido.
+	corta.disparado = true
+	cola.Encolar(ctx, "msg-traspaso-1", "conv-1", "handoff", 1400)
+
+	descartadasPrevias := outbox.ContadorDescartadasPorCortacircuitos.Load()
+
+	// t=4500: se cumple la latencia; msg-reply-1 debe descartarse por el disparo (bot en
+	// silencio), msg-traspaso-1 debe transmitirse (única excepción permitida).
+	if err := cola.Drenar(ctx, 4500); err != nil {
+		t.Fatalf("error al drenar: %v", err)
+	}
+
+	if falso.contador() != 1 {
+		t.Fatalf("solo el traspaso debía transmitirse, llamadas=%d", falso.contador())
+	}
+
+	var cuentaReply int
+	db.QueryRow("SELECT COUNT(*) FROM cola_salida WHERE id_mensaje='msg-reply-1'").Scan(&cuentaReply)
+	if cuentaReply != 0 {
+		t.Fatalf("la respuesta admitida antes del disparo debía descartarse con dureza, cuenta=%d", cuentaReply)
+	}
+
+	var enviadoTraspaso sql.NullInt64
+	db.QueryRow("SELECT enviado_en_ms FROM cola_salida WHERE id_mensaje='msg-traspaso-1'").Scan(&enviadoTraspaso)
+	if !enviadoTraspaso.Valid {
+		t.Fatal("el traspaso debía quedar marcado como enviado")
+	}
+
+	if outbox.ContadorDescartadasPorCortacircuitos.Load() <= descartadasPrevias {
+		t.Errorf("no se incrementó ContadorDescartadasPorCortacircuitos")
+	}
+	if !strings.Contains(buf.String(), outbox.EventoSalidaDescartadaPorCortacircuitos) {
+		t.Errorf("no se registró EventoSalidaDescartadaPorCortacircuitos: %s", buf.String())
+	}
+	if cola.PresenciasPendientesParaPruebas() != 0 {
+		t.Errorf("el marcador de presencia debía liberarse al descartar la respuesta, quedaron %d entradas", cola.PresenciasPendientesParaPruebas())
+	}
+}
+
+// TestDrenarAplazaFilaPendienteSiFallaLaConsultaDeCortacircuitos prueba el fallo cerrado del
+// recheque en el drenaje: un error al leer el estado del cortacircuitos nunca transmite ni
+// descarta la fila -la aplaza, como verificarDisciplina aplaza ante un error de rampa.
+func TestDrenarAplazaFilaPendienteSiFallaLaConsultaDeCortacircuitos(t *testing.T) {
+	t.Parallel()
+	db, _ := abrirDbPruebaSalida(t)
+	falso := &transmisorFalso{idCorrelacion: "no-debe-enviarse"}
+	var buf bytes.Buffer
+	reg := registro.Nuevo(&buf, slog.LevelInfo, "celula-test")
+	cola := outbox.NuevaColaDeSalida(db, 60000, 3, reg, falso, nil).ConCortacircuitos(cortacircuitosConError{})
+	ctx := context.Background()
+
+	cola.Encolar(ctx, "msg-1", "conv-1", "hola", 100)
+
+	previas := outbox.ContadorAplazadasPorErrorCortacircuitos.Load()
+	if err := cola.Drenar(ctx, 200); err != nil {
+		t.Fatalf("error al drenar: %v", err)
+	}
+
+	if falso.contador() != 0 {
+		t.Fatalf("no debía transmitirse ante un error de lectura del cortacircuitos, llamadas=%d", falso.contador())
+	}
+
+	var cuenta int
+	db.QueryRow("SELECT COUNT(*) FROM cola_salida WHERE id_mensaje='msg-1'").Scan(&cuenta)
+	if cuenta != 1 {
+		t.Fatalf("ante error de lectura la fila debe conservarse (fallo cerrado, aplazada, no descartada), cuenta=%d", cuenta)
+	}
+
+	if outbox.ContadorAplazadasPorErrorCortacircuitos.Load() <= previas {
+		t.Errorf("no se incrementó ContadorAplazadasPorErrorCortacircuitos")
+	}
+	if !strings.Contains(buf.String(), "outbox.error_consultar_cortacircuitos_en_drenaje") {
+		t.Errorf("no se registró el evento de error de consulta: %s", buf.String())
+	}
+}
+
 type controlDeBajaConExencion struct {
 	idConfirmacionPermitida string
 }
@@ -841,5 +990,49 @@ func TestDrenarAplicaRampaDeVolumenYPersisteContador(t *testing.T) {
 	enviosDia, err := outbox.EnviosDelDia(ctx, db2, "2026-08-11")
 	if err != nil || enviosDia != 2 {
 		t.Errorf("envíos persistidos = %d (esperado 2), err=%v", enviosDia, err)
+	}
+}
+
+func TestPresenciaSeLiberaTrasAgotarIntentos(t *testing.T) {
+	t.Parallel()
+	db, _ := abrirDbPruebaSalida(t)
+	falso := &transmisorFalso{fallar: true}
+	emisor := &emisorPresenciaFalso{}
+	cfg := configuracion.Disciplina{
+		LatenciaMinimaMs: 3000,
+		Ventana: configuracion.VentanaDeAtencion{
+			HoraApertura: 0, MinutoApertura: 0,
+			HoraCierre: 23, MinutoCierre: 59,
+			Dias: []int{1, 2, 3, 4, 5, 6, 7},
+			Zona: time.UTC,
+		},
+		Rampa: configuracion.RampaDeVolumen{DiariaInicial: 100, IncrementoSemanal: 10, Semanas: 4},
+	}
+	disc := outbox.NuevaDisciplinaDeSalida(cfg)
+	// intentosMaximos = 2
+	cola := outbox.NuevaColaDeSalida(db, 60000, 2, nil, falso, nil).ConDisciplina(disc, emisor)
+	ctx := context.Background()
+
+	cola.Encolar(ctx, "msg-pres-agotar", "conv-1", "hola", 1000)
+
+	// t=1500: aplazado por latencia, se anuncia presencia
+	cola.Drenar(ctx, 1500)
+	if emisor.contador() != 1 {
+		t.Fatalf("debía emitir presencia por latencia mínima, llamadas=%d", emisor.contador())
+	}
+	if cola.PresenciasPendientesParaPruebas() != 1 {
+		t.Fatalf("el marcador debía conservar 1 entrada, obtenido %d", cola.PresenciasPendientesParaPruebas())
+	}
+
+	// t=4500: intento 1 de transmisión (falla, intentos pasa a 1)
+	cola.Drenar(ctx, 4500)
+	if cola.PresenciasPendientesParaPruebas() != 1 {
+		t.Fatalf("tras intento 1 el marcador debe seguir activo, obtenido %d", cola.PresenciasPendientesParaPruebas())
+	}
+
+	// t=5000: intento 2 de transmisión (falla y se agota, elimina la fila)
+	cola.Drenar(ctx, 5000)
+	if cola.PresenciasPendientesParaPruebas() != 0 {
+		t.Errorf("el marcador de presencia debía liberarse tras agotar reintentos, quedaron %d entradas", cola.PresenciasPendientesParaPruebas())
 	}
 }

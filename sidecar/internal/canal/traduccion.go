@@ -3,6 +3,7 @@ package canal
 import (
 	"context"
 	"strings"
+	"sync/atomic"
 	"time"
 	"unicode"
 
@@ -14,6 +15,8 @@ import (
 	"github.com/CGary/hexcell/sidecar/internal/ipc"
 	"github.com/CGary/hexcell/sidecar/internal/registro"
 )
+
+// Cortacircuitos conversacional [causa documentada]
 
 // SumideroDeEvento recibe cada evento entrante traducido, listo para codificarse por IPC.
 // Sigue la convención del SumideroDeEstado ya existente en reconexion.go.
@@ -43,18 +46,65 @@ type AdmisorDeConfirmacion interface {
 	AdmitirConfirmacionDeBaja(ctx context.Context, idMensaje, idConversacion, contenido string, marcaTemporalOrigenMs int64) (bool, error)
 }
 
+// ControlDeCortacircuitos registra observaciones y gestiona el cortacircuitos para el canal entrante.
+// Satisfecho por *identidad.Almacen; desacoplado para testear el detector con un espía.
+// [causa documentada]
+type ControlDeCortacircuitos interface {
+	RegistrarObservacion(ctx context.Context, idInterno, textoNormalizado string, esFrustracion bool, umbralRepeticion int64, ahoraMs int64) (bool, error)
+}
+
+// AdmisorDeTraspaso encola el mensaje único de traspaso tras dispararse el cortacircuitos.
+// Satisfecho por *outbox.PorteroDeSalida; desacoplado para testear el detector con un espía.
+// [causa documentada]
+type AdmisorDeTraspaso interface {
+	AdmitirMensajeDeTraspaso(ctx context.Context, idMensaje, idConversacion, contenido string, marcaTemporalOrigenMs int64) (bool, error)
+}
+
 // Nombres fijos de suceso
 const (
-	EventoMensajeTraducido  = "canal.mensaje_traducido"
-	EventoMensajeDescartado = "canal.mensaje_descartado"
-	EventoBajaDetectada     = "canal.baja_detectada"
+	EventoMensajeTraducido        = "canal.mensaje_traducido"
+	EventoMensajeDescartado       = "canal.mensaje_descartado"
+	EventoBajaDetectada           = "canal.baja_detectada"
+	EventoCortacircuitosDisparado = "canal.cortacircuitos_disparado"
+	EventoErrorCortacircuitos     = "canal.error_cortacircuitos"
+	EventoErrorEmisionTraspaso    = "canal.error_emision_traspaso"
 )
+
+// ContadorErroresCortacircuitos cuenta, a través de todas las instancias del proceso, fallos al
+// registrar la observación entrante del cortacircuitos (fallo cerrado: el mensaje no se reenvía
+// al núcleo para que no se genere una respuesta automática mientras el estado del cortacircuitos
+// no pueda leerse ni escribirse con certeza). Sigue el mismo idioma de contador atómico exportado
+// que outbox.ContadorErroresCortacircuitos, fix cortacircuitos-fallo-cerrado-entrante.
+var ContadorErroresCortacircuitos atomic.Int64
 
 // normalizarParaBaja recorta espacios, pasa a minúsculas y elimina signos de puntuación circundantes.
 func normalizarParaBaja(texto string) string {
 	return strings.TrimFunc(strings.ToLower(strings.TrimSpace(texto)), func(r rune) bool {
 		return unicode.IsPunct(r) || unicode.IsSpace(r)
 	})
+}
+
+// contieneFrustracion verifica si el texto contiene alguna de las palabras clave de frustración
+// mediante coincidencia de palabra completa (tokenización), evitando falsos positivos por subcadenas.
+// [causa documentada]
+func contieneFrustracion(texto string, palabras map[string]struct{}) bool {
+	if len(palabras) == 0 {
+		return false
+	}
+	if _, ok := palabras[normalizarParaBaja(texto)]; ok {
+		return true
+	}
+	tokens := strings.FieldsFunc(texto, func(r rune) bool {
+		return unicode.IsSpace(r) || unicode.IsPunct(r)
+	})
+	for _, tok := range tokens {
+		if norm := normalizarParaBaja(tok); norm != "" {
+			if _, ok := palabras[norm]; ok {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // DetectorDeBaja detecta palabras clave de baja en mensajes entrantes y procesa su confirmación.
@@ -101,19 +151,72 @@ func (d *DetectorDeBaja) ProcesarConfirmacion(ctx context.Context, idInterno str
 	return d.admisor.AdmitirConfirmacionDeBaja(ctx, "conf-"+idInterno, idInterno, d.textoConfirmacion, marcaTemporalMs)
 }
 
+// DetectorDeCortacircuitos detecta repetición y frustración en mensajes entrantes y procesa su traspaso a humano.
+// [causa documentada]
+type DetectorDeCortacircuitos struct {
+	umbralRepeticion    int64
+	palabrasFrustracion map[string]struct{}
+	textoTraspaso       string
+	control             ControlDeCortacircuitos
+	admisor             AdmisorDeTraspaso
+}
+
+// NuevoDetectorDeCortacircuitos inicializa el detector con los parámetros del cortacircuitos.
+// [causa documentada]
+func NuevoDetectorDeCortacircuitos(
+	umbralRepeticion int64,
+	palabrasFrustracion []string,
+	textoTraspaso string,
+	control ControlDeCortacircuitos,
+	admisor AdmisorDeTraspaso,
+) *DetectorDeCortacircuitos {
+	mapa := make(map[string]struct{}, len(palabrasFrustracion))
+	for _, p := range palabrasFrustracion {
+		if norm := normalizarParaBaja(p); norm != "" {
+			mapa[norm] = struct{}{}
+		}
+	}
+	return &DetectorDeCortacircuitos{
+		umbralRepeticion:    umbralRepeticion,
+		palabrasFrustracion: mapa,
+		textoTraspaso:       textoTraspaso,
+		control:             control,
+		admisor:             admisor,
+	}
+}
+
+// Observar registra la observación del mensaje entrante y devuelve si esta llamada disparó el cortacircuitos.
+func (d *DetectorDeCortacircuitos) Observar(ctx context.Context, idInterno, texto string, ahoraMs int64) (bool, error) {
+	if d == nil || d.control == nil {
+		return false, nil
+	}
+	textoNorm := normalizarParaBaja(texto)
+	esFrustracion := contieneFrustracion(texto, d.palabrasFrustracion)
+	return d.control.RegistrarObservacion(ctx, idInterno, textoNorm, esFrustracion, d.umbralRepeticion, ahoraMs)
+}
+
+// EmitirTraspaso delega la admisión del mensaje único de traspaso en el admisor inyectado.
+func (d *DetectorDeCortacircuitos) EmitirTraspaso(ctx context.Context, idInterno string, marcaTemporalMs int64) (bool, error) {
+	if d == nil || d.admisor == nil {
+		return false, nil
+	}
+	return d.admisor.AdmitirMensajeDeTraspaso(ctx, "traspaso-"+idInterno, idInterno, d.textoTraspaso, marcaTemporalMs)
+}
+
 // Traductor convierte eventos entrantes de whatsmeow en EventoEntrante de IPC
 // asegurando persist-first y deduplicación.
 type Traductor struct {
-	almacen      *identidad.Almacen
-	buzon        BuzonDurable
-	sumidero     SumideroDeEvento
-	resolutor    ResolutorDeAlias
-	registro     *registro.Registro
-	detectorBaja *DetectorDeBaja
+	almacen               *identidad.Almacen
+	buzon                 BuzonDurable
+	sumidero              SumideroDeEvento
+	resolutor             ResolutorDeAlias
+	registro              *registro.Registro
+	detectorBaja          *DetectorDeBaja
+	detectorCortacircuito *DetectorDeCortacircuitos
 	// ahoraMs es el reloj del traductor, inyectable en tests. Los mensajes conservan su marca
-	// de origen, pero la CONFIRMACIÓN de baja se encola con este reloj: si usara la marca del
-	// mensaje entrante, un STOP entregado del backlog offline tras una caída mayor que el TTL
-	// de salida nacería ya expirado y, con el reclamo único gastado, jamás se reencolaría.
+	// de origen, pero la CONFIRMACIÓN de baja y el TRASPASO de cortacircuitos se encolan con este reloj:
+	// si usaran la marca del mensaje entrante, un mensaje entregado del backlog offline tras una
+	// caída mayor que el TTL de salida nacería ya expirado y, con el reclamo único gastado, jamás se reencolaría.
 	ahoraMs func() int64
 }
 
@@ -125,15 +228,17 @@ func NuevoTraductor(
 	resolutor ResolutorDeAlias,
 	reg *registro.Registro,
 	baja *DetectorDeBaja,
+	cortacircuitos *DetectorDeCortacircuitos,
 ) *Traductor {
 	return &Traductor{
-		almacen:      almacen,
-		buzon:        buzon,
-		sumidero:     sumidero,
-		resolutor:    resolutor,
-		registro:     reg,
-		detectorBaja: baja,
-		ahoraMs:      func() int64 { return time.Now().UnixMilli() },
+		almacen:               almacen,
+		buzon:                 buzon,
+		sumidero:              sumidero,
+		resolutor:             resolutor,
+		registro:              reg,
+		detectorBaja:          baja,
+		detectorCortacircuito: cortacircuitos,
+		ahoraMs:               func() int64 { return time.Now().UnixMilli() },
 	}
 }
 
@@ -231,12 +336,34 @@ func (t *Traductor) procesarMensaje(ctx context.Context, evt *events.Message) {
 	}
 
 	esBaja := t.detectorBaja != nil && t.detectorBaja.Coincide(texto)
+	var disparoCortacircuitos bool
 	if esBaja {
 		if t.registro != nil {
 			t.registro.Info(EventoBajaDetectada, registro.Campos{IdEvento: ident.IdInterno})
 		}
 		if _, err := t.detectorBaja.RegistrarBaja(ctx, ident.IdInterno, evt.Info.Timestamp.UnixMilli()); err != nil && t.registro != nil {
 			t.registro.Error("canal.error_registro_baja", registro.Campos{Detalle: err.Error()})
+		}
+	} else if t.detectorCortacircuito != nil {
+		disparado, err := t.detectorCortacircuito.Observar(ctx, ident.IdInterno, texto, evt.Info.Timestamp.UnixMilli())
+		if err != nil {
+			// Fallo CERRADO (LES-2026-08-11-000000025, contract behavior 7): un error de lectura
+			// o escritura del estado del cortacircuitos nunca se trata como "no disparado". No se
+			// persiste ni se reenvía este mensaje al núcleo -igual que los demás errores duros de
+			// esta función (resolución, codificación, persistencia)-, así que no puede generarse
+			// una respuesta automática para él; el mensaje se pierde en silencio, que es el lado
+			// seguro (silencio recuperable) frente a responder como si el cortacircuitos no
+			// existiera. (fix cortacircuitos-fallo-cerrado-entrante)
+			ContadorErroresCortacircuitos.Add(1)
+			if t.registro != nil {
+				t.registro.Error(EventoErrorCortacircuitos, registro.Campos{IdEvento: ident.IdInterno, Detalle: err.Error()})
+			}
+			return
+		} else if disparado {
+			disparoCortacircuitos = true
+			if t.registro != nil {
+				t.registro.Info(EventoCortacircuitosDisparado, registro.Campos{IdEvento: ident.IdInterno})
+			}
 		}
 	}
 
@@ -288,6 +415,10 @@ func (t *Traductor) procesarMensaje(ctx context.Context, evt *events.Message) {
 		// una fila ya expirada e irrecuperable (el reclamo único ya estaría gastado).
 		if _, err := t.detectorBaja.ProcesarConfirmacion(ctx, ident.IdInterno, t.ahoraMs()); err != nil && t.registro != nil {
 			t.registro.Error("canal.error_confirmacion_baja", registro.Campos{Detalle: err.Error()})
+		}
+	} else if disparoCortacircuitos && t.detectorCortacircuito != nil {
+		if _, err := t.detectorCortacircuito.EmitirTraspaso(ctx, ident.IdInterno, t.ahoraMs()); err != nil && t.registro != nil {
+			t.registro.Error(EventoErrorEmisionTraspaso, registro.Campos{IdEvento: ident.IdInterno, Detalle: err.Error()})
 		}
 	}
 }

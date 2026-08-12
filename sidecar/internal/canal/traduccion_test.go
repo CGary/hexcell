@@ -27,7 +27,7 @@ func (s *sumideroEspia) recibir(ipc.EventoEntrante) {}
 
 var _ canal.SumideroDeEvento = (&sumideroEspia{}).recibir
 
-func TestNuevoTraductor_ConstruyeConLosSeisColaboradores(t *testing.T) {
+func TestNuevoTraductor_ConstruyeConLosSieteColaboradores(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	almacen, err := identidad.Abrir(identidad.Opciones{Ruta: filepath.Join(dir, "identidad.db")})
@@ -36,7 +36,7 @@ func TestNuevoTraductor_ConstruyeConLosSeisColaboradores(t *testing.T) {
 	}
 	t.Cleanup(func() { almacen.Cerrar() })
 
-	traductor := canal.NuevoTraductor(almacen, &buzonEspia{}, (&sumideroEspia{}).recibir, nil, nil, nil)
+	traductor := canal.NuevoTraductor(almacen, &buzonEspia{}, (&sumideroEspia{}).recibir, nil, nil, nil, nil)
 	if traductor == nil {
 		t.Fatalf("NuevoTraductor no debe devolver nil")
 	}
