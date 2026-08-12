@@ -109,6 +109,12 @@ pub struct AdaptadorWhatsmeow {
     marcas_de_origen: Arc<Mutex<MarcasDeOrigen>>,
     /// Contador para generar IDs de mensaje únicos.
     contador_mensajes: Arc<AtomicUsize>,
+    /// Acuses de respaldo del sqlstore pendientes de correlación por identificador de ronda.
+    respaldo_pendiente: Arc<
+        tokio::sync::Mutex<
+            HashMap<String, tokio::sync::oneshot::Sender<crate::mensajes::AcuseRespaldoSqlstore>>,
+        >,
+    >,
 }
 
 impl AdaptadorWhatsmeow {
@@ -138,6 +144,7 @@ impl AdaptadorWhatsmeow {
             escritor_compartido: Arc::new(tokio::sync::Mutex::new(None)),
             marcas_de_origen: Arc::new(Mutex::new(MarcasDeOrigen::default())),
             contador_mensajes: Arc::new(AtomicUsize::new(0)),
+            respaldo_pendiente: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
         };
 
         (adaptador, receptor_eventos)
@@ -155,10 +162,18 @@ impl AdaptadorWhatsmeow {
         let retroceso = Arc::clone(&self.retroceso);
         let escritor = Arc::clone(&self.escritor_compartido);
         let marcas = Arc::clone(&self.marcas_de_origen);
+        let respaldo_pendiente = Arc::clone(&self.respaldo_pendiente);
 
         tokio::spawn(async move {
             bucle_de_conexion(
-                ruta, id_celula, remitente, estado_tx, retroceso, escritor, marcas,
+                ruta,
+                id_celula,
+                remitente,
+                estado_tx,
+                retroceso,
+                escritor,
+                marcas,
+                respaldo_pendiente,
             )
             .await;
         });
@@ -173,9 +188,61 @@ impl AdaptadorWhatsmeow {
     pub fn estado_actual(&self) -> EstadoSesion {
         *self.receptor_estado.borrow()
     }
+
+    /// Ordena un respaldo del sqlstore al sidecar y espera el acuse correspondiente.
+    ///
+    /// Registra el canal de respuesta por `identificador_de_ronda` antes de enviar la orden
+    /// para evitar carreras, y espera hasta `plazo` antes de devolver [`ErrorCanalWhatsmeow::RespaldoSinAcuse`].
+    pub async fn ordenar_respaldo_sqlstore(
+        &self,
+        destino: &str,
+        identificador_de_ronda: &str,
+        plazo: Duration,
+    ) -> Result<crate::mensajes::AcuseRespaldoSqlstore, ErrorCanalWhatsmeow> {
+        if self.escritor_compartido.lock().await.is_none() {
+            return Err(ErrorCanalWhatsmeow::SinConexion);
+        }
+
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        {
+            let mut pendientes = self.respaldo_pendiente.lock().await;
+            pendientes.insert(identificador_de_ronda.to_string(), tx);
+        }
+
+        let orden = crate::mensajes::OrdenRespaldoSqlstore {
+            version: crate::mensajes::VERSION_PROTOCOLO,
+            tipo: "orden_respaldo_sqlstore".to_string(),
+            orden: "respaldar_sqlstore".to_string(),
+            destino: destino.to_string(),
+            identificador_de_ronda: identificador_de_ronda.to_string(),
+        };
+
+        if let Err(e) =
+            crate::conexion::enviar_orden_respaldo_sqlstore(&self.escritor_compartido, &orden).await
+        {
+            let mut pendientes = self.respaldo_pendiente.lock().await;
+            pendientes.remove(identificador_de_ronda);
+            return Err(e);
+        }
+
+        match tokio::time::timeout(plazo, rx).await {
+            Ok(Ok(acuse)) => Ok(acuse),
+            Ok(Err(_oneshot_caido)) => {
+                let mut pendientes = self.respaldo_pendiente.lock().await;
+                pendientes.remove(identificador_de_ronda);
+                Err(ErrorCanalWhatsmeow::RespaldoSinAcuse)
+            }
+            Err(_agotado) => {
+                let mut pendientes = self.respaldo_pendiente.lock().await;
+                pendientes.remove(identificador_de_ronda);
+                Err(ErrorCanalWhatsmeow::RespaldoSinAcuse)
+            }
+        }
+    }
 }
 
 /// Bucle de conexión con reconexión automática.
+#[allow(clippy::too_many_arguments)]
 async fn bucle_de_conexion(
     ruta: PathBuf,
     id_celula: String,
@@ -186,6 +253,11 @@ async fn bucle_de_conexion(
         tokio::sync::Mutex<Option<tokio::io::WriteHalf<tokio::net::UnixStream>>>,
     >,
     marcas_de_origen: Arc<Mutex<MarcasDeOrigen>>,
+    respaldo_pendiente: Arc<
+        tokio::sync::Mutex<
+            HashMap<String, tokio::sync::oneshot::Sender<crate::mensajes::AcuseRespaldoSqlstore>>,
+        >,
+    >,
 ) {
     loop {
         // Intentar conectar.
@@ -204,9 +276,14 @@ async fn bucle_de_conexion(
                         }
 
                         // Leer mensajes hasta desconexión.
-                        if let Err(_e) =
-                            leer_mensajes(&mut conexion, &remitente, &estado_tx, &marcas_de_origen)
-                                .await
+                        if let Err(_e) = leer_mensajes(
+                            &mut conexion,
+                            &remitente,
+                            &estado_tx,
+                            &marcas_de_origen,
+                            &respaldo_pendiente,
+                        )
+                        .await
                         {
                             // La conexión se perdió; pasar a reconectando.
                             let _ = estado_tx.send(EstadoSesion::Reconectando);
@@ -270,6 +347,11 @@ async fn leer_mensajes(
     remitente: &mpsc::Sender<EventoEntrante>,
     estado_tx: &watch::Sender<EstadoSesion>,
     marcas_de_origen: &Arc<Mutex<MarcasDeOrigen>>,
+    respaldo_pendiente: &Arc<
+        tokio::sync::Mutex<
+            HashMap<String, tokio::sync::oneshot::Sender<crate::mensajes::AcuseRespaldoSqlstore>>,
+        >,
+    >,
 ) -> Result<(), ErrorCanalWhatsmeow> {
     loop {
         let mensaje = conexion.leer_mensaje().await?;
@@ -346,8 +428,19 @@ async fn leer_mensajes(
                 // Igual que el código de emparejamiento: se consume cuando CicloDeVidaSesion
                 // esté completo.
             }
-            MensajeEntrante::AcuseRespaldoSqlstore(_) => {
-                // El acuse del respaldo se consume por el módulo de respaldo (tarea separada).
+            MensajeEntrante::AcuseRespaldoSqlstore(acuse) => {
+                let remitente = {
+                    let mut pendientes = respaldo_pendiente.lock().await;
+                    pendientes.remove(&acuse.identificador_de_ronda)
+                };
+                if let Some(tx) = remitente {
+                    let _ = tx.send(acuse);
+                } else {
+                    eprintln!(
+                        "hexcell-canal-whatsmeow: acuse_respaldo_sqlstore huérfano recibido para ronda: {}",
+                        acuse.identificador_de_ronda
+                    );
+                }
             }
             MensajeEntrante::AcuseEnvio(_) => {
                 // Los acuses de envío se consumen sin elevar la taxonomía de whatsmeow al puerto.

@@ -161,6 +161,36 @@ impl SidecarSimulado {
         self.enviar_linea_cruda(&linea).await;
     }
 
+    /// Lee y devuelve una orden de respaldo del sqlstore del núcleo.
+    pub async fn leer_orden_respaldo_sqlstore(
+        &mut self,
+    ) -> hexcell_canal_whatsmeow::mensajes::OrdenRespaldoSqlstore {
+        let linea = self.leer_linea().await;
+        serde_json::from_str(&linea).expect("no se pudo parsear la orden de respaldo")
+    }
+
+    /// Envía un acuse de respaldo del sqlstore.
+    pub async fn enviar_acuse_respaldo_sqlstore(
+        &mut self,
+        identificador_de_ronda: &str,
+        resultado: &str,
+        ruta_de_la_copia: &str,
+        bytes: i64,
+        motivo: &str,
+    ) {
+        let acuse = hexcell_canal_whatsmeow::mensajes::AcuseRespaldoSqlstore {
+            version: 4,
+            tipo: "acuse_respaldo_sqlstore".to_string(),
+            identificador_de_ronda: identificador_de_ronda.to_string(),
+            resultado: resultado.to_string(),
+            ruta_de_la_copia: ruta_de_la_copia.to_string(),
+            bytes,
+            motivo: motivo.to_string(),
+        };
+        let linea = serde_json::to_string(&acuse).unwrap();
+        self.enviar_linea_cruda(&linea).await;
+    }
+
     /// Lee una línea cruda del núcleo.
     pub async fn leer_linea(&mut self) -> String {
         let con = self.conexion.as_mut().expect("no hay conexión");

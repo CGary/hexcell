@@ -40,6 +40,9 @@ pub enum ErrorCanalWhatsmeow {
     /// marca: un valor centinela de 0 (época Unix) se leería en el sidecar como "ya expirado"
     /// y descartaría el mensaje sin ningún intento real de envío, silenciosamente.
     OrigenDesconocido,
+    /// No se recibió el acuse del respaldo del sqlstore dentro del plazo previsto, o la
+    /// conexión terminó antes de recibir respuesta.
+    RespaldoSinAcuse,
 }
 
 impl fmt::Display for ErrorCanalWhatsmeow {
@@ -62,6 +65,10 @@ impl fmt::Display for ErrorCanalWhatsmeow {
             Self::OrigenDesconocido => write!(
                 f,
                 "sin marca temporal de origen conocida para esta conversación"
+            ),
+            Self::RespaldoSinAcuse => write!(
+                f,
+                "no se recibió acuse de respaldo del sqlstore dentro del plazo"
             ),
         }
     }

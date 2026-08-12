@@ -40,6 +40,7 @@ http-body-util = { workspace = true }
 bytes = { workspace = true }
 hexcell-core = { path = "../hexcell-core" }
 hexcell-canal-simulado = { path = "../hexcell-canal-simulado" }
+hexcell-canal-whatsmeow = { path = "../hexcell-canal-whatsmeow" }
 # Persistencia dual de FR-05. El motor de SQLite no aparece en este manifiesto a propósito: la
 # célula habla con `sessions.db` a través del repositorio de esta capa, nunca con SQL suelto.
 hexcell-storage = { path = "../hexcell-storage" }
