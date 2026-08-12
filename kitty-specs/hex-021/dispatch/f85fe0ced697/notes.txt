@@ -1,0 +1,38 @@
+The command `cargo test -p hexcell --test respaldo_sqlstore_ipc` has been launched. Waiting for execution results.
+The workspace tests have been launched. Waiting for the execution to finish.
+DONE: Implementado respaldo de sqlstore sobre IPC con VACUUM INTO en el sidecar, verificación de integridad y correlación en el núcleo Rust.
+
+Se han implementado todas las instrucciones de la tarea **HEX-021** conforme a los contratos establecidos:
+
+1. **Lado Go (Sidecar)**:
+   - En [`sidecar/internal/canal/respaldo.go`](file:///home/gary/dev/hexcell/worktrees/HEX-021/sidecar/internal/canal/respaldo.go), se definió `NombreCanonicoDeCopiaSqlstore = "sqlstore.db"` y la función `AbrirConexionDeRespaldo` que abre una conexión dedicada de solo lectura (sin bloquear ni interferir con la conexión viva de whatsmeow).
+   - Se implementó `ManejarOrdenRespaldoSqlstore`, validando el destino, capturando `PRAGMA user_version` del origen, ejecutando `VACUUM INTO ?`, abriendo la copia en modo solo lectura para verificar `PRAGMA integrity_check` y correspondencia de `PRAGMA user_version`, y emitiendo `AcuseRespaldoSqlstore` con todos los campos siempre presentes (sin credenciales ni contenidos de mensajes en caso de fallo).
+   - Se añadieron pruebas unitarias exhaustivas en [`sidecar/internal/canal/respaldo_test.go`](file:///home/gary/dev/hexcell/worktrees/HEX-021/sidecar/internal/canal/respaldo_test.go).
+
+2. **Lado Rust (Adaptador whatsmeow & Núcleo)**:
+   - En [`crates/hexcell-canal-whatsmeow/src/error.rs`](file:///home/gary/dev/hexcell/worktrees/HEX-021/crates/hexcell-canal-whatsmeow/src/error.rs), se añadió la variante `ErrorCanalWhatsmeow::RespaldoSinAcuse`.
+   - En [`crates/hexcell-canal-whatsmeow/src/conexion.rs`](file:///home/gary/dev/hexcell/worktrees/HEX-021/crates/hexcell-canal-whatsmeow/src/conexion.rs), se agregó `enviar_orden_respaldo_sqlstore`.
+   - En [`crates/hexcell-canal-whatsmeow/src/adaptador.rs`](file:///home/gary/dev/hexcell/worktrees/HEX-021/crates/hexcell-canal-whatsmeow/src/adaptador.rs), se incorporó el mapa `respaldo_pendiente` protegido por mutex y el método `ordenar_respaldo_sqlstore` con plazo configurable, enrutando el acuse correlacionado por `identificador_de_ronda`.
+   - En [`crates/hexcell-canal-whatsmeow/tests/comun/mod.rs`](file:///home/gary/dev/hexcell/worktrees/HEX-021/crates/hexcell-canal-whatsmeow/tests/comun/mod.rs) y [`crates/hexcell-canal-whatsmeow/tests/respaldo_sqlstore.rs`](file:///home/gary/dev/hexcell/worktrees/HEX-021/crates/hexcell-canal-whatsmeow/tests/respaldo_sqlstore.rs), se crearon pruebas deterministas con `SidecarSimulado`.
+   - En [`crates/hexcell/Cargo.toml`](file:///home/gary/dev/hexcell/worktrees/HEX-021/crates/hexcell/Cargo.toml), se declaró la dependencia `hexcell-canal-whatsmeow` y se actualizó [`Cargo.lock`](file:///home/gary/dev/hexcell/worktrees/HEX-021/Cargo.lock).
+   - En [`crates/hexcell/src/respaldo.rs`](file:///home/gary/dev/hexcell/worktrees/HEX-021/crates/hexcell/src/respaldo.rs), se implementaron `ResultadoRespaldoSqlstore` y la función asíncrona `ordenar_respaldo_sqlstore` con registro estructurado (`respaldo_sqlstore_completado` / `respaldo_sqlstore_fallido`).
+   - En [`crates/hexcell/tests/respaldo_sqlstore_ipc.rs`](file:///home/gary/dev/hexcell/worktrees/HEX-021/crates/hexcell/tests/respaldo_sqlstore_ipc.rs), se añadieron pruebas de integración completas.
+   - Se documentó el estado en [`docs/STATUS.md`](file:///home/gary/dev/hexcell/worktrees/HEX-021/docs/STATUS.md).
+
+=== Fin de fase: Implementación ===
+
+Resultado: DONE
+Resumen técnico: Implementado el respaldo de sqlstore sobre IPC con VACUUM INTO en Go y correlación por ronda en Rust.
+
+Artefactos producidos:
+- Diff committeado en la rama ai/HEX-021 (worktrees/HEX-021/)
+- [.ai/tasks/active/HEX-021-new-spec/04-implementation-log.yaml](file:///home/gary/dev/hexcell/.ai/tasks/active/HEX-021-new-spec/04-implementation-log.yaml)
+
+No hay transición de estado: el worktree y la rama siguen iguales.
+
+Pasos siguientes (los despacha el orquestador, NO yo):
+1. [Obligatorio] /q-verify HEX-021 — corre verify.commands del contrato dentro del worktree y escribe 05-validation.json.
+
+Si querés volver atrás:
+- [WORKTREE:HEX-021] `git -C worktrees/HEX-021 reset --hard HEAD~1` — descarta el último commit del worktree.
+- [ROOT] `quorum task back HEX-021` — borra worktree y rama (perdés todos los commits no mergeados).

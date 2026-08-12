@@ -1,0 +1,42 @@
+acceptance:
+    - id: AC-1
+      statement: 'The Go sidecar handles the orden_respaldo_sqlstore IPC message (docs/protocolo-ipc-nucleo-sidecar.md section 7): it executes VACUUM INTO over one of its OWN open connections to the whatsmeow sqlstore (never copying the file from outside), writes the copy under the destino directory received in the order using a canonical file name that the implementation fixes and documents, and never blocks the connection whatsmeow uses for the ongoing protocol.'
+    - id: AC-2
+      statement: 'After writing the copy, the sidecar verifies it with the same criterion as the other three bases (docs/contrato-ipc-respaldo-del-sqlstore.md section 2): open the copy read-only and check PRAGMA integrity_check and PRAGMA user_version, never mere file existence. A failed verification (or a failed VACUUM INTO, or an unusable destino) yields resultado=fallido with a human-readable motivo.'
+    - id: AC-3
+      statement: 'The sidecar replies with acuse_respaldo_sqlstore carrying the SAME identificador_de_ronda received in the order, with ALL fields always present per the protocol section 1 rule 4 (absence encoded as empty string / zero, never field omission): ruta_de_la_copia and bytes filled on completado, motivo filled on fallido. The motivo NEVER contains protocol credentials nor any message content.'
+    - id: AC-4
+      statement: 'The Rust core orders the sqlstore backup as part of its existing per-cell backup round (crates/hexcell/src/respaldo.rs territory): it sends orden_respaldo_sqlstore with the resolved destino and the round identifier that groups the four bases, correlates the returned acuse by identificador_de_ronda, and records completion or failure in the structured log. The core NEVER executes VACUUM INTO on the sqlstore nor opens that file directly, not even read-only.'
+    - id: AC-5
+      statement: 'The WhatsmeowAdapter message routing (crates/hexcell-canal-whatsmeow/src/adaptador.rs) delivers AcuseRespaldoSqlstore to the correlation path instead of silently ignoring it, following the same correlation discipline the adapter already applies to other request/acknowledge pairs.'
+    - id: AC-6
+      statement: 'Tests exercise both sides deterministically without a real channel: a Go test creates a real temporary SQLite sqlstore, runs the full order->VACUUM INTO->verify->acuse path for success AND for at least one failure branch (e.g. non-writable or missing destino), asserting the all-fields-present encoding; a Rust test drives the core correlation path against a simulated sidecar acuse for both resultado values. The end-to-end restore rehearsal (restoring a cell from the four bases and checking it reconnects and answers a real message) is EXPLICITLY DEFERRED to the lab-number task (plan task 15 territory) because it requires a real paired channel.'
+    - id: AC-7
+      statement: 'The 7 standard verification commands pass (cargo fmt --check, cargo build --workspace, cargo clippy --workspace -- -D warnings, cargo test --workspace, hexcell-core tree isolation check, doc compile-fail test, cd sidecar && gofmt check && go build ./... && go vet ./... && go test ./...).'
+constraints:
+    - 'This implements the execution half of A-3 plan task 18 over contracts that are ALREADY CLOSED: docs/contrato-ipc-respaldo-del-sqlstore.md v1.0 (message, responsible party, frequency order of magnitude, destination criterion) and docs/protocolo-ipc-nucleo-sidecar.md v1.0 section 7 (exact wire fields, version 4, all-fields-present rule). Neither document is modified; the code conforms to them.'
+    - 'The message TYPE structs already exist on both sides (sidecar/internal/ipc/mensajes.go OrdenRespaldoSqlstore/AcuseRespaldoSqlstore; crates/hexcell-canal-whatsmeow/src/mensajes.rs). This task implements the HANDLING, not the types; extend the types only if the blueprint finds a mismatch against the protocol doc, and record it as a risk.'
+    - 'The exact backup frequency value (every how many hours) is a calibration parameter of stage A-3, NOT fixed here: the contract fixes only the order of magnitude (hours, not days). If a scheduling knob is introduced it is a documented configurable parameter marked "a calibrar"; do not invent a number as a final decision.'
+    - 'The remote backup destination is a pending business decision (docs/STATUS.md); tests simulate "off-disk" with a second local temporary directory, same as the other three bases.'
+    - No new third-party dependencies. No .db files versioned. No changes to the pinned whatsmeow commit.
+    - Never introduce mass-sending-provider vocabulary (jitter, warm-up, proxies, VPN, IP rotation); never write that Fase B replaces or retires the sidecar channel.
+    - Everything user-visible (code comments, log messages, docs touched, commit message) is written in Spanish; artifact YAML prose stays in English. Dates absolute (2026-08-12).
+    - Consult docs/bitacora-de-descartes.md before proposing anything resembling a previously discarded idea.
+invariants:
+    - 'The sqlstore copy is ALWAYS produced by the sidecar process via VACUUM INTO on its own open connection; the core never opens the sqlstore file for any reason, not even read-only.'
+    - 'Copy verification is integrity_check + user_version on a read-only open of the copy, never mere existence.'
+    - 'IPC messages keep the all-fields-present encoding (empty string / zero for absence), version 4, exact field names from the protocol doc.'
+    - 'The motivo field of a failed acuse never carries protocol credentials nor message content.'
+    - 'No behavior changes outside the backup path: channel discipline, outbox, pairing, reconnection and taxonomy code stay untouched except for the minimal wiring the backup handler needs.'
+    - All user-visible content in Spanish with absolute dates; no invented business numbers.
+non_goals:
+    - 'The end-to-end restore rehearsal against a real channel (restore from the four bases, reconnect, answer a real message) - deferred until the lab number exists (plan task 15).'
+    - Lab-number testing itself (plan task 15) and the PairPhone() re-pairing runbook (plan task 16).
+    - Who triggers the backup in production and the exact cadence (stage A-6 packaging/scheduling territory beyond the core round integration).
+    - The real remote backup destination (pending business decision in STATUS.md).
+    - Changes to the backup of the other three bases (sessions.db, knowledge_live.db, identity store) beyond adding the fourth to the same round.
+    - Fase B / Cloud API channel work.
+goal: 'A-3 plan task 18 (execution half): implement the sqlstore-over-IPC backup that stage A-2 left declared as a contract - the core orders it within its backup round and the sidecar process executes VACUUM INTO on its own connections, verifies integrity, and acknowledges with the round identifier - with deterministic tests on both sides; the end-to-end restore rehearsal is explicitly deferred to the lab-number task.'
+risk: medium
+summary: 'sqlstore backup over IPC: sidecar-executed VACUUM INTO with integrity verification, core-ordered within the four-base backup round; e2e restore rehearsal deferred to lab task.'
+task_id: HEX-021

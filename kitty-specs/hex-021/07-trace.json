@@ -1,0 +1,110 @@
+{
+  "attempts": [
+    {
+      "duration_s": 475.521530509,
+      "model": "google/gemini-3.6-flash-high",
+      "notes": "The command `cargo test -p hexcell --test respaldo_sqlstore_ipc` has been launched. Waiting for execution results. The workspace tests have been launched. Waiting for the execution to finish. DONE: Implementado respaldo de sqlstore sobre IPC con VACUUM INTO en el sidecar, verificación de integridad y correlación en el núcleo Rust.  Se han implementado todas las instrucciones de la tarea **HEX-021** conforme a los contratos establecidos:  1. **Lado Go (Sidecar)**:    - En [`sidecar/internal/canal/respaldo.go`](file:///home/gary/dev/hexcell/worktrees/HEX-021/sidecar/internal/canal/respaldo.go), se definió `NombreCanonicoDeCopiaSqlstore = \"sqlstore.db\"` y la función `AbrirConexionDeRespaldo` que abre una conexión dedicada de solo lectura (sin bloquear ni interferir con la conexión viva de whatsmeow).    - Se implementó `ManejarOrdenRespaldoSqlstore`, validando el destino, capturando `PRAGMA user_version` del origen, ejecutando `VACUUM INTO ?`, abriendo la copia en modo solo lectura para verificar `PRAGMA integrity_check` y correspondencia de `PRAGMA user_version`, y emitiendo `AcuseRespaldoSqlstore` con todos los campos siempre presentes (sin credenciales ni contenidos de mensajes en caso de fallo).    - Se añadieron pruebas unitarias exhaustivas en [`sidecar/internal/canal/respaldo_test.go`](file:///home/gary/dev/hexcell/worktrees/HEX-021/sidecar/internal/canal/respaldo_test.go).  2. **Lado Rust (Adaptador whatsmeow & Núcleo)**:    - En [`crates/hexcell-canal-whatsmeow/src/error.rs`](file:///home/gary/dev/hexcell/worktrees/HEX-021/crates/hexcell-canal-whatsmeow/src/error.rs), se añadió la variante `ErrorCanalWhatsmeow::RespaldoSinAcuse`.    - En [`crates/hexcell-canal-whatsmeow/src/conexion.rs`](file:///home/gary/dev/hexcell/worktrees/HEX-021/crates/hexcell-canal-whatsmeow/src/conexion.rs), se agregó `enviar_orden_respaldo_sqlstore`.    - En [`crates/hexcell-canal-whatsmeow/src/adaptador.rs`](file:///home/gary/dev/hexcell/worktrees/HEX-021/crates/hexcell-...",
+      "phase": "execute",
+      "result": "passed"
+    }
+  ],
+  "context_overflows": [],
+  "events": [
+    {
+      "event": "risk_level_calculated",
+      "level": "high",
+      "reasons": [
+        "sensitive_path_match: [Cargo.lock]"
+      ],
+      "signals": {
+        "files_count": 20,
+        "sensitive_matches": [
+          "Cargo.lock"
+        ],
+        "symbols_count": 0
+      }
+    },
+    {
+      "calculated": "high",
+      "declared": "medium",
+      "event": "risk_level_divergence",
+      "reasons": [
+        "sensitive_path_match: [Cargo.lock]"
+      ]
+    },
+    {
+      "blocked": "",
+      "candidate": {
+        "agent": "agy_edit",
+        "level": 2,
+        "model": "google/gemini-3.6-flash-high"
+      },
+      "dispatch_id": "",
+      "inputs_snapshot": {
+        "complexity_band": "L",
+        "control": {
+          "disabled": null,
+          "updated_at": ""
+        },
+        "exclusions": [],
+        "hashes": {
+          "agents_yaml": "da88cec7aff86186e0974bcf69523dd0fe7ef19266c444f6da8c16709a19a090",
+          "config_yaml": "a40d2c4258971a64d6fd920ec1fe5ed2a116f96aa6fe04374a437006ea740342",
+          "routing_yaml": "b65f9f326b45de9a8ba351e0674e80f8b69ee2d69b415eab6f37d82d0a68637c"
+        },
+        "incumbent_family": "",
+        "level": 2,
+        "phase": "implement",
+        "risk": "medium",
+        "router_version": "fleet-route/v1"
+      },
+      "reasons": null,
+      "reroute_budget": 1,
+      "review_family_degraded": false,
+      "ts": "2026-08-12T17:12:25Z",
+      "type": "routing_decision"
+    },
+    {
+      "bundle_hash": "f85fe0ced697b790e67e86015c5ea9ff8cf216867f4c36c5cf69f8ef9febe406",
+      "dispatch_id": "f85fe0ced697",
+      "ts": "2026-08-12T17:12:41Z",
+      "type": "dispatch_started"
+    },
+    {
+      "applied": true,
+      "cause": null,
+      "diff_stat": {
+        "deletions": 6,
+        "empty": false,
+        "files_changed": 12,
+        "indeterminate": false,
+        "insertions": 1080
+      },
+      "dispatch_id": "f85fe0ced697",
+      "forensic_ref": "refs/fleet/HEX-021/attempt-1-google-gemini-3.6-flash-high",
+      "noop": false,
+      "outcome_class": "attempt",
+      "ts": "2026-08-12T17:20:37Z",
+      "type": "dispatch_finished",
+      "usage_source": "none"
+    },
+    {
+      "event": "accept_gates",
+      "ready_for_merge": true,
+      "gates": {
+        "validation": true,
+        "review": true,
+        "trace": true,
+        "contract_check": true
+      },
+      "evaluated_at": "2026-08-12",
+      "evaluated_by": "orchestrator (deterministic jq/python gates)"
+    }
+  ],
+  "execution_mode": "worktree_edit",
+  "started_at": "2026-08-12T17:10:07Z",
+  "summary": "Implement sqlstore-over-IPC backup: sidecar VACUUM INTO + verification on its own connection, core order + acuse correlation by identificador_de_ronda, tested both sides.",
+  "task_id": "HEX-021",
+  "total_cost_usd": 0,
+  "violations": []
+}

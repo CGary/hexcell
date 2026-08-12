@@ -1,0 +1,359 @@
+task_id: HEX-021
+summary: >-
+  A-3 task 18 execution half: sidecar VACUUM INTO + verification on its own sqlstore
+  connection, plus a new correlation mechanism so the core orders and awaits the acuse.
+affected_files:
+  - sidecar/internal/canal/respaldo.go
+  - sidecar/internal/canal/respaldo_test.go
+  - sidecar/internal/ipc/mensajes.go
+  - sidecar/internal/canal/canal.go
+  - sidecar/internal/configuracion/configuracion.go
+  - crates/hexcell-canal-whatsmeow/src/adaptador.rs
+  - crates/hexcell-canal-whatsmeow/src/conexion.rs
+  - crates/hexcell-canal-whatsmeow/src/error.rs
+  - crates/hexcell-canal-whatsmeow/src/mensajes.rs
+  - crates/hexcell-canal-whatsmeow/tests/comun/mod.rs
+  - crates/hexcell-canal-whatsmeow/tests/respaldo_sqlstore.rs
+  - crates/hexcell-canal-whatsmeow/tests/salida.rs
+  - crates/hexcell/Cargo.toml
+  - crates/hexcell/src/respaldo.rs
+  - crates/hexcell/tests/respaldo_sqlstore_ipc.rs
+  - crates/hexcell-storage/src/respaldo.rs
+  - Cargo.lock
+  - docs/STATUS.md
+  - docs/contrato-ipc-respaldo-del-sqlstore.md
+  - docs/protocolo-ipc-nucleo-sidecar.md
+symbols:
+  - sidecar/internal/canal.NombreCanonicoDeCopiaSqlstore
+  - sidecar/internal/canal.AbrirConexionDeRespaldo
+  - sidecar/internal/canal.verificarDestinoDisponible
+  - sidecar/internal/canal.ManejarOrdenRespaldoSqlstore
+  - hexcell_canal_whatsmeow::error::ErrorCanalWhatsmeow::RespaldoSinAcuse
+  - hexcell_canal_whatsmeow::conexion::enviar_orden_respaldo_sqlstore
+  - hexcell_canal_whatsmeow::adaptador::AdaptadorWhatsmeow::respaldo_pendiente
+  - hexcell_canal_whatsmeow::adaptador::AdaptadorWhatsmeow::ordenar_respaldo_sqlstore
+  - hexcell::respaldo::ResultadoRespaldoSqlstore
+  - hexcell::respaldo::ordenar_respaldo_sqlstore
+dependencies:
+  - docs/contrato-ipc-respaldo-del-sqlstore.md
+  - docs/protocolo-ipc-nucleo-sidecar.md
+  - docs/STATUS.md
+  - docs/bitacora-de-descartes.md
+  - crates/hexcell/src/respaldo.rs
+  - crates/hexcell-storage/src/respaldo.rs
+  - crates/hexcell-storage/src/pools.rs
+  - crates/hexcell-canal-whatsmeow/src/adaptador.rs
+  - crates/hexcell-canal-whatsmeow/src/conexion.rs
+  - crates/hexcell-canal-whatsmeow/src/error.rs
+  - crates/hexcell-canal-whatsmeow/src/mensajes.rs
+  - crates/hexcell-canal-whatsmeow/tests/comun/mod.rs
+  - crates/hexcell-canal-whatsmeow/tests/salida.rs
+  - sidecar/internal/ipc/mensajes.go
+  - sidecar/internal/canal/canal.go
+  - sidecar/internal/outbox/outbox.go
+  - sidecar/internal/configuracion/configuracion.go
+  - sidecar/main.go
+test_scenarios:
+  - statement: >-
+      Go test (sidecar/internal/canal/respaldo_test.go): ManejarOrdenRespaldoSqlstore, given
+      a real temporary SQLite file standing in for the sqlstore and a valid destino
+      directory, executes VACUUM INTO on the dedicated connection from
+      AbrirConexionDeRespaldo (never on whatsmeow's own connection), writes the copy at
+      destino/sqlstore.db, verifies it by opening it read-only and checking
+      integrity_check=ok plus a user_version match against the source's value captured at
+      backup time, and returns AcuseRespaldoSqlstore{resultado: completado,
+      ruta_de_la_copia, bytes>0, motivo: ""}.
+    covers: [AC-1, AC-2, AC-3]
+  - statement: >-
+      Go test: ManejarOrdenRespaldoSqlstore, given a missing or otherwise unusable destino
+      directory, returns AcuseRespaldoSqlstore{resultado: fallido, ruta_de_la_copia: "",
+      bytes: 0, motivo: <sanitized human-readable text>} without corrupting or leaving a
+      partial file, and the all-fields-present encoding holds (empty string / zero, no
+      omitted field).
+    covers: [AC-2, AC-3]
+  - statement: >-
+      Rust integration test (crates/hexcell-canal-whatsmeow/tests/respaldo_sqlstore.rs)
+      using the existing SidecarSimulado double: AdaptadorWhatsmeow::ordenar_respaldo_sqlstore
+      sends orden_respaldo_sqlstore with the given destino/identificador_de_ronda, and the
+      leer_mensajes dispatch loop correlates the simulated sidecar's
+      acuse_respaldo_sqlstore reply -- both resultado=completado and resultado=fallido --
+      back to the awaiting caller by identificador_de_ronda, instead of discarding it as it
+      does today.
+    covers: [AC-5, AC-6]
+  - statement: >-
+      Rust integration test: an acuse_respaldo_sqlstore carrying an identificador_de_ronda
+      with no pending order is logged and dropped without closing the IPC connection,
+      verified the same way tests/salida.rs's existing
+      acuse_envio_se_consume_sin_cerrar_conexion test verifies AcuseEnvio's discard path.
+    covers: [AC-5]
+  - statement: >-
+      Rust integration test: AdaptadorWhatsmeow::ordenar_respaldo_sqlstore returns
+      ErrorCanalWhatsmeow::RespaldoSinAcuse when no acuse arrives within the
+      caller-supplied plazo (a Duration parameter, never a hardcoded constant), and removes
+      its own stale pending entry so a later unrelated acuse cannot be misdelivered to it.
+    covers: [AC-4]
+  - statement: >-
+      Rust integration test (crates/hexcell/tests/respaldo_sqlstore_ipc.rs) with a small
+      self-contained fake-sidecar UnixListener (redeclared locally, following this
+      workspace's existing convention that test binaries do not share code across crates):
+      hexcell::respaldo::ordenar_respaldo_sqlstore sends the order with a resolved destino
+      and a round identifier, correlates both a completado and a fallido acuse, returns
+      ResultadoRespaldoSqlstore::Completado(CopiaVerificada) / ::Fallido{motivo}
+      accordingly, logs the outcome via registro::emitir, and never opens the sqlstore file
+      itself.
+    covers: [AC-4, AC-6]
+  - statement: >-
+      The 7 standard verification commands (cargo fmt --check, cargo build --workspace,
+      cargo clippy --workspace -- -D warnings, cargo test --workspace, the hexcell-core
+      tree-isolation check, the doc compile-fail test, and the sidecar
+      gofmt/build/vet/test battery) all pass with the new files and the new
+      hexcell -> hexcell-canal-whatsmeow dependency edge (Cargo.toml + Cargo.lock).
+    covers: [AC-7]
+strategy:
+  - step: 1
+    action: >-
+      Add sidecar/internal/canal/respaldo.go: NombreCanonicoDeCopiaSqlstore = "sqlstore.db"
+      (mirrors the other three bases' convention of keeping the live file's basename inside
+      a per-round destino directory); AbrirConexionDeRespaldo(rutaSqlstore string) (*sql.DB,
+      error), which opens a DEDICATED read-only *sql.DB connection to rutaSqlstore
+      (mode=ro DSN, same "sqlite" driver already registered by canal.go's blank import of
+      modernc.org/sqlite -- no new import needed) because sqlstore.Container
+      (go.mau.fi/whatsmeow/store/sqlstore) does not expose its internal *sql.DB (the field
+      is unexported), so this handler cannot literally reuse whatsmeow's own connection and
+      must not try; verificarDestinoDisponible(destino string) (string, error), mirroring
+      crates/hexcell-storage/src/respaldo.rs's verificar_destino_disponible (parent
+      directory must exist, target file must not already exist), returning the joined
+      destino/sqlstore.db path; and ManejarOrdenRespaldoSqlstore(ctx, dbRespaldo *sql.DB,
+      orden ipc.OrdenRespaldoSqlstore, reg *registro.Registro) ipc.AcuseRespaldoSqlstore,
+      which validates the destino, reads PRAGMA user_version from dbRespaldo to capture the
+      SOURCE's version (whatsmeow's schema counter is opaque to this codebase -- there is no
+      hexcell-owned expected constant for it, unlike sessions.db/knowledge_live.db), runs
+      "VACUUM INTO ?" on dbRespaldo, opens the copy read-only, checks integrity_check=ok and
+      that the copy's user_version equals the captured source value, measures bytes via
+      os.Stat after closing the verification connection, and returns
+      AcuseRespaldoSqlstore with all five fields always present (resultado, and
+      ruta_de_la_copia/bytes/motivo encoded as ""/0 for the branch that does not apply).
+      Every failure branch (bad destino, failed VACUUM INTO, failed verification) returns
+      resultado=fallido with a sanitized Spanish motivo -- never chat content, never a
+      protocol credential -- and logs via reg.Error with a fixed event name and a Detalle
+      that carries only counts/ronda, never a raw path or the motivo text verbatim if it
+      could ever carry anything sensitive (it cannot here, but keep the same discipline as
+      the rest of this package). Comments and log text in Spanish.
+    files:
+      - sidecar/internal/canal/respaldo.go
+  - step: 2
+    action: >-
+      Add sidecar/internal/canal/respaldo_test.go: a success test that creates a real
+      temporary SQLite file (via the same "sqlite" driver, with an arbitrary PRAGMA
+      user_version set) standing in for the sqlstore, opens it with
+      AbrirConexionDeRespaldo, calls ManejarOrdenRespaldoSqlstore with a valid destino
+      temp dir, and asserts resultado=completado, ruta_de_la_copia ==
+      destino/sqlstore.db, bytes>0, motivo=="", and that the copy's user_version equals the
+      source's; and at least one failure-branch test (missing destino directory) asserting
+      resultado=fallido, ruta_de_la_copia=="", bytes==0, motivo!="" and that no file was
+      left behind. Do not attempt to test against a real whatsmeow-populated sqlstore --
+      an arbitrary SQLite file with the same PRAGMA shape is sufficient and keeps the test
+      independent of the whatsmeow schema.
+    files:
+      - sidecar/internal/canal/respaldo_test.go
+  - step: 3
+    action: >-
+      In crates/hexcell-canal-whatsmeow/src/error.rs, add
+      ErrorCanalWhatsmeow::RespaldoSinAcuse (no acuse_respaldo_sqlstore arrived within the
+      caller-supplied plazo, or the correlation entry was dropped without a reply) with a
+      Display arm in Spanish and no From impl (it is not an io::Error). Keep the module
+      doc's existing distinction intact: this is still a transport-layer failure, not a
+      domain outcome -- the domain outcome (completado/fallido) lives inside the
+      AcuseRespaldoSqlstore the Ok branch returns.
+    files:
+      - crates/hexcell-canal-whatsmeow/src/error.rs
+  - step: 4
+    action: >-
+      In crates/hexcell-canal-whatsmeow/src/conexion.rs, add
+      enviar_orden_respaldo_sqlstore(escritor_compartido, orden:
+      &crate::mensajes::OrdenRespaldoSqlstore) -> Result<(), ErrorCanalWhatsmeow>, a free
+      function mirroring the existing enviar_saliente exactly (serialize with serde_json,
+      lock escritor_compartido, write_all + newline + flush, SinConexion if the guard is
+      None).
+    files:
+      - crates/hexcell-canal-whatsmeow/src/conexion.rs
+  - step: 5
+    action: >-
+      In crates/hexcell-canal-whatsmeow/src/adaptador.rs: add field respaldo_pendiente:
+      Arc<tokio::sync::Mutex<HashMap<String, tokio::sync::oneshot::Sender<
+      crate::mensajes::AcuseRespaldoSqlstore>>>> to AdaptadorWhatsmeow, initialize it empty
+      in nuevo(), clone it in arrancar() and thread it through
+      bucle_de_conexion/leer_mensajes exactly like escritor_compartido and marcas_de_origen
+      already are. Add pub async fn ordenar_respaldo_sqlstore(&self, destino: &str,
+      identificador_de_ronda: &str, plazo: Duration) -> Result<
+      crate::mensajes::AcuseRespaldoSqlstore, ErrorCanalWhatsmeow>: checks
+      escritor_compartido is Some (else SinConexion) exactly like send() does; registers a
+      oneshot::channel() under identificador_de_ronda in respaldo_pendiente BEFORE writing
+      the order (never after, to close the race where an instantaneous acuse arrives before
+      registration); builds the OrdenRespaldoSqlstore with orden="respaldar_sqlstore" and
+      calls enviar_orden_respaldo_sqlstore; on write failure, removes its own pending entry
+      and returns the write error; otherwise awaits the oneshot inside
+      tokio::time::timeout(plazo, rx) -- plazo is a caller-supplied Duration, never a
+      hardcoded constant, matching how the exact backup cadence itself stays a documented
+      "a calibrar" parameter per the spec's own constraint -- returning RespaldoSinAcuse on
+      timeout or on a dropped sender, and removing the stale pending entry in the timeout
+      branch. Replace the MensajeEntrante::AcuseRespaldoSqlstore(_) arm in leer_mensajes
+      (currently discards, ~line 349) with: look up and remove the pending oneshot sender
+      by acuse.identificador_de_ronda, and if found, `let _ = remitente.send(acuse);`
+      (ignore send errors -- the awaiting future may have already timed out and dropped its
+      receiver); if not found, eprintln! the same way the existing DesajusteDeVersion
+      branch does (no new logging dependency), naming only the ronda id, never anything
+      else from the acuse. Do not change how EventoEntrante, EstadoSesion, CodigoEmparejamiento,
+      AcuseEmparejamiento or AcuseEnvio are handled.
+    files:
+      - crates/hexcell-canal-whatsmeow/src/adaptador.rs
+  - step: 6
+    action: >-
+      Extend crates/hexcell-canal-whatsmeow/tests/comun/mod.rs's SidecarSimulado with two
+      methods mirroring the existing leer_mensaje_saliente/enviar_acuse_envio pair:
+      leer_orden_respaldo_sqlstore(&mut self) -> OrdenRespaldoSqlstore (reads+parses a
+      line) and enviar_acuse_respaldo_sqlstore(&mut self, identificador_de_ronda, resultado,
+      ruta_de_la_copia, bytes, motivo) (builds and sends an AcuseRespaldoSqlstore line).
+      Add crates/hexcell-canal-whatsmeow/tests/respaldo_sqlstore.rs with #[tokio::test]s
+      covering: (a) ordenar_respaldo_sqlstore round-trips a completado acuse with matching
+      ruta_de_la_copia/bytes; (b) round-trips a fallido acuse with matching motivo; (c) an
+      orphan acuse (unknown ronda id) does not close the connection -- send a normal event
+      afterwards and confirm the confirmacion still arrives, same shape as
+      acuse_envio_se_consume_sin_cerrar_conexion in tests/salida.rs; (d) a timeout case
+      using a short plazo and never sending a reply, asserting RespaldoSinAcuse.
+    files:
+      - crates/hexcell-canal-whatsmeow/tests/comun/mod.rs
+      - crates/hexcell-canal-whatsmeow/tests/respaldo_sqlstore.rs
+  - step: 7
+    action: >-
+      Add hexcell-canal-whatsmeow = { path = "../hexcell-canal-whatsmeow" } to
+      crates/hexcell/Cargo.toml's [dependencies] (crates/hexcell currently only wires
+      hexcell-canal-simulado; crates/hexcell/src/main.rs's production wiring is NOT
+      touched by this task -- main.rs keeps using AdaptadorSimulado, per the spec's own
+      non_goal that who triggers the backup in production is A-6 territory and per D-20 in
+      the discard log, which already rejects an in-process scheduler). Run cargo build
+      --workspace once locally to let Cargo.lock pick up the new path-dependency edge; do
+      not hand-edit Cargo.lock.
+    files:
+      - crates/hexcell/Cargo.toml
+      - Cargo.lock
+  - step: 8
+    action: >-
+      In crates/hexcell/src/respaldo.rs, add pub enum ResultadoRespaldoSqlstore {
+      Completado(hexcell_storage::CopiaVerificada), Fallido { motivo: String } } and pub
+      async fn ordenar_respaldo_sqlstore(adaptador: &hexcell_canal_whatsmeow::AdaptadorWhatsmeow,
+      destino: &Path, identificador_de_ronda: &str, plazo: Duration) -> Result<
+      ResultadoRespaldoSqlstore, hexcell_canal_whatsmeow::ErrorCanalWhatsmeow>. It lives
+      apart from respaldar_celula (which stays synchronous over the three local bases,
+      untouched) because this one is async -- it speaks IPC with the sidecar. It logs via
+      registro::emitir(EntradaDeRegistro::nueva(...)) on every branch (completado, fallido,
+      and transport error) using new fixed event names such as
+      "respaldo_sqlstore_completado"/"respaldo_sqlstore_fallido", with con_detalle carrying
+      only ronda/bytes/motivo counts, matching respaldar_celula's existing privacy
+      discipline (no raw path, no message content -- there is none here, but keep the
+      convention). On Ok(acuse) with resultado=="completado", build CopiaVerificada {
+      nombre_logico: "sqlstore.db", ruta: PathBuf::from(acuse.ruta_de_la_copia), bytes:
+      acuse.bytes as u64 } and return Completado; on resultado=="fallido", return
+      Fallido { motivo: acuse.motivo }; any other resultado string is a protocol
+      inconsistency and should be treated as Fallido with a motivo saying so, never a
+      panic. Propagate the adapter's Err (SinConexion, RespaldoSinAcuse, etc.) as this
+      function's own Err after logging it. Never call anything that opens the sqlstore
+      file from this crate.
+    files:
+      - crates/hexcell/src/respaldo.rs
+  - step: 9
+    action: >-
+      Add crates/hexcell/tests/respaldo_sqlstore_ipc.rs: a small, self-contained
+      fake-sidecar UnixListener double declared locally in this file (this workspace's
+      existing convention is that test binaries never share code across crates, only
+      within one crate's own mod comun -- see the comment atop
+      crates/hexcell/tests/respaldo_y_restauracion.rs's AdaptadorQueDelegaEnArc and
+      tests/salida.rs's SidecarSimulado for the precedent). It binds a UnixListener,
+      accepts one connection, exchanges the saludo handshake exactly like
+      AdaptadorWhatsmeow::arrancar's client expects, reads the orden_respaldo_sqlstore
+      line, and replies with a hand-built acuse_respaldo_sqlstore line for two scenarios:
+      completado (with a plausible ruta_de_la_copia/bytes) and fallido (with a motivo).
+      Each #[tokio::test] builds an AdaptadorWhatsmeow, arrancar()s it, drives the fake
+      sidecar's handshake, calls hexcell::respaldo::ordenar_respaldo_sqlstore with a
+      DirectorioTemporal-backed destino (reuse comun::DirectorioTemporal, already in this
+      crate's tests/comun/mod.rs) and a fixed ronda id, and asserts the resulting
+      ResultadoRespaldoSqlstore variant and its fields.
+    files:
+      - crates/hexcell/tests/respaldo_sqlstore_ipc.rs
+  - step: 10
+    action: >-
+      Append one Definido entry to docs/STATUS.md's respaldo/A-3 section (absolute date
+      2026-08-12, HEX-021), stating that the sqlstore-over-IPC backup is now executed --
+      sidecar-side VACUUM INTO with read-only integrity/user_version verification,
+      core-side ordering and correlation by identificador_de_ronda -- while explicitly
+      cross-referencing the two boundaries this task does NOT close: the Go IPC socket
+      server remains absent (already tracked by the existing "Servidor del socket IPC en
+      Go, ausente" HEX-017 entry -- do not duplicate it, just cross-reference it) and the
+      end-to-end restore rehearsal against a real channel stays deferred to the
+      lab-number task (plan task 15). Append only; do not rewrite existing entries.
+    files:
+      - docs/STATUS.md
+risks:
+  - >-
+    AC-5's premise that the adapter already applies "the same correlation discipline" to
+    other request/acknowledge pairs does not hold against the real code: adaptador.rs
+    discards AcuseEnvio too (line ~352), and the existing test
+    acuse_envio_se_consume_sin_cerrar_conexion (tests/salida.rs) only asserts the
+    connection stays open -- it never asserts any correlation between an AcuseEnvio and
+    the send() call that produced it. No pending-request map exists anywhere in this
+    crate today. This blueprint designs the correlation mechanism (a
+    HashMap<String, oneshot::Sender<AcuseRespaldoSqlstore>> keyed by
+    identificador_de_ronda) from scratch rather than reusing an established pattern; a
+    future task could retrofit AcuseEnvio onto the same mechanism, but that is out of
+    this task's scope.
+  - >-
+    The Go IPC socket server (net.Listen/Accept) does not exist anywhere in sidecar/ --
+    confirmed by grepping the whole tree and by two existing code comments
+    (sidecar/main.go:11 and sidecar/internal/canal/reconexion.go:67). This is already
+    known, ratified debt: docs/STATUS.md's "Servidor del socket IPC en Go, ausente" entry
+    (2026-08-09, HEX-017) assigns it to plan task 3 and states it "sigue sin
+    construirse", also noting it blocks task 15's real-channel tests. This means
+    ManejarOrdenRespaldoSqlstore will be fully implemented and directly unit-tested per
+    AC-6, but will NOT be reachable from a real orden_respaldo_sqlstore arriving over a
+    live socket in production until task 3 is built separately. This blueprint does not
+    build the socket server (matches AC-6's "without a real channel" and the existing
+    STATUS.md boundary) -- flagging for human visibility, not treating it as a blocker of
+    this task.
+  - >-
+    crates/hexcell does not currently depend on hexcell-canal-whatsmeow at all;
+    crates/hexcell/src/main.rs still wires hexcell_canal_simulado::AdaptadorSimulado
+    exclusively, and crates/hexcell/src/preparacion.rs's own doc comment states "el canal
+    propio todavía no está integrado". Fulfilling AC-4 requires adding
+    hexcell-canal-whatsmeow as a new path dependency of crates/hexcell (Cargo.toml +
+    Cargo.lock, a real new workspace dependency edge). This blueprint does NOT rewire
+    main.rs to use AdaptadorWhatsmeow in production -- ordenar_respaldo_sqlstore is a
+    tested library capability only, matching the spec's non_goal ("who triggers the
+    backup in production... A-6 territory") and D-20 in docs/bitacora-de-descartes.md
+    (no in-process scheduler).
+  - >-
+    go.mau.fi/whatsmeow/store/sqlstore.Container does not expose its internal *sql.DB (the
+    field `db *dbutil.Database` in container.go is unexported), so the sidecar handler
+    cannot literally reuse whatsmeow's own live connection object. The design answer
+    (carry-forward lesson #6) is AbrirConexionDeRespaldo: a separate, dedicated read-only
+    *sql.DB connection to the same sqlstore file path, opened by the sidecar process but
+    never touching whatsmeow's Container -- this is what makes "never blocks the
+    connection whatsmeow uses for the ongoing protocol" concretely true rather than
+    aspirational.
+  - >-
+    The message TYPE structs on both sides (sidecar/internal/ipc/mensajes.go's
+    OrdenRespaldoSqlstore/AcuseRespaldoSqlstore, and
+    crates/hexcell-canal-whatsmeow/src/mensajes.rs's same-named structs) were checked
+    field-by-field against protocolo-ipc-nucleo-sidecar.md section 7 and
+    contrato-ipc-respaldo-del-sqlstore.md sections 1 and 3: no mismatch found, field
+    names/order/types already match exactly. Per the spec's own instruction to extend the
+    types "only if the blueprint finds a mismatch", the contract forbids touching
+    mensajes.go/mensajes.rs to lock this finding in.
+  - >-
+    sqlstore's PRAGMA user_version has no hexcell-owned expected constant, unlike
+    sessions.db/knowledge_live.db (whose expected version is hexcell's own migration
+    number): it is whatsmeow's internal, opaque schema counter. The Go handler must
+    capture the SOURCE's user_version at backup time (read from dbRespaldo around the
+    VACUUM INTO call) and compare the copy's user_version against that captured source
+    value, never against a hardcoded constant -- otherwise a future whatsmeow schema bump
+    would make every backup fail verification for a reason unrelated to actual copy
+    integrity.

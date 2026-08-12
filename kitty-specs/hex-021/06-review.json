@@ -1,0 +1,28 @@
+{
+  "task_id": "HEX-021",
+  "summary": "Fix round verified on disk: fail-closed cleanup implemented and genuinely tested, round id threaded, contract-check clean. Approved with minor observations for the human gate.",
+  "verdict": "approve",
+  "contract_compliance": true,
+  "forbidden_files_touched": [],
+  "unrequested_refactor": false,
+  "missing_tests": [
+    "Minor, non-blocking: the 'orden inesperada' table case also sets sinDirectorioDestino=true, so the destino check would reject it even if the orden validation were deleted; the case asserts only fallido/empty-ruta/non-empty-motivo and never pins which branch fired. The production check is correct and runs before any I/O (verified by reading respaldo.go), but the test does not discriminate it. Pointing the case at an existing destino, or asserting the motivo text, would pin it."
+  ],
+  "functional_risk": "low",
+  "notes": [
+    "contract-check ok=true; violations: none; not_checked: forbid.behaviors",
+    "Post-fix limits all within budget: respaldo.go 189/210, respaldo_test.go 183/190, crates/hexcell/src/respaldo.rs 138/140, adaptador.rs 105/180; 12/12 files, 1041 total diff lines vs 1400. Same 12-file set as before; no forbidden file touched.",
+    "05-validation.json re-saved schema-valid, 7/7 commands exit 0, overall_result=passed. Per the phase boundary I did not re-run verify.commands myself; the harness result is taken from the artifact.",
+    "FIX 1 VERIFIED (was the primary defect): the fallar() helper best-effort os.Remove's the copy and logs the removal failure separately when removal itself fails. All six post-VACUUM branches pass rutaCopia -- copy-open failure, integrity_check read error, integrity != ok, user_version read error, user_version mismatch, os.Stat failure -- so no unverified copy can remain under the canonical name, and a retry into the same destino is no longer blocked.",
+    "FIX 2 VERIFIED, and the test is honest rather than decorative: the GanchoDePruebaTrasVacuum seam tampers the already-written copy's user_version to 12345 against a source of 42, so the handler really opens the copy, really detects the mismatch, and the case asserts fallido + empty ruta_de_la_copia + the file absent from destino. The seam is nil in production, documented in Spanish as test-only, and the test resets it with a defer, so it cannot leak between cases.",
+    "FIX 3 VERIFIED in code: orden.Orden is validated against ipc.OrdenRespaldarSqlstore before any filesystem or database work, so a malformed order performs no I/O. See missing_tests for the one weak assertion around it.",
+    "FIX 4 VERIFIED: respaldar_celula_con_ronda threads the identificador_de_ronda so respaldo_iniciado, respaldo_completado and respaldo_fallido all carry ronda=<id>, matching what ordenar_respaldo_sqlstore already logged; respaldar_celula keeps its old signature as a thin wrapper minting its own id, so no existing caller changed. The module header no longer claims only three bases are reachable. AC-4's grouping is satisfied by convention (one caller passes the same id to both functions) rather than by a single four-base orchestrator, which is the correct resolution given the contract forbids a production trigger, and the module doc now states that honestly.",
+    "FIX 5 VERIFIED: the failure log Detalle carries 'ronda=%s motivo=%s', so a failed round is diagnosable from sidecar logs alone.",
+    "Observation, not blocking: the VACUUM INTO failure branch passes an empty rutaCopia, so no removal is attempted there. This is defensible because SQLite itself closes and deletes the output file when VACUUM INTO fails; passing rutaCopia would only be belt-and-braces against an abnormal termination that no in-process handler could catch anyway.",
+    "Observation, not blocking: the 'orden inesperada' motivo echoes the peer-supplied orden value via %q with no length bound. The core is the only sender and always transmits the fixed constant, so this is theoretical; a pathological order could otherwise inflate the acuse past the 128 KB line limit. Truncating the echoed value would close it.",
+    "Observation, not blocking, carried over from the first round: crates/hexcell/src/respaldo.rs casts acuse.bytes (i64) with 'as u64', wrapping a negative value into a huge size instead of rejecting it, and destino goes through to_string_lossy, silently mangling non-UTF8 paths.",
+    "Re-confirmed after the fix round: wire literals still collate byte-for-byte against docs/protocolo-ipc-nucleo-sidecar.md section 7 and mensajes.go/mensajes.rs; correlation discipline unchanged and correct (oneshot registered before send, removed on send error, timeout and channel drop; orphan acuse logged and dropped without closing the connection); unknown resultado still fails closed; motivo carries only OS/SQLite error text; user_version compared against the SOURCE's captured value; the core never opens the sqlstore file; no net.Listen/Accept in sidecar/; plazo remains a caller-supplied Duration with no hardcoded cadence; Cargo.lock still a single generated line; STATUS.md still exactly one Spanish Definido entry dated 2026-08-12 cross-referencing HEX-017; no mass-sending vocabulary and no claim that Fase B replaces the sidecar.",
+    "Contract acceptance.human_gate is true, so the observations above are recorded for the merge gate rather than as blocking fix_tasks."
+  ],
+  "fix_tasks": []
+}

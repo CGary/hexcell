@@ -1,0 +1,74 @@
+{
+  "task_id": "HEX-021",
+  "bundle_hash": "f85fe0ced697b790e67e86015c5ea9ff8cf216867f4c36c5cf69f8ef9febe406",
+  "files": [
+    ".ai/tasks/active/HEX-021-new-spec/00-spec.yaml",
+    ".ai/tasks/active/HEX-021-new-spec/01-blueprint.yaml",
+    "Cargo.lock",
+    "crates/hexcell-canal-whatsmeow/src/adaptador.rs",
+    "crates/hexcell-canal-whatsmeow/src/conexion.rs",
+    "crates/hexcell-canal-whatsmeow/src/error.rs",
+    "crates/hexcell-canal-whatsmeow/src/mensajes.rs",
+    "crates/hexcell-canal-whatsmeow/tests/comun/mod.rs",
+    "crates/hexcell-canal-whatsmeow/tests/salida.rs",
+    "crates/hexcell-storage/src/pools.rs",
+    "crates/hexcell-storage/src/respaldo.rs",
+    "crates/hexcell/Cargo.toml",
+    "crates/hexcell/src/respaldo.rs",
+    "crates/hexcell/tests/comun/mod.rs"
+  ],
+  "protocol_version": "fleet-bundle-protocol/v2",
+  "created_at": "2026-08-12T17:12:37Z",
+  "dropped": [
+    {
+      "component": "code_slice",
+      "path": "sidecar/main.go",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "sidecar/internal/outbox/outbox.go",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "sidecar/internal/ipc/mensajes.go",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "sidecar/internal/configuracion/configuracion.go",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "sidecar/internal/canal/canal.go",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "docs/protocolo-ipc-nucleo-sidecar.md",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "docs/contrato-ipc-respaldo-del-sqlstore.md",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "docs/bitacora-de-descartes.md",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "docs/STATUS.md",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "crates/hexcell/tests/respaldo_y_restauracion.rs",
+      "reason": "bundle exceeded max_bytes budget"
+    }
+  ]
+}

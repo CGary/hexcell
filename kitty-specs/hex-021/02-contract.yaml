@@ -1,0 +1,167 @@
+task_id: HEX-021
+summary: >-
+  Implement sqlstore-over-IPC backup: sidecar VACUUM INTO + verification on its own
+  connection, core order + acuse correlation by identificador_de_ronda, tested both sides.
+goal: >-
+  Close the execution half of A-3 plan task 18 over the two already-closed contracts
+  (docs/contrato-ipc-respaldo-del-sqlstore.md v1.0, docs/protocolo-ipc-nucleo-sidecar.md
+  section 7, wire version 4): the sidecar handles orden_respaldo_sqlstore by running
+  VACUUM INTO on its own dedicated connection and verifying the copy read-only, and the
+  Rust core orders it as part of the existing backup round and routes the returned
+  AcuseRespaldoSqlstore to a new correlation path instead of discarding it. The
+  end-to-end restore rehearsal against a real channel stays explicitly deferred to the
+  lab-number task (plan task 15); tests on both sides are deterministic and channel-free.
+
+read:
+  - .ai/tasks/active/HEX-021-new-spec/00-spec.yaml
+  - .ai/tasks/active/HEX-021-new-spec/01-blueprint.yaml
+  - docs/contrato-ipc-respaldo-del-sqlstore.md
+  - docs/protocolo-ipc-nucleo-sidecar.md
+  - docs/STATUS.md
+  - docs/bitacora-de-descartes.md
+  - sidecar/internal/ipc/mensajes.go
+  - sidecar/internal/canal/canal.go
+  - sidecar/internal/outbox/outbox.go
+  - sidecar/internal/configuracion/configuracion.go
+  - sidecar/main.go
+  - crates/hexcell-canal-whatsmeow/src/mensajes.rs
+  - crates/hexcell-canal-whatsmeow/src/conexion.rs
+  - crates/hexcell-canal-whatsmeow/tests/comun/mod.rs
+  - crates/hexcell-canal-whatsmeow/tests/salida.rs
+  - crates/hexcell-storage/src/respaldo.rs
+  - crates/hexcell-storage/src/pools.rs
+  - crates/hexcell/src/respaldo.rs
+  - crates/hexcell/tests/respaldo_y_restauracion.rs
+  - crates/hexcell/tests/comun/mod.rs
+
+touch:
+  - sidecar/internal/canal/respaldo.go
+  - sidecar/internal/canal/respaldo_test.go
+  - crates/hexcell-canal-whatsmeow/src/error.rs
+  - crates/hexcell-canal-whatsmeow/src/conexion.rs
+  - crates/hexcell-canal-whatsmeow/src/adaptador.rs
+  - crates/hexcell-canal-whatsmeow/tests/comun/mod.rs
+  - crates/hexcell-canal-whatsmeow/tests/respaldo_sqlstore.rs
+  - crates/hexcell/Cargo.toml
+  - crates/hexcell/src/respaldo.rs
+  - crates/hexcell/tests/respaldo_sqlstore_ipc.rs
+  - Cargo.lock
+  - docs/STATUS.md
+
+forbid:
+  files:
+    - docs/contrato-ipc-respaldo-del-sqlstore.md
+    - docs/protocolo-ipc-nucleo-sidecar.md
+    - sidecar/internal/ipc/mensajes.go
+    - sidecar/internal/ipc/mensajes_test.go
+    - sidecar/internal/ipc/documento_test.go
+    - crates/hexcell-canal-whatsmeow/src/mensajes.rs
+    - sidecar/main.go
+    - sidecar/internal/canal/canal.go
+    - sidecar/internal/canal/emparejamiento.go
+    - sidecar/internal/canal/reconexion.go
+    - sidecar/internal/canal/taxonomia.go
+    - sidecar/internal/canal/traduccion.go
+    - sidecar/internal/outbox/outbox.go
+    - sidecar/internal/outbox/disciplina.go
+    - sidecar/internal/outbox/portero.go
+    - sidecar/internal/outbox/presencia.go
+    - sidecar/internal/outbox/salida.go
+    - sidecar/internal/outbox/transmisor.go
+    - sidecar/internal/identidad/identidad.go
+    - sidecar/internal/identidad/baja.go
+    - sidecar/internal/identidad/cortacircuitos.go
+    - sidecar/internal/identidad/presentacion.go
+    - sidecar/internal/configuracion/configuracion.go
+    - crates/hexcell/src/main.rs
+    - crates/hexcell/src/preparacion.rs
+    - crates/hexcell/src/motor.rs
+    - crates/hexcell-storage/src/respaldo.rs
+    - crates/hexcell-storage/src/pools.rs
+    - crates/hexcell-storage/src/almacen_de_identidad.rs
+    - crates/hexcell-canal-simulado/src/lib.rs
+    - crates/hexcell-core/src/canal.rs
+  behaviors:
+    - "Do NOT modify docs/contrato-ipc-respaldo-del-sqlstore.md or docs/protocolo-ipc-nucleo-sidecar.md in any way (no version bump, no field change, no reference update); both are normative and already closed."
+    - "Do NOT change sidecar/internal/ipc/mensajes.go or crates/hexcell-canal-whatsmeow/src/mensajes.rs. The blueprint verified field-by-field that OrdenRespaldoSqlstore/AcuseRespaldoSqlstore already match the protocol doc exactly on both sides; this task implements handling, not types."
+    - "Do NOT build the Go IPC socket server (no net.Listen/ListenUnix/Accept anywhere in sidecar/). That gap is already tracked separately in docs/STATUS.md ('Servidor del socket IPC en Go, ausente', HEX-017) and belongs to plan task 3; ManejarOrdenRespaldoSqlstore must be directly unit-testable by calling it with a Go value, never by requiring a live socket."
+    - "Do NOT rewire crates/hexcell/src/main.rs to use AdaptadorWhatsmeow instead of AdaptadorSimulado in production. The new hexcell::respaldo::ordenar_respaldo_sqlstore function is a tested library capability only; who triggers it in production is explicitly out of scope (spec non_goal, A-6 territory, D-20 in docs/bitacora-de-descartes.md)."
+    - "Do NOT let the sidecar's VACUUM INTO run over whatsmeow's own sqlstore.Container connection. sqlstore.Container does not expose its internal *sql.DB; open a separate, dedicated read-only *sql.DB connection (AbrirConexionDeRespaldo) for the backup path so it never blocks or contends with the connection whatsmeow uses for the live protocol."
+    - "Do NOT hardcode a concrete backup frequency number or a concrete IPC correlation-wait timeout as a magic constant in source. The exact cadence is A-3 calibration territory per the spec; the correlation wait (`plazo`) must be a caller-supplied Duration parameter, with tests supplying short values."
+    - "Do NOT let any motivo field (Go AcuseRespaldoSqlstore or Rust AcuseRespaldoSqlstore/error text) carry chat message content or protocol credentials. Only sanitized OS/SQLite/transport error text is allowed."
+    - "Do NOT compare the sqlstore copy's PRAGMA user_version against a hardcoded expected constant. Capture the SOURCE's user_version at backup time and compare the copy against that captured value -- whatsmeow's schema counter is opaque to this codebase, unlike sessions.db/knowledge_live.db's hexcell-owned migration version."
+    - "Do NOT introduce mass-sending-provider vocabulary (jitter, warm-up/calentamiento, proxies, VPN, IP rotation) anywhere, and never write or imply that Fase B replaces, retires, or closes the sidecar channel."
+    - "Do NOT write any user-visible content (Go/Rust doc comments, log messages, docs/STATUS.md prose, commit message) in English; keep it in Spanish. Only this contract's and the blueprint's own YAML prose stays in English. Use absolute dates (2026-08-12), never relative ones."
+    - "Do NOT rewrite existing docs/STATUS.md entries; append only the one new Definido entry for this task, cross-referencing (not duplicating) the existing HEX-017 'Servidor del socket IPC en Go, ausente' entry."
+    - "Do NOT hand-edit Cargo.lock; only let `cargo build --workspace` regenerate it after adding the new path dependency."
+    - "Do NOT attempt the end-to-end restore rehearsal against a real channel, lab-number testing, or the PairPhone() runbook (plan tasks 15/16); those stay explicitly deferred per the spec's non_goals."
+
+verify:
+  commands:
+    - cargo fmt --check
+    - cargo build --workspace
+    - cargo clippy --workspace -- -D warnings
+    - cargo test --workspace
+    - test "$(cargo tree -p hexcell-core | wc -l)" = "1"
+    - cargo test -p hexcell-core --doc 2>&1 | grep -q "compile fail"
+    - cd sidecar && test -z "$(gofmt -l .)" && go build ./... && go vet ./... && go test ./...
+
+acceptance:
+  human_gate: true
+
+limits:
+  max_files_changed: 12
+  # Honest per-file estimate (new files are mostly-new content; existing files are the
+  # diff of the described edit, not the whole file):
+  #   sidecar/internal/canal/respaldo.go        (new)   ~170
+  #   sidecar/internal/canal/respaldo_test.go    (new)   ~140
+  #   crates/hexcell-canal-whatsmeow/src/error.rs         ~12
+  #   crates/hexcell-canal-whatsmeow/src/conexion.rs      ~28
+  #   crates/hexcell-canal-whatsmeow/src/adaptador.rs     ~140  (field + threading through
+  #     arrancar/bucle_de_conexion/leer_mensajes signatures + new pub method + dispatch arm)
+  #   crates/hexcell-canal-whatsmeow/tests/comun/mod.rs   ~45
+  #   crates/hexcell-canal-whatsmeow/tests/respaldo_sqlstore.rs (new) ~170
+  #   crates/hexcell/Cargo.toml                            ~3
+  #   crates/hexcell/src/respaldo.rs                      ~110
+  #   crates/hexcell/tests/respaldo_sqlstore_ipc.rs (new)  ~200
+  #   Cargo.lock (generated)                               ~20
+  #   docs/STATUS.md                                       ~20
+  # Honest total ~1058 lines. Setting max_diff_lines with ~30% headroom over that
+  # (LES-2026-08-11-000000024: an under-sized contract forces the implementer to violate
+  # it), since this repo's doc-comment density runs long on every file this task touches
+  # and the adaptador.rs signature-threading change touches several call sites for a
+  # small logical change.
+  max_diff_lines: 1400
+  per_class:
+    - glob: sidecar/internal/canal/respaldo.go
+      max_diff_lines: 210
+    - glob: sidecar/internal/canal/respaldo_test.go
+      max_diff_lines: 190
+    - glob: crates/hexcell-canal-whatsmeow/src/error.rs
+      max_diff_lines: 20
+    - glob: crates/hexcell-canal-whatsmeow/src/conexion.rs
+      max_diff_lines: 40
+    - glob: crates/hexcell-canal-whatsmeow/src/adaptador.rs
+      max_diff_lines: 180
+    - glob: crates/hexcell-canal-whatsmeow/tests/comun/mod.rs
+      max_diff_lines: 55
+    - glob: crates/hexcell-canal-whatsmeow/tests/respaldo_sqlstore.rs
+      max_diff_lines: 220
+    - glob: crates/hexcell/Cargo.toml
+      max_diff_lines: 6
+    - glob: crates/hexcell/src/respaldo.rs
+      max_diff_lines: 140
+    - glob: crates/hexcell/tests/respaldo_sqlstore_ipc.rs
+      max_diff_lines: 250
+    - glob: Cargo.lock
+      max_diff_lines: 20
+    - glob: docs/STATUS.md
+      max_diff_lines: 30
+
+execution:
+  mode: worktree_edit
+  branch: ai/HEX-021
+
+retry_policy:
+  max_attempts: 2
+  escalate_after: 2

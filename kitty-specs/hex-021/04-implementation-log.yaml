@@ -1,0 +1,29 @@
+task_id: HEX-021
+summary: Implemented sqlstore-over-IPC backup with sidecar VACUUM INTO and core correlation.
+tdd_red_runs:
+  - acceptance_id: AC-4
+    command: cargo test -p hexcell --test respaldo_sqlstore_ipc
+    red_exit_code: 101
+  - acceptance_id: AC-5
+    command: cargo test -p hexcell-canal-whatsmeow --test respaldo_sqlstore
+    red_exit_code: 101
+entries:
+  - changed_files:
+      - sidecar/internal/canal/respaldo.go
+      - sidecar/internal/canal/respaldo_test.go
+      - crates/hexcell-canal-whatsmeow/src/error.rs
+      - crates/hexcell-canal-whatsmeow/src/conexion.rs
+      - crates/hexcell-canal-whatsmeow/src/adaptador.rs
+      - crates/hexcell-canal-whatsmeow/tests/comun/mod.rs
+      - crates/hexcell-canal-whatsmeow/tests/respaldo_sqlstore.rs
+      - crates/hexcell/Cargo.toml
+      - crates/hexcell/src/respaldo.rs
+      - crates/hexcell/tests/respaldo_sqlstore_ipc.rs
+      - Cargo.lock
+      - docs/STATUS.md
+    notes:
+      - Implemented sidecar VACUUM INTO and read-only integrity/user_version verification.
+      - Added RespaldoSinAcuse error variant and correlation mechanism in AdaptadorWhatsmeow.
+      - Wired hexcell-canal-whatsmeow into hexcell and added hexcell::respaldo::ordenar_respaldo_sqlstore.
+      - Added deterministic tests for both sides and updated docs/STATUS.md.
+    verify_pending: true
