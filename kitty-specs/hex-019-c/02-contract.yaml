@@ -1,0 +1,176 @@
+task_id: HEX-019-c
+summary: >-
+  Presentation claim, deterministic template variation, fixed one-message-per-turn precedence,
+  sentinel extension for group/broadcast/status, and the HEX-019-b liberarPresencia residual.
+goal: >-
+  Implement the last three adr-0015 Layer-1 measures in the Go sidecar: a new
+  identidad-owned presentacion_de_conversacion table with a single-claim first-turn
+  presentation message; a ControlDePresentacion gate wired into outbox/portero.go's
+  Admitir via AdmitirMensajeDePresentacion, which routes through the unmodified Admitir so
+  the existing baja and cortacircuitos checks still gate presentation ahead of it; a
+  deterministic (non-random) SelectorDePlantilla/ComponerPresentacion pair in
+  canal/traduccion.go wired into procesarMensaje's existing esBaja/disparoCortacircuitos
+  decision as a third branch, giving the fixed precedence baja > traspaso > presentacion;
+  an extended send-path sentinel covering group/broadcast/status primitive names; the two
+  new parameters (identification text, presentation variants) wired through
+  sidecar/internal/configuracion, neither expressible as disabled; the closing of the
+  HEX-019-b review residual (registrarFallo's sibling baja-discard block in salida.go
+  missing liberarPresencia); and the docs/STATUS.md closure of the seven-measure
+  discipline entry. No IPC wire change, no schema change to an existing table, no new
+  dependency.
+
+read:
+  - .ai/tasks/active/HEX-019-c/00-spec.yaml
+  - .ai/tasks/active/HEX-019-c/01-blueprint.yaml
+  - .ai/tasks/active/HEX-019-new-spec/01-blueprint.yaml
+  - .ai/tasks/active/HEX-019-new-spec/07-trace.json
+  - kitty-specs/hex-019-b/02-contract.yaml
+  - kitty-specs/hex-019-b/06-review.json
+  - docs/plan/fase-a-3-adaptador-whatsmeow.md
+  - docs/adr/adr-0015-politica-de-convivencia-con-el-baneo.md
+  - docs/adr/adr-0011-whatsmeow-sidecar-e-ipc.md
+  - docs/adr/adr-0019-registro-estructurado.md
+  - docs/bitacora-de-descartes.md
+  - sidecar/internal/identidad/baja.go
+  - sidecar/internal/identidad/baja_test.go
+  - sidecar/internal/identidad/cortacircuitos.go
+  - sidecar/internal/identidad/cortacircuitos_test.go
+  - sidecar/internal/outbox/disciplina.go
+  - sidecar/internal/outbox/presencia.go
+  - sidecar/internal/registro/registro.go
+  - sidecar/internal/ipc/mensajes.go
+
+touch:
+  - sidecar/internal/identidad/identidad.go
+  - sidecar/internal/identidad/presentacion.go
+  - sidecar/internal/identidad/presentacion_test.go
+  - sidecar/internal/outbox/portero.go
+  - sidecar/internal/outbox/portero_test.go
+  - sidecar/internal/outbox/salida.go
+  - sidecar/internal/outbox/salida_test.go
+  - sidecar/internal/outbox/centinela_rutas_de_envio_test.go
+  - sidecar/internal/canal/traduccion.go
+  - sidecar/internal/canal/traduccion_test.go
+  - sidecar/internal/canal/traduccion_interno_test.go
+  - sidecar/internal/configuracion/configuracion.go
+  - sidecar/internal/configuracion/configuracion_test.go
+  - sidecar/main.go
+  - docs/protocolo-ipc-nucleo-sidecar.md
+  - docs/STATUS.md
+
+forbid:
+  files:
+    - crates/hexcell-canal-contrato/src/banco.rs
+    - crates/hexcell-canal-contrato/src/bateria.rs
+    - crates/hexcell-core/src/canal.rs
+    - crates/hexcell-canal-simulado/src/adaptador.rs
+    - crates/hexcell-storage/src/respaldo.rs
+    - crates/hexcell-storage/migraciones/identidad/0001-esquema-inicial.sql
+    - Cargo.toml
+    - Cargo.lock
+    - sidecar/go.mod
+    - sidecar/go.sum
+    - sidecar/internal/ipc/mensajes.go
+    - sidecar/internal/outbox/transmisor.go
+    - sidecar/internal/outbox/disciplina.go
+    - sidecar/internal/outbox/disciplina_test.go
+    - sidecar/internal/outbox/presencia.go
+    - sidecar/internal/outbox/presencia_test.go
+    - sidecar/internal/outbox/outbox.go
+    - sidecar/internal/outbox/outbox_test.go
+    - sidecar/internal/outbox/pragmas_internos_test.go
+    - sidecar/internal/identidad/baja.go
+    - sidecar/internal/identidad/baja_test.go
+    - sidecar/internal/identidad/cortacircuitos.go
+    - sidecar/internal/identidad/cortacircuitos_test.go
+    - sidecar/internal/identidad/fusion_interno_test.go
+    - sidecar/internal/identidad/identidad_test.go
+    - sidecar/internal/canal/canal.go
+    - sidecar/internal/canal/canal_test.go
+    - sidecar/internal/canal/almacen_interno_test.go
+    - sidecar/internal/canal/emparejamiento.go
+    - sidecar/internal/canal/emparejamiento_test.go
+    - sidecar/internal/canal/reconexion.go
+    - sidecar/internal/canal/reconexion_interno_test.go
+    - sidecar/internal/canal/taxonomia.go
+    - sidecar/internal/canal/taxonomia_interno_test.go
+    - docs/adr/adr-0015-politica-de-convivencia-con-el-baneo.md
+    - docs/bitacora-de-descartes.md
+  behaviors:
+    - "Do NOT relocate, weaken, skip, or otherwise touch the opt-out/STOP check (ControlDeBaja.EnvioPermitido) or the circuit breaker check (ControlDeCortacircuitos.SalidaPermitida) inside outbox/portero.go's Admitir. AdmitirMensajeDePresentacion must reclaim the presentation claim first and then call the unmodified Admitir (never cola.Encolar directly) so both untouched checks still gate the presentation message ahead of it, structurally enforcing baja > traspaso > presentacion at the admission seam."
+    - "Do NOT let a claimed presentation message bypass the baja or cortacircuitos checks. Cover with tests: an opted-out contact whose presentation claim is won still receives no presentation (Admitir rejects it); a contact whose breaker already tripped and whose presentation claim is won still receives no presentation. The single-claim itself is not undone by either rejection (matches AdmitirMensajeDeTraspaso's existing behavior of consuming the claim even when the wrapped Admitir subsequently fails)."
+    - "Do NOT keep the first-turn presentation claim in memory. It persists in the new identidad-owned presentacion_de_conversacion table via the same RowsAffected-decided atomic-claim pattern RegistrarBaja and ReclamarMensajeDeTraspaso already use, so it survives a process restart. On a read/write error against this state (in ReclamarPresentacion or in PorteroDeSalida's presentation check), fail CLOSED: never enqueue the candidate message, log a dedicated event, and increment a dedicated counter (LES-2026-08-11-000000025/26)."
+    - "Do NOT send more than one presentation message per conversation. The single-claim contention test (mirroring TestPorteroDeSalida_AdmitirMensajeDeTraspaso's existing shape) is mandatory: a second AdmitirMensajeDePresentacion call for an already-claimed id_interno must not enqueue a second row, and this must hold across a store close/reopen."
+    - "Do NOT introduce randomness anywhere in template selection (D-08 forbids it structurally, not just as a style preference). SelectorDePlantilla.Elegir must be a pure, deterministic function of id_interno only -- same input always yields the same variant, with no clock, counter, or math/rand involved."
+    - "Do NOT invent or alter the ratified identification text. Use the exact literal from .ai/tasks/active/HEX-019-new-spec/07-trace.json's human_ruling event (topic textos): 'Te atiende un asistente automático. Si preferís hablar con una persona, escribí «humano».', guillemets included -- this is the canonical source over 00-spec.yaml's AC-1 statement, which renders the same text with plain quotes as a YAML-nesting artifact, not a second ratified value. Do NOT write 'PENDING RATIFICATION' for this text."
+    - "For the three presentation variant texts, ship 01-blueprint.yaml's documented default ('¡Hola! Gracias por escribir.' / 'Hola, ¿en qué te puedo ayudar?' / 'Buenas, gracias por tu mensaje.') as the declared default per 00-spec.yaml constraint 4, since 07-trace.json ratifies only their structure (three, neutral, deterministic selection) and not their literal content. Record this as an open point for the reviewer in 04-implementation-log.yaml rather than silently treating it as fully closed."
+    - "Do NOT make HEXCELL_TEXTO_IDENTIFICACION or HEXCELL_PLANTILLAS_PRESENTACION expressible as disabling the measure. The identification text is rejected when present-but-empty-or-whitespace-only; the variant list is rejected when it resolves to fewer than 2 non-empty elements; configuracion.Presentacion carries no boolean field. Cover the boundary rejections and the no-boolean-field property with tests, not just the happy path."
+    - "Do NOT reuse a plain comma as HEXCELL_PLANTILLAS_PRESENTACION's element separator if the shipped default variants contain literal commas as ordinary punctuation (e.g. 'Hola, ¿en qué te puedo ayudar?'); use ';' instead, documented inline as a deliberate deviation from the PalabrasDeBaja/CortacircuitosPalabrasFrustracion comma convention, not an oversight."
+    - "Do NOT bump the IPC protocol version, the wire version, or the closed set of eleven message types, and do NOT touch sidecar/internal/ipc/mensajes.go. Nothing in this task crosses the wire. Only section 2 of docs/protocolo-ipc-nucleo-sidecar.md changes, to document the two new environment variables."
+    - "Do NOT change the schema of an existing table (identidad, direccion, baja_de_contacto, cortacircuitos, cola_salida, outbox, volumen_diario) and do NOT write an imperative migration. The one new table (presentacion_de_conversacion, in identidad.go's esquema constant) is added with CREATE TABLE IF NOT EXISTS so an existing identidad.db gains it on open with its other tables and rows untouched."
+    - "Do NOT skip the HEX-019-b review residual. The pre-existing baja discard block in outbox/salida.go's intentarUno (the ContadorDescartadasPorBaja.Add(filas) path) must call c.liberarPresencia(p.idMensaje), mirroring the cortacircuitos discard block a few lines below it that already does. Add a test proving PresenciasPendientesParaPruebas drops after a deferred-then-baja-discarded row. This is the only required touch to salida.go's disciplina-gate logic (owned by HEX-019-a/b); do not use it as license to touch anything else there."
+    - "Do NOT claim the group/broadcast/status sentinel extension covers a real distinct whatsmeow primitive unless it is verified against the actual whatsmeow API surface (go.mau.fi/whatsmeow, pinned version in sidecar/go.mod). If, as the blueprint's investigation found, no such distinct primitive exists (every destination sends through the already-watched SendMessage), the extension is defensive (future-proofing against a helper or SDK rename) and the code/test comments must say so plainly -- do not write documentation implying the current SDK exposes SendGroupMessage/SendBroadcastMessage/SendStatusMessage today. Add, alongside the sentinel extension, a real structural test that identidad.Almacen.DireccionDe's direccion table CHECK constraint (tipo IN ('pn','lid')) excludes group/broadcast/status JIDs from ever reaching TransmisorWhatsmeow."
+    - "Do NOT weaken the send-path sentinel's empty-corpus guard or remove an existing watched name. Extend esRutaDeEnvioVigilada's switch with the new names and update the existing exact-count assertions (TestCentinelaDetectaUnaRutaDeEnvioSintetica et al.) deliberately to reflect the larger corpus, with one new synthetic self-test per newly watched name."
+    - "Do NOT introduce mass-sending vocabulary in code, comments, identifiers, environment variable names, log event names, tests, or documentation. No jitter, no calentamiento or warm-up, no proxy, no VPN, no IP rotation, no throughput, no traffic shaping. Frame identification/handoff, template variation, and one-message-per-turn per adr-0015's own [causa documentada] classification (items 6, 8, 9), matching that mark verbatim in the code/doc comments introduced by this task."
+    - "Do NOT add a third-party dependency to the Go module and do NOT touch anything under crates/. No new import beyond the standard library and the packages already imported by the touched files."
+    - "Do NOT leave dead wiring. NuevoPorteroDeSalida and NuevoTraductor both gain one new parameter; every call site (main.go and every test constructing either type) must be migrated, not left to fail the build or to pass nil where a real collaborator now exists in production wiring. ControlDePresentacion and GeneradorDePresentacion must have real non-test callers in main.go."
+    - "Do NOT leave docs/STATUS.md's 'Política anti-ban no desactivable por configuración' entry silently as-is. Update it to record closure dated 2026-08-11, reflecting all seven adr-0015 Layer-1 measures now implemented across HEX-019-a/b/c."
+    - "Do NOT close this task's review without an explicit statement of whether any residual remains in the HEX-019 a/b/c chain (00-spec.yaml constraint 27, PAT-2026-08-11-000000027); the parent cannot close with an undeclared residual. This is the last child."
+    - "Do NOT touch the hard portfolio cap or incident-rate threshold (adr-0015 Layer 3, pending business decisions), and do NOT implement any new re-subscription/opt-in flow beyond the existing STOP mechanism."
+    - "Do NOT reorder, renumber, or rewrite an existing ADR or discard-log entry, and do NOT add a new one in this task. All identifiers, comments, documentation, and the commit message are written in Spanish; artifact YAML prose stays in English; every date written into code or documentation is absolute (2026-08-11), never relative."
+
+verify:
+  commands:
+    - cargo fmt --check
+    - cargo build --workspace
+    - cargo clippy --workspace --all-targets -- -D warnings
+    - cargo test --workspace
+    - test "$(cargo tree -p hexcell-core | wc -l)" = "1"
+    - cargo test -p hexcell-core --doc 2>&1 | grep -q "compile fail"
+    - cd sidecar && test -z "$(gofmt -l .)" && go build ./... && go vet ./... && go test ./...
+
+acceptance:
+  human_gate: true
+
+limits:
+  max_files_changed: 16
+  # 01-blueprint.yaml's strategy touches 16 files (identidad: 3 incl. 1 new; outbox: 4; canal: 3;
+  # configuracion: 2; main.go: 1; docs: 2; not counted as new: 1) against the parent decomposition's
+  # rough ~10-file estimate for child C -- the same undercount pattern HEX-019-a and HEX-019-b both
+  # showed (the parent's rough count did not itemize the identidad schema addition, the AC-6
+  # residual's own test, or the doc files). Honest line estimate: identidad ~185 (schema+new file+
+  # test), outbox ~350 (portero+tests, salida residual+test, sentinel extension), canal ~300
+  # (selector/composer/generator+wiring+tests), configuracion ~205 (struct+loader+tests), main.go
+  # ~12, docs ~19. Total ~1070. Setting max_diff_lines with ~30% headroom over that honest estimate
+  # up front, per the LES-2026-08-11-000000024 lesson from both prior siblings' post-review
+  # amendments, rather than a tight cap likely to need its own amendment round.
+  max_diff_lines: 1550
+  per_class:
+    - glob: "sidecar/internal/*/*_test.go"
+      max_diff_lines: 850
+    - glob: sidecar/internal/identidad/identidad.go
+      max_diff_lines: 35
+    - glob: sidecar/internal/identidad/presentacion.go
+      max_diff_lines: 110
+    - glob: sidecar/internal/outbox/portero.go
+      max_diff_lines: 90
+    - glob: sidecar/internal/outbox/salida.go
+      max_diff_lines: 40
+    - glob: sidecar/internal/canal/traduccion.go
+      max_diff_lines: 210
+    - glob: sidecar/internal/configuracion/configuracion.go
+      max_diff_lines: 150
+    - glob: sidecar/main.go
+      max_diff_lines: 25
+    - glob: docs/protocolo-ipc-nucleo-sidecar.md
+      max_diff_lines: 15
+    - glob: docs/STATUS.md
+      max_diff_lines: 25
+
+execution:
+  mode: worktree_edit
+  branch: ai/HEX-019-c
+
+retry_policy:
+  max_attempts: 2
+  escalate_after: 2

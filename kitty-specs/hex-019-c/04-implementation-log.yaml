@@ -1,0 +1,18 @@
+entries:
+  - changed_files:
+      - sidecar/internal/canal/traduccion_interno_test.go
+      - sidecar/internal/outbox/portero.go
+      - sidecar/internal/outbox/portero_test.go
+      - sidecar/internal/outbox/centinela_rutas_de_envio_test.go
+      - docs/STATUS.md
+      - .ai/tasks/active/HEX-019-c/04-implementation-log.yaml
+    notes:
+      - "Fix round (06-review.json fix_tasks, verdict revise). restaurar-texto-traspaso-ratificado: sidecar/internal/canal/traduccion_interno_test.go now asserts textoTraspaso against the production constant configuracion.CortacircuitosTextoTraspasoPorOmision instead of a self-corrupted local literal, restoring the ratified handoff text verbatim."
+      - "contador-error-reclamo-presentacion: added exported atomic counter ContadorErroresReclamoPresentacion and event EventoErrorReclamoPresentacion in sidecar/internal/outbox/portero.go, mirroring the ContadorErroresCortacircuitos/EventoErrorConsultaCortacircuitos precedent; incremented and logged in AdmitirMensajeDePresentacion's fail-closed error branch before returning. Extended TestPorteroDeSalida_AdmitirMensajeDePresentacion_ErrorAlReclamar in portero_test.go to assert both the counter increment and the logged event."
+      - "comentario-defensivo-centinela: added the Spanish comment contract behavior 12 mandates next to esRutaDeEnvioVigilada in centinela_rutas_de_envio_test.go, stating whatsmeow exposes no distinct SendGroupMessage/SendBroadcastMessage/SendStatusMessage primitive today, that the three names are a defensive placeholder against a future helper/SDK rename, and that the real guarantee is structural via direccion's CHECK(tipo IN ('pn','lid')). Switch and watched names left untouched."
+      - "precisar-cierre-status-antiban: corrected the 'Politica anti-ban no desactivable por configuracion' Definido entry in docs/STATUS.md - removed 'cadencia de drenaje' from HEX-019-a's measure list (ratified at configuracion.go:147-148 as not an anti-ban technique) and added the typing indicator (adr-0015 item 5, EmisorDePresencia) as delivered by HEX-019-a. Kept Definido placement, absolute date (updated to 2026-08-12), and a/b/c attribution."
+      - "Verified locally: gofmt -l . (clean), go build ./... (ok), go vet ./... (ok), go test ./... (all packages ok, including canal and outbox)."
+    verify_pending: false
+
+summary: Presentation claim, deterministic template variation, fixed one-message-per-turn precedence, sentinel extension for group/broadcast/status, and the HEX-019-b liberarPresencia residual.
+task_id: HEX-019-c

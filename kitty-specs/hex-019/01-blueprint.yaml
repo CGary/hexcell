@@ -1,0 +1,269 @@
+task_id: HEX-019
+summary: >-
+  Seven adr-0015 Layer-1 channel-behavior measures wired at three sidecar seams: portero admission,
+  outbound drain, and inbound translation. No IPC wire change.
+
+affected_files:
+  - sidecar/internal/configuracion/configuracion.go
+  - sidecar/internal/configuracion/configuracion_test.go
+  - sidecar/internal/outbox/disciplina.go
+  - sidecar/internal/outbox/disciplina_test.go
+  - sidecar/internal/outbox/presencia.go
+  - sidecar/internal/outbox/presencia_test.go
+  - sidecar/internal/outbox/salida.go
+  - sidecar/internal/outbox/salida_test.go
+  - sidecar/internal/outbox/portero.go
+  - sidecar/internal/outbox/portero_test.go
+  - sidecar/internal/outbox/outbox.go
+  - sidecar/internal/outbox/outbox_test.go
+  - sidecar/internal/outbox/centinela_rutas_de_envio_test.go
+  - sidecar/internal/identidad/identidad.go
+  - sidecar/internal/identidad/cortacircuitos.go
+  - sidecar/internal/identidad/cortacircuitos_test.go
+  - sidecar/internal/identidad/presentacion.go
+  - sidecar/internal/identidad/presentacion_test.go
+  - sidecar/internal/canal/disciplina.go
+  - sidecar/internal/canal/disciplina_test.go
+  - sidecar/internal/canal/traduccion.go
+  - sidecar/internal/canal/traduccion_interno_test.go
+  - sidecar/internal/canal/traduccion_test.go
+  - sidecar/main.go
+  - docs/protocolo-ipc-nucleo-sidecar.md
+  - docs/STATUS.md
+
+symbols:
+  - configuracion.Disciplina
+  - configuracion.VentanaDeAtencion
+  - configuracion.RampaDeVolumen
+  - configuracion.cargarDisciplina
+  - configuracion.ErrParametroDeDisciplinaInvalido
+  - outbox.DisciplinaDeSalida
+  - outbox.NuevaDisciplinaDeSalida
+  - outbox.DisciplinaDeSalida.Decidir
+  - outbox.MotivoDeAplazamiento
+  - outbox.ContadorAplazadasPorLatencia
+  - outbox.ContadorAplazadasPorHorario
+  - outbox.ContadorAplazadasPorRampa
+  - outbox.RegistrarEnvioDelDia
+  - outbox.EnviosDelDia
+  - outbox.PrimerDiaConEnvios
+  - outbox.EmisorDePresencia
+  - outbox.NuevoEmisorDePresenciaWhatsmeow
+  - outbox.ClienteDePresencia
+  - outbox.ControlDeCortacircuitos
+  - outbox.PorteroDeSalida.AdmitirTraspaso
+  - outbox.PorteroDeSalida.AdmitirPresentacion
+  - outbox.ErrConversacionCedidaAHumano
+  - identidad.Almacen.RegistrarDisparoDeCortacircuitos
+  - identidad.Almacen.EnvioAutomaticoPermitido
+  - identidad.Almacen.ReclamarTraspaso
+  - identidad.Almacen.ReclamarPresentacion
+  - identidad.ErrCortacircuitosNoDisparado
+  - canal.DetectorDeCortacircuitos
+  - canal.NuevoDetectorDeCortacircuitos
+  - canal.SelectorDePlantilla
+  - canal.ComponerPresentacion
+  - canal.DecisionDeTurno
+  - canal.Traductor.decidirMensajeDelTurno
+
+dependencies:
+  - sidecar/internal/outbox/transmisor.go
+  - sidecar/internal/identidad/baja.go
+  - sidecar/internal/registro/registro.go
+  - sidecar/internal/canal/canal.go
+  - sidecar/internal/ipc/mensajes.go
+  - docs/adr/adr-0015-politica-de-convivencia-con-el-baneo.md
+  - docs/adr/adr-0021-testigo-de-entrante.md
+  - docs/bitacora-de-descartes.md
+  - docs/plan/fase-a-3-adaptador-whatsmeow.md
+
+test_scenarios:
+  - statement: "Latency floor: a pending row whose origin is younger than the configured floor is left pending, its attempt counter is NOT incremented, and it transmits on a later drain pass once the floor has elapsed."
+    covers: [AC-1]
+  - statement: "Schedule: with a frozen clock outside the configured window, the drain transmits nothing; with the clock inside the window the same row transmits, and the applied window comes from Configuracion, never a literal."
+    covers: [AC-1]
+  - statement: "Schedule and TTL interact as designed: a row held past its TTL by a closed window is hard-discarded by descartarExpiradas with the existing per-message outbox.salida_expirada event, and is never transmitted stale."
+    covers: [AC-1]
+  - statement: "Latency floor rejects a degenerate value: HEXCELL_LATENCIA_MINIMA_MS of 0 or negative is a configuration error, and a value above the documented ceiling is also rejected."
+    covers: [AC-1, AC-8]
+  - statement: "Typing indicator: a composing chat presence is emitted exactly once for a row deferred solely by the latency floor, and is NOT emitted for a row deferred by the closed schedule or by the volume ramp."
+    covers: [AC-2]
+  - statement: "Typing indicator failure is non-fatal: a presence emitter returning an error logs its event and does not prevent the later transmission of the same row."
+    covers: [AC-2]
+  - statement: "Presentation template variation: two different id_interno values in the same cell select different variants deterministically, and the selection is stable for the same id_interno across calls."
+    covers: [AC-3]
+  - statement: "Configuration rejects a presentation template list with fewer than two non-empty variants, so template variation cannot be configured away."
+    covers: [AC-3, AC-8]
+  - statement: "One message per turn: an inbound event that simultaneously matches the opt-out keyword, the circuit-breaker condition and the first-turn condition produces exactly ONE sidecar-authored outbound message, chosen by the fixed precedence baja > traspaso > presentacion."
+    covers: [AC-4]
+  - statement: "The extended send-path sentinel flags group, broadcast and status primitives called outside the outbox package, with a synthetic case per newly watched name, while every pre-existing watched name, the empty-corpus guard and the original synthetic self-tests keep passing."
+    covers: [AC-4]
+  - statement: "First turn: the first inbound event of a conversation enqueues one presentation message whose text is a selected variant plus the invariant identification-and-handoff tail; the second inbound event of the same conversation enqueues none."
+    covers: [AC-5]
+  - statement: "First-turn identification survives a restart: reopening the identity store and replaying a second inbound event for the same contact enqueues no second presentation, because the claim is decided by RowsAffected in SQLite and not by an in-memory flag."
+    covers: [AC-5]
+  - statement: "Configuration rejects an empty identification text, so the bot-identification and human-handoff offer cannot be configured away."
+    covers: [AC-5, AC-8]
+  - statement: "Circuit breaker trips on repetition: N consecutive inbound messages with identical normalized text, where N is the configured threshold, register the trip in the identity store."
+    covers: [AC-6]
+  - statement: "Circuit breaker trips on a configured frustration keyword, using exact normalized matching as in the opt-out detector, never substring matching."
+    covers: [AC-6]
+  - statement: "The tripped breaker emits exactly one handoff message: the claim is atomic, a second trip or a restart followed by another trip enqueues no second handoff, and the breaker never goes silent without having emitted it."
+    covers: [AC-6]
+  - statement: "After the trip, PorteroDeSalida.Admitir refuses every further automated message for that conversation with ErrConversacionCedidaAHumano, while the pre-existing opt-out check still runs at its current point in Admitir, unmodified, and still blocks an opted-out contact."
+    covers: [AC-6]
+  - statement: "Breaker precedence: for an opted-out contact whose breaker also tripped, the opt-out result is unchanged, proving the breaker sits ahead of the opt-out check without weakening or relocating it."
+    covers: [AC-6]
+  - statement: "Volume ramp: with the daily cap reached, further pending rows are left pending without an attempt; the counter is incremented only on a transmission that MarcarEnviado actually claimed, and it survives a restart of the process."
+    covers: [AC-7]
+  - statement: "Volume ramp week index: the cap grows by the configured weekly increment for the configured number of weeks, computed from the first day with recorded sends, and then holds at its final value permanently."
+    covers: [AC-7]
+  - statement: "Non-disableable discipline, structural: the Disciplina configuration struct exposes no boolean field, verified by reflection, so no environment variable can express an on/off switch for any measure."
+    covers: [AC-8]
+  - statement: "Non-disableable discipline, table-driven: every discipline parameter rejects both degenerate ends (zero, negative or empty, and above its documented ceiling), including the schedule window rule that forbids a full-day window."
+    covers: [AC-8]
+  - statement: "Drain interval: HEXCELL_INTERVALO_DRENAJE_MS is read from configuration, validated positive and bounded, and main.go uses it instead of the previous hardcoded constant."
+    covers: [AC-9]
+  - statement: "Wiring is live, not scaffolding: main.go builds the discipline gate, the presence emitter, the breaker detector and the presentation composer and injects them, so every new exported symbol has a real non-test caller."
+    covers: [AC-4, AC-6]
+
+strategy:
+  - step: 1
+    action: >-
+      Value objects and configuration surface. Add a Disciplina struct to Configuracion grouping the
+      new parameters, mirroring how Retroceso already groups the five backoff values, so the closed
+      env-var list stays readable in one file. Add nested VentanaDeAtencion (opening, closing, ISO
+      weekdays, IANA zone) and RampaDeVolumen (initial daily cap, weekly increment, weeks). Validate
+      every parameter against a documented bounded range that excludes degenerate values: latency
+      strictly positive with a ceiling, drain interval strictly positive with a ceiling, at least two
+      non-empty presentation variants, non-empty identification, handoff and frustration-keyword
+      values, breaker repetition threshold bounded below and above, and a schedule window that
+      forbids a full-day window. Import time/tzdata (standard library, no module dependency) so
+      time.LoadLocation resolves inside a minimal container image.
+    files:
+      - sidecar/internal/configuracion/configuracion.go
+      - sidecar/internal/configuracion/configuracion_test.go
+  - step: 2
+    action: >-
+      Persistence, new tables only. Extend the identidad esquema constant with CREATE TABLE IF NOT
+      EXISTS for cortacircuitos_conversacion (trip timestamp, single handoff-message claim) and
+      presentacion_de_conversacion (single presentation claim), both shaped exactly like the existing
+      baja_de_contacto and both keyed on id_interno with ON DELETE CASCADE. Extend the outbox esquema
+      constant with volumen_diario (UTC day as primary key, transmitted counter). No column of any
+      existing table is added, altered or removed.
+    files:
+      - sidecar/internal/identidad/identidad.go
+      - sidecar/internal/outbox/outbox.go
+      - sidecar/internal/outbox/outbox_test.go
+  - step: 3
+    action: >-
+      Application service, breaker authority. Implement the identity-store methods as the single
+      authority for the breaker, mirroring RegistrarBaja / EnvioPermitido / ReclamarConfirmacionDeBaja
+      exactly: RegistrarDisparoDeCortacircuitos (idempotent insert), EnvioAutomaticoPermitido (the one
+      rule the send path consults) and ReclamarTraspaso plus ReclamarPresentacion (atomic single-claim
+      decided by RowsAffected, never an in-memory flag). Emit the corresponding fixed log event names.
+    files:
+      - sidecar/internal/identidad/cortacircuitos.go
+      - sidecar/internal/identidad/cortacircuitos_test.go
+      - sidecar/internal/identidad/presentacion.go
+      - sidecar/internal/identidad/presentacion_test.go
+  - step: 4
+    action: >-
+      Seam one, portero admission. At the documented COSTURA comment in Admitir, ahead of and without
+      relocating the opt-out check, consult a ControlDeCortacircuitos interface (satisfied by
+      identidad.Almacen, declared locally as ControlDeBaja already is) and return
+      ErrConversacionCedidaAHumano when the conversation was ceded to a human. Add AdmitirTraspaso and
+      AdmitirPresentacion as the only two new exempt admissions, each shaped exactly like
+      AdmitirConfirmacionDeBaja: claim first, enqueue only if the claim was won.
+    files:
+      - sidecar/internal/outbox/portero.go
+      - sidecar/internal/outbox/portero_test.go
+  - step: 5
+    action: >-
+      Seam two, outbound drain gate. Add DisciplinaDeSalida as a validated value object holding the
+      latency floor, the attention window and the ramp, with a pure Decidir(ahoraMs, origenMs,
+      enviadosHoy, primerDia) returning either transmit or a MotivoDeAplazamiento. Consult it inside
+      intentarUno immediately before Transmitir; a deferral returns without calling registrarFallo, so
+      a deferral never consumes a retry. Increment the daily counter only where MarcarEnviado actually
+      claimed the row. Document that a row held past its TTL is hard-discarded by the existing
+      descartarExpiradas, which is deliberate damage limitation and consistent with discard D-13.
+    files:
+      - sidecar/internal/outbox/disciplina.go
+      - sidecar/internal/outbox/disciplina_test.go
+      - sidecar/internal/outbox/salida.go
+      - sidecar/internal/outbox/salida_test.go
+  - step: 6
+    action: >-
+      Typing indicator, inside the outbox package on purpose. Implement EmisorDePresencia over a
+      narrow ClienteDePresencia interface wrapping whatsmeow SendChatPresence, living in
+      sidecar/internal/outbox exactly as TransmisorWhatsmeow does, so the send-path sentinel needs no
+      directory exemption. Emit composing exactly once per pending row, and only when the sole reason
+      for deferral is the latency floor. Document it with the verbatim adr-0015 caveat and with its
+      limitations: delivery is unobservable, the call only reports a transport or login failure, and
+      chat presence depends on the client having a push name and an announced availability.
+    files:
+      - sidecar/internal/outbox/presencia.go
+      - sidecar/internal/outbox/presencia_test.go
+  - step: 7
+    action: >-
+      Seam three, inbound turn decision. Add DetectorDeCortacircuitos (repetition window plus exact
+      normalized frustration-keyword matching, reusing normalizarParaBaja) and SelectorDePlantilla
+      plus ComponerPresentacion (deterministic variant selection from id_interno, invariant
+      identification-and-handoff tail appended). Add decidirMensajeDelTurno to Traductor: at most one
+      sidecar-authored message per inbound event, by the fixed precedence baja > traspaso >
+      presentacion, using the existing ahoraMs clock seam for every enqueue. The inbound persist-first
+      and deduplication flow is unchanged.
+    files:
+      - sidecar/internal/canal/disciplina.go
+      - sidecar/internal/canal/disciplina_test.go
+      - sidecar/internal/canal/traduccion.go
+      - sidecar/internal/canal/traduccion_interno_test.go
+      - sidecar/internal/canal/traduccion_test.go
+  - step: 8
+    action: >-
+      Sentinel extension and wiring. Extend the send-path sentinel with the group, broadcast and
+      status primitive names, one synthetic case each, updating the existing exact expected-count
+      assertions deliberately; never weaken the empty-corpus guard or remove a watched name. Wire
+      everything in main.go, replacing the hardcoded intervaloDrenajeSalida with the configured value.
+    files:
+      - sidecar/internal/outbox/centinela_rutas_de_envio_test.go
+      - sidecar/main.go
+  - step: 9
+    action: >-
+      Documentation. Add every new environment variable to section 2 of the IPC protocol document,
+      which is the documented other end of the configuracion.go contract, without touching the wire
+      version. Update the STATUS.md entry so it reflects the seven measures actually implemented, not
+      the five it currently lists. Each measure carries its adr-0015 mark in its own doc comment.
+    files:
+      - docs/protocolo-ipc-nucleo-sidecar.md
+      - docs/STATUS.md
+
+risks:
+  - "PENDING RATIFICATION 1/15: minimum response latency (HEXCELL_LATENCIA_MINIMA_MS). Recommended 3000 ms. Long enough to read as a person composing a reply, short enough that the contact does not think the number is dead; zero is rejected by configuration."
+  - "PENDING RATIFICATION 2/15: drain interval (HEXCELL_INTERVALO_DRENAJE_MS). Recommended 2000 ms. Preserves today's hardcoded cadence and is the resolution quantum of the latency floor, so it must stay well below it."
+  - "PENDING RATIFICATION 3/15: attention window opening (HEXCELL_HORARIO_APERTURA). Recommended 09:00. Ordinary opening hour of the microempresa this product serves."
+  - "PENDING RATIFICATION 4/15: attention window closing (HEXCELL_HORARIO_CIERRE). Recommended 19:00. Ordinary closing hour, leaving a fourteen-hour nightly silence that is the whole point of the measure."
+  - "PENDING RATIFICATION 5/15: attention days (HEXCELL_HORARIO_DIAS). Recommended 1,2,3,4,5 as ISO weekdays. Monday to Friday by default; a business that opens Saturday sets 1,2,3,4,5,6."
+  - "PENDING RATIFICATION 6/15: time zone (HEXCELL_HORARIO_ZONA). Recommended America/Argentina/Buenos_Aires. The operating locale of the first cells; every cell overrides it."
+  - "PENDING RATIFICATION 7/15: initial daily send ceiling of the ramp (HEXCELL_RAMPA_ENVIOS_DIARIOS_INICIALES). Recommended 20 messages per day. A first-week volume a single microempresa could plausibly answer by hand."
+  - "PENDING RATIFICATION 8/15: weekly increment of the ramp (HEXCELL_RAMPA_INCREMENTO_SEMANAL). Recommended 20 messages per day per week. Linear growth, trivially explainable, no schedule table to calibrate."
+  - "PENDING RATIFICATION 9/15: ramp duration (HEXCELL_RAMPA_SEMANAS). Recommended 4 weeks. Reads adr-0015's 'primeras semanas' as a month; afterwards the ceiling holds permanently at its final value rather than disappearing."
+  - "PENDING RATIFICATION 10/15: breaker repetition threshold (HEXCELL_CORTACIRCUITOS_REPETICIONES). Recommended 3. Two identical messages can be an accidental resend; three is a person who is not being understood."
+  - "PENDING RATIFICATION 11/15: frustration keywords (HEXCELL_CORTACIRCUITOS_PALABRAS). Recommended humano,persona,agente,operador. Short, unambiguous, and disjoint from the opt-out keyword list so a contact never trips both meanings at once."
+  - "PENDING RATIFICATION 12/15: handoff text (HEXCELL_TEXTO_TRASPASO). Recommended 'Te paso con una persona del equipo. En cuanto esté disponible te responde por acá.' States the handoff and promises nothing about response time."
+  - "PENDING RATIFICATION 13/15: identification tail (HEXCELL_TEXTO_IDENTIFICACION). Recommended 'Te atiende un asistente automático. Si preferís hablar con una persona, escribí «humano».' One sentence that satisfies both bot identification and the explicit human-handoff offer, and is appended invariantly to every presentation variant."
+  - "PENDING RATIFICATION 14/15: presentation variants (HEXCELL_PLANTILLAS_PRESENTACION). Recommended three neutral openings: '¡Hola! Gracias por escribir.' / 'Hola, ¿en qué te puedo ayudar?' / 'Buenas, gracias por tu mensaje.' The invariant identification tail is appended to whichever variant is selected."
+  - "PENDING RATIFICATION 15/15: anti-24/7 rule for the attention window. Recommended: reject any configuration where closing minus opening exceeds sixteen hours. Without it a cell could configure a full-day window and restore exactly the round-the-clock machine signature the measure exists to remove; the alternative is to allow a genuine 24/7 business and accept that this one measure is then inert."
+  - "RISK: the sidecar has no IPC socket server yet (STATUS.md records it as absent, and no net.Listen exists in sidecar/). PorteroDeSalida.Admitir therefore still has no core-side producer, exactly as HEX-018 already carved out. The per-turn discipline for a core-produced reply is fully implemented and unit-tested but cannot be exercised end to end until plan task 3 lands. This is not a gap to fill in this task."
+  - "RISK: the wire carries no correlation between an outbound mensaje_saliente and the inbound event it answers. The minimum latency is therefore measured from marca_temporal_origen_ms, the outbound row's own origin, which is a floor on the hold applied by the sidecar, not on end-to-end turn latency. Adding a correlation field would bump the wire version and is explicitly out of scope; the limitation must be documented in the code, not silently worked around."
+  - "RISK: adr-0021 makes MensajeSaliente constructible only from a TestigoDeEntrante on the Rust side. The three sidecar-authored messages (existing opt-out confirmation, new handoff, new presentation) never cross the wire and therefore never pass through that type gate. The reply-only property still holds behaviourally because all three are emitted only from procesarMensaje in response to a real inbound event; this must be stated in a doc comment so the widening from one bypass to three is deliberate and visible, not accidental."
+  - "RISK: a message held by the closed schedule or by the exhausted daily ramp will normally be hard-discarded by the existing TTL sweep before the window reopens, since the default TTL is fifteen minutes. This is deliberate (a reply that arrives hours late is worse than none, and discard D-13 already rejected holding messages for a later window), the existing per-message outbox.salida_expirada event keeps the audit trail, and it must be documented rather than fixed by exempting held rows from the TTL, which would break the invariant that the TTL always wins."
+  - "RISK: STATUS.md's open entry lists five measures where the A-3 plan task 14 text lists seven; the plan text is authoritative by the documentary hierarchy. Closing the entry must reflect all seven, otherwise the record understates what shipped."
+  - "RISK: whatsmeow SendChatPresence returns ErrNotLoggedIn when no session is paired, and SendPresence requires a push name. Chat presence is therefore best-effort and its delivery is entirely unobservable from the sidecar: a nil return proves only that the node was written to the socket. The measure is [precautorio] in adr-0015 for exactly this reason and must never be logged or documented as a defense."
+  - "RISK: time.LoadLocation needs the zoneinfo database, which a minimal container image may not carry. The blueprint imports the standard library's time/tzdata to embed it, which adds no module dependency and costs binary size, not resident memory. The alternative, expressing the window as a fixed UTC offset, is rejected because it is unsafe across daylight-saving transitions."
+  - "RISK: discard D-08 is marked 'no reabrir' and explicitly fences off jitter and warm-up protocols. The latency floor must therefore be a deterministic fixed minimum, never a randomized delay, and the ramp must be a plain configurable daily ceiling, never a warm-up schedule. Variant selection is likewise deterministic from id_interno, not random. Any randomness introduced here is an automatic reject."
+  - "RISK: the frustration keyword list and the opt-out keyword list are both matched with exact normalized comparison against the same inbound text. If a human configures overlapping values the precedence rule silently favours the opt-out; configuration should reject an overlap rather than resolve it silently."
+  - "DEFERRED, needs a live number (plan task 15): whether the composing indicator is actually rendered on the recipient's device; whether the volume ramp changes anything on Meta's side at all (unfalsifiable by construction, which is why adr-0015 marks it [precautorio]); whether the presentation variation is perceived as varied by a real contact; and the end-to-end one-message-per-turn behaviour for a core-produced reply, which additionally needs the IPC server of plan task 3."
+  - "DECOMPOSITION: the honest size of this task is roughly 26 files and 3000 to 3300 diff lines, about two and a half times HEX-018, which needed an amendment at 1350. A clean three-way seam exists. Child A, compuerta de salida: measures 1, 2 and 7 plus the drain-interval debt, entirely inside internal/outbox, internal/configuracion and main.go, about 11 files and 1250 lines, independent of the other two."
+  - "DECOMPOSITION: child B, cortacircuitos y traspaso: measure 6 only, the portero seam plus the identity-store trip and handoff claim plus the inbound detector, about 10 files and 1050 lines. It establishes the second sidecar-authored message and therefore the need for a turn-precedence rule."
+  - "DECOMPOSITION: child C, presentacion y un mensaje por turno: measures 3, 4 and 5, the presentation claim, the deterministic template variation, the fixed turn precedence and the sentinel extension for group, broadcast and status primitives, about 10 files and 1000 lines. It depends on B because the precedence rule only becomes meaningful once a second sidecar-authored message exists. Recommended order A, then B, then C; a two-way split leaves the second half above 1900 lines and is not enough."

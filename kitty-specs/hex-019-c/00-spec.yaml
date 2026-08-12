@@ -1,0 +1,54 @@
+acceptance:
+    - id: AC-1
+      statement: 'The first turn of every new conversation includes bot identification and an explicit human-handoff offer, using the ratified text "Te atiende un asistente automático. Si preferís hablar con una persona, escribí «humano»." (Traces to parent HEX-019 AC-5.)'
+    - id: AC-2
+      statement: 'The presentation/greeting message template varies across sends rather than repeating an identical fixed string: three ratified neutral variants, selected deterministically per contact (no randomness). (Traces to parent HEX-019 AC-3.)'
+    - id: AC-3
+      statement: 'The adapter enforces exactly one outbound message per conversational turn via a fixed, documented precedence rule (the circuit-breaker handoff from HEX-019-b and the first-turn identification are ordered deterministically against the normal reply; never two sidecar-authored sends in one turn). (Traces to parent HEX-019 AC-4.)'
+    - id: AC-4
+      statement: 'The adapter exposes no group, broadcast, or status-update send primitives; the existing sentinel is extended to cover these cases with a test. (Traces to parent HEX-019 AC-4.)'
+    - id: AC-5
+      statement: "None of this child's discipline parameters can be set to a value that disables the measure (e.g. emptying the presentation variants or disabling first-turn identification); attempts are rejected or have no disabling effect, covered by a test. (Traces to parent HEX-019 AC-8.)"
+    - id: AC-6
+      statement: "Residual inherited from HEX-019-b's final review: the pre-existing baja drain-discard block in sidecar/internal/outbox/salida.go does not call liberarPresencia, leaking the announced-presence marker for a row discarded by opt-out after a deferred attempt. Close it with a test, exactly as HEX-019-b closed the registrarFallo residual."
+    - id: AC-7
+      statement: 'Each measure this child implements carries its adr-0015 [documented cause] or [precautionary] mark in code/doc comments, and docs/protocolo-ipc-nucleo-sidecar.md is updated if the turn-precedence rule affects the documented flow. (Traces to parent HEX-019 AC-10.)'
+    - id: AC-8
+      statement: "docs/STATUS.md's open entry \"Política anti-ban no desactivable por configuración\" (2026-08-08, HEX-015) is updated to reflect closure, since this child completes the seven-measure discipline started in HEX-019-a/b. (Traces to parent HEX-019 AC-12.)"
+    - id: AC-9
+      statement: 'The 7 standard verification commands pass (cargo fmt --check, cargo build --workspace, cargo clippy --workspace -- -D warnings, cargo test --workspace, hexcell-core tree isolation check, doc compile-fail test, cd sidecar && gofmt check && go build ./... && go vet ./... && go test ./...). (Traces to parent HEX-019 AC-11.)'
+constraints:
+    - No new third-party dependencies, Go or Rust.
+    - No schema changes to existing tables; sessions.db, knowledge_live.db, and sqlstore rules are unchanged. Any new per-conversation state (first-turn flag, variant index) lives in the adapter-owned identity store, following the cortacircuitos precedent.
+    - All discipline parameters are configurable per cell (env vars in sidecar/internal/configuracion), but disabling the discipline is never a configuration option.
+    - Concrete texts are SETTLED, not open. The human ratified them on 2026-08-11 (human_ruling events in parent HEX-019's 07-trace.json, topics textos and defaults_numericos). The values binding THIS child are the identification text "Te atiende un asistente automático. Si preferís hablar con una persona, escribí «humano»." and three neutral presentation variants selected deterministically per contact. This child may not re-open them or substitute its own texts; it ships them as declared defaults, still per-cell configurable and marked "a calibrar" only in the field-calibration sense.
+    - Discipline gates follow the adjudicated family invariants (LES-2026-08-11-000000025 and LES-2026-08-11-000000026) - fail CLOSED on state-read errors (silence or deferral with log event and counter, never the permissive value), a per-conversation gate binds at EVERY emission point (admission AND drain), same zone/clock on both sides of any temporal key, and every per-message in-memory marker has a release path at every lifecycle exit.
+    - The circuit breaker, STOP check, and HEX-019-a discipline logic are owned by prior children; touch them only where the precedence rule or the AC-6 residual explicitly requires it, and never relocate or weaken the STOP check.
+    - This is the LAST child of HEX-019. Its review must explicitly declare whether any residual is left in the chain (PAT-2026-08-11-000000027); the parent cannot close with an undeclared residual.
+    - No mass-sending-provider vocabulary (jitter, warm-up/calentamiento, proxies, IP rotation); frame each measure per adr-0015's [documented cause]/[precautionary] classification, never as throughput management or evasion.
+    - Everything user-visible (identifiers, comments, docs, commit message) is written in Spanish; artifact YAML prose stays in English.
+    - Dates are written in absolute format (2026-08-11), never relative.
+    - Consult docs/bitacora-de-descartes.md before proposing anything resembling a previously discarded idea; do not re-litigate a discarded approach without meeting its documented reopening condition.
+depends_on:
+    - HEX-019-b
+goal: 'Subset of HEX-019: First-turn identification and handoff offer, deterministic template variation, one message per turn by fixed precedence, sentinel extension for group/broadcast/status. Measures 3, 4, 5.'
+invariants:
+    - At most one outbound message is emitted per conversational turn; the adapter exposes no group, broadcast, or status-update primitives.
+    - Bot identification and the human-handoff offer are present in the first turn of every new conversation.
+    - No configuration path (env var or otherwise) can fully disable the channel behavior discipline; only calibratable parameters are configurable.
+    - The opt-out (STOP) check and the circuit breaker in sidecar/internal/outbox/portero.go are not relocated or weakened.
+    - Every measure this child implements is documented with its adr-0015 classification mark, [documented cause] or [precautionary].
+    - No mass-sending-provider vocabulary (jitter, warm-up, proxies, IP rotation) is introduced.
+non_goals:
+    - Anything delivered by HEX-019-a (latency, window, ramp, typing indicator, drain interval) or HEX-019-b (circuit breaker, handoff, fail-closed inbound observation) beyond the named AC-6 residual and the turn-precedence wiring.
+    - Lab-number testing against a real WhatsApp number (A-3 plan task 15).
+    - Reconnection/pairing runbooks (A-3 plan tasks 16-17).
+    - sqlstore backup over IPC (A-3 plan task 18).
+    - Fase B / Cloud API channel work.
+    - Any new re-subscription (opt-in) flow beyond the existing STOP/opt-out mechanism.
+    - Extending the Rust core's knowledge of these measures beyond what the existing IPC contract already carries; the discipline lives in the sidecar (Go).
+    - Fixing the hard portfolio cap or incident-rate threshold (adr-0015 Layer 3); those remain pending business decisions.
+parent_task: HEX-019
+risk: medium
+summary: First-turn identification and handoff offer, deterministic template variation, one message per turn by fixed precedence, sentinel extension for group/broadcast/status. Measures 3, 4, 5.
+task_id: HEX-019-c

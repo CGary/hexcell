@@ -1,0 +1,254 @@
+task_id: HEX-019-c
+summary: >-
+  First-turn identification/handoff, deterministic presentation template, fixed one-message-per-turn
+  precedence (baja > traspaso > presentacion), sentinel extension, AC-6 residual.
+
+affected_files:
+  - sidecar/internal/identidad/identidad.go
+  - sidecar/internal/identidad/presentacion.go
+  - sidecar/internal/identidad/presentacion_test.go
+  - sidecar/internal/outbox/portero.go
+  - sidecar/internal/outbox/portero_test.go
+  - sidecar/internal/outbox/salida.go
+  - sidecar/internal/outbox/salida_test.go
+  - sidecar/internal/outbox/centinela_rutas_de_envio_test.go
+  - sidecar/internal/canal/traduccion.go
+  - sidecar/internal/canal/traduccion_test.go
+  - sidecar/internal/canal/traduccion_interno_test.go
+  - sidecar/internal/configuracion/configuracion.go
+  - sidecar/internal/configuracion/configuracion_test.go
+  - sidecar/main.go
+  - docs/protocolo-ipc-nucleo-sidecar.md
+  - docs/STATUS.md
+
+symbols:
+  - identidad.Almacen.ReclamarPresentacion
+  - outbox.ControlDePresentacion
+  - outbox.PorteroDeSalida.AdmitirMensajeDePresentacion
+  - canal.AdmisorDePresentacion
+  - canal.SelectorDePlantilla
+  - canal.SelectorDePlantilla.Elegir
+  - canal.ComponerPresentacion
+  - canal.GeneradorDePresentacion
+  - canal.GeneradorDePresentacion.Emitir
+  - canal.Traductor.procesarMensaje
+  - configuracion.Presentacion
+  - configuracion.cargarPresentacion
+
+dependencies:
+  - .ai/tasks/active/HEX-019-c/00-spec.yaml
+  - .ai/tasks/active/HEX-019-new-spec/01-blueprint.yaml
+  - .ai/tasks/active/HEX-019-new-spec/07-trace.json
+  - kitty-specs/hex-019-b/02-contract.yaml
+  - kitty-specs/hex-019-b/06-review.json
+  - sidecar/internal/identidad/baja.go
+  - sidecar/internal/identidad/cortacircuitos.go
+  - sidecar/internal/outbox/disciplina.go
+  - sidecar/internal/outbox/presencia.go
+  - sidecar/internal/registro/registro.go
+  - docs/adr/adr-0015-politica-de-convivencia-con-el-baneo.md
+  - docs/bitacora-de-descartes.md
+  - docs/plan/fase-a-3-adaptador-whatsmeow.md
+
+test_scenarios:
+  - statement: >-
+      First turn: the first inbound event of a conversation enqueues one presentation message
+      combining a deterministically selected variant with the invariant identification/handoff
+      tail; a second inbound event of the same conversation enqueues no second presentation.
+    covers: ["AC-1", "AC-2"]
+  - statement: >-
+      First-turn identification survives a restart: reopening the identity store and replaying a
+      second inbound event for the same contact enqueues no second presentation, because the claim
+      is decided by RowsAffected in SQLite (presentacion_de_conversacion), not by an in-memory flag.
+    covers: ["AC-1", "AC-2"]
+  - statement: >-
+      The identification/handoff text matches the ratified literal from 07-trace.json topic
+      "textos" verbatim, including the guillemets around humano, when no override is configured.
+    covers: ["AC-1"]
+  - statement: >-
+      Template variation: two different id_interno values in the same cell deterministically
+      select different variants (no randomness), and the selection is stable across repeated calls
+      for the same id_interno.
+    covers: ["AC-2"]
+  - statement: >-
+      Configuration rejects a presentation variant list with fewer than two non-empty variants and
+      rejects an empty identification text, so template variation and identification cannot be
+      configured away.
+    covers: ["AC-2", "AC-5"]
+  - statement: >-
+      One message per turn: an inbound event that simultaneously matches the opt-out keyword, the
+      already-tripped circuit breaker, and the first-turn condition produces exactly ONE
+      sidecar-authored outbound message, chosen by the fixed precedence baja > traspaso >
+      presentacion; PorteroDeSalida.Admitir still runs the untouched baja and cortacircuitos checks
+      ahead of the new presentation claim.
+    covers: ["AC-3"]
+  - statement: >-
+      Presentation precedence at admission: a claimed presentation message for a contact with an
+      active baja registration, or for a contact whose circuit breaker already tripped, is rejected
+      by the unmodified Admitir path even though the presentation claim itself was won; the reclaim
+      is not undone (single-claim semantics), but the message is never enqueued.
+    covers: ["AC-3"]
+  - statement: >-
+      The extended send-path sentinel flags the newly watched group/broadcast/status primitive
+      names with one synthetic case each, while every pre-existing watched name, the empty-corpus
+      guard, and the original synthetic self-tests keep passing with their exact-count assertions
+      updated deliberately.
+    covers: ["AC-4"]
+  - statement: >-
+      Structural exclusion: the only production call to whatsmeow SendMessage (TransmisorWhatsmeow)
+      resolves its destination JID exclusively through identidad.Almacen.DireccionDe, whose
+      direccion table CHECK constraint admits only tipo IN ('pn','lid'); a test documents that no
+      group ("g.us"), broadcast, or status JID can reach the transmitter through that path.
+    covers: ["AC-4"]
+  - statement: >-
+      Non-disableable discipline: configuracion.Presentacion carries no boolean field (checked by
+      reflection or an explicit field enumeration), so no environment variable can express an
+      on/off switch for identification or template variation.
+    covers: ["AC-5"]
+  - statement: >-
+      AC-6 residual: the pre-existing baja discard block in ColaDeSalida.intentarUno (the
+      ContadorDescartadasPorBaja path) now calls c.liberarPresencia(p.idMensaje), with a test
+      proving PresenciasPendientesParaPruebas drops after a deferred-then-baja-discarded row,
+      mirroring the sibling cortacircuitos discard block that already calls it.
+    covers: ["AC-6"]
+  - statement: >-
+      Every new symbol's doc comment carries its adr-0015 mark: [documented cause] for
+      identification/handoff, template variation, and the one-message-per-turn/sentinel measures
+      (adr-0015 items 6, 8, 9), matching the ADR's own classification verbatim.
+    covers: ["AC-7"]
+  - statement: >-
+      docs/STATUS.md's "Política anti-ban no desactivable por configuración" entry is updated to
+      record closure: all seven adr-0015 Layer-1 measures now exist across HEX-019-a/b/c, dated
+      2026-08-11.
+    covers: ["AC-8"]
+  - statement: All 7 standard verification commands pass, including the sidecar gofmt check.
+    covers: ["AC-9"]
+
+strategy:
+  - step: 1
+    action: >-
+      Identity store: add presentacion_de_conversacion (id_interno PK REFERENCES identidad
+      ON DELETE CASCADE, id_mensaje_presentacion UNIQUE, presentacion_encolada_en_ms) to
+      identidad.go's esquema constant via CREATE TABLE IF NOT EXISTS, mirroring baja_de_contacto's
+      shape exactly (no "must be in some prior state" precondition, unlike cortacircuitos' traspaso
+      claim). Update the package doc's table count from four to five. Add
+      sidecar/internal/identidad/presentacion.go with Almacen.ReclamarPresentacion: a single
+      idempotent INSERT ... ON CONFLICT(id_interno) DO NOTHING claim decided by RowsAffected,
+      exactly like RegistrarBaja's shape (simpler than ReclamarMensajeDeTraspaso because there is
+      no trip precondition to check first). Cover with presentacion_test.go: single-claim
+      contention (two concurrent claims, exactly one wins) and restart persistence (close/reopen
+      the store, a second claim for the same id_interno still loses).
+    files:
+      - sidecar/internal/identidad/identidad.go
+      - sidecar/internal/identidad/presentacion.go
+      - sidecar/internal/identidad/presentacion_test.go
+  - step: 2
+    action: >-
+      Seam one, portero admission. Add ControlDePresentacion (ReclamarPresentacion) to
+      outbox/portero.go, satisfied by identidad.Almacen, following ControlDeCortacircuitos's
+      exact shape. Add a presentacion field to PorteroDeSalida and extend NuevoPorteroDeSalida
+      with one new parameter (breaking; migrate every call site: main.go and portero_test.go).
+      Add AdmitirMensajeDePresentacion: reclaim the presentation claim first, then route through
+      the unmodified Admitir (never cola.Encolar directly) so the untouched cortacircuitos and
+      baja checks still gate the presentation message ahead of it, giving the fixed precedence
+      baja > traspaso > presentacion at the one seam that enforces all three. Cover with
+      portero_test.go: single-claim contention (mirrors AdmitirMensajeDeTraspaso's), a case where
+      an opted-out contact's claimed presentation is still rejected by Admitir, and a case where a
+      tripped-breaker contact's claimed presentation is still rejected.
+    files:
+      - sidecar/internal/outbox/portero.go
+      - sidecar/internal/outbox/portero_test.go
+  - step: 3
+    action: >-
+      AC-6 residual. In outbox/salida.go's intentarUno, the pre-existing baja discard block (the
+      ContadorDescartadasPorBaja.Add(filas) path, just above the already-fixed cortacircuitos
+      discard block a few lines below it) is missing c.liberarPresencia(p.idMensaje); add the one
+      call, mirroring the cortacircuitos block immediately below it. This is the only touch to
+      salida.go's disciplina-gate logic (owned by HEX-019-a/b) that this child makes. Cover with a
+      salida_test.go case: a row whose presence was announced (deferred once by the latency floor)
+      and later discarded by baja must reduce PresenciasPendientesParaPruebas.
+    files:
+      - sidecar/internal/outbox/salida.go
+      - sidecar/internal/outbox/salida_test.go
+  - step: 4
+    action: >-
+      Configuration surface. Add a Presentacion struct (TextoIdentificacion string, Variantes
+      []string) to configuracion.go, no boolean field. HEXCELL_TEXTO_IDENTIFICACION via
+      cadenaDelEntorno plus an explicit whitespace-only rejection (mirrors cargarTextoConfirmacion,
+      stricter than cadenaDelEntorno's bare empty-string check), default the ratified literal with
+      guillemets. HEXCELL_PLANTILLAS_PRESENTACION: reuse listaDelEntorno's split/trim/non-empty
+      shape but with ';' as the element separator, not ',' -- the three candidate variant texts are
+      natural-language sentences that legitimately contain commas (e.g. "Hola, ¿en qué te puedo
+      ayudar?"), unlike the existing comma-separated keyword lists (PalabrasDeBaja,
+      CortacircuitosPalabrasFrustracion), so reusing the comma convention here would silently
+      mis-split a variant on its own punctuation. After splitting, reject a result with fewer than
+      2 elements (AC-2/AC-5: template variation cannot be configured away). Mark both with
+      [causa documentada] inline, matching adr-0015 items 6 and 8.
+    files:
+      - sidecar/internal/configuracion/configuracion.go
+      - sidecar/internal/configuracion/configuracion_test.go
+  - step: 5
+    action: >-
+      Seam three, inbound turn decision. Add to canal/traduccion.go: AdmisorDePresentacion
+      interface (AdmitirMensajeDePresentacion, satisfied by *outbox.PorteroDeSalida, mirroring
+      AdmisorDeTraspaso); SelectorDePlantilla wrapping the configured variants with a pure,
+      deterministic Elegir(idInterno) (e.g. FNV-1a hash of idInterno mod len(variantes) -- no
+      DB read, so there is no "variant index" state-read to fail closed on, unlike the
+      first-turn claim itself); ComponerPresentacion(variante, textoIdentificacion) joining the
+      two; GeneradorDePresentacion wrapping selector + textoIdentificacion + admisor with
+      Emitir(ctx, idInterno, ahoraMs) that composes the text and calls
+      AdmitirMensajeDePresentacion (idempotent thanks to the atomic claim: harmless to call on
+      every non-baja, non-just-tripped turn). Add a generadorPresentacion field to Traductor and
+      one new NuevoTraductor parameter (breaking; migrate main.go and every test constructor).
+      Extend procesarMensaje's existing esBaja / disparoCortacircuitos if/else-if decision (the
+      point that already enqueues at most one sidecar-authored message per inbound event) with a
+      third branch: else if generadorPresentacion != nil, call Emitir with the same t.ahoraMs()
+      clock seam used by ProcesarConfirmacion and EmitirTraspaso, giving the fixed precedence
+      baja > traspaso > presentacion structurally, without introducing a separate
+      decidirMensajeDelTurno abstraction the parent's rough design sketched but the real code
+      (an inline if/else-if chain, not a dedicated decision function) does not need.
+    files:
+      - sidecar/internal/canal/traduccion.go
+      - sidecar/internal/canal/traduccion_test.go
+      - sidecar/internal/canal/traduccion_interno_test.go
+  - step: 6
+    action: >-
+      Sentinel extension and wiring. whatsmeow exposes no distinct send primitive for group,
+      broadcast, or status destinations -- every destination funnels through the already-watched
+      SendMessage(ctx, to types.JID, ...), so calling any of those destinations outside outbox is
+      already caught by the existing name. Extend esRutaDeEnvioVigilada's watched-name switch with
+      SendGroupMessage, SendBroadcastMessage, and SendStatusMessage as defensive coverage against a
+      future helper or SDK rename introducing a distinctly-named primitive, with one synthetic
+      self-test per name (mirroring TestCentinelaDetectaLlamadaDirectaAEncolar) and the existing
+      exact-count assertions updated deliberately; never weaken the empty-corpus guard or drop a
+      watched name. Wire everything new in main.go: identidad.Almacen already satisfies
+      ControlDePresentacion (pass almacenIdentidad into NuevoPorteroDeSalida), and construct
+      canal.NuevoGeneradorDePresentacion(cfg.Presentacion.Variantes,
+      cfg.Presentacion.TextoIdentificacion, portero) for the new NuevoTraductor parameter.
+    files:
+      - sidecar/internal/outbox/centinela_rutas_de_envio_test.go
+      - sidecar/main.go
+  - step: 7
+    action: >-
+      Documentation and closure. Add HEXCELL_TEXTO_IDENTIFICACION and
+      HEXCELL_PLANTILLAS_PRESENTACION to section 2 of the IPC protocol document, following the
+      existing one-bullet-per-measure-group format used for baja and cortacircuitos. Update
+      docs/STATUS.md's "Política anti-ban no desactivable por configuración" entry (currently in
+      Pendiente) to record closure dated 2026-08-11: all seven adr-0015 Layer-1 measures now exist
+      across HEX-019-a (measures 1, 2, 7 + drain-interval debt), HEX-019-b (measure 6), and this
+      child (measures 3, 4, 5). Each new doc comment in code carries its [documented cause] mark
+      per adr-0015 items 6, 8, 9.
+    files:
+      - docs/protocolo-ipc-nucleo-sidecar.md
+      - docs/STATUS.md
+
+risks:
+  - "SPEC TEXT MISMATCH (needs no human decision, just a verbatim-source pointer for the implementer): 00-spec.yaml's AC-1 statement quotes the identification text with plain double quotes around humano, while constraint 4 and the parent's 07-trace.json human_ruling (topic textos, 2026-08-11) both use guillemets: 'escribí «humano».'. The trace is the canonical literal source per the documentary hierarchy (00-spec.yaml constraint 4 explicitly defers to it); AC-1's rendering is a YAML-quoting artifact of nesting a quoted string inside an already-quoted field, not a second ratified value. Ship the guillemets version verbatim."
+  - "ASSUMPTION, flagged for reviewer confirmation: the parent's 07-trace.json human_ruling (topic textos) ratifies the STRUCTURE of the presentation variants ('3 neutral presentation variants with deterministic per-contact selection, no randomness, D-08') but does not itself carry the three literal variant strings -- unlike the identification and traspaso texts, which are quoted verbatim in the same event. The only concrete candidate text in the documentary record is the parent blueprint's own risk entry 'PENDING RATIFICATION 14/15' (three neutral openings: '¡Hola! Gracias por escribir.' / 'Hola, ¿en qué te puedo ayudar?' / 'Buenas, gracias por tu mensaje.'). This blueprint adopts those three as the shipped default, consistent with 00-spec.yaml constraint 4 ('ships them as declared defaults, still per-cell configurable and marked a calibrar in the field-calibration sense'), but the human should confirm this is the intended literal content and not merely the intended selection mechanism."
+  - "DESIGN CHOICE: HEXCELL_PLANTILLAS_PRESENTACION uses ';' as its element separator instead of the repo's usual ','. The chosen default variant texts contain literal commas as ordinary Spanish punctuation ('Hola, ¿en qué te puedo ayudar?'); reusing listaDelEntorno's comma-split verbatim would silently corrupt that variant into two malformed fragments. This is a deliberate, documented deviation from the PalabrasDeBaja/CortacircuitosPalabrasFrustracion convention, not an oversight -- flagged so the reviewer checks the separator choice against the final literal variant texts once ratified."
+  - "DESIGN CHOICE: SelectorDePlantilla.Elegir is a pure function of id_interno (e.g. FNV-1a hash mod len(variantes)), not a value read from or written to the identity store. This means there is no 'variant index' database read that can fail, unlike the first-turn claim itself (ReclamarPresentacion) which does fail closed per LES-2026-08-11-000000025/26. Recorded explicitly because the carry-forward bundle's phrasing ('fail closed on state-read errors ... applies to reading the first-turn flag and variant index') could be read as implying a persisted index; this blueprint's reading is that only the first-turn flag is a real state read, and the variant index is intentionally stateless to avoid adding schema surface for a value fully determined by an already-stable id_interno."
+  - "DESIGN CHOICE, structural not nominal, for AC-4: whatsmeow's actual API has no SendGroupMessage/SendBroadcastMessage/SendStatusMessage -- every destination (person, group, broadcast list, status) sends through the single SendMessage(ctx, to types.JID, ...), which the sentinel already watches. The three new watched names added in step 6 are therefore defensive (they catch a future helper or SDK rename), not a description of what the current SDK exposes. The behavioral guarantee that the adapter never targets a group/broadcast/status JID today comes structurally from identidad.Almacen.DireccionDe, whose direccion table CHECK constraint (tipo IN ('pn','lid')) can never produce a group ('g.us'), broadcast, or status JID -- documented and tested in step 6 rather than left as an implicit consequence of an unrelated schema constraint."
+  - "PRECEDENT MISMATCH vs. the parent blueprint's own step 4/7 sketch: the parent's rough design (written before HEX-019-b existed in code) proposed AdmitirTraspaso/AdmitirPresentacion and a dedicated Traductor.decidirMensajeDelTurno function. The real HEX-019-b implementation named the method AdmitirMensajeDeTraspaso and decided precedence with an inline if/else-if chain in procesarMensaje, not a separate decision function. This blueprint follows the real code (AdmitirMensajeDePresentacion, extending the existing if/else-if chain) over the parent's superseded sketch, per this skill's mandate to validate assumptions against the actual codebase."
+  - "RISK, inherited pattern from HEX-019-a and HEX-019-b: both siblings' honest file/line counts exceeded the parent decomposition's rough estimate (B: ~10/1050 estimated vs. 14/~1450 actual). This child's honest estimate is 16 files / ~1170 lines against the parent's ~10/1000 estimate, for the same reason: the parent's rough count did not itemize the identidad schema/table addition, the doc file, or the AC-6 residual's test. limits below apply ~30% headroom over the honest estimate per LES-2026-08-11-000000024, rather than a tight cap likely to need its own amendment round."
+  - "LAST-CHILD DUTY (PAT-2026-08-11-000000027): 00-spec.yaml constraint 27 requires this child's review to explicitly declare whether any residual is left in the HEX-019 a/b/c chain, since the parent cannot close with an undeclared residual. This blueprint's step 3 closes the one residual carried forward from HEX-019-b's review (the liberarPresencia gap in the baja discard block); no other residual is known at blueprint time. The review phase must state this explicitly rather than assume it."
+  - "NO PRIOR FAILURE MATCH: the affected-file set (portero.go, salida.go, identidad.go, traduccion.go, configuracion.go, main.go, centinela_rutas_de_envio_test.go) returned no matches when checked against the shape of failures recorded for HEX-019-a/b; no inherited lesson to carry beyond the carry-forward bundle already applied and beyond LES-2026-08-11-000000024/25/26."

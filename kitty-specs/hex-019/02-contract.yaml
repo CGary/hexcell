@@ -1,0 +1,154 @@
+task_id: HEX-019
+summary: >-
+  Seven adr-0015 Layer-1 channel-behavior measures in the Go sidecar, per-cell configurable but never
+  disableable, wired at three seams with no IPC wire change.
+goal: >-
+  Implement A-3 plan task 14. Wire the seven channel-behavior discipline measures into the sidecar at
+  three seams: the circuit-breaker authority at the documented COSTURA in PorteroDeSalida.Admitir,
+  ahead of and without relocating the opt-out check; a latency, attention-window and volume-ramp gate
+  plus the composing indicator inside the outbound drain, immediately before Transmitir; and a
+  single-message-per-turn decision on the inbound path that composes the first-turn identification,
+  the varied presentation template and the single handoff message. Every parameter is per-cell
+  configurable through sidecar/internal/configuracion following the existing TTL, retry and opt-out
+  pattern, with bounded ranges that make disabling the discipline inexpressible in configuration.
+  Every default value is a placeholder pending human ratification. State that must survive a restart
+  lives in new SQLite tables with atomic RowsAffected claims, following the HEX-018 precedent.
+
+read:
+  - .ai/tasks/active/HEX-019-new-spec/00-spec.yaml
+  - .ai/tasks/active/HEX-019-new-spec/01-blueprint.yaml
+  - docs/plan/fase-a-3-adaptador-whatsmeow.md
+  - docs/adr/adr-0015-politica-de-convivencia-con-el-baneo.md
+  - docs/adr/adr-0011-whatsmeow-sidecar-e-ipc.md
+  - docs/adr/adr-0019-registro-estructurado.md
+  - docs/adr/adr-0021-testigo-de-entrante.md
+  - docs/bitacora-de-descartes.md
+  - docs/STATUS.md
+  - sidecar/internal/identidad/baja.go
+  - sidecar/internal/identidad/baja_test.go
+  - sidecar/internal/outbox/transmisor.go
+  - sidecar/internal/outbox/portero_test.go
+  - sidecar/internal/registro/registro.go
+  - sidecar/internal/canal/canal.go
+  - sidecar/internal/ipc/mensajes.go
+
+touch:
+  - sidecar/internal/configuracion/configuracion.go
+  - sidecar/internal/configuracion/configuracion_test.go
+  - sidecar/internal/outbox/disciplina.go
+  - sidecar/internal/outbox/disciplina_test.go
+  - sidecar/internal/outbox/presencia.go
+  - sidecar/internal/outbox/presencia_test.go
+  - sidecar/internal/outbox/salida.go
+  - sidecar/internal/outbox/salida_test.go
+  - sidecar/internal/outbox/portero.go
+  - sidecar/internal/outbox/portero_test.go
+  - sidecar/internal/outbox/outbox.go
+  - sidecar/internal/outbox/outbox_test.go
+  - sidecar/internal/outbox/centinela_rutas_de_envio_test.go
+  - sidecar/internal/identidad/identidad.go
+  - sidecar/internal/identidad/cortacircuitos.go
+  - sidecar/internal/identidad/cortacircuitos_test.go
+  - sidecar/internal/identidad/presentacion.go
+  - sidecar/internal/identidad/presentacion_test.go
+  - sidecar/internal/canal/disciplina.go
+  - sidecar/internal/canal/disciplina_test.go
+  - sidecar/internal/canal/traduccion.go
+  - sidecar/internal/canal/traduccion_interno_test.go
+  - sidecar/internal/canal/traduccion_test.go
+  - sidecar/main.go
+  - docs/protocolo-ipc-nucleo-sidecar.md
+  - docs/STATUS.md
+
+forbid:
+  files:
+    - crates/hexcell-canal-contrato/src/banco.rs
+    - crates/hexcell-canal-contrato/src/bateria.rs
+    - crates/hexcell-core/src/canal.rs
+    - crates/hexcell-canal-simulado/src/adaptador.rs
+    - crates/hexcell-storage/src/respaldo.rs
+    - crates/hexcell-storage/migraciones/identidad/0001-esquema-inicial.sql
+    - sidecar/internal/ipc/mensajes.go
+    - sidecar/internal/outbox/transmisor.go
+    - sidecar/internal/identidad/baja.go
+    - sidecar/go.mod
+    - sidecar/go.sum
+    - Cargo.toml
+    - Cargo.lock
+  behaviors:
+    - "Do NOT make disabling any measure expressible in configuration. There is no boolean, no sentinel value such as zero or empty meaning off, no 'modo' or 'activo' flag, and no environment variable whose absence turns a measure off. The Disciplina configuration struct must contain no field of boolean kind, and a test must assert that by reflection. Every numeric parameter is validated against a documented bounded range that excludes both degenerate ends: zero and negative are rejected, and a value so large it makes the measure inert is rejected by an explicit ceiling. A parameter that only checks the lower bound is an incomplete implementation of this rule, not a style nit."
+    - "Do NOT invent or silently commit to business values. Every concrete default (latency, drain interval, opening and closing hours, weekdays, time zone, ramp ceiling, weekly increment, ramp weeks, repetition threshold, frustration keywords, handoff text, identification text, presentation variants) is a PENDING HUMAN RATIFICATION item listed in 01-blueprint.yaml. Ship each recommended value as the declared default with a PENDIENTE DE CALIBRACIÓN comment in the same style the existing retroceso and TTL defaults already use, and change none of them on your own initiative. If a ratified value arrives that contradicts the blueprint, the ratified value wins."
+    - "Do NOT bump the IPC protocol version, the wire version, or the closed set of eleven message types. Nothing in this task crosses the wire: the composing indicator is a whatsmeow side effect with no IPC carrier, and the handoff and presentation messages follow the HEX-018 precedent of being injected straight into the sidecar's own outbound queue, exactly as the opt-out confirmation already is. Only section 2 of docs/protocolo-ipc-nucleo-sidecar.md changes, to document the new environment variables. If you conclude a wire change is genuinely unavoidable, STOP and report it as a human-blocking question instead of designing it."
+    - "Do NOT relocate, weaken, duplicate or short-circuit the opt-out check in PorteroDeSalida.Admitir. It stays exactly where it is and keeps calling EnvioPermitido on the identity store as the single authority on contact consent. The circuit breaker goes ahead of it at the existing COSTURA comment, as a second and separate authority, and the two must be independently testable. A contact who is both opted out and behind a tripped breaker must still be refused for the opt-out reason."
+    - "Do NOT keep any state that must survive a restart in memory. The breaker trip, the single handoff claim, the single first-turn presentation claim and the daily send counter all live in SQLite and their exactly-once property rests on an atomic claim decided by RowsAffected, exactly as ReclamarConfirmacionDeBaja does. A mutex, a cache, a package-level map or a read-then-write check loses the guarantee across a restart and is an automatic reject. The two deliberate exceptions, which must be justified in a code comment, are the rolling repetition window of the detector (losing it only delays a trip, never causes an unwanted send) and the per-row 'composing already announced' marker (presence is best-effort and unverifiable, so re-announcing after a restart is harmless)."
+    - "Do NOT change the schema of an existing table and do NOT write an imperative migration. The three new tables (cortacircuitos_conversacion and presentacion_de_conversacion in the identidad esquema constant, volumen_diario in the outbox esquema constant) are added with CREATE TABLE IF NOT EXISTS so an existing database gains them on open with its rows untouched. Do NOT add or alter a column in identidad, direccion, baja_de_contacto, outbox or cola_salida."
+    - "Do NOT let a discipline deferral consume a retry. A row held back by the latency floor, the closed attention window or the exhausted daily ramp must return from intentarUno without calling registrarFallo, so its attempt counter does not move. Counting a deferral as a failed attempt would exhaust a message after three drain ticks and silently destroy it; this is the single most likely subtle bug in this task and must have its own test."
+    - "Do NOT exempt held rows from the TTL and do NOT add a second queue, a quarantine table or a deferred-delivery schedule. The absolute TTL keeps winning: a row held past it is hard-discarded by the existing descartarExpiradas with its existing per-message outbox.salida_expirada event. This is deliberate damage limitation and matches discard D-13, which already rejected holding messages for a later window. Document it; do not fix it."
+    - "Do NOT introduce randomness anywhere. Discard log entry D-08 is marked 'no reabrir' and explicitly fences off jitter and warm-up protocols. The minimum latency is a deterministic fixed floor, never a randomized delay. The volume ramp is a plain daily ceiling that grows on a fixed weekly step, never a warm-up schedule. The presentation variant is selected deterministically from the contact's internal identifier, never at random, so the same contact always sees the same opening and two different contacts in the same cell see different ones."
+    - "Do NOT introduce mass-sending vocabulary in code, comments, identifiers, environment variable names, log event names, tests or documentation. No jitter, no calentamiento or warm-up, no proxy, no VPN, no IP rotation, no throughput, no traffic shaping, no volume schedule. 'Rampa de volumen' is the plan's own term and is framed strictly as damage limitation per adr-0015, never as evasion or as throughput management."
+    - "Do NOT emit more than one sidecar-authored outbound message per inbound event. The precedence is fixed and total: opt-out confirmation, then circuit-breaker handoff, then first-turn presentation. An inbound event that satisfies more than one condition produces exactly one message, and this must be proven by a test that satisfies all three at once. The circuit breaker must never go silent without having emitted its single handoff message: a silent trip is a test failure, per the A-3 acceptance criteria."
+    - "Do NOT weaken, disable, skip or delete the send-path sentinel in sidecar/internal/outbox/centinela_rutas_de_envio_test.go. Extend it only, per the contract in its own header comment: add the group, broadcast and status primitive names as newly watched calls, each with a synthetic case proving it is caught. The empty-corpus guard, every pre-existing watched name and the original synthetic self-tests must keep passing, and the existing exact expected-count assertions must be updated deliberately rather than loosened. The composing indicator is implemented inside the outbox package precisely so that no directory exemption is needed; do NOT add a directory exemption."
+    - "Do NOT hardcode any discipline value outside sidecar/internal/configuracion. A literal latency, hour, weekday, ceiling, threshold, keyword, handoff text, identification text or presentation variant anywhere in canal, outbox, identidad or main is a contract violation even when a configuration path also exists. The one permitted pattern is the existing one: outbox may re-export a configuracion constant by reference, as outbox.TtlPorOmision already does, never by repeating the literal."
+    - "Do NOT use substring matching for the frustration keywords. Matching is exact against the configured set after the same normalization the opt-out detector already applies, reusing normalizarParaBaja rather than reimplementing it. Configuration must reject an overlap between the frustration keyword list and the opt-out keyword list instead of resolving it silently at runtime."
+    - "Do NOT document the composing indicator as a defense. It carries the adr-0015 mark [precautorio] and the verbatim caveat that emitting it is documented zero-cost hygiene and not a defense, together with its limitations: delivery is unobservable, a nil return proves only that the node was written, and chat presence depends on the client having a push name and an announced availability. Each of the seven measures carries its own [causa documentada] or [precautorio] mark matching adr-0015: latency and schedule, template variation, one message per turn, first-turn identification and handoff, and the circuit breaker are [causa documentada]; the composing indicator and the volume ramp are [precautorio]."
+    - "Do NOT add a third-party dependency to the Go module or the Rust workspace, and do NOT touch anything under crates/. The only new import beyond the standard library is the standard library's own time/tzdata, imported for its side effect so time.LoadLocation resolves inside a minimal container image. The Rust core learns nothing new in this task."
+    - "Do NOT leave dead wiring. Every new exported symbol needs a real non-test caller: the discipline gate, the presence emitter, the breaker detector and authority, the presentation composer and the configured drain interval must all be constructed and injected in main.go, and the whole inbound-to-outbound path must run end to end. Scaffolding without an engine, an interface with no implementation, and placeholder assignments of the form _ = variable all fail review. The single deliberate exception is the core-side producer of PorteroDeSalida.Admitir, which does not exist until the IPC socket server of plan task 3 lands, exactly as HEX-018 already carved out."
+    - "Do NOT forget the pre-existing consumer migrations. NuevaColaDeSalida and NuevoTraductor both gain collaborators and have many existing call sites across salida_test.go, traduccion_test.go, traduccion_interno_test.go and main.go; a test whose name enumerates the number of collaborators must be renamed rather than left stale. Leaving any call site stale is a build failure, not a style issue."
+    - "Do NOT implement the lab-number verifications, the reconnection or pairing runbooks, the sqlstore backup over IPC, any Fase B or Cloud API work, any re-subscription or opt-in flow, or the hard portfolio ceiling and incident-rate threshold of adr-0015 Layer 3. Whether the indicator is actually rendered on the recipient's device, whether the ramp changes anything on Meta's side, and the end-to-end per-turn behaviour of a core-produced reply are all explicitly deferred and must be recorded as such, not stubbed or faked."
+    - "Do NOT reorder, renumber or rewrite an existing ADR or discard-log entry, and do NOT add a new one in this task. All identifiers, comments, documentation and the commit message are written in Spanish; artifact YAML prose stays in English; every date written into code or documentation is absolute (2026-08-11), never relative. When closing the STATUS.md entry, reflect all seven measures of the A-3 plan text, not the five that entry currently lists."
+
+verify:
+  commands:
+    - cargo fmt --check
+    - cargo build --workspace
+    - cargo clippy --workspace --all-targets -- -D warnings
+    - cargo test --workspace
+    - test "$(cargo tree -p hexcell-core | wc -l)" = "1"
+    - cargo test -p hexcell-core --doc 2>&1 | grep -q "compile fail"
+    - cd sidecar && test -z "$(gofmt -l .)" && go build ./... && go vet ./... && go test ./...
+
+acceptance:
+  human_gate: true
+
+limits:
+  max_files_changed: 26
+  max_diff_lines: 3300
+  per_class:
+    - glob: "sidecar/internal/*/*_test.go"
+      max_diff_lines: 1750
+    - glob: sidecar/internal/configuracion/configuracion.go
+      max_diff_lines: 260
+    - glob: sidecar/internal/outbox/disciplina.go
+      max_diff_lines: 220
+    - glob: sidecar/internal/outbox/presencia.go
+      max_diff_lines: 110
+    - glob: sidecar/internal/outbox/salida.go
+      max_diff_lines: 90
+    - glob: sidecar/internal/outbox/portero.go
+      max_diff_lines: 130
+    - glob: sidecar/internal/outbox/outbox.go
+      max_diff_lines: 25
+    - glob: sidecar/internal/identidad/identidad.go
+      max_diff_lines: 35
+    - glob: sidecar/internal/identidad/cortacircuitos.go
+      max_diff_lines: 190
+    - glob: sidecar/internal/identidad/presentacion.go
+      max_diff_lines: 120
+    - glob: sidecar/internal/canal/disciplina.go
+      max_diff_lines: 230
+    - glob: sidecar/internal/canal/traduccion.go
+      max_diff_lines: 140
+    - glob: sidecar/main.go
+      max_diff_lines: 70
+    - glob: docs/protocolo-ipc-nucleo-sidecar.md
+      max_diff_lines: 70
+    - glob: docs/STATUS.md
+      max_diff_lines: 25
+
+execution:
+  mode: worktree_edit
+  branch: ai/HEX-019
+
+retry_policy:
+  max_attempts: 2
+  escalate_after: 2

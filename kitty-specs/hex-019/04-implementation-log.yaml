@@ -1,0 +1,3 @@
+entries: []
+summary: Seven adr-0015 Layer-1 channel-behavior measures in the Go sidecar, per-cell configurable but never disableable, wired at three seams with no IPC wire change.
+task_id: HEX-019

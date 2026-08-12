@@ -1,0 +1,46 @@
+{
+  "task_id": "HEX-019",
+  "events": [
+    {
+      "event": "risk_level_calculated",
+      "level": "medium",
+      "reasons": [
+        "file_count_high: 26"
+      ],
+      "signals": {
+        "files_count": 26,
+        "symbols_count": 0,
+        "sensitive_matches": []
+      }
+    },
+    {
+      "type": "human_ruling",
+      "timestamp": "2026-08-11T00:00:00Z",
+      "topic": "decomposicion",
+      "detail": "Human ratified decomposition A->B->C: A compuerta de salida (latencia, horario, rampa + deuda intervalo drenaje), B cortacircuitos y traspaso, C presentacion y un-mensaje-por-turno (C depends on B). Order A->B->C, each child runs its own full lifecycle with its own Fleet Gate."
+    },
+    {
+      "type": "human_ruling",
+      "timestamp": "2026-08-11T00:00:00Z",
+      "topic": "defaults_numericos",
+      "detail": "Human ratified numeric defaults block (all per-cell env-configurable, 'a calibrar'): latencia minima 3000 ms; drenaje 2000 ms; horario 09:00-19:00 dias 1-5 TZ America/Argentina/Buenos_Aires; rampa 20/dia inicial +20/dia por semana durante 4 semanas, techo permanente; umbral repeticion cortacircuitos 3; palabras de frustracion {humano, persona, agente, operador}."
+    },
+    {
+      "type": "human_ruling",
+      "timestamp": "2026-08-11T00:00:00Z",
+      "topic": "textos",
+      "detail": "Human ratified default texts verbatim: identificacion primer turno 'Te atiende un asistente autom\u00e1tico. Si prefer\u00eds hablar con una persona, escrib\u00ed \u00abhumano\u00bb.'; traspaso 'Te paso con una persona del equipo. En cuanto est\u00e9 disponible te responde por ac\u00e1.'; 3 neutral presentation variants with deterministic per-contact selection (no randomness, D-08)."
+    },
+    {
+      "type": "human_ruling",
+      "timestamp": "2026-08-11T00:00:00Z",
+      "topic": "anti_24x7",
+      "detail": "Human ratified the anti-24/7 rule: reject at startup any attention window whose duration exceeds 16 hours. Rationale: adr-0015 discipline must not be deactivatable via configuration; a 24h window would disable the schedule measure de facto."
+    },
+    {
+      "ts": "2026-08-12T06:09:09Z",
+      "type": "decomposition_closed",
+      "detail": "All three children (HEX-019-a compuerta de salida, HEX-019-b cortacircuitos, HEX-019-c presentacion/turno/centinela) merged to main (25adab7, b4013c9, 09b39ba). RESIDUAL CHAIN DECLARED EMPTY by HEX-019-c's final deep review (PAT-2026-08-11-000000027): A's residual closed by B, B's residual closed by C, C introduced none. The seven adr-0015 Layer-1 measures are complete; docs/STATUS.md entry 'Pol\u00edtica anti-ban no desactivable por configuraci\u00f3n' closed 2026-08-12. Known documented reading: one-message-per-turn binds sidecar-authored messages only (blueprint reading of AC-3); strict reading remains available as a future task."
+    }
+  ]
+}
