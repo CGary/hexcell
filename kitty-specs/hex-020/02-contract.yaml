@@ -1,0 +1,98 @@
+task_id: HEX-020
+summary: >-
+  Write the channel runbook (protocol-breakage procedure), the whatsmeow commit-pinning
+  policy, and the update window, documentation-only.
+goal: >-
+  A-3 plan task 17: produce docs/runbook-canal-whatsmeow.md covering the protocol-breakage
+  procedure, declare the commit-pinning policy and update window in writing, document
+  "Client outdated (405)" as the recurring breakage pattern, state that no recovery time
+  can be committed on a volunteer-maintained dependency, defer the A-6 staged rollout, and
+  close a docs/STATUS.md Definido entry for plan task 17.
+
+read:
+  - .ai/tasks/active/HEX-020-new-spec/00-spec.yaml
+  - .ai/tasks/active/HEX-020-new-spec/01-blueprint.yaml
+  - docs/runbook-restauracion-de-celula.md
+  - docs/adr/adr-0015-politica-de-convivencia-con-el-baneo.md
+  - docs/adr/adr-0011-whatsmeow-sidecar-e-ipc.md
+  - docs/adr/adr-0009-whatsmeow-adaptador-fase-a.md
+  - docs/adr/adr-0014-canal-propio-permanente.md
+  - docs/plan/fase-a-3-adaptador-whatsmeow.md
+  - docs/plan/fase-a-6-empaquetado-cli.md
+  - docs/bitacora-de-descartes.md
+  - docs/STATUS.md
+  - sidecar/go.mod
+  - docs/PRD.md
+
+touch:
+  - docs/runbook-canal-whatsmeow.md
+  - docs/STATUS.md
+  - sidecar/go.mod
+
+forbid:
+  files:
+    - docs/adr/adr-0015-politica-de-convivencia-con-el-baneo.md
+    - docs/adr/adr-0011-whatsmeow-sidecar-e-ipc.md
+    - docs/adr/adr-0009-whatsmeow-adaptador-fase-a.md
+    - docs/adr/adr-0014-canal-propio-permanente.md
+    - docs/bitacora-de-descartes.md
+    - docs/runbook-restauracion-de-celula.md
+    - docs/plan/fase-a-3-adaptador-whatsmeow.md
+    - docs/plan/fase-a-6-empaquetado-cli.md
+    - sidecar/go.sum
+    - Cargo.toml
+    - Cargo.lock
+  behaviors:
+    - "Do NOT change the pinned whatsmeow dependency. sidecar/go.mod's require line for go.mau.fi/whatsmeow must keep the exact pseudo-version v0.0.0-20260722203353-e9a033b24933 (commit e9a033b24933); the only allowed edit to that file is an explanatory comment line, never a version bump, never touching go.sum."
+    - "Do NOT change any Go or Rust behavior. No source file under crates/ or sidecar/internal/ or sidecar/main.go is touched. This is a documentation task."
+    - "Do NOT introduce mass-sending-provider vocabulary anywhere in the runbook or STATUS.md entry: no jitter, no calentamiento/warm-up, no proxy, no VPN, no IP rotation. Frame every measure discussed (commit pinning, update window) with its adr-0015 marker verbatim -- item 14 is [precautorio] -- do not upgrade or invent a [causa documentada] marking for it."
+    - "Do NOT write that Fase B replaces, retires, or closes the sidecar or Fase A. The runbook and STATUS.md entry only ever describe the two channels as coexisting, per adr-0014."
+    - "Do NOT invent a concrete update-window cadence (e.g. a specific number of days/weeks) or a concrete recovery-time commitment. If no existing document (00-spec.yaml, adr-0015, the plan) fixes a cadence, the runbook documents only the mechanism (who checks upstream, what triggers a bump) and marks the cadence 'a calibrar', with docs/STATUS.md's Pendiente section carrying the open business decision -- do not silently omit the pending-decision entry."
+    - "Do NOT state or imply a portfolio-staged rollout with a sentinel/canary cell is implemented by this task. The runbook must explicitly defer it to stage A-6 (adr-0015 Layer 3) and must not fabricate A-6 parameters (canary duration, portfolio percentage) beyond what adr-0015 already states (72 hours, staggered, never the whole portfolio the same day)."
+    - "Do NOT use relative dates (e.g. 'hoy', 'la semana pasada') anywhere in the runbook or the STATUS.md entry; every date is absolute (2026-08-12)."
+    - "Do NOT write any user-visible content (runbook body, STATUS.md entry text, go.mod comment, commit message) in English; keep it in Spanish. Only this contract's and the blueprint's own YAML prose stays in English."
+    - "Do NOT expand scope into plan tasks 15, 16, or 18 (lab-number testing, PairPhone re-pairing runbook, sqlstore backup over IPC) or into the A-7 ban-response runbook; this task covers protocol breakage only, and the new runbook's own scope note must say so."
+    - "Do NOT touch docs/STATUS.md content unrelated to this task's Definido/Pendiente entries; append, do not rewrite, existing entries."
+
+verify:
+  commands:
+    - cargo fmt --check
+    - cargo build --workspace
+    - cargo clippy --workspace -- -D warnings
+    - cargo test --workspace
+    - test "$(cargo tree -p hexcell-core | wc -l)" = "1"
+    - cargo test -p hexcell-core --doc 2>&1 | grep -q "compile fail"
+    - cd sidecar && test -z "$(gofmt -l .)" && go build ./... && go vet ./... && go test ./...
+
+acceptance:
+  human_gate: true
+
+limits:
+  max_files_changed: 3
+  # Honest estimate: docs/runbook-canal-whatsmeow.md is a new file in the style of
+  # docs/runbook-restauracion-de-celula.md (117 lines), but covers three additional
+  # topics that runbook doesn't (pinning policy, update-window mechanism, and the
+  # protocol-breakage procedure itself) -- reference-class estimate ~150-180 lines.
+  # docs/STATUS.md gains one Definido entry (~12-15 lines) and, if the cadence is
+  # unfixed, one Pendiente entry (~8-10 lines) -- ~20-25 lines total. sidecar/go.mod
+  # gets at most a short explanatory comment (~3-5 lines). Total honest estimate
+  # ~180 (runbook) + 25 (STATUS) + 5 (go.mod) = ~210 lines. Setting max_diff_lines
+  # with ~30% headroom over that per LES-2026-08-11-000000024, since this repo's
+  # runbook style runs long and a tight cap risks a post-review amendment round for
+  # a documentation-only task.
+  max_diff_lines: 275
+  per_class:
+    - glob: docs/runbook-canal-whatsmeow.md
+      max_diff_lines: 230
+    - glob: docs/STATUS.md
+      max_diff_lines: 35
+    - glob: sidecar/go.mod
+      max_diff_lines: 10
+
+execution:
+  mode: worktree_edit
+  branch: ai/HEX-020
+
+retry_policy:
+  max_attempts: 2
+  escalate_after: 2

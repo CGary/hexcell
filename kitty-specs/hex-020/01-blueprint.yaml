@@ -1,0 +1,70 @@
+task_id: HEX-020
+summary: >-
+  Documentation-only channel runbook (A-3 plan task 17): protocol-breakage procedure,
+  commit-pinning policy, update window, and STATUS.md closure entry.
+affected_files:
+  - docs/runbook-canal-whatsmeow.md
+  - docs/STATUS.md
+  - sidecar/go.mod
+symbols: []
+dependencies:
+  - docs/runbook-restauracion-de-celula.md
+  - docs/adr/adr-0015-politica-de-convivencia-con-el-baneo.md
+  - docs/adr/adr-0011-whatsmeow-sidecar-e-ipc.md
+  - docs/adr/adr-0009-whatsmeow-adaptador-fase-a.md
+  - docs/adr/adr-0014-canal-propio-permanente.md
+  - docs/plan/fase-a-3-adaptador-whatsmeow.md
+  - docs/plan/fase-a-6-empaquetado-cli.md
+  - docs/bitacora-de-descartes.md
+test_scenarios:
+  - "New docs/runbook-canal-whatsmeow.md exists in Spanish, styled like docs/runbook-restauracion-de-celula.md (dated header, scope note, numbered procedure, references section)."
+  - "The runbook states the protocol-breakage step-by-step: check whatsmeow upstream state, bump the pinned commit, rebuild the sidecar image, redeploy."
+  - "The runbook names 'Client outdated (405)' as the recurring breakage pattern and states no recovery time can be committed while it depends on a volunteer maintainer, framed per adr-0015 item 14 [precautorio]."
+  - "The runbook states the pinning policy: pinned BY COMMIT, current pseudo-version v0.0.0-20260722203353-e9a033b24933 (commit e9a033b24933, sidecar/go.mod), never a floating/latest dependency."
+  - "The runbook declares the update window mechanism (who triggers it, what gates a bump) and marks the concrete cadence 'a calibrar' since no document fixes one, cross-referencing docs/STATUS.md's Pendiente section for the business decision."
+  - "The runbook explicitly defers the portfolio-staged rollout with a sentinel cell to stage A-6 (adr-0015 Layer 3 canary), without inventing A-6 values."
+  - "The runbook never suggests jitter, warm-up/calentamiento, proxies, VPN or IP rotation, and frames every measure with [causa documentada]/[precautorio] per adr-0015."
+  - "The runbook never states Fase B replaces or retires the sidecar/Fase A channel."
+  - "docs/STATUS.md gains one Definido entry dated 2026-08-12 for plan task 17, citing the FR/NFR or plan traceability (adr-0015 item 14, FR-12/NFR-05), and, if the update cadence has no fixed value, a matching Pendiente entry marked 'a calibrar'."
+  - "All 7 standard verify commands pass with no source-code diff beyond an optional explanatory comment in sidecar/go.mod."
+strategy:
+  - step: 1
+    action: >-
+      Read docs/runbook-restauracion-de-celula.md fully for structure/tone (dated header,
+      scope note, numbered steps, references section) and docs/adr/adr-0015 items 14
+      (pinning) and Layer 3 canary, plus docs/plan/fase-a-3-adaptador-whatsmeow.md task 17
+      and docs/bitacora-de-descartes.md, to avoid contradicting a discarded idea.
+    files:
+      - docs/runbook-restauracion-de-celula.md
+      - docs/adr/adr-0015-politica-de-convivencia-con-el-baneo.md
+      - docs/plan/fase-a-3-adaptador-whatsmeow.md
+      - docs/bitacora-de-descartes.md
+  - step: 2
+    action: >-
+      Write docs/runbook-canal-whatsmeow.md: dated header (2026-08-12), scope note (this
+      covers protocol breakage only; PairPhone re-pairing is a separate runbook per task
+      16, sqlstore backup is task 18, ban response is A-7), the commit-pinning policy
+      section (pin by commit, current pin e9a033b24933, why not a version tag), the update
+      window section (mechanism: who reviews upstream, what gates a bump, cadence marked
+      'a calibrar' with a cross-reference to STATUS.md Pendiente), and the numbered
+      protocol-breakage procedure (check whatsmeow upstream project state -> bump pinned
+      commit in go.mod -> rebuild sidecar image -> redeploy), closing with the explicit
+      statement that no recovery time can be committed on a volunteer-maintained
+      dependency and the A-6 staged-rollout deferral, plus a references section.
+    files:
+      - docs/runbook-canal-whatsmeow.md
+  - step: 3
+    action: >-
+      Add one Definido entry to docs/STATUS.md (absolute date 2026-08-12) recording the
+      runbook, the commit-pinning policy, and the plan/ADR traceability (A-3 plan task 17,
+      adr-0015 item 14); if the update cadence is not fixed by any existing document, add
+      a matching Pendiente entry marked 'a calibrar' rather than inventing a number.
+    files:
+      - docs/STATUS.md
+  - step: 4
+    action: >-
+      Optionally add a short explanatory Go comment above the whatsmeow require line in
+      sidecar/go.mod pointing to the new runbook and stating the pin is deliberate
+      (commit-pinned, not auto-bumped); no version/require line changes.
+    files:
+      - sidecar/go.mod

@@ -1,0 +1,24 @@
+{
+  "task_id": "HEX-020",
+  "summary": "All 6 ACs genuinely satisfied by 87-line diff; verbatim 405 pattern, adr-0015 item 14 framing, unchanged pin, coexistence intact.",
+  "verdict": "approve",
+  "contract_compliance": true,
+  "forbidden_files_touched": [],
+  "unrequested_refactor": false,
+  "missing_tests": [],
+  "functional_risk": "low",
+  "notes": [
+    "contract-check ok=true (87/275 diff lines); not_checked: forbid.behaviors (verified by hand below)",
+    "AC-1: satisfied. Section 3 gives 4 numbered operational steps (check tulir/whatsmeow upstream, go get + go mod tidy to bump pin, go test + rebuild image, redeploy + verify logs) with concrete commands, matching restauracion-de-celula.md's dated-header/scope-note/numbered-steps/references style.",
+    "AC-2: satisfied verbatim. 'Client outdated (405)' present as the named recurring pattern; explicit statement 'No se puede comprometer ningun tiempo de recuperacion que dependa de un tercero voluntario' framed as structural per adr-0015 item 14, matching adr-0015 line 75 wording almost exactly (bus factor 1, doble riesgo).",
+    "AC-3: satisfied. Policy states pin-by-commit e9a033b24933, never floating/latest; go.mod diff confirms the require line's pseudo-version v0.0.0-20260722203353-e9a033b24933 is UNCHANGED, only a comment line was added. Update window mechanism (upstream review, go test gate) is declared; cadence explicitly marked 'a calibrar' per contract's do-not-invent rule.",
+    "AC-4: satisfied. Section 2 explicitly defers portfolio-staged rollout to stage A-6, cites adr-0015 Capa 3 canary, reuses only adr-0015's own stated values (sentinel cell, 72h) without inventing new A-6 parameters.",
+    "AC-5: satisfied. STATUS.md Definido entry dated 2026-08-12 (HEX-020, tarea 17 de A-3) cites FR-12/NFR-05 traceability; a matching Pendiente entry for the unfixed cadence was correctly appended under the Pendiente section (not invented as a number).",
+    "AC-6: satisfied per 05-validation.json (7/7 RC=0, overall_result passed).",
+    "Repo-rule scan: no jitter/warm-up/proxy/VPN/IP-rotation vocabulary found; no 'Fase B replaces the sidecar' language (adr-0014 coexistence cited instead); all dates absolute; all user-visible text in Spanish; adr-0015 item 14 marker kept as [precautorio], never upgraded to [causa documentada].",
+    "Cross-consistency: does not contradict runbook-restauracion-de-celula.md (disjoint scope, cites it only stylistically), adr-0015 (wording matches item 14 near-verbatim), or STATUS.md's HEX-019 anti-ban entry (no anti-ban vocabulary reused/misapplied). D-08's discarded jitter/warm-up bundle and D-07's whatsmeow-vs-Baileys choice are not contradicted.",
+    "quorum analyze acceptance-coverage reported 6 gaps (AC-1..AC-6), but these are a tool artifact: it string-matches AC ids against 01-blueprint.yaml test_scenarios, and this blueprint's test_scenarios are unlabeled prose that map 1:1 to each AC by content, not by 'AC-n' string -- confirmed by hand-reading blueprint lines 19-29 against 00-spec.yaml lines 2-13; no real coverage gap exists.",
+    "sidecar/go.mod's only change is the added comment line above the whatsmeow require; go.sum and Cargo.* untouched, matching forbid.files."
+  ],
+  "fix_tasks": []
+}

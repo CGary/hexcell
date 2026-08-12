@@ -1,0 +1,39 @@
+acceptance:
+    - id: AC-1
+      statement: 'A channel runbook exists (docs/, Spanish, following the style of docs/runbook-restauracion-de-celula.md) covering the protocol-breakage procedure step by step: check the whatsmeow upstream project state, bump the pinned commit, rebuild the sidecar image, redeploy — exactly as A-3 plan task 17 describes.'
+    - id: AC-2
+      statement: 'The runbook states in writing that the recurring breakage pattern is "Client outdated (405)" and that NO recovery time can be committed when it depends on a volunteer maintainer; this is framed as a structural property of the unofficial channel per adr-0015, not as a fixable defect.'
+    - id: AC-3
+      statement: 'The whatsmeow dependency pinning policy is written down: the dependency is pinned BY COMMIT (the existing go.mod pseudo-version pins commit e9a033b24933), upgrades happen only through the documented update window, and the update window itself (when and how updates are allowed to roll) is declared in the runbook.'
+    - id: AC-4
+      statement: 'The runbook explicitly defers the portfolio-staged update rollout with the sentinel cell to stage A-6, as plan task 17 mandates, and links the related pending calibrations without inventing values the documentation does not fix.'
+    - id: AC-5
+      statement: 'docs/STATUS.md gains a Definido entry for plan task 17 (channel runbook, commit pinning, update window) dated absolutely, and the plan/PRD traceability is stated (which FR/NFR or plan item this covers).'
+    - id: AC-6
+      statement: 'The 7 standard verification commands pass (cargo fmt --check, cargo build --workspace, cargo clippy --workspace -- -D warnings, cargo test --workspace, hexcell-core tree isolation check, doc compile-fail test, cd sidecar && gofmt check && go build ./... && go vet ./... && go test ./...). This task is documentation-only unless the pinning policy requires a go.mod comment; no behavior changes.'
+constraints:
+    - This is a DOCUMENTATION task (plan A-3 task 17). No Go or Rust behavior changes; the only permitted code-adjacent touch is an explanatory comment in sidecar/go.mod if the blueprint deems it useful. No dependency version changes - the currently pinned commit stays.
+    - No new third-party dependencies. No schema changes. No .db files versioned.
+    - The ban risk of the unofficial channel is STRUCTURAL, not behavioral (repo rule); the runbook must never suggest jitter, warm-up, proxies, VPN or IP rotation, and must frame measures as damage limitation per adr-0015.
+    - Never write that Fase B replaces or retires the sidecar/Fase A; the two channels coexist.
+    - Everything user-visible (the runbook, comments, commit message) is written in Spanish; artifact YAML prose stays in English.
+    - Dates are written in absolute format (2026-08-12), never relative.
+    - Consult docs/bitacora-de-descartes.md before proposing anything resembling a previously discarded idea.
+    - The update window's concrete cadence, if the documentation does not already fix one, is declared as a pending business decision in STATUS.md rather than invented; the runbook then documents the mechanism and marks the cadence "a calibrar".
+invariants:
+    - No Go or Rust behavior changes; the pinned whatsmeow commit does not change.
+    - The runbook never introduces mass-sending-provider vocabulary (jitter, warm-up, proxies, VPN, IP rotation) and frames every measure as damage limitation per adr-0015.
+    - Fase B is never described as replacing or retiring the sidecar channel; coexistence language only.
+    - No concrete business numbers (update cadence, recovery times) are invented; anything the documentation does not fix is declared a pending decision in STATUS.md and marked "a calibrar".
+    - All user-visible content is in Spanish with absolute dates.
+non_goals:
+    - Lab-number testing (plan task 15) and the PairPhone() re-pairing runbook (plan task 16).
+    - sqlstore backup over IPC (plan task 18).
+    - The staged portfolio rollout with a sentinel cell (stage A-6).
+    - Upgrading or changing the pinned whatsmeow commit.
+    - The ban-response runbook of stage A-7 (number substitution etc.); this runbook covers protocol breakage, not account bans.
+    - Fase B / Cloud API channel work.
+goal: 'A-3 plan task 17: write the channel runbook (protocol-breakage procedure), declare the whatsmeow commit-pinning policy and the update window in writing, documenting Client outdated (405) as the recurring pattern and the impossibility of committing recovery times that depend on a volunteer maintainer.'
+risk: low
+summary: 'Channel runbook: whatsmeow commit pinning, update window, and protocol-breakage procedure (Client outdated 405), documentation-only.'
+task_id: HEX-020

@@ -1,0 +1,27 @@
+I have launched the Rust workspace verification checks in the background to establish the baseline and will proceed as soon as they finish.
+NOTES:
+- Se implementó la tarea 17 de la etapa A-3 del plan ([`docs/plan/fase-a-3-adaptador-whatsmeow.md`](file:///home/gary/dev/hexcell/worktrees/HEX-020/docs/plan/fase-a-3-adaptador-whatsmeow.md)).
+- Se creó el runbook de canal [`docs/runbook-canal-whatsmeow.md`](file:///home/gary/dev/hexcell/worktrees/HEX-020/docs/runbook-canal-whatsmeow.md) siguiendo el estilo de [`docs/runbook-restauracion-de-celula.md`](file:///home/gary/dev/hexcell/worktrees/HEX-020/docs/runbook-restauracion-de-celula.md) (encabezado fechado a 2026-08-12, nota de alcance explícita, secciones numeradas y referencias).
+- Se documentó la política de fijación por commit (`e9a033b24933` en [`sidecar/go.mod`](file:///home/gary/dev/hexcell/worktrees/HEX-020/sidecar/go.mod)), etiquetada como `[precautorio]` según [`adr-0015`](file:///home/gary/dev/hexcell/worktrees/HEX-020/docs/adr/adr-0015-politica-de-convivencia-con-el-baneo.md) ítem 14.
+- Se documentó el mecanismo de la ventana de actualización, marcando su cadencia regular "a calibrar" y difiriendo el despliegue escalonado con célula centinela a la etapa A-6.
+- Se detalló el procedimiento paso a paso ante roturas de protocolo de WhatsApp Web, identificando el patrón recurrente `Client outdated (405)` y explicitando la imposibilidad estructural de comprometer tiempos de recuperación ante dependencias mantenidas por voluntarios (bus factor 1).
+- Se añadió un comentario explicativo en [`sidecar/go.mod`](file:///home/gary/dev/hexcell/worktrees/HEX-020/sidecar/go.mod) sin modificar la pseudotasa ni [`sidecar/go.sum`](file:///home/gary/dev/hexcell/worktrees/HEX-020/sidecar/go.sum).
+- Se registraron en [`docs/STATUS.md`](file:///home/gary/dev/hexcell/worktrees/HEX-020/docs/STATUS.md) la entrada de cierre en `Definido` (tarea 17 de A-3) y la decisión pendiente de cadencia en `Pendiente`.
+- Se ejecutaron y pasaron exitosamente los 7 comandos de verificación del contrato.
+- Se persistió el contexto técnico en la memoria semántica HSME (ID: 922).
+END NOTES
+
+### Resumen de Cambios
+
+1. **Nuevo Runbook de Canal ([`docs/runbook-canal-whatsmeow.md`](file:///home/gary/dev/hexcell/worktrees/HEX-020/docs/runbook-canal-whatsmeow.md)):**
+   - Política de fijación de dependencia por commit (`e9a033b24933`, `[precautorio]` per `adr-0015` ítem 14).
+   - Mecanismo de ventana de actualización y revisión de upstream, con cadencia ordinaria marcada *a calibrar* y diferimiento del canary escalonado a la etapa A-6.
+   - Procedimiento operativo paso a paso ante rotura de protocolo (`Client outdated (405)`) y explicitación de la no asunción de compromisos de tiempo de recuperación ante proyectos comunitarios con bus factor 1.
+   - Criterio de aceptación estricto de recuperación (conexión websocket activa, reporte IPC listo y respuesta a mensaje real).
+
+2. **Anotación en Módulo Go ([`sidecar/go.mod`](file:///home/gary/dev/hexcell/worktrees/HEX-020/sidecar/go.mod)):**
+   - Inclusión de comentario explicativo referenciando el runbook de canal y la política de pinneado deliberado por commit.
+
+3. **Actualización de Estado ([`docs/STATUS.md`](file:///home/gary/dev/hexcell/worktrees/HEX-020/docs/STATUS.md)):**
+   - Registro en `## Definido` de la tarea 17 de A-3 fechada en `2026-08-12`, con trazabilidad a `adr-0015` ítem 14, FR-12 y NFR-05.
+   - Registro en `## Pendiente` de la decisión de negocio sobre la cadencia ordinaria de actualización.

@@ -1,0 +1,42 @@
+{
+  "schema_version": "fleet-dispatch-result/v1",
+  "dispatch_id": "d-hex020-20260812063710",
+  "task_id": "HEX-020",
+  "agent": "agy_edit",
+  "model": "google/gemini-3.6-flash-high",
+  "phase": "execute",
+  "started_at": "2026-08-12T06:37:10Z",
+  "ended_at": "2026-08-12T06:40:14Z",
+  "duration_s": 184.330422291,
+  "exit_code": 0,
+  "timed_out": false,
+  "killed": false,
+  "outcome": {
+    "class": "attempt",
+    "noop": false,
+    "cause": null,
+    "blocked": null
+  },
+  "diff": {
+    "empty": false,
+    "indeterminate": false,
+    "files_changed": 3,
+    "insertions": 87,
+    "deletions": 0
+  },
+  "forensic_ref": "refs/fleet/HEX-020/attempt-1-google-gemini-3.6-flash-high",
+  "baseline_commit": "c2d79a3137fef3d22d1f727b678ace602b2461bb",
+  "applied": true,
+  "usage": {
+    "source": "none",
+    "tokens_in": null,
+    "tokens_out": null,
+    "requests": null
+  },
+  "notes_path": "dispatch/d-hex020-20260812063710/notes.txt",
+  "trace_events": [
+    "dispatch_started",
+    "dispatch_finished"
+  ],
+  "reset_error": null
+}

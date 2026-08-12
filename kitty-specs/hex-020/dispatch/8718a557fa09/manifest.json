@@ -1,0 +1,39 @@
+{
+  "task_id": "HEX-020",
+  "bundle_hash": "8718a557fa09d735a472c9720e773113315465a88b1ca85f5260c3f539a3a136",
+  "files": [
+    ".ai/tasks/active/HEX-020-new-spec/00-spec.yaml",
+    ".ai/tasks/active/HEX-020-new-spec/01-blueprint.yaml",
+    "docs/PRD.md",
+    "docs/STATUS.md",
+    "docs/adr/adr-0009-whatsmeow-adaptador-fase-a.md",
+    "docs/adr/adr-0011-whatsmeow-sidecar-e-ipc.md",
+    "docs/adr/adr-0014-canal-propio-permanente.md",
+    "docs/adr/adr-0015-politica-de-convivencia-con-el-baneo.md",
+    "docs/bitacora-de-descartes.md"
+  ],
+  "protocol_version": "fleet-bundle-protocol/v2",
+  "created_at": "2026-08-12T06:37:04Z",
+  "dropped": [
+    {
+      "component": "code_slice",
+      "path": "sidecar/go.mod",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "docs/runbook-restauracion-de-celula.md",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "docs/plan/fase-a-6-empaquetado-cli.md",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "docs/plan/fase-a-3-adaptador-whatsmeow.md",
+      "reason": "bundle exceeded max_bytes budget"
+    }
+  ]
+}
