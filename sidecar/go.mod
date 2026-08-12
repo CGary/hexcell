@@ -3,6 +3,7 @@ module github.com/CGary/hexcell/sidecar
 go 1.26.5
 
 require (
+	// Pinneado por commit deliberado (no flotante); ver docs/runbook-canal-whatsmeow.md
 	go.mau.fi/whatsmeow v0.0.0-20260722203353-e9a033b24933
 	modernc.org/sqlite v1.51.0
 )
