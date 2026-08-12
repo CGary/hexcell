@@ -85,6 +85,12 @@ const (
 	// VariableCortacircuitosTextoTraspaso fija el texto del único mensaje emitido al dispararse el cortacircuitos.
 	// [causa documentada]
 	VariableCortacircuitosTextoTraspaso = "HEXCELL_CORTACIRCUITOS_TEXTO_TRASPASO"
+	// VariableTextoIdentificacion fija el texto de identificación como bot y oferta de traspaso en el primer turno.
+	// [causa documentada]
+	VariableTextoIdentificacion = "HEXCELL_TEXTO_IDENTIFICACION"
+	// VariablePlantillasPresentacion fija la lista de plantillas de saludo/presentación separadas por punto y coma.
+	// [causa documentada]
+	VariablePlantillasPresentacion = "HEXCELL_PLANTILLAS_PRESENTACION"
 )
 
 // Valores por omisión, documentados en docs/protocolo-ipc-nucleo-sidecar.md, sección 2.
@@ -199,6 +205,16 @@ const (
 	// [causa documentada]
 	// PENDIENTE DE CALIBRACIÓN.
 	CortacircuitosTextoTraspasoPorOmision = "Te paso con una persona del equipo. En cuanto esté disponible te responde por acá."
+
+	// TextoIdentificacionPorOmision es el texto por omisión de identificación y oferta de traspaso en el primer turno.
+	// [causa documentada]
+	// PENDIENTE DE CALIBRACIÓN.
+	TextoIdentificacionPorOmision = "Te atiende un asistente automático. Si preferís hablar con una persona, escribí «humano»."
+
+	// PlantillasPresentacionPorOmision son las variantes neutrales de presentación por omisión separadas por punto y coma.
+	// [causa documentada]
+	// PENDIENTE DE CALIBRACIÓN.
+	PlantillasPresentacionPorOmision = "¡Hola! Gracias por escribir.;Hola, ¿en qué te puedo ayudar?;Buenas, gracias por tu mensaje."
 )
 
 // ErrRutaSocketVacia se devuelve cuando la variable del socket está definida pero vacía.
@@ -292,6 +308,14 @@ type Cortacircuitos struct {
 	TextoTraspaso       string
 }
 
+// Presentacion agrupa los parámetros de presentación e identificación de primer turno.
+// [causa documentada]
+// No contiene ningún campo booleano: la identificación y variación de plantillas no son desactivables por configuración.
+type Presentacion struct {
+	TextoIdentificacion string
+	Variantes           []string
+}
+
 // Configuracion son los parámetros de arranque del sidecar, ya validados.
 type Configuracion struct {
 	// RutaSocket es la ruta del socket de dominio Unix sobre el volumen compartido.
@@ -323,6 +347,8 @@ type Configuracion struct {
 	Disciplina Disciplina
 	// Cortacircuitos agrupa los parámetros del cortacircuitos conversacional.
 	Cortacircuitos Cortacircuitos
+	// Presentacion agrupa los parámetros de presentación e identificación de primer turno.
+	Presentacion Presentacion
 }
 
 // Cargar construye la configuración a partir de una función de consulta del entorno.
@@ -415,6 +441,11 @@ func Cargar(consultar func(string) (string, bool)) (Configuracion, error) {
 		return Configuracion{}, err
 	}
 
+	presentacion, err := cargarPresentacion(consultar)
+	if err != nil {
+		return Configuracion{}, err
+	}
+
 	return Configuracion{
 		RutaSocket:              rutaSocket,
 		NivelDeRegistro:         nivel,
@@ -429,6 +460,7 @@ func Cargar(consultar func(string) (string, bool)) (Configuracion, error) {
 		TextoConfirmacionDeBaja: textoConfirmacion,
 		Disciplina:              disciplina,
 		Cortacircuitos:          cortacircuitos,
+		Presentacion:            presentacion,
 	}, nil
 }
 
@@ -742,5 +774,55 @@ func cargarCortacircuitos(consultar func(string) (string, bool)) (Cortacircuitos
 		UmbralRepeticion:    umbral,
 		PalabrasFrustracion: palabras,
 		TextoTraspaso:       texto,
+	}, nil
+}
+
+func cargarTextoIdentificacion(consultar func(string) (string, bool)) (string, error) {
+	valor, presente := consultar(VariableTextoIdentificacion)
+	if !presente {
+		return TextoIdentificacionPorOmision, nil
+	}
+	if valor == "" || strings.TrimSpace(valor) == "" {
+		return "", fmt.Errorf("%w: %s no puede estar vacía", ErrParametroDeDisciplinaInvalido, VariableTextoIdentificacion)
+	}
+	return valor, nil
+}
+
+func cargarPlantillasPresentacion(consultar func(string) (string, bool)) ([]string, error) {
+	valor, presente := consultar(VariablePlantillasPresentacion)
+	if !presente {
+		valor = PlantillasPresentacionPorOmision
+	} else if strings.TrimSpace(valor) == "" {
+		return nil, fmt.Errorf("%w: %s no puede estar vacía", ErrParametroDeDisciplinaInvalido, VariablePlantillasPresentacion)
+	}
+
+	partes := strings.Split(valor, ";")
+	var variantes []string
+	for _, p := range partes {
+		recortada := strings.TrimSpace(p)
+		if recortada != "" {
+			variantes = append(variantes, recortada)
+		}
+	}
+	if len(variantes) < 2 {
+		return nil, fmt.Errorf("%w: %s debe contener al menos 2 variantes no vacías", ErrParametroDeDisciplinaInvalido, VariablePlantillasPresentacion)
+	}
+	return variantes, nil
+}
+
+func cargarPresentacion(consultar func(string) (string, bool)) (Presentacion, error) {
+	texto, err := cargarTextoIdentificacion(consultar)
+	if err != nil {
+		return Presentacion{}, err
+	}
+
+	variantes, err := cargarPlantillasPresentacion(consultar)
+	if err != nil {
+		return Presentacion{}, err
+	}
+
+	return Presentacion{
+		TextoIdentificacion: texto,
+		Variantes:           variantes,
 	}, nil
 }

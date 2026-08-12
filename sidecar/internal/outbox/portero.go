@@ -21,6 +21,8 @@ const (
 	EventoEnvioBloqueadoPorBaja = "outbox.envio_bloqueado_por_baja"
 	// EventoSalidaDescartadaPorBaja se emite al descartar en el drenaje una fila ya encolada.
 	EventoSalidaDescartadaPorBaja = "outbox.salida_descartada_por_baja"
+	// EventoErrorReclamoPresentacion se emite cuando el reclamo de la presentación falla (fallo cerrado).
+	EventoErrorReclamoPresentacion = "outbox.error_reclamo_presentacion"
 )
 
 var (
@@ -42,6 +44,9 @@ var (
 	// ContadorDescartadasPorBaja cuenta mensajes descartados con dureza en el drenaje por haber
 	// recibido la baja mientras estaban encolados.
 	ContadorDescartadasPorBaja atomic.Int64
+
+	// ContadorErroresReclamoPresentacion cuenta fallos al reclamar la presentación (fallo cerrado).
+	ContadorErroresReclamoPresentacion atomic.Int64
 )
 
 // ControlDeBaja define la autoridad de consulta y reclamo de baja para la ruta de salida.
@@ -59,21 +64,30 @@ type ControlDeCortacircuitos interface {
 	ReclamarMensajeDeTraspaso(ctx context.Context, idConversacion, idMensajeTraspaso string, ahoraMs int64) (bool, error)
 }
 
+// ControlDePresentacion define la autoridad de reclamo del mensaje de presentación para la salida.
+// Satisfecho por identidad.Almacen sin acoplar outbox con el paquete identidad.
+// [causa documentada]
+type ControlDePresentacion interface {
+	ReclamarPresentacion(ctx context.Context, idConversacion, idMensajePresentacion string, ahoraMs int64) (bool, error)
+}
+
 // PorteroDeSalida es el servicio de aplicación que custodia la entrada a la cola de salida,
 // aplicando el cortacircuitos y el control de baja en el punto más temprano posible de la ruta de envío.
 type PorteroDeSalida struct {
 	cola           *ColaDeSalida
 	controlBaja    ControlDeBaja
 	cortacircuitos ControlDeCortacircuitos
+	presentacion   ControlDePresentacion
 	registro       *registro.Registro
 }
 
 // NuevoPorteroDeSalida construye el portero custodiando la cola de salida inyectada.
-func NuevoPorteroDeSalida(cola *ColaDeSalida, controlBaja ControlDeBaja, cortacircuitos ControlDeCortacircuitos, reg *registro.Registro) *PorteroDeSalida {
+func NuevoPorteroDeSalida(cola *ColaDeSalida, controlBaja ControlDeBaja, cortacircuitos ControlDeCortacircuitos, presentacion ControlDePresentacion, reg *registro.Registro) *PorteroDeSalida {
 	return &PorteroDeSalida{
 		cola:           cola,
 		controlBaja:    controlBaja,
 		cortacircuitos: cortacircuitos,
+		presentacion:   presentacion,
 		registro:       reg,
 	}
 }
@@ -153,6 +167,34 @@ func (p *PorteroDeSalida) AdmitirMensajeDeTraspaso(ctx context.Context, idMensaj
 		reclamada, err := p.cortacircuitos.ReclamarMensajeDeTraspaso(ctx, idConversacion, idMensaje, marcaTemporalOrigenMs)
 		if err != nil {
 			return false, fmt.Errorf("portero de salida: error al reclamar traspaso: %w", err)
+		}
+		if !reclamada {
+			return false, nil
+		}
+	}
+
+	if err := p.Admitir(ctx, idMensaje, idConversacion, contenido, marcaTemporalOrigenMs); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// AdmitirMensajeDePresentacion es la vía de admisión del único mensaje de presentación permitido
+// en el primer turno de la conversación: reclama atómicamente la presentación y, sólo si gana el reclamo,
+// lo admite a través de Admitir para respetar la precedencia de baja/STOP y cortacircuitos sobre la presentación.
+// [causa documentada]
+func (p *PorteroDeSalida) AdmitirMensajeDePresentacion(ctx context.Context, idMensaje, idConversacion, contenido string, marcaTemporalOrigenMs int64) (bool, error) {
+	if p.presentacion != nil {
+		reclamada, err := p.presentacion.ReclamarPresentacion(ctx, idConversacion, idMensaje, marcaTemporalOrigenMs)
+		if err != nil {
+			ContadorErroresReclamoPresentacion.Add(1)
+			if p.registro != nil {
+				p.registro.Error(EventoErrorReclamoPresentacion, registro.Campos{
+					IdEvento: idMensaje,
+					Detalle:  err.Error(),
+				})
+			}
+			return false, fmt.Errorf("portero de salida: error al reclamar presentacion: %w", err)
 		}
 		if !reclamada {
 			return false, nil

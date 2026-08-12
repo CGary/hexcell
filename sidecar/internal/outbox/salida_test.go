@@ -1036,3 +1036,66 @@ func TestPresenciaSeLiberaTrasAgotarIntentos(t *testing.T) {
 		t.Errorf("el marcador de presencia debía liberarse tras agotar reintentos, quedaron %d entradas", cola.PresenciasPendientesParaPruebas())
 	}
 }
+
+type controlDeBajaMutable struct {
+	permitido bool
+}
+
+func (c *controlDeBajaMutable) EnvioPermitido(_ context.Context, _, _ string) (bool, error) {
+	return c.permitido, nil
+}
+
+func (c *controlDeBajaMutable) ReclamarConfirmacionDeBaja(_ context.Context, _, _ string, _ int64) (bool, error) {
+	return false, nil
+}
+
+func TestPresenciaSeLiberaTrasDescartePorBaja(t *testing.T) {
+	t.Parallel()
+	db, _ := abrirDbPruebaSalida(t)
+	falso := &transmisorFalso{idCorrelacion: "no-debe-enviarse"}
+	emisor := &emisorPresenciaFalso{}
+	control := &controlDeBajaMutable{permitido: true}
+	loc, _ := time.LoadLocation("America/Argentina/Buenos_Aires")
+	cfg := configuracion.Disciplina{
+		LatenciaMinimaMs: 3000,
+		Ventana: configuracion.VentanaDeAtencion{
+			HoraApertura: 9, MinutoApertura: 0,
+			HoraCierre: 19, MinutoCierre: 0,
+			Dias: []int{1, 2, 3, 4, 5},
+			Zona: loc,
+		},
+		Rampa: configuracion.RampaDeVolumen{DiariaInicial: 100, IncrementoSemanal: 10, Semanas: 4},
+	}
+	disc := outbox.NuevaDisciplinaDeSalida(cfg)
+	cola := outbox.NuevaColaDeSalida(db, 60000, 3, nil, falso, control).ConDisciplina(disc, emisor)
+	ctx := context.Background()
+
+	tDentro := time.Date(2026, 8, 11, 14, 0, 0, 0, time.UTC).UnixMilli()
+	cola.Encolar(ctx, "msg-baja-pres", "conv-1", "hola", tDentro)
+
+	// t=tDentro+1000: se difiere por latencia mínima, anuncia presencia
+	if err := cola.Drenar(ctx, tDentro+1000); err != nil {
+		t.Fatalf("error al drenar: %v", err)
+	}
+	if emisor.contador() != 1 {
+		t.Fatalf("debía emitir presencia por latencia mínima, llamadas=%d", emisor.contador())
+	}
+	if cola.PresenciasPendientesParaPruebas() != 1 {
+		t.Fatalf("el marcador debía conservar 1 entrada, obtenido %d", cola.PresenciasPendientesParaPruebas())
+	}
+
+	// Contacto solicita baja entre ciclos
+	control.permitido = false
+
+	// t=tDentro+4000: se cumple la latencia, pero el control de baja rechaza "msg-baja-pres".
+	// La fila se descarta por baja y el marcador de presencia debe liberarse (AC-6).
+	if err := cola.Drenar(ctx, tDentro+4000); err != nil {
+		t.Fatalf("error al drenar en tDentro+4000: %v", err)
+	}
+	if falso.contador() != 0 {
+		t.Fatalf("el mensaje no debía transmitirse tras descarte por baja, llamadas=%d", falso.contador())
+	}
+	if cola.PresenciasPendientesParaPruebas() != 0 {
+		t.Errorf("el marcador de presencia debía liberarse tras el descarte por baja (AC-6), quedaron %d entradas", cola.PresenciasPendientesParaPruebas())
+	}
+}

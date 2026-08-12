@@ -1,7 +1,7 @@
 // Package identidad implementa el almacén de identidades para el sidecar HexCell.
 // Esta es la cuarta base del respaldo A-2.
 //
-// Razón del esquema: consta de cuatro tablas (identidad, direccion, baja_de_contacto, cortacircuitos), ancladas en PN (Phone Number)
+// Razón del esquema: consta de cinco tablas (identidad, direccion, baja_de_contacto, cortacircuitos, presentacion_de_conversacion), ancladas en PN (Phone Number)
 // con LID como alias. Esta separación de sqlstore existe para que las identidades
 // y los registros de baja sobrevivan a eventos LoggedOut o dispositivos removidos (device_removed).
 // El script de respaldo debe ser capaz de leer este esquema desde el código.
@@ -98,6 +98,11 @@ CREATE TABLE IF NOT EXISTS cortacircuitos (
   motivo_disparo TEXT NULL,
   id_mensaje_traspaso TEXT NULL UNIQUE,
   traspaso_encolado_en_ms INTEGER NULL
+);
+CREATE TABLE IF NOT EXISTS presentacion_de_conversacion (
+  id_interno TEXT PRIMARY KEY REFERENCES identidad(id_interno) ON DELETE CASCADE,
+  id_mensaje_presentacion TEXT NULL UNIQUE,
+  presentacion_encolada_en_ms INTEGER NULL
 );
 CREATE INDEX IF NOT EXISTS idx_direccion_identidad ON direccion(id_interno);
 CREATE INDEX IF NOT EXISTS idx_identidad_fusionada ON identidad(fusionada_en);

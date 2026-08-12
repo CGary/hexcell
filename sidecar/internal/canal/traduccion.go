@@ -60,14 +60,22 @@ type AdmisorDeTraspaso interface {
 	AdmitirMensajeDeTraspaso(ctx context.Context, idMensaje, idConversacion, contenido string, marcaTemporalOrigenMs int64) (bool, error)
 }
 
+// AdmisorDePresentacion encola el mensaje único de presentación en el primer turno de la conversación.
+// Satisfecho por *outbox.PorteroDeSalida; desacoplado para testear con un espía.
+// [causa documentada]
+type AdmisorDePresentacion interface {
+	AdmitirMensajeDePresentacion(ctx context.Context, idMensaje, idConversacion, contenido string, marcaTemporalOrigenMs int64) (bool, error)
+}
+
 // Nombres fijos de suceso
 const (
-	EventoMensajeTraducido        = "canal.mensaje_traducido"
-	EventoMensajeDescartado       = "canal.mensaje_descartado"
-	EventoBajaDetectada           = "canal.baja_detectada"
-	EventoCortacircuitosDisparado = "canal.cortacircuitos_disparado"
-	EventoErrorCortacircuitos     = "canal.error_cortacircuitos"
-	EventoErrorEmisionTraspaso    = "canal.error_emision_traspaso"
+	EventoMensajeTraducido         = "canal.mensaje_traducido"
+	EventoMensajeDescartado        = "canal.mensaje_descartado"
+	EventoBajaDetectada            = "canal.baja_detectada"
+	EventoCortacircuitosDisparado  = "canal.cortacircuitos_disparado"
+	EventoErrorCortacircuitos      = "canal.error_cortacircuitos"
+	EventoErrorEmisionTraspaso     = "canal.error_emision_traspaso"
+	EventoErrorEmisionPresentacion = "canal.error_emision_presentacion"
 )
 
 // ContadorErroresCortacircuitos cuenta, a través de todas las instancias del proceso, fallos al
@@ -203,6 +211,94 @@ func (d *DetectorDeCortacircuitos) EmitirTraspaso(ctx context.Context, idInterno
 	return d.admisor.AdmitirMensajeDeTraspaso(ctx, "traspaso-"+idInterno, idInterno, d.textoTraspaso, marcaTemporalMs)
 }
 
+// SelectorDePlantilla selecciona determinísticamente una plantilla de presentación para un contacto.
+// [causa documentada]
+type SelectorDePlantilla struct {
+	variantes []string
+}
+
+// NuevoSelectorDePlantilla inicializa el selector con las variantes configuradas.
+// [causa documentada]
+func NuevoSelectorDePlantilla(variantes []string) *SelectorDePlantilla {
+	return &SelectorDePlantilla{
+		variantes: append([]string(nil), variantes...),
+	}
+}
+
+// Elegir selecciona determinísticamente una variante para el idInterno dado (FNV-1a 64-bit mod len(variantes)).
+// Sin aleatoriedad (D-08).
+// [causa documentada]
+func (s *SelectorDePlantilla) Elegir(idInterno string) string {
+	if s == nil || len(s.variantes) == 0 {
+		return ""
+	}
+	if len(s.variantes) == 1 {
+		return s.variantes[0]
+	}
+	h := fnv64a(idInterno)
+	idx := int(h % uint64(len(s.variantes)))
+	return s.variantes[idx]
+}
+
+func fnv64a(s string) uint64 {
+	const offset64 = 14695981039346656037
+	const prime64 = 1099511628211
+	var hash uint64 = offset64
+	for i := 0; i < len(s); i++ {
+		hash ^= uint64(s[i])
+		hash *= prime64
+	}
+	return hash
+}
+
+// ComponerPresentacion combina la variante de saludo seleccionada con el texto de identificación y salida a humano.
+// [causa documentada]
+func ComponerPresentacion(variante, textoIdentificacion string) string {
+	v := strings.TrimSpace(variante)
+	id := strings.TrimSpace(textoIdentificacion)
+	if v == "" {
+		return id
+	}
+	if id == "" {
+		return v
+	}
+	return v + " " + id
+}
+
+// GeneradorDePresentacion coordina la selección de plantilla, composición y admisión del mensaje de presentación.
+// [causa documentada]
+type GeneradorDePresentacion struct {
+	selector            *SelectorDePlantilla
+	textoIdentificacion string
+	admisor             AdmisorDePresentacion
+}
+
+// NuevoGeneradorDePresentacion construye un nuevo generador de presentación.
+// [causa documentada]
+func NuevoGeneradorDePresentacion(
+	variantes []string,
+	textoIdentificacion string,
+	admisor AdmisorDePresentacion,
+) *GeneradorDePresentacion {
+	return &GeneradorDePresentacion{
+		selector:            NuevoSelectorDePlantilla(variantes),
+		textoIdentificacion: textoIdentificacion,
+		admisor:             admisor,
+	}
+}
+
+// Emitir compone el mensaje de presentación para idInterno y lo entrega al admisor.
+// [causa documentada]
+func (g *GeneradorDePresentacion) Emitir(ctx context.Context, idInterno string, marcaTemporalMs int64) (bool, error) {
+	if g == nil || g.admisor == nil {
+		return false, nil
+	}
+	variante := g.selector.Elegir(idInterno)
+	textoCompleto := ComponerPresentacion(variante, g.textoIdentificacion)
+	idMensaje := "pres-" + idInterno
+	return g.admisor.AdmitirMensajeDePresentacion(ctx, idMensaje, idInterno, textoCompleto, marcaTemporalMs)
+}
+
 // Traductor convierte eventos entrantes de whatsmeow en EventoEntrante de IPC
 // asegurando persist-first y deduplicación.
 type Traductor struct {
@@ -213,8 +309,9 @@ type Traductor struct {
 	registro              *registro.Registro
 	detectorBaja          *DetectorDeBaja
 	detectorCortacircuito *DetectorDeCortacircuitos
+	generadorPresentacion *GeneradorDePresentacion
 	// ahoraMs es el reloj del traductor, inyectable en tests. Los mensajes conservan su marca
-	// de origen, pero la CONFIRMACIÓN de baja y el TRASPASO de cortacircuitos se encolan con este reloj:
+	// de origen, pero la CONFIRMACIÓN de baja, el TRASPASO de cortacircuitos y la PRESENTACIÓN se encolan con este reloj:
 	// si usaran la marca del mensaje entrante, un mensaje entregado del backlog offline tras una
 	// caída mayor que el TTL de salida nacería ya expirado y, con el reclamo único gastado, jamás se reencolaría.
 	ahoraMs func() int64
@@ -229,6 +326,7 @@ func NuevoTraductor(
 	reg *registro.Registro,
 	baja *DetectorDeBaja,
 	cortacircuitos *DetectorDeCortacircuitos,
+	generadorPresentacion *GeneradorDePresentacion,
 ) *Traductor {
 	return &Traductor{
 		almacen:               almacen,
@@ -238,6 +336,7 @@ func NuevoTraductor(
 		registro:              reg,
 		detectorBaja:          baja,
 		detectorCortacircuito: cortacircuitos,
+		generadorPresentacion: generadorPresentacion,
 		ahoraMs:               func() int64 { return time.Now().UnixMilli() },
 	}
 }
@@ -419,6 +518,10 @@ func (t *Traductor) procesarMensaje(ctx context.Context, evt *events.Message) {
 	} else if disparoCortacircuitos && t.detectorCortacircuito != nil {
 		if _, err := t.detectorCortacircuito.EmitirTraspaso(ctx, ident.IdInterno, t.ahoraMs()); err != nil && t.registro != nil {
 			t.registro.Error(EventoErrorEmisionTraspaso, registro.Campos{IdEvento: ident.IdInterno, Detalle: err.Error()})
+		}
+	} else if t.generadorPresentacion != nil {
+		if _, err := t.generadorPresentacion.Emitir(ctx, ident.IdInterno, t.ahoraMs()); err != nil && t.registro != nil {
+			t.registro.Error(EventoErrorEmisionPresentacion, registro.Campos{IdEvento: ident.IdInterno, Detalle: err.Error()})
 		}
 	}
 }

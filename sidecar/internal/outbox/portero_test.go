@@ -60,6 +60,23 @@ func (c *controlDeCortacircuitosEspia) ReclamarMensajeDeTraspaso(_ context.Conte
 
 var _ outbox.ControlDeCortacircuitos = (*controlDeCortacircuitosEspia)(nil)
 
+type controlDePresentacionEspia struct {
+	ordenLlamadas        []string
+	reclamada            bool
+	errReclamar          error
+	llamadasReclamar     int
+	ultimoIdPresentacion string
+}
+
+func (c *controlDePresentacionEspia) ReclamarPresentacion(_ context.Context, _, idMensajePresentacion string, _ int64) (bool, error) {
+	c.ordenLlamadas = append(c.ordenLlamadas, "ReclamarPresentacion")
+	c.llamadasReclamar++
+	c.ultimoIdPresentacion = idMensajePresentacion
+	return c.reclamada, c.errReclamar
+}
+
+var _ outbox.ControlDePresentacion = (*controlDePresentacionEspia)(nil)
+
 func TestPorteroDeSalida_AdmitirRechazaCortacircuitosDisparado(t *testing.T) {
 	t.Parallel()
 	db, _ := abrirDbPruebaSalida(t)
@@ -68,7 +85,7 @@ func TestPorteroDeSalida_AdmitirRechazaCortacircuitosDisparado(t *testing.T) {
 
 	var buf bytes.Buffer
 	reg := registro.Nuevo(&buf, slog.LevelInfo, "celula-test")
-	portero := outbox.NuevoPorteroDeSalida(cola, nil, corta, reg)
+	portero := outbox.NuevoPorteroDeSalida(cola, nil, corta, nil, reg)
 	ctx := context.Background()
 
 	bloqueadasPrevias := outbox.ContadorBloqueadasPorCortacircuitos.Load()
@@ -99,7 +116,7 @@ func TestPorteroDeSalida_AdmitirFallaCerradoEnErrorCortacircuitos(t *testing.T) 
 
 	var buf bytes.Buffer
 	reg := registro.Nuevo(&buf, slog.LevelInfo, "celula-test")
-	portero := outbox.NuevoPorteroDeSalida(cola, nil, corta, reg)
+	portero := outbox.NuevoPorteroDeSalida(cola, nil, corta, nil, reg)
 	ctx := context.Background()
 
 	erroresPrevios := outbox.ContadorErroresCortacircuitos.Load()
@@ -130,7 +147,7 @@ func TestPorteroDeSalida_AdmitirRechazaContactoDadoDeBaja(t *testing.T) {
 
 	var buf bytes.Buffer
 	reg := registro.Nuevo(&buf, slog.LevelInfo, "celula-test")
-	portero := outbox.NuevoPorteroDeSalida(cola, control, nil, reg)
+	portero := outbox.NuevoPorteroDeSalida(cola, control, nil, nil, reg)
 	ctx := context.Background()
 
 	bloqueadasPrevias := outbox.ContadorBloqueadasPorBaja.Load()
@@ -161,7 +178,7 @@ func TestPorteroDeSalida_AdmitirConsultaCortacircuitosAntesDeBaja(t *testing.T) 
 	cola := outbox.NuevaColaDeSalida(db, 1000, 3, nil, nil, nil)
 	baja := &controlDeBajaEspia{permitido: true}
 	corta := &controlDeCortacircuitosEspia{permitido: true}
-	portero := outbox.NuevoPorteroDeSalida(cola, baja, corta, nil)
+	portero := outbox.NuevoPorteroDeSalida(cola, baja, corta, nil, nil)
 	ctx := context.Background()
 
 	err := portero.Admitir(ctx, "msg-1", "conv-permitida", "hola", 100)
@@ -188,7 +205,7 @@ func TestPorteroDeSalida_AdmitirConfirmacionDeBaja_ReclamoUnico(t *testing.T) {
 	db, _ := abrirDbPruebaSalida(t)
 	cola := outbox.NuevaColaDeSalida(db, 1000, 3, nil, nil, nil)
 	control := &controlDeBajaEspia{reclamada: true}
-	portero := outbox.NuevoPorteroDeSalida(cola, control, nil, nil)
+	portero := outbox.NuevoPorteroDeSalida(cola, control, nil, nil, nil)
 	ctx := context.Background()
 
 	// Primer reclamo: gana
@@ -226,7 +243,7 @@ func TestPorteroDeSalida_AdmitirMensajeDeTraspaso_ReclamoUnico(t *testing.T) {
 	cola := outbox.NuevaColaDeSalida(db, 1000, 3, nil, nil, nil)
 	corta := &controlDeCortacircuitosEspia{permitido: true, reclamada: true}
 	baja := &controlDeBajaEspia{permitido: true}
-	portero := outbox.NuevoPorteroDeSalida(cola, baja, corta, nil)
+	portero := outbox.NuevoPorteroDeSalida(cola, baja, corta, nil, nil)
 	ctx := context.Background()
 
 	// Primer reclamo: gana
@@ -263,7 +280,7 @@ func TestPorteroDeSalida_AdmitirMensajeDeTraspaso_PrecedenciaDeBaja(t *testing.T
 	cola := outbox.NuevaColaDeSalida(db, 1000, 3, nil, nil, nil)
 	corta := &controlDeCortacircuitosEspia{permitido: true, reclamada: true}
 	baja := &controlDeBajaEspia{permitido: false} // Contacto dado de baja
-	portero := outbox.NuevoPorteroDeSalida(cola, baja, corta, nil)
+	portero := outbox.NuevoPorteroDeSalida(cola, baja, corta, nil, nil)
 	ctx := context.Background()
 
 	// AdmitirMensajeDeTraspaso debe rebotar por la comprobación de baja
@@ -279,5 +296,123 @@ func TestPorteroDeSalida_AdmitirMensajeDeTraspaso_PrecedenciaDeBaja(t *testing.T
 	db.QueryRow("SELECT COUNT(*) FROM cola_salida").Scan(&cuenta)
 	if cuenta != 0 {
 		t.Fatalf("cola_salida debía tener 0 filas, tiene %d", cuenta)
+	}
+}
+
+func TestPorteroDeSalida_AdmitirMensajeDePresentacion_ReclamoUnico(t *testing.T) {
+	t.Parallel()
+	db, _ := abrirDbPruebaSalida(t)
+	cola := outbox.NuevaColaDeSalida(db, 1000, 3, nil, nil, nil)
+	pres := &controlDePresentacionEspia{reclamada: true}
+	baja := &controlDeBajaEspia{permitido: true}
+	corta := &controlDeCortacircuitosEspia{permitido: true}
+	portero := outbox.NuevoPorteroDeSalida(cola, baja, corta, pres, nil)
+	ctx := context.Background()
+
+	// Primer reclamo: gana y encola
+	encolada, err := portero.AdmitirMensajeDePresentacion(ctx, "pres-1", "conv-1", "Hola, te atiende un bot.", 100)
+	if err != nil || !encolada {
+		t.Fatalf("primer reclamo de presentación debía encolar: encolada=%v, err=%v", encolada, err)
+	}
+
+	var cuenta int
+	db.QueryRow("SELECT COUNT(*) FROM cola_salida WHERE id_mensaje='pres-1'").Scan(&cuenta)
+	if cuenta != 1 {
+		t.Fatalf("el mensaje de presentación debía estar encolado")
+	}
+
+	// Segundo reclamo: pierde el reclamo (reclamada=false), no encola
+	pres.reclamada = false
+	encolada2, err := portero.AdmitirMensajeDePresentacion(ctx, "pres-2", "conv-1", "Hola, te atiende un bot.", 200)
+	if err != nil {
+		t.Fatalf("segundo reclamo de presentación no debía devolver error: %v", err)
+	}
+	if encolada2 {
+		t.Fatal("segundo reclamo de presentación debía retornar encolada=false")
+	}
+
+	db.QueryRow("SELECT COUNT(*) FROM cola_salida WHERE id_mensaje='pres-2'").Scan(&cuenta)
+	if cuenta != 0 {
+		t.Fatalf("la segunda presentación no debía encolarse")
+	}
+}
+
+func TestPorteroDeSalida_AdmitirMensajeDePresentacion_PrecedenciaDeBaja(t *testing.T) {
+	t.Parallel()
+	db, _ := abrirDbPruebaSalida(t)
+	cola := outbox.NuevaColaDeSalida(db, 1000, 3, nil, nil, nil)
+	pres := &controlDePresentacionEspia{reclamada: true}
+	baja := &controlDeBajaEspia{permitido: false} // Contacto dado de baja
+	corta := &controlDeCortacircuitosEspia{permitido: true}
+	portero := outbox.NuevoPorteroDeSalida(cola, baja, corta, pres, nil)
+	ctx := context.Background()
+
+	// Aunque se ganó el reclamo de presentación, Admitir lo rechaza por baja
+	encolada, err := portero.AdmitirMensajeDePresentacion(ctx, "pres-1", "conv-baja", "Hola, te atiende un bot.", 100)
+	if !errors.Is(err, outbox.ErrContactoDadoDeBaja) {
+		t.Fatalf("se esperaba ErrContactoDadoDeBaja por precedencia de STOP, se obtuvo err=%v", err)
+	}
+	if encolada {
+		t.Fatal("no debía encolar presentación para un contacto dado de baja")
+	}
+
+	var cuenta int
+	db.QueryRow("SELECT COUNT(*) FROM cola_salida").Scan(&cuenta)
+	if cuenta != 0 {
+		t.Fatalf("cola_salida debía tener 0 filas, tiene %d", cuenta)
+	}
+}
+
+func TestPorteroDeSalida_AdmitirMensajeDePresentacion_PrecedenciaDeCortacircuitos(t *testing.T) {
+	t.Parallel()
+	db, _ := abrirDbPruebaSalida(t)
+	cola := outbox.NuevaColaDeSalida(db, 1000, 3, nil, nil, nil)
+	pres := &controlDePresentacionEspia{reclamada: true}
+	baja := &controlDeBajaEspia{permitido: true}
+	corta := &controlDeCortacircuitosEspia{permitido: false} // Breaker tripped
+	portero := outbox.NuevoPorteroDeSalida(cola, baja, corta, pres, nil)
+	ctx := context.Background()
+
+	// Aunque se ganó el reclamo de presentación, Admitir lo rechaza por cortacircuitos
+	encolada, err := portero.AdmitirMensajeDePresentacion(ctx, "pres-1", "conv-corta", "Hola, te atiende un bot.", 100)
+	if !errors.Is(err, outbox.ErrConversacionEnTraspaso) {
+		t.Fatalf("se esperaba ErrConversacionEnTraspaso por precedencia de cortacircuitos, se obtuvo err=%v", err)
+	}
+	if encolada {
+		t.Fatal("no debía encolar presentación para una conversación en traspaso")
+	}
+
+	var cuenta int
+	db.QueryRow("SELECT COUNT(*) FROM cola_salida").Scan(&cuenta)
+	if cuenta != 0 {
+		t.Fatalf("cola_salida debía tener 0 filas, tiene %d", cuenta)
+	}
+}
+
+func TestPorteroDeSalida_AdmitirMensajeDePresentacion_ErrorAlReclamar(t *testing.T) {
+	t.Parallel()
+	db, _ := abrirDbPruebaSalida(t)
+	cola := outbox.NuevaColaDeSalida(db, 1000, 3, nil, nil, nil)
+	pres := &controlDePresentacionEspia{errReclamar: errors.New("fallo SQLite al reclamar")}
+
+	var buf bytes.Buffer
+	reg := registro.Nuevo(&buf, slog.LevelInfo, "celula-test")
+	portero := outbox.NuevoPorteroDeSalida(cola, nil, nil, pres, reg)
+	ctx := context.Background()
+
+	erroresPrevios := outbox.ContadorErroresReclamoPresentacion.Load()
+	encolada, err := portero.AdmitirMensajeDePresentacion(ctx, "pres-err", "conv-1", "Hola", 100)
+	if err == nil {
+		t.Fatal("se esperaba error al fallar el reclamo de presentación")
+	}
+	if encolada {
+		t.Fatal("no debía encolar si falló el reclamo")
+	}
+
+	if outbox.ContadorErroresReclamoPresentacion.Load() <= erroresPrevios {
+		t.Errorf("ContadorErroresReclamoPresentacion no se incrementó")
+	}
+	if !strings.Contains(buf.String(), outbox.EventoErrorReclamoPresentacion) {
+		t.Errorf("registro no contiene %s: %s", outbox.EventoErrorReclamoPresentacion, buf.String())
 	}
 }

@@ -247,6 +247,7 @@ func (c *ColaDeSalida) intentarUno(ctx context.Context, p pendienteSalida, ahora
 			}
 			if filas, _ := res.RowsAffected(); filas > 0 {
 				ContadorDescartadasPorBaja.Add(filas)
+				c.liberarPresencia(p.idMensaje)
 				if c.registro != nil {
 					c.registro.Aviso(EventoSalidaDescartadaPorBaja, registro.Campos{IdEvento: p.idMensaje})
 				}

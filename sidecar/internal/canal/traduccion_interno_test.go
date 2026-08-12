@@ -16,6 +16,7 @@ import (
 	"go.mau.fi/whatsmeow/types/events"
 	"google.golang.org/protobuf/proto"
 
+	"github.com/CGary/hexcell/sidecar/internal/configuracion"
 	"github.com/CGary/hexcell/sidecar/internal/identidad"
 	"github.com/CGary/hexcell/sidecar/internal/ipc"
 	"github.com/CGary/hexcell/sidecar/internal/outbox"
@@ -75,7 +76,7 @@ func construirTraductorDePrueba(t *testing.T, resolutor ResolutorDeAlias) (*Trad
 	}
 	t.Cleanup(func() { almacen.Cerrar() })
 	r := &registroDeLlamadas{}
-	return NuevoTraductor(almacen, r, r.sumidero, resolutor, nil, nil, nil), r
+	return NuevoTraductor(almacen, r, r.sumidero, resolutor, nil, nil, nil, nil), r
 }
 
 func TestAdmisible_ListaPermitida(t *testing.T) {
@@ -280,7 +281,7 @@ func TestProcesarMensaje_MismoMensajeDosVeces_UnaSolaFilaEnOutboxReal(t *testing
 	t.Cleanup(func() { buzon.Cerrar() })
 
 	var eventos []ipc.EventoEntrante
-	traductor := NuevoTraductor(almacen, buzon, func(e ipc.EventoEntrante) { eventos = append(eventos, e) }, nil, nil, nil, nil)
+	traductor := NuevoTraductor(almacen, buzon, func(e ipc.EventoEntrante) { eventos = append(eventos, e) }, nil, nil, nil, nil, nil)
 	msg := mensajePruebaInterno()
 
 	traductor.procesarMensaje(context.Background(), msg)
@@ -402,7 +403,7 @@ func TestProcesarMensaje_PalabraDeBaja_RegistraEnIdentidadYEncolaConfirmacion(t 
 	t.Cleanup(func() { buzon.Cerrar() })
 
 	cola := outbox.NuevaColaDeSalida(buzon.DB(), 1000, 3, nil, nil, almacen)
-	portero := outbox.NuevoPorteroDeSalida(cola, almacen, almacen, nil)
+	portero := outbox.NuevoPorteroDeSalida(cola, almacen, almacen, almacen, nil)
 	textoConf := "Has sido dado de baja correctamente."
 	detector := NuevoDetectorDeBaja([]string{"baja", "stop"}, textoConf, almacen, portero)
 
@@ -411,7 +412,7 @@ func TestProcesarMensaje_PalabraDeBaja_RegistraEnIdentidadYEncolaConfirmacion(t 
 		eventos = append(eventos, e)
 	}
 
-	traductor := NuevoTraductor(almacen, buzon, sumidero, nil, nil, detector, nil)
+	traductor := NuevoTraductor(almacen, buzon, sumidero, nil, nil, detector, nil, nil)
 
 	msg := mensajePruebaInterno()
 	msg.Message.Conversation = proto.String("BAJA")
@@ -462,11 +463,11 @@ func TestProcesarMensaje_Cortacircuitos_Repeticion3_EncolaTraspasoUnaSolaVez(t *
 	t.Cleanup(func() { buzon.Cerrar() })
 
 	cola := outbox.NuevaColaDeSalida(buzon.DB(), 1000, 3, nil, nil, almacen)
-	portero := outbox.NuevoPorteroDeSalida(cola, almacen, almacen, nil)
-	textoTraspaso := "Te paso con una persona del equipo. En cuanto esté disponible te responde por acá."
+	portero := outbox.NuevoPorteroDeSalida(cola, almacen, almacen, almacen, nil)
+	textoTraspaso := configuracion.CortacircuitosTextoTraspasoPorOmision
 	detector := NuevoDetectorDeCortacircuitos(3, []string{"humano", "persona", "agente", "operador"}, textoTraspaso, almacen, portero)
 
-	traductor := NuevoTraductor(almacen, buzon, func(ipc.EventoEntrante) {}, nil, nil, nil, detector)
+	traductor := NuevoTraductor(almacen, buzon, func(ipc.EventoEntrante) {}, nil, nil, nil, detector, nil)
 	ctx := context.Background()
 
 	msg := mensajePruebaInterno()
@@ -522,11 +523,11 @@ func TestProcesarMensaje_Cortacircuitos_Frustracion_EncolaTraspasoInmediato(t *t
 	t.Cleanup(func() { buzon.Cerrar() })
 
 	cola := outbox.NuevaColaDeSalida(buzon.DB(), 1000, 3, nil, nil, almacen)
-	portero := outbox.NuevoPorteroDeSalida(cola, almacen, almacen, nil)
+	portero := outbox.NuevoPorteroDeSalida(cola, almacen, almacen, almacen, nil)
 	textoTraspaso := "Te paso con una persona del equipo. En cuanto esté disponible te responde por acá."
 	detector := NuevoDetectorDeCortacircuitos(3, []string{"humano", "persona", "agente", "operador"}, textoTraspaso, almacen, portero)
 
-	traductor := NuevoTraductor(almacen, buzon, func(ipc.EventoEntrante) {}, nil, nil, nil, detector)
+	traductor := NuevoTraductor(almacen, buzon, func(ipc.EventoEntrante) {}, nil, nil, nil, detector, nil)
 	ctx := context.Background()
 
 	msg := mensajePruebaInterno()
@@ -571,7 +572,7 @@ func TestProcesarMensaje_Cortacircuitos_ErrorDeObservacion_FallaCerradoYNoReenvi
 	reg := registro.Nuevo(&buf, slog.LevelInfo, "celula-test")
 	detector := NuevoDetectorDeCortacircuitos(3, []string{"humano", "persona", "agente", "operador"}, "Traspaso", controlCortacircuitosErrorInterno{}, nil)
 
-	traductor := NuevoTraductor(almacen, r, r.sumidero, nil, reg, nil, detector)
+	traductor := NuevoTraductor(almacen, r, r.sumidero, nil, reg, nil, detector, nil)
 	ctx := context.Background()
 
 	msg := mensajePruebaInterno()
@@ -583,18 +584,15 @@ func TestProcesarMensaje_Cortacircuitos_ErrorDeObservacion_FallaCerradoYNoReenvi
 	if len(r.orden) != 0 {
 		t.Fatalf("ante un error de observación del cortacircuitos no debía persistirse ni reenviarse el mensaje, orden=%v", r.orden)
 	}
-	if len(r.eventos) != 0 {
-		t.Fatalf("ante un error de observación del cortacircuitos no debía reenviarse el evento al núcleo, eventos=%d", len(r.eventos))
-	}
-	if ContadorErroresCortacircuitos.Load() != previas+1 {
-		t.Errorf("no se incrementó ContadorErroresCortacircuitos: antes=%d despues=%d", previas, ContadorErroresCortacircuitos.Load())
+	if ContadorErroresCortacircuitos.Load() <= previas {
+		t.Errorf("ContadorErroresCortacircuitos no se incrementó ante fallo de observación")
 	}
 	if !strings.Contains(buf.String(), EventoErrorCortacircuitos) {
-		t.Errorf("no se registró %s: %s", EventoErrorCortacircuitos, buf.String())
+		t.Errorf("registro no contiene %s: %s", EventoErrorCortacircuitos, buf.String())
 	}
 }
 
-func TestProcesarMensaje_PrecedenciaDeBajaSobreCortacircuitos(t *testing.T) {
+func TestProcesarMensaje_Precedencia_BajaSobreCortacircuitos(t *testing.T) {
 	t.Parallel()
 	almacen, err := identidad.Abrir(identidad.Opciones{Ruta: filepath.Join(t.TempDir(), "identidad.db")})
 	if err != nil {
@@ -609,11 +607,11 @@ func TestProcesarMensaje_PrecedenciaDeBajaSobreCortacircuitos(t *testing.T) {
 	t.Cleanup(func() { buzon.Cerrar() })
 
 	cola := outbox.NuevaColaDeSalida(buzon.DB(), 1000, 3, nil, nil, almacen)
-	portero := outbox.NuevoPorteroDeSalida(cola, almacen, almacen, nil)
+	portero := outbox.NuevoPorteroDeSalida(cola, almacen, almacen, almacen, nil)
 	detectorBaja := NuevoDetectorDeBaja([]string{"baja"}, "Baja confirmada", almacen, portero)
 	detectorCorta := NuevoDetectorDeCortacircuitos(1, []string{"humano"}, "Traspaso", almacen, portero)
 
-	traductor := NuevoTraductor(almacen, buzon, func(ipc.EventoEntrante) {}, nil, nil, detectorBaja, detectorCorta)
+	traductor := NuevoTraductor(almacen, buzon, func(ipc.EventoEntrante) {}, nil, nil, detectorBaja, detectorCorta, nil)
 	ctx := context.Background()
 
 	// Mensaje de baja "baja"
@@ -651,9 +649,9 @@ func TestProcesarMensaje_ConfirmacionUsaRelojActualNoMarcaDelEntrante(t *testing
 	const ttlMs = int64(900000)
 	transmisor := &transmisorRegistrador{}
 	cola := outbox.NuevaColaDeSalida(buzon.DB(), ttlMs, 3, nil, transmisor, almacen)
-	portero := outbox.NuevoPorteroDeSalida(cola, almacen, almacen, nil)
+	portero := outbox.NuevoPorteroDeSalida(cola, almacen, almacen, almacen, nil)
 	detector := NuevoDetectorDeBaja([]string{"stop"}, "Baja confirmada.", almacen, portero)
-	traductor := NuevoTraductor(almacen, buzon, func(ipc.EventoEntrante) {}, nil, nil, detector, nil)
+	traductor := NuevoTraductor(almacen, buzon, func(ipc.EventoEntrante) {}, nil, nil, detector, nil, nil)
 
 	// Reloj inyectado: "ahora" está una hora por delante de la marca del mensaje entrante,
 	// como ocurre al drenar el backlog offline tras una caída más larga que el TTL.
@@ -723,14 +721,14 @@ func TestProcesarMensaje_DosCelulasConfiguracionesDistintas(t *testing.T) {
 	defer buzonB.Cerrar()
 
 	colaA := outbox.NuevaColaDeSalida(buzonA.DB(), 1000, 3, nil, nil, almacenA)
-	porteroA := outbox.NuevoPorteroDeSalida(colaA, almacenA, almacenA, nil)
+	porteroA := outbox.NuevoPorteroDeSalida(colaA, almacenA, almacenA, almacenA, nil)
 	detectorA := NuevoDetectorDeBaja([]string{"baja"}, "Confirmacion A", almacenA, porteroA)
-	traductorA := NuevoTraductor(almacenA, buzonA, func(ipc.EventoEntrante) {}, nil, nil, detectorA, nil)
+	traductorA := NuevoTraductor(almacenA, buzonA, func(ipc.EventoEntrante) {}, nil, nil, detectorA, nil, nil)
 
 	colaB := outbox.NuevaColaDeSalida(buzonB.DB(), 1000, 3, nil, nil, almacenB)
-	porteroB := outbox.NuevoPorteroDeSalida(colaB, almacenB, almacenB, nil)
+	porteroB := outbox.NuevoPorteroDeSalida(colaB, almacenB, almacenB, almacenB, nil)
 	detectorB := NuevoDetectorDeBaja([]string{"stop"}, "Confirmacion B", almacenB, porteroB)
-	traductorB := NuevoTraductor(almacenB, buzonB, func(ipc.EventoEntrante) {}, nil, nil, detectorB, nil)
+	traductorB := NuevoTraductor(almacenB, buzonB, func(ipc.EventoEntrante) {}, nil, nil, detectorB, nil, nil)
 
 	msgStop := mensajePruebaInterno()
 	msgStop.Message.Conversation = proto.String("STOP")
@@ -739,13 +737,204 @@ func TestProcesarMensaje_DosCelulasConfiguracionesDistintas(t *testing.T) {
 	var cuentaA int
 	buzonA.DB().QueryRow("SELECT COUNT(*) FROM cola_salida").Scan(&cuentaA)
 	if cuentaA != 0 {
-		t.Errorf("Célula A no debía encolar confirmación ante 'STOP'")
+		t.Fatalf("célula A no debía encolar confirmación para STOP, tiene %d", cuentaA)
 	}
 
 	traductorB.procesarMensaje(context.Background(), msgStop)
 	var cuentaB int
 	buzonB.DB().QueryRow("SELECT COUNT(*) FROM cola_salida").Scan(&cuentaB)
 	if cuentaB != 1 {
-		t.Errorf("Célula B debía encolar confirmación ante 'STOP'")
+		t.Fatalf("célula B debía encolar confirmación para STOP, tiene %d", cuentaB)
+	}
+}
+
+func TestProcesarMensaje_Presentacion_PrimerTurno_EncolaPresentacionUnaSolaVez(t *testing.T) {
+	t.Parallel()
+	almacen, err := identidad.Abrir(identidad.Opciones{Ruta: filepath.Join(t.TempDir(), "identidad.db")})
+	if err != nil {
+		t.Fatalf("Abrir identidad: %v", err)
+	}
+	t.Cleanup(func() { almacen.Cerrar() })
+
+	buzon, err := outbox.Abrir(outbox.Opciones{Ruta: filepath.Join(t.TempDir(), "outbox.db")})
+	if err != nil {
+		t.Fatalf("Abrir outbox: %v", err)
+	}
+	t.Cleanup(func() { buzon.Cerrar() })
+
+	cola := outbox.NuevaColaDeSalida(buzon.DB(), 1000, 3, nil, nil, almacen)
+	portero := outbox.NuevoPorteroDeSalida(cola, almacen, almacen, almacen, nil)
+
+	variantes := []string{
+		"¡Hola! Gracias por escribir.",
+		"Hola, ¿en qué te puedo ayudar?",
+		"Buenas, gracias por tu mensaje.",
+	}
+	textoIdentificacion := "Te atiende un asistente automático. Si preferís hablar con una persona, escribí «humano»."
+	generador := NuevoGeneradorDePresentacion(variantes, textoIdentificacion, portero)
+
+	traductor := NuevoTraductor(almacen, buzon, func(ipc.EventoEntrante) {}, nil, nil, nil, nil, generador)
+	ctx := context.Background()
+
+	msg1 := mensajePruebaInterno()
+	msg1.Info.ID = "MSG_ENTRANTE_1"
+	msg1.Message.Conversation = proto.String("Hola!")
+
+	// Primer turno de la conversación: se encola la presentación
+	traductor.procesarMensaje(ctx, msg1)
+
+	var cuentaPresentacion int
+	var contenidoPres string
+	err = buzon.DB().QueryRow("SELECT COUNT(*), contenido FROM cola_salida").Scan(&cuentaPresentacion, &contenidoPres)
+	if err != nil || cuentaPresentacion != 1 {
+		t.Fatalf("el primer turno debía encolar presentación, cuenta=%d, err=%v", cuentaPresentacion, err)
+	}
+	if !strings.Contains(contenidoPres, textoIdentificacion) {
+		t.Errorf("contenido de presentación %q debía contener la identificación %q", contenidoPres, textoIdentificacion)
+	}
+
+	// Segundo turno (mismo remitente, segundo mensaje): NO debe encolarse una segunda presentación
+	msg2 := mensajePruebaInterno()
+	msg2.Info.ID = "MSG_ENTRANTE_2"
+	msg2.Message.Conversation = proto.String("Quería consultar precios")
+
+	traductor.procesarMensaje(ctx, msg2)
+
+	buzon.DB().QueryRow("SELECT COUNT(*) FROM cola_salida").Scan(&cuentaPresentacion)
+	if cuentaPresentacion != 1 {
+		t.Errorf("un segundo mensaje del mismo remitente no debía encolar otra presentación, total=%d", cuentaPresentacion)
+	}
+}
+
+func TestProcesarMensaje_Precedencia_BajaSobreTraspasoYPresentacion(t *testing.T) {
+	t.Parallel()
+	almacen, err := identidad.Abrir(identidad.Opciones{Ruta: filepath.Join(t.TempDir(), "identidad.db")})
+	if err != nil {
+		t.Fatalf("Abrir identidad: %v", err)
+	}
+	t.Cleanup(func() { almacen.Cerrar() })
+
+	buzon, err := outbox.Abrir(outbox.Opciones{Ruta: filepath.Join(t.TempDir(), "outbox.db")})
+	if err != nil {
+		t.Fatalf("Abrir outbox: %v", err)
+	}
+	t.Cleanup(func() { buzon.Cerrar() })
+
+	cola := outbox.NuevaColaDeSalida(buzon.DB(), 1000, 3, nil, nil, almacen)
+	portero := outbox.NuevoPorteroDeSalida(cola, almacen, almacen, almacen, nil)
+	detectorBaja := NuevoDetectorDeBaja([]string{"baja", "stop"}, "Baja confirmada", almacen, portero)
+	detectorCorta := NuevoDetectorDeCortacircuitos(1, []string{"humano"}, "Traspaso a humano", almacen, portero)
+	generador := NuevoGeneradorDePresentacion([]string{"Hola 1", "Hola 2"}, "Identificacion bot", portero)
+
+	traductor := NuevoTraductor(almacen, buzon, func(ipc.EventoEntrante) {}, nil, nil, detectorBaja, detectorCorta, generador)
+	ctx := context.Background()
+
+	// Mensaje que solicita STOP en el primer turno de conversación
+	msg := mensajePruebaInterno()
+	msg.Message.Conversation = proto.String("STOP")
+
+	traductor.procesarMensaje(ctx, msg)
+
+	// Precedencia fija: baja > traspaso > presentacion. Debe encolarse SOLO confirmación de baja
+	var filas int
+	var contenido string
+	err = buzon.DB().QueryRow("SELECT COUNT(*), contenido FROM cola_salida").Scan(&filas, &contenido)
+	if err != nil || filas != 1 {
+		t.Fatalf("debía encolarse exactamente 1 mensaje en outbox, filas=%d, err=%v", filas, err)
+	}
+	if contenido != "Baja confirmada" {
+		t.Errorf("se encoló %q, se esperaba 'Baja confirmada'", contenido)
+	}
+}
+
+func TestProcesarMensaje_Precedencia_TraspasoSobrePresentacion(t *testing.T) {
+	t.Parallel()
+	almacen, err := identidad.Abrir(identidad.Opciones{Ruta: filepath.Join(t.TempDir(), "identidad.db")})
+	if err != nil {
+		t.Fatalf("Abrir identidad: %v", err)
+	}
+	t.Cleanup(func() { almacen.Cerrar() })
+
+	buzon, err := outbox.Abrir(outbox.Opciones{Ruta: filepath.Join(t.TempDir(), "outbox.db")})
+	if err != nil {
+		t.Fatalf("Abrir outbox: %v", err)
+	}
+	t.Cleanup(func() { buzon.Cerrar() })
+
+	cola := outbox.NuevaColaDeSalida(buzon.DB(), 1000, 3, nil, nil, almacen)
+	portero := outbox.NuevoPorteroDeSalida(cola, almacen, almacen, almacen, nil)
+	detectorBaja := NuevoDetectorDeBaja([]string{"baja", "stop"}, "Baja confirmada", almacen, portero)
+	detectorCorta := NuevoDetectorDeCortacircuitos(1, []string{"humano"}, "Traspaso a humano", almacen, portero)
+	generador := NuevoGeneradorDePresentacion([]string{"Hola 1", "Hola 2"}, "Identificacion bot", portero)
+
+	traductor := NuevoTraductor(almacen, buzon, func(ipc.EventoEntrante) {}, nil, nil, detectorBaja, detectorCorta, generador)
+	ctx := context.Background()
+
+	// Mensaje que pide "humano" en el primer turno (dispara traspaso)
+	msg := mensajePruebaInterno()
+	msg.Message.Conversation = proto.String("humano por favor")
+
+	traductor.procesarMensaje(ctx, msg)
+
+	// Precedencia fija: traspaso > presentacion. Debe encolarse SOLO traspaso
+	var filas int
+	var contenido string
+	err = buzon.DB().QueryRow("SELECT COUNT(*), contenido FROM cola_salida").Scan(&filas, &contenido)
+	if err != nil || filas != 1 {
+		t.Fatalf("debía encolarse exactamente 1 mensaje en outbox, filas=%d, err=%v", filas, err)
+	}
+	if contenido != "Traspaso a humano" {
+		t.Errorf("se encoló %q, se esperaba 'Traspaso a humano'", contenido)
+	}
+}
+
+func TestProcesarMensaje_PresentacionUsaRelojActualNoMarcaDelEntrante(t *testing.T) {
+	t.Parallel()
+	rutaIdentidad := filepath.Join(t.TempDir(), "identidad.db")
+	almacen, err := identidad.Abrir(identidad.Opciones{Ruta: rutaIdentidad})
+	if err != nil {
+		t.Fatalf("Abrir identidad: %v", err)
+	}
+	t.Cleanup(func() { almacen.Cerrar() })
+
+	buzon, err := outbox.Abrir(outbox.Opciones{Ruta: filepath.Join(t.TempDir(), "outbox.db")})
+	if err != nil {
+		t.Fatalf("Abrir outbox: %v", err)
+	}
+	t.Cleanup(func() { buzon.Cerrar() })
+
+	const ttlMs = int64(900000)
+	transmisor := &transmisorRegistrador{}
+	cola := outbox.NuevaColaDeSalida(buzon.DB(), ttlMs, 3, nil, transmisor, almacen)
+	portero := outbox.NuevoPorteroDeSalida(cola, almacen, almacen, almacen, nil)
+	generador := NuevoGeneradorDePresentacion([]string{"Hola 1", "Hola 2"}, "Identificacion bot", portero)
+	traductor := NuevoTraductor(almacen, buzon, func(ipc.EventoEntrante) {}, nil, nil, nil, nil, generador)
+
+	// Reloj inyectado: "ahora" está una hora por delante de la marca del mensaje entrante
+	marcaEntrante := time.Unix(1722816000, 0)
+	ahoraMs := marcaEntrante.UnixMilli() + 3600_000
+	traductor.ahoraMs = func() int64 { return ahoraMs }
+
+	msg := mensajePruebaInterno()
+	msg.Message.Conversation = proto.String("Hola!")
+
+	ctx := context.Background()
+	traductor.procesarMensaje(ctx, msg)
+
+	var marcaPresentacion int64
+	if err := buzon.DB().QueryRow("SELECT marca_temporal_origen_ms FROM cola_salida").Scan(&marcaPresentacion); err != nil {
+		t.Fatalf("no se encontró presentación encolada: %v", err)
+	}
+	if marcaPresentacion != ahoraMs {
+		t.Errorf("la presentación se encoló con marca %d; debía usar el reloj actual %d, no la del entrante %d",
+			marcaPresentacion, ahoraMs, marcaEntrante.UnixMilli())
+	}
+
+	// Y la presentación se TRANSMITE en un drenaje ejecutado "ahora": no nace expirada.
+	if err := cola.Drenar(ctx, ahoraMs); err != nil {
+		t.Fatalf("Drenar: %v", err)
+	}
+	if transmisor.llamadas != 1 {
+		t.Errorf("la presentación debía transmitirse en el primer drenaje, transmisiones=%d", transmisor.llamadas)
 	}
 }

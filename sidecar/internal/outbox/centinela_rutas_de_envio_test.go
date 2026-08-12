@@ -30,9 +30,18 @@ func detectarLlamadasDeEnvio(ruta string, codigoSintetico string) ([]string, int
 
 	// esRutaDeEnvioVigilada reconoce los nombres de función cuya llamada directa constituye
 	// una violación: enviar solo se permite dentro del módulo outbox.
+	//
+	// SendGroupMessage, SendBroadcastMessage y SendStatusMessage NO son primitivas que
+	// whatsmeow exponga hoy: todo destino de este sidecar pasa por SendMessage, ya vigilado
+	// arriba. Los tres nombres son un placeholder defensivo, no una descripción de la
+	// superficie actual del SDK: si un helper propio o un futuro rename del SDK introdujera
+	// funciones con esos nombres, el centinela ya las atraparía sin requerir un cambio aquí.
+	// La garantía de comportamiento contra grupos/difusión/estado es hoy estructural, no de
+	// este centinela: reside en el CHECK(tipo IN ('pn','lid')) de la tabla direccion.
 	esRutaDeEnvioVigilada := func(nombre string) bool {
 		switch nombre {
-		case "SendMessage", "SendPresence", "SendChatPresence", "SendReceipt", "Transmitir", "Encolar":
+		case "SendMessage", "SendPresence", "SendChatPresence", "SendReceipt", "Transmitir", "Encolar",
+			"SendGroupMessage", "SendBroadcastMessage", "SendStatusMessage":
 			return true
 		default:
 			return strings.HasPrefix(nombre, "Enviar")
@@ -160,5 +169,27 @@ func EncolarDirecto() {
 
 	if len(violaciones) != 1 {
 		t.Fatalf("se esperaba exactamente 1 violación por Encolar directo, se encontraron %d: %v", len(violaciones), violaciones)
+	}
+}
+
+func TestCentinelaDetectaLlamadasDirectasAGruposDifusionYEstado(t *testing.T) {
+	t.Parallel()
+
+	codigoSintetico := `
+package trampa
+
+func EnviarAGrupoYEstado() {
+	cliente.SendGroupMessage(ctx, jid, msg)
+	cliente.SendBroadcastMessage(ctx, jids, msg)
+	cliente.SendStatusMessage(ctx, msg)
+}
+`
+	violaciones, _, err := detectarLlamadasDeEnvio("trampa_grupos.go", codigoSintetico)
+	if err != nil {
+		t.Fatalf("error al procesar el código sintético: %v", err)
+	}
+
+	if len(violaciones) != 3 {
+		t.Fatalf("se esperaban exactamente 3 violaciones, se encontraron %d: %v", len(violaciones), violaciones)
 	}
 }

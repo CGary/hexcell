@@ -95,13 +95,18 @@ func main() {
 	disciplina := outbox.NuevaDisciplinaDeSalida(cfg.Disciplina)
 	emisorPresencia := outbox.NuevoEmisorDePresenciaWhatsmeow(sesion.Cliente(), almacenIdentidad, reg)
 	colaSalida := outbox.NuevaColaDeSalida(buzon.DB(), cfg.TtlSalidaMs, cfg.IntentosMaximosSalida, reg, transmisor, almacenIdentidad).ConDisciplina(disciplina, emisorPresencia).ConCortacircuitos(almacenIdentidad)
-	portero := outbox.NuevoPorteroDeSalida(colaSalida, almacenIdentidad, almacenIdentidad, reg)
+	portero := outbox.NuevoPorteroDeSalida(colaSalida, almacenIdentidad, almacenIdentidad, almacenIdentidad, reg)
 	detectorBaja := canal.NuevoDetectorDeBaja(cfg.PalabrasDeBaja, cfg.TextoConfirmacionDeBaja, almacenIdentidad, portero)
 	detectorCortacircuitos := canal.NuevoDetectorDeCortacircuitos(
 		cfg.Cortacircuitos.UmbralRepeticion,
 		cfg.Cortacircuitos.PalabrasFrustracion,
 		cfg.Cortacircuitos.TextoTraspaso,
 		almacenIdentidad,
+		portero,
+	)
+	generadorPresentacion := canal.NuevoGeneradorDePresentacion(
+		cfg.Presentacion.Variantes,
+		cfg.Presentacion.TextoIdentificacion,
 		portero,
 	)
 
@@ -115,7 +120,7 @@ func main() {
 			IdEvento: evento.IdDeduplicacion,
 		})
 	}
-	traductor := canal.NuevoTraductor(almacenIdentidad, buzon, sumideroEvento, nil, reg, detectorBaja, detectorCortacircuitos)
+	traductor := canal.NuevoTraductor(almacenIdentidad, buzon, sumideroEvento, nil, reg, detectorBaja, detectorCortacircuitos, generadorPresentacion)
 	sesion.RegistrarTraductor(traductor)
 
 	// Parada ordenada: SIGTERM es la señal con la que un runtime de contenedores detiene el

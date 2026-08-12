@@ -570,6 +570,94 @@ func TestCargarRechazaParametrosDeCortacircuitosInvalidos(t *testing.T) {
 	}
 }
 
+func TestCargarAplicaValoresPorOmisionDePresentacion(t *testing.T) {
+	t.Parallel()
+
+	cfg, err := configuracion.Cargar(entornoFalso(map[string]string{}))
+	if err != nil {
+		t.Fatalf("no se esperaba error: %v", err)
+	}
+
+	p := cfg.Presentacion
+	if p.TextoIdentificacion != configuracion.TextoIdentificacionPorOmision {
+		t.Errorf("TextoIdentificacion = %q, se esperaba %q", p.TextoIdentificacion, configuracion.TextoIdentificacionPorOmision)
+	}
+	if len(p.Variantes) != 3 {
+		t.Fatalf("se esperaban 3 variantes por omisión, se obtuvieron %d: %v", len(p.Variantes), p.Variantes)
+	}
+	if p.Variantes[0] != "¡Hola! Gracias por escribir." || p.Variantes[1] != "Hola, ¿en qué te puedo ayudar?" || p.Variantes[2] != "Buenas, gracias por tu mensaje." {
+		t.Errorf("variantes por omisión incorrectas: %v", p.Variantes)
+	}
+}
+
+func TestCargarLeeParametrosDePresentacionDelEntorno(t *testing.T) {
+	t.Parallel()
+
+	cfg, err := configuracion.Cargar(entornoFalso(map[string]string{
+		configuracion.VariableTextoIdentificacion:    "Soy un bot. Escribí agente para humano.",
+		configuracion.VariablePlantillasPresentacion: "Saludo 1; Saludo 2; Saludo 3",
+	}))
+	if err != nil {
+		t.Fatalf("no se esperaba error: %v", err)
+	}
+
+	p := cfg.Presentacion
+	if p.TextoIdentificacion != "Soy un bot. Escribí agente para humano." {
+		t.Errorf("TextoIdentificacion = %q", p.TextoIdentificacion)
+	}
+	if len(p.Variantes) != 3 || p.Variantes[0] != "Saludo 1" || p.Variantes[1] != "Saludo 2" || p.Variantes[2] != "Saludo 3" {
+		t.Errorf("Variantes = %v", p.Variantes)
+	}
+}
+
+func TestCargarPreservaComasEnPlantillasPresentacion(t *testing.T) {
+	t.Parallel()
+
+	// Probar que el separador ';' permite comas literales dentro de cada variante
+	cfg, err := configuracion.Cargar(entornoFalso(map[string]string{
+		configuracion.VariablePlantillasPresentacion: "Hola, ¿cómo estás?; Buenas, un gusto saludarte.",
+	}))
+	if err != nil {
+		t.Fatalf("no se esperaba error: %v", err)
+	}
+
+	if len(cfg.Presentacion.Variantes) != 2 {
+		t.Fatalf("se esperaban 2 variantes, se obtuvieron %d: %v", len(cfg.Presentacion.Variantes), cfg.Presentacion.Variantes)
+	}
+	if cfg.Presentacion.Variantes[0] != "Hola, ¿cómo estás?" {
+		t.Errorf("variante 0 = %q, se esperaba 'Hola, ¿cómo estás?'", cfg.Presentacion.Variantes[0])
+	}
+	if cfg.Presentacion.Variantes[1] != "Buenas, un gusto saludarte." {
+		t.Errorf("variante 1 = %q, se esperaba 'Buenas, un gusto saludarte.'", cfg.Presentacion.Variantes[1])
+	}
+}
+
+func TestCargarRechazaParametrosDePresentacionInvalidos(t *testing.T) {
+	t.Parallel()
+
+	casos := []struct {
+		nombre  string
+		entorno map[string]string
+	}{
+		{"texto_identificacion_vacio", map[string]string{configuracion.VariableTextoIdentificacion: ""}},
+		{"texto_identificacion_espacios", map[string]string{configuracion.VariableTextoIdentificacion: "   "}},
+		{"plantillas_vacia", map[string]string{configuracion.VariablePlantillasPresentacion: ""}},
+		{"plantillas_espacios", map[string]string{configuracion.VariablePlantillasPresentacion: "   "}},
+		{"plantillas_una_sola_variante", map[string]string{configuracion.VariablePlantillasPresentacion: "Solo una variante"}},
+		{"plantillas_variantes_vacias", map[string]string{configuracion.VariablePlantillasPresentacion: "; ; ;"}},
+		{"plantillas_una_valida_una_vacia", map[string]string{configuracion.VariablePlantillasPresentacion: "Una valida; "}},
+	}
+
+	for _, c := range casos {
+		t.Run(c.nombre, func(t *testing.T) {
+			_, err := configuracion.Cargar(entornoFalso(c.entorno))
+			if !errors.Is(err, configuracion.ErrParametroDeDisciplinaInvalido) {
+				t.Errorf("caso %s: se esperaba ErrParametroDeDisciplinaInvalido, se obtuvo %v", c.nombre, err)
+			}
+		})
+	}
+}
+
 func TestDisciplinaNoContieneCamposBooleanos(t *testing.T) {
 	t.Parallel()
 
@@ -578,6 +666,7 @@ func TestDisciplinaNoContieneCamposBooleanos(t *testing.T) {
 		reflect.TypeOf(configuracion.VentanaDeAtencion{}),
 		reflect.TypeOf(configuracion.RampaDeVolumen{}),
 		reflect.TypeOf(configuracion.Cortacircuitos{}),
+		reflect.TypeOf(configuracion.Presentacion{}),
 		reflect.TypeOf(configuracion.Configuracion{}),
 	}
 
