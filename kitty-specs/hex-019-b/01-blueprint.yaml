@@ -1,0 +1,203 @@
+task_id: HEX-019-b
+summary: >-
+  Conversational circuit breaker: repetition/frustration detection, persistent trip and
+  single-handoff claim in identidad, enforced at the portero COSTURA ahead of STOP check.
+affected_files:
+  - sidecar/internal/identidad/cortacircuitos.go
+  - sidecar/internal/identidad/cortacircuitos_test.go
+  - sidecar/internal/identidad/identidad.go
+  - sidecar/internal/outbox/portero.go
+  - sidecar/internal/outbox/portero_test.go
+  - sidecar/internal/outbox/salida.go
+  - sidecar/internal/outbox/salida_test.go
+  - sidecar/internal/canal/traduccion.go
+  - sidecar/internal/canal/traduccion_test.go
+  - sidecar/internal/canal/traduccion_interno_test.go
+  - sidecar/internal/configuracion/configuracion.go
+  - sidecar/internal/configuracion/configuracion_test.go
+  - sidecar/main.go
+  - docs/protocolo-ipc-nucleo-sidecar.md
+symbols:
+  - identidad.Almacen.RegistrarObservacion
+  - identidad.Almacen.SalidaPermitida
+  - identidad.Almacen.ReclamarMensajeDeTraspaso
+  - identidad.Almacen.Restablecer
+  - outbox.ControlDeCortacircuitos
+  - outbox.PorteroDeSalida.Admitir
+  - outbox.PorteroDeSalida.AdmitirMensajeDeTraspaso
+  - outbox.ColaDeSalida.registrarFallo
+  - canal.DetectorDeCortacircuitos
+  - canal.Traductor.procesarMensaje
+  - configuracion.Cortacircuitos
+  - configuracion.cargarCortacircuitos
+dependencies:
+  - sidecar/internal/identidad/baja.go
+  - sidecar/internal/outbox/presencia.go
+  - sidecar/internal/outbox/disciplina.go
+  - sidecar/internal/registro/registro.go
+  - docs/adr/adr-0015-politica-de-convivencia-con-el-baneo.md
+  - docs/plan/fase-a-3-adaptador-whatsmeow.md
+  - .ai/tasks/active/HEX-019-new-spec/01-blueprint.yaml
+  - .ai/tasks/active/HEX-019-new-spec/07-trace.json
+  - kitty-specs/hex-019-a/02-contract.yaml
+test_scenarios:
+  - statement: >-
+      Three consecutive inbound messages with the same normalized text from the same
+      conversation trip the breaker on the third; a single handoff message is enqueued
+      through the portero, and any further attempted bot reply for that conversation is
+      suppressed by the portero gate.
+    covers: ["AC-1", "AC-2"]
+  - statement: >-
+      An inbound message whose normalized tokens contain any of humano, persona, agente,
+      operador trips the breaker immediately on the first occurrence, independent of the
+      repetition counter.
+    covers: ["AC-1", "AC-2"]
+  - statement: >-
+      After tripping, PorteroDeSalida.Admitir rejects a second candidate outbound message
+      for the same conversation with the trip still active, and a second call to
+      AdmitirMensajeDeTraspaso for the same conversation does not enqueue a second handoff
+      (single-claim, mirrors ReclamarConfirmacionDeBaja's contention test).
+    covers: ["AC-1", "AC-3"]
+  - statement: >-
+      Closing and reopening the identidad.Almacen preserves a prior trip and its handoff
+      claim: EnvioPermitido-equivalent SalidaPermitida still blocks a new candidate message
+      after restart, proving persistence in the adapter-owned store, not in memory.
+    covers: ["AC-3"]
+  - statement: >-
+      The enqueued handoff message content is exactly "Te paso con una persona del equipo.
+      En cuanto esté disponible te responde por acá." when HEXCELL_CORTACIRCUITOS_TEXTO_TRASPASO
+      is unset.
+    covers: ["AC-4"]
+  - statement: >-
+      configuracion.Cargar rejects HEXCELL_CORTACIRCUITOS_UMBRAL_REPETICION set to 0, a
+      negative value, or a value above its documented ceiling, and rejects
+      HEXCELL_CORTACIRCUITOS_PALABRAS_FRUSTRACION set to an empty string; none of these
+      inputs produce a breaker that never trips.
+    covers: ["AC-2", "AC-5"]
+  - statement: >-
+      A reflection or explicit-field test confirms configuracion.Cortacircuitos carries no
+      boolean field, so no environment variable can express "disabled".
+    covers: ["AC-5"]
+  - statement: >-
+      registrarFallo's retry-exhaustion DELETE branch calls liberarPresencia so
+      PresenciasPendientesParaPruebas reflects the release after a message is abandoned at
+      intentosMaximos, closing the HEX-019-a review residual.
+    covers: ["AC-6"]
+  - statement: >-
+      The circuit breaker's code comments and/or accompanying doc carry the adr-0015
+      [documented cause] mark, matching adr-0015's own classification of the measure
+      ("Cortacircuitos conversacional [causa documentada]").
+    covers: ["AC-7"]
+  - statement: >-
+      A conversation carrying an active STOP/baja registration does not receive the
+      handoff message even after tripping, because AdmitirMensajeDeTraspaso routes through
+      the unmodified Admitir baja check (STOP precedence over the breaker, per the A-3 plan).
+    covers: ["AC-1"]
+  - statement: All 7 standard verification commands pass.
+    covers: ["AC-8"]
+strategy:
+  - step: 1
+    action: >-
+      Extend the identidad schema with a new cortacircuitos table (id_interno PK,
+      repeticiones, ultimo_texto_normalizado, disparado_en_ms, motivo_disparo,
+      id_mensaje_traspaso, traspaso_encolado_en_ms) added to identidad.go's existing
+      esquema constant via CREATE TABLE IF NOT EXISTS, so an existing identidad.db gains
+      it on open with its other tables untouched. Update the package doc's table count.
+    files:
+      - sidecar/internal/identidad/identidad.go
+  - step: 2
+    action: >-
+      Add identidad/cortacircuitos.go: RegistrarObservacion (mutates the repetition
+      counter or trips immediately on frustration, idempotent once already tripped),
+      SalidaPermitida (baja.EnvioPermitido's twin: true when not tripped, true only for
+      the claimed handoff id_mensaje when tripped), ReclamarMensajeDeTraspaso
+      (baja.ReclamarConfirmacionDeBaja's twin: single atomic claim by RowsAffected), and
+      Restablecer (deletes the row; the minimal store-level reset primitive the spec
+      allows without a conversational re-subscription flow). Cover with
+      cortacircuitos_test.go: threshold-3 trip, immediate frustration trip, idempotence
+      after trip, single-claim contention, and restart persistence via close/reopen.
+    files:
+      - sidecar/internal/identidad/cortacircuitos.go
+      - sidecar/internal/identidad/cortacircuitos_test.go
+  - step: 3
+    action: >-
+      Add ControlDeCortacircuitos interface to outbox/portero.go (SalidaPermitida,
+      ReclamarMensajeDeTraspaso), a cortacircuitos field on PorteroDeSalida, and wire it
+      into Admitir at the existing COSTURA comment, ahead of the untouched baja check:
+      on a state-read error, fail closed (wrap and return the error, do not enqueue,
+      increment a dedicated error counter and log event per LES-2026-08-11-000000025); on
+      a successful "not permitted" read, increment a suppression counter, log, and return
+      a new ErrConversacionEnTraspaso sentinel. Add AdmitirMensajeDeTraspaso, which
+      reclaims the single handoff claim and then re-enters Admitir (not a bypass) so the
+      baja check still applies to the handoff itself, preserving the A-3 plan's STOP
+      precedence over the breaker. Update NuevoPorteroDeSalida's signature (breaking,
+      one new parameter) and every call site.
+    files:
+      - sidecar/internal/outbox/portero.go
+      - sidecar/internal/outbox/portero_test.go
+  - step: 4
+    action: >-
+      Close the HEX-019-a review residual: add the missing c.liberarPresencia(p.idMensaje)
+      call to registrarFallo's retry-exhaustion DELETE branch (the only lifecycle exit
+      that currently lacks it; descartarExpiradas and MarcarEnviado already call it), with
+      a test asserting PresenciasPendientesParaPruebas drops after exhaustion.
+    files:
+      - sidecar/internal/outbox/salida.go
+      - sidecar/internal/outbox/salida_test.go
+  - step: 5
+    action: >-
+      Add ControlDeCortacircuitos and AdmisorDeTraspaso interfaces to canal/traduccion.go
+      (satisfied by *identidad.Almacen and *outbox.PorteroDeSalida respectively, mirroring
+      the existing ControlDeBaja/AdmisorDeConfirmacion pair), a contieneFrustracion
+      whole-word tokenizer (deliberately not substring matching, to avoid a false positive
+      like "personalidad" matching "persona"), and DetectorDeCortacircuitos with Observar
+      (mutate state, return whether this call tripped it) and EmitirTraspaso (reclaim +
+      enqueue). Reuse the existing normalizarParaBaja helper for both frustration
+      tokenization and repetition-text equality instead of adding a near-duplicate
+      normalizer. Wire into Traductor.procesarMensaje: call Observar early (mirroring
+      where RegistrarBaja runs today) but only when the message is not itself a baja/STOP
+      message (STOP precedence over the breaker), and call EmitirTraspaso after the
+      persist-first IPC forward (mirroring where ProcesarConfirmacion runs today) only
+      when Observar reports a fresh trip. Update NuevoTraductor's signature (breaking, one
+      new parameter) and every call site.
+    files:
+      - sidecar/internal/canal/traduccion.go
+      - sidecar/internal/canal/traduccion_test.go
+      - sidecar/internal/canal/traduccion_interno_test.go
+  - step: 6
+    action: >-
+      Add the three new env vars to configuracion.go following the existing bounded-range
+      and non-empty-string patterns: HEXCELL_CORTACIRCUITOS_UMBRAL_REPETICION (via the
+      existing enteroAcotadoDelEntorno, default 3, ceiling documented and bounded so a
+      huge value cannot silently neuter the breaker), HEXCELL_CORTACIRCUITOS_PALABRAS_FRUSTRACION
+      (a new small listaDelEntorno helper generalizing cargarPalabrasDeBaja's split/trim/
+      non-empty shape without touching the baja-specific function), and
+      HEXCELL_CORTACIRCUITOS_TEXTO_TRASPASO (via the existing cadenaDelEntorno, default the
+      ratified handoff text). Group them in a new Cortacircuitos struct and
+      cargarCortacircuitos function, reusing ErrParametroDeDisciplinaInvalido: the A-3 plan
+      itself lists the circuit breaker as one of the components of "la disciplina de
+      comportamiento del canal" (task 14), so this is not a borrowed error type but the
+      correct one. Mark the new consts [causa documentada] inline, matching adr-0015.
+    files:
+      - sidecar/internal/configuracion/configuracion.go
+      - sidecar/internal/configuracion/configuracion_test.go
+  - step: 7
+    action: >-
+      Wire main.go: construct canal.NuevoDetectorDeCortacircuitos from
+      cfg.Cortacircuitos and almacenIdentidad/portero, and pass almacenIdentidad and the
+      new detector into the updated NuevoPorteroDeSalida and NuevoTraductor call sites.
+      Document the three new env vars in docs/protocolo-ipc-nucleo-sidecar.md section 2,
+      following the existing one-bullet-per-measure-group format used for baja and
+      disciplina.
+    files:
+      - sidecar/main.go
+      - docs/protocolo-ipc-nucleo-sidecar.md
+risks:
+  - "ASSUMPTION: the repetition counter and last-seen-text are persisted in the new identidad cortacircuitos table (not kept in memory), even though 00-spec.yaml's acceptance bullet only names the trip and the single-handoff claim as required to survive restart. Rationale: an in-memory per-conversation counter has no natural release hook (unlike outbox's per-message send/discard lifecycle that liberarPresencia already exploits) and would grow unboundedly across the life of the process; persisting it in the already-indexed identidad store avoids introducing a second unmanaged in-memory marker. Flagging so the human/reviewer can confirm this is the intended interpretation rather than a scope expansion."
+  - "ASSUMPTION: the handoff text (HEXCELL_CORTACIRCUITOS_TEXTO_TRASPASO) is env-configurable with the ratified string as default, inferred from 00-spec.yaml constraint 'Concrete business numbers and texts are SETTLED... still per-cell configurable' (plural 'texts'), even though the acceptance bullet on configurability names only 'both parameters' (threshold and keywords). Mirrors the existing TextoConfirmacionDeBaja precedent exactly."
+  - "ASSUMPTION: frustration detection uses whole-word token matching on normalized text (not substring, not full-message-equals), to avoid a false positive like 'personalizado' matching the keyword 'persona'. 00-spec.yaml does not specify the matching algorithm at this level of detail."
+  - "DESIGN CHOICE: STOP precedence over the circuit breaker's handoff (per the A-3 plan's explicit ordering: baja > cola de salida > cortacircuitos) is achieved by routing AdmitirMensajeDeTraspaso through the unmodified Admitir (which still runs the baja check after the cortacircuitos check), rather than a bypass method like AdmitirConfirmacionDeBaja's. This means SalidaPermitida is evaluated twice for the handoff message (once implicitly consistent since the id was just claimed); harmless but worth the reviewer's attention as a minor redundancy, not a bug."
+  - "DESIGN CHOICE: sidecar/internal/identidad/identidad.go is a legitimate touch file for this child (schema addition only) even though HEX-019-a's contract forbade it — that forbid was scoped to HEX-019-a, and this child is the one the parent decomposition assigned the identity-store trip/handoff claim to."
+  - "DESIGN CHOICE: a new listaDelEntorno helper duplicates cargarPalabrasDeBaja's split/trim/non-empty shape instead of refactoring cargarPalabrasDeBaja to call it, to avoid touching baja's already-reviewed, already-tested code path in a task that does not own baja. A reviewer preferring strict DRY over blast-radius isolation may ask for the refactor; noted as a deliberate tradeoff, not an oversight."
+  - "NO PRIOR FAILURE MATCH: quorum analyze failure-lookup against the affected-file set (portero.go, salida.go, identidad.go, baja.go, traduccion.go, configuracion.go, main.go) returned no matches in .ai/tasks/failed/; no inherited lesson to carry beyond the carry-forward bundle already applied."
+  - "SIZING: parent HEX-019's decomposition entry estimated child B at ~10 files / ~1050 lines. Actual file count is 14 (identidad.go and the doc file were not itemized in the parent's rough count) with an honest line estimate of roughly 1450, informed by HEX-019-a's own two rounds of contract amendments (1400 -> 1550 -> 1600) on a comparably-scoped 12-file/1250-line starting estimate. limits below apply ~30% headroom over the honest estimate rather than a tight cap, per that precedent (LES-2026-08-11-000000024)."

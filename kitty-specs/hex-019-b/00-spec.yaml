@@ -1,0 +1,50 @@
+acceptance:
+- id: AC-1
+  statement: A conversational circuit breaker, wired at the documented seam in sidecar/internal/outbox/portero.go ahead of the untouched opt-out/STOP check, detects repetition or frustration and cedes to a human by emitting exactly one handoff message, then suppresses further automated replies for that conversation.
+- id: AC-2
+  statement: Repetition detection uses the ratified threshold of 3 (per-cell configurable, non-disableable), and frustration detection matches the ratified keywords humano, persona, agente, operador on inbound messages; both parameters live in sidecar/internal/configuracion following the existing env-var pattern with documented defaults.
+- id: AC-3
+  statement: The breaker trip and the single-handoff claim persist in the adapter's identity store (identidad), so a trip survives process restart and the handoff message is emitted at most once per tripped conversation; the bot stays silent for that conversation until a human or an explicit reset re-engages it.
+- id: AC-4
+  statement: The handoff message is exactly the ratified text "Te paso con una persona del equipo. En cuanto esté disponible te responde por acá."
+- id: AC-5
+  statement: The breaker's parameters cannot be set to values that disable the breaker; attempts are rejected or have no disabling effect, covered by a test.
+- id: AC-6
+  statement: The retry-exhaustion DELETE branch of registrarFallo in sidecar/internal/outbox releases the announced-presence marker (liberarPresencia), closing the residual documented in HEX-019-a's review.
+- id: AC-7
+  statement: The circuit-breaker measure carries its adr-0015 [documented cause] or [precautionary] mark in the code/doc comments, matching adr-0015's own classification.
+- id: AC-8
+  statement: The 7 standard verification commands pass (cargo fmt --check, cargo build --workspace, cargo clippy --workspace -- -D warnings, cargo test --workspace, hexcell-core tree isolation check, doc compile-fail test, cd sidecar && gofmt check && go build ./... && go vet ./... && go test ./...).
+constraints:
+- No new third-party dependencies, Go or Rust.
+- No schema changes to existing tables; sessions.db, knowledge_live.db, and sqlstore rules are unchanged. New adapter-owned state for the breaker trip lives in the identity store the adapter already owns.
+- All discipline parameters are configurable per cell (env vars in sidecar/internal/configuracion), but disabling the discipline is never a configuration option.
+- Concrete business numbers and texts are SETTLED, not open. The human ratified them on 2026-08-11; the rulings are recorded as human_ruling events in the parent HEX-019's 07-trace.json (topics defaults_numericos, textos, anti_24x7) and are inherited as given. The values binding THIS child are circuit-breaker repetition threshold 3; frustration keywords humano, persona, agente, operador; handoff text "Te paso con una persona del equipo. En cuanto esté disponible te responde por acá." This child may not re-open them as pending ratification or substitute its own values; it ships them as the declared default, still per-cell configurable and still marked "a calibrar" in the sense that field calibration may later change them.
+- No mass-sending-provider vocabulary (jitter, warm-up/calentamiento, proxies, IP rotation); use the plan's own vocabulary, and frame the measure per adr-0015's [documented cause]/[precautionary] classification, never as throughput management or evasion.
+- Everything user-visible (identifiers, comments, docs, commit message) is written in Spanish; artifact YAML prose stays in English.
+- Dates are written in absolute format (2026-08-11), never relative.
+- Consult docs/bitacora-de-descartes.md before proposing anything resembling a previously discarded idea; do not re-litigate a discarded approach without meeting its documented reopening condition.
+- Discipline gates follow the HEX-019-a invariants adjudicated in review (LES-2026-08-11-000000025) - on a state-read error the gate fails CLOSED (defer or stay silent with a log event and counter, never assume the permissive value), temporal keys use one zone on both read and write, and every per-message in-memory marker has a release path at every lifecycle exit.
+depends_on:
+- HEX-019-a
+goal: 'Subset of HEX-019: Circuit breaker: repetition and frustration detection, persistent trip and single handoff claim in identidad, enforced at the portero COSTURA ahead of the untouched opt-out check.'
+invariants:
+- No configuration path (env var or otherwise) can fully disable the channel behavior discipline; only calibratable parameters (breaker thresholds, keyword list) are configurable.
+- The opt-out (STOP) check in sidecar/internal/outbox/portero.go is not relocated or weakened; the circuit breaker is wired ahead of it per the existing seam comment.
+- The circuit breaker's handoff is exactly one message, after which the bot goes silent for that conversation until a human or an explicit reset re-engages it.
+- The breaker measure is documented inline (or in the accompanying doc) with its adr-0015 classification mark, [documented cause] or [precautionary].
+- No mass-sending-provider vocabulary (jitter, warm-up, proxies, IP rotation) is introduced.
+non_goals:
+- Anything delivered by HEX-019-a (minimum latency, attention window, volume ramp, typing indicator, drain-interval configuration) beyond the named registrarFallo/liberarPresencia residual.
+- Child C's scope - presentation claim and deterministic template variation, first-turn bot identification and human-handoff offer, one-message-per-turn precedence rule, group/broadcast/status sentinel extension, and the docs/STATUS.md closure of "Política anti-ban no desactivable por configuración" (all land in HEX-019-c).
+- Lab-number testing against a real WhatsApp number (A-3 plan task 15).
+- Reconnection/pairing runbooks (A-3 plan tasks 16-17).
+- sqlstore backup over IPC (A-3 plan task 18).
+- Fase B / Cloud API channel work.
+- Any new re-subscription (opt-in) flow beyond the existing STOP/opt-out mechanism; the explicit human reset of a tripped breaker may be a minimal operational mechanism (documented command or store operation), not a conversational flow.
+- Extending the Rust core's knowledge of these measures beyond what the existing IPC contract already carries; the discipline lives in the sidecar (Go).
+- Fixing the hard portfolio cap or incident-rate threshold (adr-0015 Layer 3); those remain pending business decisions.
+parent_task: HEX-019
+risk: medium
+summary: 'Circuit breaker: repetition and frustration detection, persistent trip and single handoff claim in identidad, enforced at the portero COSTURA ahead of the untouched opt-out check.'
+task_id: HEX-019-b

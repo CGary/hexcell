@@ -1,0 +1,50 @@
+{
+  "task_id": "HEX-019-b",
+  "commands": [
+    {
+      "command": "cargo fmt --check",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "RC=0"
+    },
+    {
+      "command": "cargo build --workspace",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "RC=0"
+    },
+    {
+      "command": "cargo clippy --workspace --all-targets -- -D warnings",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "RC=0"
+    },
+    {
+      "command": "cargo test --workspace",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "RC=0"
+    },
+    {
+      "command": "test \"$(cargo tree -p hexcell-core | wc -l)\" = \"1\"",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "RC=0"
+    },
+    {
+      "command": "cargo test -p hexcell-core --doc 2>&1 | grep -q \"compile fail\"",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "RC=0"
+    },
+    {
+      "command": "cd sidecar && test -z \"$(gofmt -l .)\" && go build ./... && go vet ./... && go test ./...",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "RC=0"
+    }
+  ],
+  "summary": "All 7 verify commands exit 0 on re-run after the review fix round; 5 stability reps and -race clean. Diff 1674/1900 lines, contract-check ok=true (amended salida.go cap).",
+  "executed_at": "2026-08-11T23:59:38Z",
+  "overall_result": "passed"
+}

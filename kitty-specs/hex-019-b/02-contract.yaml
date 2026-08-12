@@ -1,0 +1,163 @@
+task_id: HEX-019-b
+summary: >-
+  Conversational circuit breaker: repetition/frustration detection, persistent trip and
+  single-handoff claim in identidad, enforced at the portero COSTURA ahead of the STOP check.
+goal: >-
+  Implement the conversational circuit breaker end to end in the Go sidecar: a new
+  identidad-owned table tracking per-conversation repetition count and trip/handoff-claim
+  state; a ControlDeCortacircuitos gate wired into outbox/portero.go's Admitir at the
+  documented COSTURA, ahead of the untouched baja/STOP check, that suppresses every
+  outbound candidate for a tripped conversation except the one reclaimed handoff message;
+  an inbound DetectorDeCortacircuitos in canal/traduccion.go that trips on 3 consecutive
+  identical normalized messages or on any whole-word match against the ratified
+  frustration keywords; the two new parameters plus the handoff text wired through
+  sidecar/internal/configuracion following the existing bounded/non-empty env-var
+  pattern, none expressible as disabled; and the closing of the HEX-019-a review residual
+  (registrarFallo's retry-exhaustion branch missing liberarPresencia). No IPC wire change,
+  no schema change to an existing table, no new dependency.
+
+read:
+  - .ai/tasks/active/HEX-019-b/00-spec.yaml
+  - .ai/tasks/active/HEX-019-b/01-blueprint.yaml
+  - .ai/tasks/active/HEX-019-new-spec/01-blueprint.yaml
+  - .ai/tasks/active/HEX-019-new-spec/07-trace.json
+  - kitty-specs/hex-019-a/02-contract.yaml
+  - kitty-specs/hex-019-a/06-review.json
+  - docs/plan/fase-a-3-adaptador-whatsmeow.md
+  - docs/adr/adr-0015-politica-de-convivencia-con-el-baneo.md
+  - docs/adr/adr-0011-whatsmeow-sidecar-e-ipc.md
+  - docs/adr/adr-0019-registro-estructurado.md
+  - docs/bitacora-de-descartes.md
+  - sidecar/internal/identidad/baja.go
+  - sidecar/internal/identidad/baja_test.go
+  - sidecar/internal/outbox/presencia.go
+  - sidecar/internal/outbox/disciplina.go
+  - sidecar/internal/registro/registro.go
+  - sidecar/internal/ipc/mensajes.go
+
+touch:
+  - sidecar/internal/identidad/cortacircuitos.go
+  - sidecar/internal/identidad/cortacircuitos_test.go
+  - sidecar/internal/identidad/identidad.go
+  - sidecar/internal/outbox/portero.go
+  - sidecar/internal/outbox/portero_test.go
+  - sidecar/internal/outbox/salida.go
+  - sidecar/internal/outbox/salida_test.go
+  - sidecar/internal/canal/traduccion.go
+  - sidecar/internal/canal/traduccion_test.go
+  - sidecar/internal/canal/traduccion_interno_test.go
+  - sidecar/internal/configuracion/configuracion.go
+  - sidecar/internal/configuracion/configuracion_test.go
+  - sidecar/main.go
+  - docs/protocolo-ipc-nucleo-sidecar.md
+
+forbid:
+  files:
+    - crates/hexcell-canal-contrato/src/banco.rs
+    - crates/hexcell-canal-contrato/src/bateria.rs
+    - crates/hexcell-core/src/canal.rs
+    - crates/hexcell-canal-simulado/src/adaptador.rs
+    - crates/hexcell-storage/src/respaldo.rs
+    - crates/hexcell-storage/migraciones/identidad/0001-esquema-inicial.sql
+    - Cargo.toml
+    - Cargo.lock
+    - sidecar/go.mod
+    - sidecar/go.sum
+    - sidecar/internal/ipc/mensajes.go
+    - sidecar/internal/outbox/transmisor.go
+    - sidecar/internal/outbox/disciplina.go
+    - sidecar/internal/outbox/disciplina_test.go
+    - sidecar/internal/outbox/presencia.go
+    - sidecar/internal/outbox/presencia_test.go
+    - sidecar/internal/outbox/outbox.go
+    - sidecar/internal/outbox/outbox_test.go
+    - sidecar/internal/outbox/centinela_rutas_de_envio_test.go
+    - sidecar/internal/outbox/pragmas_internos_test.go
+    - sidecar/internal/identidad/baja.go
+    - sidecar/internal/identidad/baja_test.go
+    - sidecar/internal/identidad/fusion_interno_test.go
+    - sidecar/internal/identidad/identidad_test.go
+    - sidecar/internal/identidad/presentacion.go
+    - sidecar/internal/canal/canal.go
+    - sidecar/internal/canal/canal_test.go
+    - sidecar/internal/canal/almacen_interno_test.go
+    - sidecar/internal/canal/emparejamiento.go
+    - sidecar/internal/canal/emparejamiento_test.go
+    - sidecar/internal/canal/reconexion.go
+    - sidecar/internal/canal/reconexion_interno_test.go
+    - sidecar/internal/canal/taxonomia.go
+    - sidecar/internal/canal/taxonomia_interno_test.go
+    - docs/STATUS.md
+  behaviors:
+    - "Do NOT relocate, weaken, skip, or otherwise touch the opt-out/STOP check in outbox/portero.go's Admitir (the ControlDeBaja.EnvioPermitido call and its ErrContactoDadoDeBaja path). The circuit breaker's ControlDeCortacircuitos check is inserted strictly at the existing COSTURA comment, strictly ahead of it, never replacing or reordering it. AdmitirConfirmacionDeBaja stays untouched in both signature and behavior: it is baja's own exemption path, not the pattern for the handoff (see the next rule)."
+    - "Do NOT let the circuit breaker's handoff message bypass the baja/STOP check. Per the A-3 plan's explicit precedence (STOP over the outbox queue and over the breaker), AdmitirMensajeDeTraspaso must route the claimed handoff through the unmodified Admitir (or otherwise re-run the existing baja check) rather than calling ColaDeSalida.Encolar directly the way AdmitirConfirmacionDeBaja does. A contact under an active baja registration must not receive the handoff, covered by a test."
+    - "Do NOT make any of the three new parameters (repetition threshold, frustration keyword list, handoff text) expressible as disabling the breaker. The repetition threshold is validated through the existing enteroAcotadoDelEntorno with a documented, bounded ceiling (not left effectively unbounded, which would let a huge value neuter the breaker); the frustration keyword list is rejected when present-but-empty, exactly like the existing PalabrasDeBaja pattern; configuracion.Cortacircuitos carries no boolean field. Cover the boundary rejections and the no-boolean-field property with tests, not just the happy path."
+    - "Do NOT invent, alter, or re-mark as pending the three human-ratified values: repetition threshold 3, frustration keywords humano/persona/agente/operador, and the handoff text 'Te paso con una persona del equipo. En cuanto esté disponible te responde por acá.' (see .ai/tasks/active/HEX-019-new-spec/07-trace.json, topics defaults_numericos and textos, ratified 2026-08-11). Ship each as the declared default; per 00-spec.yaml constraint 4 these remain per-cell configurable and may still carry a PENDIENTE DE CALIBRACIÓN-style comment for field calibration, but do not write 'PENDING RATIFICATION' anywhere for these three values."
+    - "Do NOT bump the IPC protocol version, the wire version, or the closed set of eleven message types, and do NOT touch sidecar/internal/ipc/mensajes.go. Nothing in this task crosses the wire: the breaker is a sidecar-only reaction to inbound text and a sidecar-only gate on outbound admission. The Rust core needs no new knowledge of the breaker. Only section 2 of docs/protocolo-ipc-nucleo-sidecar.md changes, to document the three new environment variables."
+    - "Do NOT change the schema of an existing table (identidad, direccion, baja_de_contacto, cola_salida, outbox, volumen_diario) and do NOT write an imperative migration. The one new table (cortacircuitos, in identidad.go's esquema constant) is added with CREATE TABLE IF NOT EXISTS so an existing identidad.db gains it on open with its other tables and rows untouched."
+    - "Do NOT keep the trip state or the single-handoff claim in memory. They persist in the identidad-owned cortacircuitos table via the same RowsAffected-decided atomic-claim pattern that ReclamarConfirmacionDeBaja already uses for baja's own single confirmation, so both survive a process restart. On a read error against this state (in either PorteroDeSalida.Admitir's cortacircuitos check or the inbound detector's RegistrarObservacion call), the code must fail CLOSED: never assume 'not tripped', log a dedicated event, increment a dedicated counter, and do not enqueue the candidate message (LES-2026-08-11-000000025)."
+    - "Do NOT let the circuit breaker send more than one handoff message per tripped conversation. The single-claim contention test (mirroring TestPorteroDeSalida_AdmitirConfirmacionDeBaja_ReclamoUnico) is mandatory: a second AdmitirMensajeDeTraspaso call for an already-claimed conversation must not enqueue a second row."
+    - "Do NOT compare timestamps or day-boundaries in the circuit breaker path against a different timezone on read than on write. If any temporal key is introduced (e.g. disparado_en_ms, traspaso_encolado_en_ms), it is read back and reasoned about in the same zone it was written in (LES-2026-08-11-000000025); prefer storing and comparing raw epoch milliseconds, exactly as the existing baja_de_contacto table already does, over any zone-dependent formatted key."
+    - "Do NOT skip the HEX-019-a residual. registrarFallo's retry-exhaustion DELETE branch (the nuevoIntentos >= c.intentosMaximos path) must call c.liberarPresencia(p.idMensaje), with a test proving PresenciasPendientesParaPruebas reflects the release after exhaustion. This is the one required touch to salida.go; do not use it as license to touch anything else in that file's disciplina-gate logic (owned by HEX-019-a and forbidden above). ENMIENDA DEL ORQUESTADOR (2026-08-11, PAT-022, adjudicada por la revision profunda): el fix_task cortacircuitos-descarte-en-drenaje exige un SEGUNDO toque en salida.go — re-chequear el estado del cortacircuitos en el drenaje (como ya se hace con baja) para que las filas admitidas antes del disparo no se transmitan tras el traspaso, con fallo CERRADO ante error de lectura. Ese re-chequeo queda autorizado; el resto de la logica de disciplina de HEX-019-a sigue intocable."
+    - "Do NOT introduce mass-sending vocabulary in code, comments, identifiers, environment variable names, log event names, tests, or documentation. No jitter, no calentamiento or warm-up, no proxy, no VPN, no IP rotation, no throughput, no traffic shaping. Frame the breaker per adr-0015's own [causa documentada] classification of 'Cortacircuitos conversacional', matching that mark verbatim in the code/doc comments introduced by this task."
+    - "Do NOT add a third-party dependency to the Go module and do NOT touch anything under crates/. No new import beyond the standard library and the packages already imported by the touched files."
+    - "Do NOT leave dead wiring. NuevoPorteroDeSalida and NuevoTraductor both gain one new parameter; every call site (main.go and every test constructing either type) must be migrated, not left to fail the build or to pass nil where a real collaborator now exists in production wiring. The detector and the cortacircuitos control must have real non-test callers in main.go."
+    - "Do NOT implement the presentation claim, the deterministic template variation, the one-message-per-turn precedence rule, or the group/broadcast/status sentinel extension (all child HEX-019-c's scope, which depends on this child establishing the second sidecar-authored message). Do NOT implement any new re-subscription/opt-in flow; the explicit reset invariant is satisfied by a store-level Restablecer primitive only, not a conversational command or CLI surface. Do NOT touch the hard portfolio cap or incident-rate threshold (adr-0015 Layer 3, pending business decisions)."
+    - "Do NOT touch docs/STATUS.md. Its open discipline entry closes with child HEX-019-c, the last child to complete the full measure set, per 00-spec.yaml non_goals."
+    - "Do NOT reorder, renumber, or rewrite an existing ADR or discard-log entry, and do NOT add a new one in this task. All identifiers, comments, documentation, and the commit message are written in Spanish; artifact YAML prose stays in English; every date written into code or documentation is absolute (2026-08-11), never relative."
+
+verify:
+  commands:
+    - cargo fmt --check
+    - cargo build --workspace
+    - cargo clippy --workspace --all-targets -- -D warnings
+    - cargo test --workspace
+    - test "$(cargo tree -p hexcell-core | wc -l)" = "1"
+    - cargo test -p hexcell-core --doc 2>&1 | grep -q "compile fail"
+    - cd sidecar && test -z "$(gofmt -l .)" && go build ./... && go vet ./... && go test ./...
+
+acceptance:
+  human_gate: true
+
+limits:
+  max_files_changed: 14
+  # Parent HEX-019's decomposition entry (01-blueprint.yaml DECOMPOSITION, child B) estimated
+  # ~10 files / ~1050 lines; that count did not itemize identidad.go's schema addition or the
+  # protocol doc update, so the honest file count here is 14. Honest line estimate across the
+  # design in 01-blueprint.yaml is roughly 1450 (identidad: ~220, outbox: ~300, canal: ~430,
+  # configuracion: ~245, main.go: ~12, doc: ~12, plus the salida.go one-line residual fix).
+  # Setting max_diff_lines with ~30% headroom over that honest estimate up front, per the
+  # LES-2026-08-11-000000024 lesson from HEX-019-a's two post-review amendments (1400 -> 1550 ->
+  # 1600) on a comparably-scoped 12-file/1250-line starting estimate, rather than forcing a tight
+  # cap that likely needs its own amendment round.
+  max_diff_lines: 1900
+  per_class:
+    - glob: "sidecar/internal/*/*_test.go"
+      max_diff_lines: 1100
+    - glob: sidecar/internal/identidad/cortacircuitos.go
+      max_diff_lines: 260
+    - glob: sidecar/internal/identidad/identidad.go
+      max_diff_lines: 40
+    - glob: sidecar/internal/outbox/portero.go
+      max_diff_lines: 110
+    # ENMIENDA DEL ORQUESTADOR (2026-08-11, PAT-022): 20 -> 110. La revision profunda mando el
+    # re-chequeo del cortacircuitos en el drenaje (fix_task cortacircuitos-descarte-en-drenaje);
+    # el tope original solo presupuestaba el residuo liberarPresencia (5 lineas usadas).
+    - glob: sidecar/internal/outbox/salida.go
+      max_diff_lines: 110
+    - glob: sidecar/internal/canal/traduccion.go
+      max_diff_lines: 200
+    - glob: sidecar/internal/configuracion/configuracion.go
+      max_diff_lines: 140
+    - glob: sidecar/main.go
+      max_diff_lines: 30
+    - glob: docs/protocolo-ipc-nucleo-sidecar.md
+      max_diff_lines: 25
+
+execution:
+  mode: worktree_edit
+  branch: ai/HEX-019-b
+
+retry_policy:
+  max_attempts: 2
+  escalate_after: 2
