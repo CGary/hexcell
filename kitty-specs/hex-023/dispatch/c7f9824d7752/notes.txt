@@ -1,0 +1,19 @@
+DONE: Implemented Go IPC Unix-socket server in sidecar/internal/servidor and wired handlers in sidecar/main.go.
+
+=== Fin de fase: Implementación ===
+
+Resultado: DONE
+Resumen técnico: Implementado el servidor de socket Unix IPC en Go con procedimiento de socket huérfano, saludo estricto v4, relevo de conexión única más reciente gana, y cableado de manejadores (outbox, respaldo sqlstore, acuse de envío) en `main.go`.
+
+Artefactos producidos:
+- Diff committeado en la rama ai/HEX-023 (worktrees/HEX-023/)
+- .ai/tasks/active/HEX-023-new-spec/04-implementation-log.yaml
+
+No hay transición de estado: el worktree y la rama siguen iguales.
+
+Pasos siguientes (los despacha el orquestador, NO yo):
+1. [Obligatorio] /q-verify HEX-023 — corre verify.commands del contrato dentro del worktree y escribe 05-validation.json.
+
+Si querés volver atrás:
+- [WORKTREE:HEX-023] git -C worktrees/HEX-023 reset --hard HEAD~1 — descarta el último commit del worktree.
+- [ROOT] quorum task back HEX-023 — borra worktree y rama (perdés todos los commits no mergeados).

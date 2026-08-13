@@ -1,0 +1,45 @@
+acceptance:
+    - id: AC-1
+      statement: 'The sidecar process opens the IPC Unix domain socket at startup: AF_UNIX SOCK_STREAM at the path from HEXCELL_SOCKET_IPC (default /var/lib/hexcell/ipc/sidecar.sock), file mode 0600, following docs/protocolo-ipc-nucleo-sidecar.md section 2. The sidecar is the SERVER (bind+listen); the core remains the client. This closes the declared structural debt "Servidor del socket IPC en Go, ausente" (docs/STATUS.md Pendiente, HEX-017, plan task 3).'
+    - id: AC-2
+      statement: 'The stale-socket startup procedure is implemented exactly as section 2 fixes it: (1) probe-connect as a client to the configured path; (2) connection SUCCEEDS -> another live sidecar is listening: log and TERMINATE without deleting anything; (3) connection refused or file missing -> the socket is stale: unlink the path, then bind+listen; (4) any other probe error -> abort startup with a log entry, deleting nothing.'
+    - id: AC-3
+      statement: 'The version handshake follows section 3: the first message on every connection in both directions is saludo; the sidecar replies with its own saludo before delivering any event; version equality is STRICT (integer 4, no negotiation, no partial degradation); on mismatch the sidecar closes the connection and logs BOTH versions. Protocol errors follow section 8: fail closed.'
+    - id: AC-4
+      statement: 'Single active connection per section 2: when a second connection arrives while one is established, the sidecar accepts the new one and closes the previous one (most-recent-wins, resolving the restarted-core case without intervention).'
+    - id: AC-5
+      statement: 'The server wires the EXISTING message handling to the socket: inbound núcleo->sidecar messages (confirmacion, orden_emparejar, orden_respaldo_sqlstore including the HEX-021 handler, mensaje_saliente into the durable outbox path) are decoded with the existing ipc message types and routed to the existing package logic; outbound sidecar->núcleo traffic (evento_entrante redelivery of unconfirmed outbox entries per section 4, estado_sesion, codigo_emparejamiento, acuse_emparejamiento, acuse_envio, acuse_respaldo_sqlstore) flows through the existing transmission/outbox engine. No message type is added or altered (the closed set of 11 types, wire version 4, stays intact).'
+    - id: AC-6
+      statement: 'Reconnection semantics per section 5 hold on the server side: a client disconnect never stops the sidecar (it keeps receiving from the channel and persisting to the outbox); unconfirmed entries are redelivered on the next connection after its saludo; the sidecar never closes its WhatsApp session because the local consumer disconnected.'
+    - id: AC-7
+      statement: 'Go tests over a real temporary Unix socket (in a test temp dir) cover deterministically: the three stale-socket branches (live listener -> terminate; refused/missing -> unlink+bind; other error -> abort); saludo version mismatch -> connection closed with both versions logged; single-connection takeover (second client accepted, first closed); and at least one full wire loop (a Go test client connects, exchanges saludos, sends a confirmacion and receives the redelivery of an unconfirmed outbox event). The REAL cross-process núcleo(Rust)<->sidecar(Go) loop over a live channel stays EXPLICITLY DEFERRED to the lab-number task (plan task 15), as the STATUS.md pending entry already frames it.'
+    - id: AC-8
+      statement: 'docs/STATUS.md reflects the state change: a Definido entry for the IPC socket server (dated absolutely, traced to plan task 3 / FR-12) and the existing Pendiente entry "Servidor del socket IPC en Go, ausente" updated to record its closure by this task (following the file''s own conventions), keeping the honest boundary that real-channel end-to-end testing remains blocked only by the lab number now.'
+    - id: AC-9
+      statement: 'The 7 standard verification commands pass (cargo fmt --check, cargo build --workspace, cargo clippy --workspace -- -D warnings, cargo test --workspace, hexcell-core tree isolation check, doc compile-fail test, cd sidecar && gofmt check && go build ./... && go vet ./... && go test ./...), plus go test -race over the new server package stays clean.'
+constraints:
+    - 'The protocol document docs/protocolo-ipc-nucleo-sidecar.md (v1.3, wire version 4) is CLOSED and normative: no field, type, or version changes; the server implements it. The message type structs in sidecar/internal/ipc/mensajes.go and the Rust side stay untouched unless a genuine mismatch is found (then it is a recorded risk, not a silent edit).'
+    - 'The Rust IPC client already exists and is out of scope: no Rust behavior changes in this task (the existing Rust tests keep passing untouched). If the blueprint finds the Rust client incompatible with the real server semantics, that is a recorded risk for a follow-up task.'
+    - 'Environment variables and their defaults come from the existing configuracion package conventions (single production source, no magic constants); backoff values remain the declared pending-calibration parameters - do not invent final numbers.'
+    - No new third-party dependencies. No .db files versioned. No changes to the pinned whatsmeow commit.
+    - Never introduce mass-sending-provider vocabulary (jitter, warm-up, proxies, VPN, IP rotation); never write that Fase B replaces or retires the sidecar channel.
+    - Everything user-visible (code comments, log messages, STATUS.md prose, commit message) in Spanish; artifact YAML prose stays in English. Dates absolute (2026-08-13).
+    - Consult docs/bitacora-de-descartes.md before proposing anything resembling a previously discarded idea.
+invariants:
+    - 'Fail closed: version mismatch closes the connection; undecodable or unknown-type messages follow section 8; the stale-socket procedure never deletes a socket another live process is listening on.'
+    - 'The sidecar never stops receiving from the channel nor closes its WhatsApp session because the IPC client disconnected; durable state (outbox, sqlstore) survives any connection loss.'
+    - 'One active connection: most-recent-wins on a second accept.'
+    - 'The closed set of 11 message types and wire version 4 stay intact; all-fields-present encoding unchanged.'
+    - 'Socket file mode 0600 on the shared volume path; authorization is the file permission, never a protocol field.'
+    - All user-visible content in Spanish with absolute dates; no invented calibration numbers.
+non_goals:
+    - 'The real cross-process núcleo<->sidecar loop over a live paired channel (lab-number task, plan task 15) - the only remaining blocker for it after this task.'
+    - Any Rust-side changes (client, adapter, core).
+    - An operator-invocable surface for pairing (separate STATUS pending from HEX-022).
+    - Closing the inbound durable-confirmation gap (adr-0011 item 7, separately re-deferred by HEX-017).
+    - Container packaging and who supervises the process (stage A-6).
+    - Fase B / Cloud API work.
+goal: 'Close the declared structural debt of A-3 plan task 3: the Go sidecar opens, guards and serves the IPC Unix socket per the closed protocol v1.3 - stale-socket procedure, strict version-4 saludo, single active connection, wiring the existing handlers and outbox redelivery - so that when the lab number arrives, task 15 has a listening sidecar to test against.'
+risk: medium
+summary: 'Go IPC socket server for the sidecar: stale-socket procedure, strict saludo, single connection, existing-handler wiring; unblocks lab task 15.'
+task_id: HEX-023

@@ -1,0 +1,259 @@
+task_id: HEX-023
+summary: >-
+  New package sidecar/internal/servidor: Unix-socket IPC server (stale-socket
+  procedure, strict saludo, takeover, outbox redelivery) wired into main.go.
+
+affected_files:
+  - sidecar/internal/servidor/servidor.go
+  - sidecar/internal/servidor/manejo.go
+  - sidecar/internal/servidor/servidor_test.go
+  - sidecar/internal/outbox/salida.go
+  - sidecar/internal/outbox/salida_test.go
+  - sidecar/main.go
+  - docs/STATUS.md
+  - sidecar/internal/ipc/mensajes.go
+  - sidecar/internal/outbox/outbox.go
+  - sidecar/internal/outbox/portero.go
+  - sidecar/internal/canal/respaldo.go
+  - sidecar/internal/canal/reconexion.go
+  - sidecar/internal/canal/emparejamiento.go
+  - sidecar/internal/canal/canal.go
+  - sidecar/internal/configuracion/configuracion.go
+  - docs/protocolo-ipc-nucleo-sidecar.md
+
+symbols:
+  - servidor.Servidor
+  - servidor.Dependencias
+  - servidor.NuevoServidor
+  - servidor.Escuchar
+  - servidor.Aceptar
+  - servidor.Cerrar
+  - servidor.ErrOtroSidecarActivo
+  - "servidor.conexionActiva (unexported per-connection state: conn, cerrada chan struct{}, saliente chan []byte)"
+  - "servidor.atenderConexion (unexported: saludo handshake + most-recent-wins takeover)"
+  - "servidor.leerEntrante (unexported reader goroutine: decode + route inbound)"
+  - "servidor.escribirSaliente (unexported writer goroutine: redelivery + outbound drain)"
+  - outbox.SumideroDeAcuse (new type, mirrors canal.SumideroDeEstado's nil-safe pattern)
+  - outbox.ColaDeSalida.ConSumideroDeAcuse (new chainable method, mirrors ConDisciplina/ConCortacircuitos)
+  - "main.main (wiring: construct servidor.NuevoServidor, call Escuchar/Aceptar/Cerrar, wire the three sinks)"
+
+dependencies:
+  - sidecar/internal/ipc/mensajes.go (Codificar, Decodificar, Sobre, all 11 Cuerpo types, VersionProtocolo, LongitudMaximaDeLinea -- consumed read-only, never edited)
+  - sidecar/internal/outbox/outbox.go (Outbox.Pendientes, Outbox.Confirmar, Outbox.Persistir -- the redelivery source of truth; carga already holds the fully-encoded wire bytes)
+  - sidecar/internal/outbox/salida.go (ColaDeSalida.MarcarEnviado success path and registrarFallo terminal-abandon path -- the two call sites for the new SumideroDeAcuse hook)
+  - sidecar/internal/outbox/portero.go (PorteroDeSalida.Admitir -- entry point for mensaje_saliente)
+  - sidecar/internal/canal/respaldo.go (ManejarOrdenRespaldoSqlstore, AbrirConexionDeRespaldo -- entry point for orden_respaldo_sqlstore, currently dead code with no caller in main.go)
+  - sidecar/internal/canal/reconexion.go (Supervisor, SumideroDeEstado -- main.go currently passes nil; comment at NuevoSupervisor explicitly says "porque el servidor IPC todavía no existe en esta tarea")
+  - sidecar/internal/canal/emparejamiento.go (Sesion.IniciarEmparejamientoQr, Sesion.SolicitarCodigoDeVinculacion -- entry points for orden_emparejar)
+  - sidecar/internal/canal/canal.go (Sesion.RegistrarTraductor / traduccion.go's SumideroDeEvento -- main.go currently passes a sumidero that only logs; it must additionally signal the server that new work exists)
+  - sidecar/internal/configuracion/configuracion.go (Configuracion.RutaSocket / VariableSocket=HEXCELL_SOCKET_IPC, already loaded by Cargar and already logged in main.go but never used to open a listener)
+  - sidecar/internal/outbox/outbox_test.go, sidecar/internal/canal/respaldo_test.go, sidecar/internal/canal/reconexion_interno_test.go, sidecar/internal/canal/emparejamiento_test.go, sidecar/internal/outbox/portero_test.go (existing suites that must keep passing untouched)
+  - "crates/hexcell-canal-whatsmeow/src/conexion.rs, crates/hexcell-canal-whatsmeow/src/adaptador.rs (the Rust IPC client: dials, sends its saludo FIRST, then reads the server's saludo -- confirms the server's handshake order in this blueprint matches the real client, out of scope to modify)"
+
+test_scenarios:
+  - statement: >-
+      Sidecar opens AF_UNIX SOCK_STREAM at HEXCELL_SOCKET_IPC (or the /var/lib/hexcell/ipc/sidecar.sock
+      default) with file mode 0600, sidecar as server (bind+listen), core as client.
+    covers: ["AC-1"]
+  - statement: >-
+      Stale-socket branch 2: a probe-connect to the configured path succeeds (another live sidecar
+      is listening) -> Escuchar logs the fact and returns ErrOtroSidecarActivo without unlinking
+      anything; main.go treats that sentinel as a terminal startup error (process exits nonzero).
+    covers: ["AC-2"]
+  - statement: >-
+      Stale-socket branch 3: probe-connect fails with connection-refused or the socket file does not
+      exist -> Escuchar unlinks the path and proceeds with ListenUnix (bind+listen) successfully.
+    covers: ["AC-2"]
+  - statement: >-
+      Stale-socket branch 4: probe-connect fails with an error other than refused/missing (e.g. a
+      permission error on the path) -> Escuchar aborts startup with a logged error and deletes
+      nothing.
+    covers: ["AC-2"]
+  - statement: >-
+      A connecting test client sends its saludo first with a mismatched version; the server closes
+      the connection and the log record for the mismatch contains both the received and the
+      expected version. Protocol errors (undecodable line, unknown tipo) on an established
+      connection close it per section 8 without deleting the socket file.
+    covers: ["AC-3"]
+  - statement: >-
+      A first test client completes the saludo handshake and is accepted; a second test client then
+      connects and completes its own saludo. The server closes the first connection's net.Conn (its
+      reader observes EOF/closed and its goroutines exit through the cerrada channel, releasing all
+      per-connection state) and keeps only the second as active, without a race under go test -race.
+    covers: ["AC-4"]
+  - statement: >-
+      A full wire loop: a test client dials, exchanges saludos, sends confirmacion for a
+      pre-persisted-but-unconfirmed outbox entry (received via redelivery) and observes
+      Outbox.Confirmar mark it processed; sends orden_respaldo_sqlstore and receives
+      acuse_respaldo_sqlstore built by the existing ManejarOrdenRespaldoSqlstore; sends
+      mensaje_saliente and observes it land in cola_salida via PorteroDeSalida.Admitir (the existing
+      durable outbox path) with no message type added, altered, or hand-rolled outside the existing
+      ipc/outbox/canal packages.
+    covers: ["AC-5"]
+  - statement: >-
+      With no client connected, the server's absence never blocks producers: a simulated
+      evento_entrante persists into the outbox and signals the server's work channel; the entry
+      stays unconfirmed and durable. On the next connection's saludo, it is redelivered before any
+      new event. Nothing in the reader/writer goroutines calls Sesion.Cerrar() or otherwise touches
+      the WhatsApp session when a client disconnects.
+    covers: ["AC-6"]
+  - statement: >-
+      go test -race ./internal/servidor/... over a real temporary Unix socket (t.TempDir()) is clean
+      across all of the above scenarios; none of them use time.Sleep to synchronize -- takeover and
+      disconnect are observed through the cerrada channel and connection close/EOF.
+    covers: ["AC-7"]
+  - statement: >-
+      docs/STATUS.md gains one Definido entry (dated 2026-08-13, traced to plan task 3 and FR-12)
+      and the existing Pendiente entry "Servidor del socket IPC en Go, ausente" is appended with a
+      closure note referencing HEX-023, without deleting or rewriting its existing text, keeping the
+      real cross-process loop explicitly blocked only by the lab-number task (plan task 15).
+    covers: ["AC-8"]
+  - statement: >-
+      The 7 standard verify commands pass unmodified, plus `cd sidecar && go test -race ./internal/servidor/...`
+      stays clean; no Rust test changes and no Rust source file is touched by this task.
+    covers: ["AC-9"]
+
+strategy:
+  - step: 1
+    action: >-
+      Create sidecar/internal/servidor/servidor.go: package doc explaining it is the transport half
+      of docs/protocolo-ipc-nucleo-sidecar.md section 2 (server role, stale-socket procedure) and
+      section 3 (saludo). Define Dependencias (RutaSocket, IdCelula, Registro, Buzon *outbox.Outbox,
+      Portero *outbox.PorteroDeSalida, DBRespaldo *sql.DB, Sesion *canal.Sesion, TelefonoCelula
+      string) and Servidor (holds a sync.Mutex-guarded *conexionActiva "actual", the *net.UnixListener,
+      a buffered "trabajo" notify channel for redelivery wake-ups, and Dependencias). NuevoServidor
+      constructs it. Escuchar(ctx) implements the four-branch stale-socket procedure from section 2
+      literally: (1) net.Dial("unix", ruta) as a probe client; (2) success -> log with both PIDs
+      unavailable but the fact logged, close the probe conn, return ErrOtroSidecarActivo without
+      unlinking; (3) dial error is syscall.ECONNREFUSED or os.IsNotExist on a stat of the path ->
+      os.Remove(ruta) then net.ListenUnix("unix", ...) with FileMode 0600 via os.Chmod after listen
+      (UnixListener doesn't take a mode argument); (4) any other dial error -> log and return the
+      error, deleting nothing. Aceptar(ctx) runs the blocking loop: Listener.Accept(), on each
+      accepted conn spawn atenderConexion(ctx, conn) in its own goroutine; Accept() returning
+      net.ErrClosed on shutdown is not logged as an error. Cerrar() closes the listener (Go's
+      UnixListener.Close unlinks the socket file it created, since it was opened via ListenUnix and
+      not FileListener) and closes the current active connection if any.
+    files:
+      - sidecar/internal/servidor/servidor.go
+  - step: 2
+    action: >-
+      Create sidecar/internal/servidor/manejo.go: conexionActiva{conn net.Conn, cerrada chan
+      struct{}, saliente chan []byte} (saliente is a buffered channel for ad-hoc outbound frames:
+      estado_sesion, acuse_envio, codigo_emparejamiento, acuse_emparejamiento, acuse_respaldo_sqlstore
+      -- none of these are outbox-backed). atenderConexion(ctx, conn): read exactly one line bounded
+      by ipc.LongitudMaximaDeLinea via bufio.Reader, ipc.Decodificar it; any error (including version
+      mismatch, whose error text already carries both versions per ipc.Decodificar's
+      ErrVersionIncompatible wrapping) or a non-Saludo first message closes conn immediately and logs
+      per section 8 (error type + offending field name only, never the raw line) -- fail closed, no
+      saludo reply sent. On a valid matching-version Saludo: under s.mu, capture the previous
+      *conexionActiva (if any), install the new one as s.actual, release the lock, THEN close the
+      previous connection's conn and its cerrada channel (never hold s.mu while blocking on I/O) --
+      this ordering is what prevents a leaked writer goroutine on takeover (its select on cerrada
+      unblocks and it returns). Write the server's own saludo (Emisor=ipc.EmisorSidecar,
+      IdCelula=Dependencias.IdCelula) back over conn. Spawn leerEntrante and escribirSaliente for the
+      new conexionActiva. leerEntrante(ctx, s, c): loop reading+decoding lines; on any decode/protocol
+      error, close c.conn and return (releasing via defer close(c.cerrada), guarded so a concurrent
+      takeover's close doesn't double-close); route by tipo: confirmacion -> s.Buzon.Confirmar
+      (ignore-if-already-confirmed is already idempotent); orden_respaldo_sqlstore ->
+      canal.ManejarOrdenRespaldoSqlstore(ctx, s.DBRespaldo, orden, s.Registro), encode the returned
+      AcuseRespaldoSqlstore and push it onto c.saliente; orden_emparejar -> dispatch to
+      Sesion.IniciarEmparejamientoQr or Sesion.SolicitarCodigoDeVinculacion(s.TelefonoCelula) per
+      Metodo, and forward each ResultadoQr/código as codigo_emparejamiento/acuse_emparejamiento onto
+      c.saliente (fire in its own goroutine so it doesn't block reading further inbound messages);
+      mensaje_saliente -> s.Portero.Admitir(ctx, ...) into the existing durable cola_salida path;
+      unknown tipo is unreachable because ipc.Decodificar already rejects it, but any other
+      Decodificar error still closes per section 8. escribirSaliente(ctx, s, c): after the saludo
+      reply, call s.Buzon.Pendientes(ctx) and write each Entrada.Carga (already-encoded wire bytes,
+      confirmed by sidecar/internal/canal/traduccion.go's ipc.Codificar-before-Persistir order) in
+      order; then loop select{c.cerrada: return; c.saliente frame: write it; s.trabajo: re-run
+      Pendientes and write whatever is still unconfirmed}. s.trabajo is a package-level-per-Servidor
+      buffered(1) chan struct{} with a non-blocking send helper (select{ch<-struct{}{}: default:}) so
+      a burst of events coalesces into one re-scan instead of queuing unboundedly.
+    files:
+      - sidecar/internal/servidor/manejo.go
+  - step: 3
+    action: >-
+      Add outbox.SumideroDeAcuse (type SumideroDeAcuse func(ipc.AcuseEnvio)) to
+      sidecar/internal/outbox/salida.go, mirroring canal.SumideroDeEstado's established nil-safe
+      pattern exactly (default no-op when unset, same as NuevoSupervisor does today). Add a
+      sumidero field to ColaDeSalida and a chainable ConSumideroDeAcuse(SumideroDeAcuse)
+      *ColaDeSalida method next to the existing ConDisciplina/ConCortacircuitos methods. Invoke it
+      from two existing call sites, both already computing the exact fields needed: MarcarEnviado's
+      success branch (build ipc.AcuseEnvio{IdMensaje, Estado: ipc.EstadoEnvioEnviado, IdCorrelacion,
+      MarcaTemporalMs: ahoraMs}) and registrarFallo's terminal-abandon branch (Estado:
+      ipc.EstadoEnvioFallido, Motivo, MarcaTemporalMs). This is the only way acuse_envio -- one of
+      the 11 closed message types AC-5 requires to flow through the socket -- has a producer at all
+      today; without it the server would have nothing to route for that type. No change to
+      mensajes.go or the protocol.
+    files:
+      - sidecar/internal/outbox/salida.go
+      - sidecar/internal/outbox/salida_test.go
+  - step: 4
+    action: >-
+      Wire sidecar/main.go: open canal.AbrirConexionDeRespaldo(cfg.RutaSqlstore) for the dedicated
+      read-only backup connection (deferred Close, currently opened nowhere in main.go); construct
+      servidor.NuevoServidor(servidor.Dependencias{RutaSocket: cfg.RutaSocket, IdCelula: cfg.IdCelula,
+      Registro: reg, Buzon: buzon, Portero: portero, DBRespaldo: dbRespaldo, Sesion: sesion,
+      TelefonoCelula: cfg.TelefonoCelula}); replace the sumidero nil argument to
+      canal.NuevoSupervisor with a closure that pushes each ipc.EstadoSesion onto the server's
+      current connection's outbound path (a small exported Servidor method, e.g.
+      EnviarEstadoSesion(ipc.EstadoSesion), no-ops when no connection is active -- the section 5
+      invariant that a disconnected core never blocks the sidecar applies here too: state_sesion is
+      not outbox-backed and a missed one during a gap is superseded by the next state change,
+      consistent with today's TODO comment on NuevoSupervisor); chain
+      colaSalida.ConSumideroDeAcuse(srv.EnviarAcuseEnvio) the same way; extend sumideroEvento (still
+      logs canal.evento_entrante_listo) to also call srv's non-blocking work-signal method after
+      logging. Call srv.Escuchar(ctx) synchronously before starting the drain loop; on
+      errors.Is(err, servidor.ErrOtroSidecarActivo) or any other Escuchar error, log and os.Exit(1)
+      exactly like the existing almacenIdentidad/buzon startup failure branches already do. On
+      success, `go srv.Aceptar(ctx)`. On the existing SIGTERM/SIGINT shutdown path, call
+      srv.Cerrar() before sesion.Cerrar() so the socket file is unlinked and any active connection
+      is closed as part of ordered shutdown (this does not touch the WhatsApp session, preserving
+      the section 5 invariant).
+    files:
+      - sidecar/main.go
+  - step: 5
+    action: >-
+      Update docs/STATUS.md: append one Definido entry dated 2026-08-13 for HEX-023, tracing to A-3
+      plan task 3 and FR-12, stating the sidecar now opens/guards/serves the IPC socket per the
+      stale-socket procedure, strict saludo, single-connection takeover, and outbox redelivery, and
+      that the real cross-process loop stays explicitly blocked only by the lab-number task (plan
+      task 15) per AC-8. Append a closure sentence to the existing Pendiente entry "Servidor del
+      socket IPC en Go, ausente" referencing HEX-023 and 2026-08-13, without deleting or rewriting
+      its existing prose -- there is no prior example in this file of a closed Pendiente entry, so
+      this task establishes the append-in-place convention rather than inventing a move-to-Definido
+      mechanic.
+    files:
+      - docs/STATUS.md
+
+risks:
+  - "New scope beyond the literal 'server' framing: outbox.SumideroDeAcuse (step 3) is a genuine
+    code addition to sidecar/internal/outbox/salida.go, not just wiring -- no existing hook produces
+    ipc.AcuseEnvio anywhere in the codebase today (verified: zero references outside mensajes.go and
+    its own test file). AC-5 requires acuse_envio to flow through the socket as one of the 11 closed
+    types, so without this hook the server would have no producer to route for that type. The
+    addition mirrors the exact nil-safe sink pattern already established twice in this codebase
+    (canal.SumideroDeEstado, traduccion.SumideroDeEvento), so it is a small, idiomatic, low-risk
+    addition, but it is called out explicitly since the task framing said 'wire the existing
+    handlers' and this one handler doesn't fully exist yet."
+  - "No read/write deadline is set on the per-connection saludo handshake or the reader loop: the
+    protocol document does not specify a handshake timeout and no HEXCELL_* variable exists for one
+    today. Per the spec's own constraint against inventing calibration numbers, this blueprint does
+    not add one; a core that dials but never sends its saludo leaves atenderConexion blocked
+    indefinitely on that one goroutine, which does not affect other connections or the accept loop.
+    If reviewers want a bound, it should be a new configuracion variable in a follow-up task, not an
+    invented literal here."
+  - "The Rust IPC client (crates/hexcell-canal-whatsmeow/src/conexion.rs) sends its saludo first and
+    then reads the server's saludo reply -- confirmed by direct read of conexion.rs::saludar. This
+    blueprint's handshake order (read core's saludo, validate, then write the server's own) matches
+    that client exactly, so no incompatibility was found; recorded per the spec's constraint that a
+    genuine mismatch would be a risk, not a silent edit -- here there is none to report beyond this
+    confirmation."
+  - "Line-count estimate carries real uncertainty: this is the first goroutine-per-connection Unix
+    socket server in the sidecar, so there is no directly comparable existing file pair (closest
+    analogs mixed: canal/reconexion.go+reconexion_interno_test.go at 399+658 lines for a
+    single-goroutine state machine, outbox/salida.go+salida_test.go at 378+1101 lines for a
+    single-writer DB queue). The concurrency surface here (accept loop, per-connection reader/writer
+    pairs, takeover synchronization, -race cleanliness) is closer to reconexion.go's shape but with
+    more moving parts, so the contract's per-class budgets carry real headroom rather than a tight
+    reference-class estimate."

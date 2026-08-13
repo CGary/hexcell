@@ -1,0 +1,23 @@
+task_id: HEX-023
+summary: Implemented Go IPC Unix-socket server in sidecar/internal/servidor and wired it into main.go.
+tdd_red_runs:
+  - acceptance_id: AC-1
+    command: go test ./internal/servidor/...
+    red_exit_code: 1
+entries:
+  - changed_files:
+      - sidecar/internal/servidor/servidor.go
+      - sidecar/internal/servidor/manejo.go
+      - sidecar/internal/servidor/servidor_test.go
+      - sidecar/internal/outbox/salida.go
+      - sidecar/internal/outbox/salida_test.go
+      - sidecar/main.go
+      - docs/STATUS.md
+    notes:
+      - Implemented stale-socket startup procedure with 4 branches and 0600 file permissions.
+      - Implemented strict version-4 saludo handshake and single active connection takeover.
+      - Implemented redelivery of unconfirmed outbox entries and inbound message routing.
+      - Added SumideroDeAcuse in outbox/salida.go to forward acuse_envio to the active IPC socket.
+      - Wired server, backup read-only DB connection, and event/state/acuse sinks in main.go.
+      - Updated docs/STATUS.md with Definido entry and closed Pendiente note.
+    verify_pending: true
