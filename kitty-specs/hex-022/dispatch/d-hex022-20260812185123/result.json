@@ -1,0 +1,43 @@
+{
+  "schema_version": "fleet-dispatch-result/v1",
+  "dispatch_id": "d-hex022-20260812185123",
+  "task_id": "HEX-022",
+  "agent": "opencode",
+  "model": "poolside/laguna-s-2.1-free",
+  "phase": "execute",
+  "started_at": "2026-08-12T22:51:23Z",
+  "ended_at": "2026-08-12T22:56:23Z",
+  "duration_s": 300.032233076,
+  "exit_code": -1,
+  "timed_out": true,
+  "killed": false,
+  "outcome": {
+    "class": "reroute",
+    "noop": false,
+    "cause": "timeout",
+    "blocked": null
+  },
+  "diff": {
+    "empty": true,
+    "indeterminate": false,
+    "files_changed": 0,
+    "insertions": 0,
+    "deletions": 0
+  },
+  "forensic_ref": null,
+  "baseline_commit": "f3582f607f38224830369d8d87631ea2ec027c54",
+  "applied": false,
+  "usage": {
+    "source": "none",
+    "tokens_in": null,
+    "tokens_out": null,
+    "requests": null
+  },
+  "notes_path": "dispatch/d-hex022-20260812185123/notes.txt",
+  "trace_events": [
+    "dispatch_started",
+    "reroute",
+    "dispatch_finished"
+  ],
+  "reset_error": null
+}

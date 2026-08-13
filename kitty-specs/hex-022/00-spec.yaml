@@ -1,0 +1,37 @@
+acceptance:
+    - id: AC-1
+      statement: 'A dedicated re-pairing runbook exists (docs/, Spanish, following the style of docs/runbook-restauracion-de-celula.md and docs/runbook-canal-whatsmeow.md) covering the PairPhone() procedure step by step: when to trigger it (the sqlstore backup is insufficient or outdated, or the restore rule''s device_removed branch mandates re-pairing), how the operator requests the eight-character linking code through the sidecar''s existing surface (SolicitarCodigoDeVinculacion in sidecar/internal/canal/emparejamiento.go, which wraps whatsmeow''s PairPhone()), what the pilot types on their OWN phone and where (WhatsApp > Dispositivos vinculados > Vincular con el numero de telefono), and how to verify the cell is healthy afterwards (session active, bot answers).'
+    - id: AC-2
+      statement: 'The runbook frames re-pairing as a FIRST-CLASS recovery procedure, not an improvised last resort: it is the second defense layer when the sqlstore backup does not suffice or arrives outdated, and it requires neither having the pilot''s phone in hand nor traveling, because the pilot types the code on their own phone - exactly as A-3 plan task 16 mandates.'
+    - id: AC-3
+      statement: 'The runbook states in writing the rehearsal requirement: the procedure is rehearsed once with piloto-01 BEFORE onboarding piloto-02, because a recovery procedure never executed is not a procedure but an assumption. The rehearsal itself is EXPLICITLY DEFERRED (it requires a real paired cell, which does not exist until the lab-number work of plan task 15 and the piloto-01 onboarding), with no invented dates or client numbers.'
+    - id: AC-4
+      statement: 'The runbook cross-references (without rewriting) the existing restore bifurcation: docs/runbook-restauracion-de-celula.md already mandates NOT restoring the sqlstore and re-pairing via PairPhone() on the device_removed branch, and adr-0020 fixes that decision. The new runbook stays consistent with both and links them; it also does not contradict the identity-store property that the JID mapping and STOP list survive re-pairing because they live outside the sqlstore.'
+    - id: AC-5
+      statement: 'docs/STATUS.md gains a Definido entry for plan task 16 (PairPhone re-pairing runbook) dated 2026-08-12 with its traceability (which plan item / FR-NFR it covers), and a Pendiente entry for the rehearsal with piloto-01 if no such pending item exists yet.'
+    - id: AC-6
+      statement: 'The 7 standard verification commands pass (cargo fmt --check, cargo build --workspace, cargo clippy --workspace -- -D warnings, cargo test --workspace, hexcell-core tree isolation check, doc compile-fail test, cd sidecar && gofmt check && go build ./... && go vet ./... && go test ./...). This task is documentation-only: no Go or Rust behavior changes.'
+constraints:
+    - 'This is a DOCUMENTATION task (plan A-3 task 16). No Go or Rust behavior changes; no code files touched. The runbook documents the EXISTING sidecar surface (SolicitarCodigoDeVinculacion) as-is; if the blueprint finds the surface insufficient for the written procedure, that is recorded as a risk / pending item, never fixed in this task.'
+    - No new dependencies. No .db files versioned. No changes to the pinned whatsmeow commit.
+    - The ban risk of the unofficial channel is STRUCTURAL (repo rule); never suggest jitter, warm-up, proxies, VPN or IP rotation; frame everything as damage limitation per adr-0015 where relevant.
+    - Never write that Fase B replaces or retires the sidecar/Fase A; the two channels coexist.
+    - Everything user-visible (the runbook, STATUS.md prose, commit message) is written in Spanish; artifact YAML prose stays in English. Dates absolute (2026-08-12), never relative.
+    - No invented business numbers (client counts, dates, recovery-time commitments); anything undetermined is declared pending in STATUS.md.
+    - Consult docs/bitacora-de-descartes.md before proposing anything resembling a previously discarded idea.
+invariants:
+    - No Go or Rust behavior changes; documentation-only diff.
+    - The runbook never introduces mass-sending-provider vocabulary (jitter, warm-up, proxies, VPN, IP rotation).
+    - Fase B is never described as replacing or retiring the sidecar channel.
+    - No concrete business numbers or recovery-time commitments are invented; undetermined values are declared pending.
+    - All user-visible content in Spanish with absolute dates (2026-08-12).
+non_goals:
+    - Executing the rehearsal with piloto-01 (deferred; requires a real paired cell and the pilot).
+    - Lab-number testing (plan task 15) - the only remaining A-3 plan task after this one.
+    - Any change to the pairing code paths (plan task 4 already implemented QR and code pairing).
+    - The restore runbook and its bifurcation (already written in A-2); this task links it, never rewrites it.
+    - The A-7 ban-response runbook and Fase B / Cloud API work.
+goal: 'A-3 plan task 16: write the PairPhone() re-pairing runbook as a first-class recovery procedure - the eight-character code the pilot types on their own phone, second defense layer when the sqlstore backup does not suffice - stating the rehearse-once-with-piloto-01-before-piloto-02 requirement, with the rehearsal itself explicitly deferred until a real paired cell exists.'
+risk: low
+summary: 'PairPhone() re-pairing runbook: first-class recovery via eight-character code typed by the pilot, rehearsal requirement declared, documentation-only.'
+task_id: HEX-022

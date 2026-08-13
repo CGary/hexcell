@@ -1,0 +1,137 @@
+task_id: HEX-022
+summary: >-
+  Documentation-only PairPhone() re-pairing runbook (A-3 task 16): first-class recovery
+  procedure, operator steps on the existing sidecar surface, deferred rehearsal, and
+  STATUS.md entries.
+affected_files:
+  - docs/runbook-canal-fase-a.md
+  - docs/STATUS.md
+symbols:
+  - Sesion.SolicitarCodigoDeVinculacion
+dependencies:
+  - docs/runbook-restauracion-de-celula.md
+  - docs/runbook-canal-whatsmeow.md
+  - docs/adr/adr-0020-respaldo-y-restauracion-por-celula.md
+  - docs/adr/adr-0010-puerto-de-canal.md
+  - docs/plan/fase-a-3-adaptador-whatsmeow.md
+  - docs/bitacora-de-descartes.md
+  - sidecar/internal/canal/emparejamiento.go
+test_scenarios:
+  - statement: >-
+      New docs/runbook-canal-fase-a.md exists in Spanish, styled like
+      docs/runbook-restauracion-de-celula.md and docs/runbook-canal-whatsmeow.md (dated
+      header 2026-08-12, scope note, numbered sections, references section). This is a
+      text-presence criterion verified by REVIEW reading the file, not by an automated
+      test -- documentation tasks have no unit-test surface for prose content.
+    covers: ["AC-1"]
+  - statement: >-
+      The runbook states both re-pairing triggers verbatim: the sqlstore backup is
+      insufficient or arrives outdated, or the restore runbook's device_removed branch
+      (docs/runbook-restauracion-de-celula.md Rama A) mandates re-pairing. Verified by
+      REVIEW reading the trigger section against AC-1's exact wording, not by a test.
+    covers: ["AC-1"]
+  - statement: >-
+      The runbook documents the operator-facing procedure to request the eight-character
+      code: SolicitarCodigoDeVinculacion in sidecar/internal/canal/emparejamiento.go wraps
+      whatsmeow's PairPhone(), reads the phone number from cell configuration (not an IPC
+      field, per the mensajes_test.go transport-identifier guard), and never logs the code
+      payload (adr-0019). Verified by REVIEW cross-checking the described signature and
+      behavior against the actual Go source, not by a test -- this task changes no code.
+    covers: ["AC-1"]
+  - statement: >-
+      The runbook states the pilot-side steps in Spanish exactly (WhatsApp > Dispositivos
+      vinculados > Vincular con el numero de telefono) and the post-re-pairing health
+      check (session active, bot answers a real message). Verified by REVIEW text
+      presence, not by a test.
+    covers: ["AC-1"]
+  - statement: >-
+      The runbook frames re-pairing as a first-class second defense layer (not an
+      improvised last resort), stating explicitly that it requires neither the pilot's
+      phone in the operator's hand nor travel, because the pilot types the code on their
+      own device. Verified by REVIEW reading the framing section, not by a test.
+    covers: ["AC-2"]
+  - statement: >-
+      The runbook states in writing the rehearsal requirement (once with piloto-01 before
+      piloto-02's onboarding) and explicitly defers the rehearsal itself, citing that it
+      requires a real paired cell that does not exist yet (plan task 15's lab-number work
+      and piloto-01's onboarding are still pending), with no invented dates or client
+      counts. Verified by REVIEW text presence and absence of invented numbers, not by a
+      test.
+    covers: ["AC-3"]
+  - statement: >-
+      The runbook cross-references, without rewriting, docs/runbook-restauracion-de-celula.md's
+      device_removed branch and adr-0020, and states that the JID mapping and STOP list
+      survive re-pairing because they live outside the sqlstore (adr-0010), consistent with
+      "Lo que SI sobrevive a esta rama" in the restore runbook. Verified by REVIEW checking
+      the cross-reference links and consistency of claims, not by a test.
+    covers: ["AC-4"]
+  - statement: >-
+      docs/STATUS.md gains one Definido entry dated 2026-08-12 for plan task 16 with its
+      plan/FR-NFR traceability, and one Pendiente entry for the piloto-01 rehearsal (no
+      such pending item exists yet in STATUS.md as of this blueprint). Verified by REVIEW
+      reading both new STATUS.md entries, not by a test.
+    covers: ["AC-5"]
+  - statement: >-
+      All 7 standard verify commands pass (cargo fmt --check, cargo build --workspace,
+      cargo clippy --workspace -- -D warnings, cargo test --workspace, hexcell-core tree
+      isolation check, doc compile-fail test, sidecar gofmt/build/vet/test), confirming no
+      Go or Rust source file changed. This is the one AC in this task actually gated by
+      automated commands, run by q-verify.
+    covers: ["AC-6"]
+strategy:
+  - step: 1
+    action: >-
+      Read docs/runbook-restauracion-de-celula.md and docs/runbook-canal-whatsmeow.md
+      fully for structure/tone (dated header, scope note, numbered sections, references
+      section), docs/adr/adr-0020 and docs/adr/adr-0010 for the device_removed branch and
+      identity-store-survives-re-pairing property, sidecar/internal/canal/emparejamiento.go
+      for the real SolicitarCodigoDeVinculacion signature and behavior, and
+      docs/bitacora-de-descartes.md to avoid reopening a discarded idea. Note: the already
+      shipped docs/runbook-canal-whatsmeow.md (HEX-020, out of this task's touch scope)
+      already names the task-16 runbook as "docs/runbook-canal-fase-a.md" in its own scope
+      note (line 5); this task's new file must use that exact path so that existing
+      cross-reference resolves instead of pointing at a file that never gets created.
+    files:
+      - docs/runbook-restauracion-de-celula.md
+      - docs/runbook-canal-whatsmeow.md
+      - docs/adr/adr-0020-respaldo-y-restauracion-por-celula.md
+      - docs/adr/adr-0010-puerto-de-canal.md
+      - sidecar/internal/canal/emparejamiento.go
+      - docs/bitacora-de-descartes.md
+  - step: 2
+    action: >-
+      Write docs/runbook-canal-fase-a.md: dated header (2026-08-12), scope note (this
+      covers PairPhone re-pairing only; protocol breakage is docs/runbook-canal-whatsmeow.md
+      task 17, sqlstore IPC backup is task 18, lab-number testing is task 15, ban response
+      is A-7); section 1 states the two triggers (sqlstore backup insufficient/outdated, or
+      the restore runbook's device_removed branch); section 2 frames re-pairing as a
+      first-class second defense layer requiring neither the pilot's phone in hand nor
+      travel; section 3 is the operator procedure -- describe SolicitarCodigoDeVinculacion
+      as it exists today (wraps PairPhone(), reads phone from cell config, never logs the
+      code) and state honestly that this function has no operator-invokable surface yet
+      (no CLI subcommand, no wired IPC message -- it is only exercised by the Go package's
+      own tests today), so the runbook documents the mechanism an operator would drive once
+      such a surface exists and flags the gap as a pending item rather than inventing one;
+      section 4 is the pilot-side steps (WhatsApp > Dispositivos vinculados > Vincular con
+      el numero de telefono, type the eight-character code); section 5 is the
+      post-re-pairing health check (session active, bot answers) plus the identity-survives
+      note (JID mapping and STOP list live outside the sqlstore per adr-0010, unaffected by
+      re-pairing); section 6 states the rehearse-once-with-piloto-01-before-piloto-02
+      requirement and explicitly defers the rehearsal (needs a real paired cell, which
+      needs task 15's lab-number work and piloto-01's onboarding first); closes with a
+      references section linking docs/runbook-restauracion-de-celula.md, adr-0020,
+      adr-0010, the A-3 plan, PRD, STATUS.md, and bitacora-de-descartes.md.
+    files:
+      - docs/runbook-canal-fase-a.md
+  - step: 3
+    action: >-
+      Add one Definido entry to docs/STATUS.md (absolute date 2026-08-12) for plan task 16,
+      recording the new runbook, its plan traceability (A-3 task 16), and its FR/NFR tie-in
+      (FR-12 recovery path, adr-0020); add one Pendiente entry for the piloto-01 rehearsal
+      still needing to happen (blocked on task 15's lab-number work and piloto-01's
+      onboarding) and, separately, for the missing operator-invocable surface for
+      SolicitarCodigoDeVinculacion (no CLI/IPC path exists yet), following the same pattern
+      as the existing "Disparador de produccion del respaldo por celula" (HEX-008) pending
+      entry for a library-only operation. Append only; do not rewrite existing entries.
+    files:
+      - docs/STATUS.md

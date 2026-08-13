@@ -1,0 +1,100 @@
+task_id: HEX-022
+summary: >-
+  Write the PairPhone() re-pairing runbook as a first-class recovery procedure,
+  documentation-only.
+goal: >-
+  A-3 plan task 16: produce docs/runbook-canal-fase-a.md covering the PairPhone()
+  re-pairing procedure step by step (triggers, operator request via
+  SolicitarCodigoDeVinculacion, pilot-side steps, post-re-pairing health check), frame
+  it as a first-class second defense layer, state the rehearse-once-with-piloto-01
+  requirement with the rehearsal itself explicitly deferred, cross-reference the
+  existing restore bifurcation and adr-0020 without rewriting them, and close a
+  docs/STATUS.md Definido entry for plan task 16 plus a Pendiente entry for the
+  rehearsal.
+
+read:
+  - .ai/tasks/active/HEX-022-new-spec/00-spec.yaml
+  - .ai/tasks/active/HEX-022-new-spec/01-blueprint.yaml
+  - docs/runbook-restauracion-de-celula.md
+  - docs/runbook-canal-whatsmeow.md
+  - docs/adr/adr-0020-respaldo-y-restauracion-por-celula.md
+  - docs/adr/adr-0010-puerto-de-canal.md
+  - docs/plan/fase-a-3-adaptador-whatsmeow.md
+  - docs/bitacora-de-descartes.md
+  - docs/STATUS.md
+  - docs/PRD.md
+  - sidecar/internal/canal/emparejamiento.go
+  - sidecar/internal/canal/emparejamiento_test.go
+
+touch:
+  - docs/runbook-canal-fase-a.md
+  - docs/STATUS.md
+
+forbid:
+  files:
+    - docs/runbook-restauracion-de-celula.md
+    - docs/runbook-canal-whatsmeow.md
+    - docs/adr/adr-0020-respaldo-y-restauracion-por-celula.md
+    - docs/adr/adr-0010-puerto-de-canal.md
+    - docs/plan/fase-a-3-adaptador-whatsmeow.md
+    - docs/bitacora-de-descartes.md
+    - docs/PRD.md
+    - sidecar/internal/canal/emparejamiento.go
+    - sidecar/internal/canal/emparejamiento_test.go
+    - sidecar/go.mod
+    - sidecar/go.sum
+    - Cargo.toml
+    - Cargo.lock
+  behaviors:
+    - "Do NOT change any Go or Rust behavior. No source file under crates/ or sidecar/internal/ or sidecar/main.go is touched. This is a documentation task; if the existing SolicitarCodigoDeVinculacion surface is insufficient for the written procedure, record that as a risk / STATUS.md pending item, never fix it in this task."
+    - "Do NOT rewrite docs/runbook-restauracion-de-celula.md's device_removed branch or docs/adr/adr-0020's decision; only cross-reference and link them from the new runbook."
+    - "Do NOT introduce mass-sending-provider vocabulary anywhere in the runbook or STATUS.md entries: no jitter, no calentamiento/warm-up, no proxy, no VPN, no IP rotation."
+    - "Do NOT write that Fase B replaces, retires, or closes the sidecar or Fase A. The runbook and STATUS.md entries only ever describe the two channels as coexisting."
+    - "Do NOT invent business numbers: no client counts, no concrete recovery-time commitment, no dates other than 2026-08-12. If the operator-invocable surface for SolicitarCodigoDeVinculacion is missing today, say so and record it as a docs/STATUS.md Pendiente entry instead of inventing a CLI/IPC path that does not exist."
+    - "Do NOT state or imply the rehearsal with piloto-01 has been executed. It is explicitly deferred; it requires a real paired cell that does not exist until plan task 15's lab-number work and piloto-01's onboarding happen."
+    - "Do NOT use relative dates (e.g. 'hoy', 'la semana pasada') anywhere in the runbook or the STATUS.md entries; every date is absolute (2026-08-12)."
+    - "Do NOT write any user-visible content (runbook body, STATUS.md entry text, commit message) in English; keep it in Spanish. Only this contract's and the blueprint's own YAML prose stays in English."
+    - "Do NOT expand scope into plan tasks 15, 17, or 18 (lab-number testing, protocol-breakage runbook, sqlstore backup over IPC) or into the A-7 ban-response runbook; this task covers PairPhone re-pairing only, and the new runbook's own scope note must say so."
+    - "Do NOT touch docs/STATUS.md content unrelated to this task's Definido/Pendiente entries; append, do not rewrite, existing entries."
+
+verify:
+  commands:
+    - cargo fmt --check
+    - cargo build --workspace
+    - cargo clippy --workspace -- -D warnings
+    - cargo test --workspace
+    - test "$(cargo tree -p hexcell-core | wc -l)" = "1"
+    - cargo test -p hexcell-core --doc 2>&1 | grep -q "compile fail"
+    - cd sidecar && test -z "$(gofmt -l .)" && go build ./... && go vet ./... && go test ./...
+
+acceptance:
+  human_gate: true
+
+limits:
+  max_files_changed: 2
+  # Honest estimate: docs/runbook-canal-fase-a.md is a new file in the style of
+  # docs/runbook-restauracion-de-celula.md (117 lines) and docs/runbook-canal-whatsmeow.md
+  # (84 lines), with six sections (triggers, first-class framing, operator procedure with
+  # the honest invocation-surface caveat, pilot-side steps, post-re-pairing health check
+  # plus identity-survives note, rehearsal requirement) plus a references section --
+  # reference-class estimate ~150-180 lines. docs/STATUS.md gains one Definido entry
+  # (~10-12 lines) and one Pendiente entry for the rehearsal, plus a second short Pendiente
+  # note for the missing operator-invocable surface (~8-10 lines each) -- ~25-30 lines
+  # total. Total honest estimate ~180 (runbook) + 30 (STATUS) = ~210 lines. Setting
+  # max_diff_lines with ~25-30% headroom over that per LES-2026-08-11-000000024, since this
+  # repo's runbook style runs long and a tight cap risks a post-review amendment round for
+  # a documentation-only task.
+  max_diff_lines: 265
+  per_class:
+    - glob: docs/runbook-canal-fase-a.md
+      max_diff_lines: 220
+    - glob: docs/STATUS.md
+      max_diff_lines: 45
+
+execution:
+  mode: worktree_edit
+  branch: ai/HEX-022
+
+retry_policy:
+  max_attempts: 2
+  escalate_after: 2

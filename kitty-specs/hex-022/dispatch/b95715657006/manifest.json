@@ -1,0 +1,42 @@
+{
+  "task_id": "HEX-022",
+  "bundle_hash": "b9571565700623c62669155b12ccae7bafc651c032a6e0ddc6d12b63eea0b8f5",
+  "files": [
+    ".ai/tasks/active/HEX-022-new-spec/00-spec.yaml",
+    ".ai/tasks/active/HEX-022-new-spec/01-blueprint.yaml",
+    "docs/PRD.md",
+    "docs/STATUS.md",
+    "docs/adr/adr-0010-puerto-de-canal.md",
+    "docs/adr/adr-0020-respaldo-y-restauracion-por-celula.md",
+    "docs/bitacora-de-descartes.md"
+  ],
+  "protocol_version": "fleet-bundle-protocol/v2",
+  "created_at": "2026-08-12T22:45:48Z",
+  "dropped": [
+    {
+      "component": "code_slice",
+      "path": "sidecar/internal/canal/emparejamiento_test.go",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "sidecar/internal/canal/emparejamiento.go",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "docs/runbook-restauracion-de-celula.md",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "docs/runbook-canal-whatsmeow.md",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "docs/plan/fase-a-3-adaptador-whatsmeow.md",
+      "reason": "bundle exceeded max_bytes budget"
+    }
+  ]
+}
