@@ -17,6 +17,7 @@ import (
 	"go.mau.fi/whatsmeow/types"
 
 	"github.com/CGary/hexcell/sidecar/internal/configuracion"
+	"github.com/CGary/hexcell/sidecar/internal/ipc"
 	"github.com/CGary/hexcell/sidecar/internal/outbox"
 	"github.com/CGary/hexcell/sidecar/internal/registro"
 	_ "modernc.org/sqlite"
@@ -1097,5 +1098,75 @@ func TestPresenciaSeLiberaTrasDescartePorBaja(t *testing.T) {
 	}
 	if cola.PresenciasPendientesParaPruebas() != 0 {
 		t.Errorf("el marcador de presencia debía liberarse tras el descarte por baja (AC-6), quedaron %d entradas", cola.PresenciasPendientesParaPruebas())
+	}
+}
+
+func TestColaDeSalidaInvocaSumideroDeAcuseEnExito(t *testing.T) {
+	t.Parallel()
+	db, _ := abrirDbPruebaSalida(t)
+	falso := &transmisorFalso{idCorrelacion: "corr-123"}
+	var acuses []ipc.AcuseEnvio
+	var mu sync.Mutex
+	sumidero := func(a ipc.AcuseEnvio) {
+		mu.Lock()
+		defer mu.Unlock()
+		acuses = append(acuses, a)
+	}
+	cola := outbox.NuevaColaDeSalida(db, 1000, 3, nil, falso, nil).ConSumideroDeAcuse(sumidero)
+	ctx := context.Background()
+
+	cola.Encolar(ctx, "msg-exito", "conv-1", "hola", 100)
+	if err := cola.Drenar(ctx, 200); err != nil {
+		t.Fatalf("error al drenar: %v", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(acuses) != 1 {
+		t.Fatalf("se esperaba 1 acuse, hubo %d", len(acuses))
+	}
+	if acuses[0].IdMensaje != "msg-exito" || acuses[0].Estado != ipc.EstadoEnvioEnviado || acuses[0].IdCorrelacion != "corr-123" {
+		t.Errorf("acuse inesperado: %+v", acuses[0])
+	}
+}
+
+func TestColaDeSalidaInvocaSumideroDeAcuseEnFalloTerminal(t *testing.T) {
+	t.Parallel()
+	db, _ := abrirDbPruebaSalida(t)
+	falso := &transmisorFalso{fallar: true}
+	var acuses []ipc.AcuseEnvio
+	var mu sync.Mutex
+	sumidero := func(a ipc.AcuseEnvio) {
+		mu.Lock()
+		defer mu.Unlock()
+		acuses = append(acuses, a)
+	}
+	cola := outbox.NuevaColaDeSalida(db, 1_000_000, 2, nil, falso, nil).ConSumideroDeAcuse(sumidero)
+	ctx := context.Background()
+
+	cola.Encolar(ctx, "msg-fallo", "conv-1", "hola", 100)
+
+	// Intento 1: falla pero no se agota
+	if err := cola.Drenar(ctx, 200); err != nil {
+		t.Fatalf("error al drenar intento 1: %v", err)
+	}
+	mu.Lock()
+	if len(acuses) != 0 {
+		mu.Unlock()
+		t.Fatalf("no se esperaba acuse en intento no terminal, hubo %d", len(acuses))
+	}
+	mu.Unlock()
+
+	// Intento 2: falla y se agota
+	if err := cola.Drenar(ctx, 300); err != nil {
+		t.Fatalf("error al drenar intento 2: %v", err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(acuses) != 1 {
+		t.Fatalf("se esperaba 1 acuse terminal, hubo %d", len(acuses))
+	}
+	if acuses[0].IdMensaje != "msg-fallo" || acuses[0].Estado != ipc.EstadoEnvioFallido {
+		t.Errorf("acuse terminal inesperado: %+v", acuses[0])
 	}
 }

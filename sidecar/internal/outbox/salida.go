@@ -6,8 +6,10 @@ import (
 	"fmt"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/CGary/hexcell/sidecar/internal/configuracion"
+	"github.com/CGary/hexcell/sidecar/internal/ipc"
 	"github.com/CGary/hexcell/sidecar/internal/registro"
 )
 
@@ -45,6 +47,9 @@ var ContadorDescartadasPorCortacircuitos atomic.Int64
 // consulta del estado del cortacircuitos falló (fallo cerrado, ver verificarDisciplina).
 var ContadorAplazadasPorErrorCortacircuitos atomic.Int64
 
+// SumideroDeAcuse recibe cada acuse de envío generado al transmitir o fallar un mensaje saliente.
+type SumideroDeAcuse func(ipc.AcuseEnvio)
+
 // ColaDeSalida es el buzón de salida durable: el único punto de entrada para encolar un
 // mensaje saliente es Encolar, de modo que una futura lista STOP pueda anteponerse sin tocar
 // el resto de esta cola.
@@ -58,6 +63,7 @@ type ColaDeSalida struct {
 	cortacircuitos       ControlDeCortacircuitos
 	disciplina           *DisciplinaDeSalida
 	emisorPresencia      EmisorDePresencia
+	sumideroAcuse        SumideroDeAcuse
 	muPresencia          sync.Mutex
 	presenciasAnunciadas map[string]struct{}
 }
@@ -98,6 +104,13 @@ func (c *ColaDeSalida) ConDisciplina(disciplina *DisciplinaDeSalida, emisorPrese
 // encadenar.
 func (c *ColaDeSalida) ConCortacircuitos(cortacircuitos ControlDeCortacircuitos) *ColaDeSalida {
 	c.cortacircuitos = cortacircuitos
+	return c
+}
+
+// ConSumideroDeAcuse inyecta la función de notificación para acuses de envío (nil-segura);
+// devuelve la cola para encadenar.
+func (c *ColaDeSalida) ConSumideroDeAcuse(sumidero SumideroDeAcuse) *ColaDeSalida {
+	c.sumideroAcuse = sumidero
 	return c
 }
 
@@ -335,6 +348,15 @@ func (c *ColaDeSalida) registrarFallo(ctx context.Context, p pendienteSalida) {
 			if c.registro != nil {
 				c.registro.Aviso(EventoSalidaAgotada, registro.Campos{IdEvento: p.idMensaje})
 			}
+			if c.sumideroAcuse != nil {
+				c.sumideroAcuse(ipc.AcuseEnvio{
+					IdMensaje:       p.idMensaje,
+					Estado:          ipc.EstadoEnvioFallido,
+					IdCorrelacion:   "",
+					Motivo:          "intentos de transmisión agotados",
+					MarcaTemporalMs: time.Now().UnixMilli(),
+				})
+			}
 		}
 		return
 	}
@@ -372,6 +394,15 @@ func (c *ColaDeSalida) MarcarEnviado(ctx context.Context, idMensaje, idCorrelaci
 		}
 		if c.registro != nil {
 			c.registro.Info(EventoSalidaEnviada, registro.Campos{IdEvento: idMensaje})
+		}
+		if c.sumideroAcuse != nil {
+			c.sumideroAcuse(ipc.AcuseEnvio{
+				IdMensaje:       idMensaje,
+				Estado:          ipc.EstadoEnvioEnviado,
+				IdCorrelacion:   idCorrelacion,
+				Motivo:          "",
+				MarcaTemporalMs: ahoraMs,
+			})
 		}
 	}
 	return nil
