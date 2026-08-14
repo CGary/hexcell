@@ -85,6 +85,13 @@ impl MarcasDeOrigen {
     }
 }
 
+/// Evento interno de emparejamiento para enrutar desde el bucle de lectura hacia el llamante.
+#[derive(Debug)]
+pub(crate) enum EventoDeEmparejamiento {
+    Codigo(crate::mensajes::CodigoEmparejamiento),
+    Acuse(crate::mensajes::AcuseEmparejamiento),
+}
+
 /// Adaptador `ChannelAdapter` + `CicloDeVidaSesion` sobre IPC con el sidecar whatsmeow.
 ///
 /// Implementa la semántica del canal propio: ventana siempre abierta, sin plantilla requerida,
@@ -115,6 +122,8 @@ pub struct AdaptadorWhatsmeow {
             HashMap<String, tokio::sync::oneshot::Sender<crate::mensajes::AcuseRespaldoSqlstore>>,
         >,
     >,
+    /// Canal de eventos de emparejamiento en curso, si lo hay.
+    emparejamiento_pendiente: Arc<tokio::sync::Mutex<Option<mpsc::Sender<EventoDeEmparejamiento>>>>,
 }
 
 impl AdaptadorWhatsmeow {
@@ -145,6 +154,7 @@ impl AdaptadorWhatsmeow {
             marcas_de_origen: Arc::new(Mutex::new(MarcasDeOrigen::default())),
             contador_mensajes: Arc::new(AtomicUsize::new(0)),
             respaldo_pendiente: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+            emparejamiento_pendiente: Arc::new(tokio::sync::Mutex::new(None)),
         };
 
         (adaptador, receptor_eventos)
@@ -163,6 +173,7 @@ impl AdaptadorWhatsmeow {
         let escritor = Arc::clone(&self.escritor_compartido);
         let marcas = Arc::clone(&self.marcas_de_origen);
         let respaldo_pendiente = Arc::clone(&self.respaldo_pendiente);
+        let emparejamiento_pendiente = Arc::clone(&self.emparejamiento_pendiente);
 
         tokio::spawn(async move {
             bucle_de_conexion(
@@ -174,6 +185,7 @@ impl AdaptadorWhatsmeow {
                 escritor,
                 marcas,
                 respaldo_pendiente,
+                emparejamiento_pendiente,
             )
             .await;
         });
@@ -187,6 +199,69 @@ impl AdaptadorWhatsmeow {
     /// Estado de sesión actual.
     pub fn estado_actual(&self) -> EstadoSesion {
         *self.receptor_estado.borrow()
+    }
+
+    /// Suscribe un receptor a las actualizaciones del estado de sesión del canal.
+    pub fn suscribir_estado(&self) -> watch::Receiver<EstadoSesion> {
+        self.receptor_estado.clone()
+    }
+
+    /// Ordena un emparejamiento al sidecar y procesa el flujo de códigos rotativos hasta el acuse terminal.
+    ///
+    /// Registra el canal de eventos antes de enviar la orden para evitar carreras. Cada código recibido
+    /// invoca el `manejador` de forma síncrona. La espera completa está acotada por un único `plazo`
+    /// que no se reinicia con la llegada de códigos nuevos.
+    pub async fn ordenar_emparejamiento(
+        &self,
+        metodo: &str,
+        plazo: Duration,
+        mut manejador: impl FnMut(&crate::mensajes::CodigoEmparejamiento) + Send,
+    ) -> Result<crate::mensajes::AcuseEmparejamiento, ErrorCanalWhatsmeow> {
+        if self.escritor_compartido.lock().await.is_none() {
+            return Err(ErrorCanalWhatsmeow::SinConexion);
+        }
+
+        let (tx, mut rx) = mpsc::channel(32);
+        {
+            let mut pendiente = self.emparejamiento_pendiente.lock().await;
+            *pendiente = Some(tx);
+        }
+
+        let orden = crate::mensajes::OrdenEmparejar {
+            version: crate::mensajes::VERSION_PROTOCOLO,
+            tipo: "orden_emparejar".to_string(),
+            metodo: metodo.to_string(),
+        };
+
+        if let Err(e) =
+            crate::conexion::enviar_orden_emparejar(&self.escritor_compartido, &orden).await
+        {
+            let mut pendiente = self.emparejamiento_pendiente.lock().await;
+            *pendiente = None;
+            return Err(e);
+        }
+
+        let limite = tokio::time::Instant::now() + plazo;
+        loop {
+            match tokio::time::timeout_at(limite, rx.recv()).await {
+                Ok(Some(EventoDeEmparejamiento::Codigo(codigo))) => {
+                    manejador(&codigo);
+                }
+                Ok(Some(EventoDeEmparejamiento::Acuse(acuse))) => {
+                    return Ok(acuse);
+                }
+                Ok(None) => {
+                    let mut pendiente = self.emparejamiento_pendiente.lock().await;
+                    *pendiente = None;
+                    return Err(ErrorCanalWhatsmeow::EmparejamientoSinAcuse);
+                }
+                Err(_agotado) => {
+                    let mut pendiente = self.emparejamiento_pendiente.lock().await;
+                    *pendiente = None;
+                    return Err(ErrorCanalWhatsmeow::EmparejamientoSinAcuse);
+                }
+            }
+        }
     }
 
     /// Ordena un respaldo del sqlstore al sidecar y espera el acuse correspondiente.
@@ -258,6 +333,7 @@ async fn bucle_de_conexion(
             HashMap<String, tokio::sync::oneshot::Sender<crate::mensajes::AcuseRespaldoSqlstore>>,
         >,
     >,
+    emparejamiento_pendiente: Arc<tokio::sync::Mutex<Option<mpsc::Sender<EventoDeEmparejamiento>>>>,
 ) {
     loop {
         // Intentar conectar.
@@ -282,6 +358,7 @@ async fn bucle_de_conexion(
                             &estado_tx,
                             &marcas_de_origen,
                             &respaldo_pendiente,
+                            &emparejamiento_pendiente,
                         )
                         .await
                         {
@@ -352,6 +429,9 @@ async fn leer_mensajes(
             HashMap<String, tokio::sync::oneshot::Sender<crate::mensajes::AcuseRespaldoSqlstore>>,
         >,
     >,
+    emparejamiento_pendiente: &Arc<
+        tokio::sync::Mutex<Option<mpsc::Sender<EventoDeEmparejamiento>>>,
+    >,
 ) -> Result<(), ErrorCanalWhatsmeow> {
     loop {
         let mensaje = conexion.leer_mensaje().await?;
@@ -419,15 +499,37 @@ async fn leer_mensajes(
                 };
                 let _ = estado_tx.send(estado);
             }
-            MensajeEntrante::CodigoEmparejamiento(_) => {
-                // Los códigos de emparejamiento se procesan por CicloDeVidaSesion; por ahora
-                // se registran y se descartan. La implementación completa llega con la tarea
-                // de emparejamiento.
+            MensajeEntrante::CodigoEmparejamiento(codigo) => {
+                let remitente = {
+                    let lock = emparejamiento_pendiente.lock().await;
+                    lock.clone()
+                };
+                if let Some(tx) = remitente {
+                    let _ = tx.send(EventoDeEmparejamiento::Codigo(codigo)).await;
+                } else {
+                    eprintln!("hexcell-canal-whatsmeow: codigo_emparejamiento huérfano recibido");
+                }
             }
-            MensajeEntrante::AcuseEmparejamiento(_) => {
-                // Igual que el código de emparejamiento: se consume cuando CicloDeVidaSesion
-                // esté completo.
-            }
+            MensajeEntrante::AcuseEmparejamiento(acuse) => match acuse.resultado.as_str() {
+                "completado" | "expirado" | "fallido" => {
+                    let remitente = {
+                        let mut lock = emparejamiento_pendiente.lock().await;
+                        lock.take()
+                    };
+                    if let Some(tx) = remitente {
+                        let _ = tx.send(EventoDeEmparejamiento::Acuse(acuse)).await;
+                    } else {
+                        eprintln!(
+                            "hexcell-canal-whatsmeow: acuse_emparejamiento huérfano recibido"
+                        );
+                    }
+                }
+                otro => {
+                    eprintln!(
+                        "hexcell-canal-whatsmeow: acuse_emparejamiento con resultado desconocido descartado: '{otro}'"
+                    );
+                }
+            },
             MensajeEntrante::AcuseRespaldoSqlstore(acuse) => {
                 let remitente = {
                     let mut pendientes = respaldo_pendiente.lock().await;

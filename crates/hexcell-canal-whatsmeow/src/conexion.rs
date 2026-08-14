@@ -213,3 +213,22 @@ pub async fn enviar_orden_respaldo_sqlstore(
         Err(ErrorCanalWhatsmeow::SinConexion)
     }
 }
+
+/// Envía una orden de emparejar a través del extremo de escritura compartido.
+pub async fn enviar_orden_emparejar(
+    escritor_compartido: &tokio::sync::Mutex<Option<tokio::io::WriteHalf<UnixStream>>>,
+    orden: &crate::mensajes::OrdenEmparejar,
+) -> Result<(), ErrorCanalWhatsmeow> {
+    let linea = serde_json::to_string(orden).map_err(|e| {
+        ErrorCanalWhatsmeow::ErrorDeProtocolo(format!("no se pudo serializar orden_emparejar: {e}"))
+    })?;
+    let mut guardia = escritor_compartido.lock().await;
+    if let Some(escritor) = guardia.as_mut() {
+        escritor.write_all(linea.as_bytes()).await?;
+        escritor.write_all(b"\n").await?;
+        escritor.flush().await?;
+        Ok(())
+    } else {
+        Err(ErrorCanalWhatsmeow::SinConexion)
+    }
+}

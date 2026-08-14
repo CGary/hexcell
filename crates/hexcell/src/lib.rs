@@ -17,6 +17,7 @@ pub mod apagado;
 pub mod configuracion;
 pub mod conversaciones;
 pub mod deduplicacion;
+pub mod emparejar;
 pub mod inferencia;
 pub mod motor;
 pub mod preparacion;

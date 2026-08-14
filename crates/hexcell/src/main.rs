@@ -48,6 +48,7 @@ use std::sync::Arc;
 
 use hexcell::apagado::Apagado;
 use hexcell::configuracion::{CanalSeleccionado, Configuracion};
+use hexcell::emparejar;
 use hexcell::inferencia::ProveedorSimulado;
 use hexcell::motor::Motor;
 use hexcell::preparacion::SesionDelCanal;
@@ -66,6 +67,11 @@ const CONTACTO_DEL_EVENTO_DE_ARRANQUE: &str = "arranque-simulado";
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> ExitCode {
+    let argumentos: Vec<String> = std::env::args().collect();
+    if argumentos.get(1).map(String::as_str) == Some("emparejar") {
+        return emparejar::ejecutar_cli(&argumentos[2..]).await;
+    }
+
     let configuracion = match Configuracion::desde_entorno() {
         Ok(configuracion) => configuracion,
         Err(error) => {

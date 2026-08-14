@@ -199,6 +199,44 @@ impl SidecarSimulado {
         linea.trim_end().to_string()
     }
 
+    /// Lee y devuelve una orden de emparejar del núcleo.
+    pub async fn leer_orden_emparejar(
+        &mut self,
+    ) -> hexcell_canal_whatsmeow::mensajes::OrdenEmparejar {
+        let linea = self.leer_linea().await;
+        serde_json::from_str(&linea).expect("no se pudo parsear la orden de emparejar")
+    }
+
+    /// Envía un código de emparejamiento.
+    pub async fn enviar_codigo_emparejamiento(
+        &mut self,
+        metodo: &str,
+        valor: &str,
+        expira_en_ms: i64,
+    ) {
+        let codigo = hexcell_canal_whatsmeow::mensajes::CodigoEmparejamiento {
+            version: 4,
+            tipo: "codigo_emparejamiento".to_string(),
+            metodo: metodo.to_string(),
+            valor: valor.to_string(),
+            expira_en_ms,
+        };
+        let linea = serde_json::to_string(&codigo).unwrap();
+        self.enviar_linea_cruda(&linea).await;
+    }
+
+    /// Envía un acuse de emparejamiento.
+    pub async fn enviar_acuse_emparejamiento(&mut self, resultado: &str, motivo: &str) {
+        let acuse = hexcell_canal_whatsmeow::mensajes::AcuseEmparejamiento {
+            version: 4,
+            tipo: "acuse_emparejamiento".to_string(),
+            resultado: resultado.to_string(),
+            motivo: motivo.to_string(),
+        };
+        let linea = serde_json::to_string(&acuse).unwrap();
+        self.enviar_linea_cruda(&linea).await;
+    }
+
     /// Cierra la conexión.
     pub fn cerrar(&mut self) {
         self.conexion = None;

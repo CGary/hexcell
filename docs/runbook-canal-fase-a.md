@@ -30,8 +30,9 @@ El operador solicita el código de vinculación utilizando la superficie existen
 2. **Higiene de datos:** 
    * La función obtiene el número de teléfono directamente desde la configuración de la célula. Nunca se transmite como un campo del protocolo IPC para respetar la guardia de identificadores de transporte de `mensajes_test.go`.
    * El código de vinculación generado nunca se escribe en el registro estructurado de logs a ningún nivel, asegurando la privacidad conforme a `adr-0019`.
-3. **Brecha de interfaz de operador (Pendiente):**
-   * *Advertencia:* Actualmente `SolicitarCodigoDeVinculacion` no posee una superficie expuesta directamente al operador (carece de subcomando CLI o de mensaje IPC cableado desde el núcleo Rust), siendo ejercitada únicamente por las pruebas del paquete Go. El operador debe documentar este vacío como una tarea pendiente en `docs/STATUS.md` y no inventar rutas inexistentes. Una vez desarrollada la CLI de administración en la etapa A-6, este paso se ejecutará con el comando correspondiente.
+3. **Superficie de invocación del operador:**
+   * El operador ejecuta `hexcell emparejar --metodo codigo_de_vinculacion` (o simplemente `hexcell emparejar`) en la terminal de la célula. El binario conecta al socket IPC, envía `orden_emparejar`, imprime el código de ocho caracteres recibido y aguarda el acuse terminal.
+   * *Superficie remota (Pendiente, Etapa A-6):* La invocación remota sin acceso a terminal (subcomandos de `hexcell-admin`, transporte remoto y autenticación) permanece pendiente para la etapa A-6.
 
 ---
 

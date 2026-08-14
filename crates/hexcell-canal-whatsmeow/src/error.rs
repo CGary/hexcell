@@ -43,6 +43,9 @@ pub enum ErrorCanalWhatsmeow {
     /// No se recibió el acuse del respaldo del sqlstore dentro del plazo previsto, o la
     /// conexión terminó antes de recibir respuesta.
     RespaldoSinAcuse,
+    /// No se recibió el acuse del emparejamiento dentro del plazo previsto, o la
+    /// conexión terminó antes de recibir respuesta.
+    EmparejamientoSinAcuse,
 }
 
 impl fmt::Display for ErrorCanalWhatsmeow {
@@ -70,6 +73,9 @@ impl fmt::Display for ErrorCanalWhatsmeow {
                 f,
                 "no se recibió acuse de respaldo del sqlstore dentro del plazo"
             ),
+            Self::EmparejamientoSinAcuse => {
+                write!(f, "no se recibió acuse de emparejamiento dentro del plazo")
+            }
         }
     }
 }
