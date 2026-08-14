@@ -1,0 +1,332 @@
+task_id: HEX-024
+summary: >-
+  Add orden_emparejar/codigo/acuse plumbing to AdaptadorWhatsmeow, plus a testable hexcell
+  library function and a std::env::args "emparejar" mode so an operator can pair locally.
+affected_files:
+  - crates/hexcell-canal-whatsmeow/src/error.rs
+  - crates/hexcell-canal-whatsmeow/src/conexion.rs
+  - crates/hexcell-canal-whatsmeow/src/adaptador.rs
+  - crates/hexcell-canal-whatsmeow/tests/comun/mod.rs
+  - crates/hexcell-canal-whatsmeow/tests/emparejamiento.rs
+  - crates/hexcell/src/emparejar.rs
+  - crates/hexcell/src/lib.rs
+  - crates/hexcell/src/main.rs
+  - crates/hexcell/tests/emparejamiento_ipc.rs
+  - docs/STATUS.md
+  - docs/runbook-canal-fase-a.md
+symbols:
+  - hexcell_canal_whatsmeow::error::ErrorCanalWhatsmeow::EmparejamientoSinAcuse
+  - hexcell_canal_whatsmeow::conexion::enviar_orden_emparejar
+  - hexcell_canal_whatsmeow::adaptador::AdaptadorWhatsmeow::ordenar_emparejamiento
+  - hexcell_canal_whatsmeow::adaptador::AdaptadorWhatsmeow::suscribir_estado
+  - hexcell_canal_whatsmeow::adaptador::EventoDeEmparejamiento (crate-private routing enum)
+  - hexcell_canal_whatsmeow::adaptador::leer_mensajes (CodigoEmparejamiento/AcuseEmparejamiento arms)
+  - hexcell::emparejar::ResultadoEmparejamiento
+  - hexcell::emparejar::ErrorModoEmparejar
+  - hexcell::emparejar::esperar_conexion_activa
+  - hexcell::emparejar::ordenar_emparejamiento
+  - hexcell::emparejar::ejecutar
+  - hexcell::emparejar::ejecutar_cli
+  - hexcell::main (early "emparejar" dispatch branch)
+dependencies:
+  - .ai/tasks/active/HEX-024-new-spec/00-spec.yaml
+  - docs/protocolo-ipc-nucleo-sidecar.md
+  - docs/runbook-canal-whatsmeow.md
+  - docs/STATUS.md
+  - docs/bitacora-de-descartes.md
+  - crates/hexcell-core/src/canal.rs
+  - crates/hexcell/src/configuracion.rs
+  - crates/hexcell/src/respaldo.rs
+  - crates/hexcell/src/preparacion.rs
+  - crates/hexcell/src/motor.rs
+  - crates/hexcell-canal-whatsmeow/src/mensajes.rs
+  - crates/hexcell-canal-whatsmeow/src/reconexion.rs
+  - crates/hexcell-canal-whatsmeow/tests/respaldo_sqlstore.rs
+  - crates/hexcell/tests/respaldo_sqlstore_ipc.rs
+  - crates/hexcell/tests/comun/mod.rs
+  - kitty-specs/hex-021/00-spec.yaml
+  - kitty-specs/hex-021/01-blueprint.yaml
+  - kitty-specs/hex-021/02-contract.yaml
+  - sidecar/internal/canal/emparejamiento.go
+  - sidecar/internal/configuracion/configuracion.go
+test_scenarios:
+  - statement: >-
+      AdaptadorWhatsmeow::ordenar_emparejamiento sends OrdenEmparejar with metodo="qr" exactly
+      as read by SidecarSimulado.leer_orden_emparejar.
+    covers: [AC-1]
+  - statement: >-
+      AdaptadorWhatsmeow::ordenar_emparejamiento sends OrdenEmparejar with
+      metodo="codigo_de_vinculacion" exactly as read by SidecarSimulado.
+    covers: [AC-1]
+  - statement: >-
+      The adaptador.rs dispatch loop routes codigo_emparejamiento and acuse_emparejamiento to
+      the pairing correlation instead of the current silent no-op arms (~lines 422-427).
+    covers: [AC-1]
+  - statement: >-
+      Multiple rotating codigo_emparejamiento messages (QR method) are each delivered to the
+      caller's handler, in arrival order, before the terminal acuse arrives.
+    covers: [AC-2]
+  - statement: >-
+      The codigo_de_vinculacion method delivers a single codigo_emparejamiento with
+      expira_en_ms 0; the caller-facing result surfaces this as an honestly-unknown expiry,
+      never inventing a value.
+    covers: [AC-2]
+  - statement: >-
+      A terminal acuse_emparejamiento with resultado="completado" resolves
+      ordenar_emparejamiento with Ok, releasing the pending-slot correlation.
+    covers: [AC-2, AC-1]
+  - statement: >-
+      A terminal acuse_emparejamiento with resultado="expirado" resolves
+      ordenar_emparejamiento with Ok(Expirado), releasing the pending-slot correlation.
+    covers: [AC-2, AC-1]
+  - statement: >-
+      A terminal acuse_emparejamiento with resultado="fallido" and a motivo resolves
+      ordenar_emparejamiento with Ok(Fallido{motivo}); motivo is surfaced verbatim and is free
+      of credentials (never the QR string or the vinculation code).
+    covers: [AC-2, AC-1]
+  - statement: >-
+      When no terminal acuse arrives before the caller-supplied plazo elapses,
+      ordenar_emparejamiento returns Err(EmparejamientoSinAcuse) and the adapter's pending
+      slot is cleared, so a later unrelated codigo/acuse is treated as an orphan, not
+      misdelivered to a stale caller.
+    covers: [AC-2, AC-5]
+  - statement: >-
+      A codigo_emparejamiento or acuse_emparejamiento arriving with no pairing flow in
+      progress (pending slot empty) is logged and dropped without closing the IPC connection
+      or affecting a later, real pairing flow.
+    covers: [AC-5]
+  - statement: >-
+      An acuse_emparejamiento with an unrecognized resultado string (neither completado,
+      expirado nor fallido) is logged and dropped by the adapter's dispatch loop: the
+      connection stays open, the pending correlation is NOT cleared, and a subsequent valid
+      terminal acuse still resolves the same in-flight ordenar_emparejamiento call.
+    covers: [AC-2, AC-5]
+  - statement: >-
+      hexcell::emparejar::ejecutar connects a fresh AdaptadorWhatsmeow to the given socket
+      path, waits for an Activa session (event-driven via suscribir_estado, no fixed sleep),
+      orders the pairing and returns the same typed ResultadoEmparejamiento the CLI prints.
+    covers: [AC-3]
+  - statement: >-
+      hexcell::emparejar::ejecutar_cli prints each received codigo_emparejamiento value in
+      Spanish (raw QR string with the honest external-renderer note, or the eight-character
+      code) and prints the expiry when known, or an honest "expiración desconocida" note when
+      expira_en_ms is 0.
+    covers: [AC-3]
+  - statement: >-
+      hexcell::emparejar::ejecutar_cli exits with ExitCode::SUCCESS only when the terminal
+      result is Completado; Expirado and Fallido{motivo} print a sanitized Spanish message to
+      stderr and exit non-zero.
+    covers: [AC-3]
+  - statement: >-
+      Running the hexcell binary with argv that does not start with "emparejar" reaches
+      Configuracion::desde_entorno() exactly as before this task, unchanged: the existing
+      configuracion.rs, motor.rs and preparacion.rs test suites keep passing unmodified,
+      proving the normal mode's behavior is bit-for-bit unaffected.
+    covers: [AC-4]
+  - statement: >-
+      hexcell::emparejar's pairing orchestration is exercised entirely through library
+      functions (ejecutar / ordenar_emparejamiento) called directly from
+      crates/hexcell/tests/emparejamiento_ipc.rs; main.rs itself contains no pairing logic,
+      only argument dispatch.
+    covers: [AC-4]
+  - statement: >-
+      The 7 standard verification commands pass, including the hexcell-core tree isolation
+      check and the sidecar gofmt/build/vet/test check with zero Go diffs.
+    covers: [AC-7]
+strategy:
+  - step: 1
+    action: >-
+      Add ErrorCanalWhatsmeow::EmparejamientoSinAcuse (transport-layer averia, mirrors
+      RespaldoSinAcuse) with its Display arm; no other variant changes.
+    files:
+      - crates/hexcell-canal-whatsmeow/src/error.rs
+  - step: 2
+    action: >-
+      Add conexion::enviar_orden_emparejar, a thin transport function over the shared writer
+      that serializes OrdenEmparejar (existing struct, untouched) and writes it framed by
+      newline, mirroring enviar_orden_respaldo_sqlstore's shape exactly.
+    files:
+      - crates/hexcell-canal-whatsmeow/src/conexion.rs
+  - step: 3
+    action: >-
+      Extend AdaptadorWhatsmeow with a single-slot pending correlation field
+      (Arc<tokio::sync::Mutex<Option<mpsc::Sender<EventoDeEmparejamiento>>>>, not a HashMap
+      keyed by ronda: the wire protocol carries no correlation id for pairing, and only one
+      pairing flow can be in flight at a time). Thread the new Arc through arrancar,
+      bucle_de_conexion and leer_mensajes signatures exactly as respaldo_pendiente already is.
+      Add a crate-private enum EventoDeEmparejamiento { Codigo(CodigoEmparejamiento),
+      Acuse(AcuseEmparejamiento) } used only to route from the read loop to the waiting
+      public method; it never leaves the crate.
+    files:
+      - crates/hexcell-canal-whatsmeow/src/adaptador.rs
+  - step: 4
+    action: >-
+      Replace the two no-op leer_mensajes arms (CodigoEmparejamiento at ~422-424,
+      AcuseEmparejamiento at ~427-429) with real dispatch: on CodigoEmparejamiento, forward to
+      the pending sender if present (best-effort; log and drop if the channel is gone), else
+      log-and-drop as an orphan. On AcuseEmparejamiento, first validate resultado is one of
+      {"completado","expirado","fallido"}; if unrecognized, log-and-drop WITHOUT touching the
+      pending slot (fail closed, the flow keeps waiting for a real terminal message or its own
+      plazo); if valid and a pending sender exists, clear the slot (take it out) THEN forward
+      the acuse (best-effort send); if valid but no pending sender exists, log-and-drop as an
+      orphan. No arm ever returns Err or closes the connection.
+    files:
+      - crates/hexcell-canal-whatsmeow/src/adaptador.rs
+  - step: 5
+    action: >-
+      Add two new public methods on AdaptadorWhatsmeow: suscribir_estado() -> watch::Receiver
+      <EstadoSesion> (a clone of the existing internal receiver, for event-driven waiting
+      without exposing internal fields) and ordenar_emparejamiento(&self, metodo: &str, plazo:
+      Duration, manejador: impl FnMut(&CodigoEmparejamiento) + Send) -> Result
+      <AcuseEmparejamiento, ErrorCanalWhatsmeow>. The method registers the pending sender
+      BEFORE sending the order (race-free, mirrors ordenar_respaldo_sqlstore), sends
+      OrdenEmparejar via enviar_orden_emparejar, then loops on the receiver against a SINGLE
+      deadline computed once from `plazo` (tokio::time::Instant::now() + plazo; the deadline is
+      never reset when a new rotating code arrives). Each Codigo event invokes `manejador`
+      synchronously and continues the loop; the Acuse event returns Ok(acuse) immediately
+      (cleanup already happened in leer_mensajes' dispatch, per step 4). Both the deadline
+      elapsing and the channel closing unexpectedly clear the pending slot and return
+      Err(EmparejamientoSinAcuse); connection loss during the wait is NOT special-cased --
+      it is subsumed by the same plazo timeout, exactly like ordenar_respaldo_sqlstore.
+    files:
+      - crates/hexcell-canal-whatsmeow/src/adaptador.rs
+  - step: 6
+    action: >-
+      Add SidecarSimulado test helpers mirroring the existing respaldo helpers exactly:
+      leer_orden_emparejar() -> OrdenEmparejar, enviar_codigo_emparejamiento(metodo, valor,
+      expira_en_ms), enviar_acuse_emparejamiento(resultado, motivo).
+    files:
+      - crates/hexcell-canal-whatsmeow/tests/comun/mod.rs
+  - step: 7
+    action: >-
+      Write crates/hexcell-canal-whatsmeow/tests/emparejamiento.rs, one #[tokio::test] per
+      test_scenario above touching the adapter layer (AC-1, AC-2, AC-5), following the
+      SidecarSimulado + tokio::spawn(adaptador.ordenar_emparejamiento(...)) pattern already
+      established in tests/respaldo_sqlstore.rs; no test uses tokio::time::sleep to
+      synchronize -- waiting happens on the spawned task's join handle or on explicit message
+      exchange with SidecarSimulado.
+    files:
+      - crates/hexcell-canal-whatsmeow/tests/emparejamiento.rs
+  - step: 8
+    action: >-
+      Add crates/hexcell/src/emparejar.rs (new library module, Application Service layer over
+      the adapter): ResultadoEmparejamiento (Completado/Expirado/Fallido{motivo}, translated
+      from the raw AcuseEmparejamiento.resultado string the same way
+      hexcell::respaldo::ordenar_respaldo_sqlstore already translates
+      AcuseRespaldoSqlstore.resultado -- including a defensive catch-all arm, since the
+      adapter layer already fail-closed filters unknown values before a terminal Ok ever
+      surfaces here); ErrorModoEmparejar (MetodoInvalido, ConexionNoEstablecida, wraps
+      ErrorCanalWhatsmeow) with Display/Error impls that never echo credential-bearing fields;
+      esperar_conexion_activa(adaptador, plazo) polling AdaptadorWhatsmeow::suscribir_estado()
+      via receptor.changed() under a single deadline (event-driven, no sleep loop);
+      ordenar_emparejamiento(adaptador, metodo, plazo, manejador) validating metodo is one of
+      the two wire values before delegating to the adapter method and translating the result;
+      ejecutar(ruta_socket, id_celula, metodo, plazo, manejador) building a fresh
+      AdaptadorWhatsmeow (capacity + Retroceso::por_omision(), no new tunable), calling
+      arrancar(), esperar_conexion_activa() then ordenar_emparejamiento() against the SAME
+      overall `plazo` (connect time is not budgeted separately, to avoid inventing a second
+      constant); and ejecutar_cli(argumentos: &[String]) -> ExitCode, the only place that
+      touches std::env::var/println!/eprintln!, parsing `--metodo <valor>` (default
+      "codigo_de_vinculacion" when absent, per the spec's primary-path decision), reading
+      HEXCELL_ID_CELULA (reusing crate::configuracion's existing pub const, not adding a new
+      one), a locally-scoped HEXCELL_SOCKET_IPC env var with the exact default path
+      "/var/lib/hexcell/ipc/sidecar.sock" documented in
+      docs/protocolo-ipc-nucleo-sidecar.md section 2 (mirroring the sidecar's own
+      HEXCELL_SOCKET_IPC convention, never inventing a new name), and an optional
+      HEXCELL_EMPAREJAR_PLAZO_SEGUNDOS overriding a documented 120s default -- the library
+      functions above never hardcode a timeout themselves, only this CLI composition point
+      does, as the caller supplying `plazo`.
+    files:
+      - crates/hexcell/src/emparejar.rs
+  - step: 9
+    action: Register the new module in the crate's public API surface.
+    files:
+      - crates/hexcell/src/lib.rs
+  - step: 10
+    action: >-
+      In main.rs, add the dispatch at the very top of async fn main(), strictly before the
+      existing Configuracion::desde_entorno() call: read std::env::args() into a Vec<String>,
+      and if argumentos.get(1) is Some("emparejar"), return
+      hexcell::emparejar::ejecutar_cli(&argumentos[2..]).await immediately. Every existing
+      line in main() after that point, and every existing import, stays byte-for-byte
+      unchanged -- the only new lines are the args read, the match/if, the early return, and
+      the one new `use hexcell::emparejar;`-style import needed to call it.
+    files:
+      - crates/hexcell/src/main.rs
+  - step: 11
+    action: >-
+      Add crates/hexcell/tests/emparejamiento_ipc.rs mirroring
+      tests/respaldo_sqlstore_ipc.rs's own local FakeSidecar double (that file already
+      duplicates a socket double instead of reusing tests/comun -- follow that same
+      established local-double pattern for consistency), covering: ejecutar() end-to-end with
+      codigo_de_vinculacion (single code, expira_en_ms 0, completado), ejecutar() end-to-end
+      with qr (multiple rotating codes observed by the handler in order, completado),
+      expirado and fallido{motivo} terminal outcomes, and the plazo timeout path when the
+      fake sidecar never answers. At least one test asserts that a Vec<String> built entirely
+      from the tests' own literals (not re-imported from the message types) is never used to
+      assert on wire content -- assertions read the fields the fake sidecar itself parsed, to
+      avoid a tautological test.
+    files:
+      - crates/hexcell/tests/emparejamiento_ipc.rs
+  - step: 12
+    action: >-
+      Append one new Definido entry to docs/STATUS.md dated 2026-08-13, traced to plan task 4
+      of A-3 and FR-12, recording that the operator pairing surface was pulled forward from
+      its A-6 parking by explicit human decision of 2026-08-13. Edit (not delete) the existing
+      "Superficie invocable del operador para SolicitarCodigoDeVinculacion" Pendiente entry
+      (2026-08-12, HEX-022) to record that the LOCAL operator surface (this task's `hexcell
+      emparejar` mode) now exists, while explicitly keeping the remote no-server-terminal
+      surface (hexcell-admin subcommands, stage A-6) honestly pending -- do not delete or
+      rewrite the rest of that entry's history, per the file's own append-only convention for
+      Definido entries; this is an edit to a still-open Pendiente entry, which the file's
+      conventions already treat differently from a closed Definido one.
+    files:
+      - docs/STATUS.md
+  - step: 13
+    action: >-
+      Update docs/runbook-canal-fase-a.md section 3's "Brecha de interfaz de operador
+      (Pendiente)" caveat (currently stating SolicitarCodigoDeVinculacion has no CLI
+      subcommand or wired IPC message) to point at the new `hexcell emparejar --metodo
+      codigo_de_vinculacion` mode as the now-existing local invocation path, while still
+      noting that the remote/no-terminal-access surface remains stage A-6 as before -- do not
+      touch any other section of the runbook (steps 4-5 on the pilot's phone, the health
+      criteria) which describe unrelated, still-accurate procedure.
+    files:
+      - docs/runbook-canal-fase-a.md
+risks:
+  - >-
+    No prior failed task overlaps these files (quorum analyze failure-lookup returned no
+    matches against .ai/tasks/failed/, which is currently empty); no lessons to inherit from
+    a direct precedent failure.
+  - >-
+    main.rs is touched here, reversing HEX-021's own forbid list (which explicitly forbade
+    main.rs/preparacion.rs/motor.rs because "who triggers respaldo in production is out of
+    scope"). This is a deliberate, spec-directed divergence for THIS task only (AC-3/AC-4
+    explicitly want the CLI dispatch in main.rs) -- preparacion.rs and motor.rs stay out of
+    scope and forbidden exactly as before, since the emparejar mode never starts the health
+    server or the engine.
+  - >-
+    The fail-closed "unknown resultado string" behavior has no direct precedent in HEX-021
+    (respaldo is single request/response, so an unrecognized resultado there is safely
+    terminal -- there is nothing left to wait for). For the STREAM shape here, copying that
+    same "treat unknown as Fallido and return" pattern into the adapter's dispatch loop would
+    be a real behavior bug: it would end the flow because of a message that never should have
+    been trusted. The blueprint deliberately places that translation two layers apart from the
+    fail-closed drop (drop lives in adaptador.rs's leer_mensajes; translation of the finally-
+    valid resultado lives in hexcell::emparejar) specifically to prevent that conflation, but
+    it is an easy line to blur during implementation and worth a reviewer's explicit check.
+  - >-
+    No Rust code in this tree reads HEXCELL_SOCKET_IPC today (only the Go sidecar does); this
+    task introduces the Rust-side read of that exact same variable name, scoped locally to
+    emparejar.rs rather than the shared Configuracion struct. If a future task wires
+    AdaptadorWhatsmeow into the normal engine path (CanalSeleccionado gains a Whatsmeow
+    variant), that task will likely want to promote this read into configuracion.rs properly;
+    this task deliberately does not do that promotion, to keep AC-4's "normal mode untouched"
+    guarantee trivially checkable by inspection (configuracion.rs is not in the touch list at
+    all).
+  - >-
+    AC-7 asks that any genuine sidecar gap found during exploration be recorded as a risk
+    instead of silently fixed. None was found: HEX-023 already routes orden_emparejar through
+    procesarOrdenEmparejar to the existing QR/SolicitarCodigoDeVinculacion logic in
+    sidecar/internal/canal/emparejamiento.go, and the wire structs on both sides already match
+    field-by-field. No Go changes are anticipated by this blueprint.

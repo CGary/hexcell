@@ -1,0 +1,183 @@
+task_id: HEX-024
+summary: >-
+  Operator pairing surface: hexcell emparejar mode + adapter plumbing for
+  orden_emparejar/codigo/acuse with QR rotation, deterministic tests; real pairing deferred
+  to lab task.
+goal: >-
+  Close the Rust-side plumbing that today silently ignores CodigoEmparejamiento and
+  AcuseEmparejamiento in adaptador.rs (~lines 422-427): add a public
+  AdaptadorWhatsmeow::ordenar_emparejamiento method that orders orden_emparejar
+  (metodo qr | codigo_de_vinculacion) and follows the resulting STREAM of rotating
+  codigo_emparejamiento messages through to one terminal acuse_emparejamiento, with the same
+  pending-correlation discipline as HEX-021's ordenar_respaldo_sqlstore. On top of that, add a
+  testable crates/hexcell::emparejar library function and a plain std::env::args "emparejar"
+  mode in main.rs so an operator can run `hexcell emparejar --metodo codigo_de_vinculacion`
+  locally, see each pairing value and the terminal outcome in Spanish, and exit accordingly --
+  so the lab session of plan task 15 can pair without writing code. The normal cell mode stays
+  provably untouched when the pairing mode is not invoked.
+
+read:
+  - .ai/tasks/active/HEX-024-new-spec/00-spec.yaml
+  - .ai/tasks/active/HEX-024-new-spec/01-blueprint.yaml
+  - docs/protocolo-ipc-nucleo-sidecar.md
+  - docs/runbook-canal-fase-a.md
+  - docs/runbook-canal-whatsmeow.md
+  - docs/STATUS.md
+  - docs/bitacora-de-descartes.md
+  - crates/hexcell-core/src/canal.rs
+  - crates/hexcell/src/configuracion.rs
+  - crates/hexcell/src/respaldo.rs
+  - crates/hexcell/src/preparacion.rs
+  - crates/hexcell/src/motor.rs
+  - crates/hexcell-canal-whatsmeow/src/mensajes.rs
+  - crates/hexcell-canal-whatsmeow/src/reconexion.rs
+  - crates/hexcell-canal-whatsmeow/tests/respaldo_sqlstore.rs
+  - crates/hexcell/tests/respaldo_sqlstore_ipc.rs
+  - crates/hexcell/tests/comun/mod.rs
+  - kitty-specs/hex-021/00-spec.yaml
+  - kitty-specs/hex-021/01-blueprint.yaml
+  - kitty-specs/hex-021/02-contract.yaml
+  - sidecar/internal/canal/emparejamiento.go
+  - sidecar/internal/configuracion/configuracion.go
+  - sidecar/internal/servidor/manejo.go
+
+touch:
+  - crates/hexcell-canal-whatsmeow/src/error.rs
+  - crates/hexcell-canal-whatsmeow/src/conexion.rs
+  - crates/hexcell-canal-whatsmeow/src/adaptador.rs
+  - crates/hexcell-canal-whatsmeow/tests/comun/mod.rs
+  - crates/hexcell-canal-whatsmeow/tests/emparejamiento.rs
+  - crates/hexcell/src/emparejar.rs
+  - crates/hexcell/src/lib.rs
+  - crates/hexcell/src/main.rs
+  - crates/hexcell/tests/emparejamiento_ipc.rs
+  - docs/STATUS.md
+  - docs/runbook-canal-fase-a.md
+
+forbid:
+  files:
+    - docs/protocolo-ipc-nucleo-sidecar.md
+    - docs/contrato-ipc-respaldo-del-sqlstore.md
+    - crates/hexcell-canal-whatsmeow/src/mensajes.rs
+    - crates/hexcell-core/src/canal.rs
+    - crates/hexcell/src/configuracion.rs
+    - crates/hexcell/src/preparacion.rs
+    - crates/hexcell/src/motor.rs
+    - crates/hexcell/src/respaldo.rs
+    - crates/hexcell-canal-simulado/src/lib.rs
+    - crates/hexcell-storage/src/respaldo.rs
+    - crates/hexcell-storage/src/pools.rs
+    - crates/hexcell-storage/src/almacen_de_identidad.rs
+    - crates/hexcell/Cargo.toml
+    - crates/hexcell-canal-whatsmeow/Cargo.toml
+    - Cargo.toml
+    - Cargo.lock
+    - docs/runbook-canal-whatsmeow.md
+    - docs/runbook-restauracion-de-celula.md
+    - docs/adr/README.md
+    - sidecar/internal/canal/emparejamiento.go
+    - sidecar/internal/canal/canal.go
+    - sidecar/internal/servidor/manejo.go
+    - sidecar/internal/ipc/mensajes.go
+    - sidecar/internal/configuracion/configuracion.go
+    - sidecar/main.go
+  behaviors:
+    - "Do NOT modify docs/protocolo-ipc-nucleo-sidecar.md or docs/contrato-ipc-respaldo-del-sqlstore.md in any way; both are normative and closed (wire version 4 stays 4, no field/type change)."
+    - "Do NOT change crates/hexcell-canal-whatsmeow/src/mensajes.rs. OrdenEmparejar, CodigoEmparejamiento and AcuseEmparejamiento already exist and already match the protocol doc field-by-field; this task implements HANDLING of the existing structs, never their shape. Wire literals (\"orden_emparejar\", \"qr\", \"codigo_de_vinculacion\", \"completado\", \"expirado\", \"fallido\") are read from the actual struct field values the SidecarSimulado double parses/emits in tests, never hand-typed twice as an independent literal that could silently drift from production code (tautology risk)."
+    - "Do NOT touch any Go file under sidecar/. HEX-023 already routes orden_emparejar to the existing pairing logic in sidecar/internal/canal/emparejamiento.go; this task is Rust-side plumbing plus the operator entry point only. If a genuine sidecar gap is found, record it in the implementation notes as a risk -- do not silently patch Go."
+    - "Do NOT change crates/hexcell-core/src/canal.rs. Do NOT reuse or reshape the ChannelAdapter/CicloDeVidaSesion trait's iniciar_emparejamiento single-shot signature for this stream; add a new public method directly on AdaptadorWhatsmeow instead. The port stays exactly as it is."
+    - "Do NOT add a CLI argument-parsing crate (clap or otherwise) to any Cargo.toml; parse argv with plain std::env::args() only. Do NOT add a QR-rendering crate; print the raw QR string with an honest Spanish note that graphical rendering is not built in."
+    - "Do NOT modify crates/hexcell/src/configuracion.rs or the shared Configuracion struct. The emparejar mode reads its own HEXCELL_SOCKET_IPC (mirroring the sidecar's existing env var name and its documented default path exactly, docs/protocolo-ipc-nucleo-sidecar.md section 2) and reuses the existing HEXCELL_ID_CELULA constant from crate::configuracion, both read locally inside emparejar.rs/main.rs, not through Configuracion::desde_entorno()."
+    - "Do NOT modify crates/hexcell/src/preparacion.rs or crates/hexcell/src/motor.rs. The emparejar mode connects the adapter and orders the pairing directly; it never starts the health server or the messaging engine."
+    - "Do NOT change any existing line in main.rs's current body (the Configuracion::desde_entorno() call onward). The new dispatch is additive only, at the very top of async fn main(), before the first existing line, and returns immediately when invoked -- every existing line, in the same order, is otherwise untouched."
+    - "Do NOT treat an acuse_emparejamiento with an unrecognized resultado value as terminal in the adapter's dispatch loop (crates/hexcell-canal-whatsmeow/src/adaptador.rs): log and drop it, leave the pending correlation slot untouched, and keep waiting for a real terminal message or the caller's own plazo. This differs from HEX-021's respaldo translation on purpose (that flow is request/response with nothing left to wait for; this one is a stream) -- do not copy the respaldo pattern of turning an unrecognized resultado into an immediate Fallido return at the adapter layer."
+    - "Do NOT reset or extend the plazo deadline when a new rotating codigo_emparejamiento arrives. One deadline, computed once at the start of AdaptadorWhatsmeow::ordenar_emparejamiento, covers the whole flow including every rotation."
+    - "Do NOT hardcode a timeout inside crates/hexcell-canal-whatsmeow/src/adaptador.rs or crates/hexcell/src/emparejar.rs's library functions (ordenar_emparejamiento, ejecutar, esperar_conexion_activa): plazo is always a caller-supplied Duration parameter. A documented default (120 seconds) and its HEXCELL_EMPAREJAR_PLAZO_SEGUNDOS override may exist ONLY in the CLI composition point (ejecutar_cli), which is the caller."
+    - "Do NOT let any printed value, log line, error Display or motivo field carry a credential: the pairing value itself (QR string / eight-character code) is meant to be shown to the operator by design, but the cell's phone number/JID never appears in any IPC message, log line or printed output (adr-0010), and acuse_emparejamiento.motivo is only ever the sidecar's own sanitized description, never re-derived from raw message content."
+    - "Do NOT synchronize any new test with tokio::time::sleep or std::thread::sleep as a substitute for waiting on an actual event (message exchange, channel receipt, join handle, or a deliberately tiny plazo whose expiry IS the event under test)."
+    - "Do NOT write any user-visible content (Rust doc comments, CLI stdout/stderr text, log messages, docs/STATUS.md prose, docs/runbook-canal-fase-a.md prose, commit message) in English; keep it in Spanish. Only this contract's and the blueprint's own YAML prose stays in English. Use absolute dates (2026-08-13), never relative ones."
+    - "Do NOT introduce mass-sending-provider vocabulary (jitter, warm-up/calentamiento, proxies, VPN, IP rotation) anywhere, and never write or imply that Fase B replaces, retires, or closes the sidecar channel."
+    - "Do NOT delete or rewrite the existing docs/STATUS.md Definido entries; append the one new Definido entry for this task, and edit ONLY the still-open \"Superficie invocable del operador para SolicitarCodigoDeVinculacion\" Pendiente entry (2026-08-12, HEX-022) to record the local surface now exists, keeping the remote/A-6 surface honestly pending."
+    - "Do NOT touch any section of docs/runbook-canal-fase-a.md other than the section 3 \"Brecha de interfaz de operador (Pendiente)\" caveat."
+    - "Do NOT attempt pairing against a real channel, a real whatsmeow sidecar process, or the lab-number rehearsal (plan task 15); every test in this task runs against SidecarSimulado / the local FakeSidecar double, deterministic and channel-free."
+
+verify:
+  commands:
+    - cargo fmt --check
+    - cargo build --workspace
+    - cargo clippy --workspace -- -D warnings
+    - cargo test --workspace
+    - test "$(cargo tree -p hexcell-core | wc -l)" = "1"
+    - cargo test -p hexcell-core --doc 2>&1 | grep -q "compile fail"
+    - cd sidecar && test -z "$(gofmt -l .)" && go build ./... && go vet ./... && go test ./...
+
+acceptance:
+  human_gate: true
+
+limits:
+  max_files_changed: 11
+  # Honest per-file estimate (new files are mostly-new content; existing files are the diff
+  # of the described edit, not the whole file):
+  #   crates/hexcell-canal-whatsmeow/src/error.rs                    ~10  (one new variant +
+  #     Display arm, mirrors RespaldoSinAcuse)
+  #   crates/hexcell-canal-whatsmeow/src/conexion.rs                 ~18  (enviar_orden_emparejar,
+  #     mirrors enviar_orden_respaldo_sqlstore)
+  #   crates/hexcell-canal-whatsmeow/src/adaptador.rs                ~190 (new field + threading
+  #     through arrancar/bucle_de_conexion/leer_mensajes signatures, two real dispatch arms
+  #     replacing no-ops, EventoDeEmparejamiento enum, suscribir_estado(),
+  #     ordenar_emparejamiento())
+  #   crates/hexcell-canal-whatsmeow/tests/comun/mod.rs              ~55  (three new helpers,
+  #     mirrors the three respaldo helpers)
+  #   crates/hexcell-canal-whatsmeow/tests/emparejamiento.rs (new)   ~300 (7-8 test fns: metodo
+  #     qr/codigo_de_vinculacion exactness, QR rotation order, completado/expirado/fallido,
+  #     plazo timeout cleanup, orphan codigo/acuse, unknown resultado fail-closed)
+  #   crates/hexcell/src/emparejar.rs (new)                          ~230 (ResultadoEmparejamiento,
+  #     ErrorModoEmparejar, esperar_conexion_activa, ordenar_emparejamiento (layer 2),
+  #     ejecutar, ejecutar_cli with argv/env parsing and Spanish printing)
+  #   crates/hexcell/src/lib.rs                                        ~2  (pub mod emparejar;)
+  #   crates/hexcell/src/main.rs                                     ~20  (import + early dispatch
+  #     branch only)
+  #   crates/hexcell/tests/emparejamiento_ipc.rs (new)               ~240 (local FakeSidecar
+  #     double, mirrors respaldo_sqlstore_ipc.rs's own duplicated double + 4-5 test fns)
+  #   docs/STATUS.md                                                 ~20  (one new Definido entry
+  #     + edit to the existing Pendiente entry)
+  #   docs/runbook-canal-fase-a.md                                   ~10  (rewrite of one caveat
+  #     paragraph in section 3)
+  # Honest total ~1095 lines. Setting max_diff_lines with ~35% headroom over that (this repo's
+  # doc-comment density runs long on every file this task touches, same lesson HEX-021 recorded
+  # as LES-2026-08-11-000000024: an under-sized contract forces the implementer to violate it --
+  # and adaptador.rs's signature-threading change here touches MORE call sites than HEX-021's
+  # equivalent, since leer_mensajes' two no-op arms become real branching logic, not just a
+  # field read).
+  max_diff_lines: 1500
+  per_class:
+    - glob: crates/hexcell-canal-whatsmeow/src/error.rs
+      max_diff_lines: 18
+    - glob: crates/hexcell-canal-whatsmeow/src/conexion.rs
+      max_diff_lines: 30
+    - glob: crates/hexcell-canal-whatsmeow/src/adaptador.rs
+      max_diff_lines: 250
+    - glob: crates/hexcell-canal-whatsmeow/tests/comun/mod.rs
+      max_diff_lines: 75
+    - glob: crates/hexcell-canal-whatsmeow/tests/emparejamiento.rs
+      max_diff_lines: 390
+    - glob: crates/hexcell/src/emparejar.rs
+      max_diff_lines: 300
+    - glob: crates/hexcell/src/lib.rs
+      max_diff_lines: 6
+    - glob: crates/hexcell/src/main.rs
+      max_diff_lines: 35
+    - glob: crates/hexcell/tests/emparejamiento_ipc.rs
+      max_diff_lines: 310
+    - glob: docs/STATUS.md
+      max_diff_lines: 32
+    - glob: docs/runbook-canal-fase-a.md
+      max_diff_lines: 20
+
+execution:
+  mode: worktree_edit
+  branch: ai/HEX-024
+
+retry_policy:
+  max_attempts: 2
+  escalate_after: 2

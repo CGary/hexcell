@@ -1,0 +1,42 @@
+acceptance:
+    - id: AC-1
+      statement: 'The WhatsmeowAdapter (crates/hexcell-canal-whatsmeow) can order a pairing: a public method sends orden_emparejar with metodo "qr" or "codigo_de_vinculacion" (exact wire strings from docs/protocolo-ipc-nucleo-sidecar.md; the cell''s phone number does NOT travel in the message - the sidecar reads it from its own configuration per adr-0010), and the adaptador.rs dispatch loop delivers CodigoEmparejamiento and AcuseEmparejamiento to the pairing flow instead of silently ignoring them (current adaptador.rs ~lines 422-427), following the same correlation discipline as the HEX-021 respaldo acuse.'
+    - id: AC-2
+      statement: 'The pairing flow handles the QR rotation correctly: the QR method delivers MULTIPLE codigo_emparejamiento messages over time (whatsmeow rotates the QR roughly every 20 seconds) and each one is surfaced to the caller as it arrives, until the terminal acuse_emparejamiento (completado, expirado or fallido) closes the flow. The code method delivers a single eight-character code with expira_en_ms 0 (expiry unknown, whatsmeow does not expose it) - surfaced honestly as such. Waiting is bounded by a caller-supplied plazo (Duration parameter, never a hardcoded constant).'
+    - id: AC-3
+      statement: 'The hexcell cell binary gains an operator pairing mode: invoked with plain std::env::args parsing (choosing a CLI argument library remains a deliberately deferred decision - do not introduce one), e.g. "hexcell emparejar --metodo codigo_de_vinculacion" (exact UX fixed by the blueprint; codigo_de_vinculacion is the PRIMARY documented path, matching the PairPhone runbook), it connects the adapter to the cell''s IPC socket, sends the order, prints each received pairing value to stdout in Spanish (the eight-character code, or the raw QR string with an honest note that graphical QR rendering is not built in and any external QR renderer can display it), prints expiry when known, waits for the terminal acuse and exits 0 on completado / non-zero otherwise with the sanitized motivo printed.'
+    - id: AC-4
+      statement: 'The normal cell mode is untouched: running the binary without the pairing mode arguments behaves exactly as today (the pairing mode is additive; no behavior change in motor/procesador/salud paths). The pairing logic lives in a testable library function; main.rs only dispatches to it.'
+    - id: AC-5
+      statement: 'Rust integration tests against the existing SidecarSimulado double cover: the order carrying each metodo string exactly; multiple rotating QR codes delivered in arrival order; the terminal acuse for completado, expirado and fallido (with motivo surfaced and free of credentials); the plazo timeout path cleaning up its pending state; and an acuse/codigo arriving with no pairing in progress being logged and dropped without closing the connection. Pairing against a REAL channel stays EXPLICITLY DEFERRED to the lab-number task (plan task 15).'
+    - id: AC-6
+      statement: 'docs/STATUS.md reflects the change: a Definido entry (dated 2026-08-13, traced to plan task 4 of A-3 and FR-12) recording that the operator surface was pulled forward from its A-6 parking by explicit human decision of 2026-08-13; the existing Pendiente "Superficie invocable del operador para SolicitarCodigoDeVinculacion" updated per the file''s conventions to record that the LOCAL operator surface now exists, keeping honestly pending the remote no-server-terminal surface (stage A-6) - and docs/runbook-canal-fase-a.md''s honest caveat about the missing operator surface updated to point at the new mode.'
+    - id: AC-7
+      statement: 'The 7 standard verification commands pass (cargo fmt --check, cargo build --workspace, cargo clippy --workspace -- -D warnings, cargo test --workspace, hexcell-core tree isolation check, doc compile-fail test, cd sidecar && gofmt check && go build ./... && go vet ./... && go test ./...). No Go changes are expected; if the blueprint finds a genuine sidecar gap it is recorded as a risk, not silently fixed.'
+constraints:
+    - 'The protocol docs/protocolo-ipc-nucleo-sidecar.md (v1.3, wire version 4) is CLOSED: no field, type or version changes; sidecar/internal/ipc/mensajes.go and crates/hexcell-canal-whatsmeow/src/mensajes.rs message TYPES stay untouched (the Rust pairing message structs already exist - this task implements HANDLING).'
+    - 'The sidecar side is already wired (HEX-023 routes orden_emparejar to the existing pairing logic): this task is Rust-side plumbing + the operator entry point. No Go behavior changes.'
+    - 'No new third-party dependencies: no CLI argument library (std::env::args only - the library choice is a deliberately deferred A-1 decision), no QR rendering crate (the raw QR string is printed with an honest note).'
+    - 'The pairing value (QR string / eight-character code) IS meant to be shown to the operator; everything else keeps the credential discipline: motivo and log lines never carry credentials, and sessions.db/knowledge never see transport identifiers (adr-0010).'
+    - No .db files versioned. No changes to the pinned whatsmeow commit. No hardcoded timeouts (plazo caller-supplied; the mode''s own default documented and configurable via existing configuration conventions if one is needed).
+    - Never introduce mass-sending-provider vocabulary (jitter, warm-up, proxies, VPN, IP rotation); never write that Fase B replaces or retires the sidecar channel.
+    - Everything user-visible (CLI output, code comments, log messages, STATUS.md and runbook prose, commit message) in Spanish; artifact YAML prose in English. Dates absolute (2026-08-13).
+    - Consult docs/bitacora-de-descartes.md before proposing anything resembling a previously discarded idea.
+invariants:
+    - 'The cell''s phone number never travels in IPC messages; the JID never crosses the port boundary (adr-0010).'
+    - 'Fail closed: unknown resultado values, undecodable frames and orphan codigo/acuse messages are logged and dropped without closing the connection or crashing the mode.'
+    - 'The normal cell mode''s behavior is bit-for-bit unaffected when the pairing mode is not invoked.'
+    - 'The closed set of 11 message types and wire version 4 stay intact; all-fields-present encoding unchanged.'
+    - 'Correlation state is released on every exit path (timeout, error, terminal acuse) so a later unrelated message cannot be misdelivered.'
+    - All user-visible content in Spanish with absolute dates; no invented numbers.
+non_goals:
+    - 'The remote no-server-terminal operator surface (stage A-6 packaging: hexcell-admin subcommands, remote transport, auth) - stays pending.'
+    - 'Pairing against a real channel and the lab session itself (plan task 15 - blocked only by the WhatsApp number).'
+    - Graphical QR rendering in the terminal.
+    - Choosing a CLI argument-parsing library.
+    - Any Go/sidecar changes.
+    - Fase B / Cloud API work.
+goal: 'Give the operator a local invocable surface for pairing (pulled forward from A-6 by human decision of 2026-08-13): the hexcell binary gains an emparejar mode that orders orden_emparejar through its own adapter, prints each rotating QR string or the eight-character code, waits for the terminal acuse and exits accordingly - closing the Rust-side plumbing that today ignores CodigoEmparejamiento/AcuseEmparejamiento - so the lab session of task 15 can pair without writing code.'
+risk: medium
+summary: 'Operator pairing surface: hexcell emparejar mode + adapter plumbing for orden_emparejar/codigo/acuse with QR rotation, deterministic tests; real pairing deferred to lab task.'
+task_id: HEX-024
