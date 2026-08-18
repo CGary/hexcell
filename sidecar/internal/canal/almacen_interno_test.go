@@ -169,8 +169,11 @@ func TestElNumeroDeTelefonoNuncaLlegaAlRegistro(t *testing.T) {
 
 	sesion, salida := sesionVaciaDePrueba(t)
 
-	if _, err := sesion.SolicitarCodigoDeVinculacion(context.Background(), numero); err == nil {
-		t.Fatalf("se esperaba el rechazo de un número que empieza con 0")
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	if _, err := sesion.SolicitarCodigoDeVinculacion(ctx, numero); err == nil {
+		t.Fatalf("se esperaba un error al solicitar código de vinculación con contexto cancelado")
 	}
 
 	texto := salida.String()

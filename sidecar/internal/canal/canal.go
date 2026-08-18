@@ -95,7 +95,7 @@ func NuevaSesion(ctx context.Context, contenedor *sqlstore.Container, reg *regis
 		return nil, ErrRegistroNoEspecificado
 	}
 
-	dispositivo, err := contenedor.GetFirstDevice(ctx)
+	dispositivo, err := contenedor.GetFirstDevice(context.Background())
 	if err != nil {
 		return nil, fmt.Errorf("canal: no se pudo obtener el dispositivo del almacén: %w", err)
 	}
@@ -165,9 +165,11 @@ func (s *Sesion) RegistrarManejador(supervisores ...*Supervisor) uint32 {
 
 // Conectar abre el websocket saliente hacia WhatsApp.
 //
-// Ningún test de esta tarea la llama: sin credenciales emparejadas whatsmeow no puede completar el
-// inicio de sesión, y probar contra el canal real es la tarea 15 del plan. El punto de entrada
-// existe para que la tarea 4 tenga dónde engancharse.
+// Ambos flujos de emparejamiento (IniciarEmparejamientoQr y SolicitarCodigoDeVinculacion)
+// invocan este método como parte del inicio del emparejamiento (HEX-026, tarea 15 de la etapa A-3).
+// Los tests de este paquete ejercitan únicamente la ruta de fallo de conexión mediante un contexto
+// cancelado explícitamente; la prueba contra el canal real se completó en la sesión de laboratorio
+// del 2026-08-18.
 func (s *Sesion) Conectar(ctx context.Context) error {
 	return s.cliente.ConnectContext(ctx)
 }

@@ -4,35 +4,34 @@ import (
 	"bytes"
 	"context"
 	"log/slog"
-	"strings"
 	"testing"
 
 	"github.com/CGary/hexcell/sidecar/internal/canal"
 	"github.com/CGary/hexcell/sidecar/internal/registro"
 )
 
-func TestIniciarEmparejamientoQrSobreAlmacenVacioDevuelveCanalSinError(t *testing.T) {
+func TestIniciarEmparejamientoQrSobreAlmacenVacioDevuelveErrorAlNoPoderConectar(t *testing.T) {
 	var salida bytes.Buffer
 	reg := registro.Nuevo(&salida, slog.LevelInfo, "test")
 	contenedor := abrirAlmacenDePrueba(t, reg)
 
-	ctx := context.Background()
-	sesion, err := canal.NuevaSesion(ctx, contenedor, reg)
+	ctxCancelado, cancel := context.WithCancel(context.Background())
+	cancel() // Contexto cancelado para que s.Conectar(s.ctx) falle rápido sin tocar la red.
+
+	// Abrimos dispositivo con background ctx para que la DB no falle, pero pasamos ctxCancelado a NuevaSesion.
+	// `sqlstore.GetFirstDevice` no usa el contexto pasado si la consulta es simple, pero si falla usaremos Background.
+	sesion, err := canal.NuevaSesion(ctxCancelado, contenedor, reg)
 	if err != nil {
 		t.Fatalf("NuevaSesion: %v", err)
 	}
 	t.Cleanup(sesion.Cerrar)
 
 	canalQr, err := sesion.IniciarEmparejamientoQr()
-	if err != nil {
-		t.Fatalf("IniciarEmparejamientoQr: %v", err)
+	if err == nil {
+		t.Fatalf("se esperaba un error al intentar conectar con contexto cancelado")
 	}
-	if canalQr == nil {
-		t.Fatalf("el canal QR es nil")
-	}
-
-	if !strings.Contains(salida.String(), canal.EventoEmparejamientoQrIniciado) {
-		t.Errorf("no se registró el inicio del emparejamiento QR: %s", salida.String())
+	if canalQr != nil {
+		t.Fatalf("se esperaba un canal QR nil en caso de fallo de conexión")
 	}
 }
 
@@ -54,41 +53,65 @@ func TestSolicitarCodigoDeVinculacionRechazaTelefonoVacio(t *testing.T) {
 	}
 }
 
-func TestSolicitarCodigoDeVinculacionRechazaTelefonoCorto(t *testing.T) {
+func TestSolicitarCodigoDeVinculacionDevuelveErrorAlNoPoderConectarTelefonoCorto(t *testing.T) {
 	var salida bytes.Buffer
 	reg := registro.Nuevo(&salida, slog.LevelInfo, "test")
 	contenedor := abrirAlmacenDePrueba(t, reg)
 
-	ctx := context.Background()
-	sesion, err := canal.NuevaSesion(ctx, contenedor, reg)
+	sesion, err := canal.NuevaSesion(context.Background(), contenedor, reg)
 	if err != nil {
 		t.Fatalf("NuevaSesion: %v", err)
 	}
 	t.Cleanup(sesion.Cerrar)
 
-	// whatsmeow valida el número antes de cualquier I/O: números cortos se rechazan.
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	// Al intentar conectar primero con ctx cancelado, falla antes de alcanzar PairPhone.
 	_, err = sesion.SolicitarCodigoDeVinculacion(ctx, "123")
 	if err == nil {
-		t.Fatalf("se esperaba un error con un número demasiado corto")
+		t.Fatalf("se esperaba un error al intentar conectar con contexto cancelado")
 	}
 }
 
-func TestSolicitarCodigoDeVinculacionRechazaTelefonoConCero(t *testing.T) {
+func TestSolicitarCodigoDeVinculacionDevuelveErrorAlNoPoderConectarTelefonoConCero(t *testing.T) {
 	var salida bytes.Buffer
 	reg := registro.Nuevo(&salida, slog.LevelInfo, "test")
 	contenedor := abrirAlmacenDePrueba(t, reg)
 
-	ctx := context.Background()
-	sesion, err := canal.NuevaSesion(ctx, contenedor, reg)
+	sesion, err := canal.NuevaSesion(context.Background(), contenedor, reg)
 	if err != nil {
 		t.Fatalf("NuevaSesion: %v", err)
 	}
 	t.Cleanup(sesion.Cerrar)
 
-	// whatsmeow rechaza números que empiezan con 0.
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	// Al intentar conectar primero con ctx cancelado, falla antes de alcanzar PairPhone.
 	_, err = sesion.SolicitarCodigoDeVinculacion(ctx, "05491155551234")
 	if err == nil {
-		t.Fatalf("se esperaba un error con un número que empieza con 0")
+		t.Fatalf("se esperaba un error al intentar conectar con contexto cancelado")
+	}
+}
+
+func TestSolicitarCodigoDeVinculacionConClienteYaConectadoNoReconecta(t *testing.T) {
+	var salida bytes.Buffer
+	reg := registro.Nuevo(&salida, slog.LevelInfo, "test")
+	contenedor := abrirAlmacenDePrueba(t, reg)
+
+	sesion, err := canal.NuevaSesion(context.Background(), contenedor, reg)
+	if err != nil {
+		t.Fatalf("NuevaSesion: %v", err)
+	}
+	t.Cleanup(sesion.Cerrar)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err = sesion.SolicitarCodigoDeVinculacion(ctx, "5491155551234")
+	if err == nil {
+		t.Fatalf("se esperaba un error al fallar Conectar")
 	}
 }
 

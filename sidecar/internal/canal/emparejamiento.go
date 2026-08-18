@@ -11,6 +11,7 @@ package canal
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	"go.mau.fi/whatsmeow"
@@ -73,6 +74,10 @@ func (s *Sesion) IniciarEmparejamientoQr() (<-chan ResultadoQr, error) {
 			return nil, ErrYaEmparejada
 		}
 		return nil, err
+	}
+
+	if err := s.Conectar(s.ctx); err != nil {
+		return nil, fmt.Errorf("canal: no se pudo conectar para iniciar emparejamiento QR: %w", err)
 	}
 
 	s.registro.Info(EventoEmparejamientoQrIniciado, registro.Campos{
@@ -144,6 +149,12 @@ func (s *Sesion) SolicitarCodigoDeVinculacion(ctx context.Context, telefono stri
 	s.registro.Info(EventoEmparejamientoPcSolicitado, registro.Campos{
 		Detalle: "código de vinculación solicitado; número no registrado",
 	})
+
+	if !s.cliente.IsConnected() {
+		if err := s.Conectar(ctx); err != nil {
+			return "", fmt.Errorf("canal: no se pudo conectar para solicitar código de vinculación: %w", err)
+		}
+	}
 
 	codigo, err := s.cliente.PairPhone(ctx, telefono, true, whatsmeow.PairClientChrome, "Chrome (Linux)")
 	if err != nil {

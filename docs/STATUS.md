@@ -23,6 +23,11 @@ adicional cuando aparezca un cliente que lo justifique. Ver [plan/README.md](pla
   —que no impone condición sobre uso en red y regalaría la ventaja competitiva del modelo de
   servicio gestionado— y BUSL-1.1 —que exige gobernanza adicional de fecha de conversión sin aportar
   nada que el dual licensing no cubra ya—. El texto oficial y verbatim vive en `LICENSE`.
+* **Conexión explícita previa en flujos de emparejamiento** (2026-08-18, `HEX-026`, tarea 15 de la etapa A-3).
+  Se corrigió el interbloqueo detectado en sesión de laboratorio donde `IniciarEmparejamientoQr` y
+  `SolicitarCodigoDeVinculacion` abrían los canales de emparejamiento sin invocar `Conectar()`, impidiendo
+  la emisión de códigos QR y la vinculación por teléfono. Ambos flujos establecen la conexión con disciplina
+  de fallo cerrado antes de proceder.
 * **Canal propio permanente y canal oficial aditivo por demanda** (2026-07-28, `adr-0014`, que
   supersede a `adr-0008`). whatsmeow deja de ser un canal temporal de validación y pasa a ser el
   canal de producción por defecto, con clientes de pago. La Cloud API se pospone a una segunda etapa
