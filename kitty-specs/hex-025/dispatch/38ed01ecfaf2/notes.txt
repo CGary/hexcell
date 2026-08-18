@@ -1,0 +1,37 @@
+NOTES:
+- Promovidas las constantes [`HEXCELL_SOCKET_IPC`](file:///home/gary/dev/hexcell/worktrees/HEX-025/crates/hexcell/src/configuracion.rs#L161) y [`RUTA_SOCKET_IPC_POR_DEFECTO`](file:///home/gary/dev/hexcell/worktrees/HEX-025/crates/hexcell/src/configuracion.rs#L194) a [`crates/hexcell/src/configuracion.rs`](file:///home/gary/dev/hexcell/worktrees/HEX-025/crates/hexcell/src/configuracion.rs) como fuente única de verdad, reexportándolas en [`crates/hexcell/src/emparejar.rs`](file:///home/gary/dev/hexcell/worktrees/HEX-025/crates/hexcell/src/emparejar.rs#L18).
+- Agregada la variante [`CanalSeleccionado::Whatsmeow`](file:///home/gary/dev/hexcell/worktrees/HEX-025/crates/hexcell/src/configuracion.rs#L30-L32), parseo en `desde_str` ("whatsmeow"), y el campo [`Configuracion::ruta_socket_ipc`](file:///home/gary/dev/hexcell/worktrees/HEX-025/crates/hexcell/src/configuracion.rs#L54-L58).
+- Añadido el brazo `CanalSeleccionado::Whatsmeow` en [`crates/hexcell/src/main.rs`](file:///home/gary/dev/hexcell/worktrees/HEX-025/crates/hexcell/src/main.rs#L200-L229), construyendo `AdaptadorWhatsmeow::nuevo` con `Retroceso::por_omision()`, arrancando el adaptador y conectándolo al `Motor` genérico idéntico al brazo simulado.
+- Agregados tests unitarios de configuración en [`crates/hexcell/tests/configuracion.rs`](file:///home/gary/dev/hexcell/worktrees/HEX-025/crates/hexcell/tests/configuracion.rs#L298-L337) validando el valor por omisión `simulado` y la selección de `whatsmeow`.
+- Creado [`crates/hexcell/tests/canal_whatsmeow_seleccionado.rs`](file:///home/gary/dev/hexcell/worktrees/HEX-025/crates/hexcell/tests/canal_whatsmeow_seleccionado.rs) con doble `FakeSidecar` sobre socket Unix, comprobando el flujo completo `evento_entrante` -> confirmación -> respuesta de `ProveedorSimulado` (`mensaje_saliente`) y la respuesta del servidor HTTP de salud.
+- Creados los scripts de arranque de laboratorio directo en [`scripts/laboratorio/entorno.ejemplo.sh`](file:///home/gary/dev/hexcell/worktrees/HEX-025/scripts/laboratorio/entorno.ejemplo.sh), [`scripts/laboratorio/iniciar-sidecar.sh`](file:///home/gary/dev/hexcell/worktrees/HEX-025/scripts/laboratorio/iniciar-sidecar.sh) e [`scripts/laboratorio/iniciar-nucleo.sh`](file:///home/gary/dev/hexcell/worktrees/HEX-025/scripts/laboratorio/iniciar-nucleo.sh).
+- Añadida la entrada en [`docs/STATUS.md`](file:///home/gary/dev/hexcell/worktrees/HEX-025/docs/STATUS.md#L376) registrando las decisiones de 2026-08-18 (procesos directos en laboratorio, `ProveedorSimulado` hasta A-4).
+- Registrado el log de implementación en [`.ai/tasks/active/HEX-025-new-spec/04-implementation-log.yaml`](file:///home/gary/dev/hexcell/.ai/tasks/active/HEX-025-new-spec/04-implementation-log.yaml).
+END NOTES
+
+=== Fin de fase: Implementación ===
+
+Resultado: DONE
+Resumen técnico: Canal whatsmeow configurable vía `HEXCELL_CANAL`, cableado de `AdaptadorWhatsmeow` en `main.rs`, tests de integración de proceso y scripts de arranque directo para laboratorio.
+
+Artefactos producidos:
+- Diff committeado en la rama `ai/HEX-025` (`worktrees/HEX-025/`)
+  - [`crates/hexcell/src/configuracion.rs`](file:///home/gary/dev/hexcell/worktrees/HEX-025/crates/hexcell/src/configuracion.rs)
+  - [`crates/hexcell/src/emparejar.rs`](file:///home/gary/dev/hexcell/worktrees/HEX-025/crates/hexcell/src/emparejar.rs)
+  - [`crates/hexcell/src/main.rs`](file:///home/gary/dev/hexcell/worktrees/HEX-025/crates/hexcell/src/main.rs)
+  - [`crates/hexcell/tests/configuracion.rs`](file:///home/gary/dev/hexcell/worktrees/HEX-025/crates/hexcell/tests/configuracion.rs)
+  - [`crates/hexcell/tests/canal_whatsmeow_seleccionado.rs`](file:///home/gary/dev/hexcell/worktrees/HEX-025/crates/hexcell/tests/canal_whatsmeow_seleccionado.rs)
+  - [`docs/STATUS.md`](file:///home/gary/dev/hexcell/worktrees/HEX-025/docs/STATUS.md)
+  - [`scripts/laboratorio/entorno.ejemplo.sh`](file:///home/gary/dev/hexcell/worktrees/HEX-025/scripts/laboratorio/entorno.ejemplo.sh)
+  - [`scripts/laboratorio/iniciar-sidecar.sh`](file:///home/gary/dev/hexcell/worktrees/HEX-025/scripts/laboratorio/iniciar-sidecar.sh)
+  - [`scripts/laboratorio/iniciar-nucleo.sh`](file:///home/gary/dev/hexcell/worktrees/HEX-025/scripts/laboratorio/iniciar-nucleo.sh)
+- [`.ai/tasks/active/HEX-025-new-spec/04-implementation-log.yaml`](file:///home/gary/dev/hexcell/.ai/tasks/active/HEX-025-new-spec/04-implementation-log.yaml)
+
+No hay transición de estado: el worktree y la rama siguen iguales.
+
+Pasos siguientes (los despacha el orquestador, NO yo):
+1. [Obligatorio] `/q-verify HEX-025` — corre `verify.commands` del contrato dentro del worktree y escribe `05-validation.json`.
+
+Si querés volver atrás:
+- `[WORKTREE:HEX-025]` `git -C worktrees/HEX-025 reset --hard HEAD~1` — descarta el último commit del worktree.
+- `[ROOT]` `quorum task back HEX-025` — borra worktree y rama (perdés todos los commits no mergeados).

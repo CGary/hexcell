@@ -1,0 +1,87 @@
+{
+  "attempts": [
+    {
+      "duration_s": 386.135966599,
+      "model": "google/gemini-3.6-flash-high",
+      "notes": "NOTES: - Promovidas las constantes [`HEXCELL_SOCKET_IPC`](file:///home/gary/dev/hexcell/worktrees/HEX-025/crates/hexcell/src/configuracion.rs#L161) y [`RUTA_SOCKET_IPC_POR_DEFECTO`](file:///home/gary/dev/hexcell/worktrees/HEX-025/crates/hexcell/src/configuracion.rs#L194) a [`crates/hexcell/src/configuracion.rs`](file:///home/gary/dev/hexcell/worktrees/HEX-025/crates/hexcell/src/configuracion.rs) como fuente única de verdad, reexportándolas en [`crates/hexcell/src/emparejar.rs`](file:///home/gary/dev/hexcell/worktrees/HEX-025/crates/hexcell/src/emparejar.rs#L18). - Agregada la variante [`CanalSeleccionado::Whatsmeow`](file:///home/gary/dev/hexcell/worktrees/HEX-025/crates/hexcell/src/configuracion.rs#L30-L32), parseo en `desde_str` (\"whatsmeow\"), y el campo [`Configuracion::ruta_socket_ipc`](file:///home/gary/dev/hexcell/worktrees/HEX-025/crates/hexcell/src/configuracion.rs#L54-L58). - Añadido el brazo `CanalSeleccionado::Whatsmeow` en [`crates/hexcell/src/main.rs`](file:///home/gary/dev/hexcell/worktrees/HEX-025/crates/hexcell/src/main.rs#L200-L229), construyendo `AdaptadorWhatsmeow::nuevo` con `Retroceso::por_omision()`, arrancando el adaptador y conectándolo al `Motor` genérico idéntico al brazo simulado. - Agregados tests unitarios de configuración en [`crates/hexcell/tests/configuracion.rs`](file:///home/gary/dev/hexcell/worktrees/HEX-025/crates/hexcell/tests/configuracion.rs#L298-L337) validando el valor por omisión `simulado` y la selección de `whatsmeow`. - Creado [`crates/hexcell/tests/canal_whatsmeow_seleccionado.rs`](file:///home/gary/dev/hexcell/worktrees/HEX-025/crates/hexcell/tests/canal_whatsmeow_seleccionado.rs) con doble `FakeSidecar` sobre socket Unix, comprobando el flujo completo `evento_entrante` -\u003e confirmación -\u003e respuesta de `ProveedorSimulado` (`mensaje_saliente`) y la respuesta del servidor HTTP de salud. - Creados los scripts de arranque de laboratorio directo en [`scripts/laboratorio/entorno.ejemplo.sh`](file:///home/gary/dev/hex...",
+      "phase": "execute",
+      "result": "passed"
+    }
+  ],
+  "context_overflows": [],
+  "events": [
+    {
+      "event": "risk_level_calculated",
+      "level": "medium",
+      "reasons": [
+        "file_count_high: 9"
+      ],
+      "signals": {
+        "files_count": 9,
+        "sensitive_matches": [],
+        "symbols_count": 0
+      }
+    },
+    {
+      "blocked": "",
+      "candidate": {
+        "agent": "agy_edit",
+        "level": 2,
+        "model": "google/gemini-3.6-flash-high"
+      },
+      "dispatch_id": "",
+      "inputs_snapshot": {
+        "complexity_band": "L",
+        "control": {
+          "disabled": null,
+          "updated_at": ""
+        },
+        "exclusions": [],
+        "hashes": {
+          "agents_yaml": "da88cec7aff86186e0974bcf69523dd0fe7ef19266c444f6da8c16709a19a090",
+          "config_yaml": "a40d2c4258971a64d6fd920ec1fe5ed2a116f96aa6fe04374a437006ea740342",
+          "routing_yaml": "b65f9f326b45de9a8ba351e0674e80f8b69ee2d69b415eab6f37d82d0a68637c"
+        },
+        "incumbent_family": "",
+        "level": 2,
+        "phase": "implement",
+        "risk": "medium",
+        "router_version": "fleet-route/v1"
+      },
+      "reasons": null,
+      "reroute_budget": 1,
+      "review_family_degraded": false,
+      "ts": "2026-08-18T12:26:44Z",
+      "type": "routing_decision"
+    },
+    {
+      "bundle_hash": "38ed01ecfaf2cd5edc69a0055ce3acb3cf59c9888b52d42cf248f9ef39cf5003",
+      "dispatch_id": "38ed01ecfaf2",
+      "ts": "2026-08-18T12:27:05Z",
+      "type": "dispatch_started"
+    },
+    {
+      "applied": true,
+      "cause": null,
+      "diff_stat": {
+        "deletions": 10,
+        "empty": false,
+        "files_changed": 9,
+        "indeterminate": false,
+        "insertions": 343
+      },
+      "dispatch_id": "38ed01ecfaf2",
+      "forensic_ref": "refs/fleet/HEX-025/attempt-1-google-gemini-3.6-flash-high",
+      "noop": false,
+      "outcome_class": "attempt",
+      "ts": "2026-08-18T12:33:31Z",
+      "type": "dispatch_finished",
+      "usage_source": "none"
+    }
+  ],
+  "started_at": "2026-08-18T00:00:00Z",
+  "summary": "Add CanalSeleccionado::Whatsmeow, wire AdaptadorWhatsmeow into main.rs's engine pipeline, add lab startup scripts; simulado stays the untouched default.",
+  "task_id": "HEX-025",
+  "total_cost_usd": 0,
+  "violations": []
+}

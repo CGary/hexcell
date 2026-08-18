@@ -1,0 +1,22 @@
+task_id: HEX-025
+summary: Added CanalSeleccionado::Whatsmeow, wired AdaptadorWhatsmeow into main.rs engine pipeline, and added direct-process lab startup scripts with default simulado preserved bit-for-bit.
+entries:
+  - changed_files:
+      - crates/hexcell/src/configuracion.rs
+      - crates/hexcell/src/emparejar.rs
+      - crates/hexcell/src/main.rs
+      - crates/hexcell/tests/configuracion.rs
+      - crates/hexcell/tests/canal_whatsmeow_seleccionado.rs
+      - docs/STATUS.md
+      - scripts/laboratorio/entorno.ejemplo.sh
+      - scripts/laboratorio/iniciar-sidecar.sh
+      - scripts/laboratorio/iniciar-nucleo.sh
+    notes:
+      - Promoted HEXCELL_SOCKET_IPC and RUTA_SOCKET_IPC_POR_DEFECTO constants to configuracion.rs and re-exported in emparejar.rs.
+      - Added CanalSeleccionado::Whatsmeow variant, extended desde_str, and added ruta_socket_ipc to Configuracion.
+      - Added CanalSeleccionado::Whatsmeow match arm in main.rs constructing AdaptadorWhatsmeow and connecting to the existing Motor pipeline.
+      - Added unit tests in tests/configuracion.rs for default and whatsmeow channel configuration parsing.
+      - Added integration tests in tests/canal_whatsmeow_seleccionado.rs proving end-to-end inbound -> engine -> outbound message flow over FakeSidecar and health checks.
+      - Added direct-process laboratory startup scripts in scripts/laboratorio/ with shared environment and documented defaults.
+      - Appended Definido entry dated 2026-08-18 in docs/STATUS.md recording human decisions.
+    verify_pending: true

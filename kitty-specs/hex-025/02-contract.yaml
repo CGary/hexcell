@@ -1,0 +1,173 @@
+task_id: HEX-025
+summary: >-
+  Add CanalSeleccionado::Whatsmeow, wire AdaptadorWhatsmeow into main.rs's engine pipeline, add
+  lab startup scripts; simulado stays the untouched default.
+goal: >-
+  Make the hexcell cell binary able to run its message engine over the real whatsmeow channel
+  by adding a config-selected channel (simulado default, bit-for-bit unchanged | whatsmeow)
+  that wires AdaptadorWhatsmeow through the existing ChannelAdapter port into the same Motor +
+  ProcesadorDeInferencia(ProveedorSimulado) + health-server pipeline main.rs already runs for
+  simulado, plus local direct-process startup scripts for the sidecar and the nucleo -- so the
+  lab session of plan task 15 (pairing, real conversation, restarts, network cut, forced
+  unlink) can run with the phone in hand and no further code, per the human decisions of
+  2026-08-18 recorded in the spec (direct processes, container-restart rehearsal deferred to
+  A-6; ProveedorSimulado until A-4).
+
+read:
+  - .ai/tasks/active/HEX-025-new-spec/00-spec.yaml
+  - .ai/tasks/active/HEX-025-new-spec/01-blueprint.yaml
+  - docs/protocolo-ipc-nucleo-sidecar.md
+  - docs/STATUS.md
+  - docs/bitacora-de-descartes.md
+  - crates/hexcell-core/src/canal.rs
+  - crates/hexcell/src/motor.rs
+  - crates/hexcell/src/preparacion.rs
+  - crates/hexcell/src/inferencia.rs
+  - crates/hexcell/src/procesador.rs
+  - crates/hexcell/src/apagado.rs
+  - crates/hexcell/src/salud.rs
+  - crates/hexcell/tests/comun/mod.rs
+  - crates/hexcell/tests/emparejamiento_ipc.rs
+  - crates/hexcell/tests/motor.rs
+  - crates/hexcell-canal-whatsmeow/src/adaptador.rs
+  - crates/hexcell-canal-whatsmeow/src/reconexion.rs
+  - crates/hexcell-canal-whatsmeow/src/mensajes.rs
+  - crates/hexcell-canal-whatsmeow/tests/comun/mod.rs
+  - kitty-specs/hex-024/01-blueprint.yaml
+  - kitty-specs/hex-024/02-contract.yaml
+  - sidecar/internal/configuracion/configuracion.go
+
+touch:
+  - crates/hexcell/src/configuracion.rs
+  - crates/hexcell/src/emparejar.rs
+  - crates/hexcell/src/main.rs
+  - crates/hexcell/tests/configuracion.rs
+  - crates/hexcell/tests/canal_whatsmeow_seleccionado.rs
+  - docs/STATUS.md
+  - scripts/laboratorio/entorno.ejemplo.sh
+  - scripts/laboratorio/iniciar-sidecar.sh
+  - scripts/laboratorio/iniciar-nucleo.sh
+
+forbid:
+  files:
+    - docs/protocolo-ipc-nucleo-sidecar.md
+    - docs/contrato-ipc-respaldo-del-sqlstore.md
+    - crates/hexcell-canal-whatsmeow/src/mensajes.rs
+    - crates/hexcell-canal-whatsmeow/src/adaptador.rs
+    - crates/hexcell-canal-whatsmeow/src/conexion.rs
+    - crates/hexcell-canal-whatsmeow/src/reconexion.rs
+    - crates/hexcell-canal-whatsmeow/src/error.rs
+    - crates/hexcell-canal-whatsmeow/src/lib.rs
+    - crates/hexcell-canal-whatsmeow/tests/comun/mod.rs
+    - crates/hexcell-core/src/canal.rs
+    - crates/hexcell/src/motor.rs
+    - crates/hexcell/src/preparacion.rs
+    - crates/hexcell/src/procesador.rs
+    - crates/hexcell/src/inferencia.rs
+    - crates/hexcell/src/apagado.rs
+    - crates/hexcell/src/salud.rs
+    - crates/hexcell/src/lib.rs
+    - crates/hexcell/tests/comun/mod.rs
+    - crates/hexcell/tests/emparejamiento_ipc.rs
+    - crates/hexcell/tests/motor.rs
+    - crates/hexcell/tests/apagado_ordenado.rs
+    - crates/hexcell/tests/rss_linea_base.rs
+    - crates/hexcell/tests/salud_http.rs
+    - crates/hexcell-storage/src/almacen_de_identidad.rs
+    - crates/hexcell-storage/src/pools.rs
+    - crates/hexcell-storage/src/sesiones.rs
+    - crates/hexcell-canal-simulado/src/adaptador.rs
+    - crates/hexcell-canal-simulado/src/lib.rs
+    - crates/hexcell/Cargo.toml
+    - crates/hexcell-canal-whatsmeow/Cargo.toml
+    - Cargo.toml
+    - Cargo.lock
+    - docs/runbook-canal-fase-a.md
+    - docs/runbook-canal-whatsmeow.md
+    - docs/runbook-restauracion-de-celula.md
+    - docs/adr/README.md
+    - sidecar
+  behaviors:
+    - "Do NOT modify docs/protocolo-ipc-nucleo-sidecar.md or docs/contrato-ipc-respaldo-del-sqlstore.md in any way; both are normative and closed (wire version 4 stays 4, the 11 message types stay exactly as they are, no field/type change)."
+    - "Do NOT touch any file under sidecar/ (Go). AdaptadorWhatsmeow already implements the full client side of the protocol; this task only adds construction/selection code in the Rust binary crate. If a genuine sidecar gap is found during implementation, record it as a risk in the implementation notes -- do not silently patch Go."
+    - "Do NOT modify crates/hexcell-canal-whatsmeow/src/adaptador.rs (or any other file in that crate). AdaptadorWhatsmeow::nuevo/arrancar/estado_actual/suscribir_estado already exist with the exact signatures this task needs; call them, do not change them. In particular, do NOT add an identity-store parameter to nuevo -- it does not take one, and none should be invented (the JID mapping for the real channel lives in the sidecar's own HEXCELL_RUTA_IDENTIDAD store, not in this Rust struct)."
+    - "Do NOT modify crates/hexcell/src/motor.rs, crates/hexcell-core/src/canal.rs, crates/hexcell/src/procesador.rs or crates/hexcell/src/inferencia.rs. Motor<A, P> is already generic over ChannelAdapter and ProcesadorDeMensajes; this task adds a construction call in main.rs, never a new code path inside the engine. There must be no whatsmeow-specific `if`/`match` anywhere in motor.rs, procesador.rs or inferencia.rs after this task."
+    - "Do NOT change any existing line of main.rs's current Simulado arm or any line before the `match configuracion.canal` block. The new Whatsmeow arm is a second match arm, added additively; every existing line, in the same order, stays byte-for-byte unchanged, including the evento_simulado_de_arranque injection block, which stays exclusive to the Simulado arm and is not duplicated or generalized."
+    - "Do NOT change the shape, name, or call site of AlmacenDeIdentidad::abrir in main.rs. It keeps being opened unconditionally before the channel match exactly as today; the Whatsmeow arm simply does not consume it. Do NOT delete this call, gate it behind the channel selection, or thread it into AdaptadorWhatsmeow::nuevo."
+    - "Do NOT add a new tunable for the whatsmeow reconnect backoff in main.rs; use Retroceso::por_omision(), mirroring crates/hexcell/src/emparejar.rs's own ejecutar(). The five HEXCELL_RETROCESO_* variables already documented in docs/STATUS.md as pending calibration belong to the sidecar (Go) side and are out of scope."
+    - "Do NOT add a CLI argument-parsing crate, a QR-rendering crate, a process-supervision crate (e.g. no Docker, docker-compose, systemd units, or any container tooling of any kind), or any other new third-party dependency to any Cargo.toml or go.mod. scripts/laboratorio/ launches plain OS processes with a shell interpreter already present on the lab machine (bash or POSIX sh), nothing else."
+    - "Do NOT define HEXCELL_SOCKET_IPC or its default path independently in more than one place inside crates/hexcell/src/: promote the existing definition out of emparejar.rs into configuracion.rs (same name \"HEXCELL_SOCKET_IPC\", same default \"/var/lib/hexcell/ipc/sidecar.sock\") and have emparejar.rs reference that single definition. Do not rename the variable and do not change its default value."
+    - "Do NOT synchronize the new integration test (crates/hexcell/tests/canal_whatsmeow_seleccionado.rs) with tokio::time::sleep or std::thread::sleep as a substitute for waiting on an actual event (log line via esperar_linea, message exchange over the socket, or an explicit bounded timeout whose expiry IS the event under test)."
+    - "Do NOT let any printed value, log line, error Display, script echo, or comment carry the cell's phone number or any raw transport identifier (adr-0010): scripts/laboratorio/*.sh read the phone number, if needed at all, from the operator's own shell environment at run time, never as a literal in the script; sessions.db never sees a raw transport identifier, unchanged from today."
+    - "Do NOT hardcode any absolute path specific to this machine or this user's home directory in scripts/laboratorio/*.sh; every path is an environment variable with a documented, machine-agnostic default (e.g. under a configurable lab root), matching the spec's AC-4 wording exactly."
+    - "Do NOT modify any existing test function body in crates/hexcell/tests/configuracion.rs (including falla_si_el_canal_no_es_reconocido, which must keep passing unmodified against the sentinel value \"canal-que-no-existe\"); only add new #[test] functions."
+    - "Do NOT delete or rewrite any existing docs/STATUS.md entry; append exactly one new Definido entry dated 2026-08-18, traced to plan task 15 of A-3 and FR-12."
+    - "Do NOT write any user-visible content (Rust doc comments, CLI stdout/stderr text, log messages, script comments/echoes, docs/STATUS.md prose, commit message) in English; keep it in Spanish. Only this contract's and the blueprint's own YAML prose stays in English. Use absolute dates (2026-08-18), never relative ones."
+    - "Do NOT introduce mass-sending-provider vocabulary (jitter, warm-up/calentamiento, proxies, VPN, IP rotation) anywhere, and never write or imply that Fase B replaces, retires, or closes the sidecar channel, nor that the sidecar itself is being retired by this task."
+    - "Do NOT attempt pairing or conversation against a real channel, a real whatsmeow sidecar process, or the lab-number rehearsal (plan task 15) inside any automated test; every test in this task runs against a local double, deterministic and channel-free. The lab session itself stays out of this task's scope (non_goal)."
+
+verify:
+  commands:
+    - cargo fmt --check
+    - cargo build --workspace
+    - cargo clippy --workspace -- -D warnings
+    - cargo test --workspace
+    - test "$(cargo tree -p hexcell-core | wc -l)" = "1"
+    - cargo test -p hexcell-core --doc 2>&1 | grep -q "compile fail"
+    - cd sidecar && test -z "$(gofmt -l .)" && go build ./... && go vet ./... && go test ./...
+
+acceptance:
+  human_gate: true
+
+limits:
+  max_files_changed: 9
+  # Honest per-file estimate (new files are mostly-new content; existing files are the diff of
+  # the described edit, not the whole file):
+  #   crates/hexcell/src/configuracion.rs           ~90  (variant + desde_str arm + doc updates +
+  #     new field + promoted consts + their doc comments + parsing block)
+  #   crates/hexcell/src/emparejar.rs                ~15  (remove 2 local consts, reference the
+  #     promoted ones)
+  #   crates/hexcell/src/main.rs                     ~65  (2 new imports + one new match arm
+  #     mirroring the existing Simulado arm's construction/select! shape)
+  #   crates/hexcell/tests/configuracion.rs           ~70  (2 new #[test] fns, existing ones
+  #     untouched)
+  #   crates/hexcell/tests/canal_whatsmeow_seleccionado.rs (new) ~260 (local Unix-socket double
+  #     mirroring SidecarSimulado's shape + 2 test fns combining
+  #     lanzar_binario_con_variables with live socket interaction, a genuinely new combination
+  #     per the blueprint's risk note, so given real room)
+  #   docs/STATUS.md                                 ~18  (one new Definido entry, pure append)
+  #   scripts/laboratorio/entorno.ejemplo.sh (new)    ~40
+  #   scripts/laboratorio/iniciar-sidecar.sh (new)    ~45
+  #   scripts/laboratorio/iniciar-nucleo.sh (new)     ~45
+  # Honest total ~648 lines. Setting max_diff_lines with ~35% headroom over that, matching this
+  # repo's own documented lesson (HEX-021/HEX-024) that doc-comment density here runs long on
+  # every file this task touches and an under-sized contract forces the implementer to violate
+  # it.
+  max_diff_lines: 880
+  per_class:
+    - glob: crates/hexcell/src/configuracion.rs
+      max_diff_lines: 120
+    - glob: crates/hexcell/src/emparejar.rs
+      max_diff_lines: 25
+    - glob: crates/hexcell/src/main.rs
+      max_diff_lines: 90
+    - glob: crates/hexcell/tests/configuracion.rs
+      max_diff_lines: 100
+    - glob: crates/hexcell/tests/canal_whatsmeow_seleccionado.rs
+      max_diff_lines: 340
+    - glob: docs/STATUS.md
+      max_diff_lines: 25
+    - glob: scripts/laboratorio/entorno.ejemplo.sh
+      max_diff_lines: 55
+    - glob: scripts/laboratorio/iniciar-sidecar.sh
+      max_diff_lines: 60
+    - glob: scripts/laboratorio/iniciar-nucleo.sh
+      max_diff_lines: 60
+
+execution:
+  mode: worktree_edit
+  branch: ai/HEX-025
+
+retry_policy:
+  max_attempts: 2
+  escalate_after: 2

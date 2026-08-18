@@ -1,0 +1,276 @@
+task_id: HEX-025
+summary: >-
+  Add CanalSeleccionado::Whatsmeow, wire AdaptadorWhatsmeow into main.rs's engine pipeline, add
+  lab startup scripts; simulado stays the untouched default.
+affected_files:
+  - crates/hexcell/src/configuracion.rs
+  - crates/hexcell/src/emparejar.rs
+  - crates/hexcell/src/main.rs
+  - crates/hexcell/tests/configuracion.rs
+  - crates/hexcell/tests/canal_whatsmeow_seleccionado.rs
+  - docs/STATUS.md
+  - scripts/laboratorio/entorno.ejemplo.sh
+  - scripts/laboratorio/iniciar-sidecar.sh
+  - scripts/laboratorio/iniciar-nucleo.sh
+symbols:
+  - hexcell::configuracion::CanalSeleccionado::Whatsmeow (new enum variant)
+  - hexcell::configuracion::CanalSeleccionado::desde_str (extend match)
+  - hexcell::configuracion::Configuracion::ruta_socket_ipc (new field)
+  - "hexcell::configuracion::HEXCELL_SOCKET_IPC (promoted canonical const, same name/value as the one crate::emparejar already defines locally)"
+  - hexcell::configuracion::RUTA_SOCKET_IPC_POR_DEFECTO (promoted canonical const)
+  - "hexcell::emparejar::HEXCELL_SOCKET_IPC / RUTA_SOCKET_IPC_POR_DEFECTO (become re-exports of the promoted constants instead of independent local definitions)"
+  - hexcell::main (new CanalSeleccionado::Whatsmeow match arm)
+  - "crates/hexcell/tests/comun/mod.rs::lanzar_binario_con_variables (consumed unchanged, not modified -- already accepts arbitrary extra env vars)"
+dependencies:
+  - .ai/tasks/active/HEX-025-new-spec/00-spec.yaml
+  - docs/protocolo-ipc-nucleo-sidecar.md
+  - docs/STATUS.md
+  - docs/bitacora-de-descartes.md
+  - crates/hexcell-core/src/canal.rs
+  - crates/hexcell/src/motor.rs
+  - crates/hexcell/src/preparacion.rs
+  - crates/hexcell/src/inferencia.rs
+  - crates/hexcell/src/procesador.rs
+  - crates/hexcell/tests/comun/mod.rs
+  - crates/hexcell/tests/emparejamiento_ipc.rs
+  - crates/hexcell-canal-whatsmeow/src/adaptador.rs
+  - crates/hexcell-canal-whatsmeow/src/reconexion.rs
+  - crates/hexcell-canal-whatsmeow/src/mensajes.rs
+  - crates/hexcell-canal-whatsmeow/tests/comun/mod.rs
+  - kitty-specs/hex-024/01-blueprint.yaml
+  - kitty-specs/hex-024/02-contract.yaml
+  - sidecar/internal/configuracion/configuracion.go
+test_scenarios:
+  - statement: >-
+      Without HEXCELL_CANAL set (or set to "simulado"), Configuracion::desde_entorno and the
+      main.rs Simulado arm behave exactly as today; every existing test in
+      crates/hexcell/tests/ keeps passing unmodified, proving bit-for-bit default preservation.
+    covers: [AC-1]
+  - statement: >-
+      HEXCELL_CANAL="whatsmeow" parses to CanalSeleccionado::Whatsmeow via
+      Configuracion::desde_entorno (new unit test in tests/configuracion.rs, mirroring the
+      existing default/invalid-value tests in that same file).
+    covers: [AC-1]
+  - statement: >-
+      HEXCELL_CANAL set to an unrecognized value still aborts before binding anything, naming
+      HEXCELL_CANAL and listing accepted values ("simulado, whatsmeow") in the Spanish error
+      message; the existing falla_si_el_canal_no_es_reconocido test (which uses the sentinel
+      value "canal-que-no-existe") needs no change to keep passing.
+    covers: [AC-1]
+  - statement: >-
+      With HEXCELL_CANAL=whatsmeow and HEXCELL_SOCKET_IPC pointed at a test-owned Unix socket
+      path, the real compiled hexcell binary (spawned via
+      crates/hexcell/tests/comun::lanzar_binario_con_variables, which already waits for the
+      salud_vinculada log line emitted before the channel match in main.rs) constructs
+      AdaptadorWhatsmeow, calls arrancar(), and reaches the same Motor +
+      ProcesadorDeInferencia(ProveedorSimulado) + health-server pipeline used by the Simulado
+      arm: a local test double (new struct in the new test file, following the
+      SidecarSimulado/FakeSidecar pattern established in
+      crates/hexcell-canal-whatsmeow/tests/comun/mod.rs and
+      crates/hexcell/tests/emparejamiento_ipc.rs) accepts the connection, exchanges the saludo,
+      sends one evento_entrante IPC frame, and reads back a mensaje_saliente IPC frame produced
+      by ProveedorSimulado -- proving inbound -> engine -> outbound over the real main.rs
+      whatsmeow wiring, without a real WhatsApp channel.
+    covers: [AC-2, AC-3]
+  - statement: >-
+      The GET /health response from the same running process (HTTP request over the address the
+      binary printed, same helper peticion_http_cruda already used elsewhere) succeeds while the
+      whatsmeow channel is selected, proving the health server still runs identically regardless
+      of channel.
+    covers: [AC-2]
+  - statement: >-
+      scripts/laboratorio/iniciar-sidecar.sh and iniciar-nucleo.sh exist, are POSIX shell,
+      contain no hardcoded absolute user paths (every path is an environment variable with a
+      documented default), set HEXCELL_CANAL=whatsmeow plus a coherent shared
+      HEXCELL_SOCKET_IPC and per-cell data directories for the sidecar's HEXCELL_RUTA_SQLSTORE /
+      HEXCELL_RUTA_IDENTIDAD and the nucleo's HEXCELL_RUTA_DATOS, are commented in Spanish, and
+      explicitly say in a comment that this is the LAB harness (Docker/hexcell-admin packaging
+      is stage A-6) -- checked by review, not by an automated test (shell scripts are outside
+      the 7 standard verify commands).
+    covers: [AC-4]
+  - statement: >-
+      docs/STATUS.md gains one new Definido entry dated 2026-08-18, traced to plan task 15 of
+      A-3 and FR-12, recording both 2026-08-18 human decisions (direct-process lab session with
+      the container-restart rehearsal re-run in A-6; ProveedorSimulado until A-4), appended
+      without editing or deleting any prior entry.
+    covers: [AC-5]
+  - statement: >-
+      The 7 standard verification commands pass, including the hexcell-core tree isolation
+      check, the doc compile-fail test, and the sidecar gofmt/build/vet/test check with zero Go
+      diffs (no Go file appears in the diff).
+    covers: [AC-6]
+strategy:
+  - step: 1
+    action: >-
+      Promote HEXCELL_SOCKET_IPC and its default path from crates/hexcell/src/emparejar.rs
+      (currently local pub consts) into crates/hexcell/src/configuracion.rs as the canonical
+      definitions, same name ("HEXCELL_SOCKET_IPC") and same default value
+      ("/var/lib/hexcell/ipc/sidecar.sock") -- HEX-024's own blueprint flagged this exact
+      promotion as the expected follow-up once a task wires AdaptadorWhatsmeow into the normal
+      engine path (kitty-specs/hex-024/01-blueprint.yaml, closing risk entry). Update
+      emparejar.rs to reference the promoted constants (re-export or direct
+      crate::configuracion:: path) instead of redefining them, so there is exactly one source of
+      truth for the variable name and default.
+    files:
+      - crates/hexcell/src/configuracion.rs
+      - crates/hexcell/src/emparejar.rs
+  - step: 2
+    action: >-
+      Add CanalSeleccionado::Whatsmeow as a second unit variant; extend desde_str's match arm
+      ("whatsmeow" => Some(Self::Whatsmeow)); update the enum's doc comment (it currently states
+      "hoy solo existe una variante") and the formato_esperado string used in the ValorInvalido
+      error ("uno de: simulado" -> "uno de: simulado, whatsmeow"). CANAL_POR_DEFECTO stays
+      CanalSeleccionado::Simulado, unchanged.
+    files:
+      - crates/hexcell/src/configuracion.rs
+  - step: 3
+    action: >-
+      Add Configuracion::ruta_socket_ipc: PathBuf, read unconditionally in desde_entorno from
+      the promoted HEXCELL_SOCKET_IPC (falling back to RUTA_SOCKET_IPC_POR_DEFECTO), following
+      the exact precedent of the other channel-specific optional fields already in this struct
+      (evento_simulado_de_arranque, proveedor_de_inferencia_falla): always parsed regardless of
+      which channel ends up selected, with a doc comment stating only the Whatsmeow arm reads
+      it. No parse failure mode exists for a path string, so no new ErrorDeConfiguracion variant
+      is needed here.
+    files:
+      - crates/hexcell/src/configuracion.rs
+  - step: 4
+    action: >-
+      In main.rs, add `use hexcell_canal_whatsmeow::{AdaptadorWhatsmeow, Retroceso};` and a
+      second match arm CanalSeleccionado::Whatsmeow mirroring the Simulado arm's structure:
+      print "hexcell: canal configurado: whatsmeow"; construct
+      AdaptadorWhatsmeow::nuevo(configuracion.ruta_socket_ipc.clone(),
+      configuracion.id_celula.clone(), configuracion.capacidad_cola, Retroceso::por_omision())
+      (four positional args -- the constructor takes NO identity-store parameter, see risks);
+      call adaptador.arrancar(); build the same ProcesadorDeInferencia<ProveedorSimulado> (same
+      proveedor_de_inferencia_falla / latencia_inferencia_simulada branch already used by
+      Simulado) and Motor::nuevo(adaptador, procesador, receptor_eventos,
+      ventana_deduplicacion, repositorio) as the existing arm, then the identical
+      tokio::select! { servidor_salud, motor.ejecutar(senal_de_apagado) }. The
+      evento_simulado_de_arranque injection block is Simulado-only and is NOT duplicated into
+      this arm (it exists solely because the simulado channel has no external event source; the
+      Whatsmeow arm's events come from the real socket). almacen_de_identidad stays opened
+      unconditionally before the match exactly as today and is simply unused in this new arm
+      (see risks) -- do not thread it into AdaptadorWhatsmeow::nuevo, it does not accept it.
+    files:
+      - crates/hexcell/src/main.rs
+  - step: 5
+    action: >-
+      Add two new #[test] functions to the existing crates/hexcell/tests/configuracion.rs (new
+      functions only, no existing function body changes): one asserting HEXCELL_CANAL="whatsmeow"
+      parses to CanalSeleccionado::Whatsmeow, one asserting the default/absent case still yields
+      CanalSeleccionado::Simulado (already implicitly covered by other tests in the file, but an
+      explicit assertion documents the contract). Reuse the file's existing
+      CERROJO_DE_ENTORNO/limpiar_entorno_de_hexcell helpers.
+    files:
+      - crates/hexcell/tests/configuracion.rs
+  - step: 6
+    action: >-
+      Add crates/hexcell/tests/canal_whatsmeow_seleccionado.rs: a local Unix-socket double
+      (new struct, mirroring SidecarSimulado's shape from
+      crates/hexcell-canal-whatsmeow/tests/comun/mod.rs and emparejamiento_ipc.rs's FakeSidecar
+      -- binds the socket BEFORE the child spawns, since the real binary's reconnect loop dials
+      it) that binds a temp socket path, then calls
+      crate::comun::lanzar_binario_con_variables(&ruta_datos, &[("HEXCELL_CANAL", "whatsmeow"),
+      ("HEXCELL_SOCKET_IPC", <socket path>)]) to launch the real binary and wait for
+      salud_vinculada. The double accepts the connection, reads the núcleo's saludo, replies
+      with its own saludo (version 4, emisor "sidecar"), sends one evento_entrante frame, and
+      asserts it reads back one mensaje_saliente frame produced by ProveedorSimulado. A second
+      test hits GET /health on binario.direccion via the existing peticion_http_cruda helper
+      while the whatsmeow channel is selected. `mod comun;` is added at the top of this new file
+      exactly like every other file in this directory.
+    files:
+      - crates/hexcell/tests/canal_whatsmeow_seleccionado.rs
+  - step: 7
+    action: >-
+      Create scripts/laboratorio/ with three files: entorno.ejemplo.sh (documents the shared
+      variables both processes need -- HEXCELL_SOCKET_IPC, per-cell HEXCELL_RUTA_DATOS,
+      HEXCELL_RUTA_SQLSTORE, HEXCELL_RUTA_IDENTIDAD, HEXCELL_TELEFONO_CELULA,
+      HEXCELL_ID_CELULA -- with documented defaults under a configurable lab root, no hardcoded
+      absolute user path, meant to be sourced by the other two scripts), iniciar-sidecar.sh
+      (cd sidecar && go run . or the built binary, sourcing entorno.ejemplo.sh), and
+      iniciar-nucleo.sh (cargo run -p hexcell, with HEXCELL_CANAL=whatsmeow, sourcing the same
+      shared environment). All comments and echoed text in Spanish; each script's header states
+      plainly it is the LAB harness for plan task 15 and that Docker/hexcell-admin packaging is
+      stage A-6, not this task. No secrets, no telephone number literal (adr-0010) -- the
+      telephone number is read from the operator's own shell environment, never hardcoded in the
+      script.
+    files:
+      - scripts/laboratorio/entorno.ejemplo.sh
+      - scripts/laboratorio/iniciar-sidecar.sh
+      - scripts/laboratorio/iniciar-nucleo.sh
+  - step: 8
+    action: >-
+      Append one new Definido entry to docs/STATUS.md, dated 2026-08-18, traced to plan task 15
+      of A-3 and FR-12, recording the two 2026-08-18 human decisions verbatim (direct-process lab
+      session, container-restart rehearsal re-run explicitly in A-6; ProveedorSimulado answers
+      until A-4 lands). Per grep, no existing STATUS.md or runbook line currently claims the
+      engine "only runs on the simulated channel" -- that claim lives only in main.rs's and
+      configuracion.rs's own doc comments, already corrected by steps 2 and 4; this step is a
+      pure append, no edit to any prior entry.
+    files:
+      - docs/STATUS.md
+risks:
+  - >-
+    No prior failed task overlaps these files (quorum analyze failure-lookup returned null
+    against .ai/tasks/failed/; the directory has no matches to inherit lessons from).
+  - >-
+    AdaptadorWhatsmeow::nuevo's real signature (crates/hexcell-canal-whatsmeow/src/adaptador.rs
+    line 137) is `nuevo(ruta_socket: impl Into<PathBuf>, id_celula: impl Into<String>,
+    capacidad: usize, retroceso: Retroceso) -> (Self, mpsc::Receiver<EventoEntrante>)` -- it
+    does NOT take an identity-store parameter. Grepping the whole
+    hexcell-canal-whatsmeow crate for AlmacenDeIdentidad/almacen returns zero matches, and the
+    crate has no dependency on hexcell-storage at all. This differs from the task-essence
+    assumption that the constructor "needs socket path, identity store, runtime handles". The
+    JID-to-internal-identifier mapping for the real channel lives entirely in the sidecar (Go
+    side, HEXCELL_RUTA_IDENTIDAD env var, plan task 9 of fase-a-3), not in this Rust struct.
+    main.rs keeps opening AlmacenDeIdentidad unconditionally before the channel match, exactly
+    as it does today, and it stays simply unused in the new Whatsmeow arm -- do not invent a use
+    for it there and do not change AlmacenDeIdentidad::abrir's call site or signature.
+  - >-
+    Motor<A, P> (crates/hexcell/src/motor.rs) is already fully generic over A: ChannelAdapter
+    with no adapter-specific logic inside it, and CanalSeleccionado is matched in exactly one
+    place in the whole workspace (main.rs line 150; grep confirms no other exhaustive match on
+    this enum exists anywhere in crates/). The "no whatsmeow-specific branches in the engine"
+    invariant (AC-2) is therefore already true by construction before this task starts; this
+    task only needs to add construction/selection code in main.rs, never touch motor.rs.
+  - >-
+    The engine-over-IPC integration test (AC-3) is fully feasible against the REAL compiled
+    binary, not just against directly-constructed Motor/AdaptadorWhatsmeow objects in-process:
+    crates/hexcell/tests/comun/mod.rs already provides lanzar_binario_con_variables (spawns
+    CARGO_BIN_EXE_hexcell, does not block, accepts arbitrary extra env vars, waits for the
+    salud_vinculada log line) plus BinarioDePrueba's enviar_sigterm/esperar_salida/pid, and the
+    health server binds BEFORE the channel match in main.rs (line 133 vs. line 150), so
+    salud_vinculada fires identically regardless of which channel arm runs next. This closes
+    what would otherwise be a real gap (this repo's existing tests only ever drive
+    Motor/AdaptadorWhatsmeow directly in-process, e.g. tests/motor.rs and
+    tests/emparejamiento_ipc.rs, never by spawning the compiled binary for behavior beyond the
+    two config-failure smoke tests in tests/configuracion.rs) -- the new test in step 6 is a
+    genuinely new combination of two already-proven helpers, not a copy-paste of an existing
+    test file, and is worth a reviewer's extra attention for correctness even though every piece
+    it composes is independently precedented.
+  - >-
+    crates/hexcell-canal-whatsmeow's SidecarSimulado double (tests/comun/mod.rs) is a test-only
+    module of a different crate and is not importable from crates/hexcell/tests/ (separate
+    integration-test binaries, no shared test-support library crate in this workspace). HEX-024
+    already established the precedent of NOT trying to share it cross-crate: emparejamiento_ipc.rs
+    duplicates a small local FakeSidecar instead of importing SidecarSimulado. Step 6 follows
+    that same established local-double pattern; it is not literally reusing the whatsmeow
+    crate's own double, only its wire-protocol shape.
+  - >-
+    codebase-memory-mcp's code graph for this project (home-gary-dev-hexcell) has zero indexed
+    symbols under crates/hexcell-canal-whatsmeow/ despite index_status reporting head_sha equal
+    to the current HEAD -- every fact about that crate in this blueprint came from direct Read/
+    grep, not the graph. This looks like a per-crate indexing gap rather than staleness (the
+    rest of the workspace, including crates/hexcell/, is well represented); it does not block
+    this task since direct reads covered the gap, but it is worth flagging so a future re-index
+    picks the crate up.
+  - >-
+    HSME search-fuzzy against the "quorum" project returned zero results for this task's
+    summary/goal (20s timeout, no error) -- there is no semantically similar past task or
+    failure to surface as advisory context; proceeding without it is a normal outcome, not a
+    degradation.
+  - >-
+    docs/bitacora-de-descartes.md has no entry mentioning scripts, local lab launchers, direct
+    processes, or Docker for this stage; nothing in this task's scope has been previously
+    discarded and reopened here.

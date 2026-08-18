@@ -1,0 +1,41 @@
+task_id: HEX-025
+summary: 'Config-selected channel in the cell binary: engine over the real whatsmeow adapter (default simulado untouched) + local startup scripts, unblocking lab task 15.'
+goal: 'Make the hexcell cell binary able to run its message engine over the real whatsmeow channel: a configuration-selected channel (simulado | whatsmeow, default simulado preserving current behavior bit-for-bit) wires AdaptadorWhatsmeow through the existing ChannelAdapter port into the same Motor + ProcesadorDeInferencia(ProveedorSimulado) pipeline, and local startup scripts launch the two processes (sidecar + nucleo) with a coherent shared environment - so the lab session of plan task 15 (pairing, real conversation, restarts, network cut, forced unlink) can run with the phone in hand and no further code. Human decisions of 2026-08-18: the lab runs DIRECT PROCESSES (Docker packaging and its container-restart rehearsal belong to stage A-6), and the bot answers with the existing deterministic ProveedorSimulado (real LLM inference arrives with stage A-4 admission/budget).'
+risk: medium
+acceptance:
+    - id: AC-1
+      statement: 'The cell configuration gains a channel selection read from the environment following the existing Configuracion::desde_entorno conventions (variable name fixed by the blueprint, e.g. HEXCELL_CANAL): value "simulado" or absent runs exactly the current behavior (existing tests unaffected, bit-for-bit); value "whatsmeow" selects the real channel; any other value aborts startup fail-closed printing the concrete variable name and the accepted values in Spanish, consistent with the binary''s existing startup-error discipline.'
+    - id: AC-2
+      statement: 'With whatsmeow selected, main constructs AdaptadorWhatsmeow over the configured IPC socket path and the existing adapter identity store (adr-0010), starts its dispatch loop, and runs the SAME engine pipeline used today (Motor + ProcesadorDeInferencia over ProveedorSimulado, health server included): the engine path stays adapter-agnostic through the ChannelAdapter port (FR-12) - channel-specific code is confined to construction/selection, with no whatsmeow-specific branches in the engine.'
+    - id: AC-3
+      statement: 'Integration tests against the existing SidecarSimulado double prove the wiring end-to-end without a real channel: with the whatsmeow channel selected, an inbound message emitted by the double reaches the engine and produces an outbound reply (from ProveedorSimulado) observable by the double through the port; plus the selection logic itself - invalid value rejected naming the variable, default/simulado path preserved (existing tests keep passing unchanged). Pairing and conversation against the REAL channel stay EXPLICITLY DEFERRED to the lab session (plan task 15, run live after this task merges).'
+    - id: AC-4
+      statement: 'Local startup scripts for the lab cell exist (location fixed by the blueprint, e.g. scripts/laboratorio/): they launch the sidecar and the nucleo as direct processes with a coherent shared environment (IPC socket path, per-cell data directories for the four stores, channel=whatsmeow), are commented in Spanish, contain no secrets and no hardcoded absolute user paths (configurable via environment with documented defaults), and state honestly that they are the LAB harness - the operable packaging (Docker + hexcell-admin) is stage A-6.'
+    - id: AC-5
+      statement: 'docs/STATUS.md gains a Definido entry (dated 2026-08-18, traced to plan task 15 of A-3 and FR-12) recording the two human decisions of 2026-08-18: the lab session runs direct processes with the container-restart rehearsal explicitly re-run in stage A-6, and the lab bot answers via ProveedorSimulado until A-4 lands; any existing STATUS/runbook line that claims the engine only runs on the simulated channel is updated per the file''s conventions.'
+    - id: AC-6
+      statement: 'The 7 standard verification commands pass (cargo fmt --check, cargo build --workspace, cargo clippy --workspace -- -D warnings, cargo test --workspace, hexcell-core tree isolation check, doc compile-fail test, cd sidecar && gofmt check && go build ./... && go vet ./... && go test ./...). No Go/sidecar changes are expected; if the blueprint finds a genuine sidecar gap it is recorded as a risk, not silently fixed.'
+constraints:
+    - 'The IPC protocol docs/protocolo-ipc-nucleo-sidecar.md (v1.3, wire version 4) is CLOSED: no field, type or version changes on either side.'
+    - 'No new third-party dependencies (no CLI/config library - the existing std::env-based Configuracion conventions only).'
+    - 'No Dockerfiles, compose files or container tooling in this task (human decision 2026-08-18: that is stage A-6 scope).'
+    - 'No real LLM provider wiring (human decision 2026-08-18: ProveedorSimulado only; real inference arrives with A-4 admission/budget).'
+    - 'adr-0010: the cell phone number never appears in nucleo configuration, IPC messages or logs; sessions.db never sees raw transport identifiers; the identity store stays the adapter''s own.'
+    - 'Default behavior is sacred: without the new variable the binary behaves bit-for-bit as today; no existing test may need modification to keep passing (new tests only).'
+    - 'Never introduce mass-sending-provider vocabulary (jitter, warm-up, proxies, VPN, IP rotation); never write that Fase B replaces or retires the sidecar channel.'
+    - 'Everything user-visible (CLI/stderr output, code comments, script comments, STATUS.md prose, commit message) in Spanish; artifact YAML prose in English. Dates absolute (2026-08-18).'
+    - 'Consult docs/bitacora-de-descartes.md before proposing anything resembling a previously discarded idea.'
+    - 'No .db files versioned; no changes to the pinned whatsmeow commit.'
+invariants:
+    - 'The engine never knows the transport: everything crosses the ChannelAdapter port (FR-12); channel-specific code confined to construction/selection in the binary crate.'
+    - 'Fail closed at startup: invalid channel value aborts before binding any port or touching any store, naming the variable.'
+    - 'The closed set of 11 IPC message types and wire version 4 stay intact.'
+    - 'The simulado path stays the default and remains bit-for-bit unchanged.'
+    - 'All user-visible content in Spanish with absolute dates; no invented numbers.'
+non_goals:
+    - 'The live lab session itself (pairing, real conversation, restarts, network cut, forced unlink) - runs interactively with the human after this task merges.'
+    - 'Docker packaging, cell composition, resource limits, hexcell-admin CLI (stage A-6).'
+    - 'Real LLM inference, admission or budget accounting (stage A-4).'
+    - 'Any Go/sidecar changes.'
+    - 'Fase B / Cloud API work.'
+    - 'Remote no-server-terminal operator surface (stage A-6).'
