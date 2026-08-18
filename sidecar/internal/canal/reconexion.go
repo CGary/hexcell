@@ -26,6 +26,7 @@ const (
 	EventoReconexionInterrumpida = "canal.reconexion_interrumpida"
 	EventoPausaVigente           = "canal.pausa_vigente"
 	EventoPoliticaEnCurso        = "canal.politica_en_curso"
+	causaArranqueInicial         = "arranque_inicial"
 )
 
 // Supervisor aplica la política de reconexión propia del sidecar.
@@ -129,6 +130,18 @@ func (s *Supervisor) procesarEvento(ctx context.Context, evento any) {
 		return
 	}
 	s.procesarDesconexion(ctx, desc)
+}
+
+// Arrancar es el único punto de entrada que inicia la conexión automática de un dispositivo
+// ya emparejado al arrancar el sidecar. Si emparejada es false, es una operación nula (un almacén
+// sin dispositivo nunca se conecta solo y el emparejamiento sigue siendo la única entrada).
+// El primer intento también espera IntervaloInicial antes de marcar la conexión, respetando
+// la disciplina de retroceso configurada.
+func (s *Supervisor) Arrancar(ctx context.Context, emparejada bool) {
+	if !emparejada {
+		return
+	}
+	s.reintentarConexion(ctx, causaArranqueInicial)
 }
 
 func (s *Supervisor) procesarDesconexion(ctx context.Context, desc desconexion) {

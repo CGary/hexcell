@@ -379,6 +379,12 @@ adicional cuando aparezca un cliente que lo justifique. Ver [plan/README.md](pla
   `SolicitarCodigoDeVinculacion` abrían los canales de emparejamiento sin invocar `Conectar()`, impidiendo
   la emisión de códigos QR y la vinculación por teléfono. Ambos flujos establecen la conexión con disciplina
   de fallo cerrado antes de proceder.
+* **Auto-conexión al arrancar con dispositivo emparejado** (2026-08-18, `HEX-027`, tarea 15 y tarea 7 de la etapa A-3).
+  Se resolvió el defecto detectado en sesión de laboratorio donde el supervisor de reconexión se construía en `main.go`
+  y se registraba para manejar eventos crudos, pero no contaba con punto de entrada para iniciar la conexión en el arranque
+  con un dispositivo ya emparejado (`sesion.EstaEmparejada() == true`), dejando la célula inerte. Se añadió `Supervisor.Arrancar(ctx, emparejada)`
+  que ejecuta `reintentarConexion` con la disciplina de retroceso configurada cuando existe dispositivo emparejado,
+  permaneciendo como no-op en arranques sin dispositivo para preservar el emparejamiento como única vía de conexión inicial.
 
 ## Pendiente
 * **Calibración de parámetros de retroceso IPC en el núcleo** (2026-08-08, HEX-015). Los valores por defecto provisionales del cliente IPC para los reintentos de conexión requieren calibración bajo tráfico real. — *Etapa A-3.*

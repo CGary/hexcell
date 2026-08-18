@@ -112,6 +112,7 @@ func main() {
 
 	supervisor := canal.NuevoSupervisor(reg, cfg.Retroceso, sesion.Conectar, srv.EnviarEstadoSesion)
 	sesion.RegistrarManejador(supervisor)
+	go supervisor.Arrancar(ctx, sesion.EstaEmparejada())
 
 	detectorBaja := canal.NuevoDetectorDeBaja(cfg.PalabrasDeBaja, cfg.TextoConfirmacionDeBaja, almacenIdentidad, portero)
 	detectorCortacircuitos := canal.NuevoDetectorDeCortacircuitos(

@@ -167,10 +167,11 @@ func (s *Sesion) RegistrarManejador(supervisores ...*Supervisor) uint32 {
 //
 // Ambos flujos de emparejamiento (IniciarEmparejamientoQr y SolicitarCodigoDeVinculacion)
 // invocan este método como parte del inicio del emparejamiento (HEX-026, tarea 15 de la etapa A-3).
-// Los tests de este paquete ejercitan únicamente la ruta de fallo de conexión mediante un contexto
-// cancelado explícitamente; la sesión de laboratorio del 2026-08-18 fue la que encontró este
-// defecto (el interbloqueo por falta de conexión), no una prueba de que esta corrección funciona
-// contra el canal real, que sigue pendiente.
+// Asimismo, Supervisor.Arrancar lo invoca una vez desde main.go para un dispositivo ya emparejado al
+// arrancar (HEX-027, tarea 15 / tarea 7 de la etapa A-3).
+// Los tests de este paquete ejercitan únicamente el cableado de Arrancar (guardia + invocación del bucle
+// de reintento) mediante una función de conexión inyectada, nunca con una llamada real a whatsmeow;
+// la prueba contra un canal real es el ensayo de corte de red del laboratorio (tarea 15), no una prueba unitaria.
 func (s *Sesion) Conectar(ctx context.Context) error {
 	return s.cliente.ConnectContext(ctx)
 }

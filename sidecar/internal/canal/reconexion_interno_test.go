@@ -656,3 +656,121 @@ func TestSupervisorNoArrancaUnIntentoNuevoConLaPausaYaVigente(t *testing.T) {
 		t.Fatalf("no se registró el descarte por pausa vigente: %s", salida.String())
 	}
 }
+
+func TestSupervisorArrancarConDispositivoEmparejadoDisparaConexionYEmiteEstadoActiva(t *testing.T) {
+	t.Parallel()
+
+	var salida bytes.Buffer
+	reg := registro.Nuevo(&salida, slog.LevelInfo, "test")
+	var esperas []time.Duration
+	var estados []ipc.EstadoSesion
+	intentosConexion := 0
+
+	supervisor := NuevoSupervisor(reg, retrocesoDePrueba(), func(context.Context) error {
+		intentosConexion++
+		return nil
+	}, func(estado ipc.EstadoSesion) {
+		estados = append(estados, estado)
+	})
+	supervisor.esperar = func(_ context.Context, duracion time.Duration) error {
+		esperas = append(esperas, duracion)
+		return nil
+	}
+
+	supervisor.Arrancar(context.Background(), true)
+
+	esperadas := []time.Duration{time.Second}
+	if !reflect.DeepEqual(esperas, esperadas) {
+		t.Fatalf("esperas = %v, se esperaba %v", esperas, esperadas)
+	}
+	if intentosConexion != 1 {
+		t.Fatalf("intentos de conexión = %d, se esperaba 1", intentosConexion)
+	}
+	if len(estados) != 1 || estados[0].Estado != ipc.EstadoActiva {
+		t.Fatalf("estados emitidos = %#v, se esperaba [activa]", estados)
+	}
+	log := salida.String()
+	if !strings.Contains(log, EventoReintentoConexion) || !strings.Contains(log, "causa=arranque_inicial") {
+		t.Fatalf("log sin causa de arranque inicial: %s", log)
+	}
+	if !strings.Contains(log, EventoReconexionRestaurada) {
+		t.Fatalf("log sin reconexión restaurada: %s", log)
+	}
+}
+
+func TestSupervisorArrancarSinDispositivoEsNoOp(t *testing.T) {
+	t.Parallel()
+
+	var salida bytes.Buffer
+	reg := registro.Nuevo(&salida, slog.LevelInfo, "test")
+	var esperas []time.Duration
+	var estados []ipc.EstadoSesion
+	intentosConexion := 0
+
+	supervisor := NuevoSupervisor(reg, retrocesoDePrueba(), func(context.Context) error {
+		intentosConexion++
+		return nil
+	}, func(estado ipc.EstadoSesion) {
+		estados = append(estados, estado)
+	})
+	supervisor.esperar = func(_ context.Context, duracion time.Duration) error {
+		esperas = append(esperas, duracion)
+		return nil
+	}
+
+	supervisor.Arrancar(context.Background(), false)
+
+	if intentosConexion != 0 {
+		t.Fatalf("intentos de conexión = %d, se esperaba 0", intentosConexion)
+	}
+	if len(esperas) != 0 {
+		t.Fatalf("esperas = %v, se esperaba vacías", esperas)
+	}
+	if len(estados) != 0 {
+		t.Fatalf("estados emitidos = %#v, se esperaba vacíos", estados)
+	}
+	if salida.Len() != 0 {
+		t.Fatalf("se escribió log en arranque sin dispositivo: %s", salida.String())
+	}
+}
+
+func TestSupervisorArrancarConFallosReintentaSegunRetroceso(t *testing.T) {
+	t.Parallel()
+
+	var salida bytes.Buffer
+	reg := registro.Nuevo(&salida, slog.LevelInfo, "test")
+	var esperas []time.Duration
+	var estados []ipc.EstadoSesion
+	intentosConexion := 0
+
+	supervisor := NuevoSupervisor(reg, retrocesoDePrueba(), func(context.Context) error {
+		intentosConexion++
+		if intentosConexion < 3 {
+			return errors.New("fallo transitorio de arranque")
+		}
+		return nil
+	}, func(estado ipc.EstadoSesion) {
+		estados = append(estados, estado)
+	})
+	supervisor.esperar = func(_ context.Context, duracion time.Duration) error {
+		esperas = append(esperas, duracion)
+		return nil
+	}
+
+	supervisor.Arrancar(context.Background(), true)
+
+	esperadas := []time.Duration{time.Second, 2 * time.Second, 4 * time.Second}
+	if !reflect.DeepEqual(esperas, esperadas) {
+		t.Fatalf("esperas = %v, se esperaba %v", esperas, esperadas)
+	}
+	if intentosConexion != 3 {
+		t.Fatalf("intentos de conexión = %d, se esperaba 3", intentosConexion)
+	}
+	if len(estados) != 1 || estados[0].Estado != ipc.EstadoActiva {
+		t.Fatalf("estados emitidos = %#v, se esperaba [activa]", estados)
+	}
+	log := salida.String()
+	if strings.Count(log, EventoReintentoConexion) < 3 {
+		t.Fatalf("log sin entradas para cada intento: %s", log)
+	}
+}
