@@ -1,0 +1,23 @@
+The error handling in **`sidecar/internal/canal/emparejamiento.go`** has been updated to wrap the error returned by `s.cliente.PairPhone` with additional context:
+
+```go
+return "", fmt.Errorf("canal: error al solicitar código de vinculación: %w", err)
+```
+
+This provides clearer diagnostics while preserving the original error for downstream handling.
+
+All tests now pass:
+
+```
+ok   github.com/CGary/hexcell/sidecar/internal/canal   0.112s
+ok   github.com/CGary/hexcell/sidecar/internal/configuracion   0.003s
+ok   github.com/CGary/hexcell/sidecar/internal/identidad   0.057s
+ok   github.com/CGary/hexcell/sidecar/internal/ipc   0.003s
+ok   github.com/CGary/hexcell/sidecar/internal/outbox   0.046s
+ok   github.com/CGary/hexcell/sidecar/internal/registro   0.003s
+ok   github.com/CGary/hexcell/sidecar/internal/servidor   0.008s
+```
+
+You can review the exact change here: [emparejamiento.go](file:///home/gary/dev/hexcell/worktrees/HEX-026/sidecar/internal/canal/emparejamiento.go)
+
+Let me know if there’s anything else you’d like to address.

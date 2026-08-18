@@ -1,0 +1,34 @@
+task_id: HEX-026
+summary: 'Lab-found fix: the sidecar pairing paths never call Connect, so whatsmeow emits no QR codes and PairPhone cannot work; connect within both pairing flows.'
+goal: 'Fix the pairing deadlock discovered live in the lab session of 2026-08-18 (plan task 15): sidecar/internal/canal/emparejamiento.go opens the QR channel with GetQRChannel but never calls Connect, and whatsmeow only emits QR codes AFTER the websocket connects - observed evidence: sidecar log shows canal.emparejamiento_qr_iniciado followed by silence, and the operator sees no QR ever. The code-pairing path has the same gap (PairPhone requires a connected client). Both flows must establish the connection as part of initiating the pairing, with fail-closed error handling, so the lab session can pair a real number.'
+risk: medium
+acceptance:
+    - id: AC-1
+      statement: 'IniciarEmparejamientoQr establishes the whatsmeow connection as part of initiating the flow: after GetQRChannel succeeds, the client connects (ConnectContext or the whatsmeow-documented equivalent for the QR flow); a connection failure is returned as an error to the caller with the QR consumer goroutine and channel cleaned up (no leaked goroutine, no half-open flow), and the error path never logs QR payloads (adr-0019 stays intact).'
+    - id: AC-2
+      statement: 'The code-pairing path (PairPhone) ensures the client is connected before calling PairPhone, following the whatsmeow-documented contract for phone-pairing, with the same fail-closed error discipline; the existing behavior of reading the phone number from sidecar configuration only (never from IPC messages, adr-0010) is unchanged.'
+    - id: AC-3
+      statement: 'Tests cover what is honestly coverable without a real channel: the connection-failure error path of each flow (asserting the flow returns an error and cleans up rather than hanging), and existing pairing tests keep passing - EXCEPTION recorded 2026-08-18: the three existing tests that would otherwise encode the pre-fix bug or dial live WhatsApp infrastructure from a unit test (QR happy-path, the two phone-format-rejection tests, and the adr-0019 phone-never-logged test in almacen_interno_test.go - four in total, one more than the blueprint counted) are repointed to a deliberately pre-cancelled context, exactly as the blueprint documents; no other existing test changes. Where whatsmeow only emits events against the real service, the limitation stays documented in the test or code comment exactly as the existing traducirItemQr sentinel-test pattern does - do NOT fabricate green tests that never exercise the claimed behavior.'
+    - id: AC-4
+      statement: 'The Conectar entry point comment in sidecar/internal/canal/canal.go (which currently says nothing calls it and defers real-channel proof to task 15) is updated to reflect reality after this change, in Spanish, without weakening the credential discipline notes; docs/STATUS.md gains a brief Definido entry (dated 2026-08-18) recording the lab-found defect and its fix, traced to plan task 15 of A-3.'
+    - id: AC-5
+      statement: 'The 7 standard verification commands pass (cargo fmt --check, cargo build --workspace, cargo clippy --workspace -- -D warnings, cargo test --workspace, hexcell-core tree isolation check, doc compile-fail test, cd sidecar && gofmt check && go build ./... && go vet ./... && go test ./...). This is a Go-side task: no Rust changes expected; if the blueprint finds a genuine Rust gap it is recorded as a risk, not silently fixed.'
+constraints:
+    - 'The IPC protocol docs/protocolo-ipc-nucleo-sidecar.md (v1.3, wire version 4) is CLOSED: no field, type or version changes on either side.'
+    - 'No changes to the pinned whatsmeow commit; use the API the pinned version provides.'
+    - 'adr-0019: the QR payload is never written to any log; adr-0010: the phone number never travels in IPC messages and the JID never crosses the port boundary.'
+    - 'No new third-party dependencies.'
+    - 'Everything user-visible (log messages, code comments, STATUS.md prose, commit message) in Spanish; artifact YAML prose in English. Dates absolute (2026-08-18).'
+    - 'Never introduce mass-sending-provider vocabulary (jitter, warm-up, proxies, VPN, IP rotation); never write that Fase B replaces or retires the sidecar channel.'
+    - 'Consult docs/bitacora-de-descartes.md before proposing anything resembling a previously discarded idea.'
+    - 'No .db files versioned.'
+invariants:
+    - 'Fail closed: a pairing flow that cannot connect returns an error and releases its resources; it never leaves a silent half-open flow (the exact failure mode this task fixes).'
+    - 'The closed set of 11 IPC message types and wire version 4 stay intact.'
+    - 'Existing tests keep passing; the sole permitted modification is the four-test context repointing documented in the blueprint (a unit test must never dial live WhatsApp infrastructure).'
+    - 'All user-visible content in Spanish with absolute dates.'
+non_goals:
+    - 'The outbox database path hardcoded in sidecar main.go (RutaPorOmision) - a separate lab finding, queued as its own micro-task.'
+    - 'Wiring the health endpoint to real channel state (known gap, separate task).'
+    - 'The lab session itself and any Rust-side changes.'
+    - 'Reconnection/supervisor behavior for already-paired sessions (task 7 taxonomy territory) beyond what pairing strictly needs.'

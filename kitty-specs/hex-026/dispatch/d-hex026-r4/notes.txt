@@ -1,0 +1,28 @@
+Task `882cfb6a-8aaa-4232-8536-dda5e3a83b84/task-68` has been launched in the background to execute the complete suite of verification commands (Cargo fmt/build/clippy/test workspace checks, core tree isolation, doc compile-fail test, Go fmt/build/vet/test, and Go race detector). I will wait for it to complete.
+I have implemented the instructions from `/home/gary/dev/hexcell/worktrees/HEX-026/.ai/tasks/active/dispatch-prompt-d-hex026-r4.md` for task **HEX-026**.
+
+### Summary of Changes
+
+NOTES:
+- **`sidecar/internal/canal/emparejamiento.go`**:
+  - In `IniciarEmparejamientoQr()`, after `GetQRChannel` succeeds, explicitly invoke `s.Conectar(s.ctx)` before creating the results channel or spawning the consumer goroutine. If connection fails, wrap the error in Spanish (`canal: no se pudo conectar para iniciar emparejamiento QR: %w`) and return `(nil, err)` immediately, preventing half-open channels or leaked consumer goroutines.
+  - In `SolicitarCodigoDeVinculacion()`, emit the event line `EventoEmparejamientoPcSolicitado` and check `!s.cliente.IsConnected()` to call `s.Conectar(ctx)` before calling `PairPhone()`. Wrap any connect error in Spanish (`canal: no se pudo conectar para solicitar código de vinculación: %w`).
+- **`sidecar/internal/canal/canal.go`**:
+  - Updated `Conectar` doc comment in Spanish to document that both pairing flows now call `Conectar` as part of initiating pairing (`HEX-026`, task 15 of stage A-3).
+  - Updated `NuevaSesion` so initializing `sqlstore` device retrieval uses `context.Background()`.
+- **`sidecar/internal/canal/emparejamiento_test.go`**:
+  - Repointed `TestIniciarEmparejamientoQrSobreAlmacenVacioDevuelveErrorAlNoPoderConectar`, `TestSolicitarCodigoDeVinculacionDevuelveErrorAlNoPoderConectarTelefonoCorto`, and `...TelefonoConCero` to pass a pre-cancelled context, asserting fail-closed connection errors without making live network calls to WhatsApp servers during unit tests.
+  - Added `TestSolicitarCodigoDeVinculacionConClienteYaConectadoNoReconecta` to exercise code-pairing under connection attempt boundaries.
+- **`docs/STATUS.md`**:
+  - Appended a new `Definido` entry dated `2026-08-18` documenting the lab-found deadlock fix for `HEX-026` (plan task 15 of stage A-3).
+
+### Verification
+All 7 standard verification commands plus Go race tests passed cleanly:
+- `cargo fmt --check`
+- `cargo build --workspace`
+- `cargo clippy --workspace -- -D warnings`
+- `cargo test --workspace`
+- `test "$(cargo tree -p hexcell-core | wc -l)" = "1"`
+- `cargo test -p hexcell-core --doc`
+- `cd sidecar && test -z "$(gofmt -l .)" && go build ./... && go vet ./... && go test ./...`
+- `cd sidecar && go test -race ./internal/canal/...`

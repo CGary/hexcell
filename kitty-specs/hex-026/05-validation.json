@@ -1,0 +1,56 @@
+{
+  "commands": [
+    {
+      "command": "cargo fmt --check",
+      "duration_s": 0.2,
+      "exit_code": 0,
+      "output_excerpt": "sin diferencias de formato"
+    },
+    {
+      "command": "cargo build --workspace",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "Finished (cache)"
+    },
+    {
+      "command": "cargo clippy --workspace -- -D warnings",
+      "duration_s": 0.1,
+      "exit_code": 0,
+      "output_excerpt": "sin warnings"
+    },
+    {
+      "command": "cargo test --workspace",
+      "duration_s": 3.2,
+      "exit_code": 0,
+      "output_excerpt": "todas las suites en verde"
+    },
+    {
+      "command": "test \"$(cargo tree -p hexcell-core | wc -l)\" = \"1\"",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "hexcell-core sin dependencias"
+    },
+    {
+      "command": "cargo test -p hexcell-core --doc 2\u003e\u00261 | grep -q \"compile fail\"",
+      "duration_s": 0.2,
+      "exit_code": 0,
+      "output_excerpt": "compile fail presente"
+    },
+    {
+      "command": "cd sidecar \u0026\u0026 test -z \"$(gofmt -l .)\" \u0026\u0026 go build ./... \u0026\u0026 go vet ./... \u0026\u0026 go test ./...",
+      "duration_s": 0.8,
+      "exit_code": 0,
+      "output_excerpt": "gofmt limpio, build/vet/test ok"
+    },
+    {
+      "command": "cd sidecar \u0026\u0026 go test -race -count=1 ./internal/canal/...",
+      "duration_s": 5,
+      "exit_code": 0,
+      "output_excerpt": "race detector limpio sobre el paquete tocado"
+    }
+  ],
+  "executed_at": "2026-08-18T18:10:00Z",
+  "overall_result": "passed",
+  "summary": "Round 2 after fix round 5028256: 7/7 contract commands exit 0, 5/5 stability reps, go test -race ./internal/canal/... clean, contract-check ok.",
+  "task_id": "HEX-026"
+}

@@ -1,0 +1,120 @@
+task_id: HEX-026
+summary: Wire whatsmeow Connect into both pairing flows so pairing no longer deadlocks; fail-closed on connect error, no real
+  network from a unit test.
+goal: 'Fix the lab-found defect: IniciarEmparejamientoQr and SolicitarCodigoDeVinculacion in sidecar/internal/canal/emparejamiento.go
+  never call Connect, so whatsmeow never emits QR codes and PairPhone cannot work. Both flows must establish the connection
+  as part of initiating pairing, with fail-closed error handling and no leaked goroutine, using the existing Sesion.Conectar
+  entry point in canal.go (whose doc comment is updated to reflect that it is finally called). Tests cover the connection-failure
+  path honestly, using a deliberately pre-cancelled context so no test ever dials WhatsApp''s real infrastructure; real QR
+  emission and whatsmeow''s own phone-format validation stay documented as untestable without a live channel, following the
+  existing traducirItemQr sentinel-test pattern. Go-only: no Rust changes, no whatsmeow commit bump, no new dependency.'
+read:
+- .ai/tasks/active/HEX-026-new-spec/00-spec.yaml
+- .ai/tasks/active/HEX-026-new-spec/01-blueprint.yaml
+- docs/protocolo-ipc-nucleo-sidecar.md
+- docs/runbook-canal-whatsmeow.md
+- docs/runbook-canal-fase-a.md
+- docs/STATUS.md
+- docs/bitacora-de-descartes.md
+- sidecar/go.mod
+- sidecar/internal/canal/canal_test.go
+- sidecar/internal/canal/almacen_interno_test.go
+- sidecar/internal/servidor/manejo.go
+- kitty-specs/hex-024/02-contract.yaml
+- kitty-specs/hex-023/02-contract.yaml
+touch:
+- sidecar/internal/canal/emparejamiento.go
+- sidecar/internal/canal/canal.go
+- sidecar/internal/canal/emparejamiento_test.go
+- docs/STATUS.md
+- sidecar/internal/canal/almacen_interno_test.go
+forbid:
+  files:
+  - docs/protocolo-ipc-nucleo-sidecar.md
+  - docs/contrato-ipc-respaldo-del-sqlstore.md
+  - sidecar/go.mod
+  - sidecar/go.sum
+  - sidecar/internal/canal/canal_test.go
+  - sidecar/internal/canal/taxonomia.go
+  - sidecar/internal/canal/traduccion.go
+  - sidecar/internal/servidor/manejo.go
+  - sidecar/internal/ipc/mensajes.go
+  - sidecar/internal/configuracion/configuracion.go
+  - sidecar/main.go
+  - docs/runbook-canal-whatsmeow.md
+  - docs/runbook-canal-fase-a.md
+  - docs/adr/README.md
+  - Cargo.toml
+  - Cargo.lock
+  behaviors:
+  - Do NOT bump, downgrade, or re-pin the whatsmeow commit in sidecar/go.mod, and do NOT add any new module to sidecar/go.mod
+    or sidecar/go.sum. Use only whatsmeow.Client methods that already exist in go.mau.fi/whatsmeow@v0.0.0-20260722203353-e9a033b24933
+    (verify method names and signatures against the pinned module cache, never assume).
+  - Do NOT touch any Rust file (crates/**, Cargo.toml, Cargo.lock). If a genuine Rust-side gap is found during implementation,
+    record it as a risk in the implementation notes; do not silently fix it here.
+  - Do NOT let any new or modified test in emparejamiento_test.go dial a real network address. Every test that exercises the
+    Conectar path (directly or through IniciarEmparejamientoQr / SolicitarCodigoDeVinculacion) must use a deliberately pre-cancelled
+    or already-expired context (e.g. context.WithCancel followed by immediate cancel()), never a bare context.Background()
+    or a context with a real deadline. This repo's CI network reachability to wss://web.whatsapp.com is not something to rely
+    on either way -- the test must fail fast on ctx.Done() before any dial is attempted, verified during blueprint research
+    by reading coder/websocket's Dial call chain down to socket.FrameSocket.Connect.
+  - Do NOT spawn the resultados channel or its consumer goroutine in IniciarEmparejamientoQr before Conectar succeeds. On
+    a Conectar error, return (nil, err) directly; the goroutine and channel must never exist on the failure path, so there
+    is nothing to explicitly close or cancel -- do not add a spawn-then-teardown pattern (e.g. starting the goroutine and
+    then trying to stop it after a failed connect), which is unnecessary complexity and a plausible source of a real race
+    or leak this fix is supposed to eliminate.
+  - Do NOT attempt to remove or track whatsmeow's internal QR-channel event handler (registered inside GetQRChannel) on a
+    Conectar failure. No handler ID is exposed to this package by the pinned API; do not work around this by reflection, unsafe,
+    or reaching into unexported whatsmeow state. Document the residual as an accepted, bounded whatsmeow-side limitation instead.
+  - 'Do NOT log, print, or place into any error''s Display/wrapped text the QR code string, the pairing code string, or the
+    phone number, at any point on the new connect-failure paths (adr-0019, adr-0010). A connect failure''s error text may
+    only describe the connection failure itself (e.g. wrapping whatsmeow''s dial error), never credential material -- this
+    repo''s existing wrapping style (fmt.Errorf with %w, Spanish text prefixed ''canal: '') is the pattern to follow.'
+  - Do NOT read the phone number from any IPC message field; SolicitarCodigoDeVinculacion keeps reading it from sidecar configuration
+    only (unchanged call site in manejo.go, which stays untouched).
+  - Do NOT delete, weaken, or silently reinterpret TestSolicitarCodigoDeVinculacionRechazaTelefonoVacio; its check runs before
+    any connect attempt and needs no behavioral change.
+  - Do NOT delete or rewrite any existing docs/STATUS.md Definido entry, including the HEX-010 entry that currently states
+    Conectar is not yet called; append one new Definido entry only, dated 2026-08-18, traced to plan task 15 of stage A-3
+    and this task's ID.
+  - Do NOT write any user-visible content (Go doc comments, log messages, error text, docs/STATUS.md prose, commit message)
+    in English; keep it in Spanish. Only this contract's and the blueprint's own YAML prose stays in English. Use absolute
+    dates (2026-08-18), never relative ones.
+  - Do NOT introduce mass-sending-provider vocabulary (jitter, warm-up/calentamiento, proxies, VPN, IP rotation) anywhere,
+    and never write or imply that Fase B replaces, retires, or closes the sidecar channel.
+  - Do NOT weaken the credential-discipline package doc comment at the top of canal.go (lines 1-20) while updating Conectar's
+    own doc comment; both must remain intact and mutually consistent.
+  - Do NOT fabricate a green test for real QR emission or for whatsmeow's own PairPhone phone-format validation (ErrPhoneNumberTooShort,
+    ErrPhoneNumberIsNotInternational) that does not actually exercise the claimed behavior; where those remain untestable
+    without a live channel, say so explicitly in a comment, following the existing traducirItemQr sentinel-test documentation
+    pattern in this same file.
+verify:
+  commands:
+  - cargo fmt --check
+  - cargo build --workspace
+  - cargo clippy --workspace -- -D warnings
+  - cargo test --workspace
+  - test "$(cargo tree -p hexcell-core | wc -l)" = "1"
+  - cargo test -p hexcell-core --doc 2>&1 | grep -q "compile fail"
+  - cd sidecar && test -z "$(gofmt -l .)" && go build ./... && go vet ./... && go test ./...
+  - cd sidecar && go test -race ./internal/canal/...
+acceptance:
+  human_gate: true
+limits:
+  max_files_changed: 5
+  max_diff_lines: 420
+  per_class:
+  - glob: sidecar/internal/canal/emparejamiento.go
+    max_diff_lines: 65
+  - glob: sidecar/internal/canal/canal.go
+    max_diff_lines: 30
+  - glob: sidecar/internal/canal/emparejamiento_test.go
+    max_diff_lines: 300
+  - glob: docs/STATUS.md
+    max_diff_lines: 20
+execution:
+  mode: worktree_edit
+  branch: ai/HEX-026
+retry_policy:
+  max_attempts: 2
+  escalate_after: 2

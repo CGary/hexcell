@@ -1,0 +1,3 @@
+entries: []
+summary: Wire whatsmeow Connect into both pairing flows so pairing no longer deadlocks; fail-closed on connect error, no real network from a unit test.
+task_id: HEX-026

@@ -1,0 +1,184 @@
+task_id: HEX-026
+summary: >-
+  Wire whatsmeow Connect into both pairing flows (QR and PairPhone) so the lab-found
+  deadlock disappears; fail closed on connect error, never touch real network from a
+  unit test.
+
+affected_files:
+  - sidecar/internal/canal/emparejamiento.go
+  - sidecar/internal/canal/canal.go
+  - sidecar/internal/canal/emparejamiento_test.go
+  - docs/STATUS.md
+
+symbols:
+  - Sesion.IniciarEmparejamientoQr
+  - Sesion.SolicitarCodigoDeVinculacion
+  - Sesion.Conectar
+
+dependencies:
+  - sidecar/internal/servidor/manejo.go
+  - sidecar/go.mod
+
+test_scenarios:
+  - statement: >-
+      IniciarEmparejamientoQr on a store with no device: GetQRChannel succeeds, then
+      Conectar is called with a deliberately pre-cancelled context so ConnectContext
+      fails fast on ctx.Done() inside websocket.Dial, never dialing the real
+      wss://web.whatsapp.com server; the method returns a non-nil error and a nil
+      result channel, and by construction (the consumer goroutine is only started
+      after Conectar succeeds) no goroutine or channel was ever created on this path.
+    covers: [AC-1]
+  - statement: >-
+      SolicitarCodigoDeVinculacion with a valid-looking phone and a deliberately
+      pre-cancelled context: the connect-before-PairPhone check runs first and fails
+      fast without ever reaching PairPhone's own network call, returning a non-nil
+      error; the same fail-closed discipline as the QR flow, and no real network touched.
+    covers: [AC-2]
+  - statement: >-
+      SolicitarCodigoDeVinculacion called twice in sequence where the QR flow already
+      connected the client (IsConnected() true): the code-pairing path does not call
+      Conectar again (no ErrAlreadyConnected), matching whatsmeow's documented
+      tolerance for both flows running against the same connection.
+    covers: [AC-2]
+  - statement: >-
+      Existing empty-store/no-error happy-path assertion on IniciarEmparejamientoQr
+      cannot survive unchanged: after the fix, a context.Background() call would
+      attempt a REAL websocket dial to WhatsApp's live infrastructure from a unit
+      test, which this task treats as unacceptable regardless of this sandbox's
+      actual network reachability (verified reachable here, but never a safe thing to
+      depend on in CI). This test must be repointed to the pre-cancelled-context
+      fail-closed scenario above; its old "success with no error" assertion is a
+      direct encoding of the bug being fixed and cannot remain true post-fix.
+    covers: [AC-1, AC-3]
+  - statement: >-
+      Existing TestSolicitarCodigoDeVinculacionRechazaTelefonoCorto and
+      ...ConCero tests assert whatsmeow's own PairPhone-internal phone-format
+      validation, which runs strictly before any network I/O today. Post-fix, Conectar
+      runs before PairPhone, so reaching that internal validation without a live
+      connection is no longer possible from this package's test surface. These two
+      tests must be repointed to use a pre-cancelled context (asserting the
+      fail-closed connect error, same shape as the other connect-failure tests); the
+      TestSolicitarCodigoDeVinculacionRechazaTelefonoVacio test is unaffected because
+      the empty-phone check runs before any connect attempt and needs no change.
+    covers: [AC-2, AC-3]
+  - statement: >-
+      whatsmeow's own phone-format rejection (too short, leading zero) and real QR
+      code emission both stay honestly undemonstrated by this package's tests after
+      the fix, exactly like the pre-existing traducirItemQr sentinel-test limitation
+      documented in emparejamiento_test.go; the updated test file states this
+      explicitly rather than fabricating a green assertion that never exercises the
+      claimed whatsmeow-side behavior.
+    covers: [AC-3]
+  - statement: >-
+      Existing pairing tests not touched by this task (EstaEmparejada guard,
+      ErrQRStoreContainsID mapping to ErrYaEmparejada, empty-phone rejection) keep
+      passing without modification.
+    covers: [AC-3]
+  - statement: >-
+      canal.go's Conectar doc comment no longer claims "nothing calls it"; it names
+      both pairing entry points as its callers and states that only the
+      connect-failure path is exercised by this package's tests, with real-channel
+      proof deferred to the lab session (task 15, already completed 2026-08-18) exactly
+      as HEX-026 fixes.
+    covers: [AC-4]
+  - statement: >-
+      docs/STATUS.md gains one new Definido bullet dated 2026-08-18 recording the
+      lab-found defect (Connect never called in either pairing flow) and this fix,
+      traced to plan task 15 of stage A-3, without editing or deleting any existing
+      Definido entry.
+    covers: [AC-4]
+  - statement: >-
+      The 7 standard verification commands pass, plus `cd sidecar && go test -race
+      ./internal/canal/...` stays clean given the goroutine-spawn-ordering change in
+      IniciarEmparejamientoQr.
+    covers: [AC-5]
+
+strategy:
+  - step: 1
+    action: >-
+      In IniciarEmparejamientoQr (emparejamiento.go ~line 63), after GetQRChannel
+      succeeds and before spawning the consumer goroutine, call s.Conectar(s.ctx); on
+      error, wrap it in Spanish (fmt.Errorf, %w) and return (nil, err) immediately --
+      the resultados channel and its goroutine are only created after Conectar
+      succeeds, so a connect failure by construction never leaks a goroutine or
+      leaves a half-open channel. Do not attempt to close whatsmeow's internal QR
+      event handler registered by GetQRChannel on this failure path: the pinned
+      whatsmeow version only closes it in response to a Connected/ConnectFailure/
+      LoggedOut/TemporaryBan/Disconnected event dispatched over its own event bus,
+      none of which fire on a synchronous dial failure (verified by reading
+      qrchan.go's handleEvent and client.go's unlockedConnect in the pinned commit);
+      there is no public API to remove a handler ID we were never given. Record this
+      as an accepted, bounded whatsmeow-side residual, not something this task can or
+      should further "clean up".
+    files:
+      - sidecar/internal/canal/emparejamiento.go
+  - step: 2
+    action: >-
+      In SolicitarCodigoDeVinculacion (emparejamiento.go ~line 136), after the
+      existing EstaEmparejada and telefono=="" checks (both unchanged, both still
+      return before any connect attempt), add `if !s.cliente.IsConnected() { if err
+      := s.Conectar(ctx); err != nil { wrap in Spanish and return "", err } }` before
+      the existing PairPhone call. The IsConnected guard makes this idempotent when
+      the QR flow already connected the same client, matching PairPhone's documented
+      tolerance for both flows sharing one connection.
+    files:
+      - sidecar/internal/canal/emparejamiento.go
+  - step: 3
+    action: >-
+      Update Conectar's doc comment in canal.go (~line 166) to state, in Spanish,
+      that both pairing flows now call it as part of initiating pairing (task 15 of
+      stage A-3, HEX-026), that this package's tests exercise only the
+      connect-failure path with a deliberately cancelled context, and that
+      proof against a real channel was the lab session that found this exact defect
+      (2026-08-18) -- without weakening any existing credential-discipline note
+      elsewhere in the file's package doc comment (lines 1-20), which stays untouched.
+    files:
+      - sidecar/internal/canal/canal.go
+  - step: 4
+    action: >-
+      Repoint TestIniciarEmparejamientoQrSobreAlmacenVacioDevuelveCanalSinError to
+      construct the Sesion with an already-cancelled context (context.WithCancel +
+      immediate cancel()) and assert IniciarEmparejamientoQr returns a non-nil error
+      and a nil channel, with a comment explaining this is now the fail-closed
+      connect-failure proof (its old "success" assertion directly encoded the bug
+      this task fixes and cannot remain true once Connect is actually wired in,
+      without the test dialing WhatsApp's live infrastructure).
+    files:
+      - sidecar/internal/canal/emparejamiento_test.go
+  - step: 5
+    action: >-
+      Repoint TestSolicitarCodigoDeVinculacionRechazaTelefonoCorto and
+      ...RechazaTelefonoConCero to pass an already-cancelled context and assert the
+      same fail-closed connect error, with an updated comment stating honestly that
+      whatsmeow's own phone-format validation is no longer reachable from a
+      network-free test once Conectar runs first -- do not delete the tests, do not
+      leave the old "whatsmeow valida el número antes de cualquier I/O" comment now
+      that it is false. Leave RechazaTelefonoVacio untouched (its check still runs
+      before any connect attempt).
+    files:
+      - sidecar/internal/canal/emparejamiento_test.go
+  - step: 6
+    action: >-
+      Add one new test asserting the code-pairing path does not error with
+      ErrAlreadyConnected when the client is already connected (covers the
+      IsConnected guard added in step 2); since a real Connect cannot run in a unit
+      test, this can only be exercised by asserting the guard's branching via a
+      state that would otherwise necessarily fail on a second unconditional Conectar
+      call -- if no network-free way to observe this exists, document that
+      limitation honestly instead of asserting it falsely.
+    files:
+      - sidecar/internal/canal/emparejamiento_test.go
+  - step: 7
+    action: >-
+      Append one new Definido bullet to docs/STATUS.md (2026-08-18, HEX-026, plan
+      task 15 of stage A-3) recording the lab-found defect (neither pairing flow ever
+      called Connect) and this fix, without editing or deleting any existing bullet.
+    files:
+      - docs/STATUS.md
+
+risks:
+  - "PRIMARY DESIGN RISK: the spec's invariant 'Existing tests keep passing unchanged (new tests only)' cannot hold literally for three existing tests in emparejamiento_test.go (the QR happy-path test and the two phone-format-rejection tests), because their current assertions either directly encode the bug being fixed (QR success with no connect attempted) or rely on whatsmeow's internal PairPhone validation running before any I/O -- an ordering the fix necessarily changes. Leaving them byte-for-byte unchanged would make them perform a REAL websocket dial to wss://web.whatsapp.com from a unit test (confirmed reachable from this environment during blueprint research: `curl https://web.whatsapp.com` returned 200 in 0.34s), which is unacceptable regardless of whether any particular CI runner happens to block or allow it. This blueprint's strategy updates these three tests to use a deliberately pre-cancelled context and assert the fail-closed connect-failure path instead, preserving the letter of 'error still returned' but changing what each test actually exercises. This is a human-visible deviation from the spec's literal wording that the human should confirm before implementation proceeds."
+  - "whatsmeow's internal QR-channel event handler (registered inside GetQRChannel, id not exposed to callers) cannot be removed by this package when Conectar fails via a synchronous dial error, because the pinned whatsmeow version only auto-closes that handler in response to specific dispatched events (Connected/ConnectFailure/LoggedOut/TemporaryBan/Disconnected), none of which a plain dial failure produces. This is a bounded, per-failed-attempt residual internal to the whatsmeow.Client instance (not a goroutine we spawn, not exposed to our caller) that this task cannot close without forking or patching the pinned commit, which is out of scope. Documented rather than silently ignored."
+  - "SolicitarCodigoDeVinculacion's new IsConnected guard is a design choice (idempotent connect) inferred from PairPhone's doc comment ('you'll also receive a QR code event, but that can be ignored when doing code pairing'), which implies both flows can share one connection; whatsmeow's ConnectContext itself would return ErrAlreadyConnected on a second unconditional call, which this guard avoids. No test in the pinned whatsmeow test suite was consulted to confirm this beyond the doc comment; flagged for reviewer attention."
+  - "cli.EnableAutoReconnect=false and cli.InitialAutoReconnect=false (set in NuevaSesion, canal.go ~line 116-118) make ConnectContext's isRetryableConnectError-driven background-retry branch always skip (both flags required, short-circuits on InitialAutoReconnect), so every connect failure -- retryable network error or not -- returns synchronously from ConnectContext with no background goroutine spawned. Verified by reading client.go's ConnectContext body in the pinned commit (go.mau.fi/whatsmeow@v0.0.0-20260722203353-e9a033b24933). This confirms the fail-closed design is safe under the sidecar's current auto-reconnect-disabled configuration and needs no additional guard."
+  - "No Rust-side gap found: sidecar/internal/servidor/manejo.go already forwards any error from IniciarEmparejamientoQr/SolicitarCodigoDeVinculacion generically as ipc.ResultadoEmparejamientoFallido with err.Error() as Motivo (confirmed by reading manejo.go lines 195-265); no change needed there, and no Rust file is touched by this task."
