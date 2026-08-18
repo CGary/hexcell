@@ -95,7 +95,7 @@ func NuevaSesion(ctx context.Context, contenedor *sqlstore.Container, reg *regis
 		return nil, ErrRegistroNoEspecificado
 	}
 
-	dispositivo, err := contenedor.GetFirstDevice(context.Background())
+	dispositivo, err := contenedor.GetFirstDevice(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("canal: no se pudo obtener el dispositivo del almacén: %w", err)
 	}
@@ -168,8 +168,9 @@ func (s *Sesion) RegistrarManejador(supervisores ...*Supervisor) uint32 {
 // Ambos flujos de emparejamiento (IniciarEmparejamientoQr y SolicitarCodigoDeVinculacion)
 // invocan este método como parte del inicio del emparejamiento (HEX-026, tarea 15 de la etapa A-3).
 // Los tests de este paquete ejercitan únicamente la ruta de fallo de conexión mediante un contexto
-// cancelado explícitamente; la prueba contra el canal real se completó en la sesión de laboratorio
-// del 2026-08-18.
+// cancelado explícitamente; la sesión de laboratorio del 2026-08-18 fue la que encontró este
+// defecto (el interbloqueo por falta de conexión), no una prueba de que esta corrección funciona
+// contra el canal real, que sigue pendiente.
 func (s *Sesion) Conectar(ctx context.Context) error {
 	return s.cliente.ConnectContext(ctx)
 }

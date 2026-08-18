@@ -161,10 +161,15 @@ func TestElPayloadCentinelaDelQrNuncaLlegaAlRegistro(t *testing.T) {
 }
 
 // TestElNumeroDeTelefonoNuncaLlegaAlRegistro comprueba la otra mitad de la frontera: la línea de
-// EventoEmparejamientoPcSolicitado SÍ se ejecuta antes de que whatsmeow rechace el número, así
-// que el registro resultante no es un búfer vacío y la afirmación tiene contenido.
+// EventoEmparejamientoPcSolicitado SÍ se ejecuta antes de que la conexión falle (el contexto
+// cancelado hace fallar Conectar antes de llegar a PairPhone), así que el registro resultante no
+// es un búfer vacío y la afirmación tiene contenido.
 func TestElNumeroDeTelefonoNuncaLlegaAlRegistro(t *testing.T) {
-	// whatsmeow rechaza los números que empiezan con 0 antes de cualquier I/O.
+	// El cero inicial ya no prueba la validación de formato propia de whatsmeow: con Conectar
+	// corriendo antes que PairPhone, el contexto cancelado hace fallar la conexión primero, así
+	// que whatsmeow nunca llega a inspeccionar este número (ver la nota de limitación honesta en
+	// emparejamiento_test.go). Lo que esta prueba comprueba es que el número nunca aparece en el
+	// registro, sea cual sea la causa del fallo.
 	const numero = "05491155551234"
 
 	sesion, salida := sesionVaciaDePrueba(t)

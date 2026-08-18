@@ -23,11 +23,6 @@ adicional cuando aparezca un cliente que lo justifique. Ver [plan/README.md](pla
   —que no impone condición sobre uso en red y regalaría la ventaja competitiva del modelo de
   servicio gestionado— y BUSL-1.1 —que exige gobernanza adicional de fecha de conversión sin aportar
   nada que el dual licensing no cubra ya—. El texto oficial y verbatim vive en `LICENSE`.
-* **Conexión explícita previa en flujos de emparejamiento** (2026-08-18, `HEX-026`, tarea 15 de la etapa A-3).
-  Se corrigió el interbloqueo detectado en sesión de laboratorio donde `IniciarEmparejamientoQr` y
-  `SolicitarCodigoDeVinculacion` abrían los canales de emparejamiento sin invocar `Conectar()`, impidiendo
-  la emisión de códigos QR y la vinculación por teléfono. Ambos flujos establecen la conexión con disciplina
-  de fallo cerrado antes de proceder.
 * **Canal propio permanente y canal oficial aditivo por demanda** (2026-07-28, `adr-0014`, que
   supersede a `adr-0008`). whatsmeow deja de ser un canal temporal de validación y pasa a ser el
   canal de producción por defecto, con clientes de pago. La Cloud API se pospone a una segunda etapa
@@ -379,6 +374,11 @@ adicional cuando aparezca un cliente que lo justifique. Ver [plan/README.md](pla
 * **Servidor del socket IPC en Go con procedimiento de socket huérfano, saludo estricto versión 4 y relevo de conexión única** (2026-08-13, HEX-023, tarea 3 de la etapa A-3 / FR-12). El sidecar Go abre y custodia el socket Unix en la ruta configurada (modo 0600), resuelve sockets huérfanos sin eliminar sockets de otros procesos vivos, exige saludo estricto versión 4 cerrando la conexión ante desajustes con registro de ambas versiones, aplica relevo de conexión única más reciente gana, y conecta los manejadores existentes de outbox (redistribución at-least-once, confirmación), respaldo sqlstore (HEX-021), emparejamiento y salida durable con acuse de envío. El bucle extremo a extremo real sobre un canal emparejado vivo queda explícitamente bloqueado únicamente por la tarea del número de laboratorio (tarea 15).
 * **Superficie de emparejamiento del operador sobre IPC y modo emparejar en el binario** (2026-08-13, HEX-024, tarea 4 de la etapa A-3 / FR-12). Se adelanta la superficie local de emparejamiento desde su aparcamiento en A-6 por decisión explícita humana del 2026-08-13. `AdaptadorWhatsmeow` implementa `ordenar_emparejamiento` y `suscribir_estado`, procesando la secuencia de `codigo_emparejamiento` rotativos (método `qr` o `codigo_de_vinculacion`) y resolviendo con el `acuse_emparejamiento` terminal (`completado`, `expirado` o `fallido` con motivo desinfectado), con descarte estricto de huérfanos o resultados desconocidos sin cerrar la conexión. El binario `hexcell` suma el modo local `emparejar` con análisis de `std::env::args`, mostrando el código de ocho caracteres o la cadena QR al operador sin alterar el modo de ejecución normal de la célula. El emparejamiento contra un canal real de WhatsApp permanece explícitamente diferido a la tarea del número de laboratorio (tarea 15).
 * **Canal whatsmeow seleccionable por configuración en el binario de la célula y scripts de laboratorio** (2026-08-18, HEX-025, tarea 15 de la etapa A-3 / FR-12). Se añade la selección de canal (`HEXCELL_CANAL`, valores `simulado` | `whatsmeow`, por omisión `simulado` preservado bit a bit) que cablea `AdaptadorWhatsmeow` sobre el puerto agnóstico `ChannelAdapter` hacia el mismo motor (`Motor` + `ProcesadorDeInferencia` sobre `ProveedorSimulado`). Se registran las dos decisiones humanas del 2026-08-18: la sesión de laboratorio (tarea 15) opera procesos directos (el ensayo de reinicio de contenedores se re-ejecuta explícitamente en la etapa A-6) y el bot de laboratorio responde con `ProveedorSimulado` hasta la llegada de la etapa A-4 (admisión/presupuesto de inferencia real).
+* **Conexión explícita previa en flujos de emparejamiento** (2026-08-18, `HEX-026`, tarea 15 de la etapa A-3).
+  Se corrigió el interbloqueo detectado en sesión de laboratorio donde `IniciarEmparejamientoQr` y
+  `SolicitarCodigoDeVinculacion` abrían los canales de emparejamiento sin invocar `Conectar()`, impidiendo
+  la emisión de códigos QR y la vinculación por teléfono. Ambos flujos establecen la conexión con disciplina
+  de fallo cerrado antes de proceder.
 
 ## Pendiente
 * **Calibración de parámetros de retroceso IPC en el núcleo** (2026-08-08, HEX-015). Los valores por defecto provisionales del cliente IPC para los reintentos de conexión requieren calibración bajo tráfico real. — *Etapa A-3.*
