@@ -56,6 +56,7 @@ use hexcell::procesador::ProcesadorDeInferencia;
 use hexcell::registro::{self, EntradaDeRegistro, NivelDeRegistro};
 use hexcell::salud::{EstadoDeSalud, servir_salud};
 use hexcell_canal_simulado::{AdaptadorSimulado, RelojDelSistema};
+use hexcell_canal_whatsmeow::{AdaptadorWhatsmeow, Retroceso};
 use hexcell_core::identidad::IdDeduplicacion;
 use hexcell_storage::{
     AlmacenDeIdentidad, GestorDePools, RepositorioDeSesiones, ResumenDePuntoDeControl,
@@ -176,6 +177,35 @@ async fn main() -> ExitCode {
                     );
                 }
             }
+
+            let proveedor = if configuracion.proveedor_de_inferencia_falla {
+                ProveedorSimulado::que_falla()
+            } else {
+                ProveedorSimulado::con_latencia(configuracion.latencia_inferencia_simulada)
+            };
+            let procesador = ProcesadorDeInferencia::nuevo(proveedor);
+            let mut motor = Motor::nuevo(
+                adaptador,
+                procesador,
+                receptor_eventos,
+                configuracion.ventana_deduplicacion,
+                repositorio,
+            );
+
+            tokio::select! {
+                () = servidor_salud => {}
+                () = motor.ejecutar(senal_de_apagado) => {}
+            }
+        }
+        CanalSeleccionado::Whatsmeow => {
+            println!("hexcell: canal configurado: whatsmeow");
+            let (adaptador, receptor_eventos) = AdaptadorWhatsmeow::nuevo(
+                configuracion.ruta_socket_ipc.clone(),
+                configuracion.id_celula.clone(),
+                configuracion.capacidad_cola,
+                Retroceso::por_omision(),
+            );
+            adaptador.arrancar();
 
             let proveedor = if configuracion.proveedor_de_inferencia_falla {
                 ProveedorSimulado::que_falla()

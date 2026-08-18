@@ -15,10 +15,7 @@ use hexcell_canal_whatsmeow::mensajes::CodigoEmparejamiento;
 use hexcell_canal_whatsmeow::reconexion::Retroceso;
 use hexcell_core::canal::EstadoSesion;
 
-/// Nombre de la variable de entorno para la ruta del socket IPC.
-pub const HEXCELL_SOCKET_IPC: &str = "HEXCELL_SOCKET_IPC";
-/// Ruta por omisión del socket IPC documentada en el protocolo.
-pub const RUTA_SOCKET_IPC_POR_DEFECTO: &str = "/var/lib/hexcell/ipc/sidecar.sock";
+pub use crate::configuracion::{HEXCELL_SOCKET_IPC, RUTA_SOCKET_IPC_POR_DEFECTO};
 /// Plazo por omisión en segundos para el modo de emparejamiento.
 pub const PLAZO_EMPAREJAR_POR_DEFECTO_SEGUNDOS: u64 = 120;
 /// Variable opcional para sobreescribir el plazo en segundos.

@@ -10,7 +10,7 @@ use std::process::{Command, Stdio};
 use std::sync::Mutex;
 use std::time::Duration;
 
-use hexcell::configuracion::{Configuracion, ErrorDeConfiguracion};
+use hexcell::configuracion::{CanalSeleccionado, Configuracion, ErrorDeConfiguracion};
 
 /// `cargo test` ejecuta los tests de un mismo binario en hilos distintos del mismo proceso, y
 /// `std::env::set_var`/`remove_var` son estado **del proceso completo**, no del hilo. Sin esta
@@ -293,4 +293,47 @@ fn el_binario_no_vincula_nada_si_la_configuracion_es_invalida() {
     // habría usado debe fallar porque el binario nunca llegó a bindearla.
     let conexion = std::net::TcpStream::connect(direccion_libre);
     assert!(conexion.is_err());
+}
+
+#[test]
+fn canal_por_defecto_es_simulado() {
+    let _guardia = CERROJO_DE_ENTORNO.lock().unwrap_or_else(|e| e.into_inner());
+    limpiar_entorno_de_hexcell();
+    let directorio_temporal =
+        std::env::temp_dir().join(format!("hexcell-test-canal-defecto-{}", std::process::id()));
+    std::fs::create_dir_all(&directorio_temporal)
+        .expect("crear el directorio temporal del test debe funcionar");
+    unsafe {
+        std::env::set_var("HEXCELL_ID_CELULA", "piloto-01");
+        std::env::set_var("HEXCELL_RUTA_DATOS", &directorio_temporal);
+    }
+
+    let configuracion =
+        Configuracion::desde_entorno().expect("la configuración válida no debe fallar");
+    assert_eq!(configuracion.canal, CanalSeleccionado::Simulado);
+
+    let _ = std::fs::remove_dir_all(&directorio_temporal);
+}
+
+#[test]
+fn canal_whatsmeow_se_configura_por_variable_de_entorno() {
+    let _guardia = CERROJO_DE_ENTORNO.lock().unwrap_or_else(|e| e.into_inner());
+    limpiar_entorno_de_hexcell();
+    let directorio_temporal = std::env::temp_dir().join(format!(
+        "hexcell-test-canal-whatsmeow-{}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&directorio_temporal)
+        .expect("crear el directorio temporal del test debe funcionar");
+    unsafe {
+        std::env::set_var("HEXCELL_ID_CELULA", "piloto-01");
+        std::env::set_var("HEXCELL_RUTA_DATOS", &directorio_temporal);
+        std::env::set_var("HEXCELL_CANAL", "whatsmeow");
+    }
+
+    let configuracion =
+        Configuracion::desde_entorno().expect("la configuración válida no debe fallar");
+    assert_eq!(configuracion.canal, CanalSeleccionado::Whatsmeow);
+
+    let _ = std::fs::remove_dir_all(&directorio_temporal);
 }

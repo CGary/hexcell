@@ -20,20 +20,19 @@ use crate::apagado::LIMITE_DE_DRENAJE_POR_DEFECTO;
 use crate::deduplicacion::VENTANA_DE_RETENCION_DEDUPLICACION_POR_DEFECTO;
 
 /// Canal seleccionado para esta célula.
-///
-/// Hoy solo existe una variante porque el único adaptador que existe en el árbol es el simulado
-/// (`hexcell-canal-simulado`); el adaptador de canal propio ya está cerrado en la etapa A-3 y se
-/// añadirá aquí como una variante más cuando esta tarea lo integre, sin tocar el resto del enum.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CanalSeleccionado {
     /// Adaptador en memoria con semántica restrictiva de Cloud API (`hexcell-canal-simulado`).
     Simulado,
+    /// Adaptador sobre IPC con el sidecar whatsmeow (`hexcell-canal-whatsmeow`).
+    Whatsmeow,
 }
 
 impl CanalSeleccionado {
     fn desde_str(valor: &str) -> Option<Self> {
         match valor {
             "simulado" => Some(Self::Simulado),
+            "whatsmeow" => Some(Self::Whatsmeow),
             _ => None,
         }
     }
@@ -52,6 +51,11 @@ pub struct Configuracion {
     pub direccion_salud: SocketAddr,
     /// Canal configurado para esta célula.
     pub canal: CanalSeleccionado,
+    /// Ruta del socket Unix de comunicación IPC con el sidecar whatsmeow.
+    ///
+    /// Solo la lee el brazo `CanalSeleccionado::Whatsmeow` de la raíz de composición. Por
+    /// defecto, `RUTA_SOCKET_IPC_POR_DEFECTO`: `/var/lib/hexcell/ipc/sidecar.sock`.
+    pub ruta_socket_ipc: PathBuf,
     /// Capacidad del canal `mpsc` acotado por el que el adaptador entrega sus eventos al motor.
     pub capacidad_cola: usize,
     /// Ventana de retención del registro de deduplicación del motor (`crate::deduplicacion`).
@@ -154,6 +158,8 @@ pub const HEXCELL_ID_CELULA: &str = "HEXCELL_ID_CELULA";
 pub const HEXCELL_RUTA_DATOS: &str = "HEXCELL_RUTA_DATOS";
 /// Nombre de la variable de entorno con la dirección del servidor de salud (opcional).
 pub const HEXCELL_DIRECCION_SALUD: &str = "HEXCELL_DIRECCION_SALUD";
+/// Nombre de la variable de entorno con la ruta del socket IPC (opcional).
+pub const HEXCELL_SOCKET_IPC: &str = "HEXCELL_SOCKET_IPC";
 /// Nombre de la variable de entorno con el canal configurado (opcional).
 pub const HEXCELL_CANAL: &str = "HEXCELL_CANAL";
 /// Nombre de la variable de entorno con la capacidad del canal de eventos (opcional).
@@ -185,6 +191,8 @@ const DIRECCION_SALUD_POR_DEFECTO: SocketAddr =
     SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 8081);
 /// Canal por defecto cuando no se configura ninguno: el único que existe hoy en el árbol.
 const CANAL_POR_DEFECTO: CanalSeleccionado = CanalSeleccionado::Simulado;
+/// Ruta por omisión del socket IPC documentada en el protocolo.
+pub const RUTA_SOCKET_IPC_POR_DEFECTO: &str = "/var/lib/hexcell/ipc/sidecar.sock";
 /// Capacidad por defecto del canal `mpsc` acotado.
 const CAPACIDAD_COLA_POR_DEFECTO: usize = 256;
 
@@ -223,10 +231,15 @@ impl Configuracion {
                 ErrorDeConfiguracion::ValorInvalido {
                     nombre: HEXCELL_CANAL,
                     valor: valor.clone(),
-                    formato_esperado: "uno de: simulado",
+                    formato_esperado: "uno de: simulado, whatsmeow",
                 }
             })?,
             Err(_) => CANAL_POR_DEFECTO,
+        };
+
+        let ruta_socket_ipc = match std::env::var(HEXCELL_SOCKET_IPC) {
+            Ok(valor) => PathBuf::from(valor),
+            Err(_) => PathBuf::from(RUTA_SOCKET_IPC_POR_DEFECTO),
         };
 
         let capacidad_cola = match std::env::var(HEXCELL_CAPACIDAD_COLA) {
@@ -297,6 +310,7 @@ impl Configuracion {
             ruta_datos,
             direccion_salud,
             canal,
+            ruta_socket_ipc,
             capacidad_cola,
             ventana_deduplicacion,
             limite_de_drenaje,
