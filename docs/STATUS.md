@@ -392,6 +392,7 @@ adicional cuando aparezca un cliente que lo justifique. Ver [plan/README.md](pla
   * Clasificación del corte de red como desconexión de transporte con reintento y reconexión autónoma.
   * Clasificación de desvinculación forzada como terminal (código 401), eliminando la sesión local sin reintentos.
   * Recuperación completada mediante re-emparejamiento QR, verificando que un almacén vacío rechaza la conexión automática.
+* **Superficie de respaldo por célula para el operador y modo respaldar en el binario** (2026-08-19, HEX-029, tarea 18 de la etapa A-3). `respaldar::ejecutar_cli` provee el subcomando `hexcell respaldar --directorio <ruta>` para orquestar la copia en caliente de las cuatro bases (`sessions.db`, `knowledge_live.db`, `adapter_identity.db` y `sqlstore.db` sobre IPC), aplicando la disciplina operacional de núcleo detenido y sidecar en ejecución, dejando un destino limpio en fallo (LES-031). Desbloquea el ensayo de restauración de la tarea 18.
 
 ## Pendiente
 * **Calibración de parámetros de retroceso IPC en el núcleo** (2026-08-08, HEX-015). Los valores por defecto provisionales del cliente IPC para los reintentos de conexión requieren calibración bajo tráfico real. — *Etapa A-3.*
@@ -403,11 +404,7 @@ adicional cuando aparezca un cliente que lo justifique. Ver [plan/README.md](pla
   medio realmente externo al servidor— es una decisión de negocio que esta tarea no toma. Los
   tests lo simulan con un segundo directorio local. — *Bloquea el primer respaldo de producción
   real; no bloquea la etapa A-2.*
-* **Disparador de producción del respaldo por célula** (2026-07-30, HEX-008). Ni esta tarea ni la
-  tarea 13 del plan piden un planificador, una ruta HTTP ni un subcomando de CLI:
-  `respaldar_celula` es hoy una operación de biblioteca invocada solo por los tests de
-  integración, documentada en el runbook como el procedimiento que un operador o un futuro
-  planificador ejecutan. Empaquetado y planificación son alcance de la etapa A-6. — *Etapa A-6.*
+* **Disparador de producción del respaldo por célula** (2026-07-30, HEX-008; actualizado el 2026-08-19 por HEX-029). El modo CLI `hexcell respaldar` provee la superficie invocable del operador para orquestar el respaldo de las cuatro bases. La planificación periódica, la frecuencia de producción y el destino remoto fuera del disco del servidor permanecen pendientes como decisiones de negocio o empaquetado A-6. — *Etapa A-6 / decisión de negocio.*
 * **Tiempo máximo por llamada del proveedor de inferencia real** (2026-07-30, HEX-007). El límite
   de drenaje del apagado ordenado se comprueba entre eventos, no alrededor de uno en curso, así
   que un evento cuya llamada al proveedor no retorne puede superar ese límite y, en teoría, el

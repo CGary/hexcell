@@ -1,6 +1,6 @@
 # Bitácora de descartes
 
-> Registro de lo que se consideró y **no** se hizo. Última actualización: 2026-07-30 (D-19, D-20).
+> Registro de lo que se consideró y **no** se hizo. Última actualización: 2026-08-19 (D-22, D-23).
 
 ## Para qué sirve este documento
 
@@ -55,6 +55,8 @@ se apoya en un principio de diseño, no.
 | [D-19](#d-19) | API de respaldo en línea de `rusqlite` (`Connection::backup`) frente a `VACUUM INTO` | Principio de diseño, no reabrir |
 | [D-20](#d-20) | Planificador de respaldo dentro del propio proceso de la célula | Principio de diseño, no reabrir |
 | [D-21](#d-21) | Usar trybuild como mecanismo de prueba compile-failure | Reabrible si cambia semántica de rustc |
+| [D-22](#d-22) | Respaldo concurrente sin pausa previa (steal-and-exit con reconexión automática) | Principio de diseño, no reabrir |
+| [D-23](#d-23) | Disparador de respaldo en el propio proceso del núcleo por señales/env | Principio de diseño, no reabrir |
 
 ---
 
@@ -387,6 +389,22 @@ copiar `sessions.db`, `knowledge_live.db` y el almacén de identidad del adaptad
 * **Por qué se descartó:** el invariante `compile_fail` doctest es suficiente, `trybuild` añadiría una dependencia de desarrollo y un directorio de fixtures; la prueba E0639 no se refuerza en rustc estable 1.92.0 pero se mitiga con un doctest positivo emparejado que rompe si se renombra o elimina la API.
 * **Registro normativo:** `docs/adr/adr-0021-testigo-de-entrante.md`.
 * **Qué tendría que cambiar para reabrirlo:** si el doctest positivo deja de ser mitigación suficiente (p.ej. si rustc cambia la semántica de `compile_fail` en un modo que invalide el emparejamiento) o si se necesita probar más de un error de compilación en el mismo crate.
+
+### D-22
+**Respaldo concurrente sin pausa previa (steal-and-exit con reconexión automática del adaptador).**
+
+* **Descartado:** 2026-08-19 (HEX-029).
+* **Por qué se descartó:** El servidor IPC del sidecar aplica relevo de conexión única donde la más reciente gana (`servidor/manejo.go`, `protocolo-ipc-nucleo-sidecar.md`). La reconexión automática del núcleo en ejecución con `Retroceso::por_omision()` (500 ms inicial) desparaliza al proceso de respaldo antes de que el sidecar concluya `VACUUM INTO`. La conexión IPC del respaldo queda cerrada, el `acuse_respaldo_sqlstore` se descarta y la operación falla con `RespaldoSinAcuse`.
+* **Registro normativo:** `crates/hexcell/src/respaldar.rs`, `docs/runbook-restauracion-de-celula.md`.
+* **Qué tendría que cambiar para reabrirlo:** Requeriría que el sidecar acepte múltiples conexiones activas concurrentes sobre IPC, lo cual alteraría el protocolo cerrado v1.3 (cable 4).
+
+### D-23
+**Disparador de respaldo en el propio proceso del núcleo mediante señales o variables de entorno.**
+
+* **Descartado:** 2026-08-19 (HEX-029).
+* **Por qué se descartó:** Un disparador interno por señales dentro del núcleo no puede entregar un código de salida (`ExitCode`) ni un mensaje estructurado en `stderr` nombrando la base concreta que falló al operador. Además, añadiría una segunda ruta de procesamiento de señales concurrente con `apagado.rs`.
+* **Registro normativo:** `crates/hexcell/src/respaldar.rs`, `docs/STATUS.md`.
+* **Qué tendría que cambiar para reabrirlo:** Requeriría una superficie cuyo resultado sea consumido por un orquestador que analice registros estructurados en lugar de un operador humano leyendo el código de salida de un subcomando.
 
 ---
 

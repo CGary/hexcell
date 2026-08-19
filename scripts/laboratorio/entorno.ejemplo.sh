@@ -26,3 +26,6 @@ export HEXCELL_DIRECCION_SALUD="${HEXCELL_DIRECCION_SALUD:-127.0.0.1:8081}"
 # Teléfono de la célula para emparejamiento (opcional, leído del entorno del operador)
 # Nunca fijar un literal aquí (adr-0010): debe provenir del entorno del operador.
 export HEXCELL_TELEFONO_CELULA="${HEXCELL_TELEFONO_CELULA:-}"
+
+# Ruta por omisión para almacenar los respaldos de laboratorio (consumida por el script, no por el binario)
+export HEXCELL_RUTA_RESPALDOS="${HEXCELL_RUTA_RESPALDOS:-$HEXCELL_LAB_DIR/respaldos}"

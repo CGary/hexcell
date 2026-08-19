@@ -72,6 +72,9 @@ async fn main() -> ExitCode {
     if argumentos.get(1).map(String::as_str) == Some("emparejar") {
         return emparejar::ejecutar_cli(&argumentos[2..]).await;
     }
+    if argumentos.get(1).map(String::as_str) == Some("respaldar") {
+        return hexcell::respaldar::ejecutar_cli(&argumentos[2..]).await;
+    }
 
     let configuracion = match Configuracion::desde_entorno() {
         Ok(configuracion) => configuracion,

@@ -23,5 +23,6 @@ pub mod motor;
 pub mod preparacion;
 pub mod procesador;
 pub mod registro;
+pub mod respaldar;
 pub mod respaldo;
 pub mod salud;

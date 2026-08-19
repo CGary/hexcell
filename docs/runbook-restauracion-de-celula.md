@@ -29,6 +29,23 @@
   que el proceso todavía tiene abierto, y el resultado depende de en qué momento exacto se
   sobrescribió: no es un procedimiento, es una apuesta.
 
+## Producción de un respaldo de célula (HEX-029)
+
+Para producir una ronda de respaldo de las cuatro bases en un directorio de destino:
+
+1. **Disciplina operacional obligatoria:** la operación exige **núcleo detenido y sidecar en ejecución**.
+   * El proceso del núcleo (`hexcell`) debe estar **detenido** (vía `SIGTERM` o Ctrl-C en el entorno de laboratorio).
+   * El proceso del sidecar Go debe permanecer **en ejecución** escuchando en el socket IPC, ya que él mismo ejecuta la copia `VACUUM INTO` sobre `sqlstore.db`.
+2. **Invocación:** ejecutar el subcomando `hexcell respaldar` indicando una **ruta absoluta** hacia un directorio de destino inalcanzado/vacío:
+   ```bash
+   hexcell respaldar --directorio /ruta/absoluta/al/destino
+   ```
+   O utilizar el script de laboratorio que construye un directorio con marca temporal:
+   ```bash
+   scripts/laboratorio/respaldar-celula.sh
+   ```
+3. El comando verifica previamente la disponibilidad de las cuatro rutas de destino (`sessions.db`, `knowledge_live.db`, `adapter_identity.db` y `sqlstore.db`). Ante cualquier fallo o destino ocupado, el proceso aborta con código no nulo y deja el directorio libre de respaldos parciales (LES-031).
+
 ## 1. Restaurar las tres bases de esta etapa
 
 1. Detener por completo el proceso `hexcell` de la célula, si sigue vivo. Restaurar contra un

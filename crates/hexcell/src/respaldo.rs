@@ -18,17 +18,14 @@
 //! es correlacionable en los logs. `respaldar_celula` sigue sin cambios de firma, como atajo que
 //! genera su propio identificador cuando el llamante no necesita esa correlación.
 //!
-//! # Sin disparador de producción, y eso es una decisión
+//! # Disparador del operador en CLI (HEX-029)
 //!
-//! Ni la especificación de esta tarea ni la tarea 13 del plan de la etapa A-2 piden un
-//! planificador, una ruta HTTP ni un subcomando de CLI: el apagado ordenado es de HEX-007 y las
-//! metas explícitamente descartadas de esta tarea prohíben reabrirlo, y el empaquetado y la
-//! planificación son de la etapa A-6. Así que los únicos llamantes de `respaldar_celula` en este
-//! árbol son los tests de integración; un futuro planificador, o un operador humano, invocan esta
-//! misma función siguiendo el procedimiento que describe
-//! `docs/runbook-restauracion-de-celula.md`. La ausencia de disparador queda anotada también en
-//! `docs/adr/adr-0020-respaldo-y-restauracion-por-celula.md` y en `docs/STATUS.md`, para que se lea
-//! como una decisión y no como un hueco.
+//! `respaldar_celula_con_ronda` y `ordenar_respaldo_sqlstore` son invocados por el subcomando CLI
+//! `hexcell respaldar` (`crates/hexcell/src/respaldar.rs`), entregado en HEX-029 para permitir el
+//! ensayo de restauración de la tarea 18 de la etapa A-3. `respaldar_celula` se mantiene como atajo
+//! de 3 parámetros para llamantes que no necesitan correlacionar la ronda. La planificación
+//! periódica, la frecuencia de producción y el empaquetado remoto corresponden a decisiones de
+//! negocio o a la etapa A-6 (`docs/bitacora-de-descartes.md` D-20).
 
 use std::path::Path;
 
