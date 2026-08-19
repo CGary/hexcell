@@ -1,0 +1,3 @@
+entries: []
+summary: Add Supervisor.Arrancar(ctx, emparejada) as the missing initial-connect entry point, wired from main.go, so a paired device self-connects at startup under the existing tested Retroceso discipline.
+task_id: HEX-027

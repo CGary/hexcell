@@ -1,0 +1,34 @@
+task_id: HEX-027
+summary: 'Lab-found fix: the reconnection Supervisor is constructed but never wired - no initial connect on resumable startup and no disconnection events feed it; wire it.'
+goal: 'Fix the second pairing-family deadlock discovered live in the lab session of 2026-08-18 (plan task 15, restart rehearsal): after a restart with existing credentials the sidecar logs "dispositivo existente encontrado; sesión reanudable sin emparejamiento" and then NEVER connects - observed evidence: 15+ seconds after startup, zero connection attempts and zero raw whatsmeow events; the cell is deaf although pairing survived. Root cause verified in code: main.go:113 constructs canal.NuevoSupervisor(reg, cfg.Retroceso, sesion.Conectar, srv.EnviarEstadoSesion) and the supervisor is never referenced again anywhere in the sidecar - its tested backoff/terminal-pause logic (plan task 7) is fully disconnected from reality. Two observable behaviors must exist after this task: (1) a sidecar starting with a paired device connects to WhatsApp on its own (with the configured backoff discipline), without requiring any pairing flow; (2) disconnection events from whatsmeow actually reach the Supervisor so the reconnection/backoff/terminal-pause logic drives real reconnections - which the upcoming network-cut rehearsal of task 15 will exercise.'
+risk: medium
+acceptance:
+    - id: AC-1
+      statement: 'A sidecar process starting with an existing paired device (sqlstore has credentials) initiates the WhatsApp connection on its own during startup, honoring the configured Retroceso backoff discipline on failures; a sidecar starting with an EMPTY store does NOT attempt to connect (pairing remains the only entry, exactly as today). Observable in the log: a connection event follows "dispositivo existente encontrado" without any operator action.'
+    - id: AC-2
+      statement: 'Whatsmeow disconnection/connection lifecycle events are wired into the existing Supervisor (canal/reconexion.go) so its already-tested logic (backoff intervals, counter reset, terminal pause, estado_sesion emission through srv.EnviarEstadoSesion) processes REAL events; the wiring uses the existing taxonomy (canal/taxonomia.go) for event classification - no new classification logic invented, no changes to the Supervisor internal state machine beyond what wiring strictly requires.'
+    - id: AC-3
+      statement: 'The single-flow discipline is preserved: the startup connect must not race the pairing flows (HEX-026) - a device-less start never auto-connects, and the blueprint documents how a concurrent "orden_emparejar while already connected/connecting" behaves (existing ErrYaEmparejada / IsConnected guards remain the authority). No regression in the HEX-026 paths.'
+    - id: AC-4
+      statement: 'Tests cover what is honestly coverable without a real channel: a fake/injectable connect function proving (a) startup-with-device triggers connect and startup-without-device does not, (b) a failing connect is retried per the backoff discipline (the Supervisor unit tests already cover the state machine - the NEW tests prove the WIRING calls it), following the existing sentinel-pattern honesty for what only the real service can prove. Existing tests keep passing unchanged (new tests only, unless a test file must gain additive cases).'
+    - id: AC-5
+      statement: 'docs/STATUS.md gains a brief Definido entry (dated 2026-08-18, traced to plan task 15 and task 7 of A-3) recording the lab-found defect (supervisor constructed but never wired) and its fix; the 7 standard verification commands pass plus go test -race over the touched packages. Go-side task: no Rust changes expected; genuine Rust gaps are recorded as risks, not silently fixed.'
+constraints:
+    - 'The IPC protocol docs/protocolo-ipc-nucleo-sidecar.md (v1.3, wire version 4) is CLOSED: no field, type or version changes; estado_sesion emission uses the existing message type semantics.'
+    - 'No changes to the pinned whatsmeow commit; no new third-party dependencies.'
+    - 'adr-0019: QR payload never logged; adr-0010: phone number/JID never in IPC messages or nucleo-visible logs.'
+    - 'The Supervisor state machine internals (backoff math, terminal pause) are already tested and stay untouched except for what wiring strictly requires - this task connects it, it does not redesign it.'
+    - 'Everything user-visible (log messages, code comments, STATUS.md prose, commit message) in Spanish; artifact YAML prose in English. Dates absolute (2026-08-18).'
+    - 'Never introduce mass-sending-provider vocabulary (jitter, warm-up, proxies, VPN, IP rotation); never write that Fase B replaces or retires the sidecar channel. The backoff discipline is the existing configured Retroceso, not new tuning.'
+    - 'Consult docs/bitacora-de-descartes.md before proposing anything resembling a previously discarded idea.'
+    - 'No .db files versioned.'
+invariants:
+    - 'A device-less sidecar never auto-connects: pairing flows remain the only entry to a first connection.'
+    - 'Fail closed under repeated connection failure: the existing terminal-pause discipline decides when to stop retrying; no infinite hot loop.'
+    - 'The closed set of 11 IPC message types and wire version 4 stay intact.'
+    - 'All user-visible content in Spanish with absolute dates.'
+non_goals:
+    - 'The remaining lab-findings queue: outbox path env var, /health/ready wiring, device display-name unification - separate micro-tasks.'
+    - 'Redesigning the Supervisor state machine or the disconnection taxonomy (plan task 7 owns them; they are implemented and tested).'
+    - 'The lab session itself and any Rust-side changes.'
+    - 'Fase B / Cloud API work.'

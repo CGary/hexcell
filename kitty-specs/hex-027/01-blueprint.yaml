@@ -1,0 +1,139 @@
+task_id: HEX-027
+summary: >-
+  Add Supervisor.Arrancar(ctx, emparejada) as the missing initial-connect entry point so a
+  paired device self-connects at startup under the existing Retroceso discipline; event
+  wiring already exists.
+
+affected_files:
+  - sidecar/main.go
+  - sidecar/internal/canal/reconexion.go
+  - sidecar/internal/canal/canal.go
+  - sidecar/internal/canal/reconexion_interno_test.go
+  - docs/STATUS.md
+
+symbols:
+  - Supervisor.Arrancar
+  - Sesion.Conectar
+  - Sesion.EstaEmparejada
+  - Sesion.RegistrarManejador
+
+dependencies:
+  - sidecar/internal/canal/taxonomia.go
+  - sidecar/internal/canal/emparejamiento.go
+  - sidecar/internal/configuracion/configuracion.go
+  - sidecar/internal/ipc/mensajes.go
+  - kitty-specs/hex-026/02-contract.yaml
+
+test_scenarios:
+  - statement: >-
+      Supervisor.Arrancar(ctx, true) with an injected conectar function that succeeds on
+      the first call causes at least one connect attempt and an eventual estado_sesion
+      "activa" emission, reusing the existing reintentarConexion loop end to end (fake
+      esperar to skip real timing, mirroring the existing
+      TestSupervisorReintentaTransitorioConTechoYRegistraIntentos pattern).
+    covers: [AC-1, AC-4]
+  - statement: >-
+      Supervisor.Arrancar(ctx, false) never calls the injected conectar function (call
+      count stays zero) and never emits any estado_sesion: a device-less start is a no-op,
+      preserving pairing as the only entry to a first connection.
+    covers: [AC-1, AC-3, AC-4]
+  - statement: >-
+      Supervisor.Arrancar(ctx, true) with an injected conectar function that fails N times
+      before succeeding produces exactly the backoff intervals configuracion.Retroceso
+      predicts (same intervaloDeRetroceso math already tested), proving the wiring drives
+      the existing tested state machine rather than a new bespoke retry path.
+    covers: [AC-1, AC-2, AC-4]
+  - statement: >-
+      No new test is added asserting whatsmeow-event classification or taxonomy behavior:
+      RegistrarManejador already forwards every raw event to supervisor.procesarEvento
+      (canal.go, existing code, unchanged), and clasificarDesconexion/proyectarEstado stay
+      untouched and covered by their existing tests in taxonomia_interno_test.go.
+    covers: [AC-2]
+  - statement: >-
+      Existing Supervisor tests in reconexion_interno_test.go keep passing unchanged
+      (procesarEvento-driven reconnection, terminal pause, single-flight reconnection
+      policy); existing pairing tests in emparejamiento_test.go and canal_test.go keep
+      passing unchanged, confirming no regression in the HEX-026 paths.
+    covers: [AC-3]
+  - statement: >-
+      docs/STATUS.md gains one new Definido bullet dated 2026-08-18 (HEX-027, plan task
+      15 / task 7 of stage A-3) recording the lab-found defect (Supervisor constructed
+      but never given an initial-connect entry point) and this fix, without editing or
+      deleting any existing bullet, including the adjacent HEX-026 entry.
+    covers: [AC-5]
+  - statement: >-
+      The 7 standard verification commands pass, plus `cd sidecar && go test -race
+      -count=1 ./internal/canal/... ./...` stays clean over the touched packages.
+    covers: [AC-5]
+
+strategy:
+  - step: 1
+    action: >-
+      In reconexion.go, add an unexported const causaArranqueInicial (a plain log-detail
+      string, e.g. "arranque_inicial") alongside the existing Evento* constants, and add a
+      new exported method func (s *Supervisor) Arrancar(ctx context.Context, emparejada
+      bool) placed near procesarEvento/procesarDesconexion. Body: if !emparejada, return
+      immediately (no-op, no log line beyond what the caller already logs); otherwise call
+      s.reintentarConexion(ctx, causaArranqueInicial) directly, reusing the existing tested
+      retry loop (backoff, terminal-pause checks, single-flight policy reservation) with
+      zero changes to reintentarConexion itself. Document in the method's doc comment that
+      this is the ONLY path that self-connects a paired device at startup, that a
+      device-less store must never call it with emparejada=true, and that the first
+      attempt also waits IntervaloInicial before dialing exactly like any reconnection's
+      first attempt (existing, unmodified behavior of reintentarConexion).
+    files:
+      - sidecar/internal/canal/reconexion.go
+  - step: 2
+    action: >-
+      In main.go, immediately after the existing `sesion.RegistrarManejador(supervisor)`
+      call (currently line 114), add `go supervisor.Arrancar(ctx, sesion.EstaEmparejada())`.
+      Launch it in a goroutine because a failing connect retries indefinitely (bounded only
+      by the existing terminal-pause discipline) and must never block srv.Escuchar/Aceptar
+      or the drain loop from starting. Do not add any new ctx derivation: reuse the same
+      top-level ctx already in scope; the goroutine is reaped on process exit like any
+      other background goroutine in this file, consistent with existing shutdown handling
+      (no new cancellation wiring needed - out of scope per the "wiring, not redesigning"
+      constraint).
+    files:
+      - sidecar/main.go
+  - step: 3
+    action: >-
+      Update Conectar's doc comment in canal.go (currently lines 166-173) to name the third
+      caller: Supervisor.Arrancar, invoked once from main.go for an already-paired device at
+      startup (HEX-027, task 15 / task 7 of stage A-3), alongside the two existing pairing
+      callers named there since HEX-026. State that this package's tests exercise Arrancar's
+      wiring (gate + retry-loop invocation) with an injected connect function, never a real
+      whatsmeow dial, and that proof against a real channel is the lab's network-cut
+      rehearsal (task 15), not a unit test. Do not weaken or restructure the rest of the
+      comment or the package-level doc comment (lines 1-20).
+    files:
+      - sidecar/internal/canal/canal.go
+  - step: 4
+    action: >-
+      Add the three new tests described in test_scenarios to reconexion_interno_test.go,
+      following the existing style in this file exactly (retrocesoDePrueba(), an injected
+      esperar closure recording durations instead of sleeping, a registro.Nuevo(&bytes.Buffer,
+      ...) sink, and reflect.DeepEqual against the expected backoff sequence). Do not
+      duplicate assertions already made by TestSupervisorReintentaTransitorioConTechoYRegistraIntentos
+      for the underlying retry math; these new tests assert only what Arrancar itself adds
+      (the emparejada gate and the direct call into the existing loop).
+    files:
+      - sidecar/internal/canal/reconexion_interno_test.go
+  - step: 5
+    action: >-
+      Append one new Definido bullet to docs/STATUS.md (2026-08-18, HEX-027, plan task 15
+      and task 7 of stage A-3), placed after the existing HEX-026 bullet (currently lines
+      377-381), recording the lab-found defect (Supervisor built but never given an
+      initial-connect entry point, so a resumable session never dialed) and this fix
+      (Supervisor.Arrancar wired from main.go), without editing or deleting the HEX-026
+      bullet or any other existing Definido entry.
+    files:
+      - docs/STATUS.md
+
+risks:
+  - "SPEC-VS-CODE MISMATCH (verified by reading main.go and canal.go): 00-spec.yaml's root-cause quote states the supervisor variable 'is never referenced again anywhere', but main.go:114 already calls sesion.RegistrarManejador(supervisor), which forwards every whatsmeow event to supervisor.procesarEvento (canal.go:151-164), and this wiring has existed since commit 5906778 (2026-08-13), not introduced by this task. AC-2's event-routing requirement is therefore ALREADY SATISFIED by existing code; only AC-1 (no initial-connect entry point) is the real, still-open gap. Both symptoms produce the identical observed defect (zero connection attempts, zero raw events) because no whatsmeow event can ever fire without a first successful connect - so fixing AC-1 alone resolves the lab's observed deadlock. Flagged for human confirmation that AC-2 needs no code change, only this documentation of why it is already true."
+  - "DESIGN CHOICE, matches the spec's own stated preference: Arrancar(ctx, true) calls the unmodified reintentarConexion, whose loop always waits intervaloNormal(1) (IntervaloInicial) before its first connect attempt - so the very first startup connect is delayed by that interval too, exactly as the spec's design point 1 asks for ('backoff covers the first connect too'). Not a new behavior invented for this task; inherited unchanged from the already-tested reconnection loop."
+  - "CONFIRMED SAFE (read go.mau.fi/whatsmeow@v0.0.0-20260722203353-e9a033b24933 client.go:663): Client.Disconnect()'s doc comment states 'This will not emit any events, the Disconnected event is only used when the connection is closed by the server or a network error.' Ordered shutdown (sesion.Cerrar -> cli.Disconnect) therefore cannot trigger a reconnection loop through the now-live Supervisor wiring, even though the sidecar will actually be connected in practice for the first time after this fix. No shutdown-path change needed."
+  - "AC-3's 'no race with pairing' requirement needs no new locking: IniciarEmparejamientoQr and SolicitarCodigoDeVinculacion both return ErrYaEmparejada before ever calling Conectar when EstaEmparejada()==true (emparejamiento.go:65-66, 142-143), and Arrancar's own gate only calls Conectar when EstaEmparejada()==true. These two conditions are mutually exclusive for the lifetime of one process, so the existing guards are structurally sufficient; this blueprint only documents the exclusivity, per constraint 'existing ErrYaEmparejada / IsConnected guards remain the authority'."
+  - "HONEST TEST LIMIT (same sentinel pattern as HEX-026): a real reconnection against a live whatsmeow channel cannot be proven by a unit test in this environment; the new tests prove the WIRING (the emparejada gate and the direct call into the existing, already-tested retry loop), not that a real network reconnection succeeds. The lab's network-cut rehearsal (plan task 15) is the only real proof, exactly as 00-spec.yaml states."
+  - "No Rust-side gap found: Supervisor.Arrancar is purely internal sidecar wiring behind the existing srv.EnviarEstadoSesion sink; nothing new crosses the IPC boundary and no new message type or field is introduced, so docs/protocolo-ipc-nucleo-sidecar.md (v1.3, wire 4) stays untouched as required."

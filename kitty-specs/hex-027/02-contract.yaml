@@ -1,0 +1,117 @@
+task_id: HEX-027
+summary: Add Supervisor.Arrancar(ctx, emparejada) as the missing initial-connect entry point, wired from main.go, so a paired
+  device self-connects at startup under the existing tested Retroceso discipline.
+goal: 'Fix the lab-found defect: main.go builds the reconnection Supervisor and already wires whatsmeow events into it via
+  sesion.RegistrarManejador(supervisor) (existing code, unchanged since 2026-08-13), but nothing ever calls Sesion.Conectar
+  for an already-paired device at startup, so no whatsmeow event ever fires and the wired Supervisor stays dormant forever
+  - the cell is deaf. Add a new exported Supervisor.Arrancar(ctx, emparejada) that, when emparejada is true, calls the existing
+  unmodified reintentarConexion loop directly, reusing its tested backoff/terminal-pause/single-flight logic for the first
+  connect attempt too; when emparejada is false it is a no-op, preserving pairing (HEX-026) as the only entry to a first
+  connection. main.go launches it in a goroutine right after the existing RegistrarManejador wiring. Go-only: no Rust changes,
+  no whatsmeow commit bump, no new dependency, no IPC protocol change.'
+read:
+- .ai/tasks/active/HEX-027-new-spec/00-spec.yaml
+- .ai/tasks/active/HEX-027-new-spec/01-blueprint.yaml
+- docs/protocolo-ipc-nucleo-sidecar.md
+- docs/STATUS.md
+- docs/bitacora-de-descartes.md
+- sidecar/internal/canal/taxonomia.go
+- sidecar/internal/canal/taxonomia_interno_test.go
+- sidecar/internal/canal/emparejamiento.go
+- sidecar/internal/configuracion/configuracion.go
+- sidecar/internal/ipc/mensajes.go
+- kitty-specs/hex-026/02-contract.yaml
+- kitty-specs/hex-026/01-blueprint.yaml
+touch:
+- sidecar/main.go
+- sidecar/internal/canal/reconexion.go
+- sidecar/internal/canal/canal.go
+- sidecar/internal/canal/reconexion_interno_test.go
+- docs/STATUS.md
+forbid:
+  files:
+  - docs/protocolo-ipc-nucleo-sidecar.md
+  - docs/contrato-ipc-respaldo-del-sqlstore.md
+  - sidecar/go.mod
+  - sidecar/go.sum
+  - sidecar/internal/canal/taxonomia.go
+  - sidecar/internal/canal/taxonomia_interno_test.go
+  - sidecar/internal/canal/emparejamiento.go
+  - sidecar/internal/canal/emparejamiento_test.go
+  - sidecar/internal/canal/canal_test.go
+  - sidecar/internal/canal/traduccion.go
+  - sidecar/internal/servidor/manejo.go
+  - sidecar/internal/servidor/servidor.go
+  - sidecar/internal/ipc/mensajes.go
+  - sidecar/internal/configuracion/configuracion.go
+  - docs/runbook-canal-whatsmeow.md
+  - docs/runbook-canal-fase-a.md
+  - docs/adr/README.md
+  - Cargo.toml
+  - Cargo.lock
+  behaviors:
+  - Do NOT modify reintentarConexion, procesarEvento, procesarDesconexion, entrarEnPausaTerminal, enPausa, tomarPolitica,
+    soltarPolitica, emitirEstado, esperarBaneoTemporal, intervaloDeRetroceso, intervaloNormal, or intervaloBaneo in reconexion.go.
+    Arrancar must call the existing reintentarConexion unchanged; do not inline a second copy of its retry logic and do not
+    add any new state field to the Supervisor struct.
+  - Do NOT modify clasificarDesconexion or proyectarEstado in taxonomia.go, and do not add any new ipc.Causa* constant or
+    any new estado_sesion field. No new whatsmeow event classification logic anywhere.
+  - Do NOT touch emparejamiento.go or emparejamiento_test.go. The ErrYaEmparejada / IsConnected guards that keep pairing
+    and the new startup connect mutually exclusive are existing code (emparejamiento.go:65-66, 142-143) and stay untouched;
+    document the exclusivity, do not add new locking.
+  - Do NOT touch sidecar/internal/servidor/*.go. EnviarEstadoSesion is passed to NuevoSupervisor unchanged; no new IPC message
+    type, field, or wire-version change (docs/protocolo-ipc-nucleo-sidecar.md v1.3, wire version 4, stays untouched).
+  - Do NOT bump, downgrade, or re-pin the whatsmeow commit in sidecar/go.mod, and do NOT add any new module to sidecar/go.mod
+    or sidecar/go.sum.
+  - Do NOT touch any Rust file (crates/**, Cargo.toml, Cargo.lock). If a genuine Rust-side gap is found during implementation,
+    record it as a risk in the implementation notes; do not silently fix it here.
+  - Do NOT call Supervisor.Arrancar synchronously (blocking) from main.go; it must run in its own goroutine (go supervisor.Arrancar(...))
+    so a failing/retrying connect can never delay srv.Escuchar, srv.Aceptar, or the outbox drain loop from starting.
+  - Do NOT gate Arrancar on anything other than the emparejada boolean passed by the caller; do NOT have Supervisor import
+    or reference the canal.Sesion type (preserve the existing decoupling where Supervisor only knows the injected conectar
+    closure).
+  - Do NOT write any user-visible content (Go doc comments, log messages, error text, docs/STATUS.md prose, commit message)
+    in English; keep it in Spanish. Only this contract's and the blueprint's own YAML prose stays in English. Use absolute
+    dates (2026-08-18), never relative ones.
+  - Do NOT introduce mass-sending-provider vocabulary (jitter, warm-up/calentamiento, proxies, VPN, IP rotation) anywhere,
+    and never write or imply that Fase B replaces, retires, or closes the sidecar channel.
+  - Do NOT delete or rewrite any existing docs/STATUS.md Definido entry, including the adjacent HEX-026 entry; append one
+    new Definido entry only, dated 2026-08-18, traced to plan task 15 and task 7 of stage A-3.
+  - Do NOT fabricate a green test claiming a real reconnection against a live whatsmeow channel succeeded; the new tests
+    prove only the wiring (the emparejada gate and the direct call into the existing tested retry loop), with an injected
+    connect function, never a real dial, following the existing sentinel-pattern honesty already used in this package (traducirItemQr,
+    HEX-026's connect-failure tests).
+  - Do NOT delete, weaken, or silently reinterpret any existing test in reconexion_interno_test.go, canal_test.go, or taxonomia_interno_test.go;
+    they must keep passing unchanged.
+verify:
+  commands:
+  - cargo fmt --check
+  - cargo build --workspace
+  - cargo clippy --workspace -- -D warnings
+  - cargo test --workspace
+  - test "$(cargo tree -p hexcell-core | wc -l)" = "1"
+  - cargo test -p hexcell-core --doc 2>&1 | grep -q "compile fail"
+  - cd sidecar && test -z "$(gofmt -l .)" && go build ./... && go vet ./... && go test ./...
+  - cd sidecar && go test -race -count=1 ./internal/canal/... ./...
+acceptance:
+  human_gate: true
+limits:
+  max_files_changed: 5
+  max_diff_lines: 260
+  per_class:
+  - glob: sidecar/main.go
+    max_diff_lines: 20
+  - glob: sidecar/internal/canal/reconexion.go
+    max_diff_lines: 60
+  - glob: sidecar/internal/canal/canal.go
+    max_diff_lines: 25
+  - glob: sidecar/internal/canal/reconexion_interno_test.go
+    max_diff_lines: 170
+  - glob: docs/STATUS.md
+    max_diff_lines: 20
+execution:
+  mode: worktree_edit
+  branch: ai/HEX-027
+retry_policy:
+  max_attempts: 2
+  escalate_after: 2

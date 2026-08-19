@@ -1,0 +1,25 @@
+I have executed the instructions in `.ai/tasks/active/dispatch-prompt-d-hex027-r4.md` for task **HEX-027**.
+
+### Summary of Changes
+
+1. **[reconexion.go](file:///home/gary/dev/hexcell/worktrees/HEX-027/sidecar/internal/canal/reconexion.go#L26-L145)**:
+   - Added unexported constant `causaArranqueInicial = "arranque_inicial"`.
+   - Implemented `Supervisor.Arrancar(ctx context.Context, emparejada bool)` as the initial-connect entry point. If `emparejada` is `false`, it returns immediately. If `true`, it directly calls the existing `reintentarConexion` loop with `causaArranqueInicial`, reusing the tested backoff and terminal-pause logic.
+
+2. **[main.go](file:///home/gary/dev/hexcell/worktrees/HEX-027/sidecar/main.go#L112-L116)**:
+   - Wired `go supervisor.Arrancar(ctx, sesion.EstaEmparejada())` in a background goroutine right after `sesion.RegistrarManejador(supervisor)`.
+
+3. **[canal.go](file:///home/gary/dev/hexcell/worktrees/HEX-027/sidecar/internal/canal/canal.go#L165-L177)**:
+   - Updated `Conectar` doc comment to document `Supervisor.Arrancar` as its third caller (for startup of an already paired device).
+
+4. **[reconexion_interno_test.go](file:///home/gary/dev/hexcell/worktrees/HEX-027/sidecar/internal/canal/reconexion_interno_test.go#L657-L777)**:
+   - Added unit tests covering:
+     - `Supervisor.Arrancar(ctx, true)` with successful connection attempt triggering `estado_sesion` "activa".
+     - `Supervisor.Arrancar(ctx, false)` as a no-op (zero connect calls, zero states, zero logs).
+     - `Supervisor.Arrancar(ctx, true)` retrying upon failure according to configured backoff intervals (`Retroceso`).
+
+5. **[docs/STATUS.md](file:///home/gary/dev/hexcell/worktrees/HEX-027/docs/STATUS.md#L379-L388)**:
+   - Appended a new `Definido` entry dated 2026-08-18 documenting the defect and its fix.
+
+### Verification
+All 7 standard workspace verification checks plus `cd sidecar && go test -race -count=1 ./internal/canal/... ./...` passed cleanly without errors.

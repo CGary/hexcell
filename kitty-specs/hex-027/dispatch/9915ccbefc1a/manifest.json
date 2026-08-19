@@ -1,0 +1,54 @@
+{
+  "task_id": "HEX-027",
+  "bundle_hash": "9915ccbefc1a8fd76f791819a9a93ac2de39ea63f140a5c3e7d50a21f917b932",
+  "files": [
+    ".ai/tasks/active/HEX-027-new-spec/00-spec.yaml",
+    ".ai/tasks/active/HEX-027-new-spec/01-blueprint.yaml",
+    "docs/STATUS.md",
+    "docs/bitacora-de-descartes.md",
+    "docs/protocolo-ipc-nucleo-sidecar.md",
+    "kitty-specs/hex-026/01-blueprint.yaml",
+    "kitty-specs/hex-026/02-contract.yaml",
+    "sidecar/internal/canal/canal.go",
+    "sidecar/internal/canal/emparejamiento.go"
+  ],
+  "protocol_version": "fleet-bundle-protocol/v2",
+  "created_at": "2026-08-18T17:29:05Z",
+  "dropped": [
+    {
+      "component": "code_slice",
+      "path": "sidecar/main.go",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "sidecar/internal/ipc/mensajes.go",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "sidecar/internal/configuracion/configuracion.go",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "sidecar/internal/canal/taxonomia_interno_test.go",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "sidecar/internal/canal/taxonomia.go",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "sidecar/internal/canal/reconexion_interno_test.go",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "sidecar/internal/canal/reconexion.go",
+      "reason": "bundle exceeded max_bytes budget"
+    }
+  ]
+}
