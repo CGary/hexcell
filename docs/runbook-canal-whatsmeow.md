@@ -71,6 +71,19 @@ Una recuperación ante rotura de protocolo **no se da por buena porque el conten
 
 ---
 
+## 5. Taxonomía de desconexión validada en laboratorio
+
+Durante la sesión de laboratorio del **2026-08-18**, se validaron empíricamente las siguientes clasificaciones y rutas de recuperación ante desconexiones del canal propio:
+
+* **Corte de transporte (`desconexion_de_transporte`):** Provocado por cortes de red. El sidecar inicia la reconexión autónoma aplicando la disciplina de retroceso (backoff) exponencial configurada hasta restablecer la conexión.
+* **Desvinculación forzada (`desvinculada_dispositivo_removido`, código `401`):** Provocado al desvincular el dispositivo desde el cliente oficial. Se abortan inmediatamente los reintentos, whatsmeow elimina la sesión local y el restablecimiento requiere una intervención humana para re-emparejar (ver [runbook-canal-fase-a.md](runbook-canal-fase-a.md)).
+* **Entorno del laboratorio:** Los ensayos se operaron sobre procesos directos mediante los scripts en `scripts/laboratorio/`, quedando pendiente el empaquetado del ciclo de vida de contenedores para la etapa A-6.
+
+> [!NOTE]
+> **Rutas no ejercitadas (pendientes):** El flujo de emparejamiento por código con `PairPhone()` contra un canal real de WhatsApp y el ensayo de restauración extrema a extrema (tarea 18) no se ejercitaron y permanecen explícitamente pendientes.
+
+---
+
 ## Referencias
 
 * `docs/adr/adr-0015-politica-de-convivencia-con-el-baneo.md` (ítem 14 `[precautorio]`, Capa 3 canary de biblioteca).

@@ -1,6 +1,6 @@
 # Estado del Proyecto
 
-> Registro vivo del avance. Última actualización: 2026-08-09.
+> Registro vivo del avance. Última actualización: 2026-08-18.
 
 ## Fase actual
 **Canal propio en producción — etapa A-1, fundaciones.** Ya existe el workspace Rust con sus cinco
@@ -385,6 +385,13 @@ adicional cuando aparezca un cliente que lo justifique. Ver [plan/README.md](pla
   con un dispositivo ya emparejado (`sesion.EstaEmparejada() == true`), dejando la célula inerte. Se añadió `Supervisor.Arrancar(ctx, emparejada)`
   que ejecuta `reintentarConexion` con la disciplina de retroceso configurada cuando existe dispositivo emparejado,
   permaneciendo como no-op en arranques sin dispositivo para preservar el emparejamiento como única vía de conexión inicial.
+* **Cierre y validación de la sesión de laboratorio** (2026-08-18, `HEX-028`, tarea 15 de A-3, FR-01, FR-12). Se registraron las evidencias de los ensayos en el canal propio, completando la tarea 15 de la etapa A-3 en el lado del canal propio (sin afectar a las etapas A-4 a A-7):
+  * Emparejamiento inicial por QR verificado con éxito tras la corrección del contexto en `HEX-026`.
+  * Disciplina de comportamiento observada en conversación real (presentación de bienvenida, traspaso único a humano y cortacircuitos persistente tras reinicio).
+  * Reinicio de procesos en ambos órdenes reanudando la sesión sin nuevo código QR tras corregir la auto-conexión en `HEX-027`.
+  * Clasificación del corte de red como desconexión de transporte con reintento y reconexión autónoma.
+  * Clasificación de desvinculación forzada como terminal (código 401), eliminando la sesión local sin reintentos.
+  * Recuperación completada mediante re-emparejamiento QR, verificando que un almacén vacío rechaza la conexión automática.
 
 ## Pendiente
 * **Calibración de parámetros de retroceso IPC en el núcleo** (2026-08-08, HEX-015). Los valores por defecto provisionales del cliente IPC para los reintentos de conexión requieren calibración bajo tráfico real. — *Etapa A-3.*
@@ -490,4 +497,10 @@ adicional cuando aparezca un cliente que lo justifique. Ver [plan/README.md](pla
   calibrarlo.*
 * **Cadencia de la ventana de actualización ordinaria de whatsmeow** (2026-08-12, HEX-020). El mecanismo y las puertas de paso quedan definidos en `docs/runbook-canal-whatsmeow.md` per `adr-0015` ítem 14; la frecuencia regular de actualización ordinaria queda pendiente de calibración como decisión de negocio. — *Etapa A-3 / etapa A-7.*
 * **Ensayo de re-emparejamiento con piloto-01** (2026-08-12, HEX-022). El runbook exige ensayar y cronometrar la recuperación con `piloto-01` antes del alta de `piloto-02`. Se encuentra explícitamente diferido hasta contar con una célula emparejada real en laboratorio. — *Etapa A-3 / etapa A-7.*
-* **Superficie invocable del operador para SolicitarCodigoDeVinculacion** (2026-08-12, HEX-022; actualizado el 2026-08-13 por HEX-024). La superficie local del operador queda provista mediante el modo `hexcell emparejar` (`--metodo codigo_de_vinculacion` y `--metodo qr`), cerrando la plomería IPC desde el núcleo. Queda pendiente la superficie remota de operador sin acceso a terminal (subcomandos de `hexcell-admin`, transporte remoto y autenticación). — *Etapa A-6.*
+* **Superficie invocable del operador para SolicitarCodigoDeVinculacion** (2026-08-12, HEX-022; actualizado el 2026-08-13 por HEX-024). La superficie local del operador queda provista mediante el modo `hexcell emparejar` (`--metodo codigo_de_vinculacion` y `--metodo qr`), cerrando la plomería IPC desde el núcleo. Queda pendiente la superficie remota de operador sin acceso a terminal (subcomandos de `hexcell-admin`, transporte remoto y autenticación). Asimismo, queda pendiente proveer la superficie de operador para invocar el restablecimiento del cortacircuitos (`identidad Restablecer`), identificado en la sesión de laboratorio del 2026-08-18. — *Etapa A-6.*
+* **Parametrización de la ruta de la base de datos de outbox** (2026-08-18, sesión de laboratorio). Definir una variable de entorno para configurar la ruta de la base de datos de la cola de salida (`outbox.RutaPorOmision` actualmente fijada en `/var/lib/hexcell/outbox.db` en `main.go`), homologando el comportamiento con `sqlstore` e `identidad`.
+* **Integración del estado real del canal en la preparación de la célula** (2026-08-18, sesión de laboratorio). Reemplazar el uso de `SesionDelCanal::siempre_activa()` en `/health/ready` para que el endpoint responda con base en el estado real de conexión y sesión reportado por el canal, evitando retornar un código 200 cuando el canal no esté activo.
+* **Unificación del nombre de dispositivo vinculado en whatsmeow** (2026-08-18, sesión de laboratorio). Tomar una decisión de diseño respecto al nombre del cliente vinculado que se muestra en WhatsApp (la ruta QR emplea el valor por omisión de whatsmeow, mientras que la ruta por código de vinculación envía "Chrome (Linux)"), definiendo un valor honesto y unificado bajo la doctrina de etiquetado operacional y riesgo estructural (`adr-0015`).
+* **Sincronización del estado de conexión del sidecar en la conexión del cliente IPC** (2026-08-18, sesión de laboratorio). Corregir la pérdida del evento `estado_sesion=activa` cuando el sidecar conecta al arranque antes de que el cliente IPC del núcleo esté listo para escucharlo (el sidecar escribe `ultimoEstado` pero el núcleo no lo lee al conectar; se requiere un mecanismo de reenvío de estado al establecerse la conexión IPC).
+* **Restauración de nota de honestidad sobre contextos cancelados en Conectar** (2026-08-18, sesión de laboratorio). Incorporar en el comentario de la función `Conectar` en `canal.go` la advertencia de honestidad relativa al manejo de contextos cancelados introducida en `HEX-026`, la cual se perdió durante la reescritura del archivo.
+
