@@ -1,0 +1,105 @@
+task_id: HEX-028
+summary: Docs-only closure of plan task 15 (A-3). Append lab evidence to STATUS.md (one Definido
+  entry, six Pendiente findings) and a disconnection-taxonomy section to one runbook.
+affected_files:
+  - docs/STATUS.md
+  - docs/runbook-canal-whatsmeow.md
+  - docs/runbook-canal-fase-a.md
+  - docs/plan/fase-a-3-adaptador-whatsmeow.md
+symbols: []
+dependencies:
+  - docs/bitacora-de-descartes.md
+  - docs/plan/fase-a-3-adaptador-whatsmeow.md
+test_scenarios:
+  - statement: 'docs/STATUS.md Definido section gains exactly one new entry, appended after the
+      existing last entry (HEX-027, 2026-08-18) and before the "## Pendiente" heading, covering the
+      five rehearsals, the re-pairing rehearsal, and the explicit statement that plan task 15 is
+      complete, traced to plan task 15 of A-3 and FR-01/FR-12.'
+    covers: [AC-1]
+  - statement: 'docs/STATUS.md Pendiente section gains five new entries (findings 1-5) appended at
+      the end of the section, each dated 2026-08-18 lab session and phrased as a pending decision or
+      work item, no invented numbers or deadlines.'
+    covers: [AC-2]
+  - statement: 'The existing operator-surface Pendiente entry ("Superficie invocable del operador
+      para SolicitarCodigoDeVinculacion", currently the last Pendiente entry before this task) is
+      extended in place to also register finding 6 (circuit-breaker Restablecer has no operator
+      surface) instead of creating a duplicate entry.'
+    covers: [AC-2]
+  - statement: 'One runbook file (docs/runbook-canal-whatsmeow.md, chosen over
+      docs/runbook-canal-fase-a.md because it is the general operational runbook for the whatsmeow
+      channel and already documents session-state recovery criteria, while the fase-a runbook is
+      scoped narrowly to PairPhone re-pairing) gains one new short section with the lab-validated
+      disconnection taxonomy (transport cut -> reconectando + backoff; device removed -> terminal
+      401, no retries, session deleted, re-pair required) and the scripts/laboratorio/ note, marking
+      unexercised paths (PairPhone against a real channel, e2e restore) as explicitly pending.'
+    covers: [AC-3]
+  - statement: 'git diff --name-only against the task branch touches only docs/STATUS.md and
+      docs/runbook-canal-whatsmeow.md; no source, script, or config file changes; the 7 standard
+      verification commands still pass unaffected by a docs-only diff.'
+    covers: [AC-4]
+strategy:
+  - step: 1
+    action: Read docs/STATUS.md's Definido and Pendiente sections in full to fix insertion points
+      (Definido end at line 387/388, Pendiente end at line 493/494) and confirm the file's existing
+      prose conventions (bold lead phrase, dated parenthetical, plan-task/ADR traceability, no
+      reordering) before writing anything.
+    files:
+      - docs/STATUS.md
+  - step: 2
+    action: Append one new Definido entry after the HEX-027 entry (2026-08-18) and before "##
+      Pendiente", covering the five rehearsals (QR pairing post-HEX-026; real conversation with
+      presentation/single-handoff/circuit-breaker-persisting-across-restart observed live;
+      dual-order process restart resuming without QR re-scan post-HEX-027; network cut classified
+      desconexion_de_transporte with backoff and autonomous reconnection; forced unlink classified
+      terminal desvinculada_dispositivo_removido codigo=401 with zero retry and session deletion),
+      the re-pairing rehearsal, and the explicit "plan task 15 of A-3 is complete" statement scoped
+      to the own-channel side only.
+    files:
+      - docs/STATUS.md
+  - step: 3
+    action: In the Pendiente section, extend the existing last entry ("Superficie invocable del
+      operador para SolicitarCodigoDeVinculacion...") in place to add finding 6 (identidad
+      Restablecer / circuit-breaker reset has no operator surface either) as an additional pending
+      item on the same operator-surface topic, dated to this lab session, without deleting or
+      reordering any existing text in that entry.
+    files:
+      - docs/STATUS.md
+  - step: 4
+    action: Append five new Pendiente entries at the very end of the Pendiente section (findings
+      1-5 - hardcoded outbox DB path, /health/ready siempre_activa() ignoring channel state,
+      inconsistent linked-device display name needing a unified honest naming decision phrased as
+      operational labeling never as detection evasion, estado_sesion=activa dropped when IPC client
+      not yet connected with no resend on IPC connect, the Conectar comment losing the HEX-026
+      cancelled-context honesty note), each traced to "sesión de laboratorio 2026-08-18" and phrased
+      as a decision/work item.
+    files:
+      - docs/STATUS.md
+  - step: 5
+    action: Add a new short section to docs/runbook-canal-whatsmeow.md (before the References
+      section) titled around "taxonomía de desconexión validada en laboratorio", stating the
+      2026-08-18 lab evidence for transport-cut and device-removed classification with their
+      respective recovery paths, referencing docs/runbook-canal-fase-a.md for the PairPhone
+      re-pairing steps rather than duplicating them, noting scripts/laboratorio/ as the direct-process
+      harness until A-6 packaging, and explicitly marking PairPhone-against-real-channel and the
+      e2e restore rehearsal as still unexercised/pending.
+    files:
+      - docs/runbook-canal-whatsmeow.md
+risks:
+  - 'docs/STATUS.md header line 3 ("Última actualización: 2026-08-09") is already stale versus
+    existing entries dated 2026-08-18 (HEX-025/026/027); this task does not touch it per the
+    spec''s narrow scope (Definido append + Pendiente entries only), so the staleness persists and
+    is recorded here rather than silently fixed.'
+  - 'The spec allows the runbook section to land in either runbook-canal-whatsmeow.md or
+    runbook-canal-fase-a.md "where the existing structure fits better"; this blueprint picks
+    runbook-canal-whatsmeow.md as the single touched runbook file since the fase-a runbook is
+    scoped narrowly to PairPhone re-pairing and does not currently host any disconnection-taxonomy
+    content, while the whatsmeow runbook already has a session-state recovery criterion section
+    (section 4). If review disagrees, the section can be relocated without any other change.'
+  - 'Finding 3 (device display-name inconsistency) must be recorded strictly as an operational
+    labeling decision to make (unify QR-path default vs. code-path "Chrome (Linux)"), never phrased
+    as a way to evade WhatsApp detection, per the structural-risk doctrine (adr-0015, D-notes in
+    bitacora-de-descartes.md) - no bitácora entry conflicts with this finding.'
+  - 'The AC-2 instruction to possibly extend an existing Pendiente entry applies to exactly one of
+    the six findings (the operator-surface one, matching the existing entry about
+    SolicitarCodigoDeVinculacion at the end of the Pendiente section); the other five findings have
+    no matching existing entry and are appended as new ones.'

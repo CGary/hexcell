@@ -1,0 +1,14 @@
+I have successfully completed the tasks requested in the dispatch prompt. Here is the summary of the work done:
+
+1. **Updated project status**: In [STATUS.md](file:///home/gary/dev/hexcell/worktrees/HEX-028/docs/STATUS.md):
+   * Updated the header's last update date metadata to `2026-08-18`.
+   * Added the closure and validation of the laboratory session under a new `Definido` entry, documenting the results of the rehearsals (QR pairing post-`HEX-026`, behavior discipline observed live, process restarts post-`HEX-027`, network cuts, forced device unlinking, and QR re-pairing recovery).
+   * Extended the existing `Pendiente` entry regarding the operator surface (`SolicitarCodigoDeVinculacion`) to include the lack of an operator interface to trigger the circuit-breaker reset (`identidad Restablecer`), as identified during the lab session.
+   * Registered the other 5 lab findings as distinct tracked work items in the `Pendiente` section (hardcoded outbox database path, `/health/ready` always reporting active regardless of channel state, linked-device display name inconsistency, dropped `estado_sesion=activa` IPC events at startup connect, and the missing honesty comment note on canceled contexts in `canal.go`). All findings are strictly phrased as decisions or work items without invented metrics or deadlines.
+
+2. **Updated runbook**: In [runbook-canal-whatsmeow.md](file:///home/gary/dev/hexcell/worktrees/HEX-028/docs/runbook-canal-whatsmeow.md):
+   * Added a new section **5. Taxonomía de desconexión validada en laboratorio** documenting the validated behavior for transport cuts (`desconexion_de_transporte`) and forced unlinking (`desvinculada_dispositivo_removido` code `401`).
+   * Explicitly pointed to the re-pairing runbook [runbook-canal-fase-a.md](file:///home/gary/dev/hexcell/worktrees/HEX-028/docs/runbook-canal-fase-a.md) for recovery.
+   * Marked the direct process tests run in `scripts/laboratorio/` as the lab environment, while explicitly noting that the `PairPhone()` flow against a real channel and the end-to-end restore rehearsal remain unexercised/pending.
+
+Consistent with the global behavioral rules, no build commands were executed following these documentation changes.

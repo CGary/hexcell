@@ -1,0 +1,27 @@
+**Continuación de la sesión**
+
+### Estado actual
+- **Tarea:** `HEX-028` (docs‑only)  
+- **Restricciones:** solo modificar `docs/STATUS.md` y `docs/runbook-canal-whatsmeow.md`; no tocar código ni scripts. Todo el contenido nuevo debe estar en **español** y respetar los puntos de inserción definidos en el `01‑blueprint.yaml`.  
+- **Descubrimientos clave:**
+  - En `STATUS.md` la última entrada **Definido** es `HEX‑027, 2026‑08‑18` (línea 382).  
+  - El encabezado `## Pendiente` sigue después de esa línea.  
+  - Existe una entrada **Pendiente** para “Superficie invocable del operador…” que debe ser ampliada con el hallazgo 6.  
+  - Se necesita añadir cinco nuevas entradas **Pendiente** (hallazgos 1‑5) al final de la sección.  
+  - En `runbook-canal-whatsmeow.md` hay que insertar la sección “taxonomía de desconexión validada en laboratorio” justo antes del encabezado **References**.
+
+### Próximos pasos (para el siguiente agente)
+1. **`docs/STATUS.md`**
+   - Insertar una nueva línea **Definido** después del `HEX‑027` (línea 382) y antes de `## Pendiente`.  
+   - Ampliar la entrada existente de “Superficie invocable del operador…” añadiendo el hallazgo 6.  
+   - Añadir cinco nuevas entradas **Pendiente** (hallazgos 1‑5) al final de la sección.  
+2. **`docs/runbook-canal-whatsmeow.md`**
+   - Añadir la sección “taxonomía de desconexión validada en laboratorio” antes de **References**.  
+3. **Commit**
+   - Mensaje convencional, p. ej. `docs: close plan task 15 – add STATUS Definido, Pendiente entries and disconnection taxonomy`.  
+   - No incluir `Co‑Authored‑By`.  
+4. **Verificación**
+   - Confirmar que el diff solo toca los dos archivos permitidos y que el número de líneas modificadas respeta los límites del contrato.  
+   - Ejecutar los comandos de verificación del repositorio para asegurarse de que siguen pasando.
+
+Una vez completados esos cambios, el agente debe crear el commit y notificar la finalización de la tarea.

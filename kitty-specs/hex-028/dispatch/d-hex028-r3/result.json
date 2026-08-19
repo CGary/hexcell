@@ -1,0 +1,42 @@
+{
+  "schema_version": "fleet-dispatch-result/v1",
+  "dispatch_id": "d-hex028-r3",
+  "task_id": "HEX-028",
+  "agent": "agy_edit",
+  "model": "openai/gpt-oss-120b",
+  "phase": "execute",
+  "started_at": "2026-08-19T13:55:27Z",
+  "ended_at": "2026-08-19T13:57:27Z",
+  "duration_s": 119.858446784,
+  "exit_code": 0,
+  "timed_out": false,
+  "killed": false,
+  "outcome": {
+    "class": "attempt",
+    "noop": false,
+    "cause": null,
+    "blocked": null
+  },
+  "diff": {
+    "empty": true,
+    "indeterminate": false,
+    "files_changed": 0,
+    "insertions": 0,
+    "deletions": 0
+  },
+  "forensic_ref": null,
+  "baseline_commit": "a5d478129b6a604c5031d1b63ceb8dd73933641b",
+  "applied": false,
+  "usage": {
+    "source": "none",
+    "tokens_in": null,
+    "tokens_out": null,
+    "requests": null
+  },
+  "notes_path": "dispatch/d-hex028-r3/notes.txt",
+  "trace_events": [
+    "dispatch_started",
+    "dispatch_finished"
+  ],
+  "reset_error": null
+}

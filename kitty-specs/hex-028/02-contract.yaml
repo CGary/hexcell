@@ -1,0 +1,105 @@
+task_id: HEX-028
+summary: Docs-only closure of plan task 15 of A-3 - append lab-session evidence to STATUS.md and a
+  lab-validated disconnection-taxonomy section to the whatsmeow runbook.
+goal: 'Close plan task 15 of A-3 on paper with the evidence the live lab session of 2026-08-18
+  produced (five passed rehearsals plus re-pairing recovery), and register the six findings the
+  lab surfaced as tracked Pendiente entries without fixing any of them. No source, script, or
+  config file changes; review reads the diff to verify doc presence, since acceptance here is
+  prose content, not a machine-checkable behavior.'
+read:
+  - .ai/tasks/active/HEX-028-new-spec/00-spec.yaml
+  - .ai/tasks/active/HEX-028-new-spec/01-blueprint.yaml
+  - docs/STATUS.md
+  - docs/runbook-canal-whatsmeow.md
+  - docs/runbook-canal-fase-a.md
+  - docs/plan/fase-a-3-adaptador-whatsmeow.md
+  - docs/bitacora-de-descartes.md
+  - sidecar/main.go
+  - sidecar/internal/outbox/outbox.go
+  - sidecar/internal/canal/reconexion.go
+  - sidecar/internal/canal/canal.go
+  - sidecar/internal/canal/emparejamiento.go
+  - sidecar/internal/identidad/cortacircuitos.go
+  - crates/hexcell/src/preparacion.rs
+touch:
+  - docs/STATUS.md
+  - docs/runbook-canal-whatsmeow.md
+forbid:
+  files:
+  - docs/runbook-canal-fase-a.md
+  - docs/plan/fase-a-3-adaptador-whatsmeow.md
+  - docs/bitacora-de-descartes.md
+  - docs/adr/README.md
+  - crates/hexcell/src/preparacion.rs
+  - sidecar/main.go
+  - sidecar/internal/outbox/outbox.go
+  - sidecar/internal/canal/reconexion.go
+  - sidecar/internal/canal/canal.go
+  - sidecar/internal/canal/emparejamiento.go
+  - sidecar/internal/identidad/cortacircuitos.go
+  - sidecar/go.mod
+  - sidecar/go.sum
+  - Cargo.toml
+  - Cargo.lock
+  behaviors:
+  - Do NOT modify any source file (crates/**, sidecar/**), any script (scripts/**), any config
+    file, or any file other than docs/STATUS.md and docs/runbook-canal-whatsmeow.md. This is a
+    docs-only task, and the six findings are recorded, never fixed.
+  - Do NOT delete, rewrite, or reorder any existing docs/STATUS.md content. In the Definido
+    section, append exactly one new entry after the current last entry (HEX-027, 2026-08-18) and
+    before the "## Pendiente" heading - never insert it earlier in the section (the HEX-026 review
+    caught this exact insertion error; do not repeat it).
+  - Do NOT create a duplicate Pendiente entry for the operator-surface finding (finding 6,
+    identidad Restablecer / circuit-breaker reset with no operator surface). Extend the existing
+    Pendiente entry about "Superficie invocable del operador para SolicitarCodigoDeVinculacion" in
+    place instead.
+  - Do NOT touch docs/runbook-canal-fase-a.md. The lab-validated disconnection-taxonomy section
+    goes in docs/runbook-canal-whatsmeow.md only, referencing the fase-a runbook for PairPhone
+    re-pairing steps rather than duplicating them.
+  - Do NOT phrase the device display-name finding (finding 3) as detection-evasion advice of any
+    kind. Phrase it strictly as an operational-labeling decision to make (unify the QR-path default
+    name and the code-path "Chrome (Linux)" name into one honest, consistent value), per the
+    structural-risk doctrine (adr-0015) - the ban risk is structural and no behavioral disguise
+    reduces it.
+  - Do NOT invent client counts, dates, SLAs, or numeric thresholds anywhere in the new prose. Use
+    only the absolute date 2026-08-18 for the lab session and existing dated entries as already
+    written; never a relative date.
+  - Do NOT use mass-sending-provider vocabulary (jitter, warm-up/calentamiento, proxies, VPN, IP
+    rotation) anywhere, and never write or imply that Fase B replaces, retires, or closes the
+    sidecar channel.
+  - Do NOT write any user-visible content (docs/STATUS.md prose, runbook prose, commit message) in
+    English; keep it in Spanish. Only this contract's and the blueprint's own YAML prose stays in
+    English.
+  - Do NOT phrase the six Pendiente findings as narrative/prose paragraphs describing what happened
+    in the lab; phrase each as a decision or work item to be resolved, consistent with the file's
+    existing Pendiente entries.
+  - Do NOT claim in the Definido entry that any stage beyond A-3 (A-4..A-7, Fase B) is complete or
+    affected; the entry closes plan task 15 of A-3 on the own-channel side only.
+  - Do NOT mark as validated in the runbook anything the lab did not exercise. The PairPhone code
+    path against a real channel and the e2e restore rehearsal (task 18) must stay explicitly listed
+    as pending/unexercised, not folded into what was validated.
+verify:
+  commands:
+  - cargo fmt --check
+  - cargo build --workspace
+  - cargo clippy --workspace -- -D warnings
+  - cargo test --workspace
+  - test "$(cargo tree -p hexcell-core | wc -l)" = "1"
+  - cargo test -p hexcell-core --doc 2>&1 | grep -q "compile fail"
+  - cd sidecar && test -z "$(gofmt -l .)" && go build ./... && go vet ./... && go test ./...
+acceptance:
+  human_gate: true
+limits:
+  max_files_changed: 2
+  max_diff_lines: 120
+  per_class:
+  - glob: docs/STATUS.md
+    max_diff_lines: 75
+  - glob: docs/runbook-canal-whatsmeow.md
+    max_diff_lines: 45
+execution:
+  mode: worktree_edit
+  branch: ai/HEX-028
+retry_policy:
+  max_attempts: 2
+  escalate_after: 2

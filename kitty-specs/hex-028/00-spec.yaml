@@ -1,0 +1,29 @@
+task_id: HEX-028
+summary: 'Documentary closure of the lab session (plan task 15 of A-3): record the rehearsal evidence in STATUS.md, register the 6 lab findings as tracked Pendientes, update the runbook.'
+goal: 'Close plan task 15 of A-3 on paper with the evidence the live lab session of 2026-08-18 produced: all five rehearsals passed (QR pairing after the HEX-026 fix; real conversation with the behavior discipline observed live - presentation claimed, single human-handoff message, circuit breaker blocking subsequent sends and PERSISTING across restart; process restart in BOTH orders resuming the session without QR re-scan after the HEX-027 fix; network cut classified as desconexion_de_transporte with backoff retry and autonomous reconnection; forced unlink classified terminal as desvinculada_dispositivo_removido codigo=401 with ZERO retry loop and whatsmeow deleting the local session), plus the re-pairing rehearsal via QR completing the recovery path (empty store correctly refusing to auto-connect). The closure also registers, as tracked Pendiente entries, the SIX findings the lab surfaced that remain open: (1) the outbox database path is hardcoded (outbox.RutaPorOmision = /var/lib/hexcell/outbox.db, main.go) with no environment variable, unlike sqlstore/identidad; (2) /health/ready uses siempre_activa() and returns 200 regardless of channel state; (3) the linked-device display name is inconsistent (QR path shows whatsmeow default, code path passes "Chrome (Linux)") and needs an explicit human decision on a unified honest name; (4) estado_sesion=activa emitted during startup connect is dropped when the nucleo IPC client is not yet connected (no state resend on IPC connect; ultimoEstado written but never read); (5) the Conectar comment in canal.go lost the HEX-026 cancelled-context honesty note when rewritten; (6) the circuit-breaker reset (identidad Restablecer) exists but has no operator surface. Everything traced to the plan and dated 2026-08-18.'
+risk: low
+acceptance:
+    - id: AC-1
+      statement: 'docs/STATUS.md records the lab session as a Definido entry (dated 2026-08-18, appended at the END of the Definido section per file convention, traced to plan task 15 of A-3 and FR-01/FR-12 as applicable): the five rehearsals with their observed evidence (one concise line each, including the two live-found-and-fixed bugs HEX-026/HEX-027 by their commits), the re-pairing rehearsal, and the explicit statement that plan task 15 is COMPLETE - which closes the last open task of stage A-3 on the own-channel side, without claiming anything about stages A-4..A-7.'
+    - id: AC-2
+      statement: 'docs/STATUS.md registers the six lab findings listed in the goal as Pendiente entries per the file''s conventions (or extends existing Pendiente entries where one already covers the topic - e.g. the operator-surface Pendiente may absorb the Restablecer surface), each traced to its origin (lab session 2026-08-18) and each phrased as a decision/work item, not as prose; no invented numbers, no invented deadlines.'
+    - id: AC-3
+      statement: 'docs/runbook-canal-whatsmeow.md (and/or docs/runbook-canal-fase-a.md where the existing structure fits better - the blueprint decides by reading both) gains a short lab-validated section: the observed disconnection taxonomy evidence (transport cut -> reconectando + backoff; device removed -> terminal 401, no retries, session deleted, re-pair required per the existing restoration rule), and the note that the lab harness scripts live in scripts/laboratorio/ with direct processes until A-6 packaging. Honest wording: what was validated in the lab is marked as such; what remains unexercised (e.g. PairPhone code path against real channel, e2e restore rehearsal) stays explicitly pending.'
+    - id: AC-4
+      statement: 'No code changes of any kind (docs-only task: docs/STATUS.md and the runbook file(s) are the only touchable files). The verification commands still pass (they cannot be affected by a docs-only diff, but they run as the standard gate).'
+constraints:
+    - 'Docs-only: no source, script, or config changes. The 6 findings are RECORDED, not fixed. Updating the STATUS.md header line (Ultima actualizacion) to 2026-08-18 is explicitly in scope per the file convention.'
+    - 'Everything in Spanish, absolute dates (2026-08-18), no mass-sending-provider vocabulary (jitter, warm-up, proxies, VPN, IP rotation), never write that Fase B replaces or retires the sidecar channel.'
+    - 'STATUS.md conventions are authoritative: Definido appended at section end (the HEX-026 review caught an insertion error - do not repeat it), Pendiente entries phrased as pending decisions/work.'
+    - 'No invented numbers (client counts, dates, SLAs); the update-window cadence and other open business decisions stay open.'
+    - 'Consult docs/bitacora-de-descartes.md before writing anything resembling a previously discarded idea.'
+    - 'Artifact YAML prose in English; the documentation itself in Spanish.'
+invariants:
+    - 'Nothing in the diff weakens the structural-ban-risk doctrine: the device display-name finding is recorded as an operational-labeling decision, never as detection-evasion advice.'
+    - 'All existing STATUS.md and runbook content is preserved; entries are added or minimally extended, never rewritten or reordered.'
+    - 'The 7 standard verification commands pass.'
+non_goals:
+    - 'Fixing any of the six findings (each becomes its own micro-task when prioritized).'
+    - 'The e2e restore rehearsal (task 18 ensayo) - requires its own lab block with the live cell.'
+    - 'The PairPhone code-path rehearsal against the real channel (runbook task 16 rehearsal with piloto-01).'
+    - 'Any A-4..A-7 work; any Fase B work.'
