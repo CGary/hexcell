@@ -26,6 +26,11 @@
 //! de 3 parámetros para llamantes que no necesitan correlacionar la ronda. La planificación
 //! periódica, la frecuencia de producción y el empaquetado remoto corresponden a decisiones de
 //! negocio o a la etapa A-6 (`docs/bitacora-de-descartes.md` D-20).
+//!
+//! La nota de alcance del punto 6 de `docs/adr/adr-0020-respaldo-y-restauracion-por-celula.md`
+//! ("ninguna operación de respaldo tiene disparador de producción") queda parcialmente desactualizada
+//! por este disparador de operador; el detalle y la decisión humana pendiente sobre un ADR sucesor
+//! viven en `docs/STATUS.md`.
 
 use std::path::Path;
 

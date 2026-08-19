@@ -215,12 +215,22 @@ async fn ejecutar_respaldo_fallido_sqlstore_deja_destino_vacio() {
         .unwrap()
         .expect_err("ejecutar debe fallar");
 
-    match err {
+    match &err {
         ErrorModoRespaldar::SqlstoreFallido { motivo } => {
             assert_eq!(motivo, "espacio insuficiente en disco");
         }
         _ => panic!("se esperaba SqlstoreFallido"),
     }
+
+    let mensaje = err.to_string();
+    assert!(
+        mensaje.contains("sqlstore.db"),
+        "el mensaje debe nombrar la base que falló: {mensaje}"
+    );
+    assert!(
+        mensaje.contains("espacio insuficiente en disco"),
+        "el mensaje debe incluir el motivo reportado por el sidecar: {mensaje}"
+    );
 
     let entradas: Vec<_> = std::fs::read_dir(destino_temp.ruta())
         .unwrap()
@@ -328,4 +338,77 @@ fn binario_real_sin_argumento_falla_con_mensaje_espanol() {
 
     let stderr = String::from_utf8_lossy(&salida.stderr);
     assert!(stderr.contains("falta el argumento obligatorio --directorio"));
+}
+
+#[tokio::test]
+async fn binario_real_sidecar_rechaza_respaldo_falla_con_mensaje_espanol() {
+    let mut sidecar = FakeSidecar::nuevo();
+    let socket_path = sidecar.ruta_socket().clone();
+
+    let origen_temp = DirectorioTemporal::nuevo("respaldo-bin-rechazo-origen");
+    let (_pools, _repo, _almacen) = abrir_persistencia_con_identidad(origen_temp.ruta());
+    let destino_temp = DirectorioTemporal::nuevo("respaldo-bin-rechazo-destino");
+
+    let bin_path = env!("CARGO_BIN_EXE_hexcell");
+    let id_celula = "celula-bin-rechazo";
+    let destino_path = destino_temp.ruta().to_path_buf();
+
+    let mut comando = Command::new(bin_path);
+    comando
+        .env_clear()
+        .env("HEXCELL_ID_CELULA", id_celula)
+        .env("HEXCELL_RUTA_DATOS", origen_temp.ruta())
+        .env("HEXCELL_SOCKET_IPC", &socket_path)
+        .arg("respaldar")
+        .arg("--directorio")
+        .arg(&destino_path);
+
+    let tarea_sidecar = tokio::spawn(async move {
+        sidecar.aceptar_y_saludar(id_celula).await;
+        let orden = sidecar.leer_linea().await;
+        let ronda_id = extraer_identificador_de_ronda(&orden);
+
+        let acuse = format!(
+            "{{\"version\":4,\"tipo\":\"acuse_respaldo_sqlstore\",\"identificador_de_ronda\":\"{ronda_id}\",\"resultado\":\"fallido\",\"ruta_de_la_copia\":\"\",\"bytes\":0,\"motivo\":\"sidecar rechazó el respaldo\"}}"
+        );
+        sidecar.enviar_linea(&acuse).await;
+    });
+
+    let salida = tokio::task::spawn_blocking(move || {
+        comando
+            .output()
+            .expect("ejecutar binario hexcell respaldar")
+    })
+    .await
+    .unwrap();
+    tarea_sidecar.await.unwrap();
+
+    assert!(
+        !salida.status.success(),
+        "el binario debe terminar con exit code distinto de 0"
+    );
+
+    let stderr = String::from_utf8_lossy(&salida.stderr);
+    assert!(
+        stderr.contains("sqlstore.db"),
+        "stderr debe nombrar la base que falló: {stderr}"
+    );
+    assert!(
+        stderr.contains("sidecar rechazó el respaldo"),
+        "stderr debe incluir el motivo reportado por el sidecar: {stderr}"
+    );
+    assert!(
+        stderr.contains("el directorio de destino NO contiene un respaldo válido"),
+        "stderr debe advertir que el destino no quedó válido: {stderr}"
+    );
+    assert!(
+        stderr.contains("directorio NUEVO y sin usar"),
+        "stderr debe recordar la regla de directorio nuevo: {stderr}"
+    );
+
+    let entradas: Vec<_> = std::fs::read_dir(destino_temp.ruta())
+        .unwrap()
+        .map(|e| e.unwrap().file_name())
+        .collect();
+    assert_eq!(entradas.len(), 0);
 }

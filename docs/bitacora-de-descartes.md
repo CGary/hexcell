@@ -394,7 +394,7 @@ copiar `sessions.db`, `knowledge_live.db` y el almacén de identidad del adaptad
 **Respaldo concurrente sin pausa previa (steal-and-exit con reconexión automática del adaptador).**
 
 * **Descartado:** 2026-08-19 (HEX-029).
-* **Por qué se descartó:** El servidor IPC del sidecar aplica relevo de conexión única donde la más reciente gana (`servidor/manejo.go`, `protocolo-ipc-nucleo-sidecar.md`). La reconexión automática del núcleo en ejecución con `Retroceso::por_omision()` (500 ms inicial) desparaliza al proceso de respaldo antes de que el sidecar concluya `VACUUM INTO`. La conexión IPC del respaldo queda cerrada, el `acuse_respaldo_sqlstore` se descarta y la operación falla con `RespaldoSinAcuse`.
+* **Por qué se descartó:** El servidor IPC del sidecar aplica relevo de conexión única donde la más reciente gana (`servidor/manejo.go`, `protocolo-ipc-nucleo-sidecar.md`). La reconexión automática del núcleo en ejecución con `Retroceso::por_omision()` (500 ms inicial) desplaza al proceso de respaldo antes de que el sidecar concluya `VACUUM INTO`. La conexión IPC del respaldo queda cerrada, el `acuse_respaldo_sqlstore` se descarta y la operación falla con `RespaldoSinAcuse`.
 * **Registro normativo:** `crates/hexcell/src/respaldar.rs`, `docs/runbook-restauracion-de-celula.md`.
 * **Qué tendría que cambiar para reabrirlo:** Requeriría que el sidecar acepte múltiples conexiones activas concurrentes sobre IPC, lo cual alteraría el protocolo cerrado v1.3 (cable 4).
 

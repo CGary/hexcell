@@ -11,9 +11,9 @@
 //!
 //! 1. **Socket IPC de conexión única**: El sidecar aplica relevo de conexión única donde la más
 //!    reciente gana (`servidor/manejo.go`, `protocolo-ipc-nucleo-sidecar.md`). Si un proceso de
-//!    respaldo se conectara con el núcleo en ejecución, desparalizaría al núcleo; el núcleo
-//!    reconectaría a los ~500 ms y reconectaría con el sidecar, cerrando la conexión del respaldo y
-//!    provocando que el `acuse_respaldo_sqlstore` se pierda y la operación falle.
+//!    respaldo se conectara con el núcleo en ejecución, desplazaría al núcleo; el núcleo se
+//!    reconectaría a los ~500 ms y desplazaría a su vez la conexión del respaldo, cerrando esa
+//!    conexión y provocando que el `acuse_respaldo_sqlstore` se pierda y la operación falle.
 //! 2. **Riesgo de aperturas rw en migración**: `GestorDePools::abrir` aplica migraciones si el
 //!    esquema lo requiere. Ejecutar migraciones desde un segundo proceso sobre bases SQLite vivas
 //!    introduce riesgos de concurrencia no cubiertos por las garantías de `VACUUM INTO` de `adr-0020`.
@@ -55,6 +55,8 @@ const NOMBRE_CANONICO_SQLSTORE: &str = "sqlstore.db";
 pub struct ResumenDeRespaldoCompleto {
     /// Copias verificadas de las cuatro bases (`sqlstore.db`, `sessions.db`, `knowledge_live.db`, `adapter_identity.db`).
     pub copias: Vec<CopiaVerificada>,
+    /// Identificador de ronda compartido por las cuatro copias, correlacionable con el `acuse_respaldo_sqlstore` del sidecar.
+    pub identificador_de_ronda: String,
 }
 
 /// Errores durante la ejecución del subcomando `respaldar`.
@@ -224,7 +226,10 @@ pub async fn ejecutar(
     let mut copias = vec![copia_sqlstore];
     copias.extend(resumen_local.copias);
 
-    Ok(ResumenDeRespaldoCompleto { copias })
+    Ok(ResumenDeRespaldoCompleto {
+        copias,
+        identificador_de_ronda,
+    })
 }
 
 /// Punto de entrada CLI para el subcomando `hexcell respaldar`.
@@ -295,8 +300,9 @@ pub async fn ejecutar_cli(argumentos: &[String]) -> ExitCode {
             }
             let bytes_totales: u64 = resumen.copias.iter().map(|c| c.bytes).sum();
             println!(
-                "hexcell respaldar: respaldo completado exitosamente ({} copias, {bytes_totales} bytes totales).",
-                resumen.copias.len()
+                "hexcell respaldar: respaldo completado exitosamente ({} copias, {bytes_totales} bytes totales, ronda «{}»).",
+                resumen.copias.len(),
+                resumen.identificador_de_ronda
             );
             ExitCode::SUCCESS
         }
@@ -306,7 +312,7 @@ pub async fn ejecutar_cli(argumentos: &[String]) -> ExitCode {
                 "hexcell respaldar: el directorio de destino NO contiene un respaldo válido de la célula."
             );
             eprintln!(
-                "hexcell respaldar: para reintentar debe utilizar un directorio NUEVO e inalcanzado."
+                "hexcell respaldar: para reintentar debe utilizar un directorio NUEVO y sin usar."
             );
             ExitCode::FAILURE
         }

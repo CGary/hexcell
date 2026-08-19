@@ -36,7 +36,7 @@ Para producir una ronda de respaldo de las cuatro bases en un directorio de dest
 1. **Disciplina operacional obligatoria:** la operación exige **núcleo detenido y sidecar en ejecución**.
    * El proceso del núcleo (`hexcell`) debe estar **detenido** (vía `SIGTERM` o Ctrl-C en el entorno de laboratorio).
    * El proceso del sidecar Go debe permanecer **en ejecución** escuchando en el socket IPC, ya que él mismo ejecuta la copia `VACUUM INTO` sobre `sqlstore.db`.
-2. **Invocación:** ejecutar el subcomando `hexcell respaldar` indicando una **ruta absoluta** hacia un directorio de destino inalcanzado/vacío:
+2. **Invocación:** ejecutar el subcomando `hexcell respaldar` indicando una **ruta absoluta** hacia un directorio de destino sin usar/vacío:
    ```bash
    hexcell respaldar --directorio /ruta/absoluta/al/destino
    ```
