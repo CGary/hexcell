@@ -1,0 +1,37 @@
+{
+  "task_id": "HEX-033",
+  "bundle_hash": "89900d05021f2f72b0a57caee7fabba6e801b964191340092bf7413d481fd50e",
+  "files": [
+    ".ai/tasks/active/HEX-033-new-spec/00-spec.yaml",
+    ".ai/tasks/active/HEX-033-new-spec/01-blueprint.yaml",
+    "docs/STATUS.md",
+    "docs/bitacora-de-descartes.md",
+    "scripts/laboratorio/entorno.ejemplo.sh",
+    "sidecar/internal/configuracion/configuracion.go",
+    "sidecar/internal/configuracion/configuracion_test.go"
+  ],
+  "protocol_version": "fleet-bundle-protocol/v2",
+  "created_at": "2026-08-20T17:12:10Z",
+  "dropped": [
+    {
+      "component": "code_slice",
+      "path": "sidecar/main.go",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "sidecar/internal/outbox/outbox.go",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "sidecar/internal/outbox/disciplina.go",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "sidecar/internal/identidad/identidad.go",
+      "reason": "bundle exceeded max_bytes budget"
+    }
+  ]
+}

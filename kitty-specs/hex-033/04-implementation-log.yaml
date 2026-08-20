@@ -1,0 +1,3 @@
+entries: []
+summary: Add HEXCELL_RUTA_OUTBOX env var (default preserved) and make HEXCELL_VENTANA_ZONA required, fail-closed at startup.
+task_id: HEX-033

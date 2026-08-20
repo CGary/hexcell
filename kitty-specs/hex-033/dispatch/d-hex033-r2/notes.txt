@@ -1,0 +1,47 @@
+NOTES:
+1. Extended `sidecar/internal/configuracion/configuracion.go` to add `VariableRutaOutbox` (`HEXCELL_RUTA_OUTBOX`), `RutaOutboxPorOmision` (`/var/lib/hexcell/outbox.db`), `ErrRutaOutboxVacia`, and `RutaOutbox` on `Configuracion`.
+2. Removed `VentanaZonaPorOmision` and updated `cargarVentanaDeAtencion` so `HEXCELL_VENTANA_ZONA` is required and fails closed at startup returning `ErrParametroDeDisciplinaInvalido` naming `HEXCELL_VENTANA_ZONA` if missing or empty.
+3. Threaded `cfg.RutaOutbox` into `outbox.Abrir` in `sidecar/main.go`.
+4. Extended `entornoFalso` helper in `sidecar/internal/configuracion/configuracion_test.go` to supply fixture default `America/La_Paz` when `HEXCELL_VENTANA_ZONA` is un-set, added tests for `RutaOutbox` (default, custom, empty), updated zone assertion, and added discriminating test `TestCargarRechazaVentanaZonaAusente`.
+5. Updated `docs/STATUS.md` annotating Hallazgos 1 & 10 under `Pendiente` and added a resolution entry under `Definido`.
+6. Extended `scripts/laboratorio/entorno.ejemplo.sh` to define `HEXCELL_RUTA_OUTBOX` and `HEXCELL_VENTANA_ZONA`.
+7. Ran Go package checks (`gofmt`, `go vet`, `go test -race`) cleanly.
+END NOTES
+
+---
+
+### Resumen de Ejecución (HEX-033)
+
+He ejecutado las instrucciones especificadas en el archivo de dispatch para el problema **HEX-033** (Hallazgos 1 y 10 de laboratorio):
+
+#### Cambios Implementados
+
+1. **[sidecar/internal/configuracion/configuracion.go](file:///home/gary/dev/hexcell/worktrees/HEX-033/sidecar/internal/configuracion/configuracion.go)**:
+   - Se añadió la constante `VariableRutaOutbox = "HEXCELL_RUTA_OUTBOX"`.
+   - Se definió `RutaOutboxPorOmision = "/var/lib/hexcell/outbox.db"` (mismo literal documentado de fallback).
+   - Se añadió el error `ErrRutaOutboxVacia`.
+   - Se añadió el campo `RutaOutbox` al struct [Configuracion](file:///home/gary/dev/hexcell/worktrees/HEX-033/sidecar/internal/configuracion/configuracion.go#L320-L355) y su lectura validada en [Cargar](file:///home/gary/dev/hexcell/worktrees/HEX-033/sidecar/internal/configuracion/configuracion.go#L362-L466).
+   - Se eliminó el valor por omisión `VentanaZonaPorOmision = "America/Argentina/Buenos_Aires"`.
+   - Se actualizó `cargarVentanaDeAtencion` para hacer `HEXCELL_VENTANA_ZONA` un parámetro **requerido** que falla de forma cerrada al arranque (`ErrParametroDeDisciplinaInvalido`) nombrando a la variable si está ausente o vacía.
+
+2. **[sidecar/main.go](file:///home/gary/dev/hexcell/worktrees/HEX-033/sidecar/main.go)**:
+   - Se pasó `cfg.RutaOutbox` a `outbox.Abrir` en lugar de la constante fija `outbox.RutaPorOmision`.
+
+3. **[sidecar/internal/configuracion/configuracion_test.go](file:///home/gary/dev/hexcell/worktrees/HEX-033/sidecar/internal/configuracion/configuracion_test.go)**:
+   - Se ajustó el helper `entornoFalso` para proveer `America/La_Paz` como valor de fixture cuando la clave no está en el mapa recibido, preservando el comportamiento de casos negativos donde se especifique una zona vacía o desconocida.
+   - Se añadieron tests unitarios discriminantes para `HEXCELL_RUTA_OUTBOX` (por omisión, personalizada y vacía).
+   - Se añadió el test discriminante `TestCargarRechazaVentanaZonaAusente` para certificar el fallo cerrado al omitir `HEXCELL_VENTANA_ZONA`.
+
+4. **[docs/STATUS.md](file:///home/gary/dev/hexcell/worktrees/HEX-033/docs/STATUS.md)**:
+   - Se anotaron in-situ los hallazgos 1 y 10 en la sección `Pendiente` indicando su resolución al 2026-08-20 por `HEX-033`.
+   - Se registró la nueva entrada correspondiente en la sección `Definido`.
+
+5. **[scripts/laboratorio/entorno.ejemplo.sh](file:///home/gary/dev/hexcell/worktrees/HEX-033/scripts/laboratorio/entorno.ejemplo.sh)**:
+   - Se añadieron las variables `HEXCELL_RUTA_OUTBOX` y `HEXCELL_VENTANA_ZONA` para asegurar que el entorno de laboratorio no dependa de ningún valor por omisión removido.
+
+#### Verificación
+
+Se ejecutaron las pruebas sobre el sidecar en Go:
+- `gofmt -l .` -> Limpio.
+- `go vet ./...` -> Exitoso sin advertencias.
+- `go test -race -count=1 ./internal/configuracion/... ./internal/outbox/...` -> **PASS** (100% exitoso).

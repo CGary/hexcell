@@ -1,0 +1,66 @@
+task_id: HEX-033
+summary: Add HEXCELL_RUTA_OUTBOX env var (default preserved) and make HEXCELL_VENTANA_ZONA required, fail-closed at startup.
+affected_files:
+  - sidecar/internal/configuracion/configuracion.go
+  - sidecar/internal/configuracion/configuracion_test.go
+  - sidecar/main.go
+  - docs/STATUS.md
+  - scripts/laboratorio/entorno.ejemplo.sh
+symbols:
+  - configuracion.VariableRutaOutbox
+  - configuracion.RutaOutboxPorOmision
+  - configuracion.ErrRutaOutboxVacia
+  - configuracion.Configuracion.RutaOutbox
+  - configuracion.Cargar
+  - configuracion.cargarVentanaDeAtencion
+  - configuracion.VentanaZonaPorOmision
+  - main.main
+dependencies:
+  - sidecar/internal/outbox/outbox.go
+  - sidecar/internal/outbox/disciplina.go
+  - sidecar/internal/outbox/salida.go
+  - sidecar/internal/identidad/identidad.go
+test_scenarios:
+  - statement: HEXCELL_RUTA_OUTBOX set to a custom path relocates Configuracion.RutaOutbox to that value, mirroring HEXCELL_RUTA_SQLSTORE/IDENTIDAD.
+    covers: ["AC-1", "AC-3"]
+  - statement: HEXCELL_RUTA_OUTBOX absent leaves Configuracion.RutaOutbox at RutaOutboxPorOmision (same literal as outbox.RutaPorOmision), so outbox.Abrir behaves exactly as before.
+    covers: ["AC-1", "AC-3"]
+  - statement: HEXCELL_RUTA_OUTBOX set to an empty string fails Cargar with ErrRutaOutboxVacia, mirroring the sqlstore/identidad empty-value guard.
+    covers: ["AC-1", "AC-3"]
+  - statement: HEXCELL_VENTANA_ZONA absent or empty fails Cargar with an ErrParametroDeDisciplinaInvalido-style Spanish error naming HEXCELL_VENTANA_ZONA, before any store opens or port binds; the test must fail if this required check is reverted to a default fallback.
+    covers: ["AC-2", "AC-3"]
+  - statement: HEXCELL_VENTANA_ZONA set to a valid IANA zone (e.g. America/La_Paz or America/Sao_Paulo) succeeds and VentanaDeAtencion.Zona reflects it.
+    covers: ["AC-2", "AC-3"]
+  - statement: HEXCELL_VENTANA_ZONA set to an invalid IANA string keeps failing exactly as today, naming the variable in the error.
+    covers: ["AC-2", "AC-3"]
+  - statement: Existing configuracion tests keep passing without silently relying on the removed VentanaZonaPorOmision default (entornoFalso now supplies a valid test-fixture zone unless a case overrides it).
+    covers: ["AC-3"]
+  - statement: docs/STATUS.md records findings 1 and 10 as resolved (dated 2026-08-20, HEX-033) without erasing the original lab-finding bullets, and entorno.ejemplo.sh sets HEXCELL_VENTANA_ZONA and HEXCELL_RUTA_OUTBOX explicitly.
+    covers: ["AC-4"]
+  - statement: go test -race -count=1 passes over ./internal/configuracion/... and ./internal/outbox/...; no file from the HEX-032 change set is touched.
+    covers: ["AC-5"]
+strategy:
+  - step: 1
+    action: "Value object extension: add VariableRutaOutbox (HEXCELL_RUTA_OUTBOX), RutaOutboxPorOmision (same literal as outbox.RutaPorOmision, duplicated rather than imported to avoid an import cycle since outbox already imports configuracion), ErrRutaOutboxVacia, and a RutaOutbox field on Configuracion; wire it in Cargar with the exact presence/empty-check pattern already used for RutaSqlstore/RutaIdentidad."
+    files:
+      - sidecar/internal/configuracion/configuracion.go
+  - step: 2
+    action: "Validator change: in cargarVentanaDeAtencion, remove the cadenaDelEntorno(consultar, VariableVentanaZona, VentanaZonaPorOmision) fallback call and the VentanaZonaPorOmision constant entirely; replace with a presence+non-empty required check that fails closed with an ErrParametroDeDisciplinaInvalido-style Spanish error naming HEXCELL_VENTANA_ZONA, evaluated before time.LoadLocation and mirroring the existing 16-hour anti-24/7 guard's error style. Invalid IANA strings keep failing via the existing LoadLocation branch."
+    files:
+      - sidecar/internal/configuracion/configuracion.go
+  - step: 3
+    action: "Orchestration wiring: change the outbox.Abrir call site from Ruta:outbox.RutaPorOmision to Ruta:cfg.RutaOutbox. outbox.go's own empty-Ruta fallback (ruta==\"\" -> RutaPorOmision) already preserves default behavior, so outbox.go itself stays untouched."
+    files:
+      - sidecar/main.go
+  - step: 4
+    action: "Test harness change: extend the entornoFalso helper to merge in a valid default test zone (e.g. America/La_Paz) whenever the caller's map does not already set VariableVentanaZona, preserving override for existing zona_vacia/zona_desconocida negative cases; update TestCargarAplicaValoresPorOmisionDeDisciplina's zone assertion to the new fixture default instead of the removed VentanaZonaPorOmision constant; add three new tests mirroring the sqlstore/identidad triplet (default/custom/empty) for RutaOutbox; add one dedicated test that bypasses entornoFalso with a raw always-absent closure to prove Cargar fails naming HEXCELL_VENTANA_ZONA when the variable is genuinely absent (LES-036 discriminating test)."
+    files:
+      - sidecar/internal/configuracion/configuracion_test.go
+  - step: 5
+    action: "Docs update: annotate the existing '(Hallazgo 1)' outbox-path and '(Hallazgo 10)' timezone Pendiente bullets in place with a short resolution note dated 2026-08-20 referencing HEX-033 (preserving their original text), and append one new bullet under the Definido section describing the concrete fix (env var name, required-zone fail-closed behavior)."
+    files:
+      - docs/STATUS.md
+  - step: 6
+    action: "Lab script update: add HEXCELL_RUTA_OUTBOX under $HEXCELL_LAB_DIR/datos mirroring the existing RUTA_SQLSTORE/RUTA_IDENTIDAD block, and set HEXCELL_VENTANA_ZONA=America/La_Paz with a comment marking it now-required per hallazgo 10, so the lab no longer depends on any removed default."
+    files:
+      - scripts/laboratorio/entorno.ejemplo.sh

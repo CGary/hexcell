@@ -1,0 +1,103 @@
+task_id: HEX-033
+summary: Add HEXCELL_RUTA_OUTBOX env var (default preserved) and make HEXCELL_VENTANA_ZONA required, fail-closed at startup.
+goal: 'Fix two sidecar configuration findings from the 2026-08-19/20 lab session. Finding 1: the outbox database path is a
+  hardcoded constant with no environment variable, unlike the sibling sqlstore/identidad stores; add HEXCELL_RUTA_OUTBOX following
+  that exact pattern, defaulting to the existing constant when unset. Finding 10: the attention-window timezone silently defaults
+  to a foreign zone (America/Argentina/Buenos_Aires) one hour off the real Bolivia deployment; make HEXCELL_VENTANA_ZONA a
+  required per-cell setting that fails closed at startup, naming the variable in Spanish, when absent or empty.
+
+  '
+read:
+- .ai/tasks/active/HEX-033-new-spec/00-spec.yaml
+- .ai/tasks/active/HEX-033-new-spec/01-blueprint.yaml
+- sidecar/internal/configuracion/configuracion.go
+- sidecar/internal/configuracion/configuracion_test.go
+- sidecar/main.go
+- sidecar/internal/outbox/outbox.go
+- sidecar/internal/outbox/disciplina.go
+- sidecar/internal/identidad/identidad.go
+- docs/STATUS.md
+- docs/bitacora-de-descartes.md
+- scripts/laboratorio/entorno.ejemplo.sh
+touch:
+- sidecar/internal/configuracion/configuracion.go
+- sidecar/internal/configuracion/configuracion_test.go
+- sidecar/main.go
+- docs/STATUS.md
+- scripts/laboratorio/entorno.ejemplo.sh
+- sidecar/internal/canal/traduccion_test.go
+forbid:
+  files:
+  - sidecar/internal/canal/respaldo.go
+  - sidecar/internal/ipc/mensajes.go
+  - crates/hexcell/src/respaldo.rs
+  - crates/hexcell/src/respaldar.rs
+  - docs/protocolo-ipc-nucleo-sidecar.md
+  - docs/runbook-restauracion-de-celula.md
+  - docs/adr/README.md
+  - sidecar/internal/outbox/outbox.go
+  - sidecar/go.mod
+  - sidecar/go.sum
+  - Cargo.toml
+  - Cargo.lock
+  - docs/bitacora-de-descartes.md
+  behaviors:
+  - Do NOT touch any file in the HEX-032 change set (sidecar/internal/canal/respaldo.go, sidecar/internal/ipc/mensajes.go,
+    crates/hexcell/src/respaldo.rs, crates/hexcell/src/respaldar.rs, docs/protocolo-ipc-nucleo-sidecar.md, any ADR, docs/runbook-restauracion-de-celula.md),
+    which is being edited concurrently by HEX-032. If a genuine need to touch one of those files surfaces, STOP and record
+    a human-blocking note instead of editing it.
+  - Do NOT modify sidecar/internal/outbox/outbox.go. The outbox default path stays owned by that package; configuracion.go's
+    RutaOutboxPorOmision duplicates the same literal (not an import, to avoid a cycle since outbox already imports configuracion
+    via disciplina.go/salida.go), exactly like identidad.RutaPorOmision/configuracion.RutaIdentidadPorOmision already do.
+  - Do NOT add any third-party dependency, do NOT change the pinned whatsmeow commit, and do NOT change the IPC protocol,
+    message types, or wire version in any way.
+  - Do NOT keep VentanaZonaPorOmision or any implicit fallback for HEXCELL_VENTANA_ZONA. The check must run before any store
+    opens or port binds, mirror the existing 16-hour anti-24/7 guard's ErrParametroDeDisciplinaInvalido error style, and name
+    HEXCELL_VENTANA_ZONA in Spanish. An invalid IANA string must keep failing exactly as today.
+  - 'Do NOT change behavior of the outbox path when HEXCELL_RUTA_OUTBOX is unset: the existing constant remains the default
+    with zero behavior change for deploys that never set it.'
+  - 'Do NOT delete, weaken, or silently reinterpret any existing configuracion test. Tests must discriminate (LES-036): the
+    required-zone test must fail if the check is removed or reverted to a default fallback; the outbox-path test must fail
+    if the env var is ignored. Only the entornoFalso helper''s fixture default and the single zone assertion in TestCargarAplicaValoresPorOmisionDeDisciplina
+    may change to accommodate the now-required zone; do not touch any other existing test''s assertions.'
+  - Do NOT erase or rewrite the existing '(Hallazgo 1)' and '(Hallazgo 10)' bullets in docs/STATUS.md's Pendiente section.
+    Annotate them in place with a short resolution note and append exactly one new bullet under the Definido section instead.
+  - Do NOT invent client counts, cell counts, or prices the documentation does not already fix. Never write that Fase B replaces,
+    retires, or closes the sidecar channel. Never introduce mass-sending-provider vocabulary (jitter, warm-up, proxies, VPN,
+    IP rotation).
+  - Do NOT commit any .db, .db-wal, or .db-shm file, nor any .env file.
+  - All user-visible content (log/error messages, Go comments, STATUS.md prose, shell script comments, commit message) must
+    be in Spanish with absolute dates (2026-08-20, never relative). Only this contract's and the blueprint's own YAML prose
+    stays in English.
+verify:
+  commands:
+  - cargo fmt --check
+  - cargo build --workspace
+  - cargo clippy --workspace -- -D warnings
+  - cargo test --workspace
+  - test "$(cargo tree -p hexcell-core | wc -l)" = "1"
+  - cargo test -p hexcell-core --doc 2>&1 | grep -q "compile fail"
+  - cd sidecar && test -z "$(gofmt -l .)" && go build ./... && go vet ./... && go test ./...
+  - cd sidecar && go test -race -count=1 ./internal/configuracion/... ./internal/outbox/...
+acceptance:
+  human_gate: true
+limits:
+  max_files_changed: 6
+  max_diff_lines: 280
+  per_class:
+  - glob: sidecar/internal/configuracion/configuracion.go
+    max_diff_lines: 90
+  - glob: sidecar/internal/configuracion/configuracion_test.go
+    max_diff_lines: 140
+  - glob: sidecar/main.go
+    max_diff_lines: 10
+  - glob: docs/STATUS.md
+    max_diff_lines: 20
+  - glob: scripts/laboratorio/entorno.ejemplo.sh
+    max_diff_lines: 15
+execution:
+  mode: worktree_edit
+  branch: ai/HEX-033
+retry_policy:
+  max_attempts: 2
+  escalate_after: 2
