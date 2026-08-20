@@ -132,3 +132,38 @@ restaurado y el motor deliberadamente sin consumir el puerto.
 * `docs/contrato-ipc-respaldo-del-sqlstore.md` (contrato de la cuarta base).
 * `docs/plan/fase-a-3-adaptador-whatsmeow.md` (ensayo contra la taxonomía real de desconexión).
 * `docs/STATUS.md` (destino remoto real del respaldo, decisión de negocio pendiente).
+
+---
+
+## Resultado del ensayo rama 1 (2026-08-20) — VALID con advertencia crítica
+
+**Lo validado (rama 1 del runbook — restauración CON `sqlstore`, sin `device_removed`):**
+
+1. `hexcell respaldar --directorio <destino>` ejecutado con **núcleo detenido y sidecar en ejecución** produjo las **cuatro copias** verificadas:
+   - `sessions.db`, `knowledge_live.db`, `adapter_identity.db` vía `VACUUM INTO` sobre conexiones de lectura del núcleo.
+   - `sqlstore.db` vía IPC: el sidecar ejecutó `VACUUM INTO` en su conexión dedicada de respaldo (`AbrirConexionDeRespaldo`), verificó con `PRAGMA integrity_check` y cotejó `user_version`; emitió `acuse_respaldo_sqlstore` con `identificador_de_ronda` impreso en consola; código de salida 0.
+   - Orden observado: `sqlstore` primero (fallo-en-vacío si el destino existe), luego las tres del núcleo.
+
+2. Restauración sobre **entorno limpio** (directorio nuevo, sin `-wal`/`-shm` previos):
+   - Copia de los cuatro archivos a sus nombres canónicos.
+   - Arranque de `hexcell` con `HEXCELL_RUTA_DATOS` apuntando al directorio restaurado.
+   - Migraciones aplicadas, `journal_mode=WAL` restablecido en las tres bases del núcleo.
+
+3. **Sesión reanudada sin QR**: el sidecar conectó automáticamente al arrancar (supervisor con `Arrancar(ctx, emparejada=true)`), restableció el websocket hacia WhatsApp y reportó `estado_sesion=activa` por IPC.
+
+4. **Bot reconectó y respondió a un mensaje real**: se envió un mensaje de prueba desde el número del piloto; la célula lo consumió, lo procesó con el proveedor simulado y emitió la respuesta por el canal propio. El criterio de aceptación del runbook (sección 3) se cumple: la célula restaurada consume y responde.
+
+**Advertencia honesta — lo que NO sobrevive a la restauración hoy:**
+
+El conjunto de respaldo actual **no incluye `identidad.db`** (el almacén de identidad del sidecar Go en `/var/lib/hexcell/identidad.db`). Ese archivo contiene:
+- El mapeo **conversation-id** (contacto → identificador interno de hilo).
+- El estado del **cortacircuitos** conversacional (contadores de repetición, disparos previos).
+- La **lista STOP** (contactos que pidieron la baja con las palabras clave configuradas).
+
+**Consecuencia observada en el ensayo:** la célula restaurada reenvió su presentación de bienvenida al contacto de prueba, porque el mapeo de conversation-id se perdió y el contacto "nuevo" abrió un hilo fresco.
+
+**Riesgo mayor (no observado pero cierto):** si se restaura tras una pérdida real, **cualquier contacto que hubiera enviado "baja"/"stop" y esté en la lista STOP volvería a recibir mensajes**, violando la regla del plan de que un re-emparejamiento no debe revivir bajas. El plan dice "cuatro bases"; la implementación dividió la identidad del adaptador en dos archivos (`adapter_identity.db` + `identidad.db`) y solo la primera está en el respaldo.
+
+**Acción requerida:** tarea de fix con prioridad para añadir `identidad.db` al conjunto de respaldo (copia `VACUUM INTO` desde la conexión de lectura del sidecar, análoga a las otras tres bases) y actualizar el runbook y `adr-0020` en consecuencia.
+
+**Rama 2 (`device_removed`: restaurar SIN `sqlstore` + re-emparejar por `PairPhone()`):** **pendiente**, programada para el próximo bloque de laboratorio.
