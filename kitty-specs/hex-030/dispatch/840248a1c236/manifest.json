@@ -1,0 +1,17 @@
+{
+  "task_id": "HEX-030",
+  "bundle_hash": "840248a1c23600d2d8bde4a49f0bc5f61f8b92f25560b00ed44848488e98f334",
+  "files": [
+    ".ai/tasks/active/HEX-030-new-spec/00-spec.yaml",
+    ".ai/tasks/active/HEX-030-new-spec/01-blueprint.yaml",
+    "docs/STATUS.md",
+    "docs/adr/adr-0020-respaldo-y-restauracion-por-celula.md",
+    "docs/bitacora-de-descartes.md",
+    "docs/runbook-canal-whatsmeow.md",
+    "docs/runbook-restauracion-de-celula.md",
+    "sidecar/internal/configuracion/configuracion.go",
+    "sidecar/internal/outbox/disciplina.go"
+  ],
+  "protocol_version": "fleet-bundle-protocol/v2",
+  "created_at": "2026-08-20T04:24:58Z"
+}

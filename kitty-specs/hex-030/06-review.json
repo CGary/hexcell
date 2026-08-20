@@ -1,0 +1,23 @@
+{
+  "task_id": "HEX-030",
+  "summary": "Docs-only diff: all 6 findings, branch-1/2 status, and 3 pending decisions present intact per completeness audit; no fabricated D-NN; contract-check ok; AC-1..AC-4 covered; 7/7 verify pass.",
+  "verdict": "approve",
+  "contract_compliance": true,
+  "forbidden_files_touched": [],
+  "unrequested_refactor": false,
+  "missing_tests": [],
+  "functional_risk": "low",
+  "notes": [
+    "contract-check ok=true, 0 violations; not_checked: forbid.behaviors (reviewed manually instead, per skill instructions)",
+    "acceptance-coverage: AC-1, AC-2, AC-3, AC-4 all state=covered, gaps=[]",
+    "Manual per-clause audit (LES-030 method): branch-1 evidence chain intact (4 copies sqlstore-first, round id, clean-env restore, session resumed without QR, bot reconnected AND replied), branch 2 explicitly pending, traced to plan task 18",
+    "Findings 7-12 all present with live evidence; finding 12 marked (PRIORIDAD) with explicit STOP-list revival consequence, not softened, appearing consistently in both STATUS.md and the runbook",
+    "Finding 10 correctly labeled PROPUESTA (not a taken decision); anti-24/7 guard correctly labeled as an EXISTING decision being documented, not a new one",
+    "TTL re-enqueue decision verified against docs/bitacora-de-descartes.md: D-13 confirmed to cover a different topic (queueing outside 24h window); diff correctly cites the HEX-017 STATUS.md Definido entry instead of fabricating a D-NN citation",
+    "Verified sidecar source claims cited in the prose: configuracion.go:169 VentanaZonaPorOmision = America/Argentina/Buenos_Aires, configuracion.go:668-669 16h anti-24/7 error text match verbatim",
+    "Confirmed pre-existing Pendiente entries (2026-08-18 lab block, 2026-08-12/08 HEX-020/022 entries) untouched by the diff; new content strictly appended, Definido entry appended after HEX-029 and before ## Pendiente",
+    "05-validation.json: overall_result=passed, 7/7 commands exit_code 0, executed_at 2026-08-20T05:00:00Z",
+    "away-message and anti-24/7 decisions carry no invented numeric parameters (wording/TTL/thresholds left 'a calibrar')"
+  ],
+  "fix_tasks": []
+}

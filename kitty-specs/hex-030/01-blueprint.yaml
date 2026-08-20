@@ -1,0 +1,99 @@
+task_id: HEX-030
+summary: Docs-only append of branch-1 restore rehearsal evidence, six new lab findings (7-12),
+  and three pending product decisions to STATUS.md and the restore runbook.
+affected_files:
+  - docs/STATUS.md
+  - docs/runbook-restauracion-de-celula.md
+symbols: []
+dependencies:
+  - docs/bitacora-de-descartes.md
+  - docs/STATUS.md
+test_scenarios:
+  - statement: 'docs/STATUS.md gains exactly one new Definido entry, dated 2026-08-20, appended
+      after the current last Definido entry (HEX-029) and before "## Pendiente", describing branch-1
+      of the restore rehearsal as VALID with its evidence chain and explicitly naming branch 2 as
+      pending for the next lab block.'
+    covers: [AC-1]
+  - statement: 'docs/STATUS.md Pendiente section gains findings 7-12 as work-item-phrased entries,
+      each dated 2026-08-20 with its live evidence; finding 12 (identidad.db missing from the backup
+      set) is phrased as priority; finding 10 carries the zone-required-per-cell fix direction
+      labeled as a proposal, not a taken decision; no existing Pendiente entry on the same topic is
+      duplicated (extend in place where one already exists).'
+    covers: [AC-2]
+  - statement: 'docs/STATUS.md Pendiente section gains the three product decisions (off-hours
+      away-message, TTL-bounded re-enqueue at startup, documenting the anti-24/7 guard) phrased as
+      pending-for-human decisions with no invented numeric parameters; the TTL re-enqueue entry
+      references the task-12 "sin cola de reenvío ni recuperación al arrancar" design (STATUS.md
+      HEX-017 entry) as the decision being partially reopened, since no dedicated bitacora-de-descartes
+      D-NN entry covers this specific discard (D-13 covers a different topic: queueing outside the
+      24h window, not startup re-enqueue).'
+    covers: [AC-3]
+  - statement: 'docs/runbook-restauracion-de-celula.md gains a branch-1 outcome section: what was
+      validated (respaldar producing 4 copies sqlstore-first, clean-environment restore, session
+      resumed without QR, bot reconnected and replied) and an explicit honest warning that
+      identidad.db is not yet part of the backup set, so circuit-breaker/STOP/conversation-mapping
+      state does not survive a restore today.'
+    covers: [AC-3]
+  - statement: 'Diff touches only docs/STATUS.md and docs/runbook-restauracion-de-celula.md; the
+      STATUS.md header date updates to 2026-08-20; the 7 standard verification commands
+      (cargo fmt/build/clippy/test, hexcell-core dependency-count check, doc compile-fail check,
+      sidecar gofmt/build/vet/test) pass unaffected since no source changed.'
+    covers: [AC-4]
+strategy:
+  - step: 1
+    action: 'Read docs/STATUS.md current Definido tail (HEX-029 entry) and Pendiente conventions
+      (entries 1-6 from the first lab block already at lines 498-502) to match phrasing and avoid
+      duplicating topics; read docs/bitacora-de-descartes.md D-13 to confirm it covers a different
+      topic than the startup re-enqueue proposal.'
+    files:
+      - docs/STATUS.md
+      - docs/bitacora-de-descartes.md
+  - step: 2
+    action: 'Append one Definido entry to docs/STATUS.md after the HEX-029 entry and before
+      "## Pendiente", recording branch-1 of the restore rehearsal as VALID with its evidence chain
+      and naming branch 2 as pending.'
+    files:
+      - docs/STATUS.md
+  - step: 3
+    action: 'Append six new Pendiente entries (findings 7-12) to docs/STATUS.md, each phrased as a
+      work item with its evidence and date 2026-08-20; check for overlap with existing entries
+      (e.g. finding 9 on invisible counters is new ground, not covered by any existing entry) before
+      appending rather than duplicating.'
+    files:
+      - docs/STATUS.md
+  - step: 4
+    action: 'Append three pending-decision entries to docs/STATUS.md Pendiente (off-hours
+      away-message, TTL-bounded re-enqueue at startup citing the HEX-017 task-12 design being
+      partially reopened, documenting the existing anti-24/7 guard) with no invented numeric
+      parameters.'
+    files:
+      - docs/STATUS.md
+  - step: 5
+    action: 'Update the docs/STATUS.md header "Última actualización" date to 2026-08-20 per file
+      convention.'
+    files:
+      - docs/STATUS.md
+  - step: 6
+    action: 'Add a branch-1 outcome section to docs/runbook-restauracion-de-celula.md: validated
+      steps and result, plus the honest warning that identidad.db is absent from the current
+      four-file backup set and what state that means is lost on restore today.'
+    files:
+      - docs/runbook-restauracion-de-celula.md
+risks:
+  - 'No existing failed-task record touches docs/STATUS.md or docs/runbook-restauracion-de-celula.md;
+    failure-lookup returned no matches.'
+  - 'docs/bitacora-de-descartes.md has no dedicated D-NN entry for "no re-enqueue on startup" as a
+    standalone discard - it appears only as prose inside the HEX-017 Definido entry in STATUS.md
+    ("sin cola de reenvío ni recuperación al arrancar"). D-13 is adjacent but covers a different
+    discard (queueing outside the 24h service window). The task must cite the STATUS.md HEX-017
+    entry directly as the design being reopened, not fabricate a D-NN reference.'
+  - 'Code claims in 00-spec.yaml verified against source: VentanaZonaPorOmision =
+    "America/Argentina/Buenos_Aires" (sidecar/internal/configuracion/configuracion.go:169); the
+    16-hour anti-24/7 guard error text matches configuracion.go:668-669 verbatim;
+    ContadorAplazadasPorHorario/ContadorAplazadasPorRampa (sidecar/internal/outbox/disciplina.go)
+    are only referenced inside outbox package code and its tests, confirming the "exposed nowhere"
+    claim (no health endpoint or log line reads them).'
+  - 'STATUS.md Pendiente already lists six lab findings from the first block (lines 498-502, dated
+    2026-08-18, unlabeled as "1-6" in text but positionally the prior findings); findings 7-12 must
+    read as a clearly separate, later block by date and content, not as a renumbering of the
+    existing five/six entries.'
