@@ -61,7 +61,7 @@ func leerLineaAcotada(r *bufio.Reader) ([]byte, error) {
 	return linea, nil
 }
 
-// atenderConexion realiza el apretón de manos inicial (saludo estricto v4), aplica el relevo de
+// atenderConexion realiza el apretón de manos inicial (saludo estricto v5), aplica el relevo de
 // conexión única (most-recent-wins) y arranca las goroutines lectora y escritora.
 func (s *Servidor) atenderConexion(ctx context.Context, conn net.Conn) {
 	lector := bufio.NewReader(conn)
@@ -128,7 +128,7 @@ func (s *Servidor) atenderConexion(ctx context.Context, conn net.Conn) {
 
 	if s.deps.Registro != nil {
 		s.deps.Registro.Info("servidor.saludo_completado", registro.Campos{
-			Detalle: "apretón de manos de saludo versión 4 completado con éxito",
+			Detalle: "apretón de manos de saludo versión 5 completado con éxito",
 		})
 	}
 
@@ -171,6 +171,13 @@ func (s *Servidor) leerEntrante(ctx context.Context, c *conexionActiva, lector *
 		case ipc.TipoOrdenRespaldoSqlstore:
 			if orden, ok := sobre.Cuerpo.(ipc.OrdenRespaldoSqlstore); ok {
 				acuse := canal.ManejarOrdenRespaldoSqlstore(ctx, s.deps.DBRespaldo, orden, s.deps.Registro)
+				if b, err := ipc.Codificar(ipc.NuevoSobre(acuse)); err == nil {
+					c.enviar(b)
+				}
+			}
+		case ipc.TipoOrdenRespaldoIdentidad:
+			if orden, ok := sobre.Cuerpo.(ipc.OrdenRespaldoIdentidad); ok {
+				acuse := canal.ManejarOrdenRespaldoIdentidad(ctx, s.deps.DBRespaldoIdentidad, orden, s.deps.Registro)
 				if b, err := ipc.Codificar(ipc.NuevoSobre(acuse)); err == nil {
 					c.enviar(b)
 				}

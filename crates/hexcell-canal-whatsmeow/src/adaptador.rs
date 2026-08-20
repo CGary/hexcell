@@ -8,7 +8,7 @@
 //!
 //! # Envío por IPC (tarea 12, 2026-08-09)
 //!
-//! `send` reenvía por el cable v4 hacia la cola de salida del sidecar y devuelve `Aceptado`
+//! `send` reenvía por el cable v5 hacia la cola de salida del sidecar y devuelve `Aceptado`
 //! cuando el frame quedó escrito: «aceptado para entrega posterior», que la cola materializa
 //! con TTL absoluto y reintentos acotados. El puente provisional en memoria de HEX-015 quedó
 //! sustituido; su registro histórico vive en `adr-0011`.
@@ -122,6 +122,16 @@ pub struct AdaptadorWhatsmeow {
             HashMap<String, tokio::sync::oneshot::Sender<crate::mensajes::AcuseRespaldoSqlstore>>,
         >,
     >,
+    /// Acuses de respaldo de `identidad.db` pendientes de correlación por identificador de ronda.
+    ///
+    /// Mapa SEPARADO del de sqlstore a propósito (`adr-0022`): un solo mapa por ronda haría
+    /// colisionar los dos acuses de la misma ronda; con tipos y mapas distintos cada uno resuelve
+    /// su propio `oneshot` sin ambigüedad.
+    respaldo_identidad_pendiente: Arc<
+        tokio::sync::Mutex<
+            HashMap<String, tokio::sync::oneshot::Sender<crate::mensajes::AcuseRespaldoIdentidad>>,
+        >,
+    >,
     /// Canal de eventos de emparejamiento en curso, si lo hay.
     emparejamiento_pendiente: Arc<tokio::sync::Mutex<Option<mpsc::Sender<EventoDeEmparejamiento>>>>,
 }
@@ -154,6 +164,7 @@ impl AdaptadorWhatsmeow {
             marcas_de_origen: Arc::new(Mutex::new(MarcasDeOrigen::default())),
             contador_mensajes: Arc::new(AtomicUsize::new(0)),
             respaldo_pendiente: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+            respaldo_identidad_pendiente: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
             emparejamiento_pendiente: Arc::new(tokio::sync::Mutex::new(None)),
         };
 
@@ -173,6 +184,7 @@ impl AdaptadorWhatsmeow {
         let escritor = Arc::clone(&self.escritor_compartido);
         let marcas = Arc::clone(&self.marcas_de_origen);
         let respaldo_pendiente = Arc::clone(&self.respaldo_pendiente);
+        let respaldo_identidad_pendiente = Arc::clone(&self.respaldo_identidad_pendiente);
         let emparejamiento_pendiente = Arc::clone(&self.emparejamiento_pendiente);
 
         tokio::spawn(async move {
@@ -185,6 +197,7 @@ impl AdaptadorWhatsmeow {
                 escritor,
                 marcas,
                 respaldo_pendiente,
+                respaldo_identidad_pendiente,
                 emparejamiento_pendiente,
             )
             .await;
@@ -314,6 +327,60 @@ impl AdaptadorWhatsmeow {
             }
         }
     }
+
+    /// Ordena un respaldo del almacén de identidad del sidecar (`identidad.db`) y espera el acuse.
+    ///
+    /// Espejo 1:1 de [`Self::ordenar_respaldo_sqlstore`], pero contra el mapa de pendientes de
+    /// identidad y con el tipo de mensaje `orden_respaldo_identidad` (`adr-0022`). Registra el
+    /// canal de respuesta por `identificador_de_ronda` antes de enviar la orden para evitar
+    /// carreras, y espera hasta `plazo` antes de devolver [`ErrorCanalWhatsmeow::RespaldoSinAcuse`].
+    pub async fn ordenar_respaldo_identidad(
+        &self,
+        destino: &str,
+        identificador_de_ronda: &str,
+        plazo: Duration,
+    ) -> Result<crate::mensajes::AcuseRespaldoIdentidad, ErrorCanalWhatsmeow> {
+        if self.escritor_compartido.lock().await.is_none() {
+            return Err(ErrorCanalWhatsmeow::SinConexion);
+        }
+
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        {
+            let mut pendientes = self.respaldo_identidad_pendiente.lock().await;
+            pendientes.insert(identificador_de_ronda.to_string(), tx);
+        }
+
+        let orden = crate::mensajes::OrdenRespaldoIdentidad {
+            version: crate::mensajes::VERSION_PROTOCOLO,
+            tipo: "orden_respaldo_identidad".to_string(),
+            orden: "respaldar_identidad".to_string(),
+            destino: destino.to_string(),
+            identificador_de_ronda: identificador_de_ronda.to_string(),
+        };
+
+        if let Err(e) =
+            crate::conexion::enviar_orden_respaldo_identidad(&self.escritor_compartido, &orden)
+                .await
+        {
+            let mut pendientes = self.respaldo_identidad_pendiente.lock().await;
+            pendientes.remove(identificador_de_ronda);
+            return Err(e);
+        }
+
+        match tokio::time::timeout(plazo, rx).await {
+            Ok(Ok(acuse)) => Ok(acuse),
+            Ok(Err(_oneshot_caido)) => {
+                let mut pendientes = self.respaldo_identidad_pendiente.lock().await;
+                pendientes.remove(identificador_de_ronda);
+                Err(ErrorCanalWhatsmeow::RespaldoSinAcuse)
+            }
+            Err(_agotado) => {
+                let mut pendientes = self.respaldo_identidad_pendiente.lock().await;
+                pendientes.remove(identificador_de_ronda);
+                Err(ErrorCanalWhatsmeow::RespaldoSinAcuse)
+            }
+        }
+    }
 }
 
 /// Bucle de conexión con reconexión automática.
@@ -331,6 +398,11 @@ async fn bucle_de_conexion(
     respaldo_pendiente: Arc<
         tokio::sync::Mutex<
             HashMap<String, tokio::sync::oneshot::Sender<crate::mensajes::AcuseRespaldoSqlstore>>,
+        >,
+    >,
+    respaldo_identidad_pendiente: Arc<
+        tokio::sync::Mutex<
+            HashMap<String, tokio::sync::oneshot::Sender<crate::mensajes::AcuseRespaldoIdentidad>>,
         >,
     >,
     emparejamiento_pendiente: Arc<tokio::sync::Mutex<Option<mpsc::Sender<EventoDeEmparejamiento>>>>,
@@ -358,6 +430,7 @@ async fn bucle_de_conexion(
                             &estado_tx,
                             &marcas_de_origen,
                             &respaldo_pendiente,
+                            &respaldo_identidad_pendiente,
                             &emparejamiento_pendiente,
                         )
                         .await
@@ -427,6 +500,11 @@ async fn leer_mensajes(
     respaldo_pendiente: &Arc<
         tokio::sync::Mutex<
             HashMap<String, tokio::sync::oneshot::Sender<crate::mensajes::AcuseRespaldoSqlstore>>,
+        >,
+    >,
+    respaldo_identidad_pendiente: &Arc<
+        tokio::sync::Mutex<
+            HashMap<String, tokio::sync::oneshot::Sender<crate::mensajes::AcuseRespaldoIdentidad>>,
         >,
     >,
     emparejamiento_pendiente: &Arc<
@@ -540,6 +618,20 @@ async fn leer_mensajes(
                 } else {
                     eprintln!(
                         "hexcell-canal-whatsmeow: acuse_respaldo_sqlstore huérfano recibido para ronda: {}",
+                        acuse.identificador_de_ronda
+                    );
+                }
+            }
+            MensajeEntrante::AcuseRespaldoIdentidad(acuse) => {
+                let remitente = {
+                    let mut pendientes = respaldo_identidad_pendiente.lock().await;
+                    pendientes.remove(&acuse.identificador_de_ronda)
+                };
+                if let Some(tx) = remitente {
+                    let _ = tx.send(acuse);
+                } else {
+                    eprintln!(
+                        "hexcell-canal-whatsmeow: acuse_respaldo_identidad huérfano recibido para ronda: {}",
                         acuse.identificador_de_ronda
                     );
                 }

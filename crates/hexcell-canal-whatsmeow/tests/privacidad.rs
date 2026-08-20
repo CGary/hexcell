@@ -45,7 +45,7 @@ async fn evento_y_estado_de_sesion_no_filtran_identificadores_de_transporte() {
 
     sidecar.aceptar_conexion().await;
     let _ = sidecar.leer_saludo().await;
-    sidecar.enviar_saludo(4, "celula-privacidad").await;
+    sidecar.enviar_saludo(5, "celula-privacidad").await;
 
     // El evento entrante lleva ids opacos normales, tal como los minta el almacén de identidad
     // del sidecar (HEX-014). `contenido` es la única superficie pensada para texto libre de

@@ -55,7 +55,7 @@ impl FakeSidecar {
 
         // Envía saludo del sidecar
         let saludo_sidecar = format!(
-            "{{\"version\":4,\"tipo\":\"saludo\",\"emisor\":\"sidecar\",\"id_celula\":\"{id_celula}\"}}\n"
+            "{{\"version\":5,\"tipo\":\"saludo\",\"emisor\":\"sidecar\",\"id_celula\":\"{id_celula}\"}}\n"
         );
         escritura
             .write_all(saludo_sidecar.as_bytes())
@@ -119,7 +119,7 @@ async fn ordenar_respaldo_sqlstore_ipc_exitoso() {
 
     let ruta_copia_simulada = destino_temp.ruta().join("sqlstore.db");
     let acuse = format!(
-        "{{\"version\":4,\"tipo\":\"acuse_respaldo_sqlstore\",\"identificador_de_ronda\":\"ronda-ipc-1\",\"resultado\":\"completado\",\"ruta_de_la_copia\":\"{}\",\"bytes\":4096,\"motivo\":\"\"}}",
+        "{{\"version\":5,\"tipo\":\"acuse_respaldo_sqlstore\",\"identificador_de_ronda\":\"ronda-ipc-1\",\"resultado\":\"completado\",\"ruta_de_la_copia\":\"{}\",\"bytes\":4096,\"motivo\":\"\"}}",
         ruta_copia_simulada.to_string_lossy()
     );
     sidecar.enviar_linea(&acuse).await;
@@ -170,7 +170,7 @@ async fn ordenar_respaldo_sqlstore_ipc_fallido() {
     assert!(orden_linea.contains("\"tipo\":\"orden_respaldo_sqlstore\""));
     assert!(orden_linea.contains("\"identificador_de_ronda\":\"ronda-ipc-fallo\""));
 
-    let acuse = "{\"version\":4,\"tipo\":\"acuse_respaldo_sqlstore\",\"identificador_de_ronda\":\"ronda-ipc-fallo\",\"resultado\":\"fallido\",\"ruta_de_la_copia\":\"\",\"bytes\":0,\"motivo\":\"error al verificar integridad de la copia\"}";
+    let acuse = "{\"version\":5,\"tipo\":\"acuse_respaldo_sqlstore\",\"identificador_de_ronda\":\"ronda-ipc-fallo\",\"resultado\":\"fallido\",\"ruta_de_la_copia\":\"\",\"bytes\":0,\"motivo\":\"error al verificar integridad de la copia\"}";
     sidecar.enviar_linea(acuse).await;
 
     let res = tarea_orden

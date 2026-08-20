@@ -1,6 +1,6 @@
 # Protocolo IPC entre el núcleo y el sidecar
 
-* **Versión de este protocolo:** 1.3, fijada el 2026-08-09.
+* **Versión de este protocolo:** 1.4, fijada el 2026-08-20.
 * **Etapa que lo redacta:** A-3 (tarea 1 de `docs/plan/fase-a-3-adaptador-whatsmeow.md`).
 * **Etapa que lo implementa:** A-3, repartida entre varias tareas. Este documento **declara** la
   semántica completa; el código que la cumple llega después y por partes: el outbox durable
@@ -29,6 +29,7 @@
 | 1.1 | `2` |
 | 1.2 | `3` |
 | 1.3 | `4` |
+| 1.4 | `5` |
 
 ---
 
@@ -268,9 +269,11 @@ reactivación automática.
 
 ## 6. Conjunto cerrado de tipos de mensaje
 
-Once tipos. Los seis de la versión 1.0 se conservan intactos; los tres tipos de emparejamiento
+Trece tipos. Los seis de la versión 1.0 se conservan intactos; los tres tipos de emparejamiento
 llegan con la versión 1.1. La versión 1.2 no añade tipos: solo cierra el vocabulario de
 `estado_sesion`. La versión 1.3 añade dos tipos para la dirección saliente: `mensaje_saliente` y `acuse_envio`.
+La versión 1.4 añade dos tipos para el respaldo del almacén de identidad del sidecar
+(`identidad.db`): `orden_respaldo_identidad` y `acuse_respaldo_identidad` (`adr-0022`).
 Ampliar el conjunto de tipos es cambiar la versión del protocolo.
 
 | `tipo` | Dirección | Propósito |
@@ -281,6 +284,8 @@ Ampliar el conjunto de tipos es cambiar la versión del protocolo.
 | `estado_sesion` | sidecar → núcleo | Estado de la sesión de WhatsApp y su causa. |
 | `orden_respaldo_sqlstore` | núcleo → sidecar | Orden de copia del `sqlstore` (sección 7). |
 | `acuse_respaldo_sqlstore` | sidecar → núcleo | Desenlace de esa copia (sección 7). |
+| `orden_respaldo_identidad` | núcleo → sidecar | Orden de copia del almacén de identidad del sidecar `identidad.db` (sección 7). |
+| `acuse_respaldo_identidad` | sidecar → núcleo | Desenlace de esa copia (sección 7). |
 | `orden_emparejar` | núcleo → sidecar | Orden de iniciar un emparejamiento por QR o por código de vinculación. |
 | `codigo_emparejamiento` | sidecar → núcleo | Código QR o código de vinculación de ocho caracteres. |
 | `acuse_emparejamiento` | sidecar → núcleo | Resultado terminal del emparejamiento. |
@@ -291,7 +296,7 @@ Ampliar el conjunto de tipos es cambiar la versión del protocolo.
 
 | Campo | Tipo | Descripción |
 | :--- | :--- | :--- |
-| `version` | entero | `4`. |
+| `version` | entero | `5`. |
 | `tipo` | cadena | `saludo`. |
 | `emisor` | cadena | `nucleo` o `sidecar`. |
 | `id_celula` | cadena | Identificador opaco de la célula, para correlacionar registros. |
@@ -300,7 +305,7 @@ Ampliar el conjunto de tipos es cambiar la versión del protocolo.
 
 | Campo | Tipo | Descripción |
 | :--- | :--- | :--- |
-| `version` | entero | `4`. |
+| `version` | entero | `5`. |
 | `tipo` | cadena | `evento_entrante`. |
 | `id_deduplicacion` | cadena | Identificador durable del evento (FR-12). Es lo que el acuse referencia. |
 | `id_conversacion` | cadena | Identificador **interno** del hilo, opaco para el núcleo. |
@@ -323,7 +328,7 @@ contra el que ese TTL existe.
 
 | Campo | Tipo | Descripción |
 | :--- | :--- | :--- |
-| `version` | entero | `4`. |
+| `version` | entero | `5`. |
 | `tipo` | cadena | `confirmacion`. |
 | `id_deduplicacion` | cadena | El mismo que llegó en el `evento_entrante`. Nunca un número de secuencia. |
 
@@ -331,7 +336,7 @@ contra el que ese TTL existe.
 
 | Campo | Tipo | Descripción |
 | :--- | :--- | :--- |
-| `version` | entero | `4`. |
+| `version` | entero | `5`. |
 | `tipo` | cadena | `estado_sesion`. |
 | `estado` | cadena | `activa`, `reconectando`, `desvinculada` o `pausada`. |
 | `causa` | cadena | Variante cruda de la taxonomía de desconexión; `""` si no aplica. |
@@ -387,7 +392,7 @@ decisión humana; no existe mensaje IPC de reanudación.
 
 | Campo | Tipo | Descripción |
 | :--- | :--- | :--- |
-| `version` | entero | `4`. |
+| `version` | entero | `5`. |
 | `tipo` | cadena | `orden_emparejar`. |
 | `metodo` | cadena | `qr` o `codigo_de_vinculacion`. |
 
@@ -401,7 +406,7 @@ identificador de transporte.
 
 | Campo | Tipo | Descripción |
 | :--- | :--- | :--- |
-| `version` | entero | `4`. |
+| `version` | entero | `5`. |
 | `tipo` | cadena | `codigo_emparejamiento`. |
 | `metodo` | cadena | `qr` o `codigo_de_vinculacion`. Indica de qué tipo es `valor`. |
 | `valor` | cadena | Dato opaco: la cadena a codificar como QR, o el código de ocho caracteres. |
@@ -415,7 +420,7 @@ exactamente uno.
 
 | Campo | Tipo | Descripción |
 | :--- | :--- | :--- |
-| `version` | entero | `4`. |
+| `version` | entero | `5`. |
 | `tipo` | cadena | `acuse_emparejamiento`. |
 | `resultado` | cadena | `completado`, `expirado` o `fallido`. |
 | `motivo` | cadena | Descripción legible si `resultado` es `fallido`; `""` en caso contrario. **Nunca lleva la cadena QR, el código de vinculación ni ningún otro dato de credencial.** |
@@ -424,7 +429,7 @@ exactamente uno.
 
 | Campo | Tipo | Descripción |
 | :--- | :--- | :--- |
-| `version` | entero | `4`. |
+| `version` | entero | `5`. |
 | `tipo` | cadena | `mensaje_saliente`. |
 | `id_mensaje` | cadena | Identificador global del mensaje originado en el núcleo. |
 | `id_conversacion` | cadena | Identificador interno de la conversación destino. |
@@ -435,7 +440,7 @@ exactamente uno.
 
 | Campo | Tipo | Descripción |
 | :--- | :--- | :--- |
-| `version` | entero | `4`. |
+| `version` | entero | `5`. |
 | `tipo` | cadena | `acuse_envio`. |
 | `id_mensaje` | cadena | El mismo identificador global del `mensaje_saliente`. |
 | `estado` | cadena | Estado de la entrega: `enviado`, `entregado`, `leido` o `fallido`. |
@@ -456,7 +461,7 @@ contrato sin modificarlo**: los campos de las dos tablas siguientes son exactame
 
 | Campo | Tipo | Descripción |
 | :--- | :--- | :--- |
-| `version` | entero | `4`. |
+| `version` | entero | `5`. |
 | `tipo` | cadena | `orden_respaldo_sqlstore`. |
 | `orden` | cadena | Cadena fija `respaldar_sqlstore`. |
 | `destino` | cadena | Directorio de destino ya resuelto por quien dispara la orden. |
@@ -466,7 +471,7 @@ contrato sin modificarlo**: los campos de las dos tablas siguientes son exactame
 
 | Campo | Tipo | Descripción |
 | :--- | :--- | :--- |
-| `version` | entero | `4`. |
+| `version` | entero | `5`. |
 | `tipo` | cadena | `acuse_respaldo_sqlstore`. |
 | `identificador_de_ronda` | cadena | El mismo recibido en la orden. |
 | `resultado` | cadena | `completado` o `fallido`. |
@@ -483,6 +488,51 @@ semántica es la misma; cambia solo cómo se codifica la ausencia.
 Quién ejecuta la copia no cambia por existir este protocolo: **siempre el proceso del sidecar**,
 con `VACUUM INTO` sobre sus propias conexiones. El núcleo nunca abre el archivo del `sqlstore`, ni
 siquiera de solo lectura.
+
+### La copia del almacén de identidad del sidecar (`identidad.db`), añadida en la versión 1.4
+
+El ensayo de restauración del 2026-08-20 (hallazgo 12) descubrió que el conjunto de respaldo no
+cubría un quinto almacén vivo: el almacén de identidad del sidecar Go (`identidad.db`), que guarda
+la **lista STOP** (contactos dados de baja), el **mapeo de conversación** y el **estado del
+cortacircuitos**. Es un archivo **distinto** de `adapter_identity.db` (el almacén de identidad del
+adaptador Rust, `adr-0010`): no se deben confundir. Como el sidecar lo tiene abierto bajo WAL,
+**solo el propio sidecar puede copiarlo con seguridad**, exactamente por el mismo motivo que el
+`sqlstore`. `adr-0022` registra esta evolución y **extiende** —sin reescribir—
+`docs/contrato-ipc-respaldo-del-sqlstore.md` y `adr-0020`.
+
+En vez de generalizar el mensaje del `sqlstore` con un discriminador de almacén, la versión 1.4
+añade un **par de mensajes dedicado** con los mismos campos que el del `sqlstore` pero un TIPO
+distinto: así dos acuses de la misma ronda —uno del `sqlstore`, otro de identidad— nunca colisionan
+en el mapa de correlación por ronda del lado del núcleo, y los mensajes del `sqlstore` no cambian
+un solo byte.
+
+#### `orden_respaldo_identidad` (núcleo → sidecar)
+
+| Campo | Tipo | Descripción |
+| :--- | :--- | :--- |
+| `version` | entero | `5`. |
+| `tipo` | cadena | `orden_respaldo_identidad`. |
+| `orden` | cadena | Cadena fija `respaldar_identidad`. |
+| `destino` | cadena | Directorio de destino ya resuelto por quien dispara la orden. |
+| `identificador_de_ronda` | cadena | Agrupa esta orden con las de las otras bases de la misma ronda. |
+
+#### `acuse_respaldo_identidad` (sidecar → núcleo)
+
+| Campo | Tipo | Descripción |
+| :--- | :--- | :--- |
+| `version` | entero | `5`. |
+| `tipo` | cadena | `acuse_respaldo_identidad`. |
+| `identificador_de_ronda` | cadena | El mismo recibido en la orden. |
+| `resultado` | cadena | `completado` o `fallido`. |
+| `ruta_de_la_copia` | cadena | Ruta de la copia; `""` si `resultado` es `fallido`. |
+| `bytes` | entero | Tamaño de la copia; `0` si `resultado` es `fallido`. |
+| `motivo` | cadena | Descripción legible del fallo; `""` si `resultado` es `completado`. **Nunca lleva ninguna credencial del protocolo ni ningún contenido de mensaje.** |
+
+El sidecar aplica a `identidad.db` la misma disciplina fail-closed que al `sqlstore`: captura
+`user_version` del origen, ejecuta `VACUUM INTO`, verifica `integrity_check` y `user_version` en la
+copia, y ante cualquier fallo posterior a la escritura elimina la copia sin verificar antes de
+responder, de modo que nunca queda un archivo sin verificar bajo el nombre canónico `identidad.db`.
+El núcleo nunca abre `identidad.db`, ni siquiera de solo lectura.
 
 ---
 

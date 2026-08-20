@@ -25,10 +25,10 @@ async fn apreton_de_manos_exitoso() {
     let saludo_nucleo = sidecar.leer_saludo().await;
     assert_eq!(saludo_nucleo.emisor, "nucleo");
     assert_eq!(saludo_nucleo.id_celula, "celula-1");
-    assert_eq!(saludo_nucleo.version, 4);
+    assert_eq!(saludo_nucleo.version, 5);
 
     // El sidecar responde con su saludo
-    sidecar.enviar_saludo(4, "celula-1").await;
+    sidecar.enviar_saludo(5, "celula-1").await;
 
     // Verificamos que el apretón de manos se completó enviando un evento
     sidecar
@@ -87,13 +87,13 @@ async fn desajuste_de_version_surge_con_ambas_versiones() {
 
     match error {
         ErrorCanalWhatsmeow::DesajusteDeVersion { propia, remota } => {
-            assert_eq!(propia, 4);
+            assert_eq!(propia, 5);
             assert_eq!(remota, 3);
         }
         otro => panic!("se esperaba DesajusteDeVersion, se obtuvo {otro:?}"),
     }
     assert!(
-        mensaje.contains("propia=4") && mensaje.contains("remota=3"),
+        mensaje.contains("propia=5") && mensaje.contains("remota=3"),
         "el error surgido debe mencionar ambas versiones: {mensaje}"
     );
 }
@@ -111,10 +111,10 @@ async fn error_de_protocolo_tipo_desconocido() {
     adaptador.arrancar();
     sidecar.aceptar_conexion().await;
     let _ = sidecar.leer_saludo().await;
-    sidecar.enviar_saludo(4, "celula-1").await;
+    sidecar.enviar_saludo(5, "celula-1").await;
 
     sidecar
-        .enviar_linea_cruda(r#"{"version":4,"tipo":"desconocido"}"#)
+        .enviar_linea_cruda(r#"{"version":5,"tipo":"desconocido"}"#)
         .await;
 
     let linea = sidecar.leer_linea().await;
@@ -134,10 +134,10 @@ async fn error_de_protocolo_campo_desconocido() {
     adaptador.arrancar();
     sidecar.aceptar_conexion().await;
     let _ = sidecar.leer_saludo().await;
-    sidecar.enviar_saludo(4, "celula-1").await;
+    sidecar.enviar_saludo(5, "celula-1").await;
 
     // Regla 3: deny_unknown_fields
-    sidecar.enviar_linea_cruda(r#"{"version":4,"tipo":"evento_entrante","id_deduplicacion":"d","id_conversacion":"c","id_remitente":"r","contenido":"x","marca_temporal_ms":0,"campo_extra":1}"#).await;
+    sidecar.enviar_linea_cruda(r#"{"version":5,"tipo":"evento_entrante","id_deduplicacion":"d","id_conversacion":"c","id_remitente":"r","contenido":"x","marca_temporal_ms":0,"campo_extra":1}"#).await;
 
     let linea = sidecar.leer_linea().await;
     assert_eq!(linea, "");
@@ -156,9 +156,9 @@ async fn error_de_protocolo_valor_nulo() {
     adaptador.arrancar();
     sidecar.aceptar_conexion().await;
     let _ = sidecar.leer_saludo().await;
-    sidecar.enviar_saludo(4, "celula-1").await;
+    sidecar.enviar_saludo(5, "celula-1").await;
 
-    sidecar.enviar_linea_cruda(r#"{"version":4,"tipo":"evento_entrante","id_deduplicacion":null,"id_conversacion":"c","id_remitente":"r","contenido":"x","marca_temporal_ms":0}"#).await;
+    sidecar.enviar_linea_cruda(r#"{"version":5,"tipo":"evento_entrante","id_deduplicacion":null,"id_conversacion":"c","id_remitente":"r","contenido":"x","marca_temporal_ms":0}"#).await;
 
     let linea = sidecar.leer_linea().await;
     assert_eq!(linea, "");
@@ -177,7 +177,7 @@ async fn error_de_protocolo_linea_demasiado_larga() {
     adaptador.arrancar();
     sidecar.aceptar_conexion().await;
     let _ = sidecar.leer_saludo().await;
-    sidecar.enviar_saludo(4, "celula-1").await;
+    sidecar.enviar_saludo(5, "celula-1").await;
 
     // Supera LIMITE_DE_LINEA (131072 bytes incluyendo el salto de línea final).
     let muy_larga = "a".repeat(131073);

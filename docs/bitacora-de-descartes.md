@@ -406,6 +406,14 @@ copiar `sessions.db`, `knowledge_live.db` y el almacén de identidad del adaptad
 * **Registro normativo:** `crates/hexcell/src/respaldar.rs`, `docs/STATUS.md`.
 * **Qué tendría que cambiar para reabrirlo:** Requeriría una superficie cuyo resultado sea consumido por un orquestador que analice registros estructurados en lugar de un operador humano leyendo el código de salida de un subcomando.
 
+### D-24
+**Generalizar la orden de respaldo del `sqlstore` con un discriminador de almacén para cubrir también `identidad.db` (opción a del hallazgo 12).**
+
+* **Descartado:** 2026-08-20 (HEX-032).
+* **Por qué se descartó:** reutilizar `orden_respaldo_sqlstore` / `acuse_respaldo_sqlstore` con un campo que indique qué almacén copiar colisionaría en la correlación del núcleo. El adaptador Rust correlaciona los acuses por `identificador_de_ronda` en un `HashMap<String, oneshot::Sender<…>>` keyeado **solo por ronda**: dos acuses del **mismo tipo** en la misma ronda —uno del `sqlstore`, otro de identidad— se pisarían. Además, mutar la orden/acuse cerrada obligaría a reescribir los campos versionados de `docs/contrato-ipc-respaldo-del-sqlstore.md` (secciones 1 y 3), que las restricciones de la tarea prohíben tocar. Se eligió en su lugar un **par de mensajes dedicado** con un TIPO distinto por almacén (opción b), que deja los mensajes del `sqlstore` byte-idénticos y correlaciona cada acuse en su propio mapa de pendientes.
+* **Registro normativo:** `docs/adr/adr-0022-respaldo-identidad-sidecar-por-ipc.md`, `docs/protocolo-ipc-nucleo-sidecar.md` (sección 7, versión 1.4).
+* **Qué tendría que cambiar para reabrirlo:** que el núcleo dejara de correlacionar acuses solo por ronda (p. ej. si adoptara una clave compuesta `(ronda, almacén)` en un único mapa), en cuyo caso un mensaje parametrizado por almacén dejaría de colisionar. No reabrir mientras la correlación siga siendo por ronda y el contrato del `sqlstore` deba permanecer intacto.
+
 ---
 
 ## Deuda de esta bitácora

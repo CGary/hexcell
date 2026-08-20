@@ -1,7 +1,7 @@
 // Package ipc es la representación tipada del protocolo que fija
-// `docs/protocolo-ipc-nucleo-sidecar.md`, versión 1.3 (versión de cable 4).
+// `docs/protocolo-ipc-nucleo-sidecar.md`, versión 1.4 (versión de cable 5).
 //
-// Aquí no hay socket, ni escucha, ni outbox: solo los objetos de valor de los nueve tipos de
+// Aquí no hay socket, ni escucha, ni outbox: solo los objetos de valor de los trece tipos de
 // mensaje y dos funciones puras, [Codificar] y [Decodificar]. El transporte llega con la tarea 3
 // del plan de la etapa A-3; separarlo permite comprobar el formato con tests normales, sin abrir
 // ningún descriptor, por el mismo motivo por el que `registro::formatear` está separado de
@@ -29,7 +29,7 @@ import (
 )
 
 // VersionProtocolo es la versión que este binario habla. Un desajuste cierra la conexión.
-const VersionProtocolo int64 = 4
+const VersionProtocolo int64 = 5
 
 // LongitudMaximaDeLinea es el techo de una línea del protocolo, en bytes, salto de línea
 // incluido. Existe para que el lector del otro extremo dimensione un búfer acotado.
@@ -44,19 +44,21 @@ const (
 // TipoMensaje es el conjunto cerrado de tipos del documento.
 type TipoMensaje string
 
-// Los nueve tipos del protocolo, ni uno más.
+// Los trece tipos del protocolo, ni uno más.
 const (
-	TipoSaludo                TipoMensaje = "saludo"
-	TipoEventoEntrante        TipoMensaje = "evento_entrante"
-	TipoConfirmacion          TipoMensaje = "confirmacion"
-	TipoEstadoSesion          TipoMensaje = "estado_sesion"
-	TipoOrdenRespaldoSqlstore TipoMensaje = "orden_respaldo_sqlstore"
-	TipoAcuseRespaldoSqlstore TipoMensaje = "acuse_respaldo_sqlstore"
-	TipoOrdenEmparejar        TipoMensaje = "orden_emparejar"
-	TipoCodigoEmparejamiento  TipoMensaje = "codigo_emparejamiento"
-	TipoAcuseEmparejamiento   TipoMensaje = "acuse_emparejamiento"
-	TipoMensajeSaliente       TipoMensaje = "mensaje_saliente"
-	TipoAcuseEnvio            TipoMensaje = "acuse_envio"
+	TipoSaludo                 TipoMensaje = "saludo"
+	TipoEventoEntrante         TipoMensaje = "evento_entrante"
+	TipoConfirmacion           TipoMensaje = "confirmacion"
+	TipoEstadoSesion           TipoMensaje = "estado_sesion"
+	TipoOrdenRespaldoSqlstore  TipoMensaje = "orden_respaldo_sqlstore"
+	TipoAcuseRespaldoSqlstore  TipoMensaje = "acuse_respaldo_sqlstore"
+	TipoOrdenRespaldoIdentidad TipoMensaje = "orden_respaldo_identidad"
+	TipoAcuseRespaldoIdentidad TipoMensaje = "acuse_respaldo_identidad"
+	TipoOrdenEmparejar         TipoMensaje = "orden_emparejar"
+	TipoCodigoEmparejamiento   TipoMensaje = "codigo_emparejamiento"
+	TipoAcuseEmparejamiento    TipoMensaje = "acuse_emparejamiento"
+	TipoMensajeSaliente        TipoMensaje = "mensaje_saliente"
+	TipoAcuseEnvio             TipoMensaje = "acuse_envio"
 )
 
 // Valores cerrados del campo `emisor` de un saludo.
@@ -99,6 +101,11 @@ const (
 // OrdenRespaldarSqlstore es la cadena fija que el contrato de la etapa A-2 exige en el campo
 // `orden` (`docs/contrato-ipc-respaldo-del-sqlstore.md`, sección 1).
 const OrdenRespaldarSqlstore = "respaldar_sqlstore"
+
+// OrdenRespaldarIdentidad es la cadena fija que exige el campo `orden` de la copia del almacén
+// de identidad del sidecar (`identidad.db`: lista STOP, mapeo de conversación, cortacircuitos),
+// añadida en la versión 1.4 del protocolo (`adr-0022`), espejo 1:1 de OrdenRespaldarSqlstore.
+const OrdenRespaldarIdentidad = "respaldar_identidad"
 
 // Valores cerrados del campo `resultado` del acuse de respaldo, según ese mismo contrato.
 const (
@@ -234,6 +241,36 @@ type AcuseRespaldoSqlstore struct {
 
 func (AcuseRespaldoSqlstore) tipo() TipoMensaje { return TipoAcuseRespaldoSqlstore }
 func (a AcuseRespaldoSqlstore) valores() []any {
+	return []any{a.IdentificadorDeRonda, a.Resultado, a.RutaDeLaCopia, a.Bytes, a.Motivo}
+}
+
+// OrdenRespaldoIdentidad es la orden de copia del almacén de identidad del sidecar (`identidad.db`).
+// Añadida en la versión 1.4 del protocolo (`adr-0022`), tiene los mismos tres campos que
+// OrdenRespaldoSqlstore, pero es un TIPO de mensaje distinto para que su acuse nunca colisione con
+// el del sqlstore en la misma ronda del lado del núcleo.
+type OrdenRespaldoIdentidad struct {
+	Orden                string
+	Destino              string
+	IdentificadorDeRonda string
+}
+
+func (OrdenRespaldoIdentidad) tipo() TipoMensaje { return TipoOrdenRespaldoIdentidad }
+func (o OrdenRespaldoIdentidad) valores() []any {
+	return []any{o.Orden, o.Destino, o.IdentificadorDeRonda}
+}
+
+// AcuseRespaldoIdentidad es el desenlace de la copia de `identidad.db`, con los mismos cinco
+// campos que AcuseRespaldoSqlstore. Es un tipo distinto a propósito (`adr-0022`).
+type AcuseRespaldoIdentidad struct {
+	IdentificadorDeRonda string
+	Resultado            string
+	RutaDeLaCopia        string
+	Bytes                int64
+	Motivo               string
+}
+
+func (AcuseRespaldoIdentidad) tipo() TipoMensaje { return TipoAcuseRespaldoIdentidad }
+func (a AcuseRespaldoIdentidad) valores() []any {
 	return []any{a.IdentificadorDeRonda, a.Resultado, a.RutaDeLaCopia, a.Bytes, a.Motivo}
 }
 
@@ -383,6 +420,38 @@ var descriptores = map[TipoMensaje]descriptor{
 			}
 		},
 	},
+	TipoOrdenRespaldoIdentidad: {
+		campos: []declaracion{
+			{"orden", claseCadena},
+			{"destino", claseCadena},
+			{"identificador_de_ronda", claseCadena},
+		},
+		construir: func(cadenas []string, _ []int64) Cuerpo {
+			return OrdenRespaldoIdentidad{
+				Orden:                cadenas[0],
+				Destino:              cadenas[1],
+				IdentificadorDeRonda: cadenas[2],
+			}
+		},
+	},
+	TipoAcuseRespaldoIdentidad: {
+		campos: []declaracion{
+			{"identificador_de_ronda", claseCadena},
+			{"resultado", claseCadena},
+			{"ruta_de_la_copia", claseCadena},
+			{"bytes", claseEntero},
+			{"motivo", claseCadena},
+		},
+		construir: func(cadenas []string, enteros []int64) Cuerpo {
+			return AcuseRespaldoIdentidad{
+				IdentificadorDeRonda: cadenas[0],
+				Resultado:            cadenas[1],
+				RutaDeLaCopia:        cadenas[2],
+				Bytes:                enteros[0],
+				Motivo:               cadenas[3],
+			}
+		},
+	},
 	TipoOrdenEmparejar: {
 		campos: []declaracion{{"metodo", claseCadena}},
 		construir: func(cadenas []string, _ []int64) Cuerpo {
@@ -491,6 +560,7 @@ func TiposDeclarados() []TipoMensaje {
 	return []TipoMensaje{
 		TipoSaludo, TipoEventoEntrante, TipoConfirmacion,
 		TipoEstadoSesion, TipoOrdenRespaldoSqlstore, TipoAcuseRespaldoSqlstore,
+		TipoOrdenRespaldoIdentidad, TipoAcuseRespaldoIdentidad,
 		TipoOrdenEmparejar, TipoCodigoEmparejamiento, TipoAcuseEmparejamiento,
 		TipoMensajeSaliente, TipoAcuseEnvio,
 	}

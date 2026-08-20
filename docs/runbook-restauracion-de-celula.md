@@ -31,11 +31,11 @@
 
 ## Producción de un respaldo de célula (HEX-029)
 
-Para producir una ronda de respaldo de las cuatro bases en un directorio de destino:
+Para producir una ronda de respaldo de las cinco bases en un directorio de destino:
 
 1. **Disciplina operacional obligatoria:** la operación exige **núcleo detenido y sidecar en ejecución**.
    * El proceso del núcleo (`hexcell`) debe estar **detenido** (vía `SIGTERM` o Ctrl-C en el entorno de laboratorio).
-   * El proceso del sidecar Go debe permanecer **en ejecución** escuchando en el socket IPC, ya que él mismo ejecuta la copia `VACUUM INTO` sobre `sqlstore.db`.
+   * El proceso del sidecar Go debe permanecer **en ejecución** escuchando en el socket IPC, ya que él mismo ejecuta la copia `VACUUM INTO` sobre `sqlstore.db` **y sobre `identidad.db`** (su almacén de identidad: lista STOP, mapeo de conversación, cortacircuitos), las dos bases ordenadas por IPC (`adr-0022`).
 2. **Invocación:** ejecutar el subcomando `hexcell respaldar` indicando una **ruta absoluta** hacia un directorio de destino sin usar/vacío:
    ```bash
    hexcell respaldar --directorio /ruta/absoluta/al/destino
@@ -44,7 +44,7 @@ Para producir una ronda de respaldo de las cuatro bases en un directorio de dest
    ```bash
    scripts/laboratorio/respaldar-celula.sh
    ```
-3. El comando verifica previamente la disponibilidad de las cuatro rutas de destino (`sessions.db`, `knowledge_live.db`, `adapter_identity.db` y `sqlstore.db`). Ante cualquier fallo o destino ocupado, el proceso aborta con código no nulo y deja el directorio libre de respaldos parciales (LES-031).
+3. El comando verifica previamente la disponibilidad de las cinco rutas de destino (`sessions.db`, `knowledge_live.db`, `adapter_identity.db`, `sqlstore.db` e `identidad.db`). Las dos bases IPC (`sqlstore.db`, `identidad.db`) se producen **antes** que las tres locales, tras el pre-chequeo de los cinco destinos (PAT-038 fallo-en-vacío). Ante cualquier fallo o destino ocupado, el proceso aborta con código no nulo, nombrando la base que falló, y deja el directorio libre de respaldos parciales (LES-031).
 
 ## 1. Restaurar las tres bases de esta etapa
 
@@ -81,9 +81,12 @@ cambió. No es que restaurarlo sea peligroso; es que es **inútil**, y conservar
 retrasaría llegar al único camino que sí funciona, que es un re-emparejamiento nuevo por
 `PairPhone()`.
 
-**Lo que SÍ sobrevive a esta rama, y por qué:** el almacén de identidad del adaptador —el mapa entre
-cada contacto y su identificador interno de conversación— **se restaura igual que las otras tres
-bases**, exactamente porque vive separado del `sqlstore` desde `adr-0010`. Un contacto que ya tenía
+**Lo que SÍ sobrevive a esta rama, y por qué:** los dos almacenes de identidad **no credenciales**
+—el del adaptador (`adapter_identity.db`) y el del sidecar (`identidad.db`, que guarda la lista
+STOP, el mapeo de conversación y el cortacircuitos; `adr-0022`)— **se restauran igual que las bases
+locales, incluso en esta rama**, exactamente porque viven separados del `sqlstore`. Restaurar
+`identidad.db` aquí es lo que impide que un contacto dado de baja vuelva a recibir mensajes tras el
+re-emparejamiento: la lista STOP debe sobrevivir a las dos ramas. Un contacto que ya tenía
 hilo abierto antes de la pérdida vuelve a caer en el mismo hilo tras el re-emparejamiento, aunque el
 dispositivo emparejado sea uno nuevo: es la propiedad que
 `crates/hexcell/tests/continuidad_de_hilo.rs` ya prueba con `re_emparejar`, y que este mismo runbook
@@ -95,7 +98,8 @@ generaliza al caso de una restauración completa.
 `LoggedOut` con `device_removed` (por ejemplo, una pérdida del propio servidor sin que la sesión de
 WhatsApp se haya invalidado del otro lado).
 
-**Decisión: el respaldo es válido. Se restaura el `sqlstore`.**
+**Decisión: el respaldo es válido. Se restaura el `sqlstore` (y, como en las tres bases locales y
+en `identidad.db`, todo el conjunto de cinco).**
 
 **Por qué:** el dispositivo sigue existiendo en el servidor de WhatsApp; lo único que faltaba era
 el proceso o el disco que lo servía. Restaurar la copia más reciente del `sqlstore` —producida por
@@ -191,3 +195,16 @@ El conjunto de respaldo actual **no incluye `identidad.db`** (el almacén de ide
 A diferencia de la rama 1, la rama 2 **no restaura** el `sqlstore` sino que **genera uno nuevo** mediante re-emparejamiento. Esto es **por diseño**, no una limitación: la regla de restauración (tarea 7 del plan + `adr-0020` + sección 2 de este runbook) establece que ante `device_removed` el `sqlstore` anterior es inútil porque el dispositivo ya no existe del otro lado. El re-emparejamiento por `PairPhone()` / QR es el camino correcto y probado.
 
 **Hallazgo 12 reconfirmado:** al no incluirse `identidad.db` en el conjunto de respaldo, la célula restaurada trató al contacto de prueba como nuevo y re-envió presentación + respuesta. Esto refuerza la etiqueta **PRIORIDAD** del hallazgo 12 sin añadir un nuevo número de hallazgo y sin atenuar la consecuencia de revivir lista STOP ya documentada.
+
+---
+
+## Resolución del hallazgo 12 (2026-08-20, HEX-032)
+
+El hallazgo 12 queda **resuelto**: `identidad.db` es ahora la **quinta base** del conjunto de
+respaldo. El propio sidecar produce su copia verificada por IPC (`VACUUM INTO` sobre una conexión
+dedicada de solo lectura, con la misma disciplina fail-closed que el `sqlstore`), ordenada mediante
+el nuevo par de mensajes `orden_respaldo_identidad` / `acuse_respaldo_identidad` (versión de cable
+5, `adr-0022`). Con la restauración de `identidad.db` en **las dos ramas**, la **lista STOP
+sobrevive** a una restauración: un contacto dado de baja sigue de baja. El re-ensayo e2e de las dos
+ramas con el conjunto de cinco bases queda para el próximo bloque de laboratorio; este fix lo hace
+posible.

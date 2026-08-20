@@ -57,7 +57,7 @@ impl FakeSidecar {
 
         // Envía saludo del sidecar
         let saludo_sidecar = format!(
-            "{{\"version\":4,\"tipo\":\"saludo\",\"emisor\":\"sidecar\",\"id_celula\":\"{id_celula}\"}}\n"
+            "{{\"version\":5,\"tipo\":\"saludo\",\"emisor\":\"sidecar\",\"id_celula\":\"{id_celula}\"}}\n"
         );
         escritura
             .write_all(saludo_sidecar.as_bytes())
@@ -119,13 +119,13 @@ async fn ejecutar_emparejamiento_codigo_de_vinculacion_exitoso() {
 
     sidecar
         .enviar_linea(
-            "{\"version\":4,\"tipo\":\"codigo_emparejamiento\",\"metodo\":\"codigo_de_vinculacion\",\"valor\":\"ABC1-2345\",\"expira_en_ms\":0}",
+            "{\"version\":5,\"tipo\":\"codigo_emparejamiento\",\"metodo\":\"codigo_de_vinculacion\",\"valor\":\"ABC1-2345\",\"expira_en_ms\":0}",
         )
         .await;
 
     sidecar
         .enviar_linea(
-            "{\"version\":4,\"tipo\":\"acuse_emparejamiento\",\"resultado\":\"completado\",\"motivo\":\"\"}",
+            "{\"version\":5,\"tipo\":\"acuse_emparejamiento\",\"resultado\":\"completado\",\"motivo\":\"\"}",
         )
         .await;
 
@@ -167,18 +167,18 @@ async fn ejecutar_emparejamiento_qr_rotativo_exitoso() {
 
     sidecar
         .enviar_linea(
-            "{\"version\":4,\"tipo\":\"codigo_emparejamiento\",\"metodo\":\"qr\",\"valor\":\"qr_code_frame_1\",\"expira_en_ms\":1000}",
+            "{\"version\":5,\"tipo\":\"codigo_emparejamiento\",\"metodo\":\"qr\",\"valor\":\"qr_code_frame_1\",\"expira_en_ms\":1000}",
         )
         .await;
     sidecar
         .enviar_linea(
-            "{\"version\":4,\"tipo\":\"codigo_emparejamiento\",\"metodo\":\"qr\",\"valor\":\"qr_code_frame_2\",\"expira_en_ms\":2000}",
+            "{\"version\":5,\"tipo\":\"codigo_emparejamiento\",\"metodo\":\"qr\",\"valor\":\"qr_code_frame_2\",\"expira_en_ms\":2000}",
         )
         .await;
 
     sidecar
         .enviar_linea(
-            "{\"version\":4,\"tipo\":\"acuse_emparejamiento\",\"resultado\":\"completado\",\"motivo\":\"\"}",
+            "{\"version\":5,\"tipo\":\"acuse_emparejamiento\",\"resultado\":\"completado\",\"motivo\":\"\"}",
         )
         .await;
 
@@ -207,7 +207,7 @@ async fn ordenar_emparejamiento_ipc_expirado() {
     let _ = sidecar.leer_linea().await;
     sidecar
         .enviar_linea(
-            "{\"version\":4,\"tipo\":\"acuse_emparejamiento\",\"resultado\":\"expirado\",\"motivo\":\"\"}",
+            "{\"version\":5,\"tipo\":\"acuse_emparejamiento\",\"resultado\":\"expirado\",\"motivo\":\"\"}",
         )
         .await;
     let res_exp = tarea_exp.await.unwrap().unwrap();
@@ -238,7 +238,7 @@ async fn ordenar_emparejamiento_ipc_fallido_con_motivo() {
     let _ = sidecar.leer_linea().await;
     sidecar
         .enviar_linea(
-            "{\"version\":4,\"tipo\":\"acuse_emparejamiento\",\"resultado\":\"fallido\",\"motivo\":\"sesion cerrada por usuario remoto\"}",
+            "{\"version\":5,\"tipo\":\"acuse_emparejamiento\",\"resultado\":\"fallido\",\"motivo\":\"sesion cerrada por usuario remoto\"}",
         )
         .await;
     let res_fallo = tarea_fallo.await.unwrap().unwrap();

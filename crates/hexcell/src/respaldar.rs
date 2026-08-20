@@ -1,8 +1,8 @@
 //! Servicio de aplicación para el modo de respaldo de la célula por el operador.
 //!
-//! Orquesta el respaldo de las cuatro bases de una célula (`sessions.db`, `knowledge_live.db`,
-//! `adapter_identity.db` y `sqlstore.db` del sidecar sobre IPC) tras verificar que los cuatro
-//! destinos en el directorio especificado están libres y accesibles.
+//! Orquesta el respaldo de las cinco bases de una célula (`sessions.db`, `knowledge_live.db`,
+//! `adapter_identity.db`, más `sqlstore.db` e `identidad.db` del sidecar sobre IPC) tras verificar
+//! que los cinco destinos en el directorio especificado están libres y accesibles.
 //!
 //! # Disciplina operacional: pausa previa del núcleo
 //!
@@ -40,7 +40,8 @@ use crate::configuracion::{
 };
 use crate::emparejar::esperar_conexion_activa;
 use crate::respaldo::{
-    ResultadoRespaldoSqlstore, ordenar_respaldo_sqlstore, respaldar_celula_con_ronda,
+    ResultadoRespaldoIdentidad, ResultadoRespaldoSqlstore, ordenar_respaldo_identidad,
+    ordenar_respaldo_sqlstore, respaldar_celula_con_ronda,
 };
 
 /// Plazo por omisión en segundos para el modo de respaldo.
@@ -49,13 +50,14 @@ pub const PLAZO_RESPALDAR_POR_DEFECTO_SEGUNDOS: u64 = 60;
 pub const HEXCELL_RESPALDAR_PLAZO_SEGUNDOS: &str = "HEXCELL_RESPALDAR_PLAZO_SEGUNDOS";
 
 const NOMBRE_CANONICO_SQLSTORE: &str = "sqlstore.db";
+const NOMBRE_CANONICO_IDENTIDAD: &str = "identidad.db";
 
-/// Resumen agregado de las cuatro bases respaldadas.
+/// Resumen agregado de las cinco bases respaldadas.
 #[derive(Debug)]
 pub struct ResumenDeRespaldoCompleto {
-    /// Copias verificadas de las cuatro bases (`sqlstore.db`, `sessions.db`, `knowledge_live.db`, `adapter_identity.db`).
+    /// Copias verificadas de las cinco bases (`sqlstore.db`, `identidad.db`, `sessions.db`, `knowledge_live.db`, `adapter_identity.db`).
     pub copias: Vec<CopiaVerificada>,
-    /// Identificador de ronda compartido por las cuatro copias, correlacionable con el `acuse_respaldo_sqlstore` del sidecar.
+    /// Identificador de ronda compartido por las cinco copias, correlacionable con los acuses del sidecar.
     pub identificador_de_ronda: String,
 }
 
@@ -78,6 +80,11 @@ pub enum ErrorModoRespaldar {
     ConexionNoEstablecida,
     /// El sidecar rechazó u ordenó un respaldo fallido del `sqlstore`.
     SqlstoreFallido {
+        /// Motivo reportado por el sidecar.
+        motivo: String,
+    },
+    /// El sidecar rechazó u ordenó un respaldo fallido de `identidad.db`.
+    IdentidadFallido {
         /// Motivo reportado por el sidecar.
         motivo: String,
     },
@@ -104,6 +111,9 @@ impl fmt::Display for ErrorModoRespaldar {
             ),
             Self::SqlstoreFallido { motivo } => {
                 write!(f, "fallo en respaldo de sqlstore.db: {motivo}")
+            }
+            Self::IdentidadFallido { motivo } => {
+                write!(f, "fallo en respaldo de identidad.db: {motivo}")
             }
         }
     }
@@ -175,7 +185,7 @@ fn generar_identificador_de_ronda() -> String {
     format!("ronda-{nanos}")
 }
 
-/// Orquesta la comprobación previa de los 4 destinos y el respaldo de las 4 bases.
+/// Orquesta la comprobación previa de los 5 destinos y el respaldo de las 5 bases.
 pub async fn ejecutar(
     ruta_socket: &Path,
     id_celula: &str,
@@ -187,6 +197,7 @@ pub async fn ejecutar(
     verificar_destino_disponible(&directorio.join(NOMBRE_DE_ARCHIVO_DE_CONOCIMIENTO))?;
     verificar_destino_disponible(&directorio.join(NOMBRE_DE_ARCHIVO_DE_IDENTIDAD_DEL_ADAPTADOR))?;
     verificar_destino_disponible(&directorio.join(NOMBRE_CANONICO_SQLSTORE))?;
+    verificar_destino_disponible(&directorio.join(NOMBRE_CANONICO_IDENTIDAD))?;
 
     let identificador_de_ronda = generar_identificador_de_ronda();
     let inicio = tokio::time::Instant::now();
@@ -204,6 +215,9 @@ pub async fn ejecutar(
         .checked_sub(transcurrido)
         .ok_or(ErrorModoRespaldar::ConexionNoEstablecida)?;
 
+    // Las DOS bases ordenadas por IPC (sqlstore, identidad) se producen ANTES que las tres locales
+    // (PAT-038 fail-empty): tras el pre-chequeo de los cinco destinos, si la disciplina de pausa se
+    // violara, el destino queda VACÍO en vez de parcial-que-parece-completo.
     let copia_sqlstore = match ordenar_respaldo_sqlstore(
         &adaptador,
         directorio,
@@ -218,12 +232,31 @@ pub async fn ejecutar(
         }
     };
 
+    let transcurrido = inicio.elapsed();
+    let plazo_restante = plazo
+        .checked_sub(transcurrido)
+        .ok_or(ErrorModoRespaldar::ConexionNoEstablecida)?;
+
+    let copia_identidad = match ordenar_respaldo_identidad(
+        &adaptador,
+        directorio,
+        &identificador_de_ronda,
+        plazo_restante,
+    )
+    .await?
+    {
+        ResultadoRespaldoIdentidad::Completado(copia) => copia,
+        ResultadoRespaldoIdentidad::Fallido { motivo } => {
+            return Err(ErrorModoRespaldar::IdentidadFallido { motivo });
+        }
+    };
+
     let pools = GestorDePools::abrir(ruta_datos)?;
     let almacen = AlmacenDeIdentidad::abrir(ruta_datos)?;
     let resumen_local =
         respaldar_celula_con_ronda(&pools, &almacen, directorio, &identificador_de_ronda)?;
 
-    let mut copias = vec![copia_sqlstore];
+    let mut copias = vec![copia_sqlstore, copia_identidad];
     copias.extend(resumen_local.copias);
 
     Ok(ResumenDeRespaldoCompleto {

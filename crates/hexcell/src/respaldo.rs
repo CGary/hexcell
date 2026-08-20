@@ -1,10 +1,11 @@
-//! Orquestación del respaldo de una célula: las cuatro bases, tres locales y una por IPC.
+//! Orquestación del respaldo de una célula: cinco bases, tres locales y dos por IPC.
 //!
-//! Las cuatro bases del respaldo de una célula son `sessions.db`, `knowledge_live.db`, el almacén
-//! de identidad del adaptador y el `sqlstore` del sidecar (`adr-0010`, punto 7). Esta etapa copia
-//! las tres primeras directamente: el `sqlstore` lo ejecuta el propio proceso del sidecar bajo el
-//! contrato versionado de `docs/contrato-ipc-respaldo-del-sqlstore.md`, ordenado desde aquí por
-//! `ordenar_respaldo_sqlstore` (etapa A-3, esta tarea).
+//! Las cuatro bases originales son `sessions.db`, `knowledge_live.db`, el almacén de identidad del
+//! adaptador y el `sqlstore` del sidecar (`adr-0010`, punto 7). El hallazgo 12 (2026-08-20) añadió
+//! una quinta: `identidad.db` del sidecar (lista STOP, mapeo de conversación, cortacircuitos;
+//! `adr-0022`). Esta etapa copia las tres locales directamente; el `sqlstore` e `identidad.db` los
+//! ejecuta el propio proceso del sidecar bajo `docs/contrato-ipc-respaldo-del-sqlstore.md`,
+//! ordenados desde aquí por `ordenar_respaldo_sqlstore` y `ordenar_respaldo_identidad` (etapa A-3).
 //!
 //! `respaldar_celula` comprueba los tres destinos **antes** de tomar la primera copia, para que un
 //! destino ya ocupado o inalcanzable falle sin dejar ninguna copia a medias, y delega la copia en
@@ -202,4 +203,69 @@ pub async fn ordenar_respaldo_sqlstore(
             Err(error)
         }
     }
+}
+
+/// Resultado del respaldo de `identidad.db` ejecutado por el sidecar sobre IPC.
+#[derive(Debug)]
+pub enum ResultadoRespaldoIdentidad {
+    /// Copia verificada generada con éxito por el sidecar.
+    Completado(CopiaVerificada),
+    /// Fallo informado por el sidecar con su motivo descriptivo.
+    Fallido {
+        /// Descripción del motivo del fallo.
+        motivo: String,
+    },
+}
+
+/// Solicita al sidecar el respaldo del almacén de identidad (`identidad.db`) sobre IPC.
+///
+/// Espejo de [`ordenar_respaldo_sqlstore`]: la copia física la ejecuta el propio proceso del
+/// sidecar vía `VACUUM INTO` sobre su conexión dedicada de solo lectura (`adr-0022`); el núcleo
+/// nunca abre `identidad.db`. Espera el acuse correlacionado por `identificador_de_ronda`.
+pub async fn ordenar_respaldo_identidad(
+    adaptador: &hexcell_canal_whatsmeow::AdaptadorWhatsmeow,
+    destino: &Path,
+    identificador_de_ronda: &str,
+    plazo: std::time::Duration,
+) -> Result<ResultadoRespaldoIdentidad, hexcell_canal_whatsmeow::ErrorCanalWhatsmeow> {
+    let destino_str = destino.to_string_lossy();
+    let acuse = match adaptador
+        .ordenar_respaldo_identidad(&destino_str, identificador_de_ronda, plazo)
+        .await
+    {
+        Ok(acuse) => acuse,
+        Err(error) => {
+            registro::emitir(
+                EntradaDeRegistro::nueva(NivelDeRegistro::Error, "respaldo_identidad_fallido")
+                    .con_detalle(format!("ronda={identificador_de_ronda} error={error}")),
+            );
+            return Err(error);
+        }
+    };
+
+    if acuse.resultado == "completado" {
+        registro::emitir(
+            EntradaDeRegistro::nueva(NivelDeRegistro::Info, "respaldo_identidad_completado")
+                .con_detalle(format!(
+                    "ronda={identificador_de_ronda} bytes={}",
+                    acuse.bytes
+                )),
+        );
+        return Ok(ResultadoRespaldoIdentidad::Completado(CopiaVerificada {
+            nombre_logico: "identidad.db",
+            ruta: std::path::PathBuf::from(acuse.ruta_de_la_copia),
+            bytes: acuse.bytes as u64,
+        }));
+    }
+
+    let motivo = if acuse.resultado == "fallido" {
+        acuse.motivo
+    } else {
+        format!("resultado desconocido en acuse: {}", acuse.resultado)
+    };
+    registro::emitir(
+        EntradaDeRegistro::nueva(NivelDeRegistro::Error, "respaldo_identidad_fallido")
+            .con_detalle(format!("ronda={identificador_de_ronda} motivo={motivo}")),
+    );
+    Ok(ResultadoRespaldoIdentidad::Fallido { motivo })
 }
