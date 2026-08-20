@@ -29,6 +29,8 @@ const (
 	VariableRutaSqlstore = "HEXCELL_RUTA_SQLSTORE"
 	// VariableRutaIdentidad fija la ruta del almacén de identidad.
 	VariableRutaIdentidad = "HEXCELL_RUTA_IDENTIDAD"
+	// VariableRutaOutbox fija la ruta del archivo de la base de datos de outbox.
+	VariableRutaOutbox = "HEXCELL_RUTA_OUTBOX"
 	// VariableTelefonoCelula fija el número de teléfono de la célula, sin el prefijo +,
 	// necesario para el emparejamiento por código de vinculación. Nunca viaja en el cable IPC.
 	VariableTelefonoCelula = "HEXCELL_TELEFONO_CELULA"
@@ -107,6 +109,8 @@ const (
 	RutaSqlstorePorOmision = "/var/lib/hexcell/sqlstore.db"
 	// RutaIdentidadPorOmision es la ruta del archivo del almacén de identidad en el volumen compartido.
 	RutaIdentidadPorOmision = "/var/lib/hexcell/identidad.db"
+	// RutaOutboxPorOmision es la ruta del archivo de la base de datos de outbox en el volumen compartido.
+	RutaOutboxPorOmision = "/var/lib/hexcell/outbox.db"
 	// RetrocesoInicialMsPorOmision es el intervalo inicial del retroceso exponencial.
 	// PENDIENTE DE CALIBRACIÓN: valor inicial razonable, no validado bajo carga.
 	RetrocesoInicialMsPorOmision int64 = 1000
@@ -163,10 +167,6 @@ const (
 	// [causa documentada]
 	// PENDIENTE DE CALIBRACIÓN.
 	VentanaDiasPorOmision = "1,2,3,4,5"
-	// VentanaZonaPorOmision es la zona horaria por omisión.
-	// [causa documentada]
-	// PENDIENTE DE CALIBRACIÓN.
-	VentanaZonaPorOmision = "America/Argentina/Buenos_Aires"
 
 	// RampaDiariaInicialPorOmision es el cupo de envíos diarios inicial (20 msgs/día).
 	// [precautorio]
@@ -229,6 +229,9 @@ var ErrRutaSqlstoreVacia = errors.New("configuracion: la ruta del sqlstore está
 
 // ErrRutaIdentidadVacia se devuelve cuando la variable del almacén de identidad está definida pero vacía.
 var ErrRutaIdentidadVacia = errors.New("configuracion: la ruta del almacén de identidad está vacía")
+
+// ErrRutaOutboxVacia se devuelve cuando la variable del outbox está definida pero vacía.
+var ErrRutaOutboxVacia = errors.New("configuracion: la ruta de la base de datos de outbox está vacía")
 
 // ErrNivelDeRegistroDesconocido se devuelve ante un umbral de registro que no está en la tabla.
 var ErrNivelDeRegistroDesconocido = errors.New("configuracion: nivel de registro desconocido")
@@ -329,6 +332,8 @@ type Configuracion struct {
 	RutaSqlstore string
 	// RutaIdentidad es la ruta del archivo del almacén de identidad.
 	RutaIdentidad string
+	// RutaOutbox es la ruta del archivo de la base de datos de outbox.
+	RutaOutbox string
 	// TelefonoCelula es el número de teléfono de la célula, sin prefijo +. Solo es necesario
 	// para el emparejamiento por código de vinculación. Vacío es válido: significa que ese
 	// método no está disponible.
@@ -395,6 +400,14 @@ func Cargar(consultar func(string) (string, bool)) (Configuracion, error) {
 		rutaIdentidad = valor
 	}
 
+	rutaOutbox := RutaOutboxPorOmision
+	if valor, presente := consultar(VariableRutaOutbox); presente {
+		if valor == "" {
+			return Configuracion{}, ErrRutaOutboxVacia
+		}
+		rutaOutbox = valor
+	}
+
 	telefonoCelula := ""
 	if valor, presente := consultar(VariableTelefonoCelula); presente && valor != "" {
 		telefonoCelula = valor
@@ -452,6 +465,7 @@ func Cargar(consultar func(string) (string, bool)) (Configuracion, error) {
 		IdCelula:                idCelula,
 		RutaSqlstore:            rutaSqlstore,
 		RutaIdentidad:           rutaIdentidad,
+		RutaOutbox:              rutaOutbox,
 		TelefonoCelula:          telefonoCelula,
 		Retroceso:               retroceso,
 		TtlSalidaMs:             ttlSalida,
@@ -690,13 +704,13 @@ func cargarVentanaDeAtencion(consultar func(string) (string, bool)) (VentanaDeAt
 		return VentanaDeAtencion{}, fmt.Errorf("%w: %s debe especificar al menos un día válido", ErrParametroDeDisciplinaInvalido, VariableVentanaDias)
 	}
 
-	zonaStr, err := cadenaDelEntorno(consultar, VariableVentanaZona, VentanaZonaPorOmision)
-	if err != nil {
-		return VentanaDeAtencion{}, err
+	zonaStr, ok := consultar(VariableVentanaZona)
+	if !ok || strings.TrimSpace(zonaStr) == "" {
+		return VentanaDeAtencion{}, fmt.Errorf("%w: %s es requerida y no puede estar vacía", ErrParametroDeDisciplinaInvalido, VariableVentanaZona)
 	}
 	loc, err := time.LoadLocation(zonaStr)
 	if err != nil {
-		return VentanaDeAtencion{}, fmt.Errorf("%w: zona horaria inválida %q: %v", ErrParametroDeDisciplinaInvalido, zonaStr, err)
+		return VentanaDeAtencion{}, fmt.Errorf("%w: %s: zona horaria inválida %q: %v", ErrParametroDeDisciplinaInvalido, VariableVentanaZona, zonaStr, err)
 	}
 
 	return VentanaDeAtencion{

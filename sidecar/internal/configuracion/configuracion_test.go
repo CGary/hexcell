@@ -4,6 +4,7 @@ import (
 	"errors"
 	"log/slog"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/CGary/hexcell/sidecar/internal/configuracion"
@@ -14,6 +15,9 @@ import (
 func entornoFalso(valores map[string]string) func(string) (string, bool) {
 	return func(clave string) (string, bool) {
 		valor, presente := valores[clave]
+		if !presente && clave == configuracion.VariableVentanaZona {
+			return "America/La_Paz", true
+		}
 		return valor, presente
 	}
 }
@@ -158,6 +162,43 @@ func TestCargar_RutaIdentidadVacia(t *testing.T) {
 	}))
 	if !errors.Is(err, configuracion.ErrRutaIdentidadVacia) {
 		t.Fatalf("error = %v, se esperaba ErrRutaIdentidadVacia", err)
+	}
+}
+
+func TestCargar_RutaOutboxPorOmision(t *testing.T) {
+	t.Parallel()
+
+	cfg, err := configuracion.Cargar(entornoFalso(map[string]string{}))
+	if err != nil {
+		t.Fatalf("no se esperaba error: %v", err)
+	}
+	if cfg.RutaOutbox != configuracion.RutaOutboxPorOmision {
+		t.Errorf("ruta de outbox = %q, se esperaba %q", cfg.RutaOutbox, configuracion.RutaOutboxPorOmision)
+	}
+}
+
+func TestCargar_RutaOutboxPersonalizada(t *testing.T) {
+	t.Parallel()
+
+	cfg, err := configuracion.Cargar(entornoFalso(map[string]string{
+		configuracion.VariableRutaOutbox: "/tmp/celula/outbox.db",
+	}))
+	if err != nil {
+		t.Fatalf("no se esperaba error: %v", err)
+	}
+	if cfg.RutaOutbox != "/tmp/celula/outbox.db" {
+		t.Errorf("ruta de outbox = %q, se esperaba %q", cfg.RutaOutbox, "/tmp/celula/outbox.db")
+	}
+}
+
+func TestCargar_RutaOutboxVacia(t *testing.T) {
+	t.Parallel()
+
+	_, err := configuracion.Cargar(entornoFalso(map[string]string{
+		configuracion.VariableRutaOutbox: "",
+	}))
+	if !errors.Is(err, configuracion.ErrRutaOutboxVacia) {
+		t.Fatalf("error = %v, se esperaba ErrRutaOutboxVacia", err)
 	}
 }
 
@@ -393,8 +434,8 @@ func TestCargarAplicaValoresPorOmisionDeDisciplina(t *testing.T) {
 	if len(d.Ventana.Dias) != 5 || d.Ventana.Dias[0] != 1 || d.Ventana.Dias[4] != 5 {
 		t.Errorf("Ventana Dias = %v, se esperaba [1,2,3,4,5]", d.Ventana.Dias)
 	}
-	if d.Ventana.Zona == nil || d.Ventana.Zona.String() != configuracion.VentanaZonaPorOmision {
-		t.Errorf("Ventana Zona = %v, se esperaba %s", d.Ventana.Zona, configuracion.VentanaZonaPorOmision)
+	if d.Ventana.Zona == nil || d.Ventana.Zona.String() != "America/La_Paz" {
+		t.Errorf("Ventana Zona = %v, se esperaba America/La_Paz", d.Ventana.Zona)
 	}
 	if d.Rampa.DiariaInicial != configuracion.RampaDiariaInicialPorOmision {
 		t.Errorf("Rampa DiariaInicial = %d, se esperaba %d", d.Rampa.DiariaInicial, configuracion.RampaDiariaInicialPorOmision)
@@ -496,6 +537,24 @@ func TestCargarRechazaParametrosDeDisciplinaDegeneradosOInvalidos(t *testing.T) 
 				t.Errorf("caso %s: se esperaba ErrParametroDeDisciplinaInvalido, se obtuvo %v", c.nombre, err)
 			}
 		})
+	}
+}
+
+func TestCargarRechazaVentanaZonaAusente(t *testing.T) {
+	t.Parallel()
+
+	consultarSinZona := func(clave string) (string, bool) {
+		return "", false
+	}
+	_, err := configuracion.Cargar(consultarSinZona)
+	if err == nil {
+		t.Fatal("se esperaba error al faltar HEXCELL_VENTANA_ZONA")
+	}
+	if !errors.Is(err, configuracion.ErrParametroDeDisciplinaInvalido) {
+		t.Fatalf("error = %v, se esperaba ErrParametroDeDisciplinaInvalido", err)
+	}
+	if !strings.Contains(err.Error(), configuracion.VariableVentanaZona) {
+		t.Fatalf("error = %q, se esperaba que contuviera %q", err.Error(), configuracion.VariableVentanaZona)
 	}
 }
 

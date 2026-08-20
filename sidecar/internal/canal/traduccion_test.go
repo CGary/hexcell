@@ -116,17 +116,19 @@ func TestTraductor_ConfiguracionCargarRutaIdentidad(t *testing.T) {
 		}
 	}
 
-	cfg, _ := configuracion.Cargar(entorno(map[string]string{}))
+	// La zona de la ventana de atención es obligatoria (HEX-033): se fija en cada
+	// caso para aislar el comportamiento de la ruta de identidad que este test verifica.
+	cfg, _ := configuracion.Cargar(entorno(map[string]string{"HEXCELL_VENTANA_ZONA": "America/La_Paz"}))
 	if cfg.RutaIdentidad != identidad.RutaPorOmision {
 		t.Errorf("se esperaba ruta por omisión")
 	}
 
-	cfg2, _ := configuracion.Cargar(entorno(map[string]string{"HEXCELL_RUTA_IDENTIDAD": "/tmp/otra.db"}))
+	cfg2, _ := configuracion.Cargar(entorno(map[string]string{"HEXCELL_VENTANA_ZONA": "America/La_Paz", "HEXCELL_RUTA_IDENTIDAD": "/tmp/otra.db"}))
 	if cfg2.RutaIdentidad != "/tmp/otra.db" {
 		t.Errorf("se esperaba ruta configurada")
 	}
 
-	_, err := configuracion.Cargar(entorno(map[string]string{"HEXCELL_RUTA_IDENTIDAD": ""}))
+	_, err := configuracion.Cargar(entorno(map[string]string{"HEXCELL_VENTANA_ZONA": "America/La_Paz", "HEXCELL_RUTA_IDENTIDAD": ""}))
 	if err != configuracion.ErrRutaIdentidadVacia {
 		t.Errorf("se esperaba ErrRutaIdentidadVacia al estar la variable presente pero vacía, se obtuvo %v", err)
 	}

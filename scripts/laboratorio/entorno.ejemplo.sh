@@ -16,9 +16,13 @@ export HEXCELL_SOCKET_IPC="${HEXCELL_SOCKET_IPC:-$HEXCELL_LAB_DIR/ipc/sidecar.so
 export HEXCELL_RUTA_DATOS="${HEXCELL_RUTA_DATOS:-$HEXCELL_LAB_DIR/datos}"
 export HEXCELL_RUTA_SQLSTORE="${HEXCELL_RUTA_SQLSTORE:-$HEXCELL_LAB_DIR/datos/sqlstore.db}"
 export HEXCELL_RUTA_IDENTIDAD="${HEXCELL_RUTA_IDENTIDAD:-$HEXCELL_LAB_DIR/datos/identidad.db}"
+export HEXCELL_RUTA_OUTBOX="${HEXCELL_RUTA_OUTBOX:-$HEXCELL_LAB_DIR/datos/outbox.db}"
 
 # Canal de mensajería para el núcleo
 export HEXCELL_CANAL="${HEXCELL_CANAL:-whatsmeow}"
+
+# Zona horaria requerida para la ventana de atención de la célula (hallazgo 10)
+export HEXCELL_VENTANA_ZONA="${HEXCELL_VENTANA_ZONA:-America/La_Paz}"
 
 # Dirección del servidor interno de salud
 export HEXCELL_DIRECCION_SALUD="${HEXCELL_DIRECCION_SALUD:-127.0.0.1:8081}"

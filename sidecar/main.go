@@ -81,7 +81,7 @@ func main() {
 	}
 	defer almacenIdentidad.Cerrar()
 
-	buzon, err := outbox.Abrir(outbox.Opciones{Ruta: outbox.RutaPorOmision, Registro: reg})
+	buzon, err := outbox.Abrir(outbox.Opciones{Ruta: cfg.RutaOutbox, Registro: reg})
 	if err != nil {
 		reg.Error(eventoParada, registro.Campos{Detalle: err.Error()})
 		os.Exit(1)
