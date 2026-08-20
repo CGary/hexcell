@@ -1,0 +1,5 @@
+This is a massive dispatch prompt. Let me read the remaining context files and all the dependency files I need to understand before writing any code. I'll launch parallel research subagents to read all the key files.
+Now let me also read the remaining parts of the dispatch prompt to make sure I have all the context file data:
+The subagents failed with permission errors. I'll read the key files directly. Let me start with the most critical dependency files in parallel:
+Now let me read the test files and remaining key files:
+Now let me read the remaining critical files:

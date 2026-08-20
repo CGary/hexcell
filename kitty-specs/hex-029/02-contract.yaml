@@ -1,0 +1,184 @@
+task_id: HEX-029
+summary: Add a `hexcell respaldar --directorio <ruta>` operator mode that drives the existing four-store backup under a pause-first
+  discipline, plus its tests, docs and lab script.
+goal: crates/hexcell/src/respaldo.rs implements and tests the complete four-store backup (respaldar_celula_con_ronda over
+  sessions.db, knowledge_live.db and adapter_identity.db, plus ordenar_respaldo_sqlstore driving the sidecar over IPC with
+  round-id acuse correlation, HEX-021), but nothing calls it outside its own integration tests - the third built-but-not-wired
+  finding (LES-037). Wire it behind a new short-lived CLI mode in the same binary, following the HEX-024 emparejar precedent
+  exactly (std::env::args parsing only, Spanish output, binary exit codes), so the e2e restore rehearsal (task 18 of stage
+  A-3) has a backup to restore from. The mode runs with the cell's NUCLEO STOPPED and the SIDECAR RUNNING; that discipline
+  is a design decision closed in 01-blueprint.yaml step 1 (the IPC socket accepts one active connection, most-recent-wins,
+  and the nucleo reconnects after ~500 ms, so a concurrent backup process loses the race for its own acuse) and it must be
+  stated in the mode's own output, in the runbook and in the lab script.
+read:
+- .ai/tasks/active/HEX-029-new-spec/00-spec.yaml
+- .ai/tasks/active/HEX-029-new-spec/01-blueprint.yaml
+- crates/hexcell/src/respaldo.rs
+- crates/hexcell/src/emparejar.rs
+- crates/hexcell/src/configuracion.rs
+- crates/hexcell/tests/respaldo_sqlstore_ipc.rs
+- crates/hexcell/tests/emparejamiento_ipc.rs
+- crates/hexcell/tests/configuracion.rs
+- crates/hexcell/tests/comun/mod.rs
+- crates/hexcell-storage/src/respaldo.rs
+- crates/hexcell-storage/src/pools.rs
+- crates/hexcell-canal-whatsmeow/src/adaptador.rs
+- sidecar/internal/canal/respaldo.go
+- sidecar/internal/servidor/manejo.go
+- docs/contrato-ipc-respaldo-del-sqlstore.md
+- docs/protocolo-ipc-nucleo-sidecar.md
+- docs/adr/adr-0020-respaldo-y-restauracion-por-celula.md
+- docs/plan/fase-a-3-adaptador-whatsmeow.md
+- docs/STATUS.md
+- docs/bitacora-de-descartes.md
+- kitty-specs/hex-024/01-blueprint.yaml
+- kitty-specs/hex-024/02-contract.yaml
+touch:
+- crates/hexcell/src/respaldar.rs
+- crates/hexcell/src/lib.rs
+- crates/hexcell/src/main.rs
+- crates/hexcell/src/respaldo.rs
+- crates/hexcell/tests/respaldo_cli.rs
+- docs/STATUS.md
+- docs/runbook-restauracion-de-celula.md
+- docs/bitacora-de-descartes.md
+- scripts/laboratorio/respaldar-celula.sh
+- scripts/laboratorio/entorno.ejemplo.sh
+forbid:
+  files:
+  - crates/hexcell/src/configuracion.rs
+  - crates/hexcell/src/emparejar.rs
+  - crates/hexcell/src/apagado.rs
+  - crates/hexcell/src/motor.rs
+  - crates/hexcell/src/salud.rs
+  - crates/hexcell/src/preparacion.rs
+  - crates/hexcell/tests/comun/mod.rs
+  - crates/hexcell/tests/respaldo_sqlstore_ipc.rs
+  - crates/hexcell/tests/respaldo_y_restauracion.rs
+  - crates/hexcell/tests/emparejamiento_ipc.rs
+  - crates/hexcell/tests/configuracion.rs
+  - crates/hexcell-storage/src/respaldo.rs
+  - crates/hexcell-storage/src/pools.rs
+  - crates/hexcell-storage/src/almacen_de_identidad.rs
+  - crates/hexcell-canal-whatsmeow/src/adaptador.rs
+  - crates/hexcell-canal-whatsmeow/src/mensajes.rs
+  - crates/hexcell-canal-whatsmeow/src/conexion.rs
+  - crates/hexcell-canal-whatsmeow/src/reconexion.rs
+  - docs/protocolo-ipc-nucleo-sidecar.md
+  - docs/contrato-ipc-respaldo-del-sqlstore.md
+  - docs/adr/adr-0020-respaldo-y-restauracion-por-celula.md
+  - docs/adr/README.md
+  - docs/PRD.md
+  - docs/plan/fase-a-3-adaptador-whatsmeow.md
+  - docs/plan/fase-a-6-empaquetado-cli.md
+  - docs/runbook-canal-fase-a.md
+  - docs/runbook-canal-whatsmeow.md
+  - scripts/laboratorio/iniciar-nucleo.sh
+  - scripts/laboratorio/iniciar-sidecar.sh
+  - Cargo.toml
+  - Cargo.lock
+  behaviors:
+  - Do NOT touch any Go file (sidecar/**), sidecar/go.mod or sidecar/go.sum. The sidecar side of the backup is complete and
+    wired (main.go:67 opens dbRespaldo, :106 injects it as Dependencias.DBRespaldo, servidor/manejo.go:171-176 dispatches
+    TipoOrdenRespaldoSqlstore, and canal/respaldo.go already deletes an unverified copy on failure). If a genuine Go gap surfaces,
+    record it as a risk in the implementation notes; do not silently fix it. Consequently do NOT add a `go test -race` command
+    to verify.commands.
+  - Do NOT change any function signature, function body, control flow or logic in crates/hexcell/src/respaldo.rs. That file
+    is limited to MODULE DOC COMMENT edits correcting the now-false "# Sin disparador de producción" block (lines 21-31).
+    The four-store machinery, its fail-closed semantics and its round-id threading are reused as-is, never reimplemented,
+    never wrapped in a second copy inside the new module.
+  - Do NOT add any third-party dependency, and do NOT add a CLI argument library (clap, structopt, pico-args or any other).
+    Argument parsing is a manual `while i < argumentos.len()` loop supporting `--directorio X` and `--directorio=X`, copied
+    in shape from emparejar.rs:161-196. Cargo.toml and Cargo.lock must not change.
+  - Do NOT read the destination directory from an environment variable, and do NOT add any constant, field or parsing branch
+    to crates/hexcell/src/configuracion.rs. The destination comes only from a REQUIRED --directorio argument, which must be
+    an ABSOLUTE path (the sidecar resolves that same path in its own process, and under stage A-6 in its own container). HEXCELL_RUTA_RESPALDOS
+    belongs to the lab shell script only; the binary never reads it.
+  - Do NOT invent per-store exit codes. Exit status is binary, ExitCode::SUCCESS only on complete four-store success and ExitCode::FAILURE
+    otherwise, exactly like emparejar; the Spanish MESSAGE names which store failed.
+  - 'Do NOT change the IPC protocol in any way: no new message type, no new field, no wire-version change. docs/protocolo-ipc-nucleo-sidecar.md
+    stays at v1.3 / wire 4 with its 11 closed message types, and the existing orden_respaldo_sqlstore / acuse_respaldo_sqlstore
+    round-id semantics are used exactly as they are.'
+  - Do NOT reverse the orchestration order. The sqlstore order over IPC runs FIRST and the three local copies second, after
+    a pre-check of ALL FOUR destinations via hexcell_storage::verificar_destino_disponible. This is what makes a discipline
+    violation leave an EMPTY destination instead of a three-of-four directory that looks complete. Do not delete already-verified
+    copies as a cleanup step, and do not add a completion-manifest file.
+  - Do NOT re-verify the sqlstore copy from the Rust side (no reopening the copied file, no integrity_check, no size probe
+    beyond what the acuse reports). The sidecar verifies its own copy and removes it when unverified; the acuse is the verification.
+  - Do NOT add any probe, port check or process scan that tries to detect whether the cell's nucleo is running. The discipline
+    is enforced by fail-closed behavior and stated in the output and docs, not by a runtime guard.
+  - 'Do NOT alter the behavior of the normal cell mode or the emparejar mode. The main.rs change is the new dispatch arm plus
+    a module doc paragraph; the new arm sits BEFORE Configuracion::desde_entorno so a backup run never demands the full cell
+    configuration. Do not touch emparejar.rs: reuse its existing pub esperar_conexion_activa rather than editing or duplicating
+    it.'
+  - 'Do NOT refactor the test harness. Define the FakeSidecar inside the new crates/hexcell/tests/respaldo_cli.rs, following
+    the existing per-file duplication precedent; do not move it into tests/comun/mod.rs and do not edit tests/respaldo_sqlstore_ipc.rs
+    or tests/emparejamiento_ipc.rs. Do not use comun::lanzar_binario_con_variables for the real-binary case: it blocks waiting
+    for a `salud_vinculada` line that a short-lived respaldar run never emits.'
+  - 'Do NOT delete, weaken or silently reinterpret any existing test. Tests must DISCRIMINATE (LES-036): the real-binary case
+    must fail if the main.rs dispatch arm is removed, and the fail-closed case must fail if the sqlstore-first ordering or
+    the four-destination pre-check is removed. Do not fabricate a green test claiming a backup against a real channel succeeded;
+    the e2e rehearsal runs live with the human after this merges.'
+  - Do NOT rewrite, renumber or supersede any ADR, and do NOT create a new one. adr-0020-respaldo-y-restauracion-por-celula.md
+    keeps its text verbatim even though its "ningún disparador de producción" scope note (lines 61-66, 97-99) is now partially
+    stale; the staleness is recorded in docs/STATUS.md and flagged for the human. docs/adr/README.md numbering is a source
+    of truth and stays untouched.
+  - Do NOT delete or rewrite any existing docs/STATUS.md entry. Update the "Disparador de producción del respaldo por célula"
+    Pendiente entry (lines 406-410) IN PLACE with the established "; actualizado el 2026-08-19 por HEX-029" convention (the
+    precedent is line 500), and append exactly one new Definido entry dated 2026-08-19 traced to task 18 of stage A-3, mirroring
+    the HEX-024 entry's shape at line 375.
+  - 'Do NOT edit or renumber any existing bitácora entry. Append D-22 and D-23 after D-21 in the file''s existing four-field
+    format, add their rows to the index table, and update the "Última actualización" header line. Neither entry may state
+    or imply that D-20 is reopened: D-20 discarded a PERIODIC SCHEDULER inside the cell process, and this task adds no scheduler
+    and no timer.'
+  - 'Do NOT weaken or restructure the existing restore procedure in docs/runbook-restauracion-de-celula.md. The change is
+    additive: a backup-production section with the exact invocation, the pause-first discipline, the requirement that the
+    sidecar keeps running, and the fresh-directory rule.'
+  - Do NOT write any user-visible content (Rust doc comments, printed lines, error text, shell script comments, docs prose,
+    commit message) in English; keep it in Spanish. Only this contract's and the blueprint's own YAML prose stays in English.
+    Use absolute dates (2026-08-19), never relative ones.
+  - Do NOT print or log any phone number, JID or other transport identifier, and do NOT put one in a backup file name or a
+    directory name (adr-0010). Do NOT introduce mass-sending-provider vocabulary (jitter, calentamiento/warm-up, proxies,
+    VPN, IP rotation), and never write or imply that Fase B replaces, retires or closes the sidecar channel.
+  - Do NOT commit any .db, .db-wal or .db-shm file, any .env file, or any backup directory produced while testing by hand.
+verify:
+  commands:
+  - cargo fmt --check
+  - cargo build --workspace
+  - cargo clippy --workspace -- -D warnings
+  - cargo test --workspace
+  - test "$(cargo tree -p hexcell-core | wc -l)" = "1"
+  - cargo test -p hexcell-core --doc 2>&1 | grep -q "compile fail"
+  - cd sidecar && test -z "$(gofmt -l .)" && go build ./... && go vet ./... && go test ./...
+acceptance:
+  human_gate: true
+limits:
+  max_files_changed: 10
+  max_diff_lines: 880
+  per_class:
+  - glob: crates/hexcell/src/respaldar.rs
+    max_diff_lines: 320
+  - glob: crates/hexcell/tests/respaldo_cli.rs
+    max_diff_lines: 420
+  - glob: crates/hexcell/src/main.rs
+    max_diff_lines: 25
+  - glob: crates/hexcell/src/lib.rs
+    max_diff_lines: 5
+  - glob: crates/hexcell/src/respaldo.rs
+    max_diff_lines: 25
+  - glob: docs/STATUS.md
+    max_diff_lines: 30
+  - glob: docs/runbook-restauracion-de-celula.md
+    max_diff_lines: 60
+  - glob: docs/bitacora-de-descartes.md
+    max_diff_lines: 60
+  - glob: scripts/laboratorio/respaldar-celula.sh
+    max_diff_lines: 55
+  - glob: scripts/laboratorio/entorno.ejemplo.sh
+    max_diff_lines: 8
+execution:
+  mode: worktree_edit
+  branch: ai/HEX-029
+retry_policy:
+  max_attempts: 2
+  escalate_after: 2

@@ -1,0 +1,57 @@
+### Resumen del trabajo realizado
+
+Se ha completado la implementación de la superficie del operador para el respaldo de cuatro bases en la tarea **HEX-029** dentro del worktree `worktrees/HEX-029/`.
+
+#### Cambios implementados:
+
+1. **Nuevo módulo `crates/hexcell/src/respaldar.rs`**:
+   - Implementa `analizar_argumentos` para validar `--directorio <ruta>` (requiere ruta absoluta, sin librerías externas).
+   - Implementa `ejecutar` que realiza la comprobación previa de los 4 destinos (`sessions.db`, `knowledge_live.db`, `adapter_identity.db`, `sqlstore.db`), orquesta primero la orden `sqlstore` sobre IPC y luego las 3 bases locales con correlación de `identificador_de_ronda`.
+   - Implementa `ejecutar_cli` que lee las variables de entorno mínimas (`HEXCELL_ID_CELULA`, `HEXCELL_RUTA_DATOS`, `HEXCELL_SOCKET_IPC`), imprime la disciplina operacional ("núcleo detenido, sidecar en ejecución") y reporta resultados o errores en español con códigos de salida binarios.
+
+2. **Cableado del subcomando en la raíz del binario (`crates/hexcell/src/main.rs` y `lib.rs`)**:
+   - Añadida la rama de despacho `if argumentos.get(1) == Some("respaldar")` en `main.rs` **antes** de `Configuracion::desde_entorno()`, permitiendo ejecutar el respaldo sin exigir la configuración completa del motor de mensajería.
+   - Exportado `pub mod respaldar;` en `lib.rs`.
+
+3. **Ajuste de documentación interna (`crates/hexcell/src/respaldo.rs`)**:
+   - Actualizados únicamente los comentarios de documentación del módulo para reflejar la existencia del disparador CLI entregado en HEX-029.
+
+4. **Suite de pruebas de integración (`crates/hexcell/tests/respaldo_cli.rs`)**:
+   - Pruebas unitarias para `analizar_argumentos` (rutas absolutas/relativas, formato con `=` o espacio, argumentos desconocidos).
+   - Prueba de integración contra `FakeSidecar` (camino feliz comprobando la creación de las 4 bases).
+   - Prueba de fallo cerrado ante un sidecar que rechaza el respaldo (`sqlstore.db` fallido deja 0 archivos en el destino, LES-031).
+   - Prueba de fallo previo sin IPC cuando un destino está ocupado.
+   - Pruebas con el binario real `CARGO_BIN_EXE_hexcell` verificando el despacho CLI y mensajes de error en español.
+
+5. **Arnés de laboratorio y scripts (`scripts/laboratorio/`)**:
+   - Creado `scripts/laboratorio/respaldar-celula.sh` (`chmod +x`) que crea un directorio timestamped en `$HEXCELL_RUTA_RESPALDOS` e invoca el binario.
+   - Añadida la variable `HEXCELL_RUTA_RESPALDOS` en `scripts/laboratorio/entorno.ejemplo.sh`.
+
+6. **Documentación del proyecto (`docs/`)**:
+   - Actualizado `docs/runbook-restauracion-de-celula.md` con el procedimiento de producción de respaldo y su disciplina de pausa previa.
+   - Registrados en `docs/bitacora-de-descartes.md` los descartes **D-22** (respaldo concurrente sin pausa previa por colisión IPC) y **D-23** (disparador in-process por señales/entorno).
+   - Actualizado `docs/STATUS.md` con la entrada de HEX-029 en la sección *Definido* y actualizada la entrada en *Pendiente*.
+
+7. **Registro de implementación y Git**:
+   - Creado `.ai/tasks/active/HEX-029/04-implementation-log.yaml`.
+   - Generado commit Git en la rama `ai/HEX-029`: `feat(core): wire operator surface for four-store backup via hexcell respaldar CLI`.
+
+---
+
+=== Fin de fase: Implementación ===
+
+Resultado: DONE
+Resumen técnico: Implementado subcomando `hexcell respaldar --directorio <ruta>` para respaldo de 4 bases bajo disciplina de pausa previa, con tests de integración, script de laboratorio y documentación.
+
+Artefactos producidos:
+- Diff committeado en la rama ai/HEX-029 (worktrees/HEX-029/)
+- .ai/tasks/active/HEX-029/04-implementation-log.yaml
+
+No hay transición de estado: el worktree y la rama siguen iguales.
+
+Pasos siguientes (los despacha el orquestador, NO yo):
+1. [Obligatorio] /q-verify HEX-029 — corre verify.commands del contrato dentro del worktree y escribe 05-validation.json.
+
+Si querés volver atrás:
+- [WORKTREE:HEX-029] git -C worktrees/HEX-029 reset --hard HEAD~1 — descarta el último commit del worktree.
+- [ROOT] quorum task back HEX-029 — borra worktree y rama (perdés todos los commits no mergeados).

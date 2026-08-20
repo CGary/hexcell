@@ -1,0 +1,42 @@
+{
+  "schema_version": "fleet-dispatch-result/v1",
+  "dispatch_id": "d-hex029-r3",
+  "task_id": "HEX-029",
+  "agent": "agy_edit",
+  "model": "anthropic/claude-opus-4-6",
+  "phase": "execute",
+  "started_at": "2026-08-19T20:21:00Z",
+  "ended_at": "2026-08-19T20:24:39Z",
+  "duration_s": 218.952895319,
+  "exit_code": 0,
+  "timed_out": false,
+  "killed": false,
+  "outcome": {
+    "class": "attempt",
+    "noop": false,
+    "cause": null,
+    "blocked": null
+  },
+  "diff": {
+    "empty": true,
+    "indeterminate": false,
+    "files_changed": 0,
+    "insertions": 0,
+    "deletions": 0
+  },
+  "forensic_ref": null,
+  "baseline_commit": "7c33d8eb41f5ec3a1f08967eeae1de1177e62301",
+  "applied": false,
+  "usage": {
+    "source": "none",
+    "tokens_in": null,
+    "tokens_out": null,
+    "requests": null
+  },
+  "notes_path": "dispatch/d-hex029-r3/notes.txt",
+  "trace_events": [
+    "dispatch_started",
+    "dispatch_finished"
+  ],
+  "reset_error": null
+}

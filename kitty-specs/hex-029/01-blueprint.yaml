@@ -1,0 +1,387 @@
+task_id: HEX-029
+summary: >-
+  Wire the existing four-store backup behind a new `hexcell respaldar --directorio <ruta>` CLI
+  mode with a pause-first discipline, mirroring the HEX-024 emparejar precedent.
+
+affected_files:
+  - crates/hexcell/src/respaldar.rs
+  - crates/hexcell/src/lib.rs
+  - crates/hexcell/src/main.rs
+  - crates/hexcell/src/respaldo.rs
+  - crates/hexcell/tests/respaldo_cli.rs
+  - docs/STATUS.md
+  - docs/runbook-restauracion-de-celula.md
+  - docs/bitacora-de-descartes.md
+  - scripts/laboratorio/respaldar-celula.sh
+  - scripts/laboratorio/entorno.ejemplo.sh
+
+symbols:
+  - respaldar::ejecutar_cli
+  - respaldar::ejecutar
+  - respaldar::analizar_argumentos
+  - respaldar::ErrorModoRespaldar
+  - respaldar::ResumenDeRespaldoCompleto
+  - respaldo::respaldar_celula_con_ronda
+  - respaldo::ordenar_respaldo_sqlstore
+  - emparejar::esperar_conexion_activa
+  - hexcell_storage::verificar_destino_disponible
+
+dependencies:
+  - crates/hexcell/src/emparejar.rs
+  - crates/hexcell/src/configuracion.rs
+  - crates/hexcell/tests/comun/mod.rs
+  - crates/hexcell/tests/respaldo_sqlstore_ipc.rs
+  - crates/hexcell/tests/emparejamiento_ipc.rs
+  - crates/hexcell/tests/configuracion.rs
+  - crates/hexcell-storage/src/respaldo.rs
+  - crates/hexcell-storage/src/pools.rs
+  - crates/hexcell-canal-whatsmeow/src/adaptador.rs
+  - sidecar/internal/canal/respaldo.go
+  - sidecar/internal/servidor/manejo.go
+  - docs/contrato-ipc-respaldo-del-sqlstore.md
+  - docs/protocolo-ipc-nucleo-sidecar.md
+  - docs/adr/adr-0020-respaldo-y-restauracion-por-celula.md
+  - docs/plan/fase-a-3-adaptador-whatsmeow.md
+  - kitty-specs/hex-024/01-blueprint.yaml
+
+test_scenarios:
+  - statement: >-
+      Happy path through the application service: `respaldar::ejecutar` against a FakeSidecar on a
+      real Unix socket (the pattern already used by tests/respaldo_sqlstore_ipc.rs) that replies
+      `acuse_respaldo_sqlstore` with resultado "completado" after creating sqlstore.db, over a temp
+      data directory holding real sessions.db / knowledge_live.db / adapter_identity.db, returns Ok
+      and leaves exactly FOUR files in the destination under their canonical names. Discriminates:
+      fails if either the IPC order or the three local copies are dropped from the wiring.
+    covers: [AC-1, AC-3]
+  - statement: >-
+      Fail-closed on a refusing sidecar: the FakeSidecar replies resultado "fallido" with a motivo;
+      `respaldar::ejecutar` returns the sqlstore failure with the motivo preserved, and the
+      destination directory is left with ZERO files, because the sqlstore step runs FIRST and the
+      three local VACUUM INTO copies are never started. Proves LES-031 at the directory level, not
+      only at the single-file level.
+    covers: [AC-1, AC-3]
+  - statement: >-
+      Fail-closed before any work when a destination is occupied: a pre-existing sessions.db in the
+      destination makes `respaldar::ejecutar` fail with DestinoDeRespaldoOcupado naming that store,
+      and the FakeSidecar receives NO orden_respaldo_sqlstore frame at all. Proves the all-four
+      pre-check happens before the first side effect, local or remote.
+    covers: [AC-1, AC-3]
+  - statement: >-
+      Real-binary dispatch test (the anti-LES-037 test): spawn env!("CARGO_BIN_EXE_hexcell") with
+      args ["respaldar", "--directorio", <dest>] and env HEXCELL_ID_CELULA / HEXCELL_RUTA_DATOS /
+      HEXCELL_SOCKET_IPC under .env_clear(), with the test acting as the FakeSidecar; the process
+      exits 0, prints the Spanish success line, and the four files exist. Discriminates: fails if
+      the main.rs dispatch arm is removed, because the binary would fall through to normal cell mode
+      and never exit. This is the test that would have caught the built-but-not-wired defect.
+    covers: [AC-1, AC-3]
+  - statement: >-
+      Argument and precondition validation is unit-tested through the pure `analizar_argumentos`
+      helper, NOT through ejecutar_cli (std::process::ExitCode is opaque and not comparable in Rust,
+      which is why emparejamiento_ipc.rs tests `ejecutar` and never `ejecutar_cli`): missing
+      --directorio, empty --directorio= value, unknown argument, and a RELATIVE path are each
+      rejected with their own ErrorModoRespaldar variant whose Spanish Display text names the
+      problem. One real-binary case asserts a non-zero exit status for the missing-argument case.
+    covers: [AC-1, AC-2]
+  - statement: >-
+      Spanish failure output names the failing store: on the refusing-sidecar path the operator
+      message identifies the sqlstore explicitly, states that the destination directory is NOT a
+      valid backup, and states that a retry needs a FRESH directory because both sides reject an
+      already-occupied destination. Asserted on the captured stderr of the real-binary run or on the
+      Display text of ErrorModoRespaldar, never by re-implementing the message inside the test.
+    covers: [AC-1, AC-2, AC-3]
+  - statement: >-
+      No behavioral change to the two existing modes: the whole existing suite keeps passing
+      unchanged (tests/respaldo_y_restauracion.rs, tests/respaldo_sqlstore_ipc.rs,
+      tests/emparejamiento_ipc.rs, tests/configuracion.rs, tests/apagado_ordenado.rs), and
+      respaldo.rs receives doc-comment edits only, so no reviewed logic moves.
+    covers: [AC-1]
+  - statement: >-
+      Documentation and lab harness carry the discipline, not just the code: docs/STATUS.md updates
+      the existing "Disparador de producción del respaldo por célula" Pendiente entry in place
+      (the HEX-022 -> HEX-024 "actualizado el <fecha> por <ID>" convention) and adds one Definido
+      entry dated 2026-08-19 traced to task 18 of stage A-3; docs/runbook-restauracion-de-celula.md
+      gains a backup-production section with the exact invocation; scripts/laboratorio/respaldar-celula.sh
+      carries the same discipline in its header comments (nucleo STOPPED, sidecar RUNNING).
+    covers: [AC-2, AC-4]
+  - statement: >-
+      The two rejected design options are recorded in docs/bitacora-de-descartes.md as D-22 and
+      D-23 with their reason and reopening condition, in the file's existing four-field entry format
+      plus its index-table row and its "Última actualización" header line, satisfying the project
+      rule that a discard without a written reason is a lost discard.
+    covers: [AC-2]
+  - statement: >-
+      The 7 standard verification commands pass. No Go file is touched, so no `go test -race`
+      command is added: the sidecar side is already complete and wired (sidecar/main.go:67 opens
+      dbRespaldo via canal.AbrirConexionDeRespaldo, :106 injects it as Dependencias.DBRespaldo,
+      manejo.go:171-176 dispatches TipoOrdenRespaldoSqlstore), so AC-4's "a genuine Go gap is
+      recorded as a risk, not silently fixed" case does not arise.
+    covers: [AC-4]
+
+strategy:
+  - step: 1
+    action: >-
+      DESIGN DECISION owned by this blueprint, closing AC-2. Three options were weighed against the
+      real code; option (a) PAUSE-FIRST CLI MODE is CHOSEN. Option (b), steal-and-exit relying on
+      the adapter's reconnection path, is REJECTED on evidence: the sidecar's relay is
+      most-recent-wins and closes the previous connection (manejo.go atenderConexion, log
+      "servidor.conexion_reemplazada"; protocolo-ipc-nucleo-sidecar.md:134-137, whose stated
+      rationale is a RESTARTED nucleo, never a deliberate second concurrent client), while the
+      nucleo's AdaptadorWhatsmeow reconnects forever with Retroceso::por_omision() = 500 ms initial
+      / factor 2 / 30 s ceiling (reconexion.rs:49-51, bucle_de_conexion in adaptador.rs). A separate
+      backup process therefore steals the socket and the running nucleo steals it BACK about 500 ms
+      later, typically before the sidecar finishes VACUUM INTO; the acuse is then written to an
+      already-closed conexionActiva and dropped, so the backup dies on RespaldoSinAcuse.
+      Steal-and-exit is not merely impolite, it is a race the backup process almost always loses.
+      Option (c), an in-process trigger in the running nucleo (signal or env driven), is REJECTED
+      because AC-1 requires a non-zero EXIT CODE plus a Spanish message naming the failed store,
+      which a signal-triggered in-process backup structurally cannot deliver (it can only log), and
+      because it would add a second signal path beside apagado.rs. Record this reasoning in the new
+      module's doc comment; it is the load-bearing justification of the whole surface.
+    files:
+      - crates/hexcell/src/respaldar.rs
+  - step: 2
+    action: >-
+      Second, independent argument for pause-first, which must be stated precisely so it does not
+      read as contradicting adr-0020. adr-0020:28-35 guarantees the backup is HOT-safe because
+      VACUUM INTO runs over connections the process ALREADY has open, so it never blocks the
+      hot-path writer. That guarantee is about an IN-PROCESS backup. A separate backup process must
+      open the databases itself, and GestorDePools::abrir "abre y migra": it takes a READ-WRITE
+      connection on sessions.db and applies aplicar_migraciones_de_sesiones (pools.rs:210-229), plus
+      a read-write open of knowledge_live.db to migrate it (pools.rs:236-240). Running migrations
+      from a second process against a live cell is a different and worse risk than the one adr-0020
+      cleared. State this distinction in the module doc so a later reader does not "fix" the
+      discipline away by citing adr-0020.
+    files:
+      - crates/hexcell/src/respaldar.rs
+  - step: 3
+    action: >-
+      Create crates/hexcell/src/respaldar.rs (new module, verb-named like emparejar.rs, leaving the
+      reviewed respaldo.rs machinery in place). Surface: `enum ErrorModoRespaldar` with Display and
+      std::error::Error (variants at least FaltaDirectorio, DirectorioRelativo,
+      ArgumentoDesconocido(String), FaltaVariableDeEntorno(&'static str), Almacen(ErrorDeAlmacen),
+      Canal(ErrorCanalWhatsmeow), ConexionNoEstablecida, SqlstoreFallido{motivo}); `fn
+      analizar_argumentos(&[String]) -> Result<PathBuf, ErrorModoRespaldar>`, PURE and unit-testable,
+      accepting both `--directorio X` and `--directorio=X` exactly like emparejar.rs's --metodo loop
+      (emparejar.rs:161-196), rejecting unknown args with the same «guillemets» style, and REQUIRING
+      an ABSOLUTE path; `async fn ejecutar(ruta_socket, id_celula, ruta_datos, directorio, plazo)`;
+      `async fn ejecutar_cli(&[String]) -> ExitCode`. Constants mirroring emparejar.rs:
+      PLAZO_RESPALDAR_POR_DEFECTO_SEGUNDOS = 60 and HEXCELL_RESPALDAR_PLAZO_SEGUNDOS, plus a private
+      const for the canonical copy name "sqlstore.db" mirroring the sidecar's
+      canal.NombreCanonicoDeCopiaSqlstore. No new dependency, no CLI argument library.
+    files:
+      - crates/hexcell/src/respaldar.rs
+  - step: 4
+    action: >-
+      Configuration reading in ejecutar_cli follows the emparejar.rs precedent exactly: read
+      individual variables with std::env::var using the existing constants
+      (configuracion::HEXCELL_ID_CELULA required, configuracion::HEXCELL_RUTA_DATOS required,
+      emparejar::HEXCELL_SOCKET_IPC with RUTA_SOCKET_IPC_POR_DEFECTO as fallback), NOT
+      Configuracion::desde_entorno, which would demand HEXCELL_DIRECCION_SALUD, HEXCELL_CANAL and
+      the rest that a backup run has no use for. Do NOT add any field or constant to
+      configuracion.rs, so the normal cell mode stays byte-for-byte unaffected. The destination
+      comes ONLY from --directorio, with no env-var fallback: a backup destination is a per-run
+      decision and a silent default is how a backup lands in the wrong place. HEXCELL_RUTA_RESPALDOS
+      (step 8) is a LAB SCRIPT variable that builds the --directorio value; the Rust binary never
+      reads it. Exit codes stay binary (ExitCode::SUCCESS / FAILURE) like emparejar: the MESSAGE
+      names the store, not the code.
+    files:
+      - crates/hexcell/src/respaldar.rs
+  - step: 5
+    action: >-
+      Orchestration order inside `ejecutar`, the second half of the AC-2 answer. (i) Pre-check ALL
+      FOUR destinations with hexcell_storage::verificar_destino_disponible over
+      directorio.join(NOMBRE_DE_ARCHIVO_DE_SESIONES / NOMBRE_DE_ARCHIVO_DE_CONOCIMIENTO /
+      NOMBRE_DE_ARCHIVO_DE_IDENTIDAD_DEL_ADAPTADOR / "sqlstore.db"); that helper also rejects a
+      missing or non-directory parent, so an unusable destination fails before any side effect, and
+      its own doc comment (hexcell-storage/src/respaldo.rs:59-64) already anticipates "el binario de
+      la célula" doing exactly this. (ii) Generate ONE identificador_de_ronda for the run. (iii)
+      Build an ephemeral AdaptadorWhatsmeow exactly as emparejar::ejecutar does
+      (AdaptadorWhatsmeow::nuevo(..., Retroceso::por_omision()) then arrancar()), reuse the existing
+      pub emparejar::esperar_conexion_activa instead of duplicating it, and subtract elapsed time
+      from the plazo. (iv) Order the SQLSTORE FIRST via respaldo::ordenar_respaldo_sqlstore,
+      aborting on Fallido or Err. (v) Only then GestorDePools::abrir + AlmacenDeIdentidad::abrir over
+      HEXCELL_RUTA_DATOS and respaldo::respaldar_celula_con_ronda with the SAME round id. Rationale
+      for sqlstore-first: the most likely failure is a violated discipline (nucleo running,
+      connection stolen back), and putting the remote step first turns that failure into a ZERO-file
+      destination instead of a directory holding three of four stores that looks complete. Do not
+      re-verify the sqlstore copy from Rust: the sidecar verifies its own copy and deletes it when
+      unverified (respaldo.go `fallar`), so the acuse IS the verification.
+    files:
+      - crates/hexcell/src/respaldar.rs
+  - step: 6
+    action: >-
+      Operator output, all Spanish, prefixed "hexcell respaldar:" like emparejar's. BEFORE
+      connecting, print the discipline line: the nucleo of the cell must be STOPPED and the sidecar
+      must be RUNNING, because the sqlstore copy is executed by the sidecar process itself over IPC.
+      On success print one line per store with its byte count plus the round id, and exit 0. On
+      failure print to stderr which store failed and why, that the destination directory is NOT a
+      valid backup, and that a retry needs a FRESH directory because both sides reject an occupied
+      destination; exit non-zero. Never print a phone number, a JID or any transport identifier
+      (adr-0010): the round id and the four canonical file names carry none.
+    files:
+      - crates/hexcell/src/respaldar.rs
+  - step: 7
+    action: >-
+      Wire the mode. Add `pub mod respaldar;` to lib.rs beside `pub mod respaldo;`. In main.rs add
+      the dispatch arm next to the existing emparejar one (main.rs:71-74) - `if
+      argumentos.get(1).map(String::as_str) == Some("respaldar") { return
+      respaldar::ejecutar_cli(&argumentos[2..]).await; }` - placed BEFORE Configuracion::desde_entorno
+      so a backup run never demands the full cell configuration, and extend main.rs's module doc
+      comment with a short paragraph naming the two operator modes. Then correct the now-false claim
+      in respaldo.rs's module doc comment (the "# Sin disparador de producción, y eso es una
+      decisión" block, lines 21-31): after this task respaldar_celula_con_ronda and
+      ordenar_respaldo_sqlstore have a real caller, the `hexcell respaldar` mode, while the 3-arg
+      respaldar_celula shortcut still has only test callers; scheduling and frequency remain a
+      pending business decision (bitácora D-20) and packaging remains stage A-6. DOC COMMENTS ONLY
+      in respaldo.rs: no signature, body or logic change anywhere in that file.
+    files:
+      - crates/hexcell/src/lib.rs
+      - crates/hexcell/src/main.rs
+      - crates/hexcell/src/respaldo.rs
+  - step: 8
+    action: >-
+      Add crates/hexcell/tests/respaldo_cli.rs with the scenarios above. Follow the existing in-repo
+      pattern: `mod comun;` for DirectorioTemporal and abrir_persistencia_con_identidad, plus a
+      test-local FakeSidecar over a real tokio UnixListener speaking the v4 line protocol (saludo
+      exchange, then orden_respaldo_sqlstore -> acuse_respaldo_sqlstore), copied from
+      tests/respaldo_sqlstore_ipc.rs:16-88 the same way tests/emparejamiento_ipc.rs already copies
+      it. Do NOT refactor the shared harness: do not move FakeSidecar into comun/mod.rs and do not
+      edit the two existing IPC test files. The real-binary case uses env!("CARGO_BIN_EXE_hexcell")
+      with .env_clear() following tests/configuracion.rs:235-236, NOT
+      comun::lanzar_binario_con_variables, which blocks waiting for a `salud_vinculada` line that a
+      short-lived respaldar run never emits. The FakeSidecar must create the sqlstore.db file itself
+      before replying "completado", because in the real flow the sidecar writes it.
+    files:
+      - crates/hexcell/tests/respaldo_cli.rs
+  - step: 9
+    action: >-
+      Lab harness. Add scripts/laboratorio/respaldar-celula.sh, executable, in the same
+      `#!/usr/bin/env sh` + `set -e` style as iniciar-nucleo.sh: source entorno.ejemplo.sh, derive a
+      FRESH timestamped destination under $HEXCELL_RUTA_RESPALDOS, mkdir -p it, echo the same
+      `hexcell-lab:` diagnostic lines the sibling scripts use, and invoke the binary with an
+      ABSOLUTE --directorio. Its header comments must state the discipline concretely for the lab as
+      it exists today: iniciar-nucleo.sh runs `exec cargo run -p hexcell` in the FOREGROUND with no
+      PID file, so "stop the nucleo" means Ctrl-C (SIGTERM, ordered shutdown per HEX-007) in that
+      terminal, while iniciar-sidecar.sh keeps running in its own; `cell pause` is a PLANNED stage
+      A-6 command and does not exist yet. Add the single line `export
+      HEXCELL_RUTA_RESPALDOS="${HEXCELL_RUTA_RESPALDOS:-$HEXCELL_LAB_DIR/respaldos}"` to
+      entorno.ejemplo.sh beside the other lab paths, with a comment noting it is consumed by the
+      script and never by the binary.
+    files:
+      - scripts/laboratorio/respaldar-celula.sh
+      - scripts/laboratorio/entorno.ejemplo.sh
+  - step: 10
+    action: >-
+      Documentation. docs/runbook-restauracion-de-celula.md today only ASSUMES a backup round exists
+      (lines 15-19) and never says how to produce one: add a new section, ADDITIVE, giving the exact
+      invocation, the discipline, the fresh-directory rule, and the fact that the sidecar must be
+      running because it executes the sqlstore copy; do not weaken or restructure the existing
+      restore procedure. docs/STATUS.md gets two edits in its existing formats: update the
+      "Disparador de producción del respaldo por célula" Pendiente entry (lines 406-410) IN PLACE
+      using the established "; actualizado el 2026-08-19 por HEX-029" convention seen at line 500,
+      recording that the operator trigger now exists while scheduling, frequency and the remote
+      destination stay pending; and add one Definido entry dated 2026-08-19 traced to task 18 of
+      stage A-3, mirroring the HEX-024 emparejar entry at line 375. No plan task ever asked for this
+      surface, so that STATUS entry is also the registration the project rule requires for scope
+      that the plan does not declare. Delete or rewrite no existing entry.
+    files:
+      - docs/runbook-restauracion-de-celula.md
+      - docs/STATUS.md
+  - step: 11
+    action: >-
+      Record the discards, which the project rule makes mandatory in the same commit that makes
+      them. Append to docs/bitacora-de-descartes.md two entries after D-21, in the file's existing
+      four-field format (**Descartado:**, **Por qué se descartó:**, **Registro normativo:**, **Qué
+      tendría que cambiar para reabrirlo:**), each with its row in the index table at lines 37-57,
+      and update the "Última actualización" header line 3. D-22: steal-and-exit backup relying on
+      the adapter's reconnection path, discarded because the 500 ms backoff makes the running nucleo
+      reclaim the connection before the acuse arrives; reopening would require the sidecar to accept
+      a second concurrent connection, which is a protocol change (v1.3, wire 4, closed). D-23: an
+      in-process backup trigger inside the running nucleo driven by a signal or env var, discarded
+      because it cannot deliver a per-store exit code to the operator and would add a second signal
+      path beside apagado.rs; reopening would require a backup surface whose result is consumed by a
+      supervisor reading logs rather than by a human reading an exit code, which is stage A-6
+      territory. Neither entry may claim D-20 is reopened: D-20 discarded a PERIODIC SCHEDULER inside
+      the cell process, not an operator-invoked one-shot.
+    files:
+      - docs/bitacora-de-descartes.md
+
+risks:
+  - >-
+    SPEC PREMISE VERIFIED, no mismatch: grep confirms respaldar_celula, respaldar_celula_con_ronda
+    and ordenar_respaldo_sqlstore have no caller outside crates/hexcell/src/respaldo.rs and the
+    integration tests (tests/respaldo_y_restauracion.rs:149,288 and tests/respaldo_sqlstore_ipc.rs:107,160);
+    main.rs never references the respaldo module. Third built-but-not-wired finding (LES-037), and
+    the wiring is the whole task.
+  - >-
+    NOT A REOPENED DISCARD, and this needs to survive review: bitácora D-20 discarded a PERIODIC
+    BACKUP SCHEDULER inside the cell process, with the reopening condition "no reabrir antes de que
+    la etapa A-6 decida el mecanismo real de planificación". This task adds no scheduler and no
+    timer. Positively, docs/contrato-ipc-respaldo-del-sqlstore.md:55-58 states that WHO triggers the
+    order - the nucleo itself, a future A-6 orchestrator, or a human operator following the runbook -
+    "es una decisión de la etapa A-3", and :108-109 repeats it. HEX-029 IS that deferred A-3
+    decision, answering it as "a human operator, through a CLI mode".
+  - >-
+    ADR BOUNDARY FLAGGED FOR THE HUMAN, deliberately not resolved here: adr-0020:61-66 ("Ninguna
+    operación de respaldo tiene disparador de producción en esta tarea") and its consequence at
+    :97-99 become partially stale. That text was scoped "en esta tarea" (HEX-008), a scope boundary
+    rather than a standing rule, so it is not being derogated and this blueprint does NOT rewrite it -
+    the project rule is that a derogated decision is superseded by a NEW ADR, never by editing the
+    old one. Whether the A-3 answer deserves adr-0022 is a human call; consuming an ADR number
+    inside a wiring task would be the wrong default, since docs/adr/README.md numbering is a source
+    of truth. Recorded in STATUS.md instead.
+  - >-
+    DESIGN RISK ACCEPTED (residual partial-failure window): if the sqlstore step succeeds and a
+    LOCAL copy then fails (disk full, permissions changing mid-run), the destination holds one to
+    three files and nothing machine-readable distinguishes it from a complete backup - only the
+    non-zero exit and the stderr message do. Sqlstore-first ordering makes the LIKELY failure
+    produce zero files and the all-four pre-check removes the occupied-destination case, but the
+    window remains. A completion manifest written only after all four copies succeed was considered
+    and deliberately NOT added: it would invent an artifact format that the runbook's restore
+    procedure and the pending e2e rehearsal (task 18) would then have to honor, which exceeds "wire
+    it, do not redesign it". Natural follow-up if the rehearsal finds the ambiguity painful.
+  - >-
+    OPERATIONAL RISK ACCEPTED (no running-nucleo detection): invoking `hexcell respaldar` while the
+    cell is live is not blocked, because any probe for a live nucleo would be fragile. It steals the
+    IPC connection; the nucleo goes to EstadoSesion::Reconectando and reconnects after ~500 ms.
+    Inbound events are NOT lost - the sidecar's outbox redelivers unconfirmed entries on every new
+    connection (drenarPendientes in manejo.go, at-least-once per protocol section 4) - but
+    `estado_sesion` messages emitted during that window ARE dropped by design (servidor.go:216-217
+    documents that estado_sesion does not persist in the outbox), and a `send` in flight at that
+    instant fails. The backup itself then fails closed with an empty destination. Acceptable in the
+    lab, where the operator controls both processes; a hard guard belongs to the A-6 packaging
+    surface.
+  - >-
+    PRE-EXISTING GAP FOUND, out of scope, reported for the queue: `hexcell emparejar` (HEX-024) has
+    exactly the same connection-displacement problem and NOBODY documented a discipline for it.
+    docs/runbook-canal-fase-a.md:34 tells the operator to run it with no word about the nucleo, and
+    emparejar.rs prints no warning. This task does not fix that (it would mean touching reviewed
+    HEX-024 code and a second runbook), but the same one-line discipline note belongs there. Fourth
+    latent lab finding.
+  - >-
+    CONFIRMED NO GO GAP, so AC-4's "record it, do not silently fix it" case does not arise: the
+    sidecar side is complete and wired - sidecar/main.go:67 opens the dedicated read-only backup
+    connection via canal.AbrirConexionDeRespaldo, :106 injects it as servidor.Dependencias.DBRespaldo,
+    manejo.go:171-176 dispatches TipoOrdenRespaldoSqlstore to canal.ManejarOrdenRespaldoSqlstore,
+    and respaldo.go already implements LES-031 on its own side (verificarDestinoDisponible refuses an
+    existing sqlstore.db, and `fallar` deletes an unverified copy). No Go file is touched and no
+    `go test -race` command is added.
+  - >-
+    ABSOLUTE-PATH REQUIREMENT is a real constraint, not a stylistic one: `destino` travels over IPC
+    and is resolved by the SIDECAR process (respaldo.go verificarDestinoDisponible calls os.Stat on
+    it), while the three local copies are resolved by the backup process. A relative path resolves
+    against two different working directories today, and against two different filesystem namespaces
+    once stage A-6 puts the two processes in separate containers. Rejecting relative paths up front
+    is the honest fix.
+  - >-
+    KNOWN DUPLICATION accepted on precedent: the FakeSidecar helper will exist in a third copy
+    (tests/respaldo_sqlstore_ipc.rs, tests/emparejamiento_ipc.rs, and the new tests/respaldo_cli.rs).
+    Consolidating it into tests/comun/mod.rs would mean editing two already-reviewed test files,
+    which this task's scope forbids. Flagged as test-harness debt for a future cleanup task.
+  - >-
+    ADVISORY LAYER UNAVAILABLE: the HSME read hook failed (hsme-cli: "failed to open database ... no
+    such file or directory"), so this blueprint was written with no semantic-memory context. Per ADR
+    0008 that layer is advisory only and Git plus the lifecycle artifacts remain the authority, so
+    nothing here depends on it. Phase 1b's blind external summarization was likewise skipped in
+    favour of targeted direct reads of the files whose exact signatures and runtime behavior this
+    design turns on.

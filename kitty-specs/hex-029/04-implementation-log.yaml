@@ -1,0 +1,3 @@
+entries: []
+summary: Add a `hexcell respaldar --directorio <ruta>` operator mode that drives the existing four-store backup under a pause-first discipline, plus its tests, docs and lab script.
+task_id: HEX-029

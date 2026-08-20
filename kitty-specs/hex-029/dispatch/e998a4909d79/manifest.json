@@ -1,0 +1,100 @@
+{
+  "task_id": "HEX-029",
+  "bundle_hash": "e998a4909d796655b8c6db2010b70cb0c1574dd65f40ef34363a78d99cdb59ff",
+  "files": [
+    ".ai/tasks/active/HEX-029-new-spec/00-spec.yaml",
+    ".ai/tasks/active/HEX-029-new-spec/01-blueprint.yaml",
+    "crates/hexcell-canal-whatsmeow/src/adaptador.rs",
+    "crates/hexcell-storage/src/pools.rs",
+    "crates/hexcell-storage/src/respaldo.rs",
+    "crates/hexcell/src/configuracion.rs",
+    "crates/hexcell/src/emparejar.rs",
+    "crates/hexcell/src/lib.rs",
+    "crates/hexcell/src/main.rs",
+    "crates/hexcell/src/respaldo.rs"
+  ],
+  "protocol_version": "fleet-bundle-protocol/v2",
+  "created_at": "2026-08-19T16:14:58Z",
+  "dropped": [
+    {
+      "component": "code_slice",
+      "path": "sidecar/internal/servidor/manejo.go",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "sidecar/internal/canal/respaldo.go",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "scripts/laboratorio/entorno.ejemplo.sh",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "kitty-specs/hex-024/02-contract.yaml",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "kitty-specs/hex-024/01-blueprint.yaml",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "docs/runbook-restauracion-de-celula.md",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "docs/protocolo-ipc-nucleo-sidecar.md",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "docs/plan/fase-a-3-adaptador-whatsmeow.md",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "docs/contrato-ipc-respaldo-del-sqlstore.md",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "docs/bitacora-de-descartes.md",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "docs/adr/adr-0020-respaldo-y-restauracion-por-celula.md",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "docs/STATUS.md",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "crates/hexcell/tests/respaldo_sqlstore_ipc.rs",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "crates/hexcell/tests/emparejamiento_ipc.rs",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "crates/hexcell/tests/configuracion.rs",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "crates/hexcell/tests/comun/mod.rs",
+      "reason": "bundle exceeded max_bytes budget"
+    }
+  ]
+}

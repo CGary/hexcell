@@ -1,0 +1,33 @@
+task_id: HEX-029
+summary: 'Operator surface for the four-store backup: respaldar_celula has no caller (3rd built-but-not-wired finding); wire it so the e2e restore rehearsal can run.'
+goal: 'Give the operator an invocable surface for the cell backup, unblocking the e2e restore rehearsal (plan task 18 of A-3, the last deferred rehearsal): crates/hexcell/src/respaldo.rs implements and tests the full four-store backup (sessions.db, knowledge_live.db, adapter identity store, and the sidecar sqlstore ordered over IPC with round-id correlation, HEX-021) but grep shows respaldar_celula/ordenar_respaldo_sqlstore have NO caller outside respaldo.rs - no CLI mode, no trigger, nothing an operator can run. After this task an operator can produce a complete, verified four-store backup of the lab cell into a destination directory with one documented invocation. KEY DESIGN CONSTRAINT the blueprint must close explicitly: the IPC socket accepts a SINGLE active connection (most-recent-wins), so a separate backup process would steal the running nucleo''s connection - the blueprint decides the surface shape (e.g. a hexcell respaldar mode meant to run with the cell paused, mirroring the emparejar-mode precedent; or a trigger inside the running nucleo) and documents the operational discipline honestly. Follow the HEX-024 emparejar-mode precedent for CLI conventions (std::env::args, Spanish output, exit codes).'
+risk: medium
+acceptance:
+    - id: AC-1
+      statement: 'An operator-invocable surface exists (exact shape fixed by the blueprint, e.g. hexcell respaldar --directorio <dest>, following the emparejar-mode precedent: std::env::args parsing only, Spanish stdout/stderr, exit 0 only on complete success) that produces the FOUR backup files in the destination via the existing respaldar_celula_con_ronda machinery, including the sqlstore copy ordered over IPC with its round-id acuse; a failure in ANY of the four leaves a non-zero exit and a Spanish message naming which store failed (the existing fail-closed semantics of respaldo.rs are surfaced, not reimplemented).'
+    - id: AC-2
+      statement: 'The single-IPC-connection constraint is closed by design, not by accident: the blueprint documents how the surface interacts with a running cell (steal-and-exit with supervisor/adapter reconnection, pause-first discipline, or in-process trigger - whichever it chooses), and the chosen behavior is stated in the CLI help/output and in the runbook or script comments so the operator knows the discipline. Whatever is chosen must not corrupt or silently interrupt an in-flight message exchange.'
+    - id: AC-3
+      statement: 'Tests cover the surface honestly following the emparejar-mode test precedent (SidecarSimulado double where IPC is involved, real-binary integration test if the existing harness pattern reaches it): a successful invocation produces four files and exit 0; a failing store (e.g. sidecar refusing the respaldo order via the double) yields non-zero exit, the Spanish message naming the store, and NO unverified file left under a canonical name in the destination (LES-031 fail-closed discipline). Tests must DISCRIMINATE (LES-036): they fail if the wiring is removed. Rehearsal against the REAL channel stays for the live lab block after this task merges.'
+    - id: AC-4
+      statement: 'docs/STATUS.md: the lab-findings Pendiente area gains/updates the entry recording that the backup operator surface now exists (dated 2026-08-19, traced to plan task 18 of A-3), and scripts/laboratorio/ gains (or the runbook documents) the exact invocation the e2e rehearsal will use. The 7 standard verification commands pass; go test -race over touched Go packages IF any Go file is touched (none expected - the sidecar side of respaldo is complete since HEX-021; a genuine Go gap is recorded as a risk, not silently fixed).'
+constraints:
+    - 'The IPC protocol docs/protocolo-ipc-nucleo-sidecar.md (v1.3, wire version 4) is CLOSED: the existing orden_respaldo_sqlstore/acuse round-id semantics are used as-is.'
+    - 'No new third-party dependencies; no CLI argument library (std::env::args only, deferred A-1 decision).'
+    - 'adr-0010: no phone number/JID in config, messages or logs; backup file NAMES and log lines never carry transport identifiers.'
+    - 'The respaldo.rs machinery (fail-closed semantics, GanchoDePruebaTrasVacuum seam, round-id threading) is already reviewed and tested: this task WIRES it, it does not redesign it. Same for the sidecar side.'
+    - 'Everything user-visible in Spanish; artifact YAML prose in English; dates absolute (2026-08-19).'
+    - 'Never introduce mass-sending-provider vocabulary; never write that Fase B replaces or retires the sidecar channel.'
+    - 'Consult docs/bitacora-de-descartes.md before proposing anything resembling a previously discarded idea.'
+    - 'No .db files versioned; no changes to the pinned whatsmeow commit.'
+invariants:
+    - 'Fail closed end to end: an incomplete backup run never leaves an unverified file under a canonical name (LES-031), and the exit code never claims success for a partial backup.'
+    - 'The normal cell mode and the emparejar mode are byte-for-byte unaffected when the new surface is not invoked.'
+    - 'The closed set of 11 IPC message types and wire version 4 stay intact.'
+    - 'All user-visible content in Spanish with absolute dates.'
+non_goals:
+    - 'The e2e restore rehearsal itself (runs live with the human after this merges).'
+    - 'Backup scheduling/frequency (declared pending business decision), remote backup destination, retention policy.'
+    - 'The remote no-server-terminal operator surface and Docker packaging (A-6).'
+    - 'Any redesign of respaldo.rs or the sidecar respaldo path.'
+    - 'The other lab-findings queue items (outbox path, health, device name, estado_sesion resend, Restablecer surface).'
