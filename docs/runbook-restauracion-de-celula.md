@@ -167,3 +167,27 @@ El conjunto de respaldo actual **no incluye `identidad.db`** (el almacén de ide
 **Acción requerida:** tarea de fix con prioridad para añadir `identidad.db` al conjunto de respaldo (copia `VACUUM INTO` desde la conexión de lectura del sidecar, análoga a las otras tres bases) y actualizar el runbook y `adr-0020` en consecuencia.
 
 **Rama 2 (`device_removed`: restaurar SIN `sqlstore` + re-emparejar por `PairPhone()`):** **pendiente**, programada para el próximo bloque de laboratorio.
+
+---
+
+## Resultado del ensayo rama 2 (2026-08-20) — VALID
+
+**Lo validado (rama 2 del runbook — restauración SIN `sqlstore`, con `device_removed`):**
+
+1. **Desencadenante y clasificación terminal:** desvinculación forzada desde el teléfono del piloto, clasificada en vivo por el sidecar como `estado=desvinculada causa=desvinculada_dispositivo_removido codigo=401`. Whatsmeow eliminó la sesión local inmediatamente y **el supervisor no ejecutó ningún reintento de conexión** (0 retries), conforme al invariante de HEX-027: ante `device_removed` no hay bucle de reconexión.
+
+2. **Respaldo utilizado:** `hexcell respaldar --directorio <destino>` (ejecutado con núcleo detenido y sidecar en ejecución) produjo las copias verificadas de las **tres bases no credenciales**: `sessions.db`, `knowledge_live.db` y `adapter_identity.db` (vía `VACUUM INTO` sobre conexiones de lectura del núcleo). **NO se copió `sqlstore.db`** —consistente con la Rama A del runbook (sección 2), porque el dispositivo ya no existe en el servidor de WhatsApp.
+
+3. **Restauración en entorno limpio:** se copiaron los tres archivos a sus nombres canónicos en un directorio nuevo (sin `-wal`/`-shm` previos). Arranque de `hexcell` con `HEXCELL_RUTA_DATOS` apuntando al directorio restaurado. Migraciones aplicadas, `journal_mode=WAL` restablecido.
+
+4. **Sidecar rechaza auto-conexión:** al arrancar, el sidecar detectó `sesion.EstaEmparejada() == false` (almacén de credenciales vacío) y **no intentó conectar** —el supervisor invocó `Arrancar(ctx, emparejada=false)` que es no-op, respetando el invariante de que el emparejamiento es la única vía de conexión inicial (HEX-027). Cero reintentos de conexión registrados.
+
+5. **Recuperación por re-emparejamiento QR (segunda capa):** se ejecutó `hexcell emparejar --metodo qr`, se escaneó el código con el teléfono del piloto, el sidecar persistió las nuevas credenciales en `sqlstore.db` (nuevo dispositivo) y reportó `estado_sesion=activa` por IPC.
+
+6. **Célula reconstruida reconectó y respondió:** se envió un mensaje de prueba desde el número del piloto; la célula lo consumió, lo procesó con el proveedor simulado y emitió la respuesta por el canal propio. El criterio de aceptación del runbook (sección 3) se cumple: la célula restaurada consume y responde.
+
+**Nota honesta — esta rama regenera credenciales deliberadamente:**
+
+A diferencia de la rama 1, la rama 2 **no restaura** el `sqlstore` sino que **genera uno nuevo** mediante re-emparejamiento. Esto es **por diseño**, no una limitación: la regla de restauración (tarea 7 del plan + `adr-0020` + sección 2 de este runbook) establece que ante `device_removed` el `sqlstore` anterior es inútil porque el dispositivo ya no existe del otro lado. El re-emparejamiento por `PairPhone()` / QR es el camino correcto y probado.
+
+**Hallazgo 12 reconfirmado:** al no incluirse `identidad.db` en el conjunto de respaldo, la célula restaurada trató al contacto de prueba como nuevo y re-envió presentación + respuesta. Esto refuerza la etiqueta **PRIORIDAD** del hallazgo 12 sin añadir un nuevo número de hallazgo y sin atenuar la consecuencia de revivir lista STOP ya documentada.
