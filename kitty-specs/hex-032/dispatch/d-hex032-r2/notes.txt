@@ -1,0 +1,28 @@
+This is a substantial implementation task. Let me start by reading all the source files I need to understand before making any changes. I'll launch parallel research subagents for efficiency.
+Let me also read the remaining context from the dispatch prompt while waiting for the subagents.
+Now I have all the context I need from both the dispatch prompt and the subagent results. Let me read the final lines of the dispatch prompt, then the remaining key files I still need.
+Good — dispatch prompt fully read. Now I need to read the adaptador.rs file to see the existing adapter pattern, and the remaining doc files I haven't seen yet. Let me read the key remaining files.
+Now I need to read the remaining docs files. Let me also read the key docs I need to create/modify.
+Now let me read the remaining key docs: bitacora-de-descartes.md, STATUS.md, and the runbook.
+Now let me read the remaining key files I need: the runbook and STATUS.md.
+Now let me read STATUS.md to find the finding-12 entry and the main.go/servidor.go files that need wiring changes.
+Now I have the full picture. Let me also check the `sidecar/main.go` and `sidecar/internal/servidor/servidor.go` quickly, since I need to understand the wiring for the identidad DB connection.
+Now I have a comprehensive understanding of the entire codebase. This is a complex task with 9 implementation steps. Given the scope (30 files max, 1500 diff lines), I'll now define a worker subagent and launch parallel implementation subagents to tackle this efficiently.
+
+Let me create a plan and then implement systematically. The task is large enough that I should use subagents for parallel work.
+Now let me launch subagents for the parallel work. The key dependency chain is:
+1. Steps 2+5 (IPC types, both sides) - MUST be done first (version bump)
+2. Steps 3+4 (Go handler + wiring) - depends on Step 2
+3. Steps 6+7 (Rust transport/adapter/orchestration) - depends on Step 5
+4. Step 8 (docs) - can run in parallel
+5. Step 1 (ADR) - can run in parallel
+6. Step 9 (tests) - depends on everything else
+
+I'll parallelize by grouping:
+- **Group A**: Go-side implementation (steps 2, 3, 4)
+- **Group B**: Rust-side implementation (steps 5, 6, 7)
+- **Group C**: Docs (steps 1, 8)
+- **Group D**: Tests (step 9) — after A+B complete
+
+Let me launch Groups A, B, and C in parallel.
+Error: timeout waiting for response

@@ -1,0 +1,3 @@
+entries: []
+summary: Back up the sidecar identidad.db (STOP list) as the fifth cell store via a new IPC message pair (wire 4->5, adr-0022); the sidecar produces its own VACUUM INTO copy.
+task_id: HEX-032

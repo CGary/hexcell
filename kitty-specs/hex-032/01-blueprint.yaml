@@ -1,0 +1,243 @@
+task_id: HEX-032
+summary: >-
+  Add sidecar identidad.db (STOP list) as the fifth cell backup store via a NEW IPC
+  message pair orden/acuse_respaldo_identidad; wire bump 4->5, new adr-0022; the sidecar
+  produces the VACUUM INTO copy.
+affected_files:
+  - sidecar/internal/ipc/mensajes.go
+  - sidecar/internal/canal/respaldo.go
+  - sidecar/internal/servidor/manejo.go
+  - sidecar/internal/servidor/servidor.go
+  - sidecar/main.go
+  - crates/hexcell-canal-whatsmeow/src/mensajes.rs
+  - crates/hexcell-canal-whatsmeow/src/conexion.rs
+  - crates/hexcell-canal-whatsmeow/src/adaptador.rs
+  - crates/hexcell/src/respaldo.rs
+  - crates/hexcell/src/respaldar.rs
+  - docs/protocolo-ipc-nucleo-sidecar.md
+  - docs/contrato-ipc-respaldo-del-sqlstore.md
+  - docs/adr/adr-0022-respaldo-identidad-sidecar-por-ipc.md
+  - docs/adr/README.md
+  - docs/runbook-restauracion-de-celula.md
+  - docs/STATUS.md
+  - docs/bitacora-de-descartes.md
+symbols:
+  - ipc.TipoOrdenRespaldoIdentidad
+  - ipc.TipoAcuseRespaldoIdentidad
+  - ipc.OrdenRespaldoIdentidad
+  - ipc.AcuseRespaldoIdentidad
+  - ipc.OrdenRespaldarIdentidad
+  - ipc.VersionProtocolo (4->5)
+  - canal.ManejarOrdenRespaldoIdentidad
+  - canal.NombreCanonicoDeCopiaIdentidad
+  - servidor.Dependencias.DBRespaldoIdentidad
+  - mensajes::OrdenRespaldoIdentidad
+  - mensajes::AcuseRespaldoIdentidad
+  - mensajes::MensajeEntrante::AcuseRespaldoIdentidad
+  - mensajes::VERSION_PROTOCOLO (4->5)
+  - conexion::enviar_orden_respaldo_identidad
+  - AdaptadorWhatsmeow::ordenar_respaldo_identidad
+  - respaldo::ordenar_respaldo_identidad
+  - respaldo::ResultadoRespaldoIdentidad
+  - respaldar::NOMBRE_CANONICO_IDENTIDAD
+dependencies:
+  - sidecar/internal/ipc/mensajes_test.go
+  - sidecar/internal/ipc/documento_test.go
+  - sidecar/internal/canal/respaldo_test.go
+  - crates/hexcell-canal-whatsmeow/tests/comun/mod.rs
+  - crates/hexcell-canal-whatsmeow/tests/protocolo.rs
+  - crates/hexcell-canal-whatsmeow/tests/salida.rs
+  - crates/hexcell-canal-whatsmeow/tests/respaldo_sqlstore.rs
+  - crates/hexcell/tests/respaldo_cli.rs
+  - crates/hexcell/tests/respaldo_sqlstore_ipc.rs
+  - sidecar/internal/configuracion/configuracion.go
+  - docs/adr/adr-0020-respaldo-y-restauracion-por-celula.md
+test_scenarios:
+  - statement: >-
+      Sidecar identidad backup handler produces a verified copy (VACUUM INTO on a
+      dedicated read-only connection) under the canonical name identidad.db, with
+      integrity_check ok and user_version matching the source.
+    covers: [AC-1]
+  - statement: >-
+      On any failure after VACUUM INTO (integrity mismatch via the post-vacuum test
+      hook, user_version mismatch, destination occupied), the identidad handler leaves
+      NO file under the canonical name identidad.db and returns a fallido acuse naming
+      the store (fail-closed, LES-031).
+    covers: [AC-1, AC-5]
+  - statement: >-
+      The respaldar CLI reports FIVE verified copies on success (sqlstore, identidad,
+      sessions, knowledge_live, adapter_identity) with the shared round id, and the two
+      IPC-ordered stores are produced before the three local ones.
+    covers: [AC-2]
+  - statement: >-
+      The respaldar CLI test FAILS if identidad.db is dropped from the set (count != 5)
+      and, on a per-store failure, the error names the failed store (LES-036 discrimination).
+    covers: [AC-2, AC-5]
+  - statement: >-
+      Round-trip encode/decode of orden_respaldo_identidad and acuse_respaldo_identidad
+      at wire version 5 on BOTH sides; a mistyped or missing field is rejected, and a
+      version-4 line is rejected as incompatible (LES-033).
+    covers: [AC-3, AC-5]
+  - statement: >-
+      The closed-set/document coherence tests (Go documento_test, TiposDeclarados) count
+      13 message types at wire 5 and the Rust adapter correlates the identidad acuse by
+      round id through a dedicated pending map (no collision with the sqlstore acuse).
+    covers: [AC-3]
+  - statement: >-
+      A full restore (runbook branch 1 / Rama B) lists identidad.db among the stores to
+      restore so the STOP list survives; the device_removed branch (Rama A) note is
+      corrected because identidad.db is non-credential and must be restored there too.
+    covers: [AC-4]
+  - statement: >-
+      Standard 7 verify commands pass plus go test -race over the touched sidecar
+      packages; no phone/JID in names or logs (adr-0010); all user-visible text Spanish.
+    covers: [AC-6]
+strategy:
+  - step: 1
+    action: >-
+      DECISION (Value Object / protocol boundary): add a NEW dedicated IPC message pair
+      orden_respaldo_identidad / acuse_respaldo_identidad, mirroring the sqlstore pair
+      1:1, rather than generalizing the existing order with a store discriminator
+      (option a) or copying identidad.db from a second process (option c). Evidence: (c)
+      is unsafe and on record - contrato-ipc-respaldo-del-sqlstore.md argues an external
+      process can capture a torn page of a live WAL file, and D-22 already discarded
+      no-pause concurrent backup; the invariant requires the sidecar to produce its own
+      copy. (a) is rejected because the Rust adapter correlates acuses by round id in a
+      HashMap<String, oneshot::Sender<AcuseRespaldoSqlstore>> keyed only by round -
+      two same-round acuses of the SAME type would collide, and mutating the closed
+      order/acuse would force a rewrite of the versioned contrato-ipc and section 7,
+      which the constraints forbid. A distinct acuse TYPE per store is unambiguous and
+      keeps existing messages byte-identical. CONSEQUENCE, stated explicitly: this adds
+      two message types (12th/13th) to a CLOSED protocol, so the wire version bumps
+      4->5 on BOTH sides in lockstep and a new adr-0022 records the evolution and
+      EXTENDS (never rewrites) contrato-ipc-respaldo-del-sqlstore.md and adr-0020.
+    files:
+      - docs/adr/adr-0022-respaldo-identidad-sidecar-por-ipc.md
+  - step: 2
+    action: >-
+      Go IPC types (mensajes.go): bump VersionProtocolo 4->5; add TipoOrdenRespaldoIdentidad
+      and TipoAcuseRespaldoIdentidad, the OrdenRespaldarIdentidad = "respaldar_identidad"
+      const, the OrdenRespaldoIdentidad and AcuseRespaldoIdentidad structs with valores()
+      mirroring the sqlstore ones, their descriptores entries, and both in TiposDeclarados.
+      Refresh the stale "nueve tipos" package comment to the real count. Reuse the
+      ResultadoCompletado/ResultadoFallido vocabulary.
+    files:
+      - sidecar/internal/ipc/mensajes.go
+  - step: 3
+    action: >-
+      Go backup handler (Application Service, respaldo.go): add NombreCanonicoDeCopiaIdentidad
+      = "identidad.db" and ManejarOrdenRespaldoIdentidad, reusing the verified-copy machinery
+      (open a dedicated mode=ro connection, capture user_version, VACUUM INTO, integrity_check,
+      user_version match, size, fail-closed removal of any unverified canonical file). Prefer
+      extracting a shared private helper parameterized by canonical name so both handlers share
+      one machine and neither drifts; keep the GanchoDePruebaTrasVacuum seam usable by tests.
+    files:
+      - sidecar/internal/canal/respaldo.go
+  - step: 4
+    action: >-
+      Go wiring: add DBRespaldoIdentidad *sql.DB to servidor.Dependencias; dispatch the new
+      case ipc.TipoOrdenRespaldoIdentidad in leerEntrante; in main.go open a second read-only
+      connection with canal.AbrirConexionDeRespaldo(cfg.RutaIdentidad) (config already exposes
+      RutaIdentidad/HEXCELL_RUTA_IDENTIDAD - NO config change), defer canal.CerrarDB, and pass
+      it into Dependencias.
+    files:
+      - sidecar/internal/servidor/servidor.go
+      - sidecar/internal/servidor/manejo.go
+      - sidecar/main.go
+  - step: 5
+    action: >-
+      Rust IPC types (mensajes.rs): bump VERSION_PROTOCOLO 4->5; add OrdenRespaldoIdentidad and
+      AcuseRespaldoIdentidad structs with deny_unknown_fields mirroring the sqlstore ones; add
+      MensajeEntrante::AcuseRespaldoIdentidad and its arm in analizar_mensaje_entrante; keep
+      orden_respaldo_identidad in the outbound (not-incoming) list.
+    files:
+      - crates/hexcell-canal-whatsmeow/src/mensajes.rs
+  - step: 6
+    action: >-
+      Rust transport + adapter: add conexion::enviar_orden_respaldo_identidad mirroring the
+      sqlstore sender; in adaptador.rs add a dedicated respaldo_identidad_pendiente pending map
+      (keyed by round id, oneshot Sender<AcuseRespaldoIdentidad>), thread it through nuevo/
+      arrancar/bucle_de_conexion like respaldo_pendiente, add ordenar_respaldo_identidad, and
+      resolve the incoming AcuseRespaldoIdentidad against that map.
+    files:
+      - crates/hexcell-canal-whatsmeow/src/conexion.rs
+      - crates/hexcell-canal-whatsmeow/src/adaptador.rs
+  - step: 7
+    action: >-
+      Rust orchestration: in respaldo.rs add ResultadoRespaldoIdentidad and
+      ordenar_respaldo_identidad wrapping the adapter call and emitting round-correlated logs;
+      update the "cuatro bases" docstrings to five. In respaldar.rs add NOMBRE_CANONICO_IDENTIDAD
+      = "identidad.db", pre-check FIVE destinations, order the identidad backup over IPC as the
+      SECOND IPC store (both IPC stores before the three local ones - PAT-038 fail-empty), extend
+      the copias vec, and update "cuatro"->"cinco" prose. The success line already prints
+      copias.len() and the round id, so it reports five automatically.
+    files:
+      - crates/hexcell/src/respaldo.rs
+      - crates/hexcell/src/respaldar.rs
+  - step: 8
+    action: >-
+      Docs: rewrite section 7 of protocolo-ipc to add the two new message tables and move the
+      doc/wire header to v1.4/wire 5 (correct the stale "3"/"nueve" lines); EXTEND
+      contrato-ipc-respaldo-del-sqlstore.md with an identidad section (do not rewrite the
+      sqlstore fields); add adr-0022 and its README.md row; update the restauracion runbook so
+      branch 1 (Rama B, full restore) lists identidad.db and the device_removed branch (Rama A)
+      note is corrected (identidad.db is non-credential, restored in both branches); record the
+      new discard of option (a) as bitacora D-24; move the finding-12 STATUS Pendiente to
+      resolved/Definido dated 2026-08-20 in place (verbatim record preserved).
+    files:
+      - docs/protocolo-ipc-nucleo-sidecar.md
+      - docs/contrato-ipc-respaldo-del-sqlstore.md
+      - docs/adr/adr-0022-respaldo-identidad-sidecar-por-ipc.md
+      - docs/adr/README.md
+      - docs/runbook-restauracion-de-celula.md
+      - docs/bitacora-de-descartes.md
+      - docs/STATUS.md
+  - step: 9
+    action: >-
+      Tests both sides: Go round-trip + document-coherence for the two new types at wire 5
+      (mensajes_test.go, documento_test.go), Go handler test for the verified identidad copy
+      and fail-closed no-canonical-file (respaldo_test.go); Rust round-trip and adapter
+      correlation for identidad (comun/mod.rs and protocolo.rs/salida.rs fixture sweep 4->5,
+      respaldo_sqlstore.rs sibling coverage), and the respaldar five-copies-on-success /
+      names-failed-store discrimination test (respaldo_cli.rs). Tests must FAIL if identidad.db
+      is dropped or a protocol field is mistyped (LES-033/LES-036); deferred live-channel checks
+      stay documented as sentinels, not faked.
+    files:
+      - sidecar/internal/ipc/mensajes_test.go
+      - sidecar/internal/ipc/documento_test.go
+      - sidecar/internal/canal/respaldo_test.go
+      - crates/hexcell-canal-whatsmeow/tests/comun/mod.rs
+      - crates/hexcell-canal-whatsmeow/tests/respaldo_sqlstore.rs
+      - crates/hexcell/tests/respaldo_cli.rs
+risks:
+  - >-
+    RISK (protocol): this bumps a CLOSED wire protocol 4->5. Both languages MUST move in
+    lockstep - an intermediate state with the sidecar at v5 and the core at v4 (or vice
+    versa) fails the version-gated saludo handshake and cannot communicate. The change is
+    therefore ATOMIC and cannot be decomposed into independently-mergeable children; /q-decompose
+    would only produce broken intermediates. Recommend explicit human sign-off on the wire bump
+    and adr-0022 before /q-implement.
+  - >-
+    RISK (blast radius): the wire literal "4" is hard-coded in test fixtures - Rust
+    tests/comun/mod.rs (6), protocolo.rs (3), salida.rs (1); Go mensajes_test.go (~13). All
+    must move to 5 or those suites fail on version mismatch. Sized into limits; do not treat
+    the sweep as out-of-scope.
+  - >-
+    RISK (naming collision guard): the Rust adapter identity store already backs up as
+    adapter_identity.db (adr-0010); the sidecar Go store is a DISTINCT file, identidad.db. Keep
+    the five canonical names distinct (sessions.db, knowledge_live.db, adapter_identity.db,
+    sqlstore.db, identidad.db); do not conflate the two identity stores.
+  - >-
+    RISK (fail-empty ordering): AC-2 requires ALL IPC-ordered stores before local ones. Ordering
+    identidad AFTER the local copies would leave a partial directory that looks complete on a
+    pause-first violation. Both IPC orders must precede the three local copies, after the
+    five-destination pre-check.
+  - >-
+    RISK (docs authority): adr-0020 and adr-0010 say "cuatro bases" and must NOT be rewritten;
+    adr-0022 supersedes/extends them by recording the fifth store and the wire evolution. Numbering
+    is correlative (current max adr-0021 -> new adr-0022). No prior failed task overlaps these
+    files (failure-lookup: null).
+  - >-
+    NOTE (discard hygiene): rejecting option (a) generalization is a NEW discard and must be
+    recorded as bitacora D-24 in the same commit (project rule); it does not reopen D-15/D-19/
+    D-20/D-22/D-23, whose principles this change upholds.

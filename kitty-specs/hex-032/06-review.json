@@ -1,0 +1,31 @@
+{
+  "task_id": "HEX-032",
+  "summary": "Atomic wire 4->5 identidad.db backup: both versions=5, separate acuse maps, fail-closed+fail-empty ordering, discriminating tests; contract clean, validation 8/8 green.",
+  "verdict": "approve",
+  "contract_compliance": true,
+  "forbidden_files_touched": [],
+  "unrequested_refactor": false,
+  "missing_tests": [],
+  "functional_risk": "low",
+  "notes": [
+    "contract-check ok=true; violations none; not_checked: forbid.behaviors (all forbid behaviors verified by hand below).",
+    "acceptance-coverage pass; AC-1..AC-6 all covered, no gaps.",
+    "05-validation overall_result=passed; 8/8 commands exit 0 incl go -race over ipc/canal/servidor/identidad; contract-check ok after per-class right-sizing for the wire-bump blast radius.",
+    "All 33 changed files are in the touch list; no forbidden file touched (adr-0010/0011/0020, sidecar/internal/identidad/*.go, go.mod, go.sum, Cargo.lock all untouched); global (33<=34, 1425<=1500) and every per-class cap satisfied.",
+    "LENS1 wire lockstep OK: Rust VERSION_PROTOCOLO=5 and Go VersionProtocolo=5; both saludo checks strict-inequality; Go TestDecodificarRechazaLaVersionAnteriorCuatro (v4 line -> ErrVersionIncompatible) and Rust desajuste tests (feed v3, assert propia=5) present. All production/doc/fixture literals swept 4->5; remaining 4s are the intentional v4-rejection test plus version-agnostic Go structural-parse cases (leerObjetoPlano fails before the version gate). No stray v4 that breaks the handshake.",
+    "LENS2 correlation safe: two distinct, distinctly-typed pending maps (respaldo_pendiente vs respaldo_identidad_pendiente); dispatch is by message TYPE (MensajeEntrante enum variant from tipo field), round id is only the within-map key; oneshot element types differ at compile time. Same-round no-collision test returns the two acuses in reverse order and asserts each waiter resolves to its own copy. sqlstore structs are byte-unchanged (only new structs added).",
+    "LENS3 fail-closed OK: fallarIdentidad os.Remove's the unverified canonical file on every post-VACUUM failure (integrity/user_version/stat/open); pre-VACUUM failures pass empty path. TestManejarOrdenRespaldoIdentidadFallaCerrado tampers user_version via the post-vacuum hook and asserts Stat->IsNotExist plus fallido acuse naming the store.",
+    "LENS4 fail-empty ordering OK: respaldar.rs ejecutar pre-checks all FIVE destinations, then produces both IPC stores (sqlstore then identidad) BEFORE the three local copies; either IPC failure returns early (SqlstoreFallido/IdentidadFallido) leaving locals absent, so a violated pause discipline yields an empty, not a 4-of-5-that-looks-complete.",
+    "LENS5 test discrimination OK: five-copies CLI test asserts copias.len()==5, names identidad.db, and asserts IPC order (sqlstore first, identidad second) - fails against a 4-copy impl; CamposDe coherence catches field mistypes on both sides; v4/v5 mismatch tests both languages; explicit TipoAcuseRespaldoIdentidad != TipoAcuseRespaldoSqlstore guard.",
+    "LENS6 normative docs sound: adr-0022 is correlative (prior max adr-0021), states EXTENDS-never-rewrites adr-0020 and contrato-ipc; D-24 appended and git main:docs/bitacora has no D-24; adr README row added; STATUS finding-12 marked RESUELTO 2026-08-20 with the lab-finding record preserved verbatim (1 insertion, 0 deletions); protocolo 1.3->1.4, wire 5, 'Trece tipos' (11+2), both message tables added, version-history table keeps 1.3|4; contrato-ipc section 7 EXTENDS without altering sqlstore fields.",
+    "LENS7 adr-0010 upheld: copy name is the fixed canonical 'identidad.db'; new log events carry only ronda/bytes/motivo; no phone/JID/device id in names or logs; all user-visible text Spanish; absolute dates 2026-08-20. Privacy sweep of added lines clean (only pre-existing TelefonoCelula plumbing, never in names/logs). No mass-sending vocabulary; no Fase-B-replaces-sidecar text.",
+    "LENS8 safety invariant established: identidad.db is now the 5th store, produced by the sidecar via VACUUM INTO on a dedicated RO connection; runbook documents restoring it in BOTH branches (Rama A device_removed and Rama B full restore) and adr-0022 states the STOP/baja list survives a restore. Backup-production link is code-verified; restore is a documented manual procedure and the e2e restore rehearsal is a declared non-goal.",
+    "Type-count reconciliation: implementation is internally consistent at 13 message types (11 original + the new pair); blueprint and the Go documento/coherence tests also say 13. The orchestrator prompt's '12 types' is the only outlier (11+2=13), not a code defect.",
+    "NON-BLOCKING observation: two stale docstrings in crates/hexcell/src/respaldo.rs (~L17 'orquesta las cuatro llamadas', ~L84 'orquesta las cuatro bases') were not updated to five though blueprint step 7 asked to; the module header and first paragraph correctly say 'cinco'. Cosmetic, non-load-bearing.",
+    "NON-BLOCKING observation: comment in crates/hexcell-canal-whatsmeow/tests/protocolo.rs (~L57) still reads 'nucleo espera 4' while the code expects 5; the assertion correctly checks propia=5, so the test is honest. Cosmetic.",
+    "NON-BLOCKING observation: sidecar/internal/canal/respaldo.go duplicates the VACUUM/integrity/user_version body into ManejarOrdenRespaldoIdentidad instead of one canonical-name-parameterized backup helper (blueprint said 'prefer'); only verificarDestinoDisponible and the fail helper are shared. Correct and tested now, but a future drift risk between the two backup machines.",
+    "NON-BLOCKING observation: runbook Section 1's concrete file-copy step stays core-only (3 local files); neither sidecar store (sqlstore.db, identidad.db) has a keystroke-level restore step, consistent with how sqlstore was already treated and with the deferred e2e rehearsal - identidad.db restore is documented narratively in both branches. Worth a human eye at the next lab session.",
+    "OUT-OF-SCOPE note: pre-existing 'cuatro bases' text in untouched files (crates/hexcell-admin/src/main.rs:4, crates/hexcell-storage/src/almacen_de_identidad.rs, identidad migration SQL) correctly left alone (not in this contract); candidate for a future doc-sweep task."
+  ],
+  "fix_tasks": []
+}

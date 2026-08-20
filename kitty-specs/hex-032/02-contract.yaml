@@ -1,0 +1,165 @@
+task_id: HEX-032
+summary: Back up the sidecar identidad.db (STOP list) as the fifth cell store via a new IPC message pair (wire 4->5, adr-0022);
+  the sidecar produces its own VACUUM INTO copy.
+goal: 'Close lab finding 12 (safety/PRIORITY): the cell backup covers four stores but the sidecar Go identity store identidad.db
+  (STOP/baja list, conversation-id mapping, circuit-breaker state) is not backed up, so a restore revives opted-out contacts.
+  Add identidad.db to the backup with the same integrity discipline as the sqlstore - the SIDECAR produces the verified copy
+  (VACUUM INTO on a dedicated read-only connection), never a second process copying the live WAL file - via a NEW dedicated
+  IPC message pair orden_respaldo_identidad / acuse_respaldo_identidad. This adds two message types to the CLOSED protocol,
+  so the wire version bumps 4->5 on both Rust and Go in lockstep and a new adr-0022 records the evolution and extends (never
+  rewrites) docs/contrato-ipc-respaldo-del-sqlstore.md and adr-0020. The respaldar operator mode produces five verified copies
+  with the fail-empty ordering (both IPC stores before the three local ones), the restore runbook lists identidad.db, and
+  the finding-12 STATUS entry moves to resolved dated 2026-08-20 without erasing the lab-finding record.'
+read:
+- .ai/tasks/active/HEX-032-new-spec/00-spec.yaml
+- .ai/tasks/active/HEX-032-new-spec/01-blueprint.yaml
+- docs/protocolo-ipc-nucleo-sidecar.md
+- docs/contrato-ipc-respaldo-del-sqlstore.md
+- docs/adr/adr-0020-respaldo-y-restauracion-por-celula.md
+- docs/adr/adr-0010-puerto-de-canal.md
+- docs/adr/README.md
+- docs/runbook-restauracion-de-celula.md
+- docs/STATUS.md
+- docs/bitacora-de-descartes.md
+- sidecar/internal/canal/respaldo.go
+- sidecar/internal/canal/respaldo_test.go
+- sidecar/internal/ipc/mensajes.go
+- sidecar/internal/ipc/mensajes_test.go
+- sidecar/internal/ipc/documento_test.go
+- sidecar/internal/servidor/manejo.go
+- sidecar/internal/servidor/servidor.go
+- sidecar/internal/identidad/identidad.go
+- sidecar/internal/configuracion/configuracion.go
+- sidecar/main.go
+- crates/hexcell-canal-whatsmeow/src/mensajes.rs
+- crates/hexcell-canal-whatsmeow/src/conexion.rs
+- crates/hexcell-canal-whatsmeow/src/adaptador.rs
+- crates/hexcell-canal-whatsmeow/tests/comun/mod.rs
+- crates/hexcell/src/respaldo.rs
+- crates/hexcell/src/respaldar.rs
+- crates/hexcell/tests/respaldo_cli.rs
+touch:
+- sidecar/internal/ipc/mensajes.go
+- sidecar/internal/canal/respaldo.go
+- sidecar/internal/servidor/manejo.go
+- sidecar/internal/servidor/servidor.go
+- sidecar/main.go
+- crates/hexcell-canal-whatsmeow/src/mensajes.rs
+- crates/hexcell-canal-whatsmeow/src/conexion.rs
+- crates/hexcell-canal-whatsmeow/src/adaptador.rs
+- crates/hexcell/src/respaldo.rs
+- crates/hexcell/src/respaldar.rs
+- docs/protocolo-ipc-nucleo-sidecar.md
+- docs/contrato-ipc-respaldo-del-sqlstore.md
+- docs/adr/adr-0022-respaldo-identidad-sidecar-por-ipc.md
+- docs/adr/README.md
+- docs/runbook-restauracion-de-celula.md
+- docs/STATUS.md
+- docs/bitacora-de-descartes.md
+- sidecar/internal/ipc/mensajes_test.go
+- sidecar/internal/ipc/documento_test.go
+- sidecar/internal/canal/respaldo_test.go
+- sidecar/internal/servidor/servidor_test.go
+- crates/hexcell-canal-whatsmeow/tests/comun/mod.rs
+- crates/hexcell-canal-whatsmeow/tests/protocolo.rs
+- crates/hexcell-canal-whatsmeow/tests/salida.rs
+- crates/hexcell-canal-whatsmeow/tests/respaldo_sqlstore.rs
+- crates/hexcell/tests/respaldo_cli.rs
+- crates/hexcell/tests/respaldo_sqlstore_ipc.rs
+- crates/hexcell/tests/emparejamiento_ipc.rs
+- crates/hexcell-canal-whatsmeow/tests/emparejamiento.rs
+- crates/hexcell-canal-whatsmeow/tests/reconexion.rs
+- crates/hexcell/tests/canal_whatsmeow_seleccionado.rs
+- crates/hexcell-canal-whatsmeow/tests/privacidad.rs
+- crates/hexcell-canal-whatsmeow/tests/contrato_del_puerto.rs
+forbid:
+  files:
+  - .ai/tasks/active/HEX-032-new-spec/00-spec.yaml
+  - docs/adr/adr-0010-puerto-de-canal.md
+  - docs/adr/adr-0011-whatsmeow-sidecar-e-ipc.md
+  - docs/adr/adr-0020-respaldo-y-restauracion-por-celula.md
+  - sidecar/internal/identidad/identidad.go
+  - sidecar/internal/identidad/baja.go
+  - sidecar/internal/identidad/cortacircuitos.go
+  - sidecar/internal/identidad/presentacion.go
+  - go.mod
+  - go.sum
+  - Cargo.lock
+  behaviors:
+  - Do NOT alter the shape of the existing orden_respaldo_sqlstore / acuse_respaldo_sqlstore messages (their exact fields,
+    order, or semantics); the identidad backup is a NEW message pair, and adr-0022 EXTENDS (never rewrites) contrato-ipc-respaldo-del-sqlstore.md
+    and adr-0020.
+  - 'Do NOT let a second or external process copy identidad.db: the SIDECAR must produce the copy via VACUUM INTO on its own
+    dedicated read-only connection (LES-031, D-15, D-19, D-22); the nucleo never opens identidad.db, not even read-only.'
+  - Do NOT leave an unverified file under the canonical name identidad.db on failure; a per-store failure removes any partial
+    copy and returns a non-zero result naming the store (fail-closed, PAT-038).
+  - 'Do NOT break wire-version lockstep: bump BOTH Rust VERSION_PROTOCOLO and Go VersionProtocolo 4->5 together; never leave
+    the two sides on different versions.'
+  - 'Do NOT reorder the fail-empty sequence: ALL IPC-ordered sidecar stores (sqlstore, identidad) are produced BEFORE the
+    three local ones, after a pre-check of all FIVE destinations, so a violated pause-first discipline leaves an EMPTY destination.'
+  - 'Do NOT reopen or contradict D-15, D-19, D-20, D-22 or D-23: no in-cell scheduler, no concurrent no-pause backup, no rusqlite
+    online-backup API, no storing the STOP list in the sqlstore. Record the new discard of option (a) generalization as bitacora
+    D-24.'
+  - Do NOT put any phone number, JID or device id in backup file names or logs (adr-0010, adr-0019).
+  - Do NOT introduce mass-sending vocabulary, nor any text implying Fase B replaces or retires the sidecar.
+  - Do NOT rewrite any existing ADR or reuse an ADR number; the new ADR is adr-0022 (current max is adr-0021).
+  - Do NOT add third-party dependencies or bump the pinned whatsmeow commit.
+  - 'Do NOT weaken tests to pass: a test MUST fail if identidad.db is dropped from the backup set or a protocol field is mistyped
+    (LES-033, LES-036). Deferred live-channel checks stay as documented sentinels, never faked.'
+  - All user-visible text in Spanish; artifact YAML prose in English; absolute dates (2026-08-20).
+verify:
+  commands:
+  - cargo fmt --check
+  - cargo build --workspace
+  - cargo clippy --workspace -- -D warnings
+  - cargo test --workspace
+  - test "$(cargo tree -p hexcell-core | wc -l)" = "1"
+  - cargo test -p hexcell-core --doc 2>&1 | grep -q "compile fail"
+  - cd sidecar && test -z "$(gofmt -l .)" && go build ./... && go vet ./... && go test ./...
+  - cd sidecar && go test -race ./internal/ipc/... ./internal/canal/... ./internal/servidor/... ./internal/identidad/...
+acceptance:
+  human_gate: true
+limits:
+  max_files_changed: 34
+  max_diff_lines: 1500
+  per_class:
+  - glob: sidecar/internal/ipc/mensajes.go
+    max_diff_lines: 120
+  - glob: sidecar/internal/canal/respaldo.go
+    max_diff_lines: 150
+  - glob: sidecar/internal/servidor/manejo.go
+    max_diff_lines: 20
+  - glob: sidecar/internal/servidor/servidor.go
+    max_diff_lines: 25
+  - glob: sidecar/main.go
+    max_diff_lines: 35
+  - glob: crates/hexcell-canal-whatsmeow/src/mensajes.rs
+    max_diff_lines: 90
+  - glob: crates/hexcell-canal-whatsmeow/src/conexion.rs
+    max_diff_lines: 30
+  - glob: crates/hexcell-canal-whatsmeow/src/adaptador.rs
+    max_diff_lines: 100
+  - glob: crates/hexcell/src/respaldo.rs
+    max_diff_lines: 90
+  - glob: crates/hexcell/src/respaldar.rs
+    max_diff_lines: 60
+  - glob: docs/adr/adr-0022-respaldo-identidad-sidecar-por-ipc.md
+    max_diff_lines: 170
+  - glob: docs/protocolo-ipc-nucleo-sidecar.md
+    max_diff_lines: 100
+  - glob: docs/contrato-ipc-respaldo-del-sqlstore.md
+    max_diff_lines: 80
+  - glob: docs/runbook-restauracion-de-celula.md
+    max_diff_lines: 60
+  - glob: docs/STATUS.md
+    max_diff_lines: 35
+  - glob: docs/bitacora-de-descartes.md
+    max_diff_lines: 45
+  - glob: docs/adr/README.md
+    max_diff_lines: 6
+execution:
+  mode: worktree_edit
+  branch: ai/HEX-032
+retry_policy:
+  max_attempts: 2
+  escalate_after: 2
