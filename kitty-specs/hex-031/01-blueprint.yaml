@@ -1,0 +1,81 @@
+task_id: HEX-031
+summary: Docs-only append of branch-2 (device_removed) restore rehearsal evidence to STATUS.md
+  and the runbook, closing plan task 18 of A-3 and re-confirming finding 12 with no new finding
+  number.
+affected_files:
+  - docs/STATUS.md
+  - docs/runbook-restauracion-de-celula.md
+symbols: []
+dependencies:
+  - docs/bitacora-de-descartes.md
+test_scenarios:
+  - statement: 'docs/STATUS.md continues the existing plan-task-18 Definido entry (line ~396,
+      "Ensayo de restauracion extremo a extremo - rama 1 (VALID) y rama 2 (pendiente)") with a
+      dated 2026-08-20 continuation recording branch 2 as VALID: forced unlink classified as a
+      terminal 401 device_removed disconnection with the local session deleted and zero retries;
+      restore of the three non-credential stores without sqlstore; sidecar refusing auto-connect
+      against an empty credential store; recovery via QR re-pairing; the rebuilt cell reconnected
+      and replied to a real message. States explicitly that BOTH branches are now proven and plan
+      task 18 is COMPLETE.'
+    covers: [AC-1]
+  - statement: 'The existing finding-12 Pendiente entry (line ~509, identidad.db missing from the
+      backup set) gains a note that the branch-2 run re-confirmed it (the restored cell
+      re-introduced itself to a known contact), reinforcing the existing PRIORITY tag without a
+      new finding number and without softening the STOP-list-revival consequence already
+      recorded.'
+    covers: [AC-2]
+  - statement: 'docs/runbook-restauracion-de-celula.md gains a branch-2 outcome section
+      (alongside the existing branch-1 section from HEX-030) describing the exact steps used:
+      restore the three non-credential stores, do NOT restore sqlstore, start the sidecar (which
+      refuses to auto-connect against the empty credential store), recover via QR re-pairing; and
+      an honest note that this path deliberately regenerates credentials instead of restoring
+      them, consistent with the runbook rama A / device_removed decision already documented.'
+    covers: [AC-3]
+  - statement: 'Diff touches only docs/STATUS.md and docs/runbook-restauracion-de-celula.md; the
+      7 standard verification commands (cargo fmt/build/clippy/test, hexcell-core dependency-count
+      check, doc compile-fail check, sidecar gofmt/build/vet/test) pass unaffected since no source
+      changed.'
+    covers: [AC-4]
+strategy:
+  - step: 1
+    action: 'Read docs/STATUS.md plan-task-18 Definido entry and finding-12 Pendiente entry, and
+      docs/runbook-restauracion-de-celula.md existing branch-1 section, to match phrasing and
+      continue rather than duplicate.'
+    files:
+      - docs/STATUS.md
+      - docs/runbook-restauracion-de-celula.md
+  - step: 2
+    action: 'Extend the plan-task-18 Definido entry (or append a dated continuation immediately
+      after it, before any following entry) recording branch 2 as VALID with its full evidence
+      chain, and state both branches proven / plan task 18 COMPLETE.'
+    files:
+      - docs/STATUS.md
+  - step: 3
+    action: 'Append a re-confirmation note to the existing finding-12 Pendiente entry citing the
+      branch-2 run, without a new finding number and without softening the STOP-list-revival
+      consequence.'
+    files:
+      - docs/STATUS.md
+  - step: 4
+    action: 'Append a branch-2 outcome section to docs/runbook-restauracion-de-celula.md,
+      following the same structure as the existing branch-1 section: steps used, outcome, and the
+      honest note that this path regenerates credentials rather than restoring them.'
+    files:
+      - docs/runbook-restauracion-de-celula.md
+risks:
+  - 'No existing failed-task record touches docs/STATUS.md or docs/runbook-restauracion-de-celula.md;
+    failure-lookup (quorum analyze failure-lookup) returned no matches.'
+  - 'docs/STATUS.md header "Ultima actualizacion" already reads 2026-08-20 (set by HEX-030); this
+    task does not need to change it, only AC-4 requires it not to regress.'
+  - 'The plan-task-18 Definido entry (line ~396) already exists as a single paragraph covering
+    both branches with branch 2 named pending; this task must edit/continue that exact entry
+    rather than appending a brand-new entry elsewhere in Definido, per the spec constraint on
+    STATUS.md conventions (continuations at section end / in place, not duplicated).'
+  - 'The finding-12 Pendiente entry (line ~509) already carries the PRIORITY tag and the
+    STOP-list-revival consequence in strong language; the spec explicitly forbids softening that
+    consequence, so the re-confirmation note must be additive only.'
+  - 'The runbook already has a branch-1 outcome section (added by HEX-030, ending at line 169) and
+    documents rama A (device_removed, no sqlstore restore, re-pairing) as the reasoned procedure
+    in the pre-existing "## 2. La bifurcacion" section; the new branch-2 outcome section is the
+    live evidence that rama A worked as reasoned, and should cross-reference it rather than
+    re-deriving the two-branch semantics.'

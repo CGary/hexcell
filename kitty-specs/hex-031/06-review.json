@@ -1,0 +1,20 @@
+{
+  "task_id": "HEX-031",
+  "summary": "Docs-only diff: branch-2 restore VALID with evidence, task 18 COMPLETE stated, finding 12 re-confirmed (no new number/softening), runbook branch-2 section added. No forbidden files; 7/7 checks passed.",
+  "verdict": "approve",
+  "contract_compliance": true,
+  "forbidden_files_touched": [],
+  "unrequested_refactor": false,
+  "missing_tests": [],
+  "functional_risk": "low",
+  "notes": [
+    "contract-check ok=true; not_checked: forbid.behaviors (manually verified: docs-only, no code/script/config touched, existing content preserved, finding-12 not softened, no new finding number, no mass-sending vocabulary, no Fase B replaces sidecar claim, absolute date 2026-08-20 used throughout)",
+    "acceptance-coverage: status=pass; AC-1..AC-4 all covered, no gaps",
+    "05-validation.json overall_result=passed, 7/7 commands exit 0, executed_at 2026-08-20T06:00:00Z",
+    "STATUS.md plan-task-18 Definido entry edited in place (rama 2 (pendiente) -> rama 2 (VALID) in heading) plus an appended dated continuation paragraph, not a duplicated entry; explicit text 'la tarea 18 del plan esta COMPLETA' is present at line ~397",
+    "Finding-12 Pendiente entry (line ~509) retains its PRIORITY tag and original STOP-list-revival consequence sentence verbatim; a new re-confirmation line was appended below it citing branch 2, with no new finding number introduced",
+    "Runbook gained a new '## Resultado del ensayo rama 2 (2026-08-20) - VALID' section after the existing branch-1 content (ending line 169); it cross-references section 2 ('Rama A del runbook') rather than re-deriving the two-branch semantics, and states plainly that this path regenerates credentials rather than restoring them",
+    "diff --numstat: docs/STATUS.md 3+/1-, docs/runbook-restauracion-de-celula.md 24+/0-; within per_class and total limits (max_files_changed=2, max_diff_lines=70)"
+  ],
+  "fix_tasks": []
+}

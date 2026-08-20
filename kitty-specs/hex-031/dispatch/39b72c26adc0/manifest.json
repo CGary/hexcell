@@ -1,0 +1,14 @@
+{
+  "task_id": "HEX-031",
+  "bundle_hash": "39b72c26adc0134b51fecf7c2b91b56e2ed3252955517209e43baa84b134043b",
+  "files": [
+    ".ai/tasks/active/HEX-031-new-spec/00-spec.yaml",
+    ".ai/tasks/active/HEX-031-new-spec/01-blueprint.yaml",
+    "docs/STATUS.md",
+    "docs/adr/adr-0020-respaldo-y-restauracion-por-celula.md",
+    "docs/bitacora-de-descartes.md",
+    "docs/runbook-restauracion-de-celula.md"
+  ],
+  "protocol_version": "fleet-bundle-protocol/v2",
+  "created_at": "2026-08-20T13:31:54Z"
+}

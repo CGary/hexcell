@@ -1,0 +1,90 @@
+task_id: HEX-031
+summary: Docs-only append of branch-2 restore rehearsal evidence, plan-task-18 closure, and
+  finding-12 re-confirmation to STATUS.md and the restore runbook.
+goal: 'Continue the existing plan-task-18 Definido entry in docs/STATUS.md with branch 2 (VALID,
+  device_removed) closing plan task 18 completely, re-confirm finding 12 without a new finding
+  number, and append the branch-2 procedure and outcome to docs/runbook-restauracion-de-celula.md.
+  Review reads the diff to verify doc presence and phrasing, since acceptance here is prose
+  content, not a machine-checkable behavior.'
+read:
+  - .ai/tasks/active/HEX-031-new-spec/00-spec.yaml
+  - .ai/tasks/active/HEX-031-new-spec/01-blueprint.yaml
+  - docs/STATUS.md
+  - docs/runbook-restauracion-de-celula.md
+  - docs/bitacora-de-descartes.md
+  - docs/adr/adr-0020-respaldo-y-restauracion-por-celula.md
+touch:
+  - docs/STATUS.md
+  - docs/runbook-restauracion-de-celula.md
+forbid:
+  files:
+    - docs/runbook-canal-whatsmeow.md
+    - docs/runbook-canal-fase-a.md
+    - docs/plan/fase-a-3-adaptador-whatsmeow.md
+    - docs/bitacora-de-descartes.md
+    - docs/adr/README.md
+    - docs/adr/adr-0020-respaldo-y-restauracion-por-celula.md
+    - crates/hexcell/src/preparacion.rs
+    - crates/hexcell-storage/src/respaldo.rs
+    - sidecar/main.go
+    - sidecar/internal/configuracion/configuracion.go
+    - sidecar/internal/outbox/disciplina.go
+    - sidecar/internal/outbox/outbox.go
+    - sidecar/internal/identidad/cortacircuitos.go
+    - sidecar/go.mod
+    - sidecar/go.sum
+    - Cargo.toml
+    - Cargo.lock
+    - scripts/laboratorio/respaldar-celula.sh
+  behaviors:
+    - Do NOT modify any source file (crates/**, sidecar/**), any script (scripts/**), any config
+      file, or any file other than docs/STATUS.md and docs/runbook-restauracion-de-celula.md. This
+      is a docs-only task; finding 12 is reinforced, never fixed, here.
+    - Do NOT delete, rewrite, or reorder any existing docs/STATUS.md or runbook content. Continue
+      the existing plan-task-18 Definido entry (or append a dated continuation immediately after
+      it) rather than inserting a new, separate Definido entry elsewhere in the section.
+    - Do NOT introduce a new finding number for the identidad.db gap; only extend the existing
+      finding-12 Pendiente entry with a re-confirmation note.
+    - Do NOT soften, remove, or hedge the existing STOP-list-revival consequence language already
+      recorded in the finding-12 entry.
+    - Do NOT mark any lab finding as fixed or resolved; findings 7-12 and the three pending product
+      decisions from HEX-030 stay exactly as recorded, untouched, except for the finding-12
+      re-confirmation note.
+    - Do NOT use mass-sending-provider vocabulary (jitter, warm-up/calentamiento, proxies, VPN, IP
+      rotation) anywhere, and never write or imply that Fase B replaces, retires, or closes the
+      sidecar channel.
+    - Do NOT write any user-visible content (docs/STATUS.md prose, runbook prose, commit message)
+      in English; keep it in Spanish. Only this contract's and the blueprint's own YAML prose
+      stays in English.
+    - Do NOT use relative dates anywhere; use only 2026-08-20 as the absolute date for new content.
+    - Do NOT re-derive or restate the restoration rule's two-branch semantics from scratch; cite
+      them as already established by plan task 7 (taxonomy) and plan task 18 (branch-1 rehearsal,
+      HEX-030), and reference the existing "## 2. La bifurcacion" section of the runbook rather
+      than rewriting it.
+    - Do NOT invent numeric parameters, client counts, cell counts, or prices anywhere in the new
+      prose.
+verify:
+  commands:
+    - cargo fmt --check
+    - cargo build --workspace
+    - cargo clippy --workspace -- -D warnings
+    - cargo test --workspace
+    - test "$(cargo tree -p hexcell-core | wc -l)" = "1"
+    - cargo test -p hexcell-core --doc 2>&1 | grep -q "compile fail"
+    - cd sidecar && test -z "$(gofmt -l .)" && go build ./... && go vet ./... && go test ./...
+acceptance:
+  human_gate: true
+limits:
+  max_files_changed: 2
+  max_diff_lines: 70
+  per_class:
+    - glob: docs/STATUS.md
+      max_diff_lines: 40
+    - glob: docs/runbook-restauracion-de-celula.md
+      max_diff_lines: 40
+execution:
+  mode: worktree_edit
+  branch: ai/HEX-031
+retry_policy:
+  max_attempts: 2
+  escalate_after: 2
