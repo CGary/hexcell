@@ -45,6 +45,18 @@ func cuerposDeMuestra() map[ipc.TipoMensaje]ipc.Cuerpo {
 			Bytes:                262144,
 			Motivo:               "",
 		},
+		ipc.TipoOrdenRespaldoIdentidad: ipc.OrdenRespaldoIdentidad{
+			Orden:                ipc.OrdenRespaldarIdentidad,
+			Destino:              "/respaldos/ronda-42",
+			IdentificadorDeRonda: "ronda-42",
+		},
+		ipc.TipoAcuseRespaldoIdentidad: ipc.AcuseRespaldoIdentidad{
+			IdentificadorDeRonda: "ronda-42",
+			Resultado:            ipc.ResultadoCompletado,
+			RutaDeLaCopia:        "/respaldos/ronda-42/identidad.db",
+			Bytes:                131072,
+			Motivo:               "",
+		},
 		ipc.TipoOrdenEmparejar: ipc.OrdenEmparejar{
 			Metodo: ipc.MetodoQr,
 		},
@@ -171,9 +183,22 @@ func TestDecodificarRechazaUnaVersionIncompatible(t *testing.T) {
 func TestDecodificarRechazaUnTipoDesconocido(t *testing.T) {
 	t.Parallel()
 
-	linea := []byte(`{"version":4,"tipo":"tipo_inexistente","texto":"hola"}` + "\n")
+	linea := []byte(`{"version":5,"tipo":"tipo_inexistente","texto":"hola"}` + "\n")
 	if _, err := ipc.Decodificar(linea); !errors.Is(err, ipc.ErrTipoDesconocido) {
 		t.Fatalf("error = %v, se esperaba ErrTipoDesconocido", err)
+	}
+}
+
+// TestDecodificarRechazaLaVersionAnteriorCuatro fija el lockstep del salto 4->5: una línea de la
+// versión de cable anterior (`4`, documento 1.3) es incompatible y se rechaza como tal, nunca se
+// acepta silenciosamente. Es la prueba que rompe si alguien deja los dos lados en versiones
+// distintas (LES-033).
+func TestDecodificarRechazaLaVersionAnteriorCuatro(t *testing.T) {
+	t.Parallel()
+
+	linea := []byte(`{"version":4,"tipo":"confirmacion","id_deduplicacion":"dedup-7"}` + "\n")
+	if _, err := ipc.Decodificar(linea); !errors.Is(err, ipc.ErrVersionIncompatible) {
+		t.Fatalf("error = %v, se esperaba ErrVersionIncompatible", err)
 	}
 }
 
@@ -196,8 +221,8 @@ func TestDecodificarRechazaLineasMalformadasSinEntrarEnPanico(t *testing.T) {
 		{"valor booleano", `{"version":4,"tipo":"saludo","emisor":true,"id_celula":"c"}` + "\n", ipc.ErrValorNoEscalar},
 		{"valor nulo", `{"version":4,"tipo":"saludo","emisor":null,"id_celula":"c"}` + "\n", ipc.ErrValorNoEscalar},
 		{"entero con coma", `{"version":4,"tipo":"confirmacion","id_deduplicacion":"d","extra":1.5}` + "\n", ipc.ErrValorNoEscalar},
-		{"campo ausente", `{"version":4,"tipo":"saludo","emisor":"nucleo"}` + "\n", ipc.ErrCampoAusente},
-		{"campo desconocido", `{"version":4,"tipo":"confirmacion","id_deduplicacion":"d","secuencia":7}` + "\n", ipc.ErrCampoDesconocido},
+		{"campo ausente", `{"version":5,"tipo":"saludo","emisor":"nucleo"}` + "\n", ipc.ErrCampoAusente},
+		{"campo desconocido", `{"version":5,"tipo":"confirmacion","id_deduplicacion":"d","secuencia":7}` + "\n", ipc.ErrCampoDesconocido},
 	}
 
 	for _, caso := range casos {
@@ -272,6 +297,35 @@ func TestElRespaldoDelSqlstoreEncajaConElContratoDeLaEtapaA2(t *testing.T) {
 	}
 	if !strings.Contains(string(linea), `"bytes":0`) {
 		t.Errorf("el acuse fallido omite bytes en vez de ponerlo a cero: %s", linea)
+	}
+}
+
+func TestElRespaldoDeIdentidadEspejaElContratoDelSqlstore(t *testing.T) {
+	t.Parallel()
+
+	orden := ipc.CamposDe(ipc.TipoOrdenRespaldoIdentidad)
+	esperadosOrden := []string{"version", "tipo", "orden", "destino", "identificador_de_ronda"}
+	if strings.Join(orden, ",") != strings.Join(esperadosOrden, ",") {
+		t.Errorf("campos de la orden de identidad = %v, se esperaba %v", orden, esperadosOrden)
+	}
+
+	acuse := ipc.CamposDe(ipc.TipoAcuseRespaldoIdentidad)
+	esperadosAcuse := []string{
+		"version", "tipo", "identificador_de_ronda", "resultado",
+		"ruta_de_la_copia", "bytes", "motivo",
+	}
+	if strings.Join(acuse, ",") != strings.Join(esperadosAcuse, ",") {
+		t.Errorf("campos del acuse de identidad = %v, se esperaba %v", acuse, esperadosAcuse)
+	}
+
+	if ipc.OrdenRespaldarIdentidad != "respaldar_identidad" {
+		t.Errorf("la cadena fija de la orden de identidad = %q", ipc.OrdenRespaldarIdentidad)
+	}
+
+	// El tipo del acuse de identidad es DISTINTO del de sqlstore: es justo lo que impide que dos
+	// acuses de la misma ronda colisionen en el mapa de correlación del núcleo (adr-0022).
+	if ipc.TipoAcuseRespaldoIdentidad == ipc.TipoAcuseRespaldoSqlstore {
+		t.Errorf("los dos acuses de respaldo comparten tipo: colisionarían por ronda")
 	}
 }
 

@@ -52,7 +52,7 @@ impl FakeSidecar {
         lector.read_line(&mut linea_saludo).await.unwrap();
 
         let saludo_sidecar = format!(
-            "{{\"version\":4,\"tipo\":\"saludo\",\"emisor\":\"sidecar\",\"id_celula\":\"{id_celula}\"}}\n"
+            "{{\"version\":5,\"tipo\":\"saludo\",\"emisor\":\"sidecar\",\"id_celula\":\"{id_celula}\"}}\n"
         );
         escritura
             .write_all(saludo_sidecar.as_bytes())
@@ -75,6 +75,27 @@ impl FakeSidecar {
         con.1.write_all(linea.as_bytes()).await.unwrap();
         con.1.write_all(b"\n").await.unwrap();
         con.1.flush().await.unwrap();
+    }
+
+    /// Lee una orden de respaldo por IPC, escribe la copia simulada bajo su nombre canónico y
+    /// responde con el acuse del TIPO que corresponde (sqlstore o identidad). Devuelve el nombre
+    /// canónico que atendió, para que el test pueda comprobar qué base se ordenó.
+    async fn atender_orden_respaldo(&mut self, destino: &std::path::Path) -> &'static str {
+        let orden = self.leer_linea().await;
+        let ronda = extraer_identificador_de_ronda(&orden);
+        let (tipo_acuse, nombre) = if orden.contains("\"tipo\":\"orden_respaldo_identidad\"") {
+            ("acuse_respaldo_identidad", "identidad.db")
+        } else {
+            ("acuse_respaldo_sqlstore", "sqlstore.db")
+        };
+        let copia = destino.join(nombre);
+        std::fs::write(&copia, b"datos-ipc-simulados").unwrap();
+        let acuse = format!(
+            "{{\"version\":5,\"tipo\":\"{tipo_acuse}\",\"identificador_de_ronda\":\"{ronda}\",\"resultado\":\"completado\",\"ruta_de_la_copia\":\"{}\",\"bytes\":19,\"motivo\":\"\"}}",
+            copia.to_string_lossy()
+        );
+        self.enviar_linea(&acuse).await;
+        nombre
     }
 }
 
@@ -127,7 +148,7 @@ fn extraer_identificador_de_ronda(linea: &str) -> String {
 }
 
 #[tokio::test]
-async fn ejecutar_respaldo_exitoso_cuatro_bases() {
+async fn ejecutar_respaldo_exitoso_cinco_bases() {
     let mut sidecar = FakeSidecar::nuevo();
     let id_celula = "celula-respaldo-cli-1";
 
@@ -152,29 +173,39 @@ async fn ejecutar_respaldo_exitoso_cuatro_bases() {
 
     sidecar.aceptar_y_saludar(id_celula).await;
 
-    let orden = sidecar.leer_linea().await;
-    assert!(orden.contains("\"tipo\":\"orden_respaldo_sqlstore\""));
-    let ronda_id = extraer_identificador_de_ronda(&orden);
-
-    let sqlstore_copia = destino_temp.ruta().join("sqlstore.db");
-    std::fs::write(&sqlstore_copia, b"datos-sqlstore-simulados").unwrap();
-
-    let acuse = format!(
-        "{{\"version\":4,\"tipo\":\"acuse_respaldo_sqlstore\",\"identificador_de_ronda\":\"{ronda_id}\",\"resultado\":\"completado\",\"ruta_de_la_copia\":\"{}\",\"bytes\":24,\"motivo\":\"\"}}",
-        sqlstore_copia.to_string_lossy()
+    // Las DOS órdenes IPC (sqlstore, identidad) llegan ANTES que las tres copias locales
+    // (PAT-038); el fake atiende cada una con el acuse de su tipo. El primero DEBE ser sqlstore.
+    let primero = sidecar.atender_orden_respaldo(destino_temp.ruta()).await;
+    assert_eq!(
+        primero, "sqlstore.db",
+        "el primer store IPC debe ser el sqlstore"
     );
-    sidecar.enviar_linea(&acuse).await;
+    let segundo = sidecar.atender_orden_respaldo(destino_temp.ruta()).await;
+    assert_eq!(
+        segundo, "identidad.db",
+        "el segundo store IPC debe ser identidad"
+    );
 
     let resumen = tarea_ejecutar
         .await
         .unwrap()
         .expect("ejecutar debe retornar Ok");
 
-    assert_eq!(resumen.copias.len(), 4);
+    // CINCO copias, no cuatro: si identidad.db se cae del conjunto, este conteo falla (LES-036).
+    assert_eq!(resumen.copias.len(), 5);
     assert!(destino_temp.ruta().join("sqlstore.db").exists());
+    assert!(destino_temp.ruta().join("identidad.db").exists());
     assert!(destino_temp.ruta().join("sessions.db").exists());
     assert!(destino_temp.ruta().join("knowledge_live.db").exists());
     assert!(destino_temp.ruta().join("adapter_identity.db").exists());
+    // El resumen nombra explícitamente identidad.db entre sus copias.
+    assert!(
+        resumen
+            .copias
+            .iter()
+            .any(|c| c.nombre_logico == "identidad.db"),
+        "el resumen de respaldo debe incluir identidad.db"
+    );
 }
 
 #[tokio::test]
@@ -206,7 +237,7 @@ async fn ejecutar_respaldo_fallido_sqlstore_deja_destino_vacio() {
     let ronda_id = extraer_identificador_de_ronda(&orden);
 
     let acuse = format!(
-        "{{\"version\":4,\"tipo\":\"acuse_respaldo_sqlstore\",\"identificador_de_ronda\":\"{ronda_id}\",\"resultado\":\"fallido\",\"ruta_de_la_copia\":\"\",\"bytes\":0,\"motivo\":\"espacio insuficiente en disco\"}}"
+        "{{\"version\":5,\"tipo\":\"acuse_respaldo_sqlstore\",\"identificador_de_ronda\":\"{ronda_id}\",\"resultado\":\"fallido\",\"ruta_de_la_copia\":\"\",\"bytes\":0,\"motivo\":\"espacio insuficiente en disco\"}}"
     );
     sidecar.enviar_linea(&acuse).await;
 
@@ -291,17 +322,9 @@ async fn binario_real_despacha_respaldar_con_exito() {
     let sidecar_dest_path = destino_path.clone();
     let tarea_sidecar = tokio::spawn(async move {
         sidecar.aceptar_y_saludar(id_celula).await;
-        let orden = sidecar.leer_linea().await;
-        let ronda_id = extraer_identificador_de_ronda(&orden);
-
-        let sqlstore_copia = sidecar_dest_path.join("sqlstore.db");
-        std::fs::write(&sqlstore_copia, b"sqlstore-bin").unwrap();
-
-        let acuse = format!(
-            "{{\"version\":4,\"tipo\":\"acuse_respaldo_sqlstore\",\"identificador_de_ronda\":\"{ronda_id}\",\"resultado\":\"completado\",\"ruta_de_la_copia\":\"{}\",\"bytes\":12,\"motivo\":\"\"}}",
-            sqlstore_copia.to_string_lossy()
-        );
-        sidecar.enviar_linea(&acuse).await;
+        // El binario ordena las dos bases IPC en secuencia: sqlstore y luego identidad.
+        sidecar.atender_orden_respaldo(&sidecar_dest_path).await;
+        sidecar.atender_orden_respaldo(&sidecar_dest_path).await;
     });
 
     let salida = tokio::task::spawn_blocking(move || {
@@ -369,7 +392,7 @@ async fn binario_real_sidecar_rechaza_respaldo_falla_con_mensaje_espanol() {
         let ronda_id = extraer_identificador_de_ronda(&orden);
 
         let acuse = format!(
-            "{{\"version\":4,\"tipo\":\"acuse_respaldo_sqlstore\",\"identificador_de_ronda\":\"{ronda_id}\",\"resultado\":\"fallido\",\"ruta_de_la_copia\":\"\",\"bytes\":0,\"motivo\":\"sidecar rechazó el respaldo\"}}"
+            "{{\"version\":5,\"tipo\":\"acuse_respaldo_sqlstore\",\"identificador_de_ronda\":\"{ronda_id}\",\"resultado\":\"fallido\",\"ruta_de_la_copia\":\"\",\"bytes\":0,\"motivo\":\"sidecar rechazó el respaldo\"}}"
         );
         sidecar.enviar_linea(&acuse).await;
     });

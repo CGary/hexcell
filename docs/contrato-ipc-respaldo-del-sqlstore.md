@@ -119,9 +119,35 @@ debe leerse como una elección ya tomada. Los tests de esta tarea, y los de la e
 > responsable, la frecuencia y el destino— sigue exactamente igual, y `adr-0011` continúa siendo
 > el ADR que registrará la decisión.
 
+## 7. Extensión 2026-08-20: la copia del almacén de identidad del sidecar (`identidad.db`)
+
+> **Esta sección EXTIENDE el contrato; no reescribe nada de las secciones 1 a 6.** Los campos, el
+> responsable y la disciplina del `sqlstore` siguen exactamente igual. La decisión se registra en
+> `docs/adr/adr-0022-respaldo-identidad-sidecar-por-ipc.md`, que también extiende `adr-0020`.
+
+El ensayo de restauración del 2026-08-20 (hallazgo 12, `docs/STATUS.md`) descubrió una **quinta
+base viva** que el conjunto de respaldo no cubría: el almacén de identidad del **sidecar Go**,
+`identidad.db`, que guarda la **lista STOP** (contactos dados de baja), el **mapeo de conversación**
+y el **estado del cortacircuitos**. Es un archivo **distinto** de `adapter_identity.db` (el almacén
+de identidad del adaptador Rust, `adr-0010`, punto 7): no se deben confundir.
+
+Como el sidecar tiene `identidad.db` abierto bajo WAL, se le aplica **exactamente el mismo criterio
+que al `sqlstore`** de las secciones 2 y 3: solo el propio proceso del sidecar puede copiarlo con
+seguridad, vía `VACUUM INTO` sobre una conexión dedicada de solo lectura, con verificación de
+`integrity_check` y `user_version`, y con disciplina fail-closed (una copia que no verifica no
+sobrevive bajo el nombre canónico `identidad.db`). El núcleo nunca abre `identidad.db`.
+
+En vez de generalizar el mensaje del `sqlstore` con un discriminador de almacén, la extensión añade
+un **par de mensajes dedicado** —`orden_respaldo_identidad` / `acuse_respaldo_identidad`— con los
+mismos campos que el par del `sqlstore` pero un TIPO distinto. El motivo está en `adr-0022`: dos
+acuses de la misma ronda con el mismo tipo colisionarían en el mapa de correlación por ronda del
+núcleo. Su forma exacta sobre el cable la fija `docs/protocolo-ipc-nucleo-sidecar.md`, sección 7,
+versión 1.4 (cable 5). El campo `orden` lleva la cadena fija `respaldar_identidad`.
+
 ## Referencias
 
 * `docs/adr/adr-0010-puerto-de-canal.md`, punto 7 (las cuatro bases del respaldo).
+* `docs/adr/adr-0022-respaldo-identidad-sidecar-por-ipc.md` (la quinta base, `identidad.db`).
 * `docs/adr/adr-0020-respaldo-y-restauracion-por-celula.md` (la decisión de esta tarea).
 * `docs/runbook-restauracion-de-celula.md` (procedimiento de restauración, con la bifurcación antes
   de tocar el `sqlstore`).

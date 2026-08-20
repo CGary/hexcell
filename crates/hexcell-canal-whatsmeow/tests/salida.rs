@@ -21,7 +21,7 @@ async fn send_escribe_mensaje_saliente_en_ipc() {
 
     sidecar.aceptar_conexion().await;
     let _ = sidecar.leer_saludo().await;
-    sidecar.enviar_saludo(4, "celula-1").await;
+    sidecar.enviar_saludo(5, "celula-1").await;
 
     // Simula la recepción de un evento para que el adaptador guarde la marca temporal de origen
     sidecar
@@ -101,7 +101,7 @@ async fn send_sin_marca_de_origen_conocida_devuelve_error_explicito() {
 
     sidecar.aceptar_conexion().await;
     let _ = sidecar.leer_saludo().await;
-    sidecar.enviar_saludo(4, "celula-1").await;
+    sidecar.enviar_saludo(5, "celula-1").await;
 
     // A diferencia de send_escribe_mensaje_saliente_en_ipc, aquí NUNCA se envía un evento
     // entrante para "conv-nueva". El mapa de marcas de origen es memoria de proceso: arranca
@@ -175,7 +175,7 @@ async fn acuse_envio_se_consume_sin_cerrar_conexion() {
 
     sidecar.aceptar_conexion().await;
     let _ = sidecar.leer_saludo().await;
-    sidecar.enviar_saludo(4, "celula-1").await;
+    sidecar.enviar_saludo(5, "celula-1").await;
 
     // Mandamos el acuse_envio
     sidecar
@@ -192,7 +192,7 @@ async fn acuse_envio_se_consume_sin_cerrar_conexion() {
 
 #[tokio::test]
 async fn acuse_envio_no_filtra_terminos_proscritos() {
-    let texto_acuse = r#"{"version":4,"tipo":"acuse_envio","id_mensaje":"msg-1","estado":"fallido","id_correlacion":"corr-1","motivo":"phone numero dispositivo jid device telefono inválido","marca_temporal_ms":123}"#;
+    let texto_acuse = r#"{"version":5,"tipo":"acuse_envio","id_mensaje":"msg-1","estado":"fallido","id_correlacion":"corr-1","motivo":"phone numero dispositivo jid device telefono inválido","marca_temporal_ms":123}"#;
     const TERMINOS_PROSCRITOS: [&str; 6] = [
         "jid",
         "telefono",

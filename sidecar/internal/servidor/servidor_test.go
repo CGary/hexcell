@@ -276,9 +276,9 @@ func TestSaludoDesajusteDeVersionCierraConexionYRegistraAmbas(t *testing.T) {
 		t.Fatalf("se esperaba cierre de conexión (EOF), obtenido: %v", errRead)
 	}
 
-	// Verificar que el registro contiene ambas versiones (3 y 4)
+	// Verificar que el registro contiene ambas versiones (3 y 5)
 	salidaLog := buf.String()
-	if !strings.Contains(salidaLog, "recibida 3") || !strings.Contains(salidaLog, "esperada 4") {
+	if !strings.Contains(salidaLog, "recibida 3") || !strings.Contains(salidaLog, "esperada 5") {
 		t.Fatalf("el registro no contiene ambas versiones: %s", salidaLog)
 	}
 }
@@ -556,6 +556,71 @@ func TestBucleCompletoSobreSocket(t *testing.T) {
 	sobreAcuseEnv, _ := ipc.Decodificar(lineaAcuseEnv)
 	if sobreAcuseEnv.Tipo != ipc.TipoAcuseEnvio {
 		t.Fatalf("tipo incorrecto para acuse envio: %s", sobreAcuseEnv.Tipo)
+	}
+}
+
+// TestOrdenRespaldoIdentidadSeDespachaYResponde comprueba que el servidor enruta
+// orden_respaldo_identidad al manejador de identidad (manejo.go) y devuelve un
+// acuse_respaldo_identidad por el mismo socket, sin colisionar con la ruta del sqlstore.
+func TestOrdenRespaldoIdentidadSeDespachaYResponde(t *testing.T) {
+	t.Parallel()
+	socketPath := filepath.Join(t.TempDir(), "ipc.sock")
+	dbRespaldoIdentidad, _ := abrirDbRespaldoPrueba(t)
+
+	srv := servidor.NuevoServidor(servidor.Dependencias{
+		RutaSocket:          socketPath,
+		IdCelula:            "test-cell",
+		DBRespaldoIdentidad: dbRespaldoIdentidad,
+	})
+	if err := srv.Escuchar(context.Background()); err != nil {
+		t.Fatalf("fallo al escuchar: %v", err)
+	}
+	defer srv.Cerrar()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go srv.Aceptar(ctx)
+
+	conn, err := net.Dial("unix", socketPath)
+	if err != nil {
+		t.Fatalf("error conectando cliente: %v", err)
+	}
+	defer conn.Close()
+	lector := bufio.NewReader(conn)
+
+	saludoNucleo, _ := ipc.Codificar(ipc.NuevoSobre(ipc.Saludo{Emisor: ipc.EmisorNucleo, IdCelula: "test-cell"}))
+	if _, err := conn.Write(saludoNucleo); err != nil {
+		t.Fatalf("error enviando saludo: %v", err)
+	}
+	if _, err := lector.ReadBytes('\n'); err != nil {
+		t.Fatalf("error recibiendo saludo servidor: %v", err)
+	}
+
+	dirDestino := t.TempDir()
+	ordenIdentidad, _ := ipc.Codificar(ipc.NuevoSobre(ipc.OrdenRespaldoIdentidad{
+		Orden:                ipc.OrdenRespaldarIdentidad,
+		Destino:              dirDestino,
+		IdentificadorDeRonda: "ronda-identidad-1",
+	}))
+	if _, err := conn.Write(ordenIdentidad); err != nil {
+		t.Fatalf("error enviando orden respaldo identidad: %v", err)
+	}
+
+	lineaAcuse, err := lector.ReadBytes('\n')
+	if err != nil {
+		t.Fatalf("error recibiendo acuse respaldo identidad: %v", err)
+	}
+	sobreAcuse, err := ipc.Decodificar(lineaAcuse)
+	if err != nil || sobreAcuse.Tipo != ipc.TipoAcuseRespaldoIdentidad {
+		t.Fatalf("acuse respaldo identidad inválido: %v, sobre=%+v", err, sobreAcuse)
+	}
+	acuse := sobreAcuse.Cuerpo.(ipc.AcuseRespaldoIdentidad)
+	if acuse.Resultado != ipc.ResultadoCompletado || acuse.IdentificadorDeRonda != "ronda-identidad-1" {
+		t.Fatalf("acuse respaldo identidad fallido: %+v", acuse)
+	}
+	rutaEsperada := filepath.Join(dirDestino, "identidad.db")
+	if acuse.RutaDeLaCopia != rutaEsperada {
+		t.Fatalf("la copia no aterrizó bajo el nombre canónico identidad.db: %q", acuse.RutaDeLaCopia)
 	}
 }
 

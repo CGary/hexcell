@@ -71,6 +71,16 @@ func main() {
 	}
 	defer canal.CerrarDB(dbRespaldo)
 
+	// Segunda conexión dedicada de solo lectura, esta al almacén de identidad del sidecar
+	// (`identidad.db`), para que el propio sidecar produzca su copia VACUUM INTO por IPC. El
+	// núcleo nunca abre este archivo (adr-0022): la copia sale de una conexión del proceso dueño.
+	dbRespaldoIdentidad, err := canal.AbrirConexionDeRespaldo(cfg.RutaIdentidad)
+	if err != nil {
+		reg.Error(eventoParada, registro.Campos{Detalle: err.Error()})
+		os.Exit(1)
+	}
+	defer canal.CerrarDB(dbRespaldoIdentidad)
+
 	almacenIdentidad, err := identidad.Abrir(identidad.Opciones{
 		Ruta:     cfg.RutaIdentidad,
 		Registro: reg,
@@ -98,14 +108,15 @@ func main() {
 	portero := outbox.NuevoPorteroDeSalida(colaSalida, almacenIdentidad, almacenIdentidad, almacenIdentidad, reg)
 
 	srv := servidor.NuevoServidor(servidor.Dependencias{
-		RutaSocket:     cfg.RutaSocket,
-		IdCelula:       cfg.IdCelula,
-		Registro:       reg,
-		Buzon:          buzon,
-		Portero:        portero,
-		DBRespaldo:     dbRespaldo,
-		Sesion:         sesion,
-		TelefonoCelula: cfg.TelefonoCelula,
+		RutaSocket:          cfg.RutaSocket,
+		IdCelula:            cfg.IdCelula,
+		Registro:            reg,
+		Buzon:               buzon,
+		Portero:             portero,
+		DBRespaldo:          dbRespaldo,
+		DBRespaldoIdentidad: dbRespaldoIdentidad,
+		Sesion:              sesion,
+		TelefonoCelula:      cfg.TelefonoCelula,
 	})
 
 	colaSalida.ConSumideroDeAcuse(srv.EnviarAcuseEnvio)

@@ -61,7 +61,7 @@ impl FakeSidecar {
         assert!(linea_saludo.contains("\"emisor\":\"nucleo\""));
 
         let saludo_sidecar = format!(
-            "{{\"version\":4,\"tipo\":\"saludo\",\"emisor\":\"sidecar\",\"id_celula\":\"{id_celula}\"}}\n"
+            "{{\"version\":5,\"tipo\":\"saludo\",\"emisor\":\"sidecar\",\"id_celula\":\"{id_celula}\"}}\n"
         );
         escritura
             .write_all(saludo_sidecar.as_bytes())
@@ -82,7 +82,7 @@ impl FakeSidecar {
     ) {
         let con = self.conexion.as_mut().expect("sin conexión activa");
         let frame = format!(
-            "{{\"version\":4,\"tipo\":\"evento_entrante\",\"id_deduplicacion\":\"{id_deduplicacion}\",\"id_conversacion\":\"{id_conversacion}\",\"id_remitente\":\"{id_remitente}\",\"contenido\":\"{contenido}\",\"marca_temporal_ms\":{marca_temporal_ms}}}\n"
+            "{{\"version\":5,\"tipo\":\"evento_entrante\",\"id_deduplicacion\":\"{id_deduplicacion}\",\"id_conversacion\":\"{id_conversacion}\",\"id_remitente\":\"{id_remitente}\",\"contenido\":\"{contenido}\",\"marca_temporal_ms\":{marca_temporal_ms}}}\n"
         );
         con.1
             .write_all(frame.as_bytes())

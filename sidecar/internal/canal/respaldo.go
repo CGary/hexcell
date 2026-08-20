@@ -19,10 +19,21 @@ import (
 // NombreCanonicoDeCopiaSqlstore es el nombre de archivo canónico bajo el directorio de destino.
 const NombreCanonicoDeCopiaSqlstore = "sqlstore.db"
 
+// NombreCanonicoDeCopiaIdentidad es el nombre de archivo canónico de la copia del almacén de
+// identidad del sidecar (`identidad.db`) bajo el directorio de destino. Es un archivo DISTINTO
+// del almacén de identidad del adaptador (`adapter_identity.db`, adr-0010): no se deben confundir.
+const NombreCanonicoDeCopiaIdentidad = "identidad.db"
+
 // Nombres fijos de eventos de registro estructurado para el respaldo del sqlstore.
 const (
 	EventoRespaldoSqlstoreCompletado = "canal.respaldo_sqlstore_completado"
 	EventoRespaldoSqlstoreFallido    = "canal.respaldo_sqlstore_fallido"
+)
+
+// Nombres fijos de eventos de registro estructurado para el respaldo del almacén de identidad.
+const (
+	EventoRespaldoIdentidadCompletado = "canal.respaldo_identidad_completado"
+	EventoRespaldoIdentidadFallido    = "canal.respaldo_identidad_fallido"
 )
 
 // GanchoDePruebaTrasVacuum, cuando no es nil, se invoca justo después de que VACUUM INTO escribe
@@ -49,8 +60,9 @@ func AbrirConexionDeRespaldo(rutaSqlstore string) (*sql.DB, error) {
 }
 
 // verificarDestinoDisponible comprueba que el directorio de destino existe y que el archivo
-// de destino aún no existe, devolviendo la ruta completa del archivo de copia.
-func verificarDestinoDisponible(destino string) (string, error) {
+// de destino (bajo el nombre canónico dado) aún no existe, devolviendo la ruta completa de la copia.
+// Lo comparten los dos manejadores de respaldo, cada uno con su nombre canónico.
+func verificarDestinoDisponible(destino, nombreCanonico string) (string, error) {
 	info, err := os.Stat(destino)
 	if err != nil {
 		return "", fmt.Errorf("el directorio de destino no es accesible: %w", err)
@@ -58,7 +70,7 @@ func verificarDestinoDisponible(destino string) (string, error) {
 	if !info.IsDir() {
 		return "", fmt.Errorf("el destino no es un directorio: %s", destino)
 	}
-	rutaCopia := filepath.Join(destino, NombreCanonicoDeCopiaSqlstore)
+	rutaCopia := filepath.Join(destino, nombreCanonico)
 	if _, err := os.Stat(rutaCopia); err == nil {
 		return "", fmt.Errorf("el archivo de destino ya existe: %s", rutaCopia)
 	}
@@ -112,7 +124,7 @@ func ManejarOrdenRespaldoSqlstore(
 			fmt.Sprintf("orden inesperada: %q", orden.Orden))
 	}
 
-	rutaCopia, err := verificarDestinoDisponible(orden.Destino)
+	rutaCopia, err := verificarDestinoDisponible(orden.Destino, NombreCanonicoDeCopiaSqlstore)
 	if err != nil {
 		return fallar(reg, orden.IdentificadorDeRonda, "", fmt.Sprintf("destino no disponible: %v", err))
 	}
@@ -180,6 +192,125 @@ func ManejarOrdenRespaldoSqlstore(
 	}
 
 	return ipc.AcuseRespaldoSqlstore{
+		IdentificadorDeRonda: orden.IdentificadorDeRonda,
+		Resultado:            ipc.ResultadoCompletado,
+		RutaDeLaCopia:        rutaCopia,
+		Bytes:                infoCopia.Size(),
+		Motivo:               "",
+	}
+}
+
+// fallarIdentidad es el análogo de fallar para la copia de `identidad.db`: elimina cualquier copia
+// sin verificar bajo el nombre canónico (fail-closed, LES-031) y construye el acuse fallido.
+func fallarIdentidad(reg *registro.Registro, ronda, rutaCopia, motivo string) ipc.AcuseRespaldoIdentidad {
+	if rutaCopia != "" {
+		if errEliminar := os.Remove(rutaCopia); errEliminar != nil && !os.IsNotExist(errEliminar) {
+			if reg != nil {
+				reg.Error(EventoRespaldoIdentidadFallido, registro.Campos{
+					Detalle: fmt.Sprintf("ronda=%s no se pudo eliminar la copia sin verificar: %v", ronda, errEliminar),
+				})
+			}
+		}
+	}
+	if reg != nil {
+		reg.Error(EventoRespaldoIdentidadFallido, registro.Campos{
+			Detalle: fmt.Sprintf("ronda=%s motivo=%s", ronda, motivo),
+		})
+	}
+	return ipc.AcuseRespaldoIdentidad{
+		IdentificadorDeRonda: ronda,
+		Resultado:            ipc.ResultadoFallido,
+		RutaDeLaCopia:        "",
+		Bytes:                0,
+		Motivo:               motivo,
+	}
+}
+
+// ManejarOrdenRespaldoIdentidad procesa la orden de respaldo del almacén de identidad del sidecar,
+// con exactamente la misma disciplina de integridad que ManejarOrdenRespaldoSqlstore: captura
+// user_version del origen, ejecuta VACUUM INTO sobre una conexión dedicada de solo lectura,
+// verifica integridad y user_version en la copia, y emite el acuse. Cualquier fallo posterior a la
+// escritura de la copia la elimina antes de responder (fail-closed): el sidecar nunca deja una
+// copia sin verificar bajo el nombre canónico `identidad.db`.
+func ManejarOrdenRespaldoIdentidad(
+	ctx context.Context,
+	dbRespaldo *sql.DB,
+	orden ipc.OrdenRespaldoIdentidad,
+	reg *registro.Registro,
+) ipc.AcuseRespaldoIdentidad {
+	if orden.Orden != ipc.OrdenRespaldarIdentidad {
+		return fallarIdentidad(reg, orden.IdentificadorDeRonda, "",
+			fmt.Sprintf("orden inesperada: %q", orden.Orden))
+	}
+
+	rutaCopia, err := verificarDestinoDisponible(orden.Destino, NombreCanonicoDeCopiaIdentidad)
+	if err != nil {
+		return fallarIdentidad(reg, orden.IdentificadorDeRonda, "", fmt.Sprintf("destino no disponible: %v", err))
+	}
+
+	if dbRespaldo == nil {
+		return fallarIdentidad(reg, orden.IdentificadorDeRonda, "", "conexión de base de datos de respaldo nula")
+	}
+
+	var userVersionOrigen int64
+	if err := dbRespaldo.QueryRowContext(ctx, "PRAGMA user_version").Scan(&userVersionOrigen); err != nil {
+		return fallarIdentidad(reg, orden.IdentificadorDeRonda, "",
+			fmt.Sprintf("error al leer user_version del origen: %v", err))
+	}
+
+	if _, err := dbRespaldo.ExecContext(ctx, "VACUUM INTO ?", rutaCopia); err != nil {
+		return fallarIdentidad(reg, orden.IdentificadorDeRonda, "", fmt.Sprintf("error al ejecutar VACUUM INTO: %v", err))
+	}
+
+	if GanchoDePruebaTrasVacuum != nil {
+		GanchoDePruebaTrasVacuum(rutaCopia)
+	}
+
+	dbCopia, err := sql.Open("sqlite", fmt.Sprintf("file:%s?mode=ro", rutaCopia))
+	if err != nil {
+		return fallarIdentidad(reg, orden.IdentificadorDeRonda, rutaCopia,
+			fmt.Sprintf("error al abrir copia para verificación: %v", err))
+	}
+
+	var integridad string
+	if err := dbCopia.QueryRowContext(ctx, "PRAGMA integrity_check").Scan(&integridad); err != nil {
+		_ = dbCopia.Close()
+		return fallarIdentidad(reg, orden.IdentificadorDeRonda, rutaCopia,
+			fmt.Sprintf("error al verificar integridad de la copia: %v", err))
+	}
+	if integridad != "ok" {
+		_ = dbCopia.Close()
+		return fallarIdentidad(reg, orden.IdentificadorDeRonda, rutaCopia,
+			fmt.Sprintf("integridad de copia no es ok: %s", integridad))
+	}
+
+	var userVersionCopia int64
+	if err := dbCopia.QueryRowContext(ctx, "PRAGMA user_version").Scan(&userVersionCopia); err != nil {
+		_ = dbCopia.Close()
+		return fallarIdentidad(reg, orden.IdentificadorDeRonda, rutaCopia,
+			fmt.Sprintf("error al leer user_version de la copia: %v", err))
+	}
+	if userVersionCopia != userVersionOrigen {
+		_ = dbCopia.Close()
+		return fallarIdentidad(reg, orden.IdentificadorDeRonda, rutaCopia,
+			fmt.Sprintf("desajuste de user_version: origen=%d copia=%d", userVersionOrigen, userVersionCopia))
+	}
+
+	_ = dbCopia.Close()
+
+	infoCopia, err := os.Stat(rutaCopia)
+	if err != nil {
+		return fallarIdentidad(reg, orden.IdentificadorDeRonda, rutaCopia,
+			fmt.Sprintf("error al obtener tamaño de la copia: %v", err))
+	}
+
+	if reg != nil {
+		reg.Info(EventoRespaldoIdentidadCompletado, registro.Campos{
+			Detalle: fmt.Sprintf("ronda=%s bytes=%d", orden.IdentificadorDeRonda, infoCopia.Size()),
+		})
+	}
+
+	return ipc.AcuseRespaldoIdentidad{
 		IdentificadorDeRonda: orden.IdentificadorDeRonda,
 		Resultado:            ipc.ResultadoCompletado,
 		RutaDeLaCopia:        rutaCopia,

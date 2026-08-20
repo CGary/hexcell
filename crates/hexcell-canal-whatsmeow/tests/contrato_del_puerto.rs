@@ -119,7 +119,7 @@ impl BancoWhatsmeow {
 
         sidecar.aceptar_conexion().await;
         let _ = sidecar.leer_saludo().await;
-        sidecar.enviar_saludo(4, "celula-test").await;
+        sidecar.enviar_saludo(5, "celula-test").await;
 
         Self {
             adaptador: AdaptadorDePrueba::nuevo(adaptador_interno),

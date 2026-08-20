@@ -31,14 +31,15 @@ var ErrOtroSidecarActivo = errors.New("servidor: otro proceso sidecar ya está e
 
 // Dependencias agrupa los servicios y configuración requeridos por el servidor IPC.
 type Dependencias struct {
-	RutaSocket     string
-	IdCelula       string
-	Registro       *registro.Registro
-	Buzon          *outbox.Outbox
-	Portero        *outbox.PorteroDeSalida
-	DBRespaldo     *sql.DB
-	Sesion         *canal.Sesion
-	TelefonoCelula string
+	RutaSocket          string
+	IdCelula            string
+	Registro            *registro.Registro
+	Buzon               *outbox.Outbox
+	Portero             *outbox.PorteroDeSalida
+	DBRespaldo          *sql.DB
+	DBRespaldoIdentidad *sql.DB
+	Sesion              *canal.Sesion
+	TelefonoCelula      string
 }
 
 // Servidor gestiona la apertura, escucha, despacho de conexiones y ciclo de vida del socket IPC.

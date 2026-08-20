@@ -21,7 +21,7 @@ async fn reconexion_y_reentrega() {
     // 1. Conexión inicial
     sidecar.aceptar_conexion().await;
     let _ = sidecar.leer_saludo().await;
-    sidecar.enviar_saludo(4, "celula-1").await;
+    sidecar.enviar_saludo(5, "celula-1").await;
 
     // Evento que SÍ se confirma
     sidecar
@@ -45,7 +45,7 @@ async fn reconexion_y_reentrega() {
     // 3. Reconexión
     sidecar.aceptar_conexion().await;
     let _ = sidecar.leer_saludo().await;
-    sidecar.enviar_saludo(4, "celula-1").await;
+    sidecar.enviar_saludo(5, "celula-1").await;
 
     // Evento "dedup-1" NO debe ser reentregado por el sidecar en la vida real porque fue confirmado,
     // pero si probamos la reentrega, enviamos el "dedup-2" de nuevo.
@@ -75,7 +75,7 @@ async fn estado_sesion_se_difunde_y_reconecta() {
 
     sidecar.aceptar_conexion().await;
     let _ = sidecar.leer_saludo().await;
-    sidecar.enviar_saludo(4, "celula-1").await;
+    sidecar.enviar_saludo(5, "celula-1").await;
 
     // Espera a que el estado pase a Activa
     tokio::time::sleep(Duration::from_millis(50)).await;
@@ -104,7 +104,7 @@ async fn estado_sesion_del_cable_mapea_las_cuatro_variantes() {
     adaptador.arrancar();
     sidecar.aceptar_conexion().await;
     let _ = sidecar.leer_saludo().await;
-    sidecar.enviar_saludo(4, "celula-1").await;
+    sidecar.enviar_saludo(5, "celula-1").await;
 
     let casos = [
         ("activa", EstadoSesion::Activa),
@@ -139,7 +139,7 @@ async fn estado_sesion_del_cable_con_valor_desconocido_cierra_la_conexion() {
     adaptador.arrancar();
     sidecar.aceptar_conexion().await;
     let _ = sidecar.leer_saludo().await;
-    sidecar.enviar_saludo(4, "celula-1").await;
+    sidecar.enviar_saludo(5, "celula-1").await;
 
     sidecar.enviar_estado_sesion("suspendida", "", 0, 0).await;
 

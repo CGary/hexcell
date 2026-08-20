@@ -181,3 +181,106 @@ func TestManejarOrdenRespaldoSqlstoreFallos(t *testing.T) {
 		})
 	}
 }
+
+// asertarEnvoltorioIpcIdentidad es el análogo de asertarEnvoltorioIpc para el acuse de identidad.
+func asertarEnvoltorioIpcIdentidad(t *testing.T, acuse ipc.AcuseRespaldoIdentidad) {
+	t.Helper()
+	sobre := ipc.NuevoSobre(acuse)
+	lineaCodificada, err := ipc.Codificar(sobre)
+	if err != nil {
+		t.Fatalf("no se pudo codificar sobre IPC: %v", err)
+	}
+	sobreDecodificado, err := ipc.Decodificar(lineaCodificada)
+	if err != nil {
+		t.Fatalf("no se pudo decodificar línea IPC: %v", err)
+	}
+	acuseDecodificado, ok := sobreDecodificado.Cuerpo.(ipc.AcuseRespaldoIdentidad)
+	if !ok {
+		t.Fatalf("el cuerpo decodificado no es AcuseRespaldoIdentidad: %T", sobreDecodificado.Cuerpo)
+	}
+	if acuseDecodificado != acuse {
+		t.Errorf("acuse decodificado no coincide con el original: %+v vs %+v", acuseDecodificado, acuse)
+	}
+}
+
+func TestManejarOrdenRespaldoIdentidadExitoso(t *testing.T) {
+	dirTemp := t.TempDir()
+	dbRespaldo := crearOrigen(t, dirTemp, 7)
+	defer dbRespaldo.Close()
+
+	destino := filepath.Join(dirTemp, "copia_destino")
+	if err := os.MkdirAll(destino, 0755); err != nil {
+		t.Fatalf("no se pudo crear el directorio de destino: %v", err)
+	}
+	orden := ipc.OrdenRespaldoIdentidad{
+		Orden: ipc.OrdenRespaldarIdentidad, Destino: destino, IdentificadorDeRonda: "ronda-id-1",
+	}
+
+	acuse := canal.ManejarOrdenRespaldoIdentidad(context.Background(), dbRespaldo, orden, nuevoRegistro())
+
+	rutaEsperada := filepath.Join(destino, canal.NombreCanonicoDeCopiaIdentidad)
+	if acuse.Resultado != ipc.ResultadoCompletado || acuse.RutaDeLaCopia != rutaEsperada || acuse.Bytes <= 0 || acuse.Motivo != "" {
+		t.Fatalf("acuse de éxito inconsistente: %+v (ruta_esperada=%q)", acuse, rutaEsperada)
+	}
+	// El nombre canónico DEBE ser identidad.db, distinto del sqlstore.db y del adapter_identity.db.
+	if canal.NombreCanonicoDeCopiaIdentidad != "identidad.db" {
+		t.Fatalf("nombre canónico de identidad = %q, se esperaba identidad.db", canal.NombreCanonicoDeCopiaIdentidad)
+	}
+
+	dbCopia, err := sql.Open("sqlite", fmt.Sprintf("file:%s?mode=ro", rutaEsperada))
+	if err != nil {
+		t.Fatalf("no se pudo abrir la copia generada: %v", err)
+	}
+	defer dbCopia.Close()
+	var userVersionCopia int64
+	if err := dbCopia.QueryRow("PRAGMA user_version").Scan(&userVersionCopia); err != nil {
+		t.Fatalf("no se pudo leer user_version de la copia: %v", err)
+	}
+	if userVersionCopia != 7 {
+		t.Errorf("copia inconsistente: user_version=%d", userVersionCopia)
+	}
+	asertarEnvoltorioIpcIdentidad(t, acuse)
+}
+
+// TestManejarOrdenRespaldoIdentidadFallaCerrado comprueba la disciplina fail-closed (LES-031):
+// una copia que no verifica no debe sobrevivir bajo el nombre canónico identidad.db, y el acuse
+// fallido nombra el fallo sin dejar una ruta.
+func TestManejarOrdenRespaldoIdentidadFallaCerrado(t *testing.T) {
+	dirTemp := t.TempDir()
+	dbRespaldo := crearOrigen(t, dirTemp, 7)
+	defer dbRespaldo.Close()
+
+	destino := filepath.Join(dirTemp, "destino")
+	if err := os.MkdirAll(destino, 0755); err != nil {
+		t.Fatalf("no se pudo crear el directorio de destino: %v", err)
+	}
+	rutaCopia := filepath.Join(destino, canal.NombreCanonicoDeCopiaIdentidad)
+
+	// Alterar la copia tras VACUUM INTO para forzar un desajuste de user_version.
+	canal.GanchoDePruebaTrasVacuum = func(ruta string) {
+		dbTamper, err := sql.Open("sqlite", fmt.Sprintf("file:%s", ruta))
+		if err != nil {
+			t.Fatalf("no se pudo abrir la copia para alterarla: %v", err)
+		}
+		if _, err := dbTamper.Exec("PRAGMA user_version = 99999;"); err != nil {
+			t.Fatalf("no se pudo alterar user_version de la copia: %v", err)
+		}
+		if err := dbTamper.Close(); err != nil {
+			t.Fatalf("no se pudo cerrar la conexión de alteración: %v", err)
+		}
+	}
+	defer func() { canal.GanchoDePruebaTrasVacuum = nil }()
+
+	orden := ipc.OrdenRespaldoIdentidad{
+		Orden: ipc.OrdenRespaldarIdentidad, Destino: destino, IdentificadorDeRonda: "ronda-id-fallo",
+	}
+	acuse := canal.ManejarOrdenRespaldoIdentidad(context.Background(), dbRespaldo, orden, nuevoRegistro())
+
+	if acuse.Resultado != ipc.ResultadoFallido || acuse.RutaDeLaCopia != "" || acuse.Bytes != 0 || acuse.Motivo == "" {
+		t.Fatalf("acuse de fallo inconsistente: %+v", acuse)
+	}
+	if _, err := os.Stat(rutaCopia); !os.IsNotExist(err) {
+		t.Errorf("la copia sin verificar debía eliminarse de destino, pero sigue presente en %q", rutaCopia)
+	}
+	asertarEnvoltorioIpcIdentidad(t, acuse)
+}

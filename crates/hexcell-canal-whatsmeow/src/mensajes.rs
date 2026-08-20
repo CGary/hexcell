@@ -1,4 +1,4 @@
-//! Objetos de valor del protocolo IPC versión 3: un struct por tipo de mensaje.
+//! Objetos de valor del protocolo IPC versión 5 (documento 1.4): un struct por tipo de mensaje.
 //!
 //! Cada struct lleva `#[serde(deny_unknown_fields)]` porque la regla 3 del protocolo
 //! (sección 1 de `docs/protocolo-ipc-nucleo-sidecar.md`) hace **obligatorio** rechazar campos
@@ -11,8 +11,8 @@
 
 use serde::{Deserialize, Serialize};
 
-/// Versión de cable del protocolo. En esta implementación, `4` (documento 1.3).
-pub const VERSION_PROTOCOLO: i64 = 4;
+/// Versión de cable del protocolo. En esta implementación, `5` (documento 1.4).
+pub const VERSION_PROTOCOLO: i64 = 5;
 
 /// Límite de línea del protocolo: 131 072 bytes (128 KiB), contando el salto de línea final.
 /// Una línea más larga es un error de protocolo y cierra la conexión.
@@ -140,6 +140,31 @@ pub struct AcuseRespaldoSqlstore {
     pub motivo: String,
 }
 
+/// Acuse del respaldo del almacén de identidad del sidecar (`identidad.db`): desenlace de la copia.
+///
+/// Mismos cinco campos que [`AcuseRespaldoSqlstore`], pero es un TIPO distinto a propósito
+/// (`adr-0022`): el adaptador correlaciona este acuse en un mapa de pendientes separado, para que
+/// dos acuses de la misma ronda —uno del sqlstore, otro de identidad— nunca colisionen por clave.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AcuseRespaldoIdentidad {
+    /// Versión de cable.
+    pub version: i64,
+    /// Tipo de mensaje: siempre `"acuse_respaldo_identidad"`.
+    pub tipo: String,
+    /// El mismo identificador de ronda recibido en la orden.
+    pub identificador_de_ronda: String,
+    /// Resultado: `"completado"` o `"fallido"`.
+    pub resultado: String,
+    /// Ruta de la copia; `""` si `resultado` es `"fallido"`.
+    pub ruta_de_la_copia: String,
+    /// Tamaño de la copia en bytes; `0` si `resultado` es `"fallido"`.
+    pub bytes: i64,
+    /// Descripción legible del fallo; `""` si `resultado` es `"completado"`. **Nunca lleva
+    /// ninguna credencial del protocolo ni ningún contenido de mensaje.**
+    pub motivo: String,
+}
+
 // ---------------------------------------------------------------------------
 // Mensajes del núcleo al sidecar
 // ---------------------------------------------------------------------------
@@ -225,15 +250,34 @@ pub struct OrdenRespaldoSqlstore {
     pub identificador_de_ronda: String,
 }
 
+/// Orden de respaldo del almacén de identidad del sidecar (`identidad.db`): orden de copia.
+///
+/// Mismos tres campos que [`OrdenRespaldoSqlstore`]; es un tipo distinto (`adr-0022`) para que su
+/// acuse (`acuse_respaldo_identidad`) no colisione con el del sqlstore en la misma ronda.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OrdenRespaldoIdentidad {
+    /// Versión de cable.
+    pub version: i64,
+    /// Tipo de mensaje: siempre `"orden_respaldo_identidad"`.
+    pub tipo: String,
+    /// Cadena fija `"respaldar_identidad"`.
+    pub orden: String,
+    /// Directorio de destino ya resuelto por quien dispara la orden.
+    pub destino: String,
+    /// Agrupa esta orden con las de las otras bases de la misma ronda.
+    pub identificador_de_ronda: String,
+}
+
 // ---------------------------------------------------------------------------
 // Enumerado cerrado de despacho: línea entrante → variante tipada
 // ---------------------------------------------------------------------------
 
 /// Mensaje entrante del sidecar, despachado por el campo `tipo`.
 ///
-/// Las cinco variantes cubren los cinco tipos que el sidecar puede emitir hacia el núcleo.
-/// Los cuatro tipos que el núcleo envía (saludo, confirmacion, orden_emparejar,
-/// orden_respaldo_sqlstore) no aparecen aquí porque no son mensajes que el núcleo reciba.
+/// Las variantes cubren los tipos que el sidecar puede emitir hacia el núcleo. Los tipos que el
+/// núcleo envía (confirmacion, orden_emparejar, orden_respaldo_sqlstore, orden_respaldo_identidad,
+/// mensaje_saliente) no aparecen aquí porque no son mensajes que el núcleo reciba.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum MensajeEntrante {
     /// Saludo de versión del sidecar.
@@ -248,6 +292,8 @@ pub enum MensajeEntrante {
     AcuseEmparejamiento(AcuseEmparejamiento),
     /// Acuse del respaldo del `sqlstore`.
     AcuseRespaldoSqlstore(AcuseRespaldoSqlstore),
+    /// Acuse del respaldo del almacén de identidad del sidecar (`identidad.db`).
+    AcuseRespaldoIdentidad(AcuseRespaldoIdentidad),
     /// Acuse de envío de un mensaje saliente.
     AcuseEnvio(AcuseEnvioIpc),
 }
@@ -305,15 +351,24 @@ pub fn analizar_mensaje_entrante(linea: &str) -> Result<MensajeEntrante, String>
                 .map_err(|e| format!("acuse_respaldo_sqlstore inválido: {e}"))?;
             Ok(MensajeEntrante::AcuseRespaldoSqlstore(msg))
         }
+        "acuse_respaldo_identidad" => {
+            let msg: AcuseRespaldoIdentidad = serde_json::from_str(linea)
+                .map_err(|e| format!("acuse_respaldo_identidad inválido: {e}"))?;
+            Ok(MensajeEntrante::AcuseRespaldoIdentidad(msg))
+        }
         "acuse_envio" => {
             let msg: AcuseEnvioIpc =
                 serde_json::from_str(linea).map_err(|e| format!("acuse_envio inválido: {e}"))?;
             Ok(MensajeEntrante::AcuseEnvio(msg))
         }
         // Los tipos que el núcleo ENVÍA no se esperan como entrantes.
-        "confirmacion" | "orden_emparejar" | "orden_respaldo_sqlstore" | "mensaje_saliente" => Err(
-            format!("tipo '{tipo}' no es un mensaje entrante válido del sidecar"),
-        ),
+        "confirmacion"
+        | "orden_emparejar"
+        | "orden_respaldo_sqlstore"
+        | "orden_respaldo_identidad"
+        | "mensaje_saliente" => Err(format!(
+            "tipo '{tipo}' no es un mensaje entrante válido del sidecar"
+        )),
         _ => Err(format!("tipo desconocido: '{tipo}'")),
     }
 }
