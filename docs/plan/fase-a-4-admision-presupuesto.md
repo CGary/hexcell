@@ -122,6 +122,7 @@ familia de decisiones: poner un techo explícito a lo que el proceso se permite 
     saldo y desviación de conciliación, accesibles para la operación.
 12. **Construir la prueba de carga** (1 día). Script reproducible que inyecta 100 eventos concurrentes
     por el puerto y mide latencia, tasa de descarte y crecimiento de memoria residente.
+13. **Persistencia consultable de consumo de tokens por cliente** (0,5 días). Implementar la persistencia del consumo acumulado de tokens de forma diferenciada por cada cliente en una estructura estable y consultable en `sessions.db`, independiente de los contadores agregados internos de la tarea 11, sirviendo como origen de datos estable para el reporte de operador (FR-10).
 
 ---
 

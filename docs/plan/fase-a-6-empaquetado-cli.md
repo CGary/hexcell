@@ -273,6 +273,8 @@ confirmación, con orden fijo y con registro.
     tiene y cómo verificar que salió bien. Incluye `cell rebind` con su remisión explícita al
     runbook de baneo de la etapa A-7, que es donde se decide **si procede** sustituir el número;
     aquí solo se documenta **cómo** se ejecuta.
+22. **Configuración por célula como archivos** (1 día). Implementar la gestión de configuración basada en archivos (valores por defecto compartidos y superposiciones o overlays por célula) con validación de fallo cerrado al arrancar (concretando la tarea 8 sin editarla), gestionada de forma centralizada por `hexcell-admin` y versionable en git (FR-02, FR-11).
+23. **Comando de reporte de consumo de tokens por cliente** (0,5 días). Implementar un comando en `hexcell-admin` para generar el reporte de consumo de tokens por cliente apoyado en la persistencia consultable de A-4, contemplando la alternativa documentada de agregar los logs estructurados o leer las copias de respaldo (VACUUM INTO) para evitar leer de la base caliente bajo contención (FR-11, FR-10).
 
 ---
 
