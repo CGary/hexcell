@@ -1,6 +1,6 @@
 # Bitácora de descartes
 
-> Registro de lo que se consideró y **no** se hizo. Última actualización: 2026-08-19 (D-22, D-23).
+> Registro de lo que se consideró y **no** se hizo. Última actualización: 2026-08-21 (D-25, D-26).
 
 ## Para qué sirve este documento
 
@@ -57,6 +57,9 @@ se apoya en un principio de diseño, no.
 | [D-21](#d-21) | Usar trybuild como mecanismo de prueba compile-failure | Reabrible si cambia semántica de rustc |
 | [D-22](#d-22) | Respaldo concurrente sin pausa previa (steal-and-exit con reconexión automática) | Principio de diseño, no reabrir |
 | [D-23](#d-23) | Disparador de respaldo en el propio proceso del núcleo por señales/env | Principio de diseño, no reabrir |
+| [D-24](#d-24) | Generalizar la orden de respaldo del `sqlstore` con un discriminador de almacén para `identidad.db` | Principio de diseño, no reabrir |
+| [D-25](#d-25) | Centralizar las bases de datos operativas (un RDBMS único multi-inquilino para el camino caliente) | Principio de diseño, no reabrir |
+| [D-26](#d-26) | rqlite / libSQL sqld en el camino caliente (los almacenes operativos del bot por HTTP) | Principio de diseño, no reabrir |
 
 ---
 
@@ -413,6 +416,22 @@ copiar `sessions.db`, `knowledge_live.db` y el almacén de identidad del adaptad
 * **Por qué se descartó:** reutilizar `orden_respaldo_sqlstore` / `acuse_respaldo_sqlstore` con un campo que indique qué almacén copiar colisionaría en la correlación del núcleo. El adaptador Rust correlaciona los acuses por `identificador_de_ronda` en un `HashMap<String, oneshot::Sender<…>>` keyeado **solo por ronda**: dos acuses del **mismo tipo** en la misma ronda —uno del `sqlstore`, otro de identidad— se pisarían. Además, mutar la orden/acuse cerrada obligaría a reescribir los campos versionados de `docs/contrato-ipc-respaldo-del-sqlstore.md` (secciones 1 y 3), que las restricciones de la tarea prohíben tocar. Se eligió en su lugar un **par de mensajes dedicado** con un TIPO distinto por almacén (opción b), que deja los mensajes del `sqlstore` byte-idénticos y correlaciona cada acuse en su propio mapa de pendientes.
 * **Registro normativo:** `docs/adr/adr-0022-respaldo-identidad-sidecar-por-ipc.md`, `docs/protocolo-ipc-nucleo-sidecar.md` (sección 7, versión 1.4).
 * **Qué tendría que cambiar para reabrirlo:** que el núcleo dejara de correlacionar acuses solo por ronda (p. ej. si adoptara una clave compuesta `(ronda, almacén)` en un único mapa), en cuyo caso un mensaje parametrizado por almacén dejaría de colisionar. No reabrir mientras la correlación siga siendo por ronda y el contrato del `sqlstore` deba permanecer intacto.
+
+### D-25
+**Centralizar las bases de datos operativas (un RDBMS único multi-inquilino para el camino caliente).**
+
+* **Descartado:** 2026-08-21 (HEX-034).
+* **Por qué se descartó:** pierde la aislación por célula (FR-02: radio de explosión, y el mover/borrar/restaurar por cliente probado en A-3), compite por RAM/CPU en hardware modesto, y whatsmeow y sessions.db necesitan SQLite local con WAL vía driver de archivo (no una API de base remota).
+* **Registro normativo:** `docs/STATUS.md`.
+* **Qué tendría que cambiar para reabrirlo:** un despliegue en nube con múltiples máquinas donde se quiera un RDBMS gestionado con alta disponibilidad real, o la necesidad de consultas transaccionales cruzadas entre clientes como función central.
+
+### D-26
+**rqlite / libSQL sqld en el camino caliente (los almacenes operativos del bot por HTTP).**
+
+* **Descartado:** 2026-08-21 (HEX-034).
+* **Por qué se descartó:** latencia de consenso/HTTP en el bucle caliente sobre hardware modesto, opuesto al propósito del SQLite embebido de latencia cero; whatsmeow abre un archivo local vía database/sql y no habla la API HTTP de rqlite; la alta disponibilidad real de rqlite exige múltiples máquinas (en un solo servidor no hay HA de todas formas). RESERVA explícita: rqlite/libSQL no se descarta para la capa de lectura derivada (de cara al cliente); allí sí es candidata.
+* **Registro normativo:** `docs/STATUS.md`.
+* **Qué tendría que cambiar para reabrirlo:** se evalúa libSQL sqld / rqlite únicamente para la capa derivada cuando esa capa se apruebe (ver la entrada Pendiente correspondiente en STATUS), nunca para el camino caliente.
 
 ---
 
