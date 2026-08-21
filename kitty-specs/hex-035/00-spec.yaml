@@ -1,0 +1,34 @@
+task_id: HEX-035
+summary: 'Add the two operator internal needs to first-iteration scope: per-client token visibility (A-4 data + A-6 report) and config-as-files per cell (A-6), traced to existing FRs.'
+goal: 'Add to the plan, for the first iteration of HexCell, the two operator-internal needs the human decided must come before any client-facing web (recorded as direction in STATUS by HEX-034): NEED 1 - internal visibility of per-CLIENT token spend; NEED 2 - per-client configuration WITHOUT any UI (config-as-files: shared defaults + per-cell overlay + fail-closed validation at startup). Both trace to EXISTING requirements (this does NOT invent new FRs): the token accounting is FR-10 (Contabilidad Financiera de Dos Fases), the operator surface is FR-11 (Operaciones CLI), and per-cell config isolation is FR-02. This is a documentation/planning task: it appends explicit new tasks to the relevant plan-stage files and upgrades the STATUS direction entry to in-scope. The grounding read confirmed neither capability is yet explicit: A-4 task 11 exposes AGGREGATE internal counters (not per-client persisted token totals), and A-6 task 8 parametrizes the per-cell startup template (not the config-as-files defaults+overlay pattern). No code changes.'
+risk: low
+acceptance:
+    - id: AC-1
+      statement: 'docs/plan/fase-a-4-admision-presupuesto.md gains ONE new numbered task APPENDED after the current last task (re-verify the current count; A-4 has 12 tasks so the new one is 13 unless the file changed) under ## Tareas, following the exact format `N. **Titulo** (X dias). Descripcion.`: a task for persisting per-client token spend in a QUERYABLE/stable form (so the operator report of NEED 1 has a stable source distinct from the aggregate counters of the existing task 11), traced to FR-10 in the stage''s ### Requisitos del PRD cubiertos if that section needs FR-10 confirmed. Existing tasks 1..12 are NOT renumbered or edited.'
+    - id: AC-2
+      statement: 'docs/plan/fase-a-6-empaquetado-cli.md gains TWO new numbered tasks APPENDED after the current last task (A-6 has 21 tasks so the new ones are 22 and 23 unless the file changed), format identical to the existing tasks: (a) NEED 2 - configuracion por celula como ARCHIVOS: valores por defecto compartidos + superposicion (overlay) por celula + validacion de fallo cerrado al arrancar (concretando la tarea 8 existente sin editarla), gestionada por hexcell-admin, versionable en git; (b) NEED 1 surface - un comando/reporte de operador del consumo de tokens por CLIENTE, apoyado en la persistencia consultable de A-4 (AC-1), con la alternativa documentada de agregar los logs estructurados o leer las COPIAS de respaldo (VACUUM INTO) para no tocar la base caliente. Traced to FR-11 (and FR-02 for the config isolation, FR-10 for the token data). Existing tasks 1..21 NOT renumbered or edited.'
+    - id: AC-3
+      statement: 'docs/STATUS.md: the existing "Prioridad de la superficie de operador (Rumbo acordado)" Pendiente entry (added 2026-08-21 by HEX-034) is updated per the file convention to record that needs 1 and 2 are now EN ALCANCE de la primera iteracion (no longer only a direction), pointing at the new A-4 and A-6 tasks; the entry is not deleted, only upgraded, and the lab/decision record is preserved. Header date updated to 2026-08-21 if the convention applies.'
+    - id: AC-4
+      statement: 'The additions do NOT invent requirements: every new task cites an existing FR (FR-10 / FR-11 / FR-02); no new FR is written into docs/PRD.md and docs/PRD.md is NOT touched. No new ADR. The prose stays consistent with the architecture: the token report reads a queryable persistence or backup copies or logs (never the hot base under contention), and config-as-files respects per-cell isolation (adr-0010: no phone/JID leaking into shared config).'
+    - id: AC-5
+      statement: 'Docs-only diff: docs/plan/fase-a-4-admision-presupuesto.md, docs/plan/fase-a-6-empaquetado-cli.md and docs/STATUS.md are the only touched files. The 7 standard verification commands pass (a docs-only change cannot affect them; they run as the standard gate). Everything in Spanish, absolute dates 2026-08-21, no mass-sending-provider vocabulary, no text implying Fase B replaces the sidecar.'
+constraints:
+    - 'Docs-only: no code/script/config/ADR/PRD changes. FRs are CITED, never added to docs/PRD.md (docs/PRD.md is forbidden).'
+    - 'Do NOT renumber, edit, delete or reorder existing plan tasks; APPEND new tasks after the current last numbered task in each stage. Re-verify the current last task number by reading each file before numbering.'
+    - 'Everything in Spanish, absolute dates (2026-08-21), no mass-sending-provider vocabulary, never text implying Fase B replaces or retires the sidecar channel.'
+    - 'Plan-stage task format is authoritative: `N. **Titulo** (X dias). Descripcion.` Match it exactly, including a plausible effort estimate consistent with sibling tasks (config-as-files ~1 dia, token persistence ~0,5 dia, token report ~0,5-1 dia) - do not invent large numbers.'
+    - 'The token report must read a QUERYABLE persistence, the backup copies, or aggregated logs - NEVER the hot base under contention (consistent with the storage discussion recorded in the bitacora D-25/D-26 and STATUS).'
+    - 'adr-0010 stays intact: no phone number/JID in the shared config or in token-report output. No invented prices/parameters. Consult docs/bitacora-de-descartes.md before writing anything resembling a discarded idea.'
+    - 'Artifact YAML prose in English; the documentation itself in Spanish.'
+invariants:
+    - 'No new FR is created in the PRD; every added task traces to an existing FR (FR-10/FR-11/FR-02).'
+    - 'Existing plan tasks and their numbering are preserved; only appended tasks are added.'
+    - 'The operator token report never reads the hot base under contention.'
+    - 'All existing STATUS content preserved; the direction entry is upgraded, not deleted.'
+    - 'The 7 standard verification commands pass.'
+non_goals:
+    - 'Implementing needs 1 or 2 (this task only SCOPES them into the plan; the code is A-4/A-6 work).'
+    - 'The client-facing derived read-layer (parked; FR-13 pending) and the web project.'
+    - 'Ratifying any new FR into the PRD; choosing exact config file format or report output format (left to the A-6 blueprint when implemented).'
+    - 'Any code/script/config/ADR/PRD change.'

@@ -1,0 +1,21 @@
+{
+  "task_id": "HEX-035",
+  "bundle_hash": "62e4771b1aa499259e6581c785a1a9d65a834f0e82ceb463355db2998ba768f0",
+  "files": [
+    ".ai/tasks/active/HEX-035-new-spec/00-spec.yaml",
+    ".ai/tasks/active/HEX-035-new-spec/01-blueprint.yaml",
+    "docs/PRD.md",
+    "docs/STATUS.md",
+    "docs/bitacora-de-descartes.md",
+    "docs/plan/fase-a-4-admision-presupuesto.md"
+  ],
+  "protocol_version": "fleet-bundle-protocol/v2",
+  "created_at": "2026-08-21T06:45:48Z",
+  "dropped": [
+    {
+      "component": "code_slice",
+      "path": "docs/plan/fase-a-6-empaquetado-cli.md",
+      "reason": "bundle exceeded max_bytes budget"
+    }
+  ]
+}

@@ -1,0 +1,87 @@
+task_id: HEX-035
+summary: 'Append plan tasks for per-client token visibility and config-as-files to fase-a-4
+  and fase-a-6, and upgrade a STATUS.md direction entry to in-scope, docs-only.'
+goal: 'Bring two operator-internal needs into first-iteration scope by appending explicit
+  new tasks to existing plan-stage files and upgrading a STATUS.md Pendiente entry, tracing
+  every addition to existing FR-10/FR-11/FR-02 with no new FR and no code change.'
+read:
+  - .ai/tasks/active/HEX-035-new-spec/00-spec.yaml
+  - .ai/tasks/active/HEX-035-new-spec/01-blueprint.yaml
+  - docs/plan/fase-a-4-admision-presupuesto.md
+  - docs/plan/fase-a-6-empaquetado-cli.md
+  - docs/STATUS.md
+  - docs/PRD.md
+  - docs/bitacora-de-descartes.md
+touch:
+  - docs/plan/fase-a-4-admision-presupuesto.md
+  - docs/plan/fase-a-6-empaquetado-cli.md
+  - docs/STATUS.md
+forbid:
+  files:
+    - docs/PRD.md
+    - docs/adr/README.md
+    - docs/adr/adr-0001-licencia.md
+    - docs/adr/adr-0010-puerto-de-canal.md
+    - docs/plan/README.md
+    - docs/bitacora-de-descartes.md
+    - Cargo.toml
+    - Cargo.lock
+    - sidecar/go.mod
+    - sidecar/go.sum
+  behaviors:
+    - Do NOT modify any source file (crates/**, sidecar/**), any script (scripts/**), any
+      config file, any docs/adr/* file, or docs/PRD.md. This is a docs-only task confined to
+      the two plan-stage files and docs/STATUS.md.
+    - Do NOT invent a new FR or write one into docs/PRD.md. Every new task must cite only
+      FR-10, FR-11, or FR-02, all already present in the PRD.
+    - Do NOT renumber, edit, delete, or reorder any existing numbered task in either plan
+      file (fase-a-4 tasks 1..12, fase-a-6 tasks 1..21). Only append after the current last
+      task in each file, re-verifying the actual current last number by reading the file
+      first if it has changed since blueprint time.
+    - Do NOT edit or delete any existing docs/STATUS.md content. Only upgrade the "Prioridad
+      de la superficie de operador (Rumbo acordado)" entry in place to record needs 1 and 2
+      as en alcance de la primera iteracion; preserve the rest of the entry's text and the
+      lab/decision record.
+    - Do NOT write the operator token-report task in a way that reads sessions.db (the hot
+      base) under contention; it must read the queryable per-client persistence from the new
+      A-4 task, the backup copies (VACUUM INTO), or aggregated structured logs only.
+    - Do NOT leak phone numbers or JIDs into the config-as-files task's prose or examples
+      (adr-0010 stays intact).
+    - Do NOT use mass-sending-provider vocabulary (jitter, warm-up/calentamiento, proxies,
+      VPN, IP rotation) anywhere, and never write or imply that Fase B replaces, retires, or
+      closes the sidecar channel.
+    - Do NOT write any user-visible content (plan prose, STATUS.md prose, commit message) in
+      English; keep it in Spanish. Only this contract's and the blueprint's own YAML prose
+      stay in English.
+    - Do NOT use relative dates anywhere; use only 2026-08-21 as the absolute date for new
+      content.
+    - Do NOT invent numeric parameters, client counts, cell counts, or prices anywhere in the
+      new prose; effort estimates must stay consistent with sibling tasks (config-as-files
+      ~1 dia, token persistence ~0,5 dia, token report ~0,5-1 dia).
+verify:
+  commands:
+    - cargo fmt --check
+    - cargo build --workspace
+    - cargo clippy --workspace -- -D warnings
+    - cargo test --workspace
+    - test "$(cargo tree -p hexcell-core | wc -l)" = "1"
+    - cargo test -p hexcell-core --doc 2>&1 | grep -q "compile fail"
+    - cd sidecar && test -z "$(gofmt -l .)" && go build ./... && go vet ./... && go test ./...
+acceptance:
+  human_gate: true
+limits:
+  max_files_changed: 3
+  max_diff_lines: 90
+  per_class:
+    - glob: docs/plan/fase-a-4-admision-presupuesto.md
+      max_diff_lines: 15
+    - glob: docs/plan/fase-a-6-empaquetado-cli.md
+      max_diff_lines: 40
+    - glob: docs/STATUS.md
+      max_diff_lines: 35
+execution:
+  mode: worktree_edit
+  branch: ai/HEX-035
+retry_policy:
+  max_attempts: 2
+  escalate_after: 2

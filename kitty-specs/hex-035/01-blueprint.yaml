@@ -1,0 +1,71 @@
+task_id: HEX-035
+summary: 'Append tasks to fase-a-4/fase-a-6 plans and upgrade a STATUS.md entry, bringing
+  per-client token visibility and config-as-files into first-iteration scope. Docs-only.'
+affected_files:
+  - docs/plan/fase-a-4-admision-presupuesto.md
+  - docs/plan/fase-a-6-empaquetado-cli.md
+  - docs/STATUS.md
+symbols: []
+dependencies:
+  - docs/PRD.md
+  - docs/bitacora-de-descartes.md
+  - .ai/tasks/active/HEX-035-new-spec/00-spec.yaml
+test_scenarios:
+  - statement: 'docs/plan/fase-a-4-admision-presupuesto.md gains task 13 (verified next number
+      after existing 1..12), format `N. **Titulo** (X dias). Descripcion.`, for queryable
+      per-client token persistence distinct from task 11 aggregate counters. FR-10 already
+      listed in the stage Requisitos del PRD cubiertos section (verified).'
+    covers: ["AC-1"]
+  - statement: 'docs/plan/fase-a-6-empaquetado-cli.md gains tasks 22 and 23 (verified next
+      numbers after existing 1..21): 22 for config-as-files (shared defaults + per-cell
+      overlay + fail-closed startup validation, concretizing task 8 without editing it),
+      managed by hexcell-admin; 23 for the operator token-report command reading A-4''s
+      queryable persistence, backup copies, or aggregated logs, never the hot base. FR-02
+      and FR-11 already listed in the stage Requisitos del PRD cubiertos section (verified).'
+    covers: ["AC-2"]
+  - statement: 'docs/STATUS.md: the existing "Prioridad de la superficie de operador (Rumbo
+      acordado)" Pendiente entry (2026-08-21, HEX-034 direction) is upgraded in place to
+      record needs 1 and 2 as EN ALCANCE de la primera iteracion, pointing at the new A-4
+      task 13 and A-6 tasks 22/23, without deleting the direction/lab record.'
+    covers: ["AC-3"]
+  - statement: 'No FR invented: every new task cites FR-10, FR-11, or FR-02 only; docs/PRD.md
+      untouched; no new ADR; token report prose never reads the hot base under contention
+      (consistent with D-25/D-26); config-as-files prose respects adr-0010 (no phone/JID in
+      shared config).'
+    covers: ["AC-4"]
+  - statement: 'Diff touches only docs/plan/fase-a-4-admision-presupuesto.md,
+      docs/plan/fase-a-6-empaquetado-cli.md, and docs/STATUS.md; the 7 standard verification
+      commands pass unaffected by a docs-only change; all new prose in Spanish, absolute
+      date 2026-08-21, no mass-sending vocabulary, no "Fase B replaces the sidecar" language.'
+    covers: ["AC-5"]
+strategy:
+  - step: 1
+    action: 'Append task 13 to docs/plan/fase-a-4-admision-presupuesto.md ## Tareas: queryable
+      per-client token persistence (~0,5 dia), distinct from task 11 aggregate counters,
+      citing FR-10.'
+    files:
+      - docs/plan/fase-a-4-admision-presupuesto.md
+  - step: 2
+    action: 'Append task 22 (config-as-files: shared defaults + per-cell overlay + fail-closed
+      validation, ~1 dia, managed by hexcell-admin, concretizing task 8) and task 23 (operator
+      token-report command over the queryable persistence/backups/logs, never the hot base,
+      ~0,5-1 dia) to docs/plan/fase-a-6-empaquetado-cli.md ## Tareas, citing FR-02/FR-11/FR-10.'
+    files:
+      - docs/plan/fase-a-6-empaquetado-cli.md
+  - step: 3
+    action: 'Upgrade the "Prioridad de la superficie de operador (Rumbo acordado)" entry in
+      docs/STATUS.md in place to record needs 1 and 2 as EN ALCANCE de la primera iteracion,
+      referencing the new A-4/A-6 task numbers, preserving the rest of the entry text.'
+    files:
+      - docs/STATUS.md
+risks:
+  - 'acceptance-coverage will likely flag AC-1/AC-2/AC-3/AC-5 (doc-presence acceptance
+    criteria) as coverage gaps because they describe prose additions, not executable test
+    code (known LES-030 tool artifact) — to be triaged false at /q-analyze, not fixed here
+    by inventing fake tests.'
+  - 'No prior failed-task overlap found via failure-lookup for these three files (query
+    returned null); no additional lessons to carry forward.'
+  - 'blueprint-context retriever returned only the same three seed files (docs-only stage
+    has no AST/import-graph neighbors); Phase 1b blind external summarization was skipped
+    as not applicable — these are prose planning documents already read in full directly,
+    not code requiring blind bounded symbol summarization.'
