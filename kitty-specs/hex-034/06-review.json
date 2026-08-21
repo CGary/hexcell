@@ -1,0 +1,25 @@
+{
+  "task_id": "HEX-034",
+  "summary": "Docs-only capture verified append-only: D-25/D-26 correctly appended after D-24, no existing entry edited; STATUS gains all 3 Pendiente entries with full facts; PRD/ADR boundary respected.",
+  "verdict": "approve",
+  "contract_compliance": true,
+  "forbidden_files_touched": [],
+  "unrequested_refactor": false,
+  "missing_tests": [],
+  "functional_risk": "low",
+  "notes": [
+    "contract-check ok=true; not_checked: forbid.behaviors (manually verified below)",
+    "acceptance-coverage tool reported all AC-1..AC-6 as 'gap' because blueprint.test_scenarios prose does not literally cite 'AC-n' strings; this is a known matcher limitation for docs-capture tasks (blueprint's own risk note flags manual prose review as required, LES-030). Manual diff inspection confirms all 6 acceptance statements are satisfied verbatim in the diff content.",
+    "Diff touches only docs/STATUS.md and docs/bitacora-de-descartes.md (2 files, +24/-2), matching contract touch list and max_files_changed=2, max_diff_lines=110; per-class limits (bitacora<=55, STATUS<=60) respected.",
+    "Append-only integrity verified: git show main:docs/bitacora-de-descartes.md has no D-25/D-26 and its index table stops at D-23 even though the D-24 body section already existed (added in a prior task, HEX-032). The diff's new index-table row for D-24 therefore completes a pre-existing missing index entry, not an edit to D-24's body -- confirmed no diff hunk touches lines inside the D-24 body (Descartado/Por que/Registro normativo/Reapertura fields are unchanged context lines). D-01..D-24 bodies are untouched; only two new sections (D-25, D-26) and three new index rows were added.",
+    "D-25 and D-26 each carry both 'Por que se descarto' and 'Que tendria que cambiar para reabrirlo' fields, matching the existing ### D-NN format exactly (bold title, Descartado with date+task id, Registro normativo).",
+    "D-26 carries the required explicit reserve: rqlite/libSQL is NOT discarded for the derived read layer, only for the hot path -- verified verbatim in the diff.",
+    "STATUS.md gains exactly three new Pendiente bullets dated 2026-08-21: (a) derived read-layer parked, naming FR-13 as a proposal (never written into docs/PRD.md), the sqld/libSQL-vs-Postgres sub-decision, the Fase A/Fase B placement sub-decision, and the note that fase-b-2 does not cover this layer; (b) operator-first ordering direction citing A-6 config-as-files and A-4 token accounting; (c) message-aggregation/debounce idea marked as NOT planned and explicitly distinct from GCRA FR-08. None softened, all facts present.",
+    "STATUS.md header date updated 2026-08-20 -> 2026-08-21 per convention; no other existing STATUS.md line was altered (diff shows only the header date line and the three new trailing bullets).",
+    "PRD/ADR boundary confirmed: docs/PRD.md and docs/adr/* do not appear in the changed-files list; FR-13 exists only as a STATUS.md proposal reference, never written into the PRD.",
+    "No mass-sending vocabulary (jitter/calentamiento/proxies/VPN/rotacion de IP) and no claim that Fase B replaces or retires the sidecar found in the new prose.",
+    "No invented numbers, client counts, or prices found in the new prose; rqlite/libSQL and Postgres are referenced as technology names only.",
+    "05-validation.json overall_result=passed, 7/7 contract verification commands exit 0 (docs-only change, gate run as required by AC-6)."
+  ],
+  "fix_tasks": []
+}

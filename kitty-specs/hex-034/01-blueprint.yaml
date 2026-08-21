@@ -1,0 +1,61 @@
+task_id: HEX-034
+summary: 'Docs-only capture: append discards D-25/D-26 to bitacora-de-descartes.md and three
+  Pendiente entries to STATUS.md. No code, script, config, ADR, or PRD changes.'
+affected_files:
+  - docs/bitacora-de-descartes.md
+  - docs/STATUS.md
+symbols: []
+dependencies:
+  - docs/plan/fase-b-2-plano-de-control-onboarding.md
+test_scenarios:
+  - 'docs/bitacora-de-descartes.md gains D-25 (centralized multi-tenant RDBMS discard) as the
+    next entry after the current max D-24, appended after the D-24 block and before the
+    "Deuda de esta bitacora" section, matching the existing heading/field format (### D-NN,
+    bold title, Descartado, Por que se descarto, Registro normativo, Que tendria que cambiar
+    para reabrirlo).'
+  - 'docs/bitacora-de-descartes.md gains D-26 (rqlite/libSQL sqld on the hot path discard,
+    with an explicit reserve for the derived read layer) as the next correlative entry after
+    D-25, same format, both motive and reopening condition present.'
+  - 'docs/STATUS.md Pendiente section gains an entry for the parked derived customer-metrics
+    read layer, naming the FR-13 proposal, the sqld/libSQL vs Postgres sub-decision, the
+    Fase A vs Fase B placement sub-decision, and citing that fase-b-2 does not cover it.'
+  - 'docs/STATUS.md Pendiente section gains an entry for the operator-first ordering
+    direction (config-as-files ahead of A-6, token-spend visibility via A-4 accounting,
+    ahead of the customer-facing read layer).'
+  - 'docs/STATUS.md Pendiente section gains a short entry for the message-aggregation/debounce
+    future idea, marked as a potential product idea (not planned), distinct from GCRA
+    admission control (FR-08).'
+  - 'No other file in the repository changes; docs/PRD.md and docs/adr/* remain untouched.'
+strategy:
+  - step: 1
+    action: 'Re-read docs/bitacora-de-descartes.md to reconfirm the current max discard entry
+      is D-24 (already verified during this blueprint phase: last heading is "### D-24"),
+      then append D-25 and D-26 after the D-24 block (before the "Deuda de esta bitacora"
+      section), each with bold title, Descartado (date + task id), Por que se descarto
+      (motive), Registro normativo, and Que tendria que cambiar para reabrirlo (reopening
+      condition), verbatim per 00-spec.yaml AC-1 and AC-2. Never touch D-01..D-24.'
+    files:
+      - docs/bitacora-de-descartes.md
+  - step: 2
+    action: 'Append three Pendiente entries to docs/STATUS.md following the existing bullet
+      format (bold title, date + traceability, description, em-dash etapa/area), matching the
+      style of the existing entries in the Pendiente section: the parked derived read-layer
+      (AC-3, citing the FR-13 proposal, the sqld/libSQL-vs-Postgres and placement
+      sub-decisions, and that fase-b-2 does not cover this layer), the operator-first
+      ordering direction (AC-4), and the message-aggregation/debounce future idea (AC-5).
+      Do not edit any existing STATUS.md content.'
+    files:
+      - docs/STATUS.md
+risks:
+  - 'Low risk: pure documentation append, no build/test surface touched. The 7 standard
+    verify commands are a docs-only gate and cannot fail from this change unless an
+    unrelated pre-existing issue exists in the workspace.'
+  - 'Confirmed during blueprint: current bitacora max is D-24 (grep of "### D-" headings),
+    matching the spec claim; no renumbering needed.'
+  - 'Confirmed during blueprint: docs/plan/fase-b-2-plano-de-control-onboarding.md has no
+    mention of the derived read layer or customer metrics (grep for "lectura derivada",
+    "metricas de cliente", "read-layer" returns no hits), so the STATUS.md claim that
+    fase-b-2 does not cover this layer is accurate.'
+  - 'Reviewer verification for this task is necessarily manual prose reading (LES-030): the
+    7 verify commands cannot detect wrong or missing doc content, only that nothing else in
+    the workspace broke.'

@@ -1,0 +1,42 @@
+{
+  "schema_version": "fleet-dispatch-result/v1",
+  "dispatch_id": "f936cead0d27",
+  "task_id": "HEX-034",
+  "agent": "opencode",
+  "model": "nvidia/nemotron-3-ultra-550b-a55b-free",
+  "phase": "execute",
+  "started_at": "2026-08-21T06:26:10Z",
+  "ended_at": "2026-08-21T06:30:50Z",
+  "duration_s": 279.498452574,
+  "exit_code": 1,
+  "timed_out": false,
+  "killed": false,
+  "outcome": {
+    "class": "attempt",
+    "noop": false,
+    "cause": null,
+    "blocked": null
+  },
+  "diff": {
+    "empty": false,
+    "indeterminate": false,
+    "files_changed": 2,
+    "insertions": 24,
+    "deletions": 2
+  },
+  "forensic_ref": "refs/fleet/HEX-034/attempt-1-nvidia-nemotron-3-ultra-550b-a55b-free",
+  "baseline_commit": "c6a077c571ff701581b5fa00b1b4a25de714f6ee",
+  "applied": false,
+  "usage": {
+    "source": "none",
+    "tokens_in": null,
+    "tokens_out": null,
+    "requests": null
+  },
+  "notes_path": "dispatch/f936cead0d27/notes.txt",
+  "trace_events": [
+    "dispatch_started",
+    "dispatch_finished"
+  ],
+  "reset_error": null
+}

@@ -1,0 +1,13 @@
+{
+  "task_id": "HEX-034",
+  "bundle_hash": "f936cead0d2765c8ceb3115602c7b70104014f2f89d4574ca38e1dedfab919a3",
+  "files": [
+    ".ai/tasks/active/HEX-034-new-spec/00-spec.yaml",
+    ".ai/tasks/active/HEX-034-new-spec/01-blueprint.yaml",
+    "docs/STATUS.md",
+    "docs/bitacora-de-descartes.md",
+    "docs/plan/fase-b-2-plano-de-control-onboarding.md"
+  ],
+  "protocol_version": "fleet-bundle-protocol/v2",
+  "created_at": "2026-08-21T06:26:05Z"
+}

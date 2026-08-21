@@ -1,0 +1,91 @@
+task_id: HEX-034
+summary: 'Append two correlative discard entries (D-25, D-26) to docs/bitacora-de-descartes.md
+  and three Pendiente entries to docs/STATUS.md, docs-only, per the human-supplied
+  storage/scale design discussion.'
+goal: 'Capture the storage-and-scale design conversation in its correct normative home per the
+  docs hierarchy: genuine discards go to docs/bitacora-de-descartes.md (append-only,
+  correlative D-25/D-26, motive + reopening condition each); parked/pending decisions and
+  direction go to docs/STATUS.md as Pendiente entries (derived read layer + FR-13 proposal +
+  sqld/Postgres and placement sub-decisions; operator-first ordering; message-aggregation
+  future idea). No code, script, config, ADR, or PRD change.'
+read:
+  - .ai/tasks/active/HEX-034-new-spec/00-spec.yaml
+  - .ai/tasks/active/HEX-034-new-spec/01-blueprint.yaml
+  - docs/bitacora-de-descartes.md
+  - docs/STATUS.md
+  - docs/plan/fase-b-2-plano-de-control-onboarding.md
+touch:
+  - docs/bitacora-de-descartes.md
+  - docs/STATUS.md
+forbid:
+  files:
+    - docs/PRD.md
+    - docs/adr/README.md
+    - docs/adr/adr-0001-licencia.md
+    - docs/plan/fase-b-2-plano-de-control-onboarding.md
+    - docs/plan/README.md
+    - crates/hexcell/src/preparacion.rs
+    - crates/hexcell/src/respaldar.rs
+    - crates/hexcell-storage/src/respaldo.rs
+    - sidecar/main.go
+    - sidecar/internal/configuracion/configuracion.go
+    - sidecar/internal/outbox/disciplina.go
+    - sidecar/internal/outbox/outbox.go
+    - sidecar/internal/identidad/cortacircuitos.go
+    - sidecar/go.mod
+    - sidecar/go.sum
+    - Cargo.toml
+    - Cargo.lock
+    - scripts/laboratorio/respaldar-celula.sh
+  behaviors:
+    - Do NOT modify any source file (crates/**, sidecar/**), any script (scripts/**), any
+      config file, any docs/adr/* file, or docs/PRD.md. This is a docs-only task confined to
+      docs/bitacora-de-descartes.md and docs/STATUS.md.
+    - Do NOT write FR-13 into docs/PRD.md. It stays a proposal referenced from the STATUS.md
+      Pendiente entry only; ratifying it into the PRD is a separate human-ratified change.
+    - Do NOT edit, delete, or reorder any existing docs/bitacora-de-descartes.md entry
+      (D-01..D-24). Only append D-25 and D-26 after the D-24 block.
+    - Do NOT reuse or resequence discard numbers. Re-verify the current max D-NN by reading
+      the file before numbering; if the max has changed from D-24 since blueprint time, use
+      the actual next correlative numbers instead.
+    - Do NOT edit, delete, or reorder any existing docs/STATUS.md content. Only append the
+      three new Pendiente entries.
+    - Each of the two new bitacora entries MUST carry both a motive ("Por que se descarto")
+      and a reopening condition ("Que tendria que cambiar para reabrirlo"), matching the
+      existing ### D-NN heading and field format.
+    - Do NOT use mass-sending-provider vocabulary (jitter, warm-up/calentamiento, proxies,
+      VPN, IP rotation) anywhere, and never write or imply that Fase B replaces, retires, or
+      closes the sidecar channel.
+    - Do NOT write any user-visible content (bitacora prose, STATUS.md prose, commit message)
+      in English; keep it in Spanish. Only this contract's and the blueprint's own YAML
+      prose stay in English.
+    - Do NOT use relative dates anywhere; use only 2026-08-21 as the absolute date for new
+      content.
+    - Do NOT invent numeric parameters, client counts, cell counts, or prices anywhere in the
+      new prose. The rqlite/libSQL and Postgres references are technology names, not
+      endorsed versions.
+verify:
+  commands:
+    - cargo fmt --check
+    - cargo build --workspace
+    - cargo clippy --workspace -- -D warnings
+    - cargo test --workspace
+    - test "$(cargo tree -p hexcell-core | wc -l)" = "1"
+    - cargo test -p hexcell-core --doc 2>&1 | grep -q "compile fail"
+    - cd sidecar && test -z "$(gofmt -l .)" && go build ./... && go vet ./... && go test ./...
+acceptance:
+  human_gate: true
+limits:
+  max_files_changed: 2
+  max_diff_lines: 110
+  per_class:
+    - glob: docs/bitacora-de-descartes.md
+      max_diff_lines: 55
+    - glob: docs/STATUS.md
+      max_diff_lines: 60
+execution:
+  mode: worktree_edit
+  branch: ai/HEX-034
+retry_policy:
+  max_attempts: 2
+  escalate_after: 2

@@ -1,0 +1,15 @@
+He completado la tarea conforme a las instrucciones y requisitos de la especificación:
+
+1. **Bitácora de descartes ([docs/bitacora-de-descartes.md](file:///home/gary/dev/hexcell/worktrees/HEX-034/docs/bitacora-de-descartes.md)):**
+   * Se actualizó la fecha de última modificación en la cabecera al **2026-08-21**.
+   * Se añadieron las filas correspondientes en la tabla de índice para **D-24**, **D-25** y **D-26**.
+   * Se agregaron de forma secuencial y sin alterar el orden preexistente las entradas **D-25** (descarte de la base de datos RDBMS centralizada única en el camino caliente) y **D-26** (descarte de `rqlite`/`libSQL` `sqld` en el camino caliente), cada una incluyendo sus respectivos motivos y condiciones de reapertura en español.
+
+2. **Estado del Proyecto ([docs/STATUS.md](file:///home/gary/dev/hexcell/worktrees/HEX-034/docs/STATUS.md)):**
+   * Se actualizó la fecha de última modificación en la cabecera al **2026-08-21**.
+   * Se añadieron tres nuevas entradas en la sección de **Pendiente**:
+     * **Capa de lectura derivada para métricas de cliente** (Propuesta FR-13, parqueada y bloqueada por sus tres decisiones pendientes, citando explícitamente que la etapa `fase-b-2` no la cubre).
+     * **Prioridad de la superficie de operador** (Rumbo acordado priorizando configuración de archivos y reporte de gasto de tokens frente al portal de cara al cliente).
+     * **Agregación de mensajes / debounce** (Idea de producto potencial distinta de GCRA).
+
+No se ha modificado ningún código, script, archivo de configuración, ADR ni archivo del PRD, manteniendo la integridad del núcleo intacta y cumpliendo estrictamente el alcance de esta tarea de documentación.
