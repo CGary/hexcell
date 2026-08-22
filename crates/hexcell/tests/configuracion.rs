@@ -27,6 +27,8 @@ fn limpiar_entorno_de_hexcell() {
         "HEXCELL_CANAL",
         "HEXCELL_CAPACIDAD_COLA",
         "HEXCELL_VENTANA_DEDUPLICACION_SEGUNDOS",
+        "HEXCELL_ADMISION_TASA_SOSTENIDA_POR_SEGUNDO",
+        "HEXCELL_ADMISION_TOLERANCIA_RAFAGA",
     ] {
         unsafe {
             std::env::remove_var(variable);
@@ -334,6 +336,93 @@ fn canal_whatsmeow_se_configura_por_variable_de_entorno() {
     let configuracion =
         Configuracion::desde_entorno().expect("la configuración válida no debe fallar");
     assert_eq!(configuracion.canal, CanalSeleccionado::Whatsmeow);
+
+    let _ = std::fs::remove_dir_all(&directorio_temporal);
+}
+
+#[test]
+fn la_configuracion_gcra_por_defecto_se_preserva_sin_variables_de_entorno() {
+    let _guardia = CERROJO_DE_ENTORNO.lock().unwrap_or_else(|e| e.into_inner());
+    limpiar_entorno_de_hexcell();
+    let directorio_temporal = std::env::temp_dir().join(format!(
+        "hexcell-test-config-gcra-defecto-{}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&directorio_temporal)
+        .expect("crear el directorio temporal del test debe funcionar");
+    unsafe {
+        std::env::set_var("HEXCELL_ID_CELULA", "piloto-01");
+        std::env::set_var("HEXCELL_RUTA_DATOS", &directorio_temporal);
+    }
+
+    let configuracion =
+        Configuracion::desde_entorno().expect("la configuración válida no debe fallar");
+    assert_eq!(
+        configuracion.configuracion_gcra,
+        hexcell_core::admision::ConfiguracionGcra::default()
+    );
+
+    let _ = std::fs::remove_dir_all(&directorio_temporal);
+}
+
+#[test]
+fn la_configuracion_gcra_se_puede_configurar_por_variables_de_entorno() {
+    let _guardia = CERROJO_DE_ENTORNO.lock().unwrap_or_else(|e| e.into_inner());
+    limpiar_entorno_de_hexcell();
+    let directorio_temporal = std::env::temp_dir().join(format!(
+        "hexcell-test-config-gcra-explicita-{}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&directorio_temporal)
+        .expect("crear el directorio temporal del test debe funcionar");
+    unsafe {
+        std::env::set_var("HEXCELL_ID_CELULA", "piloto-01");
+        std::env::set_var("HEXCELL_RUTA_DATOS", &directorio_temporal);
+        std::env::set_var("HEXCELL_ADMISION_TASA_SOSTENIDA_POR_SEGUNDO", "2.0");
+        std::env::set_var("HEXCELL_ADMISION_TOLERANCIA_RAFAGA", "5");
+    }
+
+    let configuracion =
+        Configuracion::desde_entorno().expect("la configuración válida no debe fallar");
+    assert_eq!(
+        configuracion
+            .configuracion_gcra
+            .tasa_sostenida_por_segundo(),
+        2.0
+    );
+    assert_eq!(configuracion.configuracion_gcra.tolerancia_rafaga(), 5);
+
+    let _ = std::fs::remove_dir_all(&directorio_temporal);
+}
+
+#[test]
+fn falla_si_la_tasa_sostenida_gcra_no_es_valida() {
+    let _guardia = CERROJO_DE_ENTORNO.lock().unwrap_or_else(|e| e.into_inner());
+    limpiar_entorno_de_hexcell();
+    let directorio_temporal = std::env::temp_dir().join(format!(
+        "hexcell-test-config-gcra-invalida-{}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&directorio_temporal)
+        .expect("crear el directorio temporal del test debe funcionar");
+    unsafe {
+        std::env::set_var("HEXCELL_ID_CELULA", "piloto-01");
+        std::env::set_var("HEXCELL_RUTA_DATOS", &directorio_temporal);
+        std::env::set_var(
+            "HEXCELL_ADMISION_TASA_SOSTENIDA_POR_SEGUNDO",
+            "no-es-un-numero",
+        );
+    }
+
+    let error =
+        Configuracion::desde_entorno().expect_err("debe fallar con una tasa sostenida no numérica");
+    match error {
+        ErrorDeConfiguracion::ValorInvalido { nombre, valor, .. } => {
+            assert_eq!(nombre, "HEXCELL_ADMISION_TASA_SOSTENIDA_POR_SEGUNDO");
+            assert_eq!(valor, "no-es-un-numero");
+        }
+        otro => panic!("se esperaba ValorInvalido, se obtuvo {otro:?}"),
+    }
 
     let _ = std::fs::remove_dir_all(&directorio_temporal);
 }

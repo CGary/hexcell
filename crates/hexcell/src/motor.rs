@@ -136,6 +136,12 @@ where
         }
     }
 
+    /// Reemplaza el registro de admisión GCRA del motor con la configuración dada.
+    pub fn con_configuracion_gcra(mut self, configuracion: ConfiguracionGcra) -> Self {
+        self.admision = RegistroDeAdmision::nuevo(configuracion);
+        self
+    }
+
     /// Historial persistido de una conversación, para que los tests observen su continuidad.
     pub fn historial(
         &self,

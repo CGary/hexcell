@@ -193,7 +193,8 @@ async fn main() -> ExitCode {
                 receptor_eventos,
                 configuracion.ventana_deduplicacion,
                 repositorio,
-            );
+            )
+            .con_configuracion_gcra(configuracion.configuracion_gcra.clone());
 
             tokio::select! {
                 () = servidor_salud => {}
@@ -222,7 +223,8 @@ async fn main() -> ExitCode {
                 receptor_eventos,
                 configuracion.ventana_deduplicacion,
                 repositorio,
-            );
+            )
+            .con_configuracion_gcra(configuracion.configuracion_gcra.clone());
 
             tokio::select! {
                 () = servidor_salud => {}

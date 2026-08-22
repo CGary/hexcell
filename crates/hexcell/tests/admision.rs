@@ -166,3 +166,46 @@ async fn ac_2_y_ac_3_evento_en_exceso_es_descartado_antes_de_cargar_contexto() {
         "el 5º evento descartado no debe dejar rastro en el historial conversacional"
     );
 }
+
+#[tokio::test]
+async fn builder_con_configuracion_gcra_personalizada_reemplaza_registro_en_motor() {
+    // Tasa 1.0 req/s, ráfaga 0: admite sólo N+1 = 1 evento consecutivo sin avanzar el reloj.
+    let directorio = DirectorioTemporal::nuevo("admision-builder");
+    let reloj = RelojDePrueba::nuevo(SystemTime::UNIX_EPOCH);
+    let (adaptador, receptor_eventos) = AdaptadorSimulado::nuevo(Arc::new(reloj.clone()), 16);
+    let adaptador = Arc::new(adaptador);
+    let conversacion = IdConversacion::nuevo("conversacion-admision-builder");
+
+    for i in 1..=5 {
+        adaptador
+            .inyectar(evento_de_prueba(
+                &conversacion,
+                &format!("dedup-builder-{i}"),
+                reloj.ahora(),
+            ))
+            .await
+            .expect("el canal debe aceptar el evento");
+    }
+
+    let repositorio = repositorio_temporal(directorio.ruta());
+    let config_personalizada = hexcell_core::admision::ConfiguracionGcra::nueva(1.0, 0)
+        .expect("configuración personalizada válida");
+
+    let motor = Motor::nuevo(
+        AdaptadorQueDelegaEnArc(Arc::clone(&adaptador)),
+        ProcesadorDeEco,
+        receptor_eventos,
+        Duration::from_secs(3600),
+        Arc::clone(&repositorio),
+    )
+    .con_configuracion_gcra(config_personalizada);
+
+    drenar_y_cancelar(motor).await;
+
+    let capturas = adaptador.envios_capturados();
+    assert_eq!(
+        capturas.len(),
+        1,
+        "con ráfaga 0 debe enviarse exactamente 1 respuesta en vez de las 4 del valor por defecto"
+    );
+}

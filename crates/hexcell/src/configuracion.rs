@@ -92,6 +92,8 @@ pub struct Configuracion {
     /// no envía nada) cuando el proveedor falla, sin necesidad de un proveedor real ni de tocar
     /// producción: por defecto, ausente, el proveedor nunca falla.
     pub proveedor_de_inferencia_falla: bool,
+    /// Configuración de límites para el algoritmo de admisión GCRA (`hexcell_core::admision::ConfiguracionGcra`).
+    pub configuracion_gcra: hexcell_core::admision::ConfiguracionGcra,
 }
 
 /// Error de configuración: nombra siempre la variable concreta y su formato esperado.
@@ -179,6 +181,11 @@ pub const HEXCELL_EVENTO_SIMULADO_DE_ARRANQUE: &str = "HEXCELL_EVENTO_SIMULADO_D
 /// Nombre de la variable de entorno que fuerza que el proveedor de inferencia simulado falle
 /// siempre (opcional, solo para tests; su presencia basta, el valor no se interpreta).
 pub const HEXCELL_PROVEEDOR_DE_INFERENCIA_FALLA: &str = "HEXCELL_PROVEEDOR_DE_INFERENCIA_FALLA";
+/// Nombre de la variable de entorno con la tasa sostenida de admisión GCRA por segundo (opcional).
+pub const HEXCELL_ADMISION_TASA_SOSTENIDA_POR_SEGUNDO: &str =
+    "HEXCELL_ADMISION_TASA_SOSTENIDA_POR_SEGUNDO";
+/// Nombre de la variable de entorno con la tolerancia a ráfaga de admisión GCRA (opcional).
+pub const HEXCELL_ADMISION_TOLERANCIA_RAFAGA: &str = "HEXCELL_ADMISION_TOLERANCIA_RAFAGA";
 
 /// Dirección de salud por defecto: loopback (127.0.0.1), nunca `0.0.0.0`. Una célula sobre canal
 /// propio empaquetada en un contenedor (etapa A-6) necesita sondear esta ruta desde un
@@ -305,6 +312,42 @@ impl Configuracion {
         let proveedor_de_inferencia_falla =
             std::env::var(HEXCELL_PROVEEDOR_DE_INFERENCIA_FALLA).is_ok();
 
+        let defecto_gcra = hexcell_core::admision::ConfiguracionGcra::default();
+        let tasa_sostenida = match std::env::var(HEXCELL_ADMISION_TASA_SOSTENIDA_POR_SEGUNDO) {
+            Ok(valor) => {
+                valor
+                    .parse::<f64>()
+                    .map_err(|_| ErrorDeConfiguracion::ValorInvalido {
+                        nombre: HEXCELL_ADMISION_TASA_SOSTENIDA_POR_SEGUNDO,
+                        valor: valor.clone(),
+                        formato_esperado:
+                            "número flotante positivo de peticiones por segundo, p. ej. 0.5",
+                    })?
+            }
+            Err(_) => defecto_gcra.tasa_sostenida_por_segundo(),
+        };
+
+        let tolerancia_rafaga = match std::env::var(HEXCELL_ADMISION_TOLERANCIA_RAFAGA) {
+            Ok(valor) => valor
+                .parse::<u32>()
+                .map_err(|_| ErrorDeConfiguracion::ValorInvalido {
+                    nombre: HEXCELL_ADMISION_TOLERANCIA_RAFAGA,
+                    valor: valor.clone(),
+                    formato_esperado: "entero no negativo de eventos en ráfaga, p. ej. 3",
+                })?,
+            Err(_) => defecto_gcra.tolerancia_rafaga(),
+        };
+
+        let configuracion_gcra = hexcell_core::admision::ConfiguracionGcra::nueva(
+            tasa_sostenida,
+            tolerancia_rafaga,
+        )
+        .map_err(|_| ErrorDeConfiguracion::ValorInvalido {
+            nombre: HEXCELL_ADMISION_TASA_SOSTENIDA_POR_SEGUNDO,
+            valor: tasa_sostenida.to_string(),
+            formato_esperado: "número flotante positivo de peticiones por segundo, p. ej. 0.5",
+        })?;
+
         Ok(Self {
             id_celula,
             ruta_datos,
@@ -317,6 +360,7 @@ impl Configuracion {
             latencia_inferencia_simulada,
             evento_simulado_de_arranque,
             proveedor_de_inferencia_falla,
+            configuracion_gcra,
         })
     }
 }
