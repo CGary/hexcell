@@ -11,6 +11,7 @@
 //! debajo. El porqué de esa frontera está en `docs/adr/adr-0010-puerto-de-canal.md`; el porqué de
 //! la división en crates, en `docs/adr/adr-0002-estructura-workspace.md`.
 
+pub mod admision;
 pub mod canal;
 pub mod identidad;
 pub mod inferencia;
