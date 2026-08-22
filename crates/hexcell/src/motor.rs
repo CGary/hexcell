@@ -80,6 +80,7 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
 
+use hexcell_core::admision::{ConfiguracionGcra, RegistroDeAdmision, ResultadoDeAdmision};
 use hexcell_core::canal::{ChannelAdapter, EventoEntrante, MensajeSaliente, ResultadoEnvio};
 use hexcell_core::identidad::IdConversacion;
 use hexcell_storage::{ErrorDeAlmacen, RepositorioDeSesiones};
@@ -100,6 +101,7 @@ where
     adaptador: A,
     procesador: P,
     receptor_eventos: mpsc::Receiver<EventoEntrante>,
+    admision: RegistroDeAdmision,
     deduplicacion: RegistroDeDeduplicacion,
     conversaciones: EstadoDeConversaciones,
 }
@@ -125,6 +127,7 @@ where
             adaptador,
             procesador,
             receptor_eventos,
+            admision: RegistroDeAdmision::nuevo(ConfiguracionGcra::default()),
             deduplicacion: RegistroDeDeduplicacion::nuevo(
                 Arc::clone(&repositorio),
                 ventana_deduplicacion,
@@ -196,9 +199,19 @@ where
         }
     }
 
-    /// Procesa un único evento: deduplicación, drenaje de diferidas, registro, despacho al
-    /// procesador y envío. Es el cuerpo que tanto el bucle principal como el drenaje comparten.
+    /// Procesa un único evento: control de admisión GCRA (FR-08), deduplicación, drenaje de
+    /// diferidas, registro, despacho al procesador y envío. Es el cuerpo que tanto el bucle
+    /// principal como el drenaje comparten.
     async fn procesar_evento(&mut self, evento: EventoEntrante) {
+        // Control de admisión GCRA (FR-08): evaluado inmediatamente al consumir el evento
+        // del canal normalizado, estrictamente antes de la deduplicación, la carga de contexto
+        // conversacional y la inferencia.
+        if let ResultadoDeAdmision::Descartado { .. } =
+            self.admision.admitir(evento.conversacion.como_str())
+        {
+            return;
+        }
+
         let inicio = Instant::now();
         let id_evento = evento.deduplicacion.como_str().to_string();
         let id_conversacion = evento.conversacion.como_str().to_string();

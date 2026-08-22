@@ -265,6 +265,45 @@ impl<R: Reloj> Gcra<R> {
     }
 }
 
+/// Registro de instancias GCRA indexadas por clave de límite (conversación).
+///
+/// Garantiza que exista exactamente una instancia [`Gcra`] por clave de límite.
+/// El acceso al mapa está protegido por un [`std::sync::Mutex`], pero únicamente para la
+/// búsqueda e inserción de instancias [`Arc<Gcra>`]. La evaluación de la admisión (`admitir()`)
+/// se realiza sobre el [`Arc`] fuera del bloqueo, manteniendo la ruta caliente *lock-free*.
+/// Satisface FR-08.
+#[derive(Debug)]
+pub struct RegistroDeAdmision<R: Reloj = RelojDelSistema> {
+    configuracion: ConfiguracionGcra,
+    gcras: std::sync::Mutex<std::collections::HashMap<String, Arc<Gcra<R>>>>,
+}
+
+impl RegistroDeAdmision<RelojDelSistema> {
+    /// Crea un nuevo registro de admisión con la configuración GCRA dada utilizando el reloj del sistema.
+    pub fn nuevo(configuracion: ConfiguracionGcra) -> Self {
+        Self {
+            configuracion,
+            gcras: std::sync::Mutex::new(std::collections::HashMap::new()),
+        }
+    }
+
+    /// Obtiene o crea la instancia [`Gcra`] para la clave dada y evalúa su admisión fuera del bloqueo.
+    pub fn admitir(&self, clave: &str) -> ResultadoDeAdmision {
+        let gcra = {
+            let mut guard = self
+                .gcras
+                .lock()
+                .unwrap_or_else(|envenenado| envenenado.into_inner());
+            guard
+                .entry(clave.to_string())
+                .or_insert_with(|| Arc::new(Gcra::nueva(clave, self.configuracion.clone())))
+                .clone()
+        };
+
+        gcra.admitir()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -350,5 +389,50 @@ mod tests {
         // 4. Otro mensaje tras 3 segundos
         reloj.avanzar_nanos(3_000_000_000);
         assert_eq!(gcra.admitir(), ResultadoDeAdmision::Admitido);
+    }
+
+    #[test]
+    fn registro_de_admision_reutiliza_estado_por_clave() {
+        let config = ConfiguracionGcra::nueva(1.0, 1).expect("configuración válida");
+        let registro = RegistroDeAdmision::nuevo(config);
+
+        // Clave 1: permite 2 peticiones en ráfaga (N=1 -> N+1=2)
+        assert_eq!(registro.admitir("clave_a"), ResultadoDeAdmision::Admitido);
+        assert_eq!(registro.admitir("clave_a"), ResultadoDeAdmision::Admitido);
+        assert_eq!(
+            registro.admitir("clave_a"),
+            ResultadoDeAdmision::Descartado {
+                clave: "clave_a".to_string(),
+                motivo: MotivoDescarte::TasaSostenidaExcedida,
+            }
+        );
+    }
+
+    #[test]
+    fn registro_de_admision_aisla_claves_distintas() {
+        let config = ConfiguracionGcra::nueva(1.0, 1).expect("configuración válida");
+        let registro = RegistroDeAdmision::nuevo(config);
+
+        // Agotar presupuesto de clave_a
+        assert_eq!(registro.admitir("clave_a"), ResultadoDeAdmision::Admitido);
+        assert_eq!(registro.admitir("clave_a"), ResultadoDeAdmision::Admitido);
+        assert_eq!(
+            registro.admitir("clave_a"),
+            ResultadoDeAdmision::Descartado {
+                clave: "clave_a".to_string(),
+                motivo: MotivoDescarte::TasaSostenidaExcedida,
+            }
+        );
+
+        // clave_b debe estar intacta
+        assert_eq!(registro.admitir("clave_b"), ResultadoDeAdmision::Admitido);
+        assert_eq!(registro.admitir("clave_b"), ResultadoDeAdmision::Admitido);
+        assert_eq!(
+            registro.admitir("clave_b"),
+            ResultadoDeAdmision::Descartado {
+                clave: "clave_b".to_string(),
+                motivo: MotivoDescarte::TasaSostenidaExcedida,
+            }
+        );
     }
 }
