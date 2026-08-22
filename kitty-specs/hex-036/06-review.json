@@ -1,0 +1,21 @@
+{
+  "task_id": "HEX-036",
+  "summary": "GCRA module correctly implements sustained-rate/burst math and lock-free CAS; tests genuinely discriminate; prior Spanish-comment issue fixed and verified.",
+  "verdict": "approve",
+  "contract_compliance": true,
+  "forbidden_files_touched": [],
+  "unrequested_refactor": false,
+  "missing_tests": [],
+  "functional_risk": "low",
+  "notes": [
+    "contract-check ok=true; not_checked: forbid.behaviors (manually verified); touch scope respected (only admision.rs + 1-line lib.rs edit); Cargo.toml/Cargo.lock/all crate manifests confirmed untouched, preserving adr-0002's empty dependency table.",
+    "Independently re-ran (not just trusting delegate/coordinator claims): cargo test -p hexcell-core admision -> 3 passed (ac_1, ac_2, ac_3); cargo clippy -p hexcell-core -- -D warnings -> clean; cargo fmt --check -p hexcell-core -> clean.",
+    "GCRA math verified by hand: discard condition reduces algebraically to tat_actual > ahora + tau (standard GCRA virtual-scheduling test); tat_base = max(tat_actual, ahora) correctly resets the dry-bucket case. Traced AC-1/AC-2/AC-3 nanosecond arithmetic by hand against the source; all three produce the exact admit/discard sequence the tests assert.",
+    "Test discrimination confirmed: ac_1 and ac_2 assert concrete Descartado{clave, motivo} results with exact expected values driven by a frozen/advanced RelojDePrueba (no thread::sleep) -- an always-admit stub would fail both. ac_3 alone could pass under a stub, but combined with ac_1/ac_2 the suite as a whole cannot pass a stubbed implementation.",
+    "Concurrency: single AtomicU64 TAT, load once + compare_exchange_weak retry loop, no Mutex/RwLock/lock anywhere in admitir(). Ordering::AcqRel/Relaxed is safe and conventional for a single-atomic CAS loop; no ABA risk.",
+    "Blueprint conformance: Reloj trait injectable, RelojDelSistema Instant-based monotonic, single-key Gcra<R> per instance with no HashMap/registry -- this is the blueprint's explicitly approved task-1 scope, not a gap.",
+    "RESOLVED: prior fix_task (English word 'strictly' in the Spanish doc comment on ErrorDeConfiguracionGcra::TasaInvalida) is confirmed fixed on disk -- line 87 now reads 'estrictamente'; grep -c \"strictly\" crates/hexcell-core/src/admision.rs returns 0.",
+    "RESOLVED: the stray untracked kitty-specs/hex-036/05-validation.json noted previously has been deleted; confirmed absent on disk."
+  ],
+  "fix_tasks": []
+}

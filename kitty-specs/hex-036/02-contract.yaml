@@ -1,0 +1,108 @@
+task_id: HEX-036
+summary: Implement crates/hexcell-core/src/admision.rs, a lock-free single-key GCRA admission
+  module with configurable rate/burst, an injectable clock, and unit tests; wire it into lib.rs.
+goal: 'Deliver stage A-4 task 1 (docs/plan/fase-a-4-admision-presupuesto.md), covering FR-08 of
+  docs/PRD.md: a self-contained GCRA admission-control module inside hexcell-core, lock-free and
+  atomic, with a single TAT per limiting key, configurable sustained rate and burst tolerance,
+  and unit tests proving sustained-rate enforcement, burst tolerance, and zero false positives
+  under a realistic conversational profile. No port integration, no env-var/ADR parametrization,
+  no logging wiring: those are stage A-4 tasks 2, 3 and 4 and stay out of scope here.'
+read:
+  - .ai/tasks/active/HEX-036-new-spec/00-spec.yaml
+  - .ai/tasks/active/HEX-036-new-spec/01-blueprint.yaml
+  - crates/hexcell-core/src/lib.rs
+  - crates/hexcell-core/src/canal.rs
+  - crates/hexcell-core/src/identidad.rs
+  - crates/hexcell-core/src/inferencia.rs
+  - crates/hexcell-canal-simulado/src/reloj.rs
+  - docs/plan/fase-a-4-admision-presupuesto.md
+  - docs/PRD.md
+touch:
+  - crates/hexcell-core/src/admision.rs
+  - crates/hexcell-core/src/lib.rs
+forbid:
+  files:
+    - docs/PRD.md
+    - docs/adr/README.md
+    - docs/STATUS.md
+    - docs/bitacora-de-descartes.md
+    - Cargo.toml
+    - Cargo.lock
+    - crates/hexcell-core/Cargo.toml
+    - crates/hexcell/Cargo.toml
+    - crates/hexcell-admin/Cargo.toml
+    - crates/hexcell-storage/Cargo.toml
+    - crates/hexcell-meta/Cargo.toml
+    - crates/hexcell-canal-simulado/Cargo.toml
+    - crates/hexcell-canal-contrato/Cargo.toml
+    - crates/hexcell-canal-whatsmeow/Cargo.toml
+    - crates/hexcell-canal-simulado/src/adaptador.rs
+    - crates/hexcell-canal-simulado/src/reloj.rs
+    - crates/hexcell-canal-whatsmeow/src/adaptador.rs
+    - crates/hexcell-canal-contrato/src/bateria.rs
+    - crates/hexcell-canal-contrato/src/banco.rs
+    - crates/hexcell/src/procesador.rs
+    - crates/hexcell/src/motor.rs
+    - sidecar/main.go
+    - sidecar/go.mod
+    - sidecar/go.sum
+  behaviors:
+    - Do NOT add any new Cargo dependency, dev-dependency, workspace dependency, or Cargo
+      feature anywhere. hexcell-core's dependency table must stay empty; the module only
+      imports std (core::sync::atomic, std::time, std::sync::Arc if used for the clock type,
+      std::fmt for error Display). No dashmap, no parking_lot, no crossbeam, no rand crate.
+    - Do NOT use std::sync::Mutex, std::sync::RwLock, or any other lock inside the admission
+      decision path (Gcra::admitir). The per-key TAT is a single AtomicU64 updated only through
+      load/compare_exchange(_weak); a CAS retry loop is the only form of contention handling
+      allowed.
+    - Do NOT call std::thread::sleep, tokio::time::sleep, or any real time-based wait anywhere
+      in the unit tests. Every test must drive time through the injectable clock's
+      avanzar()/fijar() methods, never the wall clock, so the suite stays fast and deterministic.
+    - Do NOT make Gcra manage more than one limiting key per instance, and do NOT introduce a
+      HashMap/concurrent-map keyed registry of many Gcra instances inside this module. Binding
+      one key per Gcra at construction is the scope for this task; a multi-key registry belongs
+      to stage A-4 task 2 (port integration), not here.
+    - Do NOT reference crate::canal::IdConversacion, crate::identidad::IdConversacion, or any
+      other hexcell-core identity type as the limiting key type. Use a plain String/&str key so
+      the module stays decoupled from the channel port and reusable for whatever key granularity
+      stage A-4 task 3 eventually chooses.
+    - 'Do NOT touch crates/hexcell-core/tests/*.rs or add a new integration test file under
+      crates/hexcell-core/tests/. AC-1/AC-2/AC-3 are unit tests and belong inside
+      admision.rs itself as an inline #[cfg(test)] module, matching the pattern already used in
+      crates/hexcell-canal-whatsmeow/src/adaptador.rs and crates/hexcell-canal-whatsmeow/src/reconexion.rs.'
+    - Do NOT wire the module into crates/hexcell/src/procesador.rs, crates/hexcell/src/motor.rs,
+      or any channel adapter (crates/hexcell-canal-simulado, crates/hexcell-canal-whatsmeow).
+      Consuming the module from the port path is stage A-4 task 2 and out of scope.
+    - Do NOT add environment-variable configuration, a CLI flag, or a docs/adr/*.md file for the
+      GCRA parameters. Parametrization and its ADR are stage A-4 task 3.
+    - Do NOT add discard logging, tracing, or any registro.rs wiring. Discard observability is
+      stage A-4 task 4; this task only needs the discard result to be observable by the caller
+      (key + reason returned from admitir()).
+    - Do NOT implement the Tokio concurrency semaphore or any two-phase LLM budget/balance
+      accounting; both are separate stage A-4 tasks (5 and 6-13).
+    - Do NOT write the module, its identifiers, its comments, or its doc comments in any
+      language other than Spanish. Commit messages, if any are produced downstream, follow
+      conventional-commits in Spanish with no AI attribution.
+    - Do NOT version *.db, *.db-wal, *.db-shm, or .env* files.
+verify:
+  commands:
+    - cargo build --workspace
+    - cargo test --workspace
+    - cargo fmt --check
+    - cargo clippy --workspace -- -D warnings
+acceptance:
+  human_gate: true
+limits:
+  max_files_changed: 2
+  max_diff_lines: 480
+  per_class:
+    - glob: crates/hexcell-core/src/admision.rs
+      max_diff_lines: 460
+    - glob: crates/hexcell-core/src/lib.rs
+      max_diff_lines: 5
+execution:
+  mode: worktree_edit
+  branch: ai/HEX-036
+retry_policy:
+  max_attempts: 2
+  escalate_after: 2

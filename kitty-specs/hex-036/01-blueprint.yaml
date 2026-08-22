@@ -1,0 +1,139 @@
+task_id: HEX-036
+summary: Add a lock-free, atomic, single-key GCRA admission module to hexcell-core
+  (sustained rate + burst tolerance configurable, injectable clock, unit tests for AC-1..AC-3).
+affected_files:
+  - crates/hexcell-core/src/admision.rs
+  - crates/hexcell-core/src/lib.rs
+symbols:
+  - admision::Reloj
+  - admision::RelojDelSistema
+  - admision::RelojDePrueba
+  - admision::ConfiguracionGcra
+  - admision::ConfiguracionGcra::nueva
+  - admision::ConfiguracionGcra::default
+  - admision::ErrorDeConfiguracionGcra
+  - admision::MotivoDescarte
+  - admision::ResultadoDeAdmision
+  - admision::Gcra
+  - admision::Gcra::nueva
+  - admision::Gcra::con_reloj
+  - admision::Gcra::admitir
+  - admision::Gcra::clave
+dependencies:
+  - docs/plan/fase-a-4-admision-presupuesto.md
+  - docs/PRD.md
+  - crates/hexcell-core/src/canal.rs
+  - crates/hexcell-core/src/identidad.rs
+  - crates/hexcell-canal-simulado/src/reloj.rs
+test_scenarios:
+  - statement: 'With burst tolerance 0, hammering admitir() repeatedly on a frozen test clock
+      admits exactly the first call and discards every subsequent call until the clock is
+      advanced by the configured emission interval, proving sustained-rate enforcement (the
+      discard result names the key and MotivoDescarte::TasaSostenidaExcedida).'
+    covers:
+      - AC-1
+  - statement: 'With burst tolerance N configured, calling admitir() N+1 times on a frozen test
+      clock admits all N+1 calls (the initial slot plus the tolerated extra), and the very next
+      call beyond that boundary is discarded, proving burst tolerance is honored exactly at its
+      edge.'
+    covers:
+      - AC-2
+  - statement: 'Feeding a simulated realistic one-on-one conversation cadence (inter-message
+      gaps of several seconds, with one legitimate quick two-message follow-up still inside the
+      tolerated burst) through a Gcra built with ConfiguracionGcra::default() yields zero
+      discards across the whole sequence.'
+    covers:
+      - AC-3
+  - statement: 'admision.rs and its unit tests compile and run under cargo build --workspace and
+      cargo test --workspace without hexcell-core/Cargo.toml gaining any dependency; the module
+      imports only std (atomics, Instant), so no HTTP or transport crate ever enters the
+      dependency graph and no test starts a server. This is a structural property verified by
+      the standard build/test commands, not by a dedicated Rust assertion.'
+    covers:
+      - AC-4
+strategy:
+  - step: 1
+    action: 'Confirm placement inside crates/hexcell-core (Value Object / Application-Service
+      layer, no infra): its Cargo.toml dependency table is empty by design (adr-0002), which is
+      exactly the zero-HTTP invariant this task needs, and the module must be reachable without
+      knowing any transport, matching the "GCRA sobre el flujo normalizado del puerto" placement
+      from docs/plan/fase-a-4-admision-presupuesto.md. No new crate, no Cargo.toml edit.'
+    files:
+      - crates/hexcell-core/src/admision.rs
+  - step: 2
+    action: 'Define the injectable time source as a small trait Reloj { fn ahora_nanos(&self)
+      -> u64 } local to this module (deliberately distinct from
+      hexcell-canal-simulado::reloj::Reloj, which returns SystemTime for wall-clock window
+      semantics; this module needs a monotonic, atomic-storable unit). RelojDelSistema wraps a
+      fixed std::time::Instant reference captured at construction and returns nanos elapsed via
+      Instant::now().duration_since(referencia). RelojDePrueba wraps an AtomicU64 with
+      avanzar()/fijar() so tests move time deterministically without sleeping.'
+    files:
+      - crates/hexcell-core/src/admision.rs
+  - step: 3
+    action: 'Define ConfiguracionGcra as a validated Value Object (sustained rate in requests
+      per second as f64, burst tolerance as u32 extra requests), with ConfiguracionGcra::nueva
+      returning Result<Self, ErrorDeConfiguracionGcra> for non-positive/non-finite rate, and a
+      Default impl documenting a provisional realistic one-on-one conversation default (rate and
+      burst are still runtime parameters; Default only supplies a starting value, it does not
+      hardcode an unconfigurable constant). Precompute the emission interval and the tolerance
+      window in nanoseconds once, at construction.'
+    files:
+      - crates/hexcell-core/src/admision.rs
+  - step: 4
+    action: 'Define Gcra<R: Reloj = RelojDelSistema> as the domain service holding exactly one
+      AtomicU64 TAT for one limiting key (the key is bound at construction via Gcra::nueva /
+      Gcra::con_reloj, generic over the clock so production uses RelojDelSistema and tests
+      inject RelojDePrueba). Implement admitir(&self) -> ResultadoDeAdmision as the standard
+      GCRA virtual scheduling compare-exchange loop (load TAT, clamp to now, reject if the gap
+      exceeds the tolerance window without touching the atomic, otherwise CAS the advanced TAT
+      and retry the loop only on CAS contention). No Mutex, RwLock or any lock anywhere in this
+      path.'
+    files:
+      - crates/hexcell-core/src/admision.rs
+  - step: 5
+    action: 'Define MotivoDescarte (starts with TasaSostenidaExcedida) and ResultadoDeAdmision
+      { Admitido, Descartado { clave: String, motivo: MotivoDescarte } } so every discard is
+      observable with its key and reason, per the spec invariant; log wiring itself stays out
+      of scope (stage A-4 task 4).'
+    files:
+      - crates/hexcell-core/src/admision.rs
+  - step: 6
+    action: 'Wire the module into the crate root with pub mod admision; alongside the existing
+      pub mod canal; pub mod identidad; pub mod inferencia; declarations, keeping the same
+      one-line-per-module style already used in lib.rs.'
+    files:
+      - crates/hexcell-core/src/lib.rs
+  - step: 7
+    action: 'Write the three inline #[cfg(test)] unit tests (AC-1, AC-2, AC-3) described in
+      test_scenarios directly inside admision.rs, all driven by RelojDePrueba::avanzar/fijar,
+      never std::thread::sleep, matching the module doc-comment convention (long //! rationale
+      headers) already used across hexcell-core other files.'
+    files:
+      - crates/hexcell-core/src/admision.rs
+risks:
+  - 'Scope boundary decision: Gcra binds exactly one limiting key per instance (the key is a
+    constructor argument, not a runtime parameter of admitir()). A registry mapping many
+    conversation/contact keys to many Gcra instances is deliberately NOT built here:
+    00-spec.yaml non_goals assign both the port-consumption wiring (task 2) and the
+    key-granularity choice (task 3, env-var parametrization) to later tasks. This blueprint
+    reads "a single atomic TAT per key" as the per-instance state model, not as a mandate to
+    build a concurrent multi-key map inside this task. Flag for human confirmation if a
+    multi-key table was actually expected here.'
+  - 'ConfiguracionGcra::default() ships a documented but provisional sustained-rate/burst-
+    tolerance pair for AC-3''s "realistic conversational profile" test. These exact numbers are
+    not fixed by 00-spec.yaml or the PRD; stage A-4 task 3''s ADR is the authoritative place to
+    justify and, if needed, change the real production default. The doc comment on Default must
+    say so explicitly to avoid the numbers being mistaken for a ratified decision.'
+  - 'AC-4 (no HTTP/transport dependency, no server started) is satisfied structurally --
+    hexcell-core/Cargo.toml stays untouched and empty, and admision.rs imports only std -- and
+    is verified by cargo build --workspace / cargo test --workspace succeeding, not by a
+    dedicated Rust assertion. No forbid rule short of leaving Cargo.toml out of the touch list
+    enforces this, so the contract forbids editing every crate Cargo.toml and the workspace
+    root Cargo.toml/Cargo.lock explicitly.'
+  - 'RelojDelSistema deliberately uses std::time::Instant (monotonic, immune to wall-clock
+    adjustments) instead of the std::time::SystemTime already used elsewhere in hexcell-core
+    (EventoEntrante::marca_temporal, EstadoVentanaServicio::Abierta::expira_en). This is an
+    intentional inconsistency: SystemTime fits wall-clock window semantics that must survive a
+    process restart, while a rate limiter TAT is process-local and monotonicity matters more
+    than surviving a restart. Worth a reviewer explicit nod, not a defect.'

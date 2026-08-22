@@ -1,0 +1,77 @@
+task_id: HEX-036
+summary: Implement pure GCRA admission-control module (lock-free, atomic, per-key TAT) in the Rust workspace, per stage A-4 task 1. Risk low.
+goal: >
+  Implement task 1 of stage A-4 (docs/plan/fase-a-4-admision-presupuesto.md): a self-contained
+  Generic Cell Rate Algorithm (GCRA) admission-control module inside the Rust workspace
+  (crates/), lock-free and based on atomic operations, using a single timestamp (Theoretical
+  Arrival Time, TAT) per limiting key. The sustained rate and burst tolerance must be
+  configurable. This covers FR-08 of docs/PRD.md ("Control de Admision Anti-Spam (GCRA)"),
+  which requires the mechanism to sit on the channel port's normalized event flow rather than
+  on an HTTP layer, so it is identical across both channel phases.
+invariants:
+  - The module has zero dependency on HTTP or transport crates; it compiles and its unit tests
+    run without starting any server.
+  - Admission state uses a single timestamp (TAT) per limiting key, updated only through atomic
+    operations, with no mutex or lock guarding the hot admission path.
+  - Sustained rate and burst tolerance are configurable parameters of the module, not hardcoded
+    constants.
+  - "A discard decision is always observable by the caller: the return value carries the
+    limiting key and the discard reason, sufficient for the caller to log it later (actual log
+    wiring is out of scope, deferred to stage A-4 task 4)."
+  - The module never becomes aware of the transport (WhatsMeow websocket vs. Cloud API HTTP);
+    it only operates on an abstract event/key admission request, preserving the hexagonal
+    boundary that the channel port (ChannelAdapter, FR-12) already establishes.
+  - All identifiers, comments, and doc comments in the module are written in Spanish, per repo
+    convention.
+acceptance:
+  - id: AC-1
+    statement: Unit tests prove sustained-rate limiting is enforced over a continuous stream of
+      admission requests for a single key.
+    given: a GCRA instance configured with a fixed sustained rate for a given key
+    when: admission requests for that key arrive steadily above the configured sustained rate
+    then: the module discards the excess requests once the rate budget for the key is exhausted,
+      returning a discard result that identifies the key and the reason
+  - id: AC-2
+    statement: Unit tests prove burst tolerance allows a legitimate short burst before discarding.
+    given: a GCRA instance configured with a sustained rate and a positive burst tolerance
+    when: a short burst of admission requests for one key arrives within the tolerated burst
+      window
+    then: all requests within the configured burst tolerance are admitted, and only requests
+      beyond that tolerance are discarded
+  - id: AC-3
+    statement: Unit tests prove zero false positives under a realistic legitimate-conversation
+      traffic profile.
+    given: a GCRA instance configured with the module's documented default sustained rate and
+      burst tolerance
+    when: a simulated realistic conversational traffic pattern (not a burst) is fed through the
+      module
+    then: the count of discarded requests is zero
+  - id: AC-4
+    statement: The module compiles and its unit tests execute with no dependency on HTTP or
+      transport crates in the workspace dependency graph, verifiable without starting any
+      server.
+  - "cargo test --workspace passes, including the new GCRA unit tests."
+  - "cargo fmt --check and cargo clippy --workspace -- -D warnings report no issues."
+risk: low
+non_goals:
+  - Integrating the GCRA module into the channel-port consumption path (stage A-4 task 2).
+  - Environment-variable parametrization of rate/burst/key granularity and the corresponding
+    ADR (stage A-4 task 3).
+  - Discard logging/observability instrumentation (stage A-4 task 4).
+  - The Tokio concurrency semaphore (stage A-4 task 5).
+  - Any two-phase LLM budget/balance accounting work (stage A-4 tasks 6-13).
+  - >-
+    The PRD's "Prueba de Carga del Canal" QA criterion (100 concurrent events via the real
+    channel port, memory growth capped at 15%): this criterion is explicitly deferred to
+    integration (stage A-4 task 2 and the stage-level QA gate), since it requires the module to
+    be wired into the real port consumption path, which is out of scope here.
+constraints:
+  - No new runtime dependencies beyond what the workspace already provides for atomics/std;
+    no HTTP or transport crate may be added to this module's dependency chain.
+  - The module must live inside the existing Rust workspace crate structure (crates/); it must
+    not introduce a new top-level crate without blueprint-phase justification.
+  - "Verification is bounded to: cargo build --workspace; cargo test --workspace;
+    cargo fmt --check; cargo clippy --workspace -- -D warnings."
+  - "Repository-wide convention: all identifiers, comments, and commit messages stay in Spanish;
+    commits follow conventional-commits with no AI attribution."
+  - Never version *.db, *.db-wal, *.db-shm, or .env* files.
