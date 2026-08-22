@@ -1,0 +1,23 @@
+{
+  "task_id": "HEX-037",
+  "summary": "Both fix_tasks confirmed applied on disk: Spanish-only comment restored, dead RegistroDeAdmision::con_reloj removed. Approved.",
+  "verdict": "approve",
+  "contract_compliance": true,
+  "forbidden_files_touched": [],
+  "unrequested_refactor": false,
+  "missing_tests": [],
+  "functional_risk": "low",
+  "notes": [
+    "contract-check ok=true; not_checked: forbid.behaviors (verified by hand)",
+    "Insertion point verified correct: self.admision.admitir(...) is the first statement of Motor::procesar_evento, executing before the evento_recibido log, before RegistroDeDeduplicacion::procesar, before EstadoDeConversaciones::registrar_entrante and before ProcesadorDeMensajes::procesar; on Descartado it returns immediately with no logging.",
+    "Discard path allocates no state: confirmed by code order and by tests/admision.rs AC-2/AC-3 asserting historial.len()==8 for 4 admitted events (4 in + 4 out), i.e. zero trace from the 5th discarded event.",
+    "Lock discipline correct: RegistroDeAdmision::admitir locks the Mutex<HashMap> only for entry().or_insert_with()+clone(), the guard is dropped before gcra.admitir() is called on the cloned Arc outside the lock.",
+    "Key isolation and per-key state reuse both proven by dedicated unit tests in admision.rs.",
+    "Test discrimination (LES-036) satisfied: ac_2_y_ac_3 asserts exactly 4 sends and exactly 8 historial entries, so an always-admit stub or a misordered check would both fail.",
+    "No new Cargo dependency/feature; Motor::nuevo signature unchanged; only the 3 contract-touch files changed; diff well within all size limits.",
+    "FIX CONFIRMED (resolved): motor.rs line 207 now reads 'estrictamente antes de la deduplicacion' -- grep for 'strictly' in motor.rs returns no matches; Spanish-only forbid.behaviors rule now satisfied.",
+    "FIX CONFIRMED (resolved): the dead 'impl<R: Reloj> RegistroDeAdmision<R> { pub fn con_reloj(...) }' block was removed entirely from admision.rs -- only 'impl RegistroDeAdmision<RelojDelSistema> { nuevo, admitir }' remains. The pre-existing, legitimately-used Gcra::con_reloj (unrelated type, used by existing unit tests) is untouched, as expected.",
+    "Post-fix verification commands reported by implementer: cargo build --workspace, cargo test --workspace (+3 stability reps), cargo fmt --check, cargo clippy -- -D warnings all exit 0; diff shrank from 277 to 267 insertions after removing the dead code, consistent with the fix."
+  ],
+  "fix_tasks": []
+}

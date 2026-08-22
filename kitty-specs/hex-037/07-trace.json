@@ -1,0 +1,122 @@
+{
+  "attempts": [
+    {
+      "duration_s": 69.759865131,
+      "model": "google/gemini-3.6-flash-low",
+      "notes": "### Resumen del trabajo realizado (HEX-037)  Se ha completado la integración del módulo de admisión GCRA en el flujo de consumo de eventos del puerto de canal, satisfaciendo el requerimiento **FR-08**.  #### Cambios principales: 1. **`RegistroDeAdmision` en [`admision.rs`](file:///home/gary/dev/hexcell/worktrees/HEX-037/crates/hexcell-core/src/admision.rs#L269-L327)**:    - Se añadió la estructura `RegistroDeAdmision` que mapea cada clave límite (`IdConversacion` / `\u0026str`) a una única instancia `Gcra`.    - Se implementó un patrón *lock-free* para la ruta caliente: el `Mutex` de `std` solo se bloquea brevemente para la búsqueda o inserción de la instancia `Arc\u003cGcra\u003e`, soltando el cerrojo antes de llamar a `admitir()`.    - Mantiene cero dependencias externas en `hexcell-core` (respetando `adr-0002`).    - Se agregaron pruebas unitarias demostrando la reutilización de estado por clave y el aislamiento entre claves distintas.  2. **Integración en `Motor::procesar_evento` en [`motor.rs`](file:///home/gary/dev/hexcell/worktrees/HEX-037/crates/hexcell/src/motor.rs#L196-L207)**:    - Se incorporó `RegistroDeAdmision` a la estructura `Motor`, inicializado con `ConfiguracionGcra::default()` en `Motor::nuevo` (preservando su firma pública sin afectar otros call sites).    - Se posicionó la comprobación de admisión al inicio de `procesar_evento`, inmediatamente al consumir el evento del canal y **estrictamente antes** de la deduplicación, carga de contexto conversacional (`registrar_entrante`) e inferencia.    - Si la admisión resulta en `ResultadoDeAdmision::Descartado`, la función retorna de inmediato sin consumir memoria adicional de procesamiento. Se cita **FR-08** en el comentario explicativo.  3. **Pruebas de Integración en [`tests/admision.rs`](file:///home/gary/dev/hexcell/worktrees/HEX-037/crates/hexcell/tests/admision.rs)**:    - **AC-1**: Verifica que un evento admitido se procesa y responde sin alteraciones.    - **AC-2 / AC-3**: Verifica que...",
+      "phase": "execute",
+      "result": "passed"
+    }
+  ],
+  "completed_at": null,
+  "context_overflows": [],
+  "events": [
+    {
+      "event": "risk_level_calculated",
+      "level": "low",
+      "reasons": [
+        "no_signals_matched"
+      ],
+      "signals": {
+        "files_count": 3,
+        "sensitive_matches": [],
+        "symbols_count": 0
+      }
+    },
+    {
+      "calculated": "low",
+      "declared": "medium",
+      "event": "risk_level_divergence",
+      "reasons": [
+        "no_signals_matched"
+      ]
+    },
+    {
+      "blocked": "",
+      "candidate": {
+        "agent": "agy_edit",
+        "level": 1,
+        "model": "google/gemini-3.6-flash-low"
+      },
+      "dispatch_id": "",
+      "inputs_snapshot": {
+        "complexity_band": "M",
+        "control": {
+          "disabled": null,
+          "updated_at": ""
+        },
+        "exclusions": [
+          {
+            "agent": "opencode",
+            "level": 0,
+            "model": "poolside/laguna-s-2.1-free"
+          },
+          {
+            "agent": "aider",
+            "level": 0,
+            "model": "poolside/laguna-s-2.1-free"
+          },
+          {
+            "agent": "opencode",
+            "level": 0,
+            "model": "nvidia/nemotron-3-ultra-550b-a55b-free"
+          },
+          {
+            "agent": "aider",
+            "level": 0,
+            "model": "nvidia/nemotron-3-ultra-550b-a55b-free"
+          },
+          {
+            "agent": "agy_edit",
+            "level": 0,
+            "model": "openai/gpt-oss-120b"
+          }
+        ],
+        "hashes": {
+          "agents_yaml": "da88cec7aff86186e0974bcf69523dd0fe7ef19266c444f6da8c16709a19a090",
+          "config_yaml": "a40d2c4258971a64d6fd920ec1fe5ed2a116f96aa6fe04374a437006ea740342",
+          "routing_yaml": "b65f9f326b45de9a8ba351e0674e80f8b69ee2d69b415eab6f37d82d0a68637c"
+        },
+        "incumbent_family": "",
+        "level": 1,
+        "phase": "implement",
+        "risk": "medium",
+        "router_version": "fleet-route/v1"
+      },
+      "reasons": null,
+      "reroute_budget": 2,
+      "review_family_degraded": false,
+      "ts": "2026-08-22T18:29:28Z",
+      "type": "routing_decision"
+    },
+    {
+      "bundle_hash": "db2e1fab2393c22e886c7bc03ebeb44c3258296656341e22e65cc0bae8dcd5aa",
+      "dispatch_id": "db2e1fab2393",
+      "ts": "2026-08-22T18:29:36Z",
+      "type": "dispatch_started"
+    },
+    {
+      "applied": true,
+      "cause": null,
+      "diff_stat": {
+        "deletions": 2,
+        "empty": false,
+        "files_changed": 3,
+        "indeterminate": false,
+        "insertions": 277
+      },
+      "dispatch_id": "db2e1fab2393",
+      "forensic_ref": "refs/fleet/HEX-037/attempt-1-google-gemini-3.6-flash-low",
+      "noop": false,
+      "outcome_class": "attempt",
+      "ts": "2026-08-22T18:30:45Z",
+      "type": "dispatch_finished",
+      "usage_source": "none"
+    }
+  ],
+  "started_at": "2026-08-22T18:28:19Z",
+  "summary": "Wire the merged GCRA admission module into Motor::procesar_evento via a std-only per-key registry, checked before dedup/context/inference (FR-08).",
+  "task_id": "HEX-037",
+  "total_cost_usd": 0,
+  "violations": []
+}

@@ -1,0 +1,38 @@
+{
+  "commands": [
+    {
+      "command": "cargo build --workspace",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "compilacion del workspace en verde"
+    },
+    {
+      "command": "cargo test --workspace",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "52 lineas de test result en verde; nuevos: 5 unitarios en admision.rs y 2 de integracion en tests/admision.rs"
+    },
+    {
+      "command": "cargo fmt --check",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "formato limpio"
+    },
+    {
+      "command": "cargo clippy --workspace -- -D warnings",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "sin advertencias"
+    },
+    {
+      "command": "cargo test --workspace (x5 repeticiones de estabilidad)",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "5/5 repeticiones sin fallos"
+    }
+  ],
+  "executed_at": "2026-08-22T15:55:00Z",
+  "overall_result": "passed",
+  "summary": "4/4 comandos de verificacion en verde con 5/5 repeticiones estables; tests unitarios y de integracion del registro GCRA en verde.",
+  "task_id": "HEX-037"
+}

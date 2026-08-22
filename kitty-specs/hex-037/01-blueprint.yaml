@@ -1,0 +1,143 @@
+task_id: HEX-037
+summary: Wire the merged GCRA module (hexcell-core::admision) into Motor::procesar_evento via a
+  std-only per-key registry in hexcell-core, checked before dedup/context/inference (FR-08).
+affected_files:
+  - crates/hexcell-core/src/admision.rs
+  - crates/hexcell/src/motor.rs
+  - crates/hexcell/tests/admision.rs
+symbols:
+  - admision::RegistroDeAdmision
+  - admision::RegistroDeAdmision::nuevo
+  - admision::RegistroDeAdmision::admitir
+  - motor::Motor
+  - motor::Motor::procesar_evento
+dependencies:
+  - docs/plan/fase-a-4-admision-presupuesto.md
+  - docs/PRD.md
+  - docs/adr/adr-0002-estructura-workspace.md
+  - crates/hexcell-core/src/canal.rs
+  - crates/hexcell/src/procesador.rs
+  - crates/hexcell/tests/motor.rs
+  - crates/hexcell/tests/comun/mod.rs
+test_scenarios:
+  - statement: 'A single channel-port event under the configured GCRA budget (default
+      ConfiguracionGcra: 0.5 req/s, burst 3) is admitted and flows unchanged through dedup,
+      history, inference and send exactly as before this integration.'
+    covers:
+      - AC-1
+  - statement: 'Five events injected back-to-back for the same conversation exceed the default
+      GCRA budget (which admits exactly 4 consecutive calls, N+1 with N=3): the integration test
+      asserts exactly 4 sends/history entries, never 5, so a stub that always admits (LES-036)
+      fails this test; the 5th event never reaches Motor::historial or the inference call.'
+    covers:
+      - AC-2
+  - statement: 'The same discard-path test doubles as the ordering proof for AC-3: the discarded
+      5th event leaves zero trace in Motor::historial (conversational context) and triggers zero
+      calls into ProcesadorDeMensajes::procesar, demonstrating the admission check executed
+      before context loading and before inference, observable via the simulated adapter/harness.'
+    covers:
+      - AC-3
+  - statement: 'Two distinct conversation keys are admitted independently through the same
+      RegistroDeAdmision: exhausting one key''s burst budget does not affect the other key''s
+      admission outcome, proving one Gcra instance per key and no cross-key sharing (unit test
+      inside admision.rs).'
+  - statement: 'cargo build --workspace and cargo test --workspace pass with hexcell-core/Cargo.toml
+      still empty (adr-0002): the registry is built from std::sync::Mutex, std::collections::HashMap
+      and std::sync::Arc only, verified structurally by the standard build/test commands, not by a
+      dedicated Rust assertion.'
+strategy:
+  - step: 1
+    action: 'Confirm the insertion point by reading crates/hexcell/src/motor.rs::procesar_evento:
+      the earliest point where the limiting key (evento.conversacion) is available and nothing
+      else has been touched is the very first line of the function, before the "evento_recibido"
+      log, before RegistroDeDeduplicacion::procesar, before EstadoDeConversaciones::registrar_entrante
+      (context loading) and before ProcesadorDeMensajes::procesar (inference). Verify against
+      reality that EventoEntrante already arrives fully deserialized through the mpsc channel the
+      adapter owns (deserialization, where it exists, happens upstream in the adapter, e.g.
+      hexcell-canal-whatsmeow/src/mensajes.rs::interpretar_linea via serde_json, never inside
+      Motor); record the achievable guarantee as "before dedup + context loading + inference", not
+      literally "before deserialization", as a blueprint risk instead of inventing a pre-deserialization
+      hook that does not exist on this call path.'
+    files:
+      - crates/hexcell/src/motor.rs
+  - step: 2
+    action: 'Add RegistroDeAdmision to admision.rs: a std::sync::Mutex<std::collections::HashMap<String,
+      std::sync::Arc<Gcra>>> plus the ConfiguracionGcra applied to every new key, constructed with
+      RegistroDeAdmision::nuevo(configuracion). admitir(&self, clave: &str) locks only to
+      look up or insert a fresh Arc::new(Gcra::nueva(clave.to_string(), self.configuracion.clone()))
+      on first sight of a key, clones the Arc, drops the guard, then calls Gcra::admitir() on the
+      cloned Arc outside the lock, so the hot per-key CAS path stays lock-free exactly as
+      Gcra::admitir() already documents; the Mutex only ever serializes HashMap membership
+      changes, never the admission decision itself. No dependency added: hexcell-core/Cargo.toml
+      stays empty per adr-0002.'
+    files:
+      - crates/hexcell-core/src/admision.rs
+  - step: 3
+    action: 'Add inline #[cfg(test)] unit tests for RegistroDeAdmision alongside the existing
+      Gcra tests in admision.rs: one proving a repeated key reuses the same Gcra/TAT state
+      (burst budget carries over across admitir() calls for that key), and one proving two
+      distinct keys never share state (exhausting one key''s budget leaves the other key
+      unaffected).'
+    files:
+      - crates/hexcell-core/src/admision.rs
+  - step: 4
+    action: 'Add an admision: hexcell_core::admision::RegistroDeAdmision field to Motor<A, P>,
+      constructed inside Motor::nuevo via RegistroDeAdmision::nuevo(ConfiguracionGcra::default())
+      -- deliberately NOT a new Motor::nuevo parameter, so its public signature and all 8 existing
+      call sites (crates/hexcell/src/main.rs and the 7 test files under crates/hexcell/tests/)
+      stay untouched. At the top of procesar_evento, before any other statement, call
+      self.admision.admitir(evento.conversacion.como_str()); on ResultadoDeAdmision::Descartado,
+      return immediately with no logging (discard instrumentation is stage A-4 task 4, explicitly
+      out of scope per 00-spec.yaml non_goals); on Admitido, fall through to the unchanged
+      existing body. Cite FR-08 in the doc comment at this call site.'
+    files:
+      - crates/hexcell/src/motor.rs
+  - step: 5
+    action: 'Add crates/hexcell/tests/admision.rs, a new integration test file mirroring the
+      AdaptadorQueDelegaEnArc wrapper pattern already duplicated in tests/motor.rs and
+      tests/inferencia.rs. Implement the three test_scenarios above: one event admitted end to
+      end (AC-1), and one burst of 5 same-conversation events with distinct dedup ids asserting
+      exactly 4 sends and exactly 4 Motor::historial entries (AC-2/AC-3), never touching the
+      existing 7 Motor::nuevo call sites in other test files.'
+    files:
+      - crates/hexcell/tests/admision.rs
+risks:
+  - 'Divergence from 00-spec.yaml wording: the spec and the plan both say "before any heavy
+    deserialization", but EventoEntrante is already a fully-normalized, already-deserialized
+    struct by the time it reaches Motor (deserialization, on the whatsmeow adapter, happens in
+    hexcell-canal-whatsmeow/src/mensajes.rs before the event is ever put on the mpsc channel;
+    the simulated adapter never deserializes at all). There is no deserialization step left to
+    cross inside crates/hexcell. The achievable and actually-delivered guarantee is "before
+    dedup, before conversational-context loading (registrar_entrante/historial), before
+    inference" -- which is what FR-08 and this task''s acceptance criteria actually need. Flag
+    for human confirmation that this reading of "before deserialization" is accepted rather than
+    read as a missed requirement.'
+  - 'Design choice: RegistroDeAdmision is added to hexcell-core (std-only Mutex<HashMap>,
+    guarding only map access) rather than to the consuming hexcell crate. This keeps the
+    admission policy fully inside the domain crate that already owns Gcra/ConfiguracionGcra,
+    matches the existing precedent of process-global std-synchronized state living in
+    hexcell-core (canal.rs::RECHAZOS_DE_CONSTRUCCION, a static AtomicU64), and avoids
+    duplicating registry logic if a second consumer crate ever needs the same registry. The
+    alternative (registry inside crates/hexcell, using tokio::sync::Mutex since hexcell already
+    depends on tokio) was rejected only because it is not smaller, not because it would violate
+    adr-0002 -- both options are std/tokio-only and keep hexcell-core empty either way. Flag if
+    the human prefers the registry to live in hexcell instead.'
+  - 'Motor::nuevo intentionally keeps ConfiguracionGcra fixed to ::default() and unparametrized
+    (00-spec.yaml non_goals defers env-var configuration to stage task 3). This means the new
+    integration test in tests/admision.rs is coupled to the exact default numbers (0.5 req/s,
+    sustained rate; burst 3, i.e. 4 consecutive admits) to build its discriminating assertion;
+    when task 3 changes the default, this specific test will need its expected admitted-count
+    updated alongside it -- noted so the change is not mistaken for a regression.'
+  - 'Verified none of the 8 existing Motor::nuevo call sites (crates/hexcell/src/main.rs and the
+    7 files under crates/hexcell/tests/ that construct a Motor) inject more than 2 events to the
+    same conversation in rapid succession, so wiring the default GCRA budget (4 consecutive
+    admits per key) in front of every event does not change any existing test''s observable
+    outcome. Any FUTURE test that injects more than 4 rapid same-conversation events will need to
+    account for GCRA discarding the excess; flagged here so it is not mistaken for a new bug.'
+  - 'RegistroDeAdmision state is created fresh per Motor instance (in-memory only, never
+    persisted to sessions.db or elsewhere) and is therefore reset whenever a new Motor is
+    constructed, including the "second process" pattern already used by
+    crates/hexcell/tests/persistencia.rs and tests/respaldo_y_restauracion.rs to simulate a
+    restart. Nothing in 00-spec.yaml requires GCRA state to survive a restart, and no existing
+    test relies on it doing so, but this is a behavior a future load/stress test must not assume
+    away.'
