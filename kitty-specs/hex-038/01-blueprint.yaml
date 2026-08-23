@@ -1,0 +1,198 @@
+task_id: HEX-038
+summary: Parametrize GCRA admission limits via two new HEXCELL_* env vars, wire them into
+  Motor via a new builder method with no Motor::nuevo signature change, and write adr-0023.
+affected_files:
+  - crates/hexcell/src/configuracion.rs
+  - crates/hexcell/src/motor.rs
+  - crates/hexcell/src/main.rs
+  - crates/hexcell/tests/configuracion.rs
+  - crates/hexcell/tests/admision.rs
+  - docs/adr/adr-0023-parametros-gcra-por-variable-de-entorno.md
+  - docs/adr/README.md
+symbols:
+  - configuracion::Configuracion::desde_entorno
+  - configuracion::Configuracion::configuracion_gcra
+  - configuracion::HEXCELL_ADMISION_TASA_SOSTENIDA_POR_SEGUNDO
+  - configuracion::HEXCELL_ADMISION_TOLERANCIA_RAFAGA
+  - motor::Motor::con_configuracion_gcra
+dependencies:
+  - crates/hexcell-core/src/admision.rs
+  - docs/plan/fase-a-4-admision-presupuesto.md
+  - docs/PRD.md
+  - docs/adr/adr-0022-respaldo-identidad-sidecar-por-ipc.md
+  - docs/adr/adr-0004-gcra-y-parametros.md
+test_scenarios:
+  - statement: 'Setting both HEXCELL_ADMISION_TASA_SOSTENIDA_POR_SEGUNDO and
+      HEXCELL_ADMISION_TOLERANCIA_RAFAGA to valid values makes
+      Configuracion::desde_entorno().configuracion_gcra reflect those values instead of
+      ConfiguracionGcra::default() (0.5, 3), verified via the public
+      tasa_sostenida_por_segundo()/tolerancia_rafaga() accessors, following the existing
+      env-override test pattern in crates/hexcell/tests/configuracion.rs (e.g.
+      la_ventana_de_deduplicacion_se_puede_configurar_por_variable_de_entorno).'
+    covers:
+      - AC-1
+  - statement: 'A non-numeric or out-of-range value for either new env var makes
+      Configuracion::desde_entorno() return Err(ErrorDeConfiguracion::ValorInvalido { nombre,
+      .. }) naming the exact offending variable, before any directory/network/database
+      access, mirroring falla_si_la_ventana_de_deduplicacion_no_es_un_entero_positivo. A
+      tasa of 0, negative, or non-finite must fail via the ConfiguracionGcra::nueva validation
+      path (TasaInvalida), re-mapped to ValorInvalido naming
+      HEXCELL_ADMISION_TASA_SOSTENIDA_POR_SEGUNDO so the process-level fail-closed contract
+      (Spanish message naming the variable) holds even for that path.'
+    covers:
+      - AC-2
+  - statement: 'With neither new env var present, Configuracion::desde_entorno().configuracion_gcra
+      equals ConfiguracionGcra::default() exactly (0.5 req/s, burst 3), following
+      canal_por_defecto_es_simulado''s default-preservation pattern.'
+    covers:
+      - AC-3
+  - statement: 'docs/adr/adr-0023-parametros-gcra-por-variable-de-entorno.md exists, is the
+      next correlative number after adr-0022 (verified: adr-0022 is currently the latest row
+      in docs/adr/README.md), cites FR-08, justifies the preserved 0.5 req/s / burst-3 defaults
+      against the plan''s zero-false-positive criterion referencing the ac_3 realistic
+      conversation profile evidence in crates/hexcell-core/src/admision.rs and
+      crates/hexcell/tests/admision.rs, and docs/adr/README.md gains exactly one new table row
+      for it in the existing format.'
+    covers:
+      - AC-4
+  - statement: 'A new crates/hexcell/tests/admision.rs integration test builds a Motor via
+      Motor::nuevo(...).con_configuracion_gcra(configuracion_no_por_defecto) and shows the
+      admitted/discarded event count differs from the existing default-config
+      ac_2_y_ac_3_evento_en_exceso_es_descartado_antes_de_cargar_contexto assertion (4 of 5
+      admitted), proving the builder method actually replaces the Motor''s internal
+      RegistroDeAdmision end-to-end, not just Configuracion''s own struct field.'
+  - cargo build --workspace and cargo test --workspace pass, including the new tests for env
+    override, invalid-value failure, and default preservation.
+  - cargo fmt --check and cargo clippy --workspace -- -D warnings are clean.
+strategy:
+  - step: 1
+    action: 'Confirm the wiring seam without touching crates/hexcell-core/src/admision.rs
+      (00-spec.yaml invariant: the GCRA algorithm is not modified). ConfiguracionGcra already
+      exposes tasa_sostenida_por_segundo() and tolerancia_rafaga() public accessors and
+      ConfiguracionGcra::nueva(tasa, rafaga) -> Result<Self, ErrorDeConfiguracionGcra>, which is
+      exactly what configuracion.rs needs to read the defaults for fallback and to validate
+      the env-provided pair. No new symbol is needed in hexcell-core.'
+    files:
+      - crates/hexcell-core/src/admision.rs
+  - step: 2
+    action: 'In crates/hexcell/src/configuracion.rs, add two new pub const env var names
+      following the file''s exact naming/doc-comment convention (see
+      HEXCELL_VENTANA_DEDUPLICACION_SEGUNDOS for the pattern of a value with an implicit unit
+      already in the name): HEXCELL_ADMISION_TASA_SOSTENIDA_POR_SEGUNDO (f64, mirrors the
+      domain field name tasa_sostenida_por_segundo) and HEXCELL_ADMISION_TOLERANCIA_RAFAGA
+      (u32, a bare count like HEXCELL_CAPACIDAD_COLA, no unit suffix needed). Add a
+      pub configuracion_gcra: hexcell_core::admision::ConfiguracionGcra field to the
+      Configuracion struct (hexcell already depends on hexcell-core per motor.rs; no
+      Cargo.toml change needed). In desde_entorno(), after computing
+      limite_de_drenaje/latencia_inferencia_simulada and before constructing Self, read a
+      ConfiguracionGcra::default() once for fallback numbers, then parse each new var with
+      valor.parse::<f64>()/parse::<u32>() mapping a parse failure to ValorInvalido naming that
+      exact variable (matching the file''s existing match std::env::var(..) { Ok(valor) => ...,
+      Err(_) => <default_from_the_default_instance> } idiom used for
+      HEXCELL_VENTANA_DEDUPLICACION_SEGUNDOS), then call
+      ConfiguracionGcra::nueva(tasa, rafaga).map_err(|_| ValorInvalido { nombre:
+      HEXCELL_ADMISION_TASA_SOSTENIDA_POR_SEGUNDO, valor: tasa.to_string(), formato_esperado:
+      ... })? so a numerically-parseable but semantically-invalid tasa (0, negative,
+      non-finite) still fails closed naming the tasa variable, per LES-039: keep the field
+      required-with-a-computed-default, never make ConfiguracionGcra mandatory input elsewhere.'
+    files:
+      - crates/hexcell/src/configuracion.rs
+  - step: 3
+    action: 'In crates/hexcell/src/motor.rs, add a consuming builder method
+      pub fn con_configuracion_gcra(mut self, configuracion: ConfiguracionGcra) -> Self that
+      replaces self.admision with RegistroDeAdmision::nuevo(configuracion) and returns self.
+      Do NOT add a Motor::nuevo parameter and do NOT change its existing signature: that would
+      force every one of the ~20 existing Motor::nuevo call sites across crates/hexcell/tests/
+      and src/main.rs to be touched (the exact blast radius LES-039 warns against), when this
+      task only needs one opt-in call site per branch in main.rs. This keeps Motor::nuevo''s
+      default path (ConfiguracionGcra::default() internally) byte-identical to HEX-037''s
+      behavior for every test file that never calls the new method.'
+    files:
+      - crates/hexcell/src/motor.rs
+  - step: 4
+    action: 'In crates/hexcell/src/main.rs, at both Motor::nuevo(...) call sites (the
+      CanalSeleccionado::Simulado and CanalSeleccionado::Whatsmeow arms, currently lines ~190
+      and ~219), chain .con_configuracion_gcra(configuracion.configuracion_gcra.clone()) onto
+      the existing Motor::nuevo(...) call so the parsed/validated env-derived (or default)
+      GCRA configuration reaches production Motor instances in both channel arms identically.
+      ConfiguracionGcra is Clone (already derives Clone), so cloning once per branch is cheap
+      and avoids restructuring the two match arms.'
+    files:
+      - crates/hexcell/src/main.rs
+  - step: 5
+    action: 'In crates/hexcell/tests/configuracion.rs, add HEXCELL_ADMISION_TASA_SOSTENIDA_POR_SEGUNDO
+      and HEXCELL_ADMISION_TOLERANCIA_RAFAGA to limpiar_entorno_de_hexcell''s variable list, then
+      add three tests mirroring the existing ventana_de_deduplicacion trio exactly: (1) both
+      unset -> configuracion.configuracion_gcra equals ConfiguracionGcra::default() (AC-3); (2)
+      both set to valid values (e.g. "2.0" and "5") -> configuracion_gcra.tasa_sostenida_por_segundo()
+      == 2.0 and .tolerancia_rafaga() == 5 (AC-1); (3) HEXCELL_ADMISION_TASA_SOSTENIDA_POR_SEGUNDO
+      set to a non-numeric string ("no-es-un-numero") -> ValorInvalido naming that exact
+      variable (AC-2). Reuse CERROJO_DE_ENTORNO and the temp-dir pattern already in this file;
+      do not touch any existing test in it beyond the cleanup list.'
+    files:
+      - crates/hexcell/tests/configuracion.rs
+  - step: 6
+    action: 'In crates/hexcell/tests/admision.rs, add one new #[tokio::test] that builds a
+      Motor via Motor::nuevo(...).con_configuracion_gcra(ConfiguracionGcra::nueva(1.0,
+      0).expect(...)) (tighter than the 0.5/3 default: admits only 1 consecutive event per
+      key instead of 4) and injects the same 5-event burst pattern as
+      ac_2_y_ac_3_evento_en_exceso_es_descartado_antes_de_cargar_contexto, asserting exactly 1
+      send/history pair instead of 4 -- proving con_configuracion_gcra actually replaces the
+      Motor''s internal RegistroDeAdmision end-to-end (not merely a Configuracion struct
+      field), discriminating (LES-036) against a builder method that is a no-op. Do not modify
+      the two existing tests in this file.'
+    files:
+      - crates/hexcell/tests/admision.rs
+  - step: 7
+    action: 'Write docs/adr/adr-0023-parametros-gcra-por-variable-de-entorno.md following
+      adr-0022''s exact section structure (Estado/Etapa que lo produce/Relación con otros ADR,
+      Contexto, Decisión, Alternativas consideradas y descartadas, Consecuencias, Referencias),
+      in Spanish. Content: cite FR-08 (docs/PRD.md) and stage A-4 task 3
+      (docs/plan/fase-a-4-admision-presupuesto.md, "Parametrizar y documentar los límites");
+      name the two new env vars and their fail-closed validation; justify keeping the compiled
+      default (0.5 req/s, burst 3) unchanged against the plan''s "Criterio de no-falso-positivo"
+      by citing the ac_3_perfil_conversacional_realista_cero_falsos_positivos unit test
+      (crates/hexcell-core/src/admision.rs) and the ac_1/ac_2_y_ac_3 integration tests
+      (crates/hexcell/tests/admision.rs) as the calibration evidence that zero false positives
+      hold at these defaults under a realistic single-conversation profile; note this ADR does
+      NOT supersede or rewrite the still-unformalized adr-0004-gcra-y-parametros.md placeholder
+      row (a distinct, broader GCRA architecture ADR reserved for a later formalization task) --
+      adr-0023 is scoped narrowly to the env-var parametrization mechanism and the default
+      justification. Relación con otros ADR: none superseded; adr-0004''s row stays
+      "Tomada en el PRD, por formalizar" untouched.'
+    files:
+      - docs/adr/adr-0023-parametros-gcra-por-variable-de-entorno.md
+  - step: 8
+    action: 'Add exactly one new row to the docs/adr/README.md table for adr-0023, in the
+      exact existing column format (Archivo | Decisión | Etapa que lo produce | Estado),
+      immediately after the adr-0022 row, with Estado "Vigente (2026-08-22)" and Etapa "A-4".
+      Do not renumber, reorder, or edit any other row.'
+    files:
+      - docs/adr/README.md
+risks:
+  - 'Naming choice for the two new env vars: HEXCELL_ADMISION_TASA_SOSTENIDA_POR_SEGUNDO and
+    HEXCELL_ADMISION_TOLERANCIA_RAFAGA add an explicit ADMISION grouping prefix that no
+    existing HEXCELL_* var uses (existing vars go straight to the concept: HEXCELL_CANAL,
+    HEXCELL_CAPACIDAD_COLA, HEXCELL_VENTANA_DEDUPLICACION_SEGUNDOS). This departs slightly from
+    the flat naming precedent, but was chosen because "tasa" and "rafaga" alone are too generic
+    to self-document across a whole cell''s env surface, and the assignment brief itself
+    proposed this exact ADMISION-prefixed pair. Flagging for human confirmation before
+    implementation locks in the names, since env var names are effectively a public interface
+    once documented/deployed.'
+  - 'ConfiguracionGcra::nueva only validates the sustained rate (tasa_sostenida_por_segundo
+    finite and > 0); tolerancia_rafaga: u32 has no invalid values in the type itself (0 is a
+    legal, tested burst tolerance per ac_2_tolerancia_a_rafaga_exacta with N=0 implied). This
+    means AC-2''s "invalid value for either env var" is only reachable for
+    HEXCELL_ADMISION_TOLERANCIA_RAFAGA via a parse failure (non-numeric string, negative
+    number, or overflow past u32::MAX), never via a semantically-rejected numeric value; only
+    HEXCELL_ADMISION_TASA_SOSTENIDA_POR_SEGUNDO can fail both at parse time and at
+    ConfiguracionGcra::nueva validation time. The blueprint''s step 5 test plan covers the
+    parse-failure path for both variables and the semantic-validation path for the rate; no
+    semantic-validation failure mode exists for the burst count to test separately.'
+  - 'This task keeps ConfiguracionGcra::default()''s numeric values (0.5, 3) unchanged per
+    00-spec.yaml''s explicit instruction, since nothing in the ac_3 realistic-profile evidence
+    read during this exploration demands otherwise (all its five simulated messages remain
+    admitted at the current defaults). adr-0023 therefore documents a justification for the
+    status quo, not a new calibration; if a future load test surfaces a false positive at these
+    defaults, changing them is a separate, human-approved decision, never bundled into this
+    task.'

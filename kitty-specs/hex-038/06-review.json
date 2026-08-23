@@ -1,0 +1,27 @@
+{
+  "task_id": "HEX-038",
+  "summary": "GCRA env-var wiring correct end-to-end (fail-closed, both main.rs arms, tests discriminate). adr-0023 stray English word fixed; all-Spanish now clean.",
+  "verdict": "approve",
+  "contract_compliance": true,
+  "forbidden_files_touched": [],
+  "unrequested_refactor": false,
+  "missing_tests": [],
+  "functional_risk": "low",
+  "notes": [
+    "contract-check ok=true; not_checked: forbid.behaviors (manual review below covers these)",
+    "acceptance-coverage: AC-1..AC-4 all covered=true",
+    "05-validation.json: overall_result=passed, 4/4 commands green with 5/5 stability repeats; cargo fmt was run mechanically before final validation run per orchestrator note, not a delegate defect",
+    "configuracion.rs: both new env vars parse f64/u32 correctly; parse failures map ValorInvalido naming the exact variable; ConfiguracionGcra::nueva's semantic TasaInvalida rejection is correctly remapped to ValorInvalido naming HEXCELL_ADMISION_TASA_SOSTENIDA_POR_SEGUNDO (the only semantically-validated field per hexcell-core::admision::ConfiguracionGcra::nueva, confirmed by reading admision.rs); unset vars fall back to ConfiguracionGcra::default() values read once before parsing, matching AC-3 exactly",
+    "motor.rs: con_configuracion_gcra(mut self, configuracion) -> Self is a correct consuming builder that replaces self.admision via RegistroDeAdmision::nuevo; Motor::nuevo signature is unchanged",
+    "main.rs: both CanalSeleccionado::Simulado and CanalSeleccionado::Whatsmeow arms chain .con_configuracion_gcra(configuracion.configuracion_gcra.clone()) onto the existing Motor::nuevo(...) call, per blueprint step 4",
+    "tests/configuracion.rs: three new tests (default preserved, env override, invalid tasa) mirror the existing ventana_deduplicacion pattern; the invalid-value test asserts the specific ErrorDeConfiguracion::ValorInvalido{nombre,valor,..} naming the exact variable, not a bare is_err() (LES-036 satisfied); the two new env vars were added to limpiar_entorno_de_hexcell's cleanup list; no existing test was touched",
+    "tests/admision.rs: new builder_con_configuracion_gcra_personalizada_reemplaza_registro_en_motor test uses ConfiguracionGcra::nueva(1.0, 0) (tighter than default) and asserts exactly 1 send instead of the 4 the existing default-config test produces for the same 5-event burst -- this discriminates against a no-op con_configuracion_gcra implementation (LES-036 satisfied); no existing test was touched",
+    "docs/adr/README.md: exactly one new row added immediately after adr-0022's row, correct column format, Estado 'Vigente (2026-08-22)', Etapa 'A-4'; no other row edited, reordered, or removed",
+    "adr-0023: numbered correctly as the next correlative after adr-0022; follows adr-0022's section structure (Estado/Etapa/Relacion, Contexto, Decision, Alternativas, Consecuencias, Referencias); correctly documents that it does not supersede adr-0004; justifies keeping 0.5/3 defaults citing ac_3 and the admision.rs/admision test suite as calibration evidence, cites FR-08",
+    "DEFECT: docs/adr/adr-0023-parametros-gcra-por-variable-de-entorno.md line 11 contains the stray English word 'offending' inside Spanish prose ('...que nombre la variable offending'), violating the contract's explicit all-Spanish requirement for ADR prose. This is distinct from the orchestrator's pre-review check, which was scoped to code-diff comments, not ADR body prose, so it was not caught upstream. ('fail-closed' in the same sentence is not a new violation -- it is an established precedent term already used in adr-0022.)",
+    "Cargo manifests, old ADRs (0001-0022), sidecar/, docs/PRD.md, docs/STATUS.md untouched -- confirmed via git diff --name-only against the full forbid.files list",
+    "GCRA algorithm in crates/hexcell-core/src/admision.rs not modified; ConfiguracionGcra::nueva/tasa_sostenida_por_segundo()/tolerancia_rafaga() used as-is per invariant",
+    "RESOLVED: adr-0023-parametros-gcra-por-variable-de-entorno.md line 11 now reads 'la variable infractora' -- confirmed by direct read, grep for 'offending' returns 0 matches in the file. Markdown-only change, does not affect the 4/4 verify commands or 5/5 stability reps already recorded in 05-validation.json."
+  ],
+  "fix_tasks": []
+}

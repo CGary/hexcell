@@ -1,0 +1,58 @@
+task_id: HEX-038
+summary: Parametrize GCRA admission limits (sustained rate, burst) via env vars with fail-closed validation, and document the choice in adr-0023 (FR-08).
+goal: >
+  Make the GCRA admission control's sustained rate and burst tolerance
+  configurable at startup via environment variables, following the existing
+  Spanish env-var convention in crates/hexcell/src/configuracion.rs
+  (HEXCELL_ID_CELULA, HEXCELL_RUTA_DATOS, etc.). Invalid values must fail
+  startup closed with a Spanish error naming the offending variable. Defaults
+  remain ConfiguracionGcra::default() (0.5 req/s, burst 3) unless the ac_3
+  realistic conversation profile test shows evidence they must change, in
+  which case that is flagged as a risk for human sign-off, not silently
+  applied. Document the limitation key (normalized conversation id) as
+  already-correct behavior, and record the default rate/burst justification
+  in a new ADR (adr-0023, next correlative after adr-0022) referencing the
+  plan's zero-false-positive acceptance criterion.
+invariants:
+  - The GCRA algorithm implementation in crates/hexcell-core/src/admision.rs is not modified.
+  - The limitation key for admission remains the normalized conversation id (RegistroDeAdmision keyed by conversation id via Motor::procesar_evento); this is documented, not changed.
+  - When the new env vars are unset, the GCRA defaults (0.5 req/s sustained rate, burst 3) are preserved exactly.
+  - An invalid value for either env var causes startup to fail closed (process does not start serving) with a Spanish error message naming the specific environment variable.
+  - ADR numbering stays correlative and immutable; adr-0023 is the next number after adr-0022 and is never renumbered.
+non_goals:
+  - Discard logging for admission rejections (plan task 4).
+  - The semaphore / concurrency limiter (plan task 5).
+  - Any change to the GCRA algorithm itself (crates/hexcell-core/src/admision.rs core logic).
+  - Sidecar (Go) changes.
+  - Changes to docs/PRD.md.
+constraints:
+  - All prose, identifiers, and commit messages in Spanish; conventional commits without AI attribution.
+  - New env var names must follow the existing Spanish naming convention used in crates/hexcell/src/configuracion.rs (e.g. HEXCELL_*), and must be read at startup the same way HEXCELL_ID_CELULA / HEXCELL_RUTA_DATOS are read.
+  - Do not version *.db, *.db-wal, *.db-shm, or .env* files.
+  - Per project lesson LES-039, a default value is legitimate here because admission rate limits are not deployment-region-dependent; keep the defaults in code and only override via env.
+  - New ADR must be numbered adr-0023 (verify adr-0022 is still the latest before writing) and must add a row to docs/adr/README.md following the existing table format.
+  - Must cite FR-08 from docs/PRD.md as the requirement covered.
+acceptance:
+  - id: AC-1
+    statement: Setting both env vars to valid values overrides the GCRA defaults at startup.
+    given: valid values are set for the sustained-rate and burst-tolerance env vars before process startup
+    when: the process starts and constructs its ConfiguracionGcra
+    then: the resulting configuration reflects the env-provided values instead of the compiled-in defaults
+  - id: AC-2
+    statement: An invalid value for either env var fails startup closed with a Spanish error naming the variable.
+    given: one of the two env vars is set to a non-numeric or out-of-range value
+    when: the process attempts to start
+    then: startup fails before serving traffic, and the error message is in Spanish and names the specific offending environment variable
+  - id: AC-3
+    statement: When both env vars are unset, the compiled-in GCRA defaults (0.5 req/s, burst 3) are used unchanged.
+    given: neither env var is present in the process environment
+    when: the process starts and constructs its ConfiguracionGcra
+    then: the resulting configuration equals ConfiguracionGcra::default() (0.5 req/s sustained rate, burst 3)
+  - id: AC-4
+    statement: adr-0023 exists, is numbered correctly, and is referenced in docs/adr/README.md.
+    given: the implementation is complete
+    when: docs/adr/adr-0023-*.md and docs/adr/README.md are inspected
+    then: adr-0023 exists, justifies the chosen default rate/burst against the plan's zero-false-positive criterion (ac_3 realistic conversation profile test), cites FR-08, and docs/adr/README.md has a new row for it in the existing table format
+  - cargo build --workspace and cargo test --workspace pass, including the new tests for env override, invalid-value failure, and default preservation.
+  - cargo fmt --check and cargo clippy --workspace -- -D warnings are clean.
+risk: low

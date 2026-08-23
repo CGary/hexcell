@@ -1,0 +1,38 @@
+{
+  "commands": [
+    {
+      "command": "cargo build --workspace",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "compilacion en verde"
+    },
+    {
+      "command": "cargo test --workspace",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "tests del workspace en verde incl. overrides de entorno y fallo cerrado"
+    },
+    {
+      "command": "cargo fmt --check",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "limpio tras normalizar formato con cargo fmt"
+    },
+    {
+      "command": "cargo clippy --workspace -- -D warnings",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "sin advertencias"
+    },
+    {
+      "command": "cargo test --workspace (x5 repeticiones)",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "5/5 sin fallos"
+    }
+  ],
+  "executed_at": "2026-08-22T18:05:00Z",
+  "overall_result": "passed",
+  "summary": "4/4 comandos en verde con 5/5 repeticiones estables; formato normalizado con cargo fmt antes de la corrida final.",
+  "task_id": "HEX-038"
+}

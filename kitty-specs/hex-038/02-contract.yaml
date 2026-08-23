@@ -1,0 +1,184 @@
+task_id: HEX-038
+summary: Add two HEXCELL_* env vars to parametrize GCRA sustained rate and burst, wire the
+  parsed ConfiguracionGcra into Motor via a new builder method, and write adr-0023.
+goal: 'Deliver stage A-4 task 3 (docs/plan/fase-a-4-admision-presupuesto.md), covering FR-08 of
+  docs/PRD.md: make the GCRA admission control''s sustained rate and burst tolerance
+  configurable at startup via two new environment variables, following the existing Spanish
+  HEXCELL_* convention in crates/hexcell/src/configuracion.rs. An invalid value for either
+  variable must fail startup closed with a Spanish error naming the exact offending variable,
+  before any network or disk access beyond what desde_entorno() already performs. When both
+  variables are unset, ConfiguracionGcra::default() (0.5 req/s, burst 3) must be preserved
+  exactly (LES-039: this default is legitimate, admission rate limits are not
+  deployment-region-dependent). The parsed configuration must reach the production Motor via a
+  new opt-in builder method, never by changing Motor::nuevo''s existing signature, so the
+  ~20 existing call sites across crates/hexcell/tests/ and src/main.rs keep compiling
+  unmodified. Finally, write docs/adr/adr-0023-*.md justifying the preserved defaults against
+  the plan''s zero-false-positive criterion (the ac_3 realistic conversation profile evidence),
+  citing FR-08, and add its row to docs/adr/README.md.'
+read:
+  - .ai/tasks/active/HEX-038-new-spec/00-spec.yaml
+  - .ai/tasks/active/HEX-038-new-spec/01-blueprint.yaml
+  - crates/hexcell-core/src/admision.rs
+  - crates/hexcell/tests/motor.rs
+  - crates/hexcell/tests/comun/mod.rs
+  - docs/plan/fase-a-4-admision-presupuesto.md
+  - docs/PRD.md
+  - docs/adr/adr-0022-respaldo-identidad-sidecar-por-ipc.md
+  - docs/adr/adr-0004-gcra-y-parametros.md
+touch:
+  - crates/hexcell/src/configuracion.rs
+  - crates/hexcell/src/motor.rs
+  - crates/hexcell/src/main.rs
+  - crates/hexcell/tests/configuracion.rs
+  - crates/hexcell/tests/admision.rs
+  - docs/adr/adr-0023-parametros-gcra-por-variable-de-entorno.md
+  - docs/adr/README.md
+forbid:
+  files:
+    - docs/PRD.md
+    - docs/STATUS.md
+    - docs/bitacora-de-descartes.md
+    - Cargo.toml
+    - Cargo.lock
+    - crates/hexcell-core/Cargo.toml
+    - crates/hexcell/Cargo.toml
+    - crates/hexcell-admin/Cargo.toml
+    - crates/hexcell-storage/Cargo.toml
+    - crates/hexcell-meta/Cargo.toml
+    - crates/hexcell-canal-simulado/Cargo.toml
+    - crates/hexcell-canal-contrato/Cargo.toml
+    - crates/hexcell-canal-whatsmeow/Cargo.toml
+    - crates/hexcell-core/src/admision.rs
+    - crates/hexcell-core/src/lib.rs
+    - crates/hexcell-core/src/canal.rs
+    - crates/hexcell-core/src/identidad.rs
+    - crates/hexcell-core/src/inferencia.rs
+    - crates/hexcell/src/procesador.rs
+    - crates/hexcell/src/apagado.rs
+    - crates/hexcell/src/deduplicacion.rs
+    - crates/hexcell/src/conversaciones.rs
+    - crates/hexcell/src/registro.rs
+    - crates/hexcell/tests/motor.rs
+    - crates/hexcell/tests/persistencia.rs
+    - crates/hexcell/tests/respaldo_y_restauracion.rs
+    - crates/hexcell/tests/continuidad_de_hilo.rs
+    - crates/hexcell/tests/deduplicacion.rs
+    - crates/hexcell/tests/inferencia.rs
+    - crates/hexcell/tests/politica_fuera_de_ventana.rs
+    - crates/hexcell/tests/rss_linea_base.rs
+    - crates/hexcell/tests/apagado_ordenado.rs
+    - crates/hexcell/tests/canal_whatsmeow_seleccionado.rs
+    - crates/hexcell/tests/emparejamiento_ipc.rs
+    - crates/hexcell/tests/preparacion.rs
+    - crates/hexcell/tests/registro_estructurado.rs
+    - crates/hexcell/tests/respaldo_cli.rs
+    - crates/hexcell/tests/respaldo_sqlstore_ipc.rs
+    - crates/hexcell/tests/salud_http.rs
+    - docs/adr/adr-0001-licencia.md
+    - docs/adr/adr-0002-estructura-workspace.md
+    - docs/adr/adr-0003-persistencia-dual.md
+    - docs/adr/adr-0004-gcra-y-parametros.md
+    - docs/adr/adr-0005-contabilidad-dos-fases.md
+    - docs/adr/adr-0006-epocas-y-conmutacion-atomica.md
+    - docs/adr/adr-0007-imagen-y-aislamiento.md
+    - docs/adr/adr-0008-estrategia-canal-dos-fases.md
+    - docs/adr/adr-0009-whatsmeow-adaptador-fase-a.md
+    - docs/adr/adr-0010-puerto-de-canal.md
+    - docs/adr/adr-0011-whatsmeow-sidecar-e-ipc.md
+    - docs/adr/adr-0012-inferencia-externa.md
+    - docs/adr/adr-0013-entrada-publica-fase-b.md
+    - docs/adr/adr-0014-canal-propio-permanente.md
+    - docs/adr/adr-0015-politica-de-convivencia-con-el-baneo.md
+    - docs/adr/adr-0016-convencion-de-entrega-de-eventos.md
+    - docs/adr/adr-0017-puerto-de-inferencia.md
+    - docs/adr/adr-0018-apagado-ordenado.md
+    - docs/adr/adr-0019-registro-estructurado.md
+    - docs/adr/adr-0020-respaldo-y-restauracion-por-celula.md
+    - docs/adr/adr-0021-testigo-de-entrante.md
+    - docs/adr/adr-0022-respaldo-identidad-sidecar-por-ipc.md
+    - sidecar/main.go
+    - sidecar/go.mod
+    - sidecar/go.sum
+  behaviors:
+    - Do NOT modify the GCRA algorithm implementation in crates/hexcell-core/src/admision.rs
+      (00-spec.yaml invariant). ConfiguracionGcra::nueva, tasa_sostenida_por_segundo(), and
+      tolerancia_rafaga() already exist and are public; use them as-is.
+    - Do NOT add any new Cargo dependency, dev-dependency, workspace dependency, or Cargo
+      feature anywhere. hexcell-core's dependency table must stay empty (adr-0002).
+      crates/hexcell already depends on hexcell-core; no manifest change is needed.
+    - 'Do NOT change the public signature of Motor::nuevo. The parsed/validated
+      ConfiguracionGcra must reach Motor only through a new opt-in method (e.g. a consuming
+      builder con_configuracion_gcra(mut self, configuracion ConfiguracionGcra) -> Self).
+      Every existing Motor::nuevo call site outside crates/hexcell/tests/admision.rs and
+      crates/hexcell/src/main.rs must keep compiling completely unmodified.'
+    - Do NOT make ConfiguracionGcra, or any new configuracion.rs field carrying it, a mandatory
+      constructor input anywhere it would force touching test files outside this contract's
+      touch list (LES-039). Keep the field optional-with-a-computed-default at every call site.
+    - Do NOT change the limitation key for admission (it remains the normalized conversation id
+      via Motor::procesar_evento -> RegistroDeAdmision::admitir(evento.conversacion.como_str()));
+      this task documents that behavior, it does not change it.
+    - Do NOT change ConfiguracionGcra::default()'s compiled-in numeric values (0.5 req/s,
+      burst 3) unless the ac_3 realistic conversation profile evidence read during this task
+      demonstrably requires it -- and even then, only flag it as a risk in 01-blueprint.yaml
+      for explicit human sign-off; never change the defaults silently as part of this
+      implementation.
+    - 'Every new/changed env-var parsing branch in configuracion.rs must, on an invalid value,
+      return an Err with ErrorDeConfiguracion::ValorInvalido (fields nombre, valor,
+      formato_esperado) naming the exact HEXCELL_ADMISION_* variable, in Spanish, following
+      the file''s exact existing idiom (see the HEXCELL_VENTANA_DEDUPLICACION_SEGUNDOS branch)
+      -- never a bare unwrap/expect/panic in this parsing path (the module doc comment
+      explains why -- release profile sets panic to abort, which eats the message).'
+    - Do NOT add discard logging, tracing, metrics, or any crate::registro wiring for the
+      admission discard path (stage A-4 task 4, out of scope, see 00-spec.yaml non_goals).
+    - Do NOT implement the Tokio concurrency semaphore or any LLM budget/balance accounting
+      (stage A-4 task 5 and later tasks, out of scope).
+    - Do NOT introduce any HTTP- or transport-specific type into configuracion.rs, motor.rs, or
+      main.rs as part of this change.
+    - 'Do NOT delete, weaken, or silently reinterpret any existing test under
+      crates/hexcell/tests/configuracion.rs or crates/hexcell/tests/admision.rs. New coverage is
+      additive: new #[test]/#[tokio::test] functions, plus adding the two new env var names to
+      limpiar_entorno_de_hexcell''s cleanup list in configuracion.rs.'
+    - 'Tests must discriminate (LES-036): the invalid-value tests must assert the specific
+      ErrorDeConfiguracion::ValorInvalido { nombre, .. } naming the exact offending variable
+      (never a bare is_err() check), and the new admision.rs builder test must assert an exact
+      admitted/discarded count that differs from the existing default-config test, so a
+      no-op con_configuracion_gcra implementation fails it.'
+    - adr-0023 must be numbered exactly adr-0023 (verify adr-0022 is still the latest row in
+      docs/adr/README.md before writing) and must never renumber or reorder any existing ADR.
+    - docs/adr/README.md must gain exactly one new row, in the existing table's column format,
+      for adr-0023; no other row may be edited, reordered, or removed.
+    - Do NOT write any code, comment, doc-comment, ADR prose, or commit message in a language
+      other than Spanish; conventional commits without AI attribution.
+    - Do NOT version *.db, *.db-wal, *.db-shm, or .env* files.
+verify:
+  commands:
+    - cargo build --workspace
+    - cargo test --workspace
+    - cargo fmt --check
+    - cargo clippy --workspace -- -D warnings
+acceptance:
+  human_gate: true
+limits:
+  max_files_changed: 7
+  max_diff_lines: 420
+  per_class:
+    - glob: crates/hexcell/src/configuracion.rs
+      max_diff_lines: 90
+    - glob: crates/hexcell/src/motor.rs
+      max_diff_lines: 20
+    - glob: crates/hexcell/src/main.rs
+      max_diff_lines: 10
+    - glob: crates/hexcell/tests/configuracion.rs
+      max_diff_lines: 110
+    - glob: crates/hexcell/tests/admision.rs
+      max_diff_lines: 70
+    - glob: docs/adr/adr-0023-parametros-gcra-por-variable-de-entorno.md
+      max_diff_lines: 110
+    - glob: docs/adr/README.md
+      max_diff_lines: 10
+execution:
+  mode: worktree_edit
+  branch: ai/HEX-038
+retry_policy:
+  max_attempts: 2
+  escalate_after: 2
