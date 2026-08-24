@@ -1,0 +1,114 @@
+{
+  "attempts": [
+    {
+      "duration_s": 228.080427901,
+      "model": "google/gemini-3.6-flash-low",
+      "notes": "NOTES: - Instrumentada la emisión del evento estructurado `admision_descartada` (nivel `NivelDeRegistro::Aviso`) en `Motor::procesar_evento` (en [motor.rs](file:///home/gary/dev/hexcell/worktrees/HEX-039/crates/hexcell/src/motor.rs#L211-L230)) cada vez que GCRA retorna `ResultadoDeAdmision::Descartado { clave, motivo }`, cumpliendo con la visibilidad requerida por FR-08. - Relocalizada la instanciación `let inicio = Instant::now();` al principio de `procesar_evento` para asegurar que `latencia_ms` cubra de forma consistente la evaluación de admisión. - Añadido un módulo `#[cfg(test)] pub(crate) mod pruebas` en [registro.rs](file:///home/gary/dev/hexcell/worktrees/HEX-039/crates/hexcell/src/registro.rs#L201-L226) con captura `thread_local!` para interceptar entradas emitidas durante pruebas unitarias sin modificar el comportamiento de producción ni la salida por `stdout`. - Incorporadas pruebas unitarias discriminatorias (LES-036) en `#[cfg(test)] mod tests` dentro de [motor.rs](file:///home/gary/dev/hexcell/worktrees/HEX-039/crates/hexcell/src/motor.rs#L423-L509) validando que un descarte genera exactamente un evento `admision_descartada` y que un evento admitido no emite ninguno. - Declarado explícitamente que los contadores de métricas de descarte (etapa A-4 tarea 11) y los umbrales de alertas anómalas (etapa A-6) quedan diferidos. END NOTES  ### Resumen del Trabajo Realizado  1. **Instrumentación del Registro Estructurado (FR-08)**:    - En [crates/hexcell/src/motor.rs](file:///home/gary/dev/hexcell/worktrees/HEX-039/crates/hexcell/src/motor.rs#L211-L230), se actualizó `procesar_evento` para que al obtener `ResultadoDeAdmision::Descartado { clave, motivo }` se emita una `EntradaDeRegistro` con:      - `nivel`: `NivelDeRegistro::Aviso`      - `evento`: `\"admision_descartada\"`      - `id_evento`: Identificador de deduplicación del evento      - `id_conversacion`: `clave` de la conversación descartada      - `latencia_ms`: Tiempo de procesamiento desde...",
+      "phase": "execute",
+      "result": "passed"
+    }
+  ],
+  "completed_at": null,
+  "context_overflows": [],
+  "events": [
+    {
+      "event": "risk_level_calculated",
+      "level": "low",
+      "reasons": [
+        "no_signals_matched"
+      ],
+      "signals": {
+        "files_count": 2,
+        "sensitive_matches": [],
+        "symbols_count": 0
+      }
+    },
+    {
+      "blocked": "",
+      "candidate": {
+        "agent": "agy_edit",
+        "level": 1,
+        "model": "google/gemini-3.6-flash-low"
+      },
+      "dispatch_id": "",
+      "inputs_snapshot": {
+        "complexity_band": "M",
+        "control": {
+          "disabled": null,
+          "updated_at": ""
+        },
+        "exclusions": [
+          {
+            "agent": "opencode",
+            "level": 0,
+            "model": "poolside/laguna-s-2.1-free"
+          },
+          {
+            "agent": "aider",
+            "level": 0,
+            "model": "poolside/laguna-s-2.1-free"
+          },
+          {
+            "agent": "opencode",
+            "level": 0,
+            "model": "nvidia/nemotron-3-ultra-550b-a55b-free"
+          },
+          {
+            "agent": "aider",
+            "level": 0,
+            "model": "nvidia/nemotron-3-ultra-550b-a55b-free"
+          },
+          {
+            "agent": "agy_edit",
+            "level": 0,
+            "model": "openai/gpt-oss-120b"
+          }
+        ],
+        "hashes": {
+          "agents_yaml": "da88cec7aff86186e0974bcf69523dd0fe7ef19266c444f6da8c16709a19a090",
+          "config_yaml": "a40d2c4258971a64d6fd920ec1fe5ed2a116f96aa6fe04374a437006ea740342",
+          "routing_yaml": "b65f9f326b45de9a8ba351e0674e80f8b69ee2d69b415eab6f37d82d0a68637c"
+        },
+        "incumbent_family": "",
+        "level": 1,
+        "phase": "implement",
+        "risk": "low",
+        "router_version": "fleet-route/v1"
+      },
+      "reasons": null,
+      "reroute_budget": 2,
+      "review_family_degraded": false,
+      "ts": "2026-08-23T22:54:05Z",
+      "type": "routing_decision"
+    },
+    {
+      "bundle_hash": "2cf5e0f385cf690357aa8e5fce1b8cf77b8c8211391867f421eb932c80806bf7",
+      "dispatch_id": "2cf5e0f385cf",
+      "ts": "2026-08-23T22:54:13Z",
+      "type": "dispatch_started"
+    },
+    {
+      "applied": true,
+      "cause": null,
+      "diff_stat": {
+        "deletions": 2,
+        "empty": false,
+        "files_changed": 2,
+        "indeterminate": false,
+        "insertions": 136
+      },
+      "dispatch_id": "2cf5e0f385cf",
+      "forensic_ref": "refs/fleet/HEX-039/attempt-1-google-gemini-3.6-flash-low",
+      "noop": false,
+      "outcome_class": "attempt",
+      "ts": "2026-08-23T22:58:01Z",
+      "type": "dispatch_finished",
+      "usage_source": "none"
+    }
+  ],
+  "started_at": "2026-08-23T00:00:00Z",
+  "summary": "Instrument admision_descartada structured discard logging in Motor::procesar_evento (FR-08).",
+  "task_id": "HEX-039",
+  "total_cost_usd": 0,
+  "violations": []
+}

@@ -1,0 +1,48 @@
+task_id: HEX-039
+summary: Instrument GCRA discard logging in Motor::procesar_evento; silent discard is prohibited by stage acceptance criteria (FR-08).
+goal: >
+  Emit a structured log event on every GCRA admission discard in
+  Motor::procesar_evento (crates/hexcell/src/motor.rs), following the core's
+  existing structured-logging convention (EntradaDeRegistro / emitir, as used
+  by evento_recibido, inferencia_iniciada, etc.), so operators have enough
+  visibility to detect legitimate traffic being dropped by admission control
+  (FR-08). Today, on ResultadoDeAdmision::Descartado { clave, motivo } the
+  function returns immediately with no log at all.
+invariants:
+  - Every GCRA discard (ResultadoDeAdmision::Descartado) emits exactly one structured log event before the function returns.
+  - No log event of this kind is emitted when the event is admitted (ResultadoDeAdmision::Admitido).
+  - The discard log event carries at minimum the limitation key (conversation id), the discard reason (MotivoDescarte), and a timestamp consistent with how other structured events carry time.
+  - The event name and structure follow the existing Spanish structured-logging convention (EntradaDeRegistro/emitir), so it remains greppable/parseable alongside evento_recibido, inferencia_iniciada, and the other existing events.
+  - No change is made to the GCRA algorithm, its parametrization, the semaphore (stage task 5), or discard metrics counters (stage task 11).
+acceptance:
+  - id: AC-1
+    statement: A GCRA discard produces exactly one structured event carrying the conversation key, the discard reason, and a timestamp.
+    given: an event whose admission check returns ResultadoDeAdmision::Descartado { clave, motivo }
+    when: Motor::procesar_evento handles that event
+    then: exactly one structured log event is emitted (e.g. admision_descartada) with clave, motivo, and a timestamp, before the function returns
+  - id: AC-2
+    statement: An admitted event produces no discard-related log event.
+    given: an event whose admission check returns ResultadoDeAdmision::Admitido
+    when: Motor::procesar_evento handles that event
+    then: no discard structured event is emitted, and normal processing (deduplication, dispatch, send) proceeds unchanged
+  - id: AC-3
+    statement: New and existing tests discriminate discard-vs-admitted logging behavior and pass alongside the full workspace suite.
+    given: the updated motor.rs with discard logging instrumented
+    when: cargo test --workspace runs
+    then: all tests pass, including new tests asserting the event is emitted exactly on discards and never on admissions (per LES-036)
+  - "cargo build --workspace and cargo test --workspace succeed."
+  - "cargo fmt --check and cargo clippy --workspace -- -D warnings are clean."
+  - "FR-08 is cited in the change as the requirement this discard visibility satisfies."
+  - "The A-6 anomalous-discard alert threshold criterion is explicitly declared deferred to stage A-6, not implemented here."
+risk: low
+non_goals:
+  - Add discard metrics counters (stage A-4 task 11).
+  - Implement the anomalous-discard alert threshold (feeds A-6 alerts).
+  - Implement or modify the admission semaphore (stage A-4 task 5).
+  - Change the GCRA algorithm or its parametrization.
+  - Touch sidecar/Go code.
+constraints:
+  - All new code, comments, and log content must be in Spanish, consistent with the rest of the repository.
+  - Commit messages must be conventional commits with no AI attribution.
+  - Never version *.db, *.db-wal, *.db-shm, or .env* files.
+  - Follow the existing structured-logging mechanism (EntradaDeRegistro/emitir in crates/hexcell/src/registro.rs) rather than introducing a new logging mechanism.

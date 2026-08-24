@@ -1,0 +1,19 @@
+{
+  "task_id": "HEX-039",
+  "bundle_hash": "2cf5e0f385cf690357aa8e5fce1b8cf77b8c8211391867f421eb932c80806bf7",
+  "files": [
+    ".ai/tasks/active/HEX-039-new-spec/00-spec.yaml",
+    ".ai/tasks/active/HEX-039-new-spec/01-blueprint.yaml",
+    "crates/hexcell-core/src/admision.rs",
+    "crates/hexcell/src/main.rs",
+    "crates/hexcell/src/motor.rs",
+    "crates/hexcell/src/registro.rs",
+    "crates/hexcell/tests/admision.rs",
+    "crates/hexcell/tests/comun/mod.rs",
+    "crates/hexcell/tests/registro_estructurado.rs",
+    "docs/PRD.md",
+    "docs/adr/adr-0019-registro-estructurado.md"
+  ],
+  "protocol_version": "fleet-bundle-protocol/v2",
+  "created_at": "2026-08-23T22:54:10Z"
+}

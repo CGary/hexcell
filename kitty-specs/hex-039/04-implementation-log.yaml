@@ -1,0 +1,3 @@
+entries: []
+summary: Instrument admision_descartada structured discard logging in Motor::procesar_evento (FR-08), with a cfg(test) capture seam in registro.rs enabling discriminating unit tests in motor.rs.
+task_id: HEX-039

@@ -1,0 +1,164 @@
+task_id: HEX-039
+summary: Instrument admision_descartada structured discard logging in Motor::procesar_evento
+  (FR-08), with a cfg(test) capture seam in registro.rs enabling discriminating unit tests in
+  motor.rs.
+goal: 'Deliver stage A-4 task 4 (docs/plan, FR-08 of docs/PRD.md): emit exactly one structured
+  log event, named admision_descartada, whenever Motor::procesar_evento observes
+  ResultadoDeAdmision::Descartado { clave, motivo }, carrying id_conversacion = clave,
+  detalle = motivo.to_string() (reusing MotivoDescarte''s existing Display impl, never
+  duplicating its string), and latencia_ms as the timestamp-carrying field (the same convention
+  every other structured event already uses; no new EntradaDeRegistro field is added). No event
+  of this kind may be emitted on ResultadoDeAdmision::Admitido. Because Rust compiles
+  crates/hexcell/tests/*.rs as a separate integration-test crate that cannot see
+  #[cfg(test)]-gated items in the library, and because raw std::io::stdout() writes (emitir''s
+  mechanism) bypass cargo test''s own output capture, the discriminating tests (LES-036) must be
+  #[cfg(test)] unit tests colocated in crates/hexcell/src/motor.rs, backed by a minimal
+  #[cfg(test)]-only capture hook added to crates/hexcell/src/registro.rs that compiles to
+  nothing outside the crate''s own unit-test build. The GCRA algorithm
+  (crates/hexcell-core/src/admision.rs), its parametrization, the semaphore, and discard metrics
+  counters are explicitly out of scope and must not change.'
+read:
+  - .ai/tasks/active/HEX-039-new-spec/00-spec.yaml
+  - .ai/tasks/active/HEX-039-new-spec/01-blueprint.yaml
+  - crates/hexcell-core/src/admision.rs
+  - crates/hexcell/tests/admision.rs
+  - crates/hexcell/tests/registro_estructurado.rs
+  - crates/hexcell/tests/comun/mod.rs
+  - crates/hexcell/src/main.rs
+  - docs/adr/adr-0019-registro-estructurado.md
+  - docs/PRD.md
+touch:
+  - crates/hexcell/src/motor.rs
+  - crates/hexcell/src/registro.rs
+forbid:
+  files:
+    - Cargo.toml
+    - Cargo.lock
+    - crates/hexcell-core/Cargo.toml
+    - crates/hexcell/Cargo.toml
+    - crates/hexcell-admin/Cargo.toml
+    - crates/hexcell-storage/Cargo.toml
+    - crates/hexcell-meta/Cargo.toml
+    - crates/hexcell-canal-simulado/Cargo.toml
+    - crates/hexcell-canal-contrato/Cargo.toml
+    - crates/hexcell-canal-whatsmeow/Cargo.toml
+    - crates/hexcell-core/src/admision.rs
+    - crates/hexcell-core/src/lib.rs
+    - crates/hexcell-core/src/canal.rs
+    - crates/hexcell-core/src/identidad.rs
+    - crates/hexcell-core/src/inferencia.rs
+    - crates/hexcell/src/main.rs
+    - crates/hexcell/src/configuracion.rs
+    - crates/hexcell/src/procesador.rs
+    - crates/hexcell/src/apagado.rs
+    - crates/hexcell/src/deduplicacion.rs
+    - crates/hexcell/src/conversaciones.rs
+    - crates/hexcell/src/preparacion.rs
+    - crates/hexcell/src/salud.rs
+    - crates/hexcell/src/emparejar.rs
+    - crates/hexcell/src/respaldar.rs
+    - crates/hexcell/src/inferencia.rs
+    - crates/hexcell/tests/admision.rs
+    - crates/hexcell/tests/motor.rs
+    - crates/hexcell/tests/persistencia.rs
+    - crates/hexcell/tests/respaldo_y_restauracion.rs
+    - crates/hexcell/tests/continuidad_de_hilo.rs
+    - crates/hexcell/tests/deduplicacion.rs
+    - crates/hexcell/tests/inferencia.rs
+    - crates/hexcell/tests/politica_fuera_de_ventana.rs
+    - crates/hexcell/tests/rss_linea_base.rs
+    - crates/hexcell/tests/apagado_ordenado.rs
+    - crates/hexcell/tests/canal_whatsmeow_seleccionado.rs
+    - crates/hexcell/tests/emparejamiento_ipc.rs
+    - crates/hexcell/tests/preparacion.rs
+    - crates/hexcell/tests/registro_estructurado.rs
+    - crates/hexcell/tests/respaldo_cli.rs
+    - crates/hexcell/tests/respaldo_sqlstore_ipc.rs
+    - crates/hexcell/tests/salud_http.rs
+    - crates/hexcell/tests/configuracion.rs
+    - docs/PRD.md
+    - docs/STATUS.md
+    - docs/bitacora-de-descartes.md
+    - docs/adr/README.md
+    - docs/adr/adr-0001-licencia.md
+    - docs/adr/adr-0002-estructura-workspace.md
+    - docs/adr/adr-0003-persistencia-dual.md
+    - docs/adr/adr-0004-gcra-y-parametros.md
+    - docs/adr/adr-0005-contabilidad-dos-fases.md
+    - docs/adr/adr-0006-epocas-y-conmutacion-atomica.md
+    - docs/adr/adr-0007-imagen-y-aislamiento.md
+    - docs/adr/adr-0008-estrategia-canal-dos-fases.md
+    - docs/adr/adr-0009-whatsmeow-adaptador-fase-a.md
+    - docs/adr/adr-0010-puerto-de-canal.md
+    - docs/adr/adr-0011-whatsmeow-sidecar-e-ipc.md
+    - docs/adr/adr-0012-inferencia-externa.md
+    - docs/adr/adr-0013-entrada-publica-fase-b.md
+    - docs/adr/adr-0014-canal-propio-permanente.md
+    - docs/adr/adr-0015-politica-de-convivencia-con-el-baneo.md
+    - docs/adr/adr-0016-convencion-de-entrega-de-eventos.md
+    - docs/adr/adr-0017-puerto-de-inferencia.md
+    - docs/adr/adr-0018-apagado-ordenado.md
+    - docs/adr/adr-0019-registro-estructurado.md
+    - docs/adr/adr-0020-respaldo-y-restauracion-por-celula.md
+    - docs/adr/adr-0021-testigo-de-entrante.md
+    - docs/adr/adr-0022-respaldo-identidad-sidecar-por-ipc.md
+    - docs/adr/adr-0023-parametros-gcra-por-variable-de-entorno.md
+    - sidecar/main.go
+    - sidecar/go.mod
+    - sidecar/go.sum
+  behaviors:
+    - Do NOT modify the GCRA algorithm, ConfiguracionGcra, ResultadoDeAdmision, or MotivoDescarte
+      in crates/hexcell-core/src/admision.rs. Both are already public with the fields/Display
+      impl this task needs; use them as-is.
+    - Do NOT implement discard metrics counters (stage A-4 task 11) or the anomalous-discard
+      alert threshold (stage A-6); this task is logging visibility only, not counting or
+      alerting. State explicitly in a doc comment or commit message that both are deferred.
+    - Do NOT implement or modify the admission Tokio concurrency semaphore (stage A-4 task 5).
+    - Do NOT add any new Cargo dependency, dev-dependency, workspace dependency, or Cargo
+      feature anywhere (no manifest in the touch list; none is needed).
+    - Do NOT add any wall-clock/SystemTime timestamp field to EntradaDeRegistro. The "timestamp
+      consistent with how other structured events carry time" invariant is satisfied by reusing
+      con_latencia_ms(latencia_ms(inicio)) exactly like every existing event; no existing event
+      carries an explicit time field today, and this task must not introduce the first one.
+    - Do NOT duplicate MotivoDescarte's discard-reason string. Reuse its existing
+      impl fmt::Display via motivo.to_string() passed to con_detalle; never hardcode or
+      re-derive an equivalent string.
+    - 'The new capture mechanism added to crates/hexcell/src/registro.rs must be entirely
+      #[cfg(test)]-gated (module, functions, and the single registrar call inside emitir()) so
+      it compiles to nothing in cargo build --workspace, cargo build --release, and the separate
+      tests/*.rs integration-test binaries. Do NOT change emitir()''s stdout-writing behavior,
+      EntradaDeRegistro''s public fields, or formatear()''s output for any non-test build.'
+    - 'Do NOT add any new #[test]/#[tokio::test] function to crates/hexcell/tests/admision.rs (or
+      any other file in crates/hexcell/tests/) as part of this task; the discriminating tests
+      belong in a #[cfg(test)] mod tests block inside crates/hexcell/src/motor.rs (see goal for
+      why). Do not delete, weaken, or silently reinterpret any existing test anywhere.'
+    - 'Tests must discriminate (LES-036) from both directions: one test must fail if the discard
+      branch never emits admision_descartada (assert an exact count of 1, not >=0 or is_ok()-style
+      looseness), and a separate test on an admitted-only path must fail if some stub emits
+      admision_descartada unconditionally regardless of ResultadoDeAdmision (assert an exact
+      count of 0).'
+    - Do NOT write any code, comment, doc-comment, or commit message in a language other than
+      Spanish; conventional commits without AI attribution.
+    - Do NOT version *.db, *.db-wal, *.db-shm, or .env* files.
+verify:
+  commands:
+    - cargo build --workspace
+    - cargo test --workspace
+    - cargo fmt --check
+    - cargo clippy --workspace -- -D warnings
+acceptance:
+  human_gate: true
+limits:
+  max_files_changed: 2
+  max_diff_lines: 150
+  per_class:
+    - glob: crates/hexcell/src/motor.rs
+      max_diff_lines: 110
+    - glob: crates/hexcell/src/registro.rs
+      max_diff_lines: 40
+execution:
+  mode: worktree_edit
+  branch: ai/HEX-039
+retry_policy:
+  max_attempts: 2
+  escalate_after: 2

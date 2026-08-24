@@ -1,0 +1,148 @@
+task_id: HEX-039
+summary: Emit admision_descartada structured log on every GCRA discard in Motor::procesar_evento
+  (FR-08), reusing EntradaDeRegistro/emitir, plus a cfg(test) capture seam for discrimination.
+affected_files:
+  - crates/hexcell/src/motor.rs
+  - crates/hexcell/src/registro.rs
+symbols:
+  - motor::Motor::procesar_evento
+  - registro::emitir
+  - registro::EntradaDeRegistro
+  - registro::pruebas (new, cfg(test)-only capture module)
+dependencies:
+  - crates/hexcell-core/src/admision.rs
+  - crates/hexcell/tests/admision.rs
+  - crates/hexcell/tests/registro_estructurado.rs
+  - crates/hexcell/src/main.rs
+  - docs/adr/adr-0019-registro-estructurado.md
+  - docs/PRD.md
+test_scenarios:
+  - statement: 'A second GCRA discard for the same conversation key (after one admitted event)
+      emits exactly one admision_descartada entry carrying id_conversacion = clave,
+      detalle = MotivoDescarte::TasaSostenidaExcedida.to_string(), and latencia_ms present
+      (the timestamp convention: every existing event carries time only via latencia_ms, never
+      a wall-clock field, so the discard reuses that same convention rather than inventing one).
+      Verified as a #[cfg(test)] unit test inside crates/hexcell/src/motor.rs, calling
+      Motor::procesar_evento directly twice against a tightly-configured RegistroDeAdmision
+      (ConfiguracionGcra::nueva(1.0, 0), admits only the first request per key).'
+    covers:
+      - AC-1
+  - statement: 'Processing a single admitted event (no discard reached) produces zero entries
+      named admision_descartada in the same cfg(test) capture, while other expected events
+      (evento_recibido, etc.) are present -- proving the capture hook itself works and is not
+      silently empty. This is the discriminating half of LES-036: a stub that always emits the
+      discard event regardless of ResultadoDeAdmision must fail this assertion.'
+    covers:
+      - AC-2
+  - statement: 'The discard-case unit test also fails against a stub that never emits (asserting
+      exactly 1, not >=0), and against a stub that logs on every call regardless of admission
+      result (the admitted-only test asserts exactly 0). Together the two tests satisfy LES-036
+      discrimination from both directions named in 00-spec.yaml AC-3.'
+    covers:
+      - AC-3
+  - cargo build --workspace and cargo test --workspace succeed, including the two new motor.rs
+    unit tests, with no existing test in tests/admision.rs or elsewhere modified or weakened.
+  - cargo fmt --check and cargo clippy --workspace -- -D warnings are clean.
+strategy:
+  - step: 1
+    action: 'Confirm the wiring seam without touching crates/hexcell-core/src/admision.rs (frozen
+      per 00-spec.yaml invariant): ResultadoDeAdmision::Descartado { clave, motivo } and
+      MotivoDescarte (already impl fmt::Display, "Tasa sostenida o limite de rafaga superado")
+      are already public and exactly what motor.rs needs. No new symbol required in
+      hexcell-core.'
+    files:
+      - crates/hexcell-core/src/admision.rs
+  - step: 2
+    action: 'In crates/hexcell/src/motor.rs::procesar_evento, relocate the existing
+      `let inicio = Instant::now();` line from its current position (after the admission check,
+      line ~221) to the top of the function, before `self.admision.admitir(...)` is called. This
+      is the only behavioral change to the non-discard path: evento_recibido''s latencia_ms now
+      also covers the admission check''s own (lock-free CAS) cost, which is the deliberate,
+      minimal way to give the new discard event "a timestamp consistent with how other
+      structured events carry time" without adding any new field to EntradaDeRegistro.'
+    files:
+      - crates/hexcell/src/motor.rs
+  - step: 3
+    action: 'Replace the bare `return;` in the `if let ResultadoDeAdmision::Descartado { clave,
+      motivo } = ...` branch with a call to emitir(EntradaDeRegistro::nueva(NivelDeRegistro::Aviso,
+      "admision_descartada").con_id_evento(evento.deduplicacion.como_str().to_string())
+      .con_id_conversacion(clave).con_latencia_ms(latencia_ms(inicio)).con_detalle(motivo.to_string()))
+      before the return. Reuses MotivoDescarte''s existing Display impl via con_detalle (the
+      module''s designated free-text field for process-generated text, never message content --
+      matches the precedent of envio_rechazado''s con_detalle("el canal exige una plantilla
+      aprobada")). Cite FR-08 in the accompanying doc comment on this branch.'
+    files:
+      - crates/hexcell/src/motor.rs
+  - step: 4
+    action: 'In crates/hexcell/src/registro.rs, add a small #[cfg(test)] pub(crate) module
+      (e.g. `pruebas`) holding a thread_local!-scoped `RefCell<Option<Vec<EntradaDeRegistro>>>`
+      with three functions: instalar() (arms capture for the current thread), tomar() (drains
+      and returns the captured Vec), and registrar(&EntradaDeRegistro) (pushes a clone when
+      armed, no-op otherwise). Inside emitir(), add exactly one `#[cfg(test)] pruebas::registrar(&entrada);`
+      line before formatting/writing -- the stdout write path is completely unchanged, and this
+      entire module compiles to nothing outside of the crate''s own `cargo test` unit-test
+      target (never in cargo build --workspace, cargo build --release, nor in the separate
+      tests/*.rs integration-test binaries, which link the plain non-test rlib).'
+    files:
+      - crates/hexcell/src/registro.rs
+  - step: 5
+    action: 'In crates/hexcell/src/motor.rs, add a #[cfg(test)] mod tests block with a small
+      local helper (mirroring tests/admision.rs''s DirectorioTemporal/AdaptadorSimulado/
+      ProcesadorDeEco construction pattern, duplicated locally since tests/comun is only visible
+      to the separate integration-test crate, not to src/ unit tests) that builds one Motor, then
+      two #[tokio::test] functions: (a) call motor.procesar_evento(evento) twice for the SAME
+      IdConversacion under ConfiguracionGcra::nueva(1.0, 0) (admits only the first request per
+      key) -- after registro::pruebas::instalar() and inspecting registro::pruebas::tomar(),
+      assert exactly one captured entry with evento == "admision_descartada" and its
+      id_conversacion/detalle/latencia_ms as specified in AC-1; (b) call procesar_evento once
+      with a fresh conversation (always admitted) and assert zero captured entries named
+      "admision_descartada". Both calls go directly through the private procesar_evento method
+      (accessible since #[cfg(test)] mod tests is a submodule of motor.rs itself), not through
+      Motor::ejecutar''s select loop, so no mpsc timing/AdaptadorSimulado sharing is needed.'
+    files:
+      - crates/hexcell/src/motor.rs
+  - step: 6
+    action: 'Do not touch crates/hexcell/tests/admision.rs. Its three existing tests already
+      assert discard behavior (send/history counts) end-to-end and remain valid unmodified;
+      the new log-content/exact-count assertions cannot live there regardless, because
+      #[cfg(test)]-gated items in registro.rs are invisible to the separate integration-test
+      crate that tests/admision.rs compiles into (verified: raw std::io::stdout() writes bypass
+      Rust''s own libtest output capture, so there is no dependency-free way to observe emitir''s
+      output from an external integration test without either a new Cargo dependency for OS-level
+      fd redirection -- forbidden by this task''s contract -- or widening scope into
+      crates/hexcell/src/main.rs to support multi-event synthetic injection, which is also out
+      of this task''s touch surface).'
+    files:
+      - crates/hexcell/tests/admision.rs
+risks:
+  - 'Test placement deviates from the assignment''s "likely crates/hexcell/tests/admision.rs"
+    suggestion: the two new discriminating tests must live as #[cfg(test)] unit tests inside
+    crates/hexcell/src/motor.rs, not in tests/admision.rs, because Rust compiles tests/*.rs as a
+    separate integration-test crate that links the plain (non-cfg(test)) hexcell rlib -- any
+    #[cfg(test)]-gated capture hook added to registro.rs is invisible there. Empirically verified
+    in a scratch crate: a raw std::io::stdout()/writeln! write (exactly emitir''s mechanism) is
+    NOT captured by cargo test''s libtest output capture (appears even for a passing test), so
+    in-process log-content assertions have no dependency-free path outside the crate''s own
+    unit-test build. Flagging for human confirmation before implementation locks this in.'
+  - 'crates/hexcell/src/main.rs''s HEXCELL_EVENTO_SIMULADO_DE_ARRANQUE mechanism injects exactly
+    one synthetic event per process launch, and a key''s first-ever GCRA admission check is
+    always Admitido (Gcra::admitir''s tat starts at 0 < ahora), so the real-binary subprocess
+    pattern already used by tests/registro_estructurado.rs cannot produce a discard at all
+    without widening scope into main.rs to support multi-event injection -- explicitly out of
+    this task''s touch surface, so that pattern is not used here for the discard case.'
+  - 'Moving `let inicio = Instant::now();` to the top of procesar_evento is a small, deliberate
+    semantic tightening (evento_recibido''s latencia_ms now includes the admission check''s own
+    lock-free CAS cost) chosen so the discard event reuses the exact existing time-carrying
+    convention (latencia_ms) instead of adding a new wall-clock field to EntradaDeRegistro or
+    duplicating MotivoDescarte''s Display string into a new type. Flagging for human awareness,
+    not expecting objection: the added cost is O(1) atomic CAS work, immaterial to the
+    measurement''s purpose.'
+  - 'NivelDeRegistro::Aviso was chosen for admision_descartada (consistent with envio_rechazado
+    and inferencia_sin_respuesta''s "degraded but continues" semantics) rather than Info; this is
+    a judgment call the spec does not dictate and the reviewer should confirm.'
+  - 'No prior failed task in .ai/tasks/failed touches crates/hexcell/src/motor.rs or
+    crates/hexcell/src/registro.rs (failure-lookup returned no matches); no lessons to import
+    beyond LES-036, already addressed above.'
+  - '[ADVISOR] No disponible -- se procede sin contexto semantico (hsme-cli: no such database
+    file at the configured SQLITE_DB_PATH; per q-blueprint''s advisory-only HSME read hook,
+    proceeding without blocking).'

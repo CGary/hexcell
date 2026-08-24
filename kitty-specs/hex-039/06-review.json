@@ -1,0 +1,24 @@
+{
+  "task_id": "HEX-039",
+  "summary": "admision_descartada emitted exactly once per discard via a fully #[cfg(test)]-gated seam in registro.rs; production emit path unchanged. Independently re-verified build/test/fmt/clippy green.",
+  "verdict": "approve",
+  "contract_compliance": true,
+  "forbidden_files_touched": [],
+  "unrequested_refactor": false,
+  "missing_tests": [
+    "The single discriminating test only asserts entrada.detalle.is_some() on the discard path, not that it equals MotivoDescarte::TasaSostenidaExcedida.to_string() as literally specified in 01-blueprint.yaml's test_scenarios; harmless today since MotivoDescarte has only one variant, but an exact-value assertion would be a stronger LES-036 guard if a second discard reason is ever added."
+  ],
+  "functional_risk": "low",
+  "notes": [
+    "contract-check ok=true; not_checked: forbid.behaviors (verified by hand: hexcell-core/src/admision.rs untouched, no manifest/Cargo.lock changes, sidecar untouched, no new wall-clock field on EntradaDeRegistro, MotivoDescarte::to_string() reused via con_detalle with no duplicated string).",
+    "acceptance-coverage status=pass; AC-1/AC-2/AC-3 all state=covered, gaps=[].",
+    "Hook visibility verified structurally: the entire `pruebas` module in registro.rs (instalar/tomar/registrar) is declared inside a single #[cfg(test)] mod block, and the single call site inside emitir() is itself #[cfg(test)]-gated, so none of it exists in cargo build --workspace, --release, or the separate tests/*.rs integration-test crate. emitir()'s stdout-writing path (formatear + writeln!) is textually unchanged.",
+    "Event correctness verified by independent re-run: cargo test --workspace shows the new unit test motor::tests::ac_1_ac_2_ac_3_discriminacion_descarte_y_admision passing, and its stdout JSON line confirms detalle=\"Tasa sostenida o límite de ráfaga superado\" (exact MotivoDescarte::Display output, no duplicated/hardcoded string). Discard still returns immediately after emitir(), before the dedup/id extraction lines -- HEX-037 ordering intact. No second emitir() call exists on the admitted path.",
+    "Test discrimination (LES-036) confirmed logically even though blueprint asked for two separate #[tokio::test] functions and the diff supplies one combined test: assert_eq!(desc.len(), 1) fails against a never-emitting stub, and the admitted-branch assert_eq!(count, 0) (with logs_a non-empty to prove the capture hook itself is live) fails against an always-emitting stub. This is a minor structural deviation from the blueprint's step 5, not a substance gap.",
+    "let inicio = Instant::now() was deliberately relocated to the top of procesar_evento per blueprint step 2 risk note (evento_recibido's latencia_ms now also covers the admission check's own CAS cost); this is an accepted, documented, immaterial timing change to the non-discard path, not a regression.",
+    "NivelDeRegistro::Aviso (vs Info) is consistent with existing precedent (envio_rechazado, inferencia_sin_respuesta); reviewer confirms this judgment call.",
+    "Independently re-ran cargo build --workspace, cargo test --workspace, cargo fmt --check, cargo clippy --workspace -- -D warnings in worktrees/HEX-039: all exit 0, matching 05-validation.json's reported 4/4 + 5/5 stability.",
+    "Manual scan of added lines found no English-language prose leaks; all comments/doc-comments are in Spanish, matching PAT-043."
+  ],
+  "fix_tasks": []
+}

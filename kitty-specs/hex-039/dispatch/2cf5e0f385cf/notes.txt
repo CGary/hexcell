@@ -1,0 +1,25 @@
+NOTES:
+- Instrumentada la emisión del evento estructurado `admision_descartada` (nivel `NivelDeRegistro::Aviso`) en `Motor::procesar_evento` (en [motor.rs](file:///home/gary/dev/hexcell/worktrees/HEX-039/crates/hexcell/src/motor.rs#L211-L230)) cada vez que GCRA retorna `ResultadoDeAdmision::Descartado { clave, motivo }`, cumpliendo con la visibilidad requerida por FR-08.
+- Relocalizada la instanciación `let inicio = Instant::now();` al principio de `procesar_evento` para asegurar que `latencia_ms` cubra de forma consistente la evaluación de admisión.
+- Añadido un módulo `#[cfg(test)] pub(crate) mod pruebas` en [registro.rs](file:///home/gary/dev/hexcell/worktrees/HEX-039/crates/hexcell/src/registro.rs#L201-L226) con captura `thread_local!` para interceptar entradas emitidas durante pruebas unitarias sin modificar el comportamiento de producción ni la salida por `stdout`.
+- Incorporadas pruebas unitarias discriminatorias (LES-036) en `#[cfg(test)] mod tests` dentro de [motor.rs](file:///home/gary/dev/hexcell/worktrees/HEX-039/crates/hexcell/src/motor.rs#L423-L509) validando que un descarte genera exactamente un evento `admision_descartada` y que un evento admitido no emite ninguno.
+- Declarado explícitamente que los contadores de métricas de descarte (etapa A-4 tarea 11) y los umbrales de alertas anómalas (etapa A-6) quedan diferidos.
+END NOTES
+
+### Resumen del Trabajo Realizado
+
+1. **Instrumentación del Registro Estructurado (FR-08)**:
+   - En [crates/hexcell/src/motor.rs](file:///home/gary/dev/hexcell/worktrees/HEX-039/crates/hexcell/src/motor.rs#L211-L230), se actualizó `procesar_evento` para que al obtener `ResultadoDeAdmision::Descartado { clave, motivo }` se emita una `EntradaDeRegistro` con:
+     - `nivel`: `NivelDeRegistro::Aviso`
+     - `evento`: `"admision_descartada"`
+     - `id_evento`: Identificador de deduplicación del evento
+     - `id_conversacion`: `clave` de la conversación descartada
+     - `latencia_ms`: Tiempo de procesamiento desde el inicio de la función
+     - `detalle`: `motivo.to_string()` (reutilizando la implementación de `Display` existente en `MotivoDescarte`)
+
+2. **Mapeo de Captura para Pruebas Unitarias**:
+   - En [crates/hexcell/src/registro.rs](file:///home/gary/dev/hexcell/worktrees/HEX-039/crates/hexcell/src/registro.rs#L201-L226), se creó la estructura de captura de eventos privada para pruebas unitarias de forma que no afecte ni a la compilación de producción ni a los binarios de tests de integración externos.
+
+3. **Verificación y Pruebas Discriminatorias (LES-036)**:
+   - Se añadieron las pruebas unitarias correspondientes a AC-1, AC-2 y AC-3 en `crates/hexcell/src/motor.rs`.
+   - Se ejecutaron las verificaciones del workspace (`cargo test`, `cargo fmt --check`, `cargo clippy --workspace -- -D warnings`), confirmando el cumplimiento de todas las invariantes y límites del contrato.
