@@ -14,6 +14,7 @@
 //! el servidor de salud y la configuración de arranque viven aquí, no en el dominio.
 
 pub mod apagado;
+pub mod concurrencia;
 pub mod configuracion;
 pub mod conversaciones;
 pub mod deduplicacion;

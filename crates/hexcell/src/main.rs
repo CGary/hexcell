@@ -47,6 +47,7 @@ use std::process::ExitCode;
 use std::sync::Arc;
 
 use hexcell::apagado::Apagado;
+use hexcell::concurrencia::LimitadorDeConcurrencia;
 use hexcell::configuracion::{CanalSeleccionado, Configuracion};
 use hexcell::emparejar;
 use hexcell::inferencia::ProveedorSimulado;
@@ -194,7 +195,10 @@ async fn main() -> ExitCode {
                 configuracion.ventana_deduplicacion,
                 repositorio,
             )
-            .con_configuracion_gcra(configuracion.configuracion_gcra.clone());
+            .con_configuracion_gcra(configuracion.configuracion_gcra.clone())
+            .con_limite_de_concurrencia(LimitadorDeConcurrencia::nuevo(
+                configuracion.limite_de_concurrencia,
+            ));
 
             tokio::select! {
                 () = servidor_salud => {}
@@ -224,7 +228,10 @@ async fn main() -> ExitCode {
                 configuracion.ventana_deduplicacion,
                 repositorio,
             )
-            .con_configuracion_gcra(configuracion.configuracion_gcra.clone());
+            .con_configuracion_gcra(configuracion.configuracion_gcra.clone())
+            .con_limite_de_concurrencia(LimitadorDeConcurrencia::nuevo(
+                configuracion.limite_de_concurrencia,
+            ));
 
             tokio::select! {
                 () = servidor_salud => {}

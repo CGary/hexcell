@@ -17,6 +17,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use crate::apagado::LIMITE_DE_DRENAJE_POR_DEFECTO;
+use crate::concurrencia::LIMITE_DE_CONCURRENCIA_POR_DEFECTO;
 use crate::deduplicacion::VENTANA_DE_RETENCION_DEDUPLICACION_POR_DEFECTO;
 
 /// Canal seleccionado para esta célula.
@@ -94,6 +95,8 @@ pub struct Configuracion {
     pub proveedor_de_inferencia_falla: bool,
     /// Configuración de límites para el algoritmo de admisión GCRA (`hexcell_core::admision::ConfiguracionGcra`).
     pub configuracion_gcra: hexcell_core::admision::ConfiguracionGcra,
+    /// Límite estricto de concurrencia de tareas en vuelo por contenedor (`crate::concurrencia`).
+    pub limite_de_concurrencia: usize,
 }
 
 /// Error de configuración: nombra siempre la variable concreta y su formato esperado.
@@ -186,6 +189,8 @@ pub const HEXCELL_ADMISION_TASA_SOSTENIDA_POR_SEGUNDO: &str =
     "HEXCELL_ADMISION_TASA_SOSTENIDA_POR_SEGUNDO";
 /// Nombre de la variable de entorno con la tolerancia a ráfaga de admisión GCRA (opcional).
 pub const HEXCELL_ADMISION_TOLERANCIA_RAFAGA: &str = "HEXCELL_ADMISION_TOLERANCIA_RAFAGA";
+/// Nombre de la variable de entorno con el límite estricto de concurrencia por contenedor (opcional).
+pub const HEXCELL_CONCURRENCIA_LIMITE: &str = "HEXCELL_CONCURRENCIA_LIMITE";
 
 /// Dirección de salud por defecto: loopback (127.0.0.1), nunca `0.0.0.0`. Una célula sobre canal
 /// propio empaquetada en un contenedor (etapa A-6) necesita sondear esta ruta desde un
@@ -348,6 +353,28 @@ impl Configuracion {
             formato_esperado: "número flotante positivo de peticiones por segundo, p. ej. 0.5",
         })?;
 
+        let limite_de_concurrencia = match std::env::var(HEXCELL_CONCURRENCIA_LIMITE) {
+            Ok(valor) => {
+                let parsed =
+                    valor
+                        .parse::<usize>()
+                        .map_err(|_| ErrorDeConfiguracion::ValorInvalido {
+                            nombre: HEXCELL_CONCURRENCIA_LIMITE,
+                            valor: valor.clone(),
+                            formato_esperado: "entero estrictamente positivo, p. ej. 8",
+                        })?;
+                if parsed == 0 {
+                    return Err(ErrorDeConfiguracion::ValorInvalido {
+                        nombre: HEXCELL_CONCURRENCIA_LIMITE,
+                        valor: valor.clone(),
+                        formato_esperado: "entero estrictamente positivo, p. ej. 8",
+                    });
+                }
+                parsed
+            }
+            Err(_) => LIMITE_DE_CONCURRENCIA_POR_DEFECTO,
+        };
+
         Ok(Self {
             id_celula,
             ruta_datos,
@@ -361,6 +388,7 @@ impl Configuracion {
             evento_simulado_de_arranque,
             proveedor_de_inferencia_falla,
             configuracion_gcra,
+            limite_de_concurrencia,
         })
     }
 }
@@ -375,5 +403,74 @@ fn leer_obligatoria(
             nombre,
             formato_esperado,
         }),
+    }
+}
+
+#[cfg(test)]
+mod pruebas {
+    use super::*;
+    use std::sync::Mutex;
+
+    static BLOQUEO_ENTORNO: Mutex<()> = Mutex::new(());
+
+    #[test]
+    fn configuracion_limite_de_concurrencia_desde_entorno() {
+        let _guard = BLOQUEO_ENTORNO.lock().unwrap();
+
+        let dir = std::env::temp_dir();
+        unsafe {
+            std::env::set_var(HEXCELL_ID_CELULA, "test-celula");
+            std::env::set_var(HEXCELL_RUTA_DATOS, &dir);
+            std::env::remove_var(HEXCELL_CONCURRENCIA_LIMITE);
+        }
+
+        // Caso por defecto: variable ausente -> LIMITE_DE_CONCURRENCIA_POR_DEFECTO (8)
+        let config = Configuracion::desde_entorno().unwrap();
+        assert_eq!(
+            config.limite_de_concurrencia,
+            LIMITE_DE_CONCURRENCIA_POR_DEFECTO
+        );
+
+        // Valor válido
+        unsafe {
+            std::env::set_var(HEXCELL_CONCURRENCIA_LIMITE, "16");
+        }
+        let config = Configuracion::desde_entorno().unwrap();
+        assert_eq!(config.limite_de_concurrencia, 16);
+
+        // Valor no numérico -> ErrorDeConfiguracion::ValorInvalido
+        unsafe {
+            std::env::set_var(HEXCELL_CONCURRENCIA_LIMITE, "invalido");
+        }
+        let err = Configuracion::desde_entorno().unwrap_err();
+        assert_eq!(
+            err,
+            ErrorDeConfiguracion::ValorInvalido {
+                nombre: HEXCELL_CONCURRENCIA_LIMITE,
+                valor: "invalido".to_string(),
+                formato_esperado: "entero estrictamente positivo, p. ej. 8",
+            }
+        );
+
+        // Valor "0" -> ErrorDeConfiguracion::ValorInvalido
+        unsafe {
+            std::env::set_var(HEXCELL_CONCURRENCIA_LIMITE, "0");
+        }
+        let err = Configuracion::desde_entorno().unwrap_err();
+        assert_eq!(
+            err,
+            ErrorDeConfiguracion::ValorInvalido {
+                nombre: HEXCELL_CONCURRENCIA_LIMITE,
+                valor: "0".to_string(),
+                formato_esperado: "entero estrictamente positivo, p. ej. 8",
+            }
+        );
+
+        // Limpiar entorno
+        unsafe {
+            std::env::remove_var(HEXCELL_ID_CELULA);
+            std::env::remove_var(HEXCELL_RUTA_DATOS);
+            std::env::remove_var(HEXCELL_CONCURRENCIA_LIMITE);
+        }
     }
 }

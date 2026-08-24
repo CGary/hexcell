@@ -87,6 +87,9 @@ use hexcell_storage::{ErrorDeAlmacen, RepositorioDeSesiones};
 use tokio::sync::mpsc;
 
 use crate::apagado::SenalDeApagado;
+use crate::concurrencia::{
+    LIMITE_DE_CONCURRENCIA_POR_DEFECTO, LimitadorDeConcurrencia, MotivoDescarteConcurrencia,
+};
 use crate::conversaciones::{EstadoDeConversaciones, EventoDeHistorial};
 use crate::deduplicacion::{RegistroDeDeduplicacion, VeredictoDeDeduplicacion};
 use crate::procesador::ProcesadorDeMensajes;
@@ -102,6 +105,7 @@ where
     procesador: P,
     receptor_eventos: mpsc::Receiver<EventoEntrante>,
     admision: RegistroDeAdmision,
+    concurrencia: LimitadorDeConcurrencia,
     deduplicacion: RegistroDeDeduplicacion,
     conversaciones: EstadoDeConversaciones,
 }
@@ -128,6 +132,7 @@ where
             procesador,
             receptor_eventos,
             admision: RegistroDeAdmision::nuevo(ConfiguracionGcra::default()),
+            concurrencia: LimitadorDeConcurrencia::nuevo(LIMITE_DE_CONCURRENCIA_POR_DEFECTO),
             deduplicacion: RegistroDeDeduplicacion::nuevo(
                 Arc::clone(&repositorio),
                 ventana_deduplicacion,
@@ -139,6 +144,12 @@ where
     /// Reemplaza el registro de admisión GCRA del motor con la configuración dada.
     pub fn con_configuracion_gcra(mut self, configuracion: ConfiguracionGcra) -> Self {
         self.admision = RegistroDeAdmision::nuevo(configuracion);
+        self
+    }
+
+    /// Reemplaza el limitador de concurrencia del motor con la instancia dada.
+    pub fn con_limite_de_concurrencia(mut self, limitador: LimitadorDeConcurrencia) -> Self {
+        self.concurrencia = limitador;
         self
     }
 
@@ -227,6 +238,23 @@ where
             );
             return;
         }
+
+        // Límite de concurrencia por contenedor (FR-09): evaluado inmediatamente después del
+        // control de admisión GCRA y estrictamente antes de la deduplicación.
+        let _permiso_concurrencia = match self.concurrencia.intentar_adquirir() {
+            Some(permiso) => permiso,
+            None => {
+                let motivo = MotivoDescarteConcurrencia::Saturacion;
+                emitir(
+                    EntradaDeRegistro::nueva(NivelDeRegistro::Aviso, "concurrencia_descartada")
+                        .con_id_evento(evento.deduplicacion.como_str().to_string())
+                        .con_id_conversacion(evento.conversacion.como_str().to_string())
+                        .con_latencia_ms(latencia_ms(inicio))
+                        .con_detalle(motivo.to_string()),
+                );
+                return;
+            }
+        };
 
         let id_evento = evento.deduplicacion.como_str().to_string();
         let id_conversacion = evento.conversacion.como_str().to_string();
@@ -449,7 +477,12 @@ mod tests {
     }
 
     fn motor(c: ConfiguracionGcra) -> (M, std::path::PathBuf) {
-        let dir = std::env::temp_dir().join(format!("hx-m-{}", std::process::id()));
+        let id_unico =
+            match std::time::SystemTime::now().duration_since(std::time::SystemTime::UNIX_EPOCH) {
+                Ok(d) => d.as_nanos(),
+                Err(_) => 0,
+            };
+        let dir = std::env::temp_dir().join(format!("hx-m-{}-{}", std::process::id(), id_unico));
         let _ = std::fs::create_dir_all(&dir);
         let Ok(p) = GestorDePools::abrir(&dir) else {
             panic!()
@@ -509,6 +542,62 @@ mod tests {
                 .filter(|e| e.evento == "admision_descartada")
                 .count(),
             0
+        );
+
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[tokio::test]
+    async fn descarte_por_saturacion_de_concurrencia_y_recuperacion() {
+        let (mut m, dir) = motor(ConfiguracionGcra::default());
+        let limitador = LimitadorDeConcurrencia::nuevo(1);
+        m = m.con_limite_de_concurrencia(limitador.clone());
+
+        let conv = IdConversacion::nuevo("conv-concurrencia");
+
+        // Saturar externamente el limitador
+        let permiso = match limitador.intentar_adquirir() {
+            Some(p) => p,
+            None => panic!(),
+        };
+
+        registro::pruebas::instalar();
+        m.procesar_evento(evt(&conv, "dedup-conc-1")).await;
+
+        let logs = registro::pruebas::tomar();
+        let desc: Vec<_> = logs
+            .into_iter()
+            .filter(|e| e.evento == "concurrencia_descartada")
+            .collect();
+        assert_eq!(desc.len(), 1);
+        assert_eq!(desc[0].nivel, NivelDeRegistro::Aviso);
+        assert_eq!(
+            desc[0].id_conversacion.as_deref(),
+            Some("conv-concurrencia")
+        );
+        assert_eq!(desc[0].id_evento.as_deref(), Some("dedup-conc-1"));
+        assert!(desc[0].latencia_ms.is_some() && desc[0].detalle.is_some());
+
+        // Liberar el permiso y verificar que el siguiente evento sí se admite
+        drop(permiso);
+
+        registro::pruebas::instalar();
+        m.procesar_evento(evt(&conv, "dedup-conc-2")).await;
+
+        let logs_rec = registro::pruebas::tomar();
+        assert_eq!(
+            logs_rec
+                .iter()
+                .filter(|e| e.evento == "concurrencia_descartada")
+                .count(),
+            0
+        );
+        assert_eq!(
+            logs_rec
+                .iter()
+                .filter(|e| e.evento == "evento_recibido")
+                .count(),
+            1
         );
 
         let _ = std::fs::remove_dir_all(dir);
