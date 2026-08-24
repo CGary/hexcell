@@ -14,6 +14,22 @@
 //! `tokio::sync::mpsc` acotado que él mismo crea y posee, y cuyo extremo receptor pasa a este
 //! motor en el momento de construirse.
 //!
+//! # Admisión, concurrencia y bucle secuencial
+//!
+//! Antes de cualquier otra política, cada evento atraviesa dos compuertas en este orden fijo:
+//! **admisión GCRA** primero (HEX-037) y **semáforo de concurrencia** después (FR-09), ambas
+//! antes de la deduplicación. Un evento descartado por cualquiera de las dos no toca la base ni
+//! genera trabajo posterior: solo deja su registro (`admision_descartada` o
+//! `concurrencia_descartada`) y retorna.
+//!
+//! Salvedad deliberada (decisión del 23 de agosto de 2026): el bucle de
+//! `Motor::ejecutar` procesa los eventos **secuencialmente** (runtime `current_thread`, sin
+//! `tokio::spawn` por evento), por las invariantes de orden documentadas en este módulo
+//! (deduplicación, drenaje cronológico de diferidas, apagado no cancelable). Hoy, por tanto, el
+//! semáforo actúa como compuerta estructural: el límite queda aplicado en el único punto por el
+//! que pasará todo despacho futuro, y acotará tareas en vuelo reales el día que se introduzca
+//! despacho concurrente, que es una tarea distinta y mayor.
+//!
 //! # Orden de las tres políticas nuevas por evento
 //!
 //! El orden es la propia política, no un detalle de implementación:
@@ -565,6 +581,14 @@ mod tests {
         m.procesar_evento(evt(&conv, "dedup-conc-1")).await;
 
         let logs = registro::pruebas::tomar();
+        // El descarte por saturación no debe dejar rastro de procesamiento posterior:
+        // ni recepción, ni deduplicación, ni respuesta.
+        assert_eq!(
+            logs.iter()
+                .filter(|e| e.evento != "concurrencia_descartada")
+                .count(),
+            0
+        );
         let desc: Vec<_> = logs
             .into_iter()
             .filter(|e| e.evento == "concurrencia_descartada")
