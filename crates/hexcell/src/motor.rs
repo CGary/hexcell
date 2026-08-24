@@ -209,16 +209,25 @@ where
     /// diferidas, registro, despacho al procesador y envío. Es el cuerpo que tanto el bucle
     /// principal como el drenaje comparten.
     async fn procesar_evento(&mut self, evento: EventoEntrante) {
+        let inicio = Instant::now();
+
         // Control de admisión GCRA (FR-08): evaluado inmediatamente al consumir el evento
         // del canal normalizado, estrictamente antes de la deduplicación, la carga de contexto
         // conversacional y la inferencia.
-        if let ResultadoDeAdmision::Descartado { .. } =
+        if let ResultadoDeAdmision::Descartado { clave, motivo } =
             self.admision.admitir(evento.conversacion.como_str())
         {
+            // FR-08: Visibilidad de descartes por control de admisión. Métricas (A-4 t11) y alertas (A-6) diferidas.
+            emitir(
+                EntradaDeRegistro::nueva(NivelDeRegistro::Aviso, "admision_descartada")
+                    .con_id_evento(evento.deduplicacion.como_str().to_string())
+                    .con_id_conversacion(clave)
+                    .con_latencia_ms(latencia_ms(inicio))
+                    .con_detalle(motivo.to_string()),
+            );
             return;
         }
 
-        let inicio = Instant::now();
         let id_evento = evento.deduplicacion.como_str().to_string();
         let id_conversacion = evento.conversacion.como_str().to_string();
 
@@ -408,4 +417,100 @@ where
 /// del propio evento (`docs/adr/adr-0018-apagado-ordenado.md`).
 fn latencia_ms(inicio: Instant) -> u64 {
     u64::try_from(Instant::now().duration_since(inicio).as_millis()).unwrap_or(u64::MAX)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::procesador::ProcesadorDeEco;
+    use crate::registro;
+    use hexcell_core::canal::{
+        EstadoVentanaServicio, EstadoVentanaServicio::Abierta, ResultadoEnvio::Aceptado,
+    };
+    use hexcell_core::identidad::{IdDeduplicacion, IdRemitente};
+    use hexcell_storage::{GestorDePools, RepositorioDeSesiones};
+    use std::time::SystemTime;
+
+    type R = Result<ResultadoEnvio, std::convert::Infallible>;
+    type V = Result<EstadoVentanaServicio, std::convert::Infallible>;
+    type M = Motor<Dummy, ProcesadorDeEco>;
+
+    struct Dummy;
+    impl ChannelAdapter for Dummy {
+        type Error = std::convert::Infallible;
+        async fn send(&self, _: &IdConversacion, _: MensajeSaliente) -> R {
+            Ok(Aceptado)
+        }
+        async fn estado_ventana(&self, _: &IdConversacion) -> V {
+            Ok(Abierta {
+                expira_en: SystemTime::UNIX_EPOCH,
+            })
+        }
+    }
+
+    fn motor(c: ConfiguracionGcra) -> (M, std::path::PathBuf) {
+        let dir = std::env::temp_dir().join(format!("hx-m-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let Ok(p) = GestorDePools::abrir(&dir) else {
+            panic!()
+        };
+        let repo = Arc::new(RepositorioDeSesiones::nuevo(Arc::new(p)));
+        let (_, rx) = mpsc::channel(8);
+        (
+            M::nuevo(Dummy, ProcesadorDeEco, rx, Duration::from_secs(3600), repo)
+                .con_configuracion_gcra(c),
+            dir,
+        )
+    }
+
+    fn evt(c: &IdConversacion, id: &str) -> EventoEntrante {
+        EventoEntrante {
+            remitente: IdRemitente::nuevo("r"),
+            conversacion: c.clone(),
+            contenido: "t".to_string(),
+            marca_temporal: SystemTime::UNIX_EPOCH,
+            deduplicacion: IdDeduplicacion::nuevo(id),
+        }
+    }
+
+    #[tokio::test]
+    async fn ac_1_ac_2_ac_3_discriminacion_descarte_y_admision() {
+        let cfg = match ConfiguracionGcra::nueva(1.0, 0) {
+            Ok(c) => c,
+            Err(_) => panic!(),
+        };
+        let (mut m, dir) = motor(cfg);
+        let conv_d = IdConversacion::nuevo("conv-descarte");
+        let conv_a = IdConversacion::nuevo("conv-admitida");
+
+        registro::pruebas::instalar();
+        m.procesar_evento(evt(&conv_d, "dedup-1")).await;
+        m.procesar_evento(evt(&conv_d, "dedup-2")).await;
+
+        let logs = registro::pruebas::tomar();
+        let desc: Vec<_> = logs
+            .into_iter()
+            .filter(|e| e.evento == "admision_descartada")
+            .collect();
+        assert_eq!(desc.len(), 1);
+        assert_eq!(desc[0].nivel, NivelDeRegistro::Aviso);
+        assert_eq!(desc[0].id_conversacion.as_deref(), Some("conv-descarte"));
+        assert_eq!(desc[0].id_evento.as_deref(), Some("dedup-2"));
+        assert!(desc[0].latencia_ms.is_some() && desc[0].detalle.is_some());
+
+        registro::pruebas::instalar();
+        m.procesar_evento(evt(&conv_a, "dedup-admitido")).await;
+
+        let logs_a = registro::pruebas::tomar();
+        assert!(!logs_a.is_empty());
+        assert_eq!(
+            logs_a
+                .into_iter()
+                .filter(|e| e.evento == "admision_descartada")
+                .count(),
+            0
+        );
+
+        let _ = std::fs::remove_dir_all(dir);
+    }
 }

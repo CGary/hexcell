@@ -191,8 +191,37 @@ pub fn formatear(entrada: &EntradaDeRegistro) -> String {
 /// Toma `stdout().lock()` una sola vez para esta escritura: dos líneas concurrentes no se
 /// entrelazan entre sí.
 pub fn emitir(entrada: EntradaDeRegistro) {
+    #[cfg(test)]
+    pruebas::registrar(&entrada);
+
     let linea = formatear(&entrada);
     let salida = std::io::stdout();
     let mut guardian = salida.lock();
     let _ = writeln!(guardian, "{linea}");
+}
+
+#[cfg(test)]
+pub(crate) mod pruebas {
+    use super::*;
+    use std::cell::RefCell;
+
+    thread_local! {
+        static CAPTURA: RefCell<Option<Vec<EntradaDeRegistro>>> = const { RefCell::new(None) };
+    }
+
+    pub fn instalar() {
+        CAPTURA.with(|c| *c.borrow_mut() = Some(Vec::new()));
+    }
+
+    pub fn tomar() -> Vec<EntradaDeRegistro> {
+        CAPTURA.with(|c| c.borrow_mut().take().unwrap_or_default())
+    }
+
+    pub fn registrar(entrada: &EntradaDeRegistro) {
+        CAPTURA.with(|c| {
+            if let Some(capturas) = c.borrow_mut().as_mut() {
+                capturas.push(entrada.clone());
+            }
+        });
+    }
 }
