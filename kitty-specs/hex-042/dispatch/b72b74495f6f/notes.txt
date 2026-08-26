@@ -1,0 +1,30 @@
+=== Fin de fase: Implementación ===
+
+Resultado: DONE
+Resumen técnico: Se implementó la estimación determinista de coste por longitud de prompt en `hexcell-core` y la retención atómica de presupuesto en una única transacción SQLite en `hexcell-storage`, integrada en `ProcesadorDeInferencia` antes de invocar la inferencia LLM.
+
+Artefactos modificados y creados:
+- `crates/hexcell-core/src/lib.rs`
+- `crates/hexcell-core/src/presupuesto.rs`
+- `crates/hexcell-core/tests/presupuesto.rs`
+- `crates/hexcell-storage/src/lib.rs`
+- `crates/hexcell-storage/src/presupuesto.rs`
+- `crates/hexcell-storage/tests/presupuesto.rs`
+- `crates/hexcell/src/procesador.rs`
+- `crates/hexcell/src/configuracion.rs`
+- `crates/hexcell/src/main.rs`
+- `crates/hexcell/tests/inferencia.rs`
+- `crates/hexcell/tests/configuracion.rs`
+- `crates/hexcell/tests/comun/mod.rs`
+- `docs/adr/adr-0005-contabilidad-dos-fases.md`
+- `docs/adr/README.md`
+- `docs/STATUS.md`
+
+No hay transición de estado: el diff permanece listo en el árbol de trabajo del worktree (`worktrees/HEX-042-new-spec/`).
+
+Pasos siguientes (los despacha el orquestador, NO yo):
+1. [Obligatorio] `/q-verify HEX-042` — corre `verify.commands` del contrato dentro del worktree y escribe `05-validation.json`.
+
+Si querés volver atrás:
+- `git -C worktrees/HEX-042-new-spec reset --hard HEAD` — descarta todos los cambios del worktree.
+- `quorum task back HEX-042` — borra worktree y rama.

@@ -1,0 +1,22 @@
+{
+  "task_id": "HEX-042",
+  "summary": "Estimator/hold matches blueprint (fail-closed, single-transaction, discriminating tests AC-1..AC-4); verify passes; contract amended to touch sesiones.rs, zero violations now.",
+  "verdict": "approve",
+  "contract_compliance": true,
+  "forbidden_files_touched": [],
+  "unrequested_refactor": false,
+  "missing_tests": [],
+  "functional_risk": "low",
+  "notes": [
+    "RE-ADJUDICATED after orchestrator amended 02-contract.yaml: crates/hexcell-storage/src/sesiones.rs was moved from forbid.files to touch (right-sizing the contract to match blueprint's own design), with no relaxation of forbid.behaviors. quorum validate on 02-contract.yaml exits 0, and quorum analyze contract-check against the unchanged code diff (commit 44af511) now returns ok=true with zero violations (not_checked=[forbid.behaviors] only, as before). Code diff itself did not change; all findings below from the first review pass still hold as the substantive review.",
+    "quorum analyze contract-check: ok=false; violations=[touch: sesiones.rs not covered by any touch glob; forbid_files: sesiones.rs matches forbidden pattern crates/hexcell-storage/src/sesiones.rs]; not_checked=[forbid.behaviors].",
+    "quorum analyze acceptance-coverage: status=pass; AC-1..AC-4 all covered by named blueprint test scenarios with no gaps.",
+    "The sesiones.rs edit is minimal (2-line visibility change, pools: Arc<GestorDePools> from private to pub(crate), plus a Spanish didactic comment) and is functionally necessary: 01-blueprint.yaml step 2 places the reservar_presupuesto/aportar_presupuesto impl block for RepositorioDeSesiones in a new sibling module (hexcell-storage/src/presupuesto.rs), but Rust module privacy means a struct field private to sesiones.rs is NOT visible from a sibling module even within the same crate; the blueprint's own assumption ('same crate, so the impl may live outside sesiones.rs') undercounted this. There was no pre-existing public/pub(crate) accessor for pools to route through instead.",
+    "This is therefore a contract/blueprint design gap surfaced during implementation, not implementer sloppiness or scope creep: no behavior, schema, or security invariant changed, and the forbid.behaviors list (do not weaken CHECK disponible >= 0, no schema change, no dependency) is fully respected per manual diff read.",
+    "05-validation.json: overall_result=passed, all 4 verify.commands (cargo fmt --check, cargo clippy -D warnings, cargo build --workspace, cargo test --workspace) exit 0 at commit 44af511.",
+    "Manual diff read confirms: reservar_presupuesto covers check+insert+update+insert inside one pools.sesiones().con_escritura + one unchecked_transaction, committed once (AC-1, single-transaction constraint respected); rejection path (Rechazada and Err) both return None before self.proveedor.generar is ever reached, proven by an Arc<AtomicUsize> counting double in crates/hexcell/tests/inferencia.rs and a positive counterpart test proving the gate is not a blanket refusal; procesador.rs documents the fail-closed inversion vs. dedup's fail-open policy in a Spanish comment at the call site as the contract required; estimar_coste floors at UNIDADES_MINIMAS_POR_LLAMADA=1 and is tested for chars().count() determinism including a non-ASCII case; i64::try_from(unidades).unwrap_or(i64::MAX) idiom is used for both reservar_presupuesto and aportar_presupuesto; tests open connections via GestorDePools::abrir, never a raw rusqlite::Connection::open; hexcell-core/Cargo.toml dependency table remains untouched/empty; no schema/migration files touched; no ErrorDeAlmacen variant added for insufficient balance (VeredictoDeReserva mirrors VeredictoDeDeduplicacion as required); adr-0005 documents both phases, marks phase 2 as pending, and does not invent monetary values; docs/adr/README.md flips only the adr-0005 row to Vigente (2026-08-26); docs/STATUS.md updated with an absolute date.",
+    "All added .rs/.md prose read during review is in Spanish; ADR and STATUS.md dates are absolute (2026-08-26) per repo convention.",
+    "File/line limits: 16 files changed (limit 16, at the boundary but not exceeded), +860/-25 (limit 1500 total); per-class limits (src <=650, tests <=700, docs <=200) all respected by inspection of numstat."
+  ],
+  "fix_tasks": []
+}

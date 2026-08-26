@@ -1,0 +1,128 @@
+task_id: HEX-042
+summary: "Add a deterministic prompt-length cost estimator and an atomic single-transaction budget hold that gates the LLM provider call, plus adr-0005."
+goal: >
+  Estimate the cost of an upcoming inference call as a deterministic opaque unit count derived
+  from prompt length, then hold that amount against the cell's available balance inside ONE
+  SQLite transaction (check disponible, insert an activa reservation, append a 'reserva'
+  movement, decrement disponible and increment reservado). On insufficient balance, reject before
+  the provider is ever called and log the rejection. Reconciliation, release, a real provider,
+  degraded answers, metrics and any monetization value are OUT of scope.
+
+read:
+  - .ai/tasks/active/HEX-042-new-spec/00-spec.yaml
+  - .ai/tasks/active/HEX-042-new-spec/01-blueprint.yaml
+  - crates/hexcell-storage/migraciones/sesiones/0002-saldo-y-movimientos.sql
+  - crates/hexcell-storage/migraciones/sesiones/0001-esquema-inicial.sql
+  - crates/hexcell-storage/src/sesiones.rs
+  - crates/hexcell-storage/src/pools.rs
+  - crates/hexcell-storage/src/error.rs
+  - crates/hexcell-storage/src/tiempo.rs
+  - crates/hexcell-storage/tests/comun/mod.rs
+  - crates/hexcell-storage/tests/repositorio_de_sesiones.rs
+  - crates/hexcell-core/src/lib.rs
+  - crates/hexcell-core/src/admision.rs
+  - crates/hexcell-core/src/inferencia.rs
+  - crates/hexcell/src/motor.rs
+  - crates/hexcell/src/registro.rs
+  - crates/hexcell/src/inferencia.rs
+  - crates/hexcell/tests/comun/mod.rs
+  - crates/hexcell/tests/registro_estructurado.rs
+  - docs/adr/README.md
+  - docs/adr/adr-0023-parametros-gcra-por-variable-de-entorno.md
+  - docs/plan/fase-a-4-admision-presupuesto.md
+  - CLAUDE.md
+
+touch:
+  - crates/hexcell-core/src/lib.rs
+  - crates/hexcell-core/src/presupuesto.rs
+  - crates/hexcell-core/tests/presupuesto.rs
+  - crates/hexcell-storage/src/lib.rs
+  - crates/hexcell-storage/src/presupuesto.rs
+  - crates/hexcell-storage/src/sesiones.rs
+  - crates/hexcell-storage/tests/presupuesto.rs
+  - crates/hexcell/src/procesador.rs
+  - crates/hexcell/src/configuracion.rs
+  - crates/hexcell/src/main.rs
+  - crates/hexcell/tests/inferencia.rs
+  - crates/hexcell/tests/configuracion.rs
+  - crates/hexcell/tests/comun/mod.rs
+  - docs/adr/adr-0005-contabilidad-dos-fases.md
+  - docs/adr/README.md
+  - docs/STATUS.md
+
+forbid:
+  files:
+    - crates/hexcell-storage/migraciones/**
+    - crates/hexcell-storage/src/error.rs
+    - crates/hexcell-storage/src/pools.rs
+    - crates/hexcell-core/src/inferencia.rs
+    - crates/hexcell/src/motor.rs
+    - crates/hexcell/src/inferencia.rs
+    - crates/hexcell/tests/motor.rs
+    - crates/hexcell/tests/admision.rs
+    - crates/hexcell/tests/deduplicacion.rs
+    - crates/hexcell/tests/persistencia.rs
+    - crates/hexcell/tests/continuidad_de_hilo.rs
+    - crates/hexcell/tests/politica_fuera_de_ventana.rs
+    - crates/hexcell/tests/respaldo_y_restauracion.rs
+    - crates/hexcell/tests/registro_estructurado.rs
+    - Cargo.toml
+    - Cargo.lock
+    - crates/**/Cargo.toml
+    - crates/hexcell-canal-contrato/**
+    - crates/hexcell-canal-simulado/**
+    - crates/hexcell-canal-whatsmeow/**
+    - crates/hexcell-admin/**
+    - crates/hexcell-meta/**
+    - sidecar/**
+    - docs/PRD.md
+    - docs/bitacora-de-descartes.md
+    - .ai/tasks/**
+    - .github/**
+  behaviors:
+    - "Do NOT add any dependency to any Cargo.toml. hexcell-core must keep its EMPTY dependency table (adr-0002); the new hexcell-core/src/presupuesto.rs must compile against std alone."
+    - "Do NOT change the database schema: no new tables, columns, indexes or CHECKs, no new migration file, and no bump of VERSION_DE_ESQUEMA_DE_SESIONES (stays 2). Reuse 0002-saldo-y-movimientos.sql exactly as merged."
+    - "Do NOT name or store any price, currency, tariff, plan, rate, top-up or monetary amount. Budget quantities are OPAQUE INTEGER UNITS with no monetary meaning; monetization is a declared pending product decision."
+    - "Do NOT change the production default initial balance away from ZERO. HEXCELL_PRESUPUESTO_INICIAL_UNIDADES must default to 0 when the variable is absent."
+    - "Do NOT implement reconciliation or release: no transition of reservas.estado to 'conciliada' or 'liberada', no expiry sweep, no 'conciliacion' or 'liberacion' movement. That is task 8."
+    - "Do NOT add a real inference provider, any HTTP/TLS client, or any outbound network call."
+    - "Do NOT add degraded-mode or rule-based fallback answers (task 10) and do NOT add metric counters, gauges or endpoints (task 11). On rejection the event simply gets NO response."
+    - "Do NOT split the hold across two transactions or two connections. The sufficiency check, the reservas INSERT, the saldo UPDATE and the movimientos INSERT MUST share ONE pools.sesiones().con_escritura closure and ONE unchecked_transaction, committed once."
+    - "Do NOT modify ProveedorSimulado in crates/hexcell/src/inferencia.rs. It is Clone+Copy and five test files depend on it. AC-2 MUST be proven with a test-local struct implementing hexcell_core::inferencia::ProveedorDeInferencia that counts invocations in an Arc<AtomicUsize>."
+    - "Do NOT place the hold in crates/hexcell/src/motor.rs. It belongs in ProcesadorDeInferencia::procesar, on the line immediately before self.proveedor.generar(...). motor.rs is forbidden precisely to keep the seven ProcesadorDeEco test files untouched."
+    - "Do NOT add an ErrorDeAlmacen variant for insufficient balance. Insufficient balance is a VERDICT (VeredictoDeReserva::Rechazada), mirroring VeredictoDeDeduplicacion; only genuine SQLite failures are errors."
+    - "Do NOT fail open on the accounting path. If reservar_presupuesto returns Err, ProcesadorDeInferencia MUST return None WITHOUT calling the provider. This deliberately inverts the dedup fail-open rule and the inversion MUST be justified in a Spanish comment at the call site."
+    - "Do NOT use unwrap(), expect(), panic!, todo!() or unreachable!() on the hold path in production code. Release builds set panic = \"abort\"; every failure travels as a value. i64 conversions must saturate with the i64::try_from(..).unwrap_or(i64::MAX) idiom already used in sesiones.rs."
+    - "Do NOT weaken, drop or work around the CHECK (disponible >= 0) constraint. The Rust-side sufficiency check is the primary guard and the CHECK is the backstop; neither may be removed."
+    - "Do NOT open a raw rusqlite Connection::open in tests. Go through GestorDePools::abrir so aplicar_parametros_de_conexion enables PRAGMA foreign_keys = ON; otherwise foreign-key assertions silently pass on invalid inserts."
+    - "LANGUAGE: every added or modified .rs comment, doc comment, identifier, log detail string and .md prose MUST be in SPANISH. This repository is entirely Spanish, including commit messages. A deterministic pre-review grep hunts English leaks in added .rs and .md prose. Only the Quorum artifact field values stay in English."
+    - "Do NOT create the worktree, run git merge, or commit. Leave the diff in the working tree; the orchestrator handles committing."
+
+verify:
+  commands:
+    - cargo fmt --check
+    - cargo clippy --workspace -- -D warnings
+    - cargo build --workspace
+    - cargo test --workspace
+
+acceptance:
+  human_gate: true
+
+limits:
+  max_files_changed: 16
+  max_diff_lines: 1500
+  per_class:
+    - glob: "crates/**/src/**"
+      max_diff_lines: 650
+    - glob: "crates/**/tests/**"
+      max_diff_lines: 700
+    - glob: "docs/**"
+      max_diff_lines: 200
+
+execution:
+  mode: worktree_edit
+  branch: ai/HEX-042-new-spec
+
+retry_policy:
+  max_attempts: 2
+  escalate_after: 2

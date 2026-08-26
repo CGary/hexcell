@@ -1,0 +1,54 @@
+task_id: HEX-042
+summary: Add prompt-length cost estimation and atomic pre-execution balance hold before LLM inference calls (FR-10 phase 1).
+goal: >
+  Before the motor invokes the inference provider for an event, estimate the
+  cost of the upcoming call as a deterministic opaque unit count derived from
+  the prompt length, then atomically hold that amount against the cell's
+  available balance: check sufficiency, insert an active reservation, append
+  a reserva movement, and decrement available balance, all within a single
+  SQLite transaction. If the balance is insufficient, reject cleanly before
+  the provider is ever called and log the rejection, mirroring the existing
+  inferencia_sin_respuesta no-answer path.
+invariants:
+  - Available balance (saldo.disponible) never goes negative; the CHECK constraint on saldo.disponible >= 0 must hold under the hold path.
+  - A reservation is either fully created (activa row in reservas + reserva movement in movimientos + decremented saldo.disponible) in one atomic transaction, or not created at all; no partial state is observable.
+  - "The cost estimate is a deterministic pure function of prompt length: the same prompt length always yields the same estimated cost."
+  - The inference provider (ProveedorDeInferencia) is never invoked when the pre-execution hold is rejected for insufficient balance.
+  - "The admission order in procesar_evento is preserved (GCRA admission, concurrency semaphore, dedup, ..., pre-execution hold, inference); the hold check runs strictly before the provider call."
+constraints:
+  - Budget units are opaque integers; no prices, currency, plans, or top-up policy are introduced (monetization is a pending product decision, out of scope).
+  - No new runtime dependencies; hexcell-core keeps its empty dependency table (adr-0002).
+  - The hold, its movement record, and the saldo update are written in the same SQLite transaction (no split writes across separate connections/transactions).
+  - Reuse the existing saldo/reservas/movimientos schema from migration 0002-saldo-y-movimientos.sql (HEX-041) as-is; no schema changes in this task.
+  - All new .rs and .md prose added by this task must be in English for Quorum artifact/code-comment field values per repo convention, while any repository documentation prose outside Quorum artifacts stays in Spanish per project convention.
+acceptance:
+  - id: AC-1
+    statement: With sufficient available balance, processing an event creates exactly one active reservation row, exactly one reserva movement row, and decrements saldo.disponible by the estimated amount, all as one atomic operation.
+    given: an event whose estimated cost is less than or equal to the current saldo.disponible
+    when: the motor processes the event through the pre-execution hold step
+    then: exactly one row is inserted into reservas with estado = 'activa', exactly one row is inserted into movimientos with clase = 'reserva', and saldo.disponible decreases by exactly the estimated amount
+  - id: AC-2
+    statement: With insufficient available balance, the inference provider records zero calls and a rejection is logged, with no reservation or movement created.
+    given: an event whose estimated cost exceeds the current saldo.disponible
+    when: the motor processes the event through the pre-execution hold step
+    then: ProveedorDeInferencia records zero invocations, no row is inserted into reservas or movimientos, saldo is unchanged, and a rejection log entry exists for the event
+  - id: AC-3
+    statement: The cost estimate is a deterministic function of prompt length.
+    given: two prompts of equal length (possibly different content)
+    when: the cost estimator computes their estimated cost
+    then: both prompts yield the identical estimated cost value
+  - id: AC-4
+    statement: Available balance never goes negative under repeated or concurrent hold attempts.
+    given: a saldo row and a stream of hold attempts, including attempts that would overdraw it
+    when: holds are attempted against the saldo row
+    then: saldo.disponible remains >= 0 at all times, enforced by the existing CHECK constraint, and no hold is admitted that would violate it
+  - cargo test --workspace passes with new tests covering AC-1 through AC-4.
+  - cargo fmt --check and cargo clippy --workspace -- -D warnings pass with no new warnings.
+risk: medium
+non_goals:
+  - Reconciliation or release of holds (conciliada/liberada transitions) is out of scope; a separate task handles it.
+  - A real inference provider client is out of scope; the existing ProveedorSimulado is sufficient for this task's tests.
+  - Degraded-mode rule-based answers on rejection are out of scope; on rejection the event simply gets no LLM response in this task, as procesar_evento's existing inferencia_sin_respuesta path already does.
+  - Metrics exposure for holds/rejections is out of scope.
+  - Any monetization values (prices, initial production balance, top-up policy) are out of scope; they remain pending product decisions.
+  - Whether adr-0005-contabilidad-dos-fases is authored in this task or in the reconciliation task is left to the blueprint phase to decide.

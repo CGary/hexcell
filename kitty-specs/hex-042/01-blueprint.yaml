@@ -1,0 +1,140 @@
+task_id: HEX-042
+summary: "Deterministic prompt-length cost estimator in hexcell-core plus a single-transaction budget hold in hexcell-storage, invoked by ProcesadorDeInferencia immediately before the provider call."
+
+affected_files:
+  - crates/hexcell-core/src/lib.rs
+  - crates/hexcell-core/src/presupuesto.rs
+  - crates/hexcell-storage/src/lib.rs
+  - crates/hexcell-storage/src/presupuesto.rs
+  - crates/hexcell/src/procesador.rs
+  - crates/hexcell/src/configuracion.rs
+  - crates/hexcell/src/main.rs
+  - crates/hexcell-core/tests/presupuesto.rs
+  - crates/hexcell-storage/tests/presupuesto.rs
+  - crates/hexcell/tests/inferencia.rs
+  - crates/hexcell/tests/configuracion.rs
+  - crates/hexcell/tests/comun/mod.rs
+  - docs/adr/adr-0005-contabilidad-dos-fases.md
+  - docs/adr/README.md
+  - docs/STATUS.md
+
+symbols:
+  - "hexcell_core::presupuesto (new module, std-only, registered in lib.rs)"
+  - "hexcell_core::presupuesto::UnidadesDePresupuesto (pub type alias = u64)"
+  - "hexcell_core::presupuesto::CARACTERES_POR_UNIDAD_ESTIMADA (pub const u64 = 4)"
+  - "hexcell_core::presupuesto::UNIDADES_MINIMAS_POR_LLAMADA (pub const UnidadesDePresupuesto = 1)"
+  - "hexcell_core::presupuesto::estimar_coste(prompt: &str) -> UnidadesDePresupuesto"
+  - "hexcell_storage::presupuesto (new module holding an impl block for RepositorioDeSesiones)"
+  - "hexcell_storage::presupuesto::Saldo { disponible: i64, reservado: i64 }"
+  - "hexcell_storage::presupuesto::VeredictoDeReserva::Concedida { id_reserva: i64, monto_reservado: i64 }"
+  - "hexcell_storage::presupuesto::VeredictoDeReserva::Rechazada { disponible: i64, requerido: i64 }"
+  - "RepositorioDeSesiones::reservar_presupuesto(&self, &IdConversacion, UnidadesDePresupuesto, SystemTime) -> Result<VeredictoDeReserva, ErrorDeAlmacen>"
+  - "RepositorioDeSesiones::aportar_presupuesto(&self, UnidadesDePresupuesto, SystemTime) -> Result<(), ErrorDeAlmacen>"
+  - "RepositorioDeSesiones::saldo(&self) -> Result<Saldo, ErrorDeAlmacen>"
+  - "RepositorioDeSesiones::presupuesto_sin_iniciar(&self) -> Result<bool, ErrorDeAlmacen>"
+  - "ProcesadorDeInferencia<I> gains field repositorio: Arc<RepositorioDeSesiones>"
+  - "ProcesadorDeInferencia::nuevo(proveedor: I, repositorio: Arc<RepositorioDeSesiones>) -> Self"
+  - "configuracion::HEXCELL_PRESUPUESTO_INICIAL_UNIDADES (pub const &str, optional, default 0)"
+  - "Configuracion::presupuesto_inicial_unidades (u64)"
+  - "log event presupuesto_rechazado (NivelDeRegistro::Aviso)"
+
+dependencies:
+  - crates/hexcell-storage/migraciones/sesiones/0002-saldo-y-movimientos.sql
+  - crates/hexcell-storage/src/sesiones.rs
+  - crates/hexcell-storage/src/pools.rs
+  - crates/hexcell-storage/src/error.rs
+  - crates/hexcell-storage/src/tiempo.rs
+  - crates/hexcell-core/src/inferencia.rs
+  - crates/hexcell-core/src/identidad.rs
+  - crates/hexcell/src/motor.rs
+  - crates/hexcell/src/registro.rs
+  - crates/hexcell/src/inferencia.rs
+  - crates/hexcell-storage/tests/comun/mod.rs
+
+test_scenarios:
+  - statement: "Sufficient balance: reservar_presupuesto inserts exactly one reservas row with estado='activa' and resuelta_ms IS NULL, exactly one movimientos row with clase='reserva' and monto = -estimate, and saldo.disponible drops by exactly the estimate while saldo.reservado rises by it."
+    covers: [AC-1]
+  - statement: "Atomicity: after a granted hold the movimientos.saldo_resultante equals the post-update saldo.disponible; no intermediate state is observable because all four statements share one unchecked_transaction."
+    covers: [AC-1]
+  - statement: "Insufficient balance: reservar_presupuesto returns VeredictoDeReserva::Rechazada, reservas and movimientos row counts are unchanged, and saldo.disponible and saldo.reservado are byte-identical to before."
+    covers: [AC-2]
+  - statement: "End-to-end rejection: a ProcesadorDeInferencia wrapping a test-local counting ProveedorDeInferencia double, over a repository whose saldo.disponible is below the estimate, returns None and the double's AtomicUsize call counter reads exactly 0."
+    covers: [AC-2]
+  - statement: "End-to-end grant: the same counting double over a seeded balance is invoked exactly once and the motor sends the provider's answer, proving the gate is not a blanket refusal."
+    covers: [AC-1, AC-2]
+  - statement: "Rejection is logged: the rejection path emits a presupuesto_rechazado entry naming the conversation, the required units and the available units, and never a monetary term."
+    covers: [AC-2]
+  - statement: "Determinism: estimar_coste returns the same value for two distinct prompts of identical chars().count(), including a non-ASCII prompt whose byte length differs from an ASCII prompt of equal character count."
+    covers: [AC-3]
+  - statement: "Estimate is monotonic and floored: an empty prompt still estimates UNIDADES_MINIMAS_POR_LLAMADA (>= 1), so the reservas CHECK (monto_reservado > 0) and the movimientos CHECK (monto <> 0) can never be violated by an estimate."
+    covers: [AC-3, AC-4]
+  - statement: "Non-negative balance: a stream of holds against a small seeded balance admits holds only while disponible >= estimate, rejects the rest, and leaves saldo.disponible >= 0 at every step; the CHECK constraint is never hit as an error."
+    covers: [AC-4]
+  - statement: "Foreign key is enforced: the hold test opens its connection through GestorDePools (PRAGMA foreign_keys = ON via aplicar_parametros_de_conexion), and a hold for a conversation with no conversaciones row returns ErrorDeAlmacen rather than silently inserting."
+    covers: [AC-4]
+  - statement: "Persistence failure fails closed: when reservar_presupuesto returns Err, ProcesadorDeInferencia returns None without calling the provider, so an unavailable ledger never allows unaccounted spend."
+    covers: [AC-2]
+  - statement: "Seeding is idempotent: presupuesto_sin_iniciar reports false once any movimientos row exists, so restarting the binary with HEXCELL_PRESUPUESTO_INICIAL_UNIDADES set does not re-credit the balance."
+    covers: [AC-4]
+  - statement: "Configuration: HEXCELL_PRESUPUESTO_INICIAL_UNIDADES absent yields 0; a non-numeric value yields ErrorDeConfiguracion::ValorInvalido naming the variable."
+    covers: [AC-4]
+  - statement: "Existing suites stay green: the seven test files driving Motor with ProcesadorDeEco are untouched and still pass, and crates/hexcell/tests/registro_estructurado.rs still observes envio_aceptado from the launched binary."
+    covers: [AC-1]
+
+strategy:
+  - step: 1
+    action: "Value Object / pure domain: add hexcell-core/src/presupuesto.rs with UnidadesDePresupuesto, the two consts and estimar_coste, defined over prompt.chars().count() and floored at UNIDADES_MINIMAS_POR_LLAMADA. std only, no new dependency, so hexcell-core keeps its empty dependency table (adr-0002). Register the module in lib.rs."
+    files:
+      - crates/hexcell-core/src/presupuesto.rs
+      - crates/hexcell-core/src/lib.rs
+  - step: 2
+    action: "Repository / Application Service: add hexcell-storage/src/presupuesto.rs carrying Saldo, VeredictoDeReserva and an impl RepositorioDeSesiones block (same crate, so the impl may live outside sesiones.rs). reservar_presupuesto runs read-check-insert-update-append inside ONE pools.sesiones().con_escritura + unchecked_transaction, exactly as procesar_deduplicacion does. Insufficient balance is a verdict, not an ErrorDeAlmacen variant, mirroring VeredictoDeDeduplicacion."
+    files:
+      - crates/hexcell-storage/src/presupuesto.rs
+      - crates/hexcell-storage/src/lib.rs
+  - step: 3
+    action: "Add aportar_presupuesto (clase 'aporte' movement plus disponible increment, one transaction), saldo and presupuesto_sin_iniciar in the same module. These exist so tests and the optional startup seed can credit a balance without any monetary meaning; production default stays zero."
+    files:
+      - crates/hexcell-storage/src/presupuesto.rs
+  - step: 4
+    action: "Orchestration: ProcesadorDeInferencia gains an Arc<RepositorioDeSesiones> field and a second constructor argument. In procesar, estimate the cost from evento.contenido, call reservar_presupuesto, and only on Concedida call self.proveedor.generar. Concedida binds id_reserva with .. for now; threading it to reconciliation is task 8."
+    files:
+      - crates/hexcell/src/procesador.rs
+  - step: 5
+    action: "Validator / policy: on Rechazada emit presupuesto_rechazado at Aviso naming required and available units, and return None so the motor logs its existing inferencia_sin_respuesta. On Err emit fallo_de_persistencia and ALSO return None: the accounting path fails CLOSED, deliberately opposite to the dedup fail-open, and that divergence must be written next to the code following the module's existing convention."
+    files:
+      - crates/hexcell/src/procesador.rs
+  - step: 6
+    action: "Configuration: add HEXCELL_PRESUPUESTO_INICIAL_UNIDADES (optional, default 0) parsed with ErrorDeConfiguracion::ValorInvalido naming the variable, per the HEX-038 / adr-0023 precedent. Wire main.rs to pass Arc::clone(&repositorio) into both ProcesadorDeInferencia::nuevo call sites and to credit the seed once, guarded by presupuesto_sin_iniciar so restarts do not re-credit."
+    files:
+      - crates/hexcell/src/configuracion.rs
+      - crates/hexcell/src/main.rs
+  - step: 7
+    action: "Tests: new crates/hexcell-core/tests/presupuesto.rs (AC-3) and crates/hexcell-storage/tests/presupuesto.rs (AC-1, AC-4) following the DirectorioTemporal helper already in each crate's tests/comun/mod.rs. Extend crates/hexcell/tests/inferencia.rs with a counting ProveedorDeInferencia double for AC-2 and seed a balance for its five existing tests. Set a default HEXCELL_PRESUPUESTO_INICIAL_UNIDADES inside lanzar_binario_con_variables so every launched-binary test keeps its current behaviour with one edit instead of one per file."
+    files:
+      - crates/hexcell-core/tests/presupuesto.rs
+      - crates/hexcell-storage/tests/presupuesto.rs
+      - crates/hexcell/tests/inferencia.rs
+      - crates/hexcell/tests/configuracion.rs
+      - crates/hexcell/tests/comun/mod.rs
+  - step: 8
+    action: "Write docs/adr/adr-0005-contabilidad-dos-fases.md in Spanish covering BOTH phases as design (hold now, reconciliation in task 8, explicitly marked as not yet implemented), and flip its row in docs/adr/README.md from 'Tomada en el PRD, por formalizar' to Vigente (2026-08-26) in the same commit. Record the state change in docs/STATUS.md."
+    files:
+      - docs/adr/adr-0005-contabilidad-dos-fases.md
+      - docs/adr/README.md
+      - docs/STATUS.md
+
+risks:
+  - "PLACEMENT DEVIATION (needs human awareness): 00-spec invariant 5 lists the hold as a step of procesar_evento. This blueprint places it inside ProcesadorDeInferencia::procesar, one level below, immediately before self.proveedor.generar. Observable order is unchanged (GCRA -> semaphore -> dedup -> drain -> history -> hold -> inference). Rationale: co-locating the hold with the only component that owns the provider makes AC-2 structural rather than conventional, and it leaves ProcesadorDeEco untouched."
+  - "Motor-level placement was rejected on measured cost: 17 Motor::nuevo call sites across 7 test files use ProcesadorDeEco and assert that a reply is sent (crates/hexcell/tests/motor.rs:98-104 and peers). Gating them at saldo.disponible = 0 would break all of them and force ~19 unrelated test edits into this diff."
+  - "Migration 0002 seeds saldo.disponible = 0, so any hold makes a freshly migrated cell answer nothing. crates/hexcell/tests/registro_estructurado.rs:42 asserts a launched binary logs envio_aceptado and fails unless that binary gets a non-zero balance. Mitigated by HEXCELL_PRESUPUESTO_INICIAL_UNIDADES (production default stays 0) plus a default in the shared test launcher."
+  - "SPEC MISMATCH: 00-spec non_goals state ProveedorSimulado is sufficient for this task's tests, but ProveedorSimulado is Clone+Copy and exposes no invocation counter, so AC-2 ('provider records ZERO calls') cannot be asserted with it. A test-local counting ProveedorDeInferencia double is required; adding an Arc<AtomicUsize> to ProveedorSimulado would break its Copy bound and the five test files that rely on it."
+  - "reservas.id_conversacion is a FOREIGN KEY to conversaciones(id_conversacion) and PRAGMA foreign_keys is ON (pools.rs aplicar_parametros_de_conexion, line ~457). The hold must therefore run after anotar_entrante has created the conversation row. motor.rs treats an anotar_entrante failure as non-fatal (logs fallo_de_persistencia and continues), so a hold that follows a failed history write can fail on the FK; that path must return None, never panic."
+  - "Accounting failure policy deliberately inverts the dedup fail-open rule already documented in motor.rs ('Dos politicas ante un fallo de persistencia'). Duplicating a conversational reply is cheap; spending unaccounted external money is not. The hold path fails CLOSED and the reason must be written next to the code, or a later reader will read it as a forgotten error arm."
+  - "reservas has CHECK (monto_reservado > 0) and movimientos has CHECK (monto <> 0). An estimate of zero for an empty prompt would violate both. UNIDADES_MINIMAS_POR_LLAMADA >= 1 is load-bearing, not cosmetic, and must be covered by a test."
+  - "AC-3 says 'two prompts of equal length'. Byte length and character count diverge for the non-ASCII text that is routine in this Spanish-language product ('ae' is 2 chars / 3 bytes). estimar_coste defines length as chars().count() so AC-3 holds under the reading a reviewer is most likely to test."
+  - "docs/adr/adr-0005-contabilidad-dos-fases.md is listed in docs/adr/README.md line 16 but the file does NOT exist; the row is a placeholder marked 'Tomada en el PRD, por formalizar'. Creating the ADR is a one-row EDIT of that table, not a new row, and both must land in the same commit."
+  - "unchecked_transaction() is DEFERRED, matching procesar_deduplicacion. This is safe only because PoolDeSesiones holds a single write Connection behind a Mutex, so con_escritura serializes every writer in-process. A future multi-writer pool or a concurrent dispatcher would need BEGIN IMMEDIATE; the transaction plus that mutex IS the guard and must be documented as such."
+  - "Tests must not open a raw Connection::open on sessions.db: without aplicar_parametros_de_conexion the foreign_keys pragma is OFF by default and FK assertions would silently pass on invalid inserts. Go through GestorDePools::abrir like the existing storage tests."
+  - "No prior failure history: .ai/tasks/failed/ does not exist in this repo, so quorum analyze failure-lookup contributed no carry-over lessons."
+  - "HSME advisory read returned only generic HexCell project history at similarity ~0.015 (noise floor); no prior accounting task or failure was surfaced. Advisory only, per ADR 0008."
