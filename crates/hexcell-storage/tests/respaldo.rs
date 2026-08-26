@@ -14,7 +14,9 @@ use std::time::Duration;
 
 use comun::DirectorioTemporal;
 use hexcell_storage::{
-    ErrorDeAlmacen, GestorDePools, NOMBRE_DE_ARCHIVO_DE_CONOCIMIENTO, NOMBRE_DE_ARCHIVO_DE_SESIONES,
+    ErrorDeAlmacen, GestorDePools, NOMBRE_DE_ARCHIVO_DE_CONOCIMIENTO,
+    NOMBRE_DE_ARCHIVO_DE_SESIONES, VERSION_DE_ESQUEMA_DE_CONOCIMIENTO,
+    VERSION_DE_ESQUEMA_DE_SESIONES,
 };
 use rusqlite::Connection;
 
@@ -72,8 +74,13 @@ fn cada_copia_conserva_su_version_de_esquema() {
         let version: i64 = conexion
             .query_row("PRAGMA user_version", [], |fila| fila.get(0))
             .expect("leer user_version de la copia");
+        let version_esperada = match copia.nombre_logico.as_ref() {
+            NOMBRE_DE_ARCHIVO_DE_SESIONES => VERSION_DE_ESQUEMA_DE_SESIONES,
+            NOMBRE_DE_ARCHIVO_DE_CONOCIMIENTO => VERSION_DE_ESQUEMA_DE_CONOCIMIENTO,
+            otro => panic!("copia con nombre lógico no esperado: {otro}"),
+        };
         assert_eq!(
-            version, 1,
+            version, version_esperada,
             "la copia de {} debe conservar la versión de esquema de su origen",
             copia.nombre_logico
         );

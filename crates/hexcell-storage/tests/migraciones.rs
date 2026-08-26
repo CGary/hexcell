@@ -1,4 +1,4 @@
-//! Tests del corredor de migraciones sobre `PRAGMA user_version` (AC-3 y AC-5).
+//! Tests del corredor de migraciones sobre `PRAGMA user_version` (AC-1..AC-5).
 
 mod comun;
 
@@ -9,16 +9,21 @@ use hexcell_storage::{
 };
 use rusqlite::Connection;
 
-/// Tablas e índices que la versión 1 del esquema de `sessions.db` debe dejar creados.
-const OBJETOS_ESPERADOS: [(&str, &str); 8] = [
+/// Tablas e índices que la versión 2 del esquema de `sessions.db` debe dejar creados.
+const OBJETOS_ESPERADOS: [(&str, &str); 13] = [
     ("table", "contactos"),
     ("table", "conversaciones"),
     ("table", "mensajes"),
     ("table", "parametros_de_plantilla"),
     ("table", "deduplicacion"),
     ("table", "estado_del_motor"),
+    ("table", "saldo"),
+    ("table", "reservas"),
+    ("table", "movimientos"),
     ("index", "idx_mensajes_conversacion"),
     ("index", "idx_deduplicacion_marca"),
+    ("index", "idx_reservas_activas"),
+    ("index", "idx_movimientos_conversacion"),
 ];
 
 #[test]
@@ -145,4 +150,131 @@ fn reabrir_el_gestor_sobre_la_misma_ruta_no_vuelve_a_migrar_nada() {
         })
         .expect("la lectura de conocimiento debe funcionar");
     assert_eq!(version, VERSION_DE_ESQUEMA_DE_CONOCIMIENTO);
+}
+
+#[test]
+fn upgrade_de_version_1_a_version_2_preserva_datos_preexistentes() {
+    let directorio = DirectorioTemporal::nuevo("migraciones-upgrade-v1-v2");
+    let conexion = Connection::open(directorio.ruta().join(NOMBRE_DE_ARCHIVO_DE_SESIONES))
+        .expect("abrir base");
+    conexion
+        .execute_batch(include_str!(
+            "../migraciones/sesiones/0001-esquema-inicial.sql"
+        ))
+        .expect("aplicar v1");
+    conexion
+        .execute_batch("PRAGMA user_version = 1;")
+        .expect("fijar v1");
+    conexion
+        .execute(
+            "INSERT INTO contactos (id_remitente, primera_actividad_ms, ultima_actividad_ms) VALUES ('c1', 100, 200)",
+            [],
+        )
+        .expect("insertar contacto");
+    conexion
+        .execute(
+            "INSERT INTO conversaciones (id_conversacion, creada_ms, ultima_actividad_ms) VALUES ('conv1', 100, 200)",
+            [],
+        )
+        .expect("insertar conversacion");
+    conexion
+        .execute(
+            "INSERT INTO mensajes (id, id_conversacion, id_remitente, direccion, clase, contenido, marca_temporal_ms) VALUES (1, 'conv1', 'c1', 'entrante', 'texto', 'hola', 150)",
+            [],
+        )
+        .expect("insertar mensaje");
+
+    aplicar_migraciones_de_sesiones(&conexion).expect("upgrade v1->v2");
+
+    let version: i64 = conexion
+        .query_row("PRAGMA user_version", [], |fila| fila.get(0))
+        .expect("user_version");
+    assert_eq!(version, 2);
+
+    for (tipo, nombre) in OBJETOS_ESPERADOS {
+        let encontrados: i64 = conexion
+            .query_row(
+                "SELECT count(*) FROM sqlite_schema WHERE type = ?1 AND name = ?2",
+                rusqlite::params![tipo, nombre],
+                |fila| fila.get(0),
+            )
+            .expect("objeto esquema");
+        assert_eq!(encontrados, 1, "falta objeto {tipo} {nombre}");
+    }
+
+    let msg: String = conexion
+        .query_row("SELECT contenido FROM mensajes WHERE id = 1", [], |fila| {
+            fila.get(0)
+        })
+        .expect("mensaje");
+    assert_eq!(msg, "hola");
+}
+
+#[test]
+fn restricciones_de_clave_foranea_en_movimientos_y_reservas_rechazan_filas_invalidas() {
+    let directorio = DirectorioTemporal::nuevo("migraciones-fk");
+    let conexion = Connection::open(directorio.ruta().join(NOMBRE_DE_ARCHIVO_DE_SESIONES))
+        .expect("abrir base");
+    conexion.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
+    aplicar_migraciones_de_sesiones(&conexion).unwrap();
+
+    assert!(conexion.execute("INSERT INTO reservas (id_conversacion, monto_reservado, estado, creada_ms) VALUES ('x', 10, 'activa', 1)", []).is_err());
+    assert!(conexion.execute("INSERT INTO movimientos (id_conversacion, clase, monto, saldo_resultante, registrado_ms) VALUES ('x', 'aporte', 10, 10, 1)", []).is_err());
+
+    conexion
+        .execute(
+            "INSERT INTO conversaciones (id_conversacion, creada_ms, ultima_actividad_ms) VALUES ('conv1', 1, 1)",
+            [],
+        )
+        .unwrap();
+    conexion
+        .execute(
+            "INSERT INTO reservas (id, id_conversacion, monto_reservado, estado, creada_ms) VALUES (1, 'conv1', 10, 'activa', 1)",
+            [],
+        )
+        .unwrap();
+
+    assert!(conexion.execute("INSERT INTO movimientos (id_reserva, id_conversacion, clase, monto, saldo_resultante, registrado_ms) VALUES (99, 'conv1', 'reserva', -10, 0, 1)", []).is_err());
+}
+
+#[test]
+fn restricciones_check_y_strict_rechazan_valores_invalidos() {
+    let directorio = DirectorioTemporal::nuevo("migraciones-check");
+    let conexion = Connection::open(directorio.ruta().join(NOMBRE_DE_ARCHIVO_DE_SESIONES))
+        .expect("abrir base");
+    conexion.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
+    aplicar_migraciones_de_sesiones(&conexion).unwrap();
+
+    // saldo checks
+    assert!(conexion.execute("INSERT INTO saldo (id, disponible, reservado, actualizado_ms) VALUES (2, 10, 0, 1)", []).is_err());
+    assert!(
+        conexion
+            .execute("UPDATE saldo SET disponible = -1 WHERE id = 1", [])
+            .is_err()
+    );
+
+    // reservas checks
+    conexion
+        .execute(
+            "INSERT INTO conversaciones (id_conversacion, creada_ms, ultima_actividad_ms) VALUES ('conv1', 1, 1)",
+            [],
+        )
+        .unwrap();
+    assert!(conexion.execute("INSERT INTO reservas (id_conversacion, monto_reservado, estado, creada_ms) VALUES ('conv1', 0, 'activa', 1)", []).is_err());
+    assert!(conexion.execute("INSERT INTO reservas (id_conversacion, monto_reservado, estado, creada_ms) VALUES ('conv1', 5, 'invalida', 1)", []).is_err());
+    assert!(conexion.execute("INSERT INTO reservas (id_conversacion, monto_reservado, estado, creada_ms, resuelta_ms) VALUES ('conv1', 5, 'activa', 1, 10)", []).is_err());
+    assert!(conexion.execute("INSERT INTO reservas (id_conversacion, monto_reservado, estado, creada_ms) VALUES ('conv1', 5, 'conciliada', 1)", []).is_err());
+
+    // movimientos checks
+    assert!(conexion.execute("INSERT INTO movimientos (clase, monto, saldo_resultante, registrado_ms) VALUES ('invalida', 10, 10, 1)", []).is_err());
+    assert!(conexion.execute("INSERT INTO movimientos (clase, monto, saldo_resultante, registrado_ms) VALUES ('aporte', 0, 10, 1)", []).is_err());
+    assert!(conexion.execute("INSERT INTO movimientos (clase, monto, saldo_resultante, registrado_ms) VALUES ('aporte', 10, -1, 1)", []).is_err());
+
+    // STRICT checks
+    assert!(conexion.execute("INSERT INTO movimientos (clase, monto, saldo_resultante, registrado_ms) VALUES ('aporte', 'abc', 10, 1)", []).is_err());
+    assert!(
+        conexion
+            .execute("UPDATE saldo SET disponible = 'abc' WHERE id = 1", [])
+            .is_err()
+    );
 }
