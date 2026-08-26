@@ -1,0 +1,25 @@
+{
+  "task_id": "HEX-041",
+  "bundle_hash": "91ae909274ce20397bfcd9340c5de8d2a6869037b2b6db9e5619a1b381de07cf",
+  "files": [
+    ".ai/tasks/active/HEX-041-new-spec/00-spec.yaml",
+    ".ai/tasks/active/HEX-041-new-spec/01-blueprint.yaml",
+    "CLAUDE.md",
+    "crates/hexcell-storage/Cargo.toml",
+    "crates/hexcell-storage/migraciones/conocimiento/0001-esquema-minimo.sql",
+    "crates/hexcell-storage/migraciones/identidad/0001-esquema-inicial.sql",
+    "crates/hexcell-storage/migraciones/sesiones/0001-esquema-inicial.sql",
+    "crates/hexcell-storage/src/error.rs",
+    "crates/hexcell-storage/src/lib.rs",
+    "crates/hexcell-storage/src/migraciones.rs",
+    "crates/hexcell-storage/src/pools.rs",
+    "crates/hexcell-storage/src/respaldo.rs",
+    "crates/hexcell-storage/tests/comun/mod.rs",
+    "crates/hexcell-storage/tests/migraciones.rs",
+    "crates/hexcell-storage/tests/respaldo.rs",
+    "docs/adr/adr-0003-persistencia-dual.md",
+    "docs/plan/fase-a-4-admision-presupuesto.md"
+  ],
+  "protocol_version": "fleet-bundle-protocol/v2",
+  "created_at": "2026-08-26T15:10:20Z"
+}

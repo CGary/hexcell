@@ -1,0 +1,33 @@
+He llevado a cabo las instrucciones especificadas en la tarea **HEX-041** respetando estrictamente los límites del contrato y las convenciones del proyecto:
+
+### 1. Migración SQL `0002-saldo-y-movimientos.sql`
+- **Archivo creado**: [`crates/hexcell-storage/migraciones/sesiones/0002-saldo-y-movimientos.sql`](file:///home/gary/dev/hexcell/worktrees/HEX-041-new-spec/crates/hexcell-storage/migraciones/sesiones/0002-saldo-y-movimientos.sql).
+- **Estructuras creadas**:
+  - `saldo`: Tabla `STRICT` con restricción de fila única (`CHECK (id = 1)`), columnas `disponible`, `reservado` y `actualizado_ms`. Inicializada con 0 unidades.
+  - `reservas`: Tabla `STRICT` para reservas previas de presupuesto con restricción de acoplamiento de estado `CHECK ((estado = 'activa') = (resuelta_ms IS NULL))`.
+  - `movimientos`: Libro contable *append-only* (`STRICT`) con tipos de movimiento (`aporte`, `reserva`, `conciliacion`, `liberacion`), `monto` entero con signo y `saldo_resultante`.
+  - **Índices**: `idx_reservas_activas` e `idx_movimientos_conversacion`.
+
+### 2. Corredor de migraciones como escalera secuencial
+- **Archivo modificado**: [`crates/hexcell-storage/src/migraciones.rs`](file:///home/gary/dev/hexcell/worktrees/HEX-041-new-spec/crates/hexcell-storage/src/migraciones.rs).
+- **Cambios**:
+  - Se incrementó `VERSION_DE_ESQUEMA_DE_SESIONES` a `2`.
+  - Se implementó la estructura privada `PasoDeMigracion` y los arreglos ordenados `MIGRACIONES_DE_SESIONES`, `MIGRACIONES_DE_CONOCIMIENTO` y `MIGRACIONES_DE_IDENTIDAD`.
+  - La función privada `aplicar` recorre secuencialmente los pasos faltantes respecto al `PRAGMA user_version` de la base, ejecutando cada script y elevando el `user_version` en la misma transacción.
+
+### 3. Cobertura de pruebas (AC-1 a AC-5)
+- **Archivo modificado**: [`crates/hexcell-storage/tests/migraciones.rs`](file:///home/gary/dev/hexcell/worktrees/HEX-041-new-spec/crates/hexcell-storage/tests/migraciones.rs).
+- **Escenarios**:
+  - Verificación de creación de los 13 objetos del esquema y versión 2 (AC-1).
+  - Test de actualización desde versión 1 a versión 2 preservando datos de `contactos`, `conversaciones` y `mensajes` (AC-2).
+  - Test de idempotencia al reejecutar (AC-3).
+  - Tests de integridad declarativa (AC-4): rechazo por clave foránea (con `PRAGMA foreign_keys = ON`), violaciones de `CHECK` y rechazo de tipos no enteros por `STRICT`.
+
+### 4. Corrección en la suite de respaldo
+- **Archivo modificado**: [`crates/hexcell-storage/tests/respaldo.rs`](file:///home/gary/dev/hexcell/worktrees/HEX-041-new-spec/crates/hexcell-storage/tests/respaldo.rs).
+- **Cambios**: Se actualizó `cada_copia_conserva_su_version_de_esquema` para validar la versión esperada dinámicamente según el tipo de base de datos (`VERSION_DE_ESQUEMA_DE_SESIONES` vs `VERSION_DE_ESQUEMA_DE_CONOCIMIENTO`).
+
+### Verificaciones ejecutadas
+- `cargo fmt --check`: **OK**
+- `cargo clippy --workspace -- -D warnings`: **OK**
+- `cargo test --workspace`: **OK** (todos los tests pasaron limpiamente)

@@ -1,0 +1,100 @@
+task_id: HEX-041
+summary: "Add sessions.db migration 0002 (balance + holds + append-only ledger, Value Objects in SQL), convert the migration runner to a stepped ladder, fix the version-1 assertion in the backup test."
+
+affected_files:
+  - crates/hexcell-storage/migraciones/sesiones/0002-saldo-y-movimientos.sql
+  - crates/hexcell-storage/src/migraciones.rs
+  - crates/hexcell-storage/tests/migraciones.rs
+  - crates/hexcell-storage/tests/respaldo.rs
+
+symbols:
+  - "PasoDeMigracion (new private struct in src/migraciones.rs: { version: i64, guion: &'static str })"
+  - "MIGRACIONES_DE_SESIONES (new private const array, 2 steps)"
+  - "MIGRACIONES_DE_CONOCIMIENTO (new private const array, 1 step)"
+  - "MIGRACIONES_DE_IDENTIDAD (new private const array, 1 step)"
+  - "aplicar (existing private fn: signature changes from (conexion, version_objetivo: i64, guion: &str, operacion) to (conexion, pasos: &[PasoDeMigracion], operacion))"
+  - "VERSION_DE_ESQUEMA_DE_SESIONES (existing pub const: value 1 -> 2)"
+  - "VERSION_DE_ESQUEMA_DE_CONOCIMIENTO (existing pub const: stays 1)"
+  - "VERSION_DE_ESQUEMA_DE_IDENTIDAD (existing pub const: stays 1)"
+  - "aplicar_migraciones_de_sesiones (existing pub fn: body only, signature unchanged)"
+  - "aplicar_migraciones_de_conocimiento (existing pub fn: body only, signature unchanged)"
+  - "aplicar_migraciones_de_identidad (existing pub fn: body only, signature unchanged)"
+  - "SQL table saldo (single row, id INTEGER PRIMARY KEY CHECK (id = 1))"
+  - "SQL table reservas (pre-execution holds, mutable lifecycle)"
+  - "SQL table movimientos (append-only ledger)"
+  - "SQL index idx_reservas_activas"
+  - "SQL index idx_movimientos_conversacion"
+  - "OBJETOS_ESPERADOS (existing test const array in tests/migraciones.rs: [(&str, &str); 8] -> [(&str, &str); 13])"
+  - "cada_copia_conserva_su_version_de_esquema (existing test in tests/respaldo.rs: hardcoded `version, 1` must become per-copy expected version)"
+
+dependencies:
+  - crates/hexcell-storage/migraciones/sesiones/0001-esquema-inicial.sql
+  - crates/hexcell-storage/src/lib.rs
+  - crates/hexcell-storage/src/pools.rs
+  - crates/hexcell-storage/src/respaldo.rs
+  - crates/hexcell-storage/tests/comun/mod.rs
+  - crates/hexcell-storage/Cargo.toml
+  - docs/PRD.md
+  - docs/plan/fase-a-4-admision-presupuesto.md
+  - docs/adr/adr-0003-persistencia-dual.md
+
+test_scenarios:
+  - statement: "A fresh sessions.db (user_version 0) migrates through step 0001 then step 0002 and lands at user_version 2, with all 13 expected objects present (6 tables + 2 indexes from 0001, 3 tables + 2 indexes from 0002)."
+    covers: [AC-1]
+  - statement: "A sessions.db built by applying ONLY the 0001 script and setting user_version = 1 by hand (simulating a base migrated before this task) upgrades to user_version 2, and rows previously inserted into contactos, conversaciones and mensajes are still present and unchanged afterwards."
+    covers: [AC-2]
+  - statement: "Running aplicar_migraciones_de_sesiones twice on the same connection returns Ok both times, leaves user_version at 2, and preserves a sentinel row written between the two calls (no CREATE TABLE re-execution, no data loss)."
+    covers: [AC-3]
+  - statement: "The existing test todas_las_tablas_de_sesiones_se_declaran_strict now also covers saldo, reservas and movimientos: every table in sqlite_schema carries STRICT."
+    covers: [AC-1, AC-4]
+  - statement: "With PRAGMA foreign_keys = ON on the test connection, inserting a movimientos row whose id_conversacion does not exist in conversaciones is rejected, and inserting one whose id_reserva does not exist in reservas is rejected."
+    covers: [AC-4]
+  - statement: "Inserting a movimientos row with an unknown clase (outside the CHECK list) is rejected; inserting a saldo row with a negative disponible or a negative reservado is rejected; inserting a reservas row with monto_reservado <= 0 is rejected."
+    covers: [AC-4]
+  - statement: "The single-row guard on saldo holds: inserting a second saldo row with id <> 1 is rejected by the CHECK (id = 1), and inserting a second row with id = 1 is rejected by the primary key."
+    covers: [AC-4]
+  - statement: "The paired state CHECK on reservas holds: an 'activa' row with a non-null resuelta_ms is rejected, and a 'conciliada' or 'liberada' row with a null resuelta_ms is rejected."
+    covers: [AC-4]
+  - statement: "STRICT typing is enforced on the new tables: inserting a non-integer, non-coercible text value into movimientos.monto or saldo.disponible is rejected."
+    covers: [AC-4]
+  - statement: "The fresh-DB test asserts user_version equals VERSION_DE_ESQUEMA_DE_SESIONES, so any drift between the public constant and the last step of MIGRACIONES_DE_SESIONES fails the suite (this is the anti-drift check; no extra inline unit test is required)."
+    covers: [AC-5]
+  - statement: "A stub that only bumps user_version to 2 without running the 0002 script fails the object-presence and constraint tests; a runner that fails to chain (applies only the last step on a version-0 base) fails because 0001's tables are missing."
+    covers: [AC-5]
+  - statement: "cada_copia_conserva_su_version_de_esquema in tests/respaldo.rs passes again: the sessions.db copy is expected at version 2 and the knowledge_live.db copy at version 1, asserted per copy instead of a shared literal 1."
+    covers: [AC-1]
+  - statement: "knowledge_live.db and adapter_identity.db still reach exactly user_version 1 through the stepped runner (single-element ladders are a behaviour-preserving special case)."
+    covers: [AC-3]
+
+strategy:
+  - step: 1
+    action: "Write the new migration script as a pure DDL Value-Object layer, in Spanish with the same didactic why-focused comment density as 0001. Three STRICT tables. saldo: single row guarded by id INTEGER PRIMARY KEY CHECK (id = 1), columns disponible INTEGER NOT NULL CHECK (disponible >= 0), reservado INTEGER NOT NULL DEFAULT 0 CHECK (reservado >= 0), actualizado_ms INTEGER NOT NULL; the migration seeds the single row with disponible 0, reservado 0 and actualizado_ms = unixepoch() * 1000, so 'no budget configured' and 'budget exhausted' are the same queryable state that FR-10's degraded mode reads. reservas: id INTEGER PRIMARY KEY, id_conversacion TEXT NOT NULL REFERENCES conversaciones(id_conversacion), monto_reservado INTEGER NOT NULL CHECK (monto_reservado > 0), estado TEXT NOT NULL CHECK (estado IN ('activa','conciliada','liberada')), creada_ms INTEGER NOT NULL, resuelta_ms INTEGER, plus a table-level CHECK ((estado = 'activa') = (resuelta_ms IS NULL)). movimientos: id INTEGER PRIMARY KEY, id_reserva INTEGER REFERENCES reservas(id) (nullable), id_conversacion TEXT REFERENCES conversaciones(id_conversacion) (nullable), clase TEXT NOT NULL CHECK (clase IN ('aporte','reserva','conciliacion','liberacion')), monto INTEGER NOT NULL CHECK (monto <> 0) (signed: positive enters the balance, negative leaves it), saldo_resultante INTEGER NOT NULL CHECK (saldo_resultante >= 0), registrado_ms INTEGER NOT NULL. Two indexes: idx_reservas_activas ON reservas (estado, creada_ms) for the stale-hold sweep of task 8, and idx_movimientos_conversacion ON movimientos (id_conversacion, id) for the per-client consumption report of A-4 task 13. Amounts are opaque integer budget units; the comments must state that their commercial meaning is a pending business decision and must name no price, plan, top-up or currency."
+    files:
+      - crates/hexcell-storage/migraciones/sesiones/0002-saldo-y-movimientos.sql
+  - step: 2
+    action: "Convert the runner into a stepped ladder (Application Service, no domain logic). Introduce a private struct PasoDeMigracion { version: i64, guion: &'static str } and three private const arrays MIGRACIONES_DE_SESIONES (0001 then 0002), MIGRACIONES_DE_CONOCIMIENTO (0001 only) and MIGRACIONES_DE_IDENTIDAD (0001 only), each built from the existing include_str! constants plus the new one. Change `aplicar` to take &[PasoDeMigracion]: read PRAGMA user_version once, then for each step whose version is strictly greater than the current version, open a transaction, execute_batch the script, set PRAGMA user_version to THAT step's version, and commit — one transaction per step, preserving adr-0003 section 5's invariant (schema and version land together) at each rung so an interrupted upgrade leaves the file at a valid intermediate version rather than a half-migrated one. The three public wrappers keep their signatures and only swap their argument. Bump VERSION_DE_ESQUEMA_DE_SESIONES to 2; leave the knowledge and identity constants at 1. Extend the module doc comment in Spanish explaining WHY the ladder is per-step and why a base already at the target version still short-circuits to a no-op."
+    files:
+      - crates/hexcell-storage/src/migraciones.rs
+  - step: 3
+    action: "Extend the migration tests. Grow OBJETOS_ESPERADOS from 8 to 13 entries (adding tables saldo, reservas, movimientos and indexes idx_reservas_activas, idx_movimientos_conversacion). Add an AC-2 upgrade test that builds a version-1 base by hand — open a raw connection, execute_batch the 0001 script contents, set PRAGMA user_version = 1, insert rows into contactos, conversaciones and mensajes — then calls aplicar_migraciones_de_sesiones and asserts version 2, the new objects present, and the pre-existing rows intact. Add constraint-rejection tests for AC-4. CRITICAL: every test that exercises a foreign key MUST execute PRAGMA foreign_keys = ON on its own connection (or go through GestorDePools::abrir), because tests in this file open with Connection::open, which does NOT run aplicar_parametros_de_conexion and therefore leaves foreign keys OFF by SQLite default — a naive FK test would silently pass on an insert that should have been rejected."
+    files:
+      - crates/hexcell-storage/tests/migraciones.rs
+  - step: 4
+    action: "Repair the collateral breakage in the backup suite: cada_copia_conserva_su_version_de_esquema currently asserts a shared literal `version, 1` across BOTH copies produced by respaldar_en, which fails the moment sessions.db reaches version 2. Replace the literal with a per-copy expected version selected from copia.nombre_logico (NOMBRE_DE_ARCHIVO_DE_SESIONES -> VERSION_DE_ESQUEMA_DE_SESIONES, NOMBRE_DE_ARCHIVO_DE_CONOCIMIENTO -> VERSION_DE_ESQUEMA_DE_CONOCIMIENTO), so the assertion tracks the constants instead of a frozen number. No production file in the backup path changes: pools.rs already passes the constant through to respaldo::respaldar_base."
+    files:
+      - crates/hexcell-storage/tests/respaldo.rs
+
+risks:
+  - "BLOCKING-IF-IGNORED (verified 2026-08-26): crates/hexcell-storage/tests/respaldo.rs line 76, in test cada_copia_conserva_su_version_de_esquema, asserts `assert_eq!(version, 1, ...)` inside a loop over BOTH backup copies. Bumping VERSION_DE_ESQUEMA_DE_SESIONES to 2 makes cargo test --workspace FAIL there. The 00-spec constraints do not mention this file; it is added to touch for exactly this reason. This is a spec/reality mismatch recorded here, not a spec rewrite."
+  - "SILENT-FALSE-PASS (verified 2026-08-26): PRAGMA foreign_keys is enabled only in pools::aplicar_parametros_de_conexion, and tests/migraciones.rs opens connections with raw Connection::open, which bypasses it. SQLite defaults foreign_keys to OFF, so an AC-4 foreign-key test written naively would observe the invalid insert SUCCEEDING and could be 'fixed' by weakening the assertion. Every FK test must set PRAGMA foreign_keys = ON explicitly."
+  - "The 0001 script must stay byte-identical. A fresh base now runs 0001 and then 0002 in sequence, so 0002 must not re-create or ALTER any 0001 object; folding both into one script would break the AC-2 upgrade path for bases already at version 1."
+  - "The `aplicar` signature change is shared by all three databases (sesiones, conocimiento, identidad). A single-element ladder must behave exactly as today; regressions here silently affect knowledge_live.db and adapter_identity.db, whose own tests are the safety net."
+  - "unixepoch() requires SQLite >= 3.38. rusqlite is pinned to the 0.39 series with `bundled` (see the workspace Cargo.toml), which ships a far newer SQLite, so this is safe; if the implementer prefers a version-agnostic form, strftime('%s','now') * 1000 is the equivalent fallback and still yields integer milliseconds."
+  - "Balance representation is STORED, not derived by SUM over the ledger. Rationale: the pre-execution hold sits in the per-message hot path on the target hardware (ten-year-old i7, 8 GB RAM shared across cells), and a SUM over an append-only table whose size grows without bound is the wrong cost curve. Auditability is preserved by the saldo_resultante snapshot column on every movement, so the stored balance stays verifiable against the ledger without paying for it on every read."
+  - "Semantics recorded so tasks 7-8 inherit them: `disponible` is what can be spent right now (holds ALREADY deducted) and `reservado` is what is currently held; total = disponible + reservado. A hold moves m from disponible to reservado; reconciliation with real cost r returns (m - r) to disponible; a release returns all of m. CHECK (disponible >= 0) therefore enforces FR-10's 'reject cleanly when there is not enough balance' at the database level rather than only in Rust."
+  - "DECISION - adr-0005 is NOT born in this task. Three pieces of evidence: (a) plan task 6 (docs/plan/fase-a-4-admision-presupuesto.md lines 111-112) says only 'Migración con las tablas y sus restricciones de integridad' and, unlike task 3, does not say 'justificarlos en el ADR' — and task 3 is precisely the one that produced adr-0023 in HEX-036; (b) the registered scope of adr-0005 in docs/adr/README.md is 'reserva previa y conciliación posterior', i.e. the two-phase LOGIC that this spec lists as a non-goal, so writing it now would force premature commitment to the state machine of tasks 7-8; (c) precedent from 0001-esquema-inicial.sql, whose schema rationale lives in didactic SQL comments plus adr-0003 and never got an ADR of its own. Consequence: the rationale for this schema lives in the SQL comments and the migraciones.rs module doc, and adr-0005 is authored in task 7 covering the two-phase logic and citing this schema retroactively. docs/** is therefore forbidden in the contract, which makes this decision contractual rather than advisory."
+  - "The stepped-ladder runner EXTENDS adr-0003 section 5 (migrations by PRAGMA user_version, in the same transaction as the schema); it does not derogate it, because the same invariant now holds per rung. No superseding ADR is required. The repo precedent for extension is adr-0022, which explicitly 'extiende — nunca reescribe' adr-0020."
+  - "Forward compatibility with A-4 task 13 (per-client token consumption queryable in sessions.db): movimientos carries a nullable id_conversacion plus idx_movimientos_conversacion so that report can aggregate without a schema change. Nullable because a top-up ('aporte') belongs to no conversation, mirroring the documented reason mensajes.id_remitente is nullable in 0001."
+  - "adr-0017 records D-09: the inference port carries no token count and no cost. This schema does not contradict that — it stores opaque budget units written by the accounting layer, and does not add any field to the inference port."
+  - "quorum analyze failure-lookup returned null (no prior failed task overlaps these files). The HSME advisory read hook was unavailable (hsme-cli could not open its database); per ADR 0008 this is advisory-only and non-blocking, so the strategy proceeds without semantic context."
+  - "No monetary values anywhere: amounts are opaque integer budget units. INTEGER, never REAL — floating point is forbidden for quantities that must be compared and conserved exactly, and STRICT tables plus integer columns are already the project convention."

@@ -1,0 +1,66 @@
+task_id: HEX-041
+summary: Design balance-and-movements schema for sessions.db as migration 0002, chain the migration runner, cover it with tests.
+goal: >
+  Add a new versioned migration (0002) to sessions.db that introduces a balance table and an
+  append-only movements ledger with integrity constraints, so that the two-phase financial
+  accounting of FR-10 (pre-execution hold, post-execution reconcile, available-balance lookup)
+  has a schema to operate on. Bump VERSION_DE_ESQUEMA_DE_SESIONES to 2 and extend the migration
+  runner in crates/hexcell-storage/src/migraciones.rs so it can apply chained migrations (it
+  currently applies a single embedded script to reach version 1) instead of a single monolithic
+  script.
+invariants:
+  - All new tables are declared STRICT, matching the existing sessions.db schema convention.
+  - All instants are stored as integer milliseconds since the Unix epoch, never as text or seconds.
+  - No column stores a raw transport identifier; only internal IdConversacion/IdRemitente values are referenced.
+  - "The movements ledger is append-only: no UPDATE or DELETE path is part of this schema's design; corrections are new movement rows, never edits to existing ones."
+  - Re-applying the migration set on a sessions.db already at schema version 2 is a no-op that returns Ok, per the existing `aplicar` contract.
+  - An existing sessions.db at schema version 1 upgrades to version 2 without losing any pre-existing row in contactos, conversaciones, or mensajes.
+  - The schema does not encode, invent, or reference any monetary value, price, plan, or top-up amount; balance and movement amounts are opaque numeric quantities whose commercial meaning is a pending business decision.
+  - No reserve/reconcile state-machine logic, inference provider client, or degraded-mode behavior is implemented; the schema only provides the structure those future tasks (A-4 tasks 7-10) will operate on.
+acceptance:
+  - id: AC-1
+    statement: A fresh sessions.db (schema version 0) reaches PRAGMA user_version = 2 after migration, with both the 0001 tables and the new 0002 balance/movements tables present.
+    given: a brand-new SQLite file with no prior schema
+    when: aplicar_migraciones_de_sesiones runs against it
+    then: PRAGMA user_version reports 2 and the balance and movements tables exist alongside contactos, conversaciones, and mensajes
+  - id: AC-2
+    statement: An existing sessions.db at schema version 1 upgrades to version 2 preserving its existing data.
+    given: a sessions.db already migrated to version 1 with rows inserted in contactos, conversaciones, and mensajes
+    when: aplicar_migraciones_de_sesiones runs again after the 0002 migration is added
+    then: PRAGMA user_version reports 2, the pre-existing rows in contactos, conversaciones, and mensajes are unchanged, and the new balance/movements tables exist
+  - id: AC-3
+    statement: Re-running the migration on a sessions.db already at version 2 is a no-op.
+    given: a sessions.db already at schema version 2
+    when: aplicar_migraciones_de_sesiones runs again
+    then: the call returns Ok, PRAGMA user_version stays 2, and no error or duplicate-schema failure occurs
+  - id: AC-4
+    statement: The integrity constraints of the new tables reject invalid rows.
+    given: an open sessions.db at schema version 2
+    when: an insert attempts a negative amount where the schema forbids it, an invalid/unknown movement kind, or a movement row referencing a non-existent balance/conversation
+    then: SQLite rejects the insert (CHECK, foreign key, or STRICT type violation) and no row is persisted
+  - id: AC-5
+    statement: A stub or incomplete migration implementation fails the test suite.
+    given: the test suite in crates/hexcell-storage/tests/migraciones.rs covering AC-1 through AC-4
+    when: cargo test --workspace runs against a migration that only bumps the version number without creating the tables and constraints, or that fails to chain from version 1
+    then: the relevant test(s) fail, demonstrating the criteria are discriminating and not satisfiable by a stub
+  - cargo test --workspace exits 0 with the new migration tests included and passing.
+  - cargo fmt --check exits 0.
+  - cargo clippy --workspace -- -D warnings exits 0.
+  - cargo build --workspace exits 0.
+risk: medium
+non_goals:
+  - Implementing the pre-execution hold / post-execution reconcile state-machine logic (A-4 tasks 7-8).
+  - Implementing the real inference provider client (A-4 task 9).
+  - Implementing degraded-mode switching behavior (A-4 task 10).
+  - Defining or persisting any monetary value, price, plan, or top-up figure.
+  - Any change to knowledge_live.db or its Shadow DB / epoch mechanism (stage A-5).
+  - Deciding whether adr-0005-contabilidad-dos-fases is authored in this task or in task 7; that ADR-sequencing choice belongs to the blueprint phase.
+constraints:
+  - New migration file lives at crates/hexcell-storage/migraciones/sesiones/0002-*.sql and is embedded via include_str!, matching the existing 0001 pattern.
+  - VERSION_DE_ESQUEMA_DE_SESIONES in crates/hexcell-storage/src/migraciones.rs is bumped from 1 to 2.
+  - The `aplicar` migration runner is extended to apply migrations in a chained/sequential fashion (from the database's current user_version up to the target), rather than a single script that only ever reaches one fixed version.
+  - All new tables are STRICT; all instants are integer milliseconds since Unix epoch.
+  - SQL comments in the new migration are written in Spanish, in the same didactic why-focused style as 0001-esquema-inicial.sql.
+  - No transport-level identifiers (e.g. WhatsApp JIDs) are introduced anywhere in the new schema.
+  - Only sessions.db is touched; knowledge_live.db and adapter_identity.db migrations are out of scope.
+  - No new runtime or build dependencies beyond what crates/hexcell-storage already uses (rusqlite).

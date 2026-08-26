@@ -1,0 +1,25 @@
+{
+  "task_id": "HEX-041",
+  "summary": "Migration 0002 matches blueprint; contract clean; 4/4 verify pass; all AC covered by discriminating tests.",
+  "verdict": "approve",
+  "contract_compliance": true,
+  "forbidden_files_touched": [],
+  "unrequested_refactor": false,
+  "missing_tests": [],
+  "functional_risk": "low",
+  "notes": [
+    "contract-check ok=true; not_checked: forbid.behaviors (verified by hand below)",
+    "acceptance-coverage: all AC-1..AC-5 covered=true, no gaps",
+    "0001-esquema-inicial.sql untouched; diff confined to the 4 files in touch list, no forbidden files touched",
+    "saldo/reservas/movimientos are STRICT, amounts are INTEGER (no REAL/FLOAT), no monetary naming, no raw transport identifiers, only IdConversacion/IdRemitente referenced",
+    "movimientos has no UPDATE/DELETE path in production code; append-only preserved",
+    "ladder runner (PasoDeMigracion, aplicar) correctly applies only missing steps per-transaction, matching adr-0003 section 5 per-rung; single-element ladders for conocimiento/identidad behave as before (verified via reabrir_el_gestor_sobre_la_misma_ruta_no_vuelve_a_migrar_nada test still passing)",
+    "FK tests in tests/migraciones.rs explicitly execute PRAGMA foreign_keys = ON before inserting, avoiding the false-pass risk flagged in the blueprint",
+    "upgrade_de_version_1_a_version_2_preserva_datos_preexistentes builds a v1 base by hand and asserts pre-existing contactos/conversaciones/mensajes rows survive the upgrade to v2 (AC-2)",
+    "respaldo.rs fix replaces the hardcoded literal 1 with a per-copy match against VERSION_DE_ESQUEMA_DE_SESIONES/VERSION_DE_ESQUEMA_DE_CONOCIMIENTO, exactly as blueprinted",
+    "no ADR created/edited, docs/** untouched, matching the deliberate adr-0005 deferral recorded in 01-blueprint.yaml",
+    "minor low-severity gap: the saldo single-row guard test only exercises the CHECK (id<>1) branch; the blueprint's second half (duplicate insert with id=1 rejected by the PRIMARY KEY) is not separately asserted, though it is implied by the schema and not a functional risk",
+    "05-validation.json overall_result=passed at commit 16f317a matching HEAD; 4/4 verify commands exit 0"
+  ],
+  "fix_tasks": []
+}

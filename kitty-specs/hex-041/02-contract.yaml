@@ -1,0 +1,115 @@
+task_id: HEX-041
+summary: "Add sessions.db migration 0002 (saldo + reservas + movimientos), turn the migration runner into a stepped ladder to version 2, and keep the whole workspace suite green."
+goal: >
+  Create crates/hexcell-storage/migraciones/sesiones/0002-saldo-y-movimientos.sql with three STRICT
+  tables (saldo, reservas, movimientos) and two indexes, embed it with include_str!, bump
+  VERSION_DE_ESQUEMA_DE_SESIONES from 1 to 2, and rewrite the private `aplicar` helper in
+  crates/hexcell-storage/src/migraciones.rs so it walks an ordered ladder of migration steps from the
+  database's current PRAGMA user_version up to the last step, applying each script and its version
+  bump in the same transaction. Cover AC-1..AC-5 in crates/hexcell-storage/tests/migraciones.rs and
+  repair the now-stale version assertion in crates/hexcell-storage/tests/respaldo.rs. The schema only
+  provides structure for FR-10's two-phase accounting; none of its logic is implemented here.
+
+read:
+  - .ai/tasks/active/HEX-041-new-spec/00-spec.yaml
+  - .ai/tasks/active/HEX-041-new-spec/01-blueprint.yaml
+  - crates/hexcell-storage/migraciones/sesiones/0001-esquema-inicial.sql
+  - crates/hexcell-storage/migraciones/conocimiento/0001-esquema-minimo.sql
+  - crates/hexcell-storage/migraciones/identidad/0001-esquema-inicial.sql
+  - crates/hexcell-storage/src/migraciones.rs
+  - crates/hexcell-storage/src/pools.rs
+  - crates/hexcell-storage/src/respaldo.rs
+  - crates/hexcell-storage/src/lib.rs
+  - crates/hexcell-storage/src/error.rs
+  - crates/hexcell-storage/tests/migraciones.rs
+  - crates/hexcell-storage/tests/respaldo.rs
+  - crates/hexcell-storage/tests/comun/mod.rs
+  - crates/hexcell-storage/Cargo.toml
+  - docs/adr/adr-0003-persistencia-dual.md
+  - docs/plan/fase-a-4-admision-presupuesto.md
+  - CLAUDE.md
+
+touch:
+  - crates/hexcell-storage/migraciones/sesiones/0002-saldo-y-movimientos.sql
+  - crates/hexcell-storage/src/migraciones.rs
+  - crates/hexcell-storage/tests/migraciones.rs
+  - crates/hexcell-storage/tests/respaldo.rs
+
+forbid:
+  files:
+    - crates/hexcell-storage/migraciones/sesiones/0001-esquema-inicial.sql
+    - crates/hexcell-storage/migraciones/conocimiento/0001-esquema-minimo.sql
+    - crates/hexcell-storage/migraciones/identidad/0001-esquema-inicial.sql
+    - crates/hexcell-storage/src/pools.rs
+    - crates/hexcell-storage/src/respaldo.rs
+    - crates/hexcell-storage/src/sesiones.rs
+    - crates/hexcell-storage/src/almacen_de_identidad.rs
+    - crates/hexcell-storage/src/lib.rs
+    - crates/hexcell-storage/src/error.rs
+    - crates/hexcell-storage/src/tiempo.rs
+    - crates/hexcell-storage/Cargo.toml
+    - crates/hexcell-storage/tests/pools.rs
+    - crates/hexcell-storage/tests/almacen_de_identidad.rs
+    - crates/hexcell-storage/tests/repositorio_de_sesiones.rs
+    - crates/hexcell-storage/tests/comun/mod.rs
+    - crates/hexcell/**
+    - crates/hexcell-core/**
+    - crates/hexcell-admin/**
+    - crates/hexcell-meta/**
+    - crates/hexcell-canal-contrato/**
+    - crates/hexcell-canal-whatsmeow/**
+    - sidecar/**
+    - docs/**
+    - Cargo.toml
+    - Cargo.lock
+    - .ai/tasks/**/00-spec.yaml
+    - .ai/tasks/**/01-blueprint.yaml
+    - .ai/tasks/**/02-contract.yaml
+  behaviors:
+    - "Writing any prose, comment, identifier or commit text in English. ALL repo content is in Spanish; a deterministic pre-review grep hunts English leaks in added .rs and .sql prose. SQL comments must match the didactic why-focused Spanish style of 0001-esquema-inicial.sql."
+    - "Modifying, reformatting or re-running 0001-esquema-inicial.sql. It must stay byte-identical: a fresh base now applies 0001 and then 0002 in sequence, and 0002 must neither re-create nor ALTER any object 0001 owns."
+    - "Folding 0001 and 0002 into a single monolithic script, or otherwise removing the per-step ladder. A base already at version 1 must upgrade by applying ONLY step 0002."
+    - "Declaring any new table without STRICT, or storing any instant as text, as ISO-8601, or in seconds. Every instant is an integer count of milliseconds since the Unix epoch."
+    - "Using REAL, FLOAT, NUMERIC or any floating-point type for balance, hold or movement amounts. Amounts are INTEGER."
+    - "Encoding, naming or seeding any monetary value, price, plan, tariff, top-up figure or currency, in SQL, in Rust, or in comments. Amounts are opaque budget units whose commercial meaning is a declared pending business decision."
+    - "Introducing any column that stores a raw transport identifier (WhatsApp JID, phone number, or any adapter-level id). Only the internal IdConversacion and IdRemitente values already present in 0001 may be referenced."
+    - "Adding any UPDATE or DELETE path, trigger, or Rust helper that mutates or removes rows of movimientos. The ledger is append-only; corrections are new rows."
+    - "Implementing FR-10 logic: no pre-execution hold routine, no post-execution reconciliation, no degraded-mode switching, no cost estimator, no inference-provider client. This task delivers schema and migration machinery only (A-4 tasks 7-10 own the logic)."
+    - "Changing VERSION_DE_ESQUEMA_DE_CONOCIMIENTO or VERSION_DE_ESQUEMA_DE_IDENTIDAD, or adding migration steps to the knowledge or identity ladders. Both stay at exactly 1."
+    - "Changing the public signature or the name of aplicar_migraciones_de_sesiones, aplicar_migraciones_de_conocimiento or aplicar_migraciones_de_identidad, or adding any new public export to the crate. Only the bodies and the private helper change."
+    - "Adding any dependency to crates/hexcell-storage/Cargo.toml or to the workspace. rusqlite and hexcell-core are the only ones available; no migration crate, no chrono, no temp-dir crate."
+    - "Writing a foreign-key test on a connection that has not executed PRAGMA foreign_keys = ON. tests/migraciones.rs opens with Connection::open, which bypasses pools::aplicar_parametros_de_conexion, and SQLite defaults foreign keys to OFF; without the pragma an invalid insert SUCCEEDS and the test is a false pass."
+    - "Weakening, deleting or skipping (#[ignore]) any existing test to make the suite pass, in particular todas_las_tablas_de_sesiones_se_declaran_strict and cada_copia_conserva_su_version_de_esquema. The latter must be repaired to assert the expected version PER COPY, never by removing the assertion or freezing it at a literal."
+    - "Creating, editing or renumbering any ADR, or editing docs/adr/README.md, docs/STATUS.md, docs/PRD.md or docs/bitacora-de-descartes.md. adr-0005 is deliberately deferred to A-4 task 7 (see the DECISION entry in 01-blueprint.yaml); the rationale for this schema lives in the SQL comments and the migraciones.rs module doc."
+    - "Committing any *.db, *.db-wal, *.db-shm or .env* file, or adding fixture database binaries to the repo. Tests build their databases at runtime through DirectorioTemporal."
+    - "Adding AI attribution or Co-Authored-By trailers to commits. Conventional commits in Spanish only."
+
+verify:
+  commands:
+    - cargo fmt --check
+    - cargo clippy --workspace -- -D warnings
+    - cargo test --workspace
+    - cargo build --workspace
+  target_s: 60
+
+acceptance:
+  human_gate: true
+
+limits:
+  max_files_changed: 4
+  max_diff_lines: 500
+  per_class:
+    - glob: "crates/hexcell-storage/migraciones/**"
+      max_diff_lines: 140
+    - glob: "crates/hexcell-storage/src/**"
+      max_diff_lines: 140
+    - glob: "crates/hexcell-storage/tests/**"
+      max_diff_lines: 260
+
+execution:
+  mode: worktree_edit
+  branch: ai/HEX-041-new-spec
+
+retry_policy:
+  max_attempts: 2
+  escalate_after: 2
