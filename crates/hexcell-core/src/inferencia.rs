@@ -18,6 +18,15 @@
 //! consume; para eso basta con que `generar` conserve su firma, y añadir un campo a
 //! `RespuestaDeInferencia` cuando exista una respuesta real que modelar no la cambia.
 //!
+//! # Metadatos de uso en `RespuestaDeInferencia`
+//!
+//! `RespuestaDeInferencia` incluye el campo `unidades_consumidas` de tipo
+//! [`UnidadesDePresupuesto`] (`u64` total, no `Option`). Mapear una respuesta de un proveedor real que
+//! carezca de metadatos de tokens hacia un número concreto de unidades es responsabilidad del cliente
+//! HTTP de la tarea 9 (el cual puede recurrir a `estimar_coste`), garantizando que el tipo del núcleo
+//! se mantenga libre de ramificaciones. Solo utiliza módulos existentes de `hexcell-core`, por lo que
+//! el crate conserva su tabla de dependencias vacía (`adr-0002`).
+//!
 //! # Por qué el método se declara `-> impl Future` y no `async fn`
 //!
 //! La misma razón ya escrita en `crate::canal` para `ChannelAdapter`: sobre rustc 1.92.0, `async
@@ -29,6 +38,7 @@
 //! consume genérico, nunca como `Box<dyn ProveedorDeInferencia>`.
 
 use crate::identidad::IdConversacion;
+use crate::presupuesto::UnidadesDePresupuesto;
 
 /// Petición de inferencia: lo mínimo que un proveedor necesita para generar una respuesta.
 ///
@@ -44,11 +54,13 @@ pub struct PeticionDeInferencia {
     pub contenido: String,
 }
 
-/// Respuesta de inferencia: el texto que el motor envía como réplica.
+/// Respuesta de inferencia: el texto que el motor envía como réplica y sus metadatos de uso.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RespuestaDeInferencia {
     /// Texto de la respuesta generada.
     pub contenido: String,
+    /// Cantidad real de unidades de presupuesto consumidas durante la generación de la respuesta.
+    pub unidades_consumidas: UnidadesDePresupuesto,
 }
 
 /// Puerto de inferencia: todo proveedor LLM se implementa detrás de este trait.

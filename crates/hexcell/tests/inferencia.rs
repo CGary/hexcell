@@ -144,6 +144,7 @@ impl ProveedorDeInferencia for ProveedorContador {
         self.invocaciones.fetch_add(1, Ordering::Relaxed);
         Ok(RespuestaDeInferencia {
             contenido: format!("respuesta simulada para {}", peticion.contenido),
+            unidades_consumidas: 0,
         })
     }
 }
@@ -177,7 +178,7 @@ async fn el_motor_envia_la_respuesta_del_proveedor_y_no_el_eco_del_procesador() 
         procesador,
         receptor_eventos,
         std::time::Duration::from_secs(3600),
-        repositorio,
+        repositorio.clone(),
     );
 
     let manejador = tokio::spawn(async move {
@@ -210,6 +211,15 @@ async fn el_motor_envia_la_respuesta_del_proveedor_y_no_el_eco_del_procesador() 
         .await
         .expect("no debe fallar");
     assert_eq!(texto_enviado, &respuesta_esperada.contenido);
+
+    // La capa de integración no ve `pools` (visibilidad de crate): el saldo público es
+    // la evidencia equivalente, porque solo conciliar o liberar devuelven `reservado` a 0
+    // y las transiciones de estado ya las cubren los tests de hexcell-storage.
+    let saldo = repositorio.saldo().expect("consultar el saldo");
+    assert_eq!(
+        saldo.reservado, 0,
+        "no debe quedar ninguna reserva en estado 'activa' tras la respuesta exitosa"
+    );
 }
 
 #[tokio::test]
@@ -250,7 +260,7 @@ async fn un_fallo_del_proveedor_no_envia_nada_y_el_motor_sigue_consumiendo() {
         procesador,
         receptor_eventos,
         std::time::Duration::from_secs(3600),
-        repositorio,
+        Arc::clone(&repositorio),
     );
 
     let manejador = tokio::spawn(async move {
@@ -263,6 +273,15 @@ async fn un_fallo_del_proveedor_no_envia_nada_y_el_motor_sigue_consumiendo() {
     assert!(
         adaptador.envios_capturados().is_empty(),
         "un proveedor que siempre falla no debe producir ningún envío"
+    );
+
+    // La capa de integración no ve `pools` (visibilidad de crate): el saldo público es
+    // la evidencia equivalente, porque solo conciliar o liberar devuelven `reservado` a 0
+    // y las transiciones de estado ya las cubren los tests de hexcell-storage.
+    let saldo = repositorio.saldo().expect("consultar el saldo");
+    assert_eq!(
+        saldo.reservado, 0,
+        "no debe quedar ninguna reserva en estado 'activa' tras una avería del proveedor"
     );
 }
 
@@ -297,7 +316,7 @@ async fn con_saldo_insuficiente_el_proveedor_de_inferencia_registra_cero_llamada
         procesador,
         receptor_eventos,
         std::time::Duration::from_secs(3600),
-        repositorio,
+        repositorio.clone(),
     );
 
     let manejador = tokio::spawn(async move {
@@ -343,7 +362,7 @@ async fn con_saldo_suficiente_el_proveedor_de_inferencia_es_invocado() {
         procesador,
         receptor_eventos,
         std::time::Duration::from_secs(3600),
-        repositorio,
+        repositorio.clone(),
     );
 
     let manejador = tokio::spawn(async move {

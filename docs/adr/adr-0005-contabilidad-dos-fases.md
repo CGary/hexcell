@@ -1,6 +1,6 @@
 # ADR 0005: Contabilidad financiera en dos fases (Reserva previa y Conciliación posterior)
 
-* **Estado**: Vigente (Fase 1: Reserva previa implementada en HEX-042; Fase 2: Conciliación posterior pendiente)
+* **Estado**: Vigente (Fase 1: Reserva previa implementada en HEX-042; Fase 2: Conciliación posterior implementada en HEX-043)
 * **Fecha**: 2026-08-26
 * **Etapa**: A-4 (FR-10)
 
@@ -23,18 +23,27 @@ Adoptar un esquema contable financiero en **dos fases** para el control del pres
    - Registra un movimiento con clase `'reserva'` y monto negativo en la tabla `movimientos`.
 3. Si el saldo es insuficiente, la reserva devuelve `VeredictoDeReserva::Rechazada`. El procesador de inferencia no llama al proveedor, emite un registro estructurado `presupuesto_rechazado` y retorna `None` (fail-closed).
 
-### Fase 2: Conciliación o liberación posterior (Pendiente de implementación)
+### Fase 2: Conciliación o liberación posterior (HEX-043)
 Una vez completada la llamada al proveedor de inferencia:
-- Si la respuesta es exitosa o ajustada al consumo real, la reserva activa pasa a estado `'conciliada'`, ajustando el saldo reservado y registrando un movimiento de `'conciliacion'`.
-- Si la llamada falla o se cancela, la reserva activa pasa a estado `'liberada'`, devolviendo el monto retenido al saldo disponible y registrando un movimiento de `'liberacion'`.
-- *Nota*: La Fase 2 está fuera del alcance de la tarea HEX-042 y se implementará en la tarea posterior de conciliación.
+1. En caso de respuesta exitosa (`Ok(RespuestaDeInferencia)`), `ProcesadorDeInferencia` invoca `conciliar_presupuesto` en una única transacción atómica SQLite:
+   - La reserva activa pasa a estado `'conciliada'`, fijando `resuelta_ms`.
+   - Se reduce `saldo.reservado` en el monto originalmente retenido N.
+   - Si la cantidad consumida real M es menor o igual a N, la diferencia N - M se acredita a `saldo.disponible`.
+   - Si la cantidad consumida real M supera a N, el déficit M - N se debita de `saldo.disponible`, acotado al disponible existente para no violar `CHECK (disponible >= 0)`. El remanente no cubierto se reporta en `ResultadoDeResolucion::Resuelta.deficit_no_cubierto` y emite el registro estructurado `presupuesto_deficit_no_cubierto`. Este remanente no se inserta en `movimientos` para no violar el `CHECK` de clase de movimiento en la migración 0002.
+   - Si el ajuste neto sobre disponible es cero (M == N o déficit sin saldo disponible), se omite la inserción en `movimientos` respetando la restricción `CHECK (monto <> 0)`.
+2. En caso de fallo del proveedor (`Err`), `ProcesadorDeInferencia` invoca `liberar_presupuesto` en una única transacción atómica SQLite:
+   - La reserva activa pasa a estado `'liberada'`, fijando `resuelta_ms`.
+   - El monto originalmente retenido N se reintegra íntegramente a `saldo.disponible` y se reduce `saldo.reservado`.
+   - Se inserta un movimiento de clase `'liberacion'` con monto +N.
+3. La gestión de temporizadores (timeouts de red) queda diferida a la tarea 9 (cliente HTTP de inferencia real); cualquier fallo de transporte o timeout provocado por dicho cliente tomará la ruta de `liberar_presupuesto`.
 
 ## Consecuencias
 
 * **Positivas**:
   - Evita llamadas no autorizadas o sin presupuesto a proveedores de inferencia externos.
   - Invariante de saldo no negativo (`disponible >= 0`) garantizado a nivel de base de datos e interfaz.
+  - Cierre completo del ciclo de vida de las reservas: ninguna reserva creada por `reservar_presupuesto` permanece en estado `'activa'` tras concluir la llamada a la inferencia (éxito o fallo).
   - La contabilidad usa unidades enteras opacas sin presuponer precios ni monedas (monetización pendiente).
   - La política de fallo ante errores de almacenamiento es *fail-closed* en la ruta contable.
 * **Negativas / Limitaciones**:
-  - Hasta que se implemente la Fase 2 (conciliación), las reservas activas permanecen en estado `'activa'` y el saldo reservado no se libera automáticamente.
+  - El déficit que supere el saldo disponible en el momento de conciliar se acota a cero disponible y el remanente no cubierto queda registrado únicamente en métricas/logs sin asiento contable negativo en el libro.

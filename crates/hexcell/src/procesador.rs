@@ -34,7 +34,7 @@ use std::sync::Arc;
 use hexcell_core::canal::{EventoEntrante, MensajeSaliente, TestigoDeEntrante};
 use hexcell_core::inferencia::{PeticionDeInferencia, ProveedorDeInferencia};
 use hexcell_core::presupuesto::estimar_coste;
-use hexcell_storage::{RepositorioDeSesiones, VeredictoDeReserva};
+use hexcell_storage::{RepositorioDeSesiones, ResultadoDeResolucion, VeredictoDeReserva};
 
 use crate::registro::{EntradaDeRegistro, NivelDeRegistro, emitir};
 
@@ -108,12 +108,12 @@ where
     async fn procesar(&self, evento: &EventoEntrante) -> Option<MensajeSaliente> {
         let estimacion = estimar_coste(&evento.contenido);
 
-        match self.repositorio.reservar_presupuesto(
+        let id_reserva = match self.repositorio.reservar_presupuesto(
             &evento.conversacion,
             estimacion,
             evento.marca_temporal,
         ) {
-            Ok(VeredictoDeReserva::Concedida { .. }) => {}
+            Ok(VeredictoDeReserva::Concedida { id_reserva, .. }) => id_reserva,
             Ok(VeredictoDeReserva::Rechazada {
                 disponible,
                 requerido,
@@ -139,7 +139,7 @@ where
                 );
                 return None;
             }
-        }
+        };
 
         let peticion = PeticionDeInferencia {
             conversacion: evento.conversacion.clone(),
@@ -148,6 +148,44 @@ where
 
         match self.proveedor.generar(peticion).await {
             Ok(respuesta) => {
+                match self.repositorio.conciliar_presupuesto(
+                    id_reserva,
+                    respuesta.unidades_consumidas,
+                    evento.marca_temporal,
+                ) {
+                    Ok(ResultadoDeResolucion::Resuelta {
+                        deficit_no_cubierto,
+                        ..
+                    }) => {
+                        if deficit_no_cubierto > 0 {
+                            emitir(
+                                EntradaDeRegistro::nueva(
+                                    NivelDeRegistro::Aviso,
+                                    "presupuesto_deficit_no_cubierto",
+                                )
+                                .con_id_conversacion(evento.conversacion.como_str())
+                                .con_detalle(format!("déficit no cubierto: {deficit_no_cubierto}")),
+                            );
+                        }
+                    }
+                    Ok(ResultadoDeResolucion::ReservaNoActiva) => {
+                        // Inalcanzable en la ruta normal del procesador porque la reserva se
+                        // acaba de crear en esta misma llamada; la variante se cubre en tests.
+                    }
+                    Err(error) => {
+                        emitir(
+                            EntradaDeRegistro::nueva(
+                                NivelDeRegistro::Error,
+                                "fallo_de_persistencia",
+                            )
+                            .con_id_conversacion(evento.conversacion.como_str())
+                            .con_detalle(format!(
+                                "fallo al conciliar presupuesto de inferencia: {error}"
+                            )),
+                        );
+                    }
+                }
+
                 let testigo = TestigoDeEntrante::observar(evento);
                 Some(
                     MensajeSaliente::respuesta_libre(
@@ -158,7 +196,21 @@ where
                     .expect("la conversación coincide siempre"),
                 )
             }
-            Err(_averia) => None,
+            Err(_averia) => {
+                if let Err(error) = self
+                    .repositorio
+                    .liberar_presupuesto(id_reserva, evento.marca_temporal)
+                {
+                    emitir(
+                        EntradaDeRegistro::nueva(NivelDeRegistro::Error, "fallo_de_persistencia")
+                            .con_id_conversacion(evento.conversacion.como_str())
+                            .con_detalle(format!(
+                                "fallo al liberar presupuesto de inferencia: {error}"
+                            )),
+                    );
+                }
+                None
+            }
         }
     }
 }
@@ -187,6 +239,27 @@ mod tests {
         ) -> Result<RespuestaDeInferencia, Self::Error> {
             Ok(RespuestaDeInferencia {
                 contenido: peticion.contenido,
+                unidades_consumidas: 0,
+            })
+        }
+    }
+
+    /// Proveedor de prueba con consumo personalizable para forzar déficit.
+    #[derive(Clone, Copy)]
+    struct ProveedorDeExceso {
+        unidades: u64,
+    }
+
+    impl ProveedorDeInferencia for ProveedorDeExceso {
+        type Error = ErrorDeInferenciaSimulada;
+
+        async fn generar(
+            &self,
+            peticion: PeticionDeInferencia,
+        ) -> Result<RespuestaDeInferencia, Self::Error> {
+            Ok(RespuestaDeInferencia {
+                contenido: peticion.contenido,
+                unidades_consumidas: self.unidades,
             })
         }
     }
@@ -241,6 +314,58 @@ mod tests {
         assert_eq!(
             rechazo.unwrap().id_conversacion.as_deref(),
             Some("conversacion-sin-saldo")
+        );
+
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[tokio::test]
+    async fn deficit_no_cubierto_deja_registro_presupuesto_deficit_no_cubierto() {
+        let id_unico =
+            match std::time::SystemTime::now().duration_since(std::time::SystemTime::UNIX_EPOCH) {
+                Ok(d) => d.as_nanos(),
+                Err(_) => 0,
+            };
+        let dir =
+            std::env::temp_dir().join(format!("hx-proc-def-{}-{}", std::process::id(), id_unico));
+        let _ = std::fs::create_dir_all(&dir);
+        let Ok(pools) = GestorDePools::abrir(&dir) else {
+            panic!("no se pudo abrir el gestor de pools de prueba")
+        };
+        let repositorio = Arc::new(RepositorioDeSesiones::nuevo(Arc::new(pools)));
+        let conversacion = IdConversacion::nuevo("conversacion-deficit");
+
+        repositorio
+            .anotar_entrante(
+                &conversacion,
+                &IdRemitente::nuevo("remitente-deficit"),
+                "mensaje inicial",
+                SystemTime::UNIX_EPOCH,
+            )
+            .expect("anotar mensaje entrante");
+
+        repositorio
+            .aportar_presupuesto(5, SystemTime::UNIX_EPOCH)
+            .expect("aportar saldo");
+
+        let procesador =
+            ProcesadorDeInferencia::nuevo(ProveedorDeExceso { unidades: 100 }, repositorio);
+
+        registro::pruebas::instalar();
+        let resultado = procesador.procesar(&evento_de_prueba(&conversacion)).await;
+        let registros = registro::pruebas::tomar();
+
+        assert!(resultado.is_some());
+        let deficit = registros
+            .iter()
+            .find(|entrada| entrada.evento == "presupuesto_deficit_no_cubierto");
+        assert!(
+            deficit.is_some(),
+            "debe existir una entrada de registro para presupuesto_deficit_no_cubierto"
+        );
+        assert_eq!(
+            deficit.unwrap().id_conversacion.as_deref(),
+            Some("conversacion-deficit")
         );
 
         let _ = std::fs::remove_dir_all(dir);

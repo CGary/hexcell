@@ -27,6 +27,14 @@
 //! simulada responde en microsegundos y un SIGTERM enviado justo después de inyectar casi siempre
 //! llegaría con el evento ya persistido, y el criterio sería indistinguible de una implementación
 //! que trunca el trabajo en curso.
+//!
+//! # Metadatos de consumo deterministas
+//!
+//! `ProveedorSimulado::generar` calcula `unidades_consumidas` como
+//! `estimar_coste(&peticion.contenido) + estimar_coste(&contenido_de_respuesta)`.
+//! Este valor excede deliberadamente la estimación previa calculada solo sobre el prompt, lo que
+//! permite ejercitar la rama de déficit de la conciliación en la ruta ordinaria sin necesidad de
+//! esperar a la llegada del proveedor real.
 
 use std::fmt;
 use std::time::Duration;
@@ -35,6 +43,7 @@ use hexcell_core::identidad::IdConversacion;
 use hexcell_core::inferencia::{
     PeticionDeInferencia, ProveedorDeInferencia, RespuestaDeInferencia,
 };
+use hexcell_core::presupuesto::estimar_coste;
 
 /// Desplazamiento inicial del FNV-1a de 64 bits (constante del algoritmo, no arbitraria).
 const FNV_OFFSET_BASIS: u64 = 0xcbf29ce484222325;
@@ -139,8 +148,12 @@ impl ProveedorDeInferencia for ProveedorSimulado {
 
         let huella = huella_determinista(&peticion.contenido);
         let _conversacion: &IdConversacion = &peticion.conversacion;
+        let contenido_de_respuesta = format!("respuesta simulada {huella:016x}");
+        let unidades_consumidas =
+            estimar_coste(&peticion.contenido) + estimar_coste(&contenido_de_respuesta);
         Ok(RespuestaDeInferencia {
-            contenido: format!("respuesta simulada {huella:016x}"),
+            contenido: contenido_de_respuesta,
+            unidades_consumidas,
         })
     }
 }

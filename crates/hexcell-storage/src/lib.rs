@@ -55,7 +55,7 @@ pub use pools::{
     PoolDeSesiones, ResumenDePuntoDeControl, ResumenDeRespaldoDePools, SINCRONIA,
     SUFIJO_DE_ARCHIVO_WAL, Vitalidad,
 };
-pub use presupuesto::{Saldo, VeredictoDeReserva};
+pub use presupuesto::{ResultadoDeResolucion, Saldo, VeredictoDeReserva};
 pub use respaldo::{CopiaVerificada, respaldar_base, verificar_destino_disponible};
 pub use sesiones::{
     EventoDeHistorial, LIMITE_DE_ENTRADAS_RETENIDAS, RepositorioDeSesiones, SalienteHistorico,
