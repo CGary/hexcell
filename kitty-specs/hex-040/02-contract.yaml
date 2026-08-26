@@ -1,0 +1,68 @@
+task_id: HEX-040
+summary: "Add a per-container tokio Semaphore concurrency limiter (hexcell/src/concurrencia.rs) gated after GCRA admission, with a discard-and-log event and an env-configurable limit."
+goal: >
+  Bound the number of in-flight event-processing calls per container so CPU context-switch
+  degradation stays bounded, using a try_acquire (never indefinitely blocking) semaphore gate
+  evaluated immediately after GCRA admission in Motor::procesar_evento. On saturation the event is
+  discarded and logged explicitly (concurrencia_descartada, with key + reason), mirroring the
+  admision_descartada policy from HEX-039. hexcell-core's dependency table (adr-0002) stays empty;
+  the semaphore lives entirely in the hexcell crate. Tests must be deterministic and discriminant
+  (a stub/no-op limiter must fail them) per LES-036, exercising saturation and release without
+  real wall-clock races.
+read:
+  - crates/hexcell/src/motor.rs
+  - crates/hexcell/src/configuracion.rs
+  - crates/hexcell/src/lib.rs
+  - crates/hexcell/src/main.rs
+  - crates/hexcell/src/apagado.rs
+  - crates/hexcell/src/deduplicacion.rs
+  - crates/hexcell-core/src/admision.rs
+  - crates/hexcell/Cargo.toml
+  - crates/hexcell-core/Cargo.toml
+  - .ai/tasks/active/HEX-040-new-spec/00-spec.yaml
+  - .ai/tasks/active/HEX-040-new-spec/01-blueprint.yaml
+touch:
+  - crates/hexcell/src/concurrencia.rs
+  - crates/hexcell/src/motor.rs
+  - crates/hexcell/src/configuracion.rs
+  - crates/hexcell/src/lib.rs
+  - crates/hexcell/src/main.rs
+forbid:
+  files:
+    - crates/hexcell-core/Cargo.toml
+    - crates/hexcell-core/src/admision.rs
+    - crates/hexcell/Cargo.toml
+    - crates/hexcell-canal-simulado/**
+    - crates/hexcell-canal-whatsmeow/**
+    - crates/hexcell-storage/**
+    - sidecar/**
+    - docs/**
+  behaviors:
+    - "todo en espanol: todo identificador, comentario, doc-comment, nombre de evento de registro y mensaje de error nuevos deben estar en español, sin una sola palabra suelta en inglés"
+    - "no adds a new external dependency to hexcell-core's Cargo.toml (must remain empty/std-only, adr-0002)"
+    - "no adds a new crate dependency to hexcell/Cargo.toml (tokio's sync feature is already enabled; reuse it)"
+    - "no unbounded/indefinite await for concurrency-slot acquisition anywhere (try_acquire/try_acquire_owned only, never Semaphore::acquire().await)"
+    - "no tokio::spawn introduced for per-event dispatch in motor.rs (Motor::ejecutar's sequential await-per-event loop and its ordering guarantees for dedup/diferidas/apagado must remain unchanged by this task)"
+    - "no change to Motor::nuevo's existing parameter list/signature (concurrency config only via the con_limite_de_concurrencia builder, mirroring con_configuracion_gcra)"
+    - "no change to the GCRA admission algorithm, its configuration, or the admision_descartada event shape"
+    - "no metrics/observability endpoint work (stage A-4 task 11, deferred)"
+    - "no financial/LLM cost accounting changes (stage A-4 tasks 6-9)"
+    - "no silent discard on saturation: every saturation must produce a logged concurrencia_descartada entry carrying key and reason"
+    - "no sleep-based or wall-clock-timing-based tests for saturation/discard; permits must be acquired/released under deterministic test control"
+verify:
+  commands:
+    - cargo test --workspace
+    - cargo fmt --check
+    - cargo clippy --workspace -- -D warnings
+    - cargo build --workspace
+acceptance:
+  human_gate: true
+limits:
+  max_files_changed: 5
+  max_diff_lines: 600
+execution:
+  mode: worktree_edit
+  branch: ai/HEX-040-new-spec
+retry_policy:
+  max_attempts: 2
+  escalate_after: 1

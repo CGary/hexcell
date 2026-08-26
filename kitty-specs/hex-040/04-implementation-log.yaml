@@ -1,0 +1,3 @@
+entries: []
+summary: Add a per-container tokio Semaphore concurrency limiter (hexcell/src/concurrencia.rs) gated after GCRA admission, with a discard-and-log event and an env-configurable limit.
+task_id: HEX-040

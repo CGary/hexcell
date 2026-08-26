@@ -1,0 +1,32 @@
+{
+  "commands": [
+    {
+      "command": "cargo test --workspace",
+      "duration_s": 60,
+      "exit_code": 0,
+      "output_excerpt": "test result: ok. 5 passed; 0 failed / ok. 3 passed / ok. 2 passed; suites completas sin fallos"
+    },
+    {
+      "command": "cargo fmt --check",
+      "duration_s": 1,
+      "exit_code": 0,
+      "output_excerpt": "sin diferencias de formato"
+    },
+    {
+      "command": "cargo clippy --workspace -- -D warnings",
+      "duration_s": 30,
+      "exit_code": 0,
+      "output_excerpt": "sin warnings con -D warnings"
+    },
+    {
+      "command": "cargo build --workspace",
+      "duration_s": 15,
+      "exit_code": 0,
+      "output_excerpt": "Finished dev profile"
+    }
+  ],
+  "executed_at": "2026-08-23T00:00:00Z",
+  "overall_result": "passed",
+  "summary": "Los cuatro verify.commands pasan (exit 0) tras el diff del delegado externo y los dos fixes del review (doc de modulo y asercion del test de descarte), commits 2095940 y 32c4f44.",
+  "task_id": "HEX-040"
+}

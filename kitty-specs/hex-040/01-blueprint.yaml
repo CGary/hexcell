@@ -1,0 +1,165 @@
+task_id: HEX-040
+summary: "Add a per-container tokio Semaphore concurrency limiter (hexcell/src/concurrencia.rs) gated after GCRA admission, with a discard-and-log event and an env-configurable limit."
+affected_files:
+  - crates/hexcell/src/concurrencia.rs
+  - crates/hexcell/src/motor.rs
+  - crates/hexcell/src/configuracion.rs
+  - crates/hexcell/src/lib.rs
+  - crates/hexcell/src/main.rs
+symbols:
+  - concurrencia::LimitadorDeConcurrencia
+  - concurrencia::LimitadorDeConcurrencia::nuevo
+  - concurrencia::LimitadorDeConcurrencia::intentar_adquirir
+  - concurrencia::MotivoDescarteConcurrencia
+  - concurrencia::LIMITE_DE_CONCURRENCIA_POR_DEFECTO
+  - "Motor::concurrencia (field)"
+  - Motor::con_limite_de_concurrencia
+  - "Motor::procesar_evento (extended - acquire concurrency permit after GCRA admission, before dedup; discard+log on saturation)"
+  - "Configuracion::limite_de_concurrencia (field)"
+  - "Configuracion::desde_entorno (extended - parse HEXCELL_CONCURRENCIA_LIMITE)"
+  - "HEXCELL_CONCURRENCIA_LIMITE (new env var constant)"
+dependencies:
+  - crates/hexcell-core/src/admision.rs
+  - crates/hexcell/Cargo.toml
+strategy:
+  - step: 1
+    action: >
+      Create crates/hexcell/src/concurrencia.rs. Define LimitadorDeConcurrencia wrapping
+      Arc<tokio::sync::Semaphore>, constructed with nuevo(limite: usize). Method
+      intentar_adquirir(&self) -> Option<tokio::sync::OwnedSemaphorePermit> calls
+      try_acquire_owned() on a cloned Arc<Semaphore>, returning Some(permiso) on success and
+      None on saturation (never awaits, never blocks indefinitely, matching the try_acquire-style
+      constraint). Define MotivoDescarteConcurrencia enum (mirroring admision::MotivoDescarte's
+      shape: Clone, Debug, PartialEq, Eq, plus fmt::Display) with a single variant for saturation.
+      Define LIMITE_DE_CONCURRENCIA_POR_DEFECTO: usize = 8 as the module-owned default constant
+      (same placement convention as VENTANA_DE_RETENCION_DEDUPLICACION_POR_DEFECTO in
+      deduplicacion.rs and LIMITE_DE_DRENAJE_POR_DEFECTO in apagado.rs). Add unit tests in this
+      module's own #[cfg(test)] block that directly exercise saturation and release without
+      relying on Motor or on real wall-clock timing.
+    files:
+      - crates/hexcell/src/concurrencia.rs
+  - step: 2
+    action: >
+      Declare `pub mod concurrencia;` in lib.rs (alphabetical position, between apagado and
+      configuracion).
+    files:
+      - crates/hexcell/src/lib.rs
+  - step: 3
+    action: >
+      Add a `limite_de_concurrencia: usize` field to Configuracion, plus the
+      HEXCELL_CONCURRENCIA_LIMITE public env var name constant, parsed with the same style as
+      HEXCELL_ADMISION_TASA_SOSTENIDA_POR_SEGUNDO / HEXCELL_ADMISION_TOLERANCIA_RAFAGA (opt-in
+      std::env::var read, .parse::<usize>() with ErrorDeConfiguracion::ValorInvalido naming
+      HEXCELL_CONCURRENCIA_LIMITE on parse failure or on a value of 0, falling back to
+      concurrencia::LIMITE_DE_CONCURRENCIA_POR_DEFECTO when unset). Import the default constant
+      from crate::concurrencia the same way apagado's and deduplicacion's defaults are imported
+      today. Add a config-level test asserting: unset -> default; valid numeric -> parsed value;
+      non-numeric or "0" -> ErrorDeConfiguracion::ValorInvalido naming the variable.
+    files:
+      - crates/hexcell/src/configuracion.rs
+  - step: 4
+    action: >
+      In motor.rs: add a `concurrencia: concurrencia::LimitadorDeConcurrencia` field to Motor,
+      defaulted in Motor::nuevo to LimitadorDeConcurrencia::nuevo(LIMITE_DE_CONCURRENCIA_POR_DEFECTO)
+      (Motor::nuevo's existing parameter list and the ~20 call sites stay untouched, following the
+      same builder precedent HEX-038 set for GCRA). Add
+      `pub fn con_limite_de_concurrencia(mut self, limitador: LimitadorDeConcurrencia) -> Self`
+      mirroring con_configuracion_gcra exactly. In procesar_evento, immediately after the existing
+      GCRA admission check (and before the dedup id_evento/id_conversacion bindings), call
+      self.concurrencia.intentar_adquirir(); on None, emit a NivelDeRegistro::Aviso entry with
+      event name "concurrencia_descartada", .con_id_evento(...), .con_id_conversacion(clave) using
+      evento.conversacion.como_str(), .con_latencia_ms(...), and .con_detalle(motivo.to_string()),
+      then return early exactly like the admision_descartada arm does today. On Some(permiso), let
+      the permit live as a local binding held for the rest of procesar_evento's body (dropped
+      automatically when the function returns, releasing the slot before the next event is
+      dequeued from the sequential select! loop). Extend the existing module doc comment with one
+      paragraph naming this ordering (admission, then concurrency gate, then dedup) and stating
+      explicitly that today's motor loop awaits procesar_evento sequentially and does not spawn
+      per-event tasks, so this gate enforces a per-in-flight-call bound that becomes load-bearing
+      once/if a future task introduces concurrent dispatch — see the Risks section of this
+      blueprint for the full rationale. Add a Motor-level test that manually saturates the shared
+      limiter (by acquiring N owned permits directly against the same LimitadorDeConcurrencia
+      instance before calling procesar_evento) and asserts the concurrencia_descartada log fields
+      (id_conversacion, id_evento, detalle) and that no admision_descartada/evento_recibido logs
+      fire for that call, then releases the permits and asserts a follow-up call is admitted
+      normally.
+    files:
+      - crates/hexcell/src/motor.rs
+  - step: 5
+    action: >
+      In main.rs: chain `.con_limite_de_concurrencia(concurrencia::LimitadorDeConcurrencia::nuevo(configuracion.limite_de_concurrencia))`
+      onto both existing Motor::nuevo(...).con_configuracion_gcra(...) call sites (Simulado and
+      Whatsmeow branches), matching the existing builder-chaining style.
+    files:
+      - crates/hexcell/src/main.rs
+test_scenarios:
+  - statement: >
+      LimitadorDeConcurrencia::nuevo(2) admits exactly 2 concurrent intentar_adquirir() calls and
+      returns None on the 3rd while both permits are held; releasing one permit makes the next
+      intentar_adquirir() succeed again. A stub that always returns Some fails this test.
+    covers: ["AC-1", "AC-4"]
+  - statement: >
+      intentar_adquirir() never awaits and never blocks: calling it repeatedly while saturated
+      returns None immediately in a synchronous test, with no tokio::time involved.
+    covers: ["AC-1"]
+  - statement: >
+      Motor::procesar_evento, called while the shared LimitadorDeConcurrencia is externally
+      saturated, logs exactly one concurrencia_descartada entry (Aviso level) carrying the event's
+      id_evento, id_conversacion, and a non-empty detalle, does not process the event further (no
+      evento_recibido, no dedup, no send), and returns without holding a permit; a follow-up call
+      after releasing the saturating permits is admitted and processed normally.
+    covers: ["AC-2", "AC-4"]
+  - statement: >
+      Configuracion::desde_entorno with HEXCELL_CONCURRENCIA_LIMITE unset uses
+      LIMITE_DE_CONCURRENCIA_POR_DEFECTO; with a valid positive integer uses that value; with a
+      non-numeric value or "0" fails with ErrorDeConfiguracion::ValorInvalido naming
+      HEXCELL_CONCURRENCIA_LIMITE.
+    covers: ["AC-3"]
+  - statement: >
+      cargo test --workspace, cargo fmt --check, cargo clippy --workspace -- -D warnings, and
+      cargo build --workspace all pass after the change, and hexcell-core's Cargo.toml dependency
+      table remains untouched/empty.
+    covers: ["AC-1", "AC-2", "AC-3", "AC-4"]
+risks:
+  - >
+    MAJOR — architecture mismatch between the spec's literal wording and the real codebase:
+    00-spec.yaml's AC-1/AC-2 describe "more than N events arriving concurrently" and "the
+    concurrency limit is already saturated" as production scenarios, but Motor::ejecutar (verified
+    in crates/hexcell/src/motor.rs) awaits procesar_evento(evento).await sequentially inside its
+    tokio::select! loop — there is no tokio::spawn per event anywhere in crates/hexcell/src/ (the
+    only tokio::spawn in the whole channel layer is the whatsmeow adapter's background
+    reconnection loop in crates/hexcell-canal-whatsmeow/src/adaptador.rs:190, unrelated to
+    per-event dispatch) and the crate runs on a single #[tokio::main(flavor = "current_thread")]
+    runtime. motor.rs's own module doc explains at length why this is deliberate: dedup ordering,
+    chronological draining of deferred replies ("que el hilo se mantenga cronológico"), and
+    apagado ordenado's non-cancellable in-flight event all depend on exactly one event being
+    processed at a time. Under this real architecture, true concurrent saturation of the semaphore
+    from live traffic cannot happen — the permit is always acquired uncontended and released
+    before the next event is dequeued. This blueprint deliberately does NOT introduce per-event
+    tokio::spawn to make AC-1/AC-2 literally true under load, because doing so would break the
+    documented ordering invariants and is a materially larger, riskier change than this task's
+    scope/diff budget implies. Instead it builds the enforcement point (the semaphore gate wired
+    into procesar_evento) and tests it discriminantly by manipulating permits directly/externally
+    (both at the module level and at the Motor level), which satisfies AC-4's "stub must fail"
+    requirement and AC-1/AC-2's stated behavior under test, without claiming the current sequential
+    motor loop can ever organically exhaust the limiter in production. A human should confirm this
+    reading (gate now, real concurrent dispatch deferred to a future task) is the intended scope
+    before merge; if the intent was actually to introduce concurrent per-event dispatch, that is a
+    substantially different and larger task that should be re-scoped, not folded into this
+    contract's touch/forbid/diff limits.
+  - >
+    00-spec.yaml invariant #13 and constraint #48 say the concurrency limit's env var must follow
+    "the HEXCELL_ADMISION_* naming ... pattern." Read literally this would prefix the new variable
+    with ADMISION, but invariant #14 explicitly requires the concurrency limiter to be a separate
+    concern from GCRA admission (not in hexcell-core, no admission-algorithm changes per non_goals).
+    This blueprint reads "pattern" as the parsing/validation style used by the HEXCELL_ADMISION_*
+    variables (optional var, std::env::var + .parse(), ErrorDeConfiguracion::ValorInvalido naming
+    the variable, default when unset) and names the new variable HEXCELL_CONCURRENCIA_LIMITE
+    instead of an ADMISION-prefixed name, to avoid implying it is part of the admission subsystem.
+    Flagged for human confirmation; the spec itself is not rewritten.
+  - >
+    Chosen default limit (LIMITE_DE_CONCURRENCIA_POR_DEFECTO = 8) is this blueprint's own estimate
+    for the i7/8GB NFR-01 target hardware; 00-spec.yaml does not fix a number and STATUS.md records
+    no prior decision on this value. Treat as provisional pending a human/business call, same as
+    other undecided sizing constants in this codebase (e.g. ventana_deduplicacion's own
+    still-open default per configuracion.rs's own doc comment).

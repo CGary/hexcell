@@ -1,0 +1,53 @@
+task_id: HEX-040
+summary: Add a concurrency semaphore bounding in-flight Tokio tasks per container in the hexcell crate, with explicit discard behavior on saturation (FR-09, stage A-4).
+goal: >
+  Implement a strict per-container limit on concurrent in-flight event-processing
+  tasks in the hexcell crate (around Motor / the channel-port consumption loop),
+  so CPU context-switch degradation is bounded. Acquisition must never block
+  indefinitely, and saturation must produce an explicit, logged discard behavior
+  coherent with the existing admission discard policy from HEX-039.
+invariants:
+  - The number of concurrently in-flight event-processing tasks per container never exceeds the configured limit.
+  - Acquisition of a concurrency slot never blocks indefinitely (try_acquire or a bounded wait is used, never an unbounded await).
+  - When the limit is saturated, the incoming event is explicitly discarded and logged with key and reason, never silently dropped and never queued unboundedly.
+  - The concurrency limit is configurable via an environment variable following the HEXCELL_ADMISION_* naming and parsing pattern, with a sane default when unset.
+  - hexcell-core's dependency table remains empty (std only, per adr-0002); the semaphore primitive lives in the hexcell crate, not in hexcell-core.
+  - All code, identifiers, comments, log event names, and error messages introduced follow the repository's Spanish-language convention.
+acceptance:
+  - id: AC-1
+    statement: A configured concurrency limit is enforced so that no more than N event-processing tasks run in flight at once per container.
+    given: the concurrency semaphore is configured with a limit of N permits
+    when: more than N events arrive concurrently for processing
+    then: at most N tasks are in flight at any instant, and the rest either wait briefly under a bounded acquisition or are discarded
+  - id: AC-2
+    statement: Slot acquisition never blocks indefinitely; on saturation the event is discarded and logged with an explicit event name, key, and reason, consistent with the admision_descartada pattern from HEX-039.
+    given: the concurrency limit is already saturated (all permits held)
+    when: a new event arrives and attempts to acquire a slot
+    then: the acquisition attempt resolves without unbounded blocking and, on failure, a discard event (e.g. concurrencia_descartada) is logged with the event key and the reason, and the event is not processed
+  - id: AC-3
+    statement: The concurrency limit is configurable via an environment variable with a documented default, and an invalid value produces a named configuration error.
+    given: an environment variable for the concurrency limit is set to an invalid value (non-numeric or out of range)
+    when: configuration is loaded at startup
+    then: loading fails with ErrorDeConfiguracion::ValorInvalido naming the offending variable, and when the variable is unset a sane default limit is used
+  - id: AC-4
+    statement: Tests deterministically exercise saturation and discard behavior without relying on real wall-clock timing races.
+    given: a test harness that deterministically controls task completion/ordering (following the existing deterministic-test conventions in the crate, e.g. RelojDePrueba-style orchestration for time-independent concurrency tests)
+    when: the test drives more concurrent attempts than the configured limit
+    then: the test deterministically observes both the enforced limit and the explicit discard event, and a stubbed/no-op implementation of the limit fails these tests
+  - cargo test --workspace passes.
+  - cargo fmt --check passes.
+  - cargo clippy --workspace -- -D warnings passes with no new warnings.
+  - cargo build --workspace succeeds.
+risk: medium
+non_goals:
+  - Financial/LLM cost accounting changes (plan tasks 6-9 of stage A-4).
+  - The metrics/observability endpoint (plan task 11, deferred).
+  - Any change to the GCRA admission control algorithm or its configuration (completed in HEX-036..HEX-039).
+constraints:
+  - hexcell-core's dependency table must remain empty (std only, per adr-0002); the semaphore lives in the hexcell crate.
+  - The concurrency limit must be configurable via an environment variable following the HEXCELL_ADMISION_* parsing pattern in crates/hexcell/src/configuracion.rs, with invalid values rejected via ErrorDeConfiguracion::ValorInvalido naming the variable.
+  - Discard-on-saturation behavior must be explicit and logged (key + reason), coherent in spirit with the existing admision_descartada event from HEX-039.
+  - All new code, identifiers, comments, and documentation must be in Spanish; commit messages follow conventional commits in Spanish with no AI attribution.
+  - Never version *.db, *.db-wal, *.db-shm, or .env* files.
+  - "Tests must be deterministic and discriminant: a stub implementation of the concurrency limit must fail them (per LES-036)."
+  - Verification commands are limited to cargo test --workspace, cargo fmt --check, cargo clippy --workspace -- -D warnings, and cargo build --workspace.

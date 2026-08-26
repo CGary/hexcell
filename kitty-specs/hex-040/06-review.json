@@ -1,0 +1,20 @@
+{
+  "task_id": "HEX-040",
+  "summary": "Both revise fix_tasks verified in 32c4f44: module-doc ordering/sequential-loop paragraph added, discard test now asserts zero non-discard logs. Contract clean, 4/4 validation passing.",
+  "verdict": "approve",
+  "contract_compliance": true,
+  "forbidden_files_touched": [],
+  "unrequested_refactor": false,
+  "missing_tests": [],
+  "functional_risk": "low",
+  "notes": [
+    "Prior review cycle (revise): fix_tasks hex-040-doc-motor-concurrency-ordering and hex-040-test-assert-no-further-processing-on-discard, both now resolved by commit 32c4f44 on crates/hexcell/src/motor.rs (24 insertions, 0 deletions, no other files touched)",
+    "fix hex-040-doc-motor-concurrency-ordering: new '# Admision, concurrencia y bucle secuencial' module-level //! doc section added, naming the fixed order (GCRA admission first, concurrency semaphore second, both before dedup) and explicitly recording the 2026-08-23 human decision that Motor::ejecutar's loop stays sequential (no per-event tokio::spawn), noting the gate is structural today and becomes load-bearing only if/when concurrent dispatch is introduced -- matches 01-blueprint.yaml step 4 verbatim, fully in Spanish, no forbidden behaviors introduced",
+    "fix hex-040-test-assert-no-further-processing-on-discard: descarte_por_saturacion_de_concurrencia_y_recuperacion now asserts logs.iter().filter(|e| e.evento != \"concurrencia_descartada\").count() == 0 immediately after registro::pruebas::tomar(), before the existing single-discard assertions -- registro::pruebas::instalar()/tomar() scope the capture to only this call, so the assertion is a real negative check (zero evento_recibido/dedup entries), not vacuous",
+    "git diff main...HEAD confirms only touch-listed files changed (concurrencia.rs, configuracion.rs, lib.rs, main.rs, motor.rs); commit 32c4f44 itself touches only motor.rs, within scope, no forbid.files hit",
+    "05-validation.json re-verify recorded at 2026-08-23T00:00:00Z: all 4 verify.commands (cargo test/fmt --check/clippy -D warnings/build --workspace) exit 0 after commits 2095940 and 32c4f44",
+    "Carried forward, not re-litigated: contract-check ok=true, not_checked forbid.behaviors (English-leak grep, public-symbol diff), acceptance-coverage AC-1..AC-4 all covered -- all already established in the prior review round and unaffected by this doc/test-only diff",
+    "Unresolved but non-blocking, noted in prior round: 02-contract.yaml's execution.branch reads 'ai/HEX-040-new-spec' while the actual worktree branch is 'ai/HEX-040' -- metadata discrepancy, does not affect verdict"
+  ],
+  "fix_tasks": []
+}

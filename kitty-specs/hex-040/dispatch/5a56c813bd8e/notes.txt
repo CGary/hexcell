@@ -1,0 +1,34 @@
+NOTES:
+- Implemented `crates/hexcell/src/concurrencia.rs` defining `LimitadorDeConcurrencia` (wrapping `tokio::sync::Semaphore`), `MotivoDescarteConcurrencia`, and default limit `LIMITE_DE_CONCURRENCIA_POR_DEFECTO = 8`.
+- Declared `pub mod concurrencia;` in `crates/hexcell/src/lib.rs`.
+- Added `limite_de_concurrencia` field and `HEXCELL_CONCURRENCIA_LIMITE` env var constant to `crates/hexcell/src/configuracion.rs`, parsing positive non-zero `usize` values with fallback to default (8) or producing `ErrorDeConfiguracion::ValorInvalido`.
+- Integrated `LimitadorDeConcurrencia` into `Motor` (`crates/hexcell/src/motor.rs`), gating event processing immediately after GCRA admission and before deduplication. Emits `concurrencia_descartada` (`Aviso` level with key and reason) on saturation using `try_acquire_owned`.
+- Added builder `.con_limite_de_concurrencia(...)` and wired it in `crates/hexcell/src/main.rs`.
+- All verification commands (`cargo test --workspace`, `cargo fmt --check`, `cargo clippy --workspace -- -D warnings`, `cargo build --workspace`) pass cleanly.
+END NOTES
+
+Task **HEX-040** has been successfully completed.
+
+### Summary of Changes
+
+1. **New Module `concurrencia`** ([concurrencia.rs](file:///home/gary/dev/hexcell/worktrees/HEX-040/crates/hexcell/src/concurrencia.rs)):
+   - `LimitadorDeConcurrencia`: Encapsulates `tokio::sync::Semaphore` with `intentar_adquirir(&self) -> Option<OwnedSemaphorePermit>` (non-blocking `try_acquire_owned`).
+   - `MotivoDescarteConcurrencia`: Enum for saturation reporting.
+   - `LIMITE_DE_CONCURRENCIA_POR_DEFECTO`: Constant set to 8.
+
+2. **Configuration Support** ([configuracion.rs](file:///home/gary/dev/hexcell/worktrees/HEX-040/crates/hexcell/src/configuracion.rs)):
+   - Added `limite_de_concurrencia: usize` field and `HEXCELL_CONCURRENCIA_LIMITE` environment variable parsing and validation.
+
+3. **Motor Gate Integration** ([motor.rs](file:///home/gary/dev/hexcell/worktrees/HEX-040/crates/hexcell/src/motor.rs)):
+   - Wired concurrency slot acquisition immediately after GCRA admission and prior to deduplication in `Motor::procesar_evento`.
+   - Log event `concurrencia_descartada` emitted on saturation with event ID, conversation ID, latency, and reason.
+   - Added builder `con_limite_de_concurrencia`.
+
+4. **Composition Root** ([main.rs](file:///home/gary/dev/hexcell/worktrees/HEX-040/crates/hexcell/src/main.rs)):
+   - Chained `.con_limite_de_concurrencia(...)` during `Motor` instantiation in both `Simulado` and `Whatsmeow` execution branches.
+
+5. **Verification**:
+   - `cargo test --workspace` — PASS
+   - `cargo fmt --check` — PASS
+   - `cargo clippy --workspace -- -D warnings` — PASS
+   - `cargo build --workspace` — PASS
