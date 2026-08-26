@@ -213,6 +213,7 @@ pub fn lanzar_binario_con_variables(
         .env("HEXCELL_ID_CELULA", "piloto-01")
         .env("HEXCELL_RUTA_DATOS", ruta_datos)
         .env("HEXCELL_DIRECCION_SALUD", "127.0.0.1:0")
+        .env("HEXCELL_PRESUPUESTO_INICIAL_UNIDADES", "1000")
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());

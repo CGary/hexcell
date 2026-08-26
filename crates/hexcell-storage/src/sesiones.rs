@@ -95,7 +95,9 @@ pub enum EventoDeHistorial {
 
 /// Acceso de alto nivel a `sessions.db` para el motor de mensajería.
 pub struct RepositorioDeSesiones {
-    pools: Arc<GestorDePools>,
+    /// De visibilidad de crate: el bloque `impl` de `presupuesto.rs` comparte los pools
+    /// sin exponerlos fuera de `hexcell-storage`.
+    pub(crate) pools: Arc<GestorDePools>,
 }
 
 impl RepositorioDeSesiones {

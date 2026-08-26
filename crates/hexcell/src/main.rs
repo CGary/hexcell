@@ -130,6 +130,24 @@ async fn main() -> ExitCode {
     println!("hexcell: almacén de identidad del adaptador abierto y migrado");
 
     let repositorio = Arc::new(RepositorioDeSesiones::nuevo(Arc::clone(&pools)));
+
+    if configuracion.presupuesto_inicial_unidades > 0 {
+        match repositorio.presupuesto_sin_iniciar() {
+            Ok(true) => {
+                if let Err(error) = repositorio.aportar_presupuesto(
+                    configuracion.presupuesto_inicial_unidades,
+                    std::time::SystemTime::now(),
+                ) {
+                    eprintln!("hexcell: no se pudo aportar el presupuesto inicial: {error}");
+                }
+            }
+            Ok(false) => {}
+            Err(error) => {
+                eprintln!("hexcell: error al consultar estado de presupuesto inicial: {error}");
+            }
+        }
+    }
+
     let estado_de_salud = Arc::new(EstadoDeSalud::nuevo(
         Arc::clone(&pools),
         SesionDelCanal::siempre_activa(),
@@ -187,7 +205,7 @@ async fn main() -> ExitCode {
             } else {
                 ProveedorSimulado::con_latencia(configuracion.latencia_inferencia_simulada)
             };
-            let procesador = ProcesadorDeInferencia::nuevo(proveedor);
+            let procesador = ProcesadorDeInferencia::nuevo(proveedor, Arc::clone(&repositorio));
             let mut motor = Motor::nuevo(
                 adaptador,
                 procesador,
@@ -220,7 +238,7 @@ async fn main() -> ExitCode {
             } else {
                 ProveedorSimulado::con_latencia(configuracion.latencia_inferencia_simulada)
             };
-            let procesador = ProcesadorDeInferencia::nuevo(proveedor);
+            let procesador = ProcesadorDeInferencia::nuevo(proveedor, Arc::clone(&repositorio));
             let mut motor = Motor::nuevo(
                 adaptador,
                 procesador,

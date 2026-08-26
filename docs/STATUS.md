@@ -1,6 +1,6 @@
 # Estado del Proyecto
 
-> Registro vivo del avance. Última actualización: 2026-08-21.
+> Registro vivo del avance. Última actualización: 2026-08-26.
 
 ## Fase actual
 **Canal propio en producción — etapa A-1, fundaciones.** Ya existe el workspace Rust con sus cinco
@@ -18,6 +18,7 @@ adicional cuando aparezca un cliente que lo justifique. Ver [plan/README.md](pla
 > idea ya está allí, no se discute desde cero.
 
 ## Definido
+* **Estimador de costes de inferencia y reserva atómica previa de presupuesto (HEX-042, FR-10 fase 1).** (2026-08-26, `adr-0005`). Se añade el estimador de costes determinista `estimar_coste` en `hexcell-core` basado en `chars().count()` floored en `UNIDADES_MINIMAS_POR_LLAMADA` (1). Se implementa la reserva atómica en una única transacción SQLite en `hexcell-storage` (`reservar_presupuesto`) que verifica saldo suficiente, inserta la reserva `'activa'`, actualiza `saldo.disponible` y `saldo.reservado`, y registra el movimiento de `'reserva'`. `ProcesadorDeInferencia` evalúa la reserva antes de llamar al proveedor: si es insuficiente, emite log `presupuesto_rechazado` y devuelve `None` sin invocar al proveedor (fail-closed). Semilla inicial configurable mediante `HEXCELL_PRESUPUESTO_INICIAL_UNIDADES` con idempotencia (`presupuesto_sin_iniciar`). `adr-0005` formalizado como Vigente.
 * **Licencia del proyecto: AGPL-3.0** (2026-07-29, `adr-0001`), con licenciamiento dual conservado
   por el titular del copyright frente a un tercero que lo solicite. Se contrastó frente a Apache-2.0
   —que no impone condición sobre uso en red y regalaría la ventaja competitiva del modelo de

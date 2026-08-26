@@ -97,6 +97,8 @@ pub struct Configuracion {
     pub configuracion_gcra: hexcell_core::admision::ConfiguracionGcra,
     /// Límite estricto de concurrencia de tareas en vuelo por contenedor (`crate::concurrencia`).
     pub limite_de_concurrencia: usize,
+    /// Unidades de presupuesto inicial acreditadas en la primera puesta en marcha (opcional, por defecto 0).
+    pub presupuesto_inicial_unidades: u64,
 }
 
 /// Error de configuración: nombra siempre la variable concreta y su formato esperado.
@@ -191,6 +193,8 @@ pub const HEXCELL_ADMISION_TASA_SOSTENIDA_POR_SEGUNDO: &str =
 pub const HEXCELL_ADMISION_TOLERANCIA_RAFAGA: &str = "HEXCELL_ADMISION_TOLERANCIA_RAFAGA";
 /// Nombre de la variable de entorno con el límite estricto de concurrencia por contenedor (opcional).
 pub const HEXCELL_CONCURRENCIA_LIMITE: &str = "HEXCELL_CONCURRENCIA_LIMITE";
+/// Nombre de la variable de entorno con el presupuesto inicial en unidades (opcional, por defecto 0).
+pub const HEXCELL_PRESUPUESTO_INICIAL_UNIDADES: &str = "HEXCELL_PRESUPUESTO_INICIAL_UNIDADES";
 
 /// Dirección de salud por defecto: loopback (127.0.0.1), nunca `0.0.0.0`. Una célula sobre canal
 /// propio empaquetada en un contenedor (etapa A-6) necesita sondear esta ruta desde un
@@ -375,6 +379,18 @@ impl Configuracion {
             Err(_) => LIMITE_DE_CONCURRENCIA_POR_DEFECTO,
         };
 
+        let presupuesto_inicial_unidades = match std::env::var(HEXCELL_PRESUPUESTO_INICIAL_UNIDADES)
+        {
+            Ok(valor) => valor
+                .parse::<u64>()
+                .map_err(|_| ErrorDeConfiguracion::ValorInvalido {
+                    nombre: HEXCELL_PRESUPUESTO_INICIAL_UNIDADES,
+                    valor: valor.clone(),
+                    formato_esperado: "entero no negativo de unidades, p. ej. 1000",
+                })?,
+            Err(_) => 0,
+        };
+
         Ok(Self {
             id_celula,
             ruta_datos,
@@ -389,6 +405,7 @@ impl Configuracion {
             proveedor_de_inferencia_falla,
             configuracion_gcra,
             limite_de_concurrencia,
+            presupuesto_inicial_unidades,
         })
     }
 }

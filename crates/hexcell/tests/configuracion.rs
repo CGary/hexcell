@@ -426,3 +426,46 @@ fn falla_si_la_tasa_sostenida_gcra_no_es_valida() {
 
     let _ = std::fs::remove_dir_all(&directorio_temporal);
 }
+
+#[test]
+fn presupuesto_inicial_unidades_por_defecto_y_desde_entorno() {
+    let _guardia = CERROJO_DE_ENTORNO.lock().unwrap_or_else(|e| e.into_inner());
+    limpiar_entorno_de_hexcell();
+    let directorio_temporal = std::env::temp_dir().join(format!(
+        "hexcell-test-config-presupuesto-{}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&directorio_temporal)
+        .expect("crear el directorio temporal del test debe funcionar");
+
+    unsafe {
+        std::env::set_var("HEXCELL_ID_CELULA", "piloto-01");
+        std::env::set_var("HEXCELL_RUTA_DATOS", &directorio_temporal);
+    }
+
+    let config = Configuracion::desde_entorno().expect("configuración válida");
+    assert_eq!(config.presupuesto_inicial_unidades, 0);
+
+    unsafe {
+        std::env::set_var("HEXCELL_PRESUPUESTO_INICIAL_UNIDADES", "500");
+    }
+    let config = Configuracion::desde_entorno().expect("configuración válida con presupuesto");
+    assert_eq!(config.presupuesto_inicial_unidades, 500);
+
+    unsafe {
+        std::env::set_var("HEXCELL_PRESUPUESTO_INICIAL_UNIDADES", "invalido");
+    }
+    let error = Configuracion::desde_entorno().expect_err("debe fallar con valor inválido");
+    match error {
+        ErrorDeConfiguracion::ValorInvalido { nombre, valor, .. } => {
+            assert_eq!(nombre, "HEXCELL_PRESUPUESTO_INICIAL_UNIDADES");
+            assert_eq!(valor, "invalido");
+        }
+        otro => panic!("se esperaba ValorInvalido, se obtuvo {otro:?}"),
+    }
+
+    unsafe {
+        std::env::remove_var("HEXCELL_PRESUPUESTO_INICIAL_UNIDADES");
+    }
+    let _ = std::fs::remove_dir_all(&directorio_temporal);
+}

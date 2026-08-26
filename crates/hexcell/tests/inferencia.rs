@@ -3,11 +3,12 @@
 mod comun;
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::SystemTime;
 
 use comun::{DirectorioTemporal, repositorio_temporal};
 use hexcell::apagado::SenalDeApagado;
-use hexcell::inferencia::ProveedorSimulado;
+use hexcell::inferencia::{ErrorDeInferenciaSimulada, ProveedorSimulado};
 use hexcell::motor::Motor;
 use hexcell::procesador::ProcesadorDeInferencia;
 use hexcell_canal_simulado::{AdaptadorSimulado, ErrorDelAdaptadorSimulado, RelojDePrueba};
@@ -15,7 +16,9 @@ use hexcell_core::canal::{
     ChannelAdapter, EstadoVentanaServicio, EventoEntrante, MensajeSaliente, ResultadoEnvio,
 };
 use hexcell_core::identidad::{IdConversacion, IdDeduplicacion, IdRemitente};
-use hexcell_core::inferencia::{PeticionDeInferencia, ProveedorDeInferencia};
+use hexcell_core::inferencia::{
+    PeticionDeInferencia, ProveedorDeInferencia, RespuestaDeInferencia,
+};
 
 #[tokio::test]
 async fn el_proveedor_simulado_devuelve_la_misma_respuesta_para_la_misma_peticion() {
@@ -113,6 +116,38 @@ fn evento(conversacion: &IdConversacion, contenido: &str, deduplicacion: &str) -
     }
 }
 
+/// Doble de prueba de ProveedorDeInferencia que cuenta invocaciones con un `Arc<AtomicUsize>`.
+#[derive(Clone)]
+struct ProveedorContador {
+    invocaciones: Arc<AtomicUsize>,
+}
+
+impl ProveedorContador {
+    fn nuevo() -> (Self, Arc<AtomicUsize>) {
+        let contador = Arc::new(AtomicUsize::new(0));
+        (
+            Self {
+                invocaciones: Arc::clone(&contador),
+            },
+            contador,
+        )
+    }
+}
+
+impl ProveedorDeInferencia for ProveedorContador {
+    type Error = ErrorDeInferenciaSimulada;
+
+    async fn generar(
+        &self,
+        peticion: PeticionDeInferencia,
+    ) -> Result<RespuestaDeInferencia, Self::Error> {
+        self.invocaciones.fetch_add(1, Ordering::Relaxed);
+        Ok(RespuestaDeInferencia {
+            contenido: format!("respuesta simulada para {}", peticion.contenido),
+        })
+    }
+}
+
 #[tokio::test]
 async fn el_motor_envia_la_respuesta_del_proveedor_y_no_el_eco_del_procesador() {
     let directorio = DirectorioTemporal::nuevo("inferencia-motor");
@@ -130,13 +165,19 @@ async fn el_motor_envia_la_respuesta_del_proveedor_y_no_el_eco_del_procesador() 
         .await
         .expect("el canal recién creado debe aceptar el evento");
 
-    let procesador = ProcesadorDeInferencia::nuevo(ProveedorSimulado::nuevo());
+    let repositorio = repositorio_temporal(directorio.ruta());
+    repositorio
+        .aportar_presupuesto(100, SystemTime::UNIX_EPOCH)
+        .expect("aportar saldo para el test");
+
+    let procesador =
+        ProcesadorDeInferencia::nuevo(ProveedorSimulado::nuevo(), Arc::clone(&repositorio));
     let mut motor = Motor::nuevo(
         AdaptadorQueDelegaEnArc(Arc::clone(&adaptador)),
         procesador,
         receptor_eventos,
         std::time::Duration::from_secs(3600),
-        repositorio_temporal(directorio.ruta()),
+        repositorio,
     );
 
     let manejador = tokio::spawn(async move {
@@ -197,18 +238,19 @@ async fn un_fallo_del_proveedor_no_envia_nada_y_el_motor_sigue_consumiendo() {
         .await
         .expect("el canal recién creado debe aceptar el evento");
 
-    // El proveedor que siempre falla se usa para el primer evento; el motor no debe entrar en
-    // pánico ni dejar de consumir el segundo por ello. Como `ProveedorSimulado` no distingue
-    // conversaciones, se usa un procesador que siempre falla para demostrar que ningún envío se
-    // produce y que el motor no se detiene: el segundo evento del mismo procesador tampoco genera
-    // respuesta, que es exactamente lo que se comprueba.
-    let procesador = ProcesadorDeInferencia::nuevo(ProveedorSimulado::que_falla());
+    let repositorio = repositorio_temporal(directorio.ruta());
+    repositorio
+        .aportar_presupuesto(100, SystemTime::UNIX_EPOCH)
+        .expect("aportar saldo para el test");
+
+    let procesador =
+        ProcesadorDeInferencia::nuevo(ProveedorSimulado::que_falla(), Arc::clone(&repositorio));
     let mut motor = Motor::nuevo(
         AdaptadorQueDelegaEnArc(Arc::clone(&adaptador)),
         procesador,
         receptor_eventos,
         std::time::Duration::from_secs(3600),
-        repositorio_temporal(directorio.ruta()),
+        repositorio,
     );
 
     let manejador = tokio::spawn(async move {
@@ -221,5 +263,104 @@ async fn un_fallo_del_proveedor_no_envia_nada_y_el_motor_sigue_consumiendo() {
     assert!(
         adaptador.envios_capturados().is_empty(),
         "un proveedor que siempre falla no debe producir ningún envío"
+    );
+}
+
+// La mitad de AC-2 que comprueba el registro `presupuesto_rechazado` vive en
+// `crates/hexcell/src/procesador.rs` (test unitario), donde `registro::pruebas` es alcanzable;
+// este test de integración prueba solo la mitad conductual: con saldo insuficiente el proveedor
+// de inferencia registra cero llamadas y no se envía nada.
+#[tokio::test]
+async fn con_saldo_insuficiente_el_proveedor_de_inferencia_registra_cero_llamadas() {
+    let directorio = DirectorioTemporal::nuevo("inferencia-saldo-insuficiente");
+    let reloj = RelojDePrueba::nuevo(SystemTime::UNIX_EPOCH);
+    let (adaptador, receptor_eventos) = AdaptadorSimulado::nuevo(Arc::new(reloj), 8);
+    let adaptador = Arc::new(adaptador);
+    let conversacion = IdConversacion::nuevo("conversacion-sin-saldo");
+
+    adaptador
+        .inyectar(evento(
+            &conversacion,
+            "prompt que requiere unidades de presupuesto",
+            "dedup-sin-saldo-uno",
+        ))
+        .await
+        .expect("inyectar evento de prueba");
+
+    let repositorio = repositorio_temporal(directorio.ruta());
+    // El saldo inicial es 0, menor que la estimación del prompt
+
+    let (proveedor_contador, contador) = ProveedorContador::nuevo();
+    let procesador = ProcesadorDeInferencia::nuevo(proveedor_contador, Arc::clone(&repositorio));
+    let mut motor = Motor::nuevo(
+        AdaptadorQueDelegaEnArc(Arc::clone(&adaptador)),
+        procesador,
+        receptor_eventos,
+        std::time::Duration::from_secs(3600),
+        repositorio,
+    );
+
+    let manejador = tokio::spawn(async move {
+        motor.ejecutar(SenalDeApagado::nunca()).await;
+    });
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    manejador.abort();
+    let _ = manejador.await;
+
+    assert_eq!(
+        contador.load(Ordering::Relaxed),
+        0,
+        "el proveedor de inferencia no debe ser invocado cuando el saldo es insuficiente"
+    );
+    assert!(
+        adaptador.envios_capturados().is_empty(),
+        "no debe haber envíos cuando la reserva es rechazada"
+    );
+}
+
+#[tokio::test]
+async fn con_saldo_suficiente_el_proveedor_de_inferencia_es_invocado() {
+    let directorio = DirectorioTemporal::nuevo("inferencia-saldo-suficiente");
+    let reloj = RelojDePrueba::nuevo(SystemTime::UNIX_EPOCH);
+    let (adaptador, receptor_eventos) = AdaptadorSimulado::nuevo(Arc::new(reloj), 8);
+    let adaptador = Arc::new(adaptador);
+    let conversacion = IdConversacion::nuevo("conversacion-con-saldo");
+
+    adaptador
+        .inyectar(evento(&conversacion, "hola", "dedup-con-saldo-uno"))
+        .await
+        .expect("inyectar evento de prueba");
+
+    let repositorio = repositorio_temporal(directorio.ruta());
+    repositorio
+        .aportar_presupuesto(50, SystemTime::UNIX_EPOCH)
+        .expect("aportar saldo suficiente");
+
+    let (proveedor_contador, contador) = ProveedorContador::nuevo();
+    let procesador = ProcesadorDeInferencia::nuevo(proveedor_contador, Arc::clone(&repositorio));
+    let mut motor = Motor::nuevo(
+        AdaptadorQueDelegaEnArc(Arc::clone(&adaptador)),
+        procesador,
+        receptor_eventos,
+        std::time::Duration::from_secs(3600),
+        repositorio,
+    );
+
+    let manejador = tokio::spawn(async move {
+        motor.ejecutar(SenalDeApagado::nunca()).await;
+    });
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    manejador.abort();
+    let _ = manejador.await;
+
+    assert_eq!(
+        contador.load(Ordering::Relaxed),
+        1,
+        "el proveedor de inferencia debe ser invocado exactamente una vez con saldo suficiente"
+    );
+    assert_eq!(
+        adaptador.envios_capturados().len(),
+        1,
+        "debe existir un envío saliente tras la inferencia exitosa"
     );
 }

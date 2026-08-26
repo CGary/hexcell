@@ -21,16 +21,22 @@
 //! `I`, la compilación falla con un error que señala un punto muy alejado de esta causa; queda
 //! escrito aquí para que nadie tenga que redescubrirlo.
 //!
-//! # Qué hace este procesador ante un fallo del proveedor
+//! # Qué hace este procesador ante un fallo del proveedor o rechazo de presupuesto
 //!
 //! Ninguna regla de negocio: sin texto fijo de disculpa, sin reintento, sin `backoff`. Qué
-//! contesta una célula cuando la inferencia falla es una decisión de producto ligada al modo
-//! degradado de la etapa A-4 (FR-10), y `docs/STATUS.md` la trata como bloqueo declarado, no como
-//! algo que resolver de paso. Este procesador simplemente no genera respuesta (`None`); es el
-//! motor quien decide qué se registra sobre ese evento.
+//! contesta una célula cuando la inferencia falla o es rechazada por presupuesto es una decisión
+//! de producto ligada al modo degradado de la etapa A-4 (FR-10), y `docs/STATUS.md` la trata como
+//! bloqueo declarado, no como algo que resolver de paso. Este procesador simplemente no genera
+//! respuesta (`None`); es el motor quien decide qué se registra sobre ese evento.
+
+use std::sync::Arc;
 
 use hexcell_core::canal::{EventoEntrante, MensajeSaliente, TestigoDeEntrante};
 use hexcell_core::inferencia::{PeticionDeInferencia, ProveedorDeInferencia};
+use hexcell_core::presupuesto::estimar_coste;
+use hexcell_storage::{RepositorioDeSesiones, VeredictoDeReserva};
+
+use crate::registro::{EntradaDeRegistro, NivelDeRegistro, emitir};
 
 /// Puerto del procesador de mensajes, local a este binario.
 ///
@@ -69,7 +75,8 @@ impl ProcesadorDeMensajes for ProcesadorDeEco {
     }
 }
 
-/// Procesador que delega la decisión de respuesta en un [`ProveedorDeInferencia`] inyectado.
+/// Procesador que delega la decisión de respuesta en un [`ProveedorDeInferencia`] inyectado,
+/// previa verificación y reserva atómica de presupuesto en [`RepositorioDeSesiones`].
 ///
 /// Genérico sobre el trait, nunca sobre el tipo concreto del proveedor simulado: el motor que
 /// construye este procesador no nombra `ProveedorSimulado` en ningún punto de su firma pública.
@@ -78,15 +85,19 @@ where
     I: ProveedorDeInferencia,
 {
     proveedor: I,
+    repositorio: Arc<RepositorioDeSesiones>,
 }
 
 impl<I> ProcesadorDeInferencia<I>
 where
     I: ProveedorDeInferencia,
 {
-    /// Construye el procesador sobre el proveedor de inferencia ya inyectado.
-    pub fn nuevo(proveedor: I) -> Self {
-        Self { proveedor }
+    /// Construye el procesador sobre el proveedor de inferencia y el repositorio de sesiones.
+    pub fn nuevo(proveedor: I, repositorio: Arc<RepositorioDeSesiones>) -> Self {
+        Self {
+            proveedor,
+            repositorio,
+        }
     }
 }
 
@@ -95,6 +106,41 @@ where
     I: ProveedorDeInferencia + Sync,
 {
     async fn procesar(&self, evento: &EventoEntrante) -> Option<MensajeSaliente> {
+        let estimacion = estimar_coste(&evento.contenido);
+
+        match self.repositorio.reservar_presupuesto(
+            &evento.conversacion,
+            estimacion,
+            evento.marca_temporal,
+        ) {
+            Ok(VeredictoDeReserva::Concedida { .. }) => {}
+            Ok(VeredictoDeReserva::Rechazada {
+                disponible,
+                requerido,
+            }) => {
+                emitir(
+                    EntradaDeRegistro::nueva(NivelDeRegistro::Aviso, "presupuesto_rechazado")
+                        .con_id_conversacion(evento.conversacion.como_str())
+                        .con_detalle(format!("requerido: {requerido}, disponible: {disponible}")),
+                );
+                return None;
+            }
+            Err(error) => {
+                // Política fail-closed: a diferencia de la deduplicación que es fail-open (duplicar
+                // un mensaje es barato, gastar saldo no contabilizado no lo es), ante un error de
+                // almacenamiento al consultar o reservar presupuesto no se realiza la llamada al
+                // proveedor de inferencia para evitar consumo sin registro contable.
+                emitir(
+                    EntradaDeRegistro::nueva(NivelDeRegistro::Error, "fallo_de_persistencia")
+                        .con_id_conversacion(evento.conversacion.como_str())
+                        .con_detalle(format!(
+                            "fallo al reservar presupuesto de inferencia: {error}"
+                        )),
+                );
+                return None;
+            }
+        }
+
         let peticion = PeticionDeInferencia {
             conversacion: evento.conversacion.clone(),
             contenido: evento.contenido.clone(),
@@ -114,5 +160,89 @@ where
             }
             Err(_averia) => None,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::inferencia::ErrorDeInferenciaSimulada;
+    use crate::registro;
+    use hexcell_core::identidad::{IdConversacion, IdDeduplicacion, IdRemitente};
+    use hexcell_core::inferencia::RespuestaDeInferencia;
+    use hexcell_storage::GestorDePools;
+    use std::time::SystemTime;
+
+    /// Proveedor mínimo de prueba: si llegara a invocarse con saldo insuficiente el test de más
+    /// abajo fallaría por otra vía (un envío inesperado), así que basta con que cumpla el trait.
+    #[derive(Clone, Copy, Default)]
+    struct ProveedorDePrueba;
+
+    impl ProveedorDeInferencia for ProveedorDePrueba {
+        type Error = ErrorDeInferenciaSimulada;
+
+        async fn generar(
+            &self,
+            peticion: PeticionDeInferencia,
+        ) -> Result<RespuestaDeInferencia, Self::Error> {
+            Ok(RespuestaDeInferencia {
+                contenido: peticion.contenido,
+            })
+        }
+    }
+
+    fn evento_de_prueba(conversacion: &IdConversacion) -> EventoEntrante {
+        EventoEntrante {
+            remitente: IdRemitente::nuevo("remitente-de-prueba"),
+            conversacion: conversacion.clone(),
+            contenido: "contenido de prueba".to_string(),
+            marca_temporal: SystemTime::UNIX_EPOCH,
+            deduplicacion: IdDeduplicacion::nuevo("dedup-presupuesto-rechazado"),
+        }
+    }
+
+    /// Mitad de AC-2 que el test de integración `crates/hexcell/tests/inferencia.rs` no puede
+    /// cubrir: `registro::pruebas` es `pub(crate)`, así que solo un test dentro de este crate
+    /// puede comprobar que el rechazo de presupuesto deja la entrada `presupuesto_rechazado`,
+    /// igual que `motor.rs` comprueba `admision_descartada` y `concurrencia_descartada`.
+    #[tokio::test]
+    async fn saldo_insuficiente_deja_registro_presupuesto_rechazado() {
+        let id_unico =
+            match std::time::SystemTime::now().duration_since(std::time::SystemTime::UNIX_EPOCH) {
+                Ok(d) => d.as_nanos(),
+                Err(_) => 0,
+            };
+        let dir = std::env::temp_dir().join(format!("hx-proc-{}-{}", std::process::id(), id_unico));
+        let _ = std::fs::create_dir_all(&dir);
+        let Ok(pools) = GestorDePools::abrir(&dir) else {
+            panic!("no se pudo abrir el gestor de pools de prueba")
+        };
+        let repositorio = Arc::new(RepositorioDeSesiones::nuevo(Arc::new(pools)));
+        // El saldo inicial es 0 por defecto: cualquier estimación de coste mayor lo rechaza.
+
+        let procesador = ProcesadorDeInferencia::nuevo(ProveedorDePrueba, repositorio);
+        let conversacion = IdConversacion::nuevo("conversacion-sin-saldo");
+
+        registro::pruebas::instalar();
+        let resultado = procesador.procesar(&evento_de_prueba(&conversacion)).await;
+        let registros = registro::pruebas::tomar();
+
+        assert!(
+            resultado.is_none(),
+            "sin saldo suficiente el procesador no debe generar respuesta"
+        );
+        let rechazo = registros
+            .iter()
+            .find(|entrada| entrada.evento == "presupuesto_rechazado");
+        assert!(
+            rechazo.is_some(),
+            "debe existir una entrada de registro para presupuesto_rechazado"
+        );
+        assert_eq!(
+            rechazo.unwrap().id_conversacion.as_deref(),
+            Some("conversacion-sin-saldo")
+        );
+
+        let _ = std::fs::remove_dir_all(dir);
     }
 }
