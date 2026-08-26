@@ -1,0 +1,26 @@
+{
+  "task_id": "HEX-043",
+  "summary": "Reconciliation and release implemented exactly per blueprint: capped deficit, zero-delta suppression, id_reserva wired on both Ok/Err paths, ADR and STATUS updated.",
+  "verdict": "approve",
+  "contract_compliance": true,
+  "forbidden_files_touched": [],
+  "unrequested_refactor": false,
+  "missing_tests": [],
+  "functional_risk": "low",
+  "notes": [
+    "contract-check ok=true; not_checked: forbid.behaviors (verified by hand below)",
+    "acceptance-coverage status=pass; AC-1..AC-5 all covered",
+    "05-validation.json only records 4 of the 5 verify.commands from 02-contract.yaml; the English-leak grep command is absent from the recorded evidence. Re-ran it by hand at HEAD (d9483a4) and it exits 0 (no leaks in the 4 targeted files), so the gate itself passes, but the on-disk validation artifact is incomplete evidence and should ideally be re-run/recorded by /q-verify.",
+    "id_reserva is now bound from VeredictoDeReserva::Concedida and flows into both conciliar_presupuesto (Ok path) and liberar_presupuesto (Err path) in crates/hexcell/src/procesador.rs, closing the silent-activa risk flagged in the blueprint",
+    "Deficit capping verified line-by-line in conciliar_presupuesto: charge is capped at disponible_actual, remainder surfaced only as deficit_no_cubierto plus log event presupuesto_deficit_no_cubierto, never a movimientos row",
+    "Zero-delta case (M == N) correctly skips the movimientos insert, honoring CHECK (monto <> 0)",
+    "Both conciliar_presupuesto and liberar_presupuesto run inside a single con_escritura + unchecked_transaction block, matching reservar_presupuesto's shape",
+    "ReservaNoActiva path verified for double-resolution; storage test asserts saldo untouched on second call",
+    "Storage tests are discriminating: separate tests for surplus, covered deficit, uncovered deficit, exact match, release, double-resolution, and ledger-sum consistency (7 new tests) plus 1 in-crate procesador.rs log-assertion test and 2 integration reservado==0 assertions",
+    "Integration tests in crates/hexcell/tests/inferencia.rs assert saldo.reservado == 0 rather than disponible restoration directly (repo.pools is crate-private); this is an accepted proxy per the carry-forward bundle since the storage-layer unit tests already assert disponible arithmetic precisely",
+    "ADR update is accurate; one loose phrase ('queda registrado unicamente en metricas/logs') slightly overstates scope since no metrics were added (task 11 non-goal) -- only a log event exists -- cosmetic, non-blocking",
+    "No new Cargo dependency, no new migration, no monetary/currency value introduced, hexcell-core dependency table untouched",
+    "All touched files are within the contract's touch list; no forbidden file was modified"
+  ],
+  "fix_tasks": []
+}

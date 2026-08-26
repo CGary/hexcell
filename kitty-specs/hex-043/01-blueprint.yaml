@@ -1,0 +1,268 @@
+task_id: HEX-043
+summary: >-
+  Add conciliar_presupuesto and liberar_presupuesto to hexcell-storage, extend
+  RespuestaDeInferencia with consumed-units metadata, and wire ProcesadorDeInferencia to
+  resolve every hold.
+
+affected_files:
+  - crates/hexcell-core/src/inferencia.rs
+  - crates/hexcell-storage/src/presupuesto.rs
+  - crates/hexcell-storage/src/lib.rs
+  - crates/hexcell/src/inferencia.rs
+  - crates/hexcell/src/procesador.rs
+  - crates/hexcell-storage/tests/presupuesto.rs
+  - crates/hexcell/tests/inferencia.rs
+  - docs/adr/adr-0005-contabilidad-dos-fases.md
+  - docs/STATUS.md
+
+symbols:
+  - "hexcell_core::inferencia::RespuestaDeInferencia::unidades_consumidas (new field, Value Object)"
+  - "hexcell_storage::presupuesto::ResultadoDeResolucion (new enum, Value Object)"
+  - "hexcell_storage::presupuesto::RepositorioDeSesiones::conciliar_presupuesto (new, Application Service)"
+  - "hexcell_storage::presupuesto::RepositorioDeSesiones::liberar_presupuesto (new, Application Service)"
+  - "hexcell::inferencia::ProveedorSimulado::generar (modified, fills unidades_consumidas)"
+  - "hexcell::procesador::ProcesadorDeInferencia::procesar (modified, Orchestrator: binds id_reserva, calls conciliar on Ok / liberar on Err)"
+
+dependencies:
+  - crates/hexcell-storage/migraciones/sesiones/0002-saldo-y-movimientos.sql
+  - crates/hexcell-storage/src/pools.rs
+  - crates/hexcell-storage/src/error.rs
+  - crates/hexcell-storage/src/tiempo.rs
+  - crates/hexcell-core/src/presupuesto.rs
+  - crates/hexcell/src/registro.rs
+  - docs/plan/fase-a-4-admision-presupuesto.md
+
+test_scenarios:
+  - statement: >-
+      conciliar_presupuesto with real consumption M < reserved N sets estado 'conciliada' with
+      resuelta_ms, adds (N - M) to saldo.disponible, subtracts N from saldo.reservado, and inserts
+      exactly one movimientos row with clase 'conciliacion' and monto = +(N - M).
+    covers: [AC-1]
+  - statement: >-
+      conciliar_presupuesto with M > N and enough disponible to absorb the deficit sets estado
+      'conciliada', subtracts N from saldo.reservado, subtracts (M - N) from saldo.disponible, and
+      inserts exactly one 'conciliacion' movement with monto = -(M - N); ResultadoDeResolucion
+      reports deficit_no_cubierto = 0.
+    covers: [AC-2]
+  - statement: >-
+      conciliar_presupuesto with M > N when disponible cannot absorb the whole deficit charges only
+      what exists, leaves disponible at exactly 0 without violating CHECK (disponible >= 0), closes
+      the reservation as 'conciliada', and reports the shortfall in
+      ResultadoDeResolucion::Resuelta.deficit_no_cubierto.
+    covers: [AC-2]
+  - statement: >-
+      conciliar_presupuesto with M == N closes the reservation as 'conciliada' and leaves
+      saldo.disponible unchanged while subtracting N from saldo.reservado, inserting NO
+      'conciliacion' movement, because movimientos enforces CHECK (monto <> 0).
+    covers: [AC-2]
+  - statement: >-
+      liberar_presupuesto sets estado 'liberada' with resuelta_ms, adds the full N back to
+      saldo.disponible, subtracts N from saldo.reservado, and inserts exactly one movimientos row
+      with clase 'liberacion' and monto = +N.
+    covers: [AC-3]
+  - statement: >-
+      Calling conciliar_presupuesto or liberar_presupuesto twice on the same reservation returns
+      ResultadoDeResolucion::ReservaNoActiva on the second call and leaves saldo untouched, so no
+      double refund can drive saldo.reservado below zero.
+    covers: [AC-3]
+  - statement: >-
+      After conciliar_presupuesto or liberar_presupuesto, the sum of movimientos.monto equals
+      saldo.disponible, and every movimientos row carries the id_reserva and id_conversacion of the
+      resolved reservation.
+    covers: [AC-1, AC-3]
+  - statement: >-
+      ProcesadorDeInferencia::procesar with a provider returning Ok leaves zero reservations in
+      estado 'activa' for that conversation and produces an outgoing message.
+    covers: [AC-4]
+  - statement: >-
+      ProcesadorDeInferencia::procesar with ProveedorSimulado::que_falla leaves zero reservations in
+      estado 'activa', restores saldo.disponible to its pre-call value, and produces no message.
+    covers: [AC-4]
+  - statement: >-
+      In-crate unit test in procesador.rs asserts that an uncovered deficit emits the structured log
+      entry presupuesto_deficit_no_cubierto with the conversation id, since registro::pruebas is
+      pub(crate) and unreachable from integration tests.
+    covers: [AC-4]
+  - statement: >-
+      ProveedorSimulado::generar returns the same unidades_consumidas value across repeated calls
+      with identical input, computed without rand, clock or HashMap ordering.
+    covers: [AC-5]
+
+strategy:
+  - step: 1
+    action: >-
+      Value Object - add field unidades_consumidas of type
+      hexcell_core::presupuesto::UnidadesDePresupuesto (u64, total, NOT Option) to
+      RespuestaDeInferencia. Document in the module header why it is total: mapping a real provider
+      response that carries no token metadata onto a concrete number is the task 9 HTTP client's
+      responsibility (it may fall back to estimar_coste), so the core type stays branch-free. Uses
+      only an existing hexcell-core module, so the crate keeps its empty dependency table (adr-0002).
+    files:
+      - crates/hexcell-core/src/inferencia.rs
+  - step: 2
+    action: >-
+      Value Object - declare enum ResultadoDeResolucion with variants Resuelta { ajuste_aplicado:
+      i64, deficit_no_cubierto: i64 } and ReservaNoActiva. ajuste_aplicado is the signed delta really
+      applied to saldo.disponible; deficit_no_cubierto is the part of an over-consumption that could
+      not be charged and is always 0 for liberar_presupuesto. Derive Clone, Copy, Debug, PartialEq,
+      Eq to match Saldo and VeredictoDeReserva.
+    files:
+      - crates/hexcell-storage/src/presupuesto.rs
+  - step: 3
+    action: >-
+      Application Service - implement conciliar_presupuesto(&self, id_reserva: i64,
+      unidades_consumidas: UnidadesDePresupuesto, marca_temporal: SystemTime) inside ONE
+      con_escritura + unchecked_transaction block, mirroring reservar_presupuesto. Sequence - (a)
+      SELECT id_conversacion, monto_reservado FROM reservas WHERE id = ?1 AND estado = 'activa',
+      returning ReservaNoActiva when no row matches; (b) compute the delta on disponible; (c) UPDATE
+      reservas SET estado = 'conciliada', resuelta_ms = ?; (d) UPDATE saldo; (e) INSERT the
+      'conciliacion' movement ONLY when the delta is non-zero. Convert unidades_consumidas with
+      i64::try_from(..).unwrap_or(i64::MAX), matching the existing saturating style.
+    files:
+      - crates/hexcell-storage/src/presupuesto.rs
+  - step: 4
+    action: >-
+      Deficit rule - when unidades_consumidas M exceeds monto_reservado N, the charge applied to
+      disponible is capped at the current disponible value, so disponible never goes below zero and
+      CHECK (disponible >= 0) is never the thing that fails the transaction. The uncovered remainder
+      is returned as deficit_no_cubierto and is deliberately NOT written to movimientos - the clase
+      CHECK admits only aporte, reserva, conciliacion and liberacion, and this task must not add a
+      migration. Justify this choice in the doc comment - failing the transaction instead would leave
+      the reservation in estado 'activa' and break the task's first invariant.
+    files:
+      - crates/hexcell-storage/src/presupuesto.rs
+  - step: 5
+    action: >-
+      Application Service - implement liberar_presupuesto(&self, id_reserva: i64, marca_temporal:
+      SystemTime) with the same single-transaction shape - guard on estado = 'activa', UPDATE reservas
+      to 'liberada' with resuelta_ms, UPDATE saldo adding N back to disponible and subtracting N from
+      reservado, and INSERT one 'liberacion' movement with monto = +N. The movement is always written
+      because reservas enforces CHECK (monto_reservado > 0), so monto is never zero here.
+    files:
+      - crates/hexcell-storage/src/presupuesto.rs
+  - step: 6
+    action: >-
+      Re-export ResultadoDeResolucion from the crate root next to the existing
+      "pub use presupuesto::{Saldo, VeredictoDeReserva};" so crates/hexcell can name the type.
+    files:
+      - crates/hexcell-storage/src/lib.rs
+  - step: 7
+    action: >-
+      Fill unidades_consumidas in ProveedorSimulado::generar as
+      estimar_coste(&peticion.contenido) + estimar_coste(&contenido_de_respuesta), a deterministic
+      function of two deterministic inputs. Extend the module header - the value deliberately exceeds
+      the prompt-only estimate used by the hold, so the deficit branch of the reconciliation is
+      exercised on the ordinary path instead of lying dormant until the real provider arrives.
+    files:
+      - crates/hexcell/src/inferencia.rs
+  - step: 8
+    action: >-
+      Orchestrator - in ProcesadorDeInferencia::procesar, bind id_reserva from
+      VeredictoDeReserva::Concedida (today discarded with "{ .. }"), then after
+      self.proveedor.generar - on Ok call conciliar_presupuesto with
+      respuesta.unidades_consumidas BEFORE building the outgoing message, and on Err call
+      liberar_presupuesto and return None. Keep the existing fail-closed comment style - no product
+      rule, no retry, no apology text.
+    files:
+      - crates/hexcell/src/procesador.rs
+  - step: 9
+    action: >-
+      Log only anomalies from the resolution - reuse the existing event name
+      fallo_de_persistencia at NivelDeRegistro::Error when conciliar or liberar returns Err, and add
+      a new event presupuesto_deficit_no_cubierto at NivelDeRegistro::Aviso when
+      deficit_no_cubierto is greater than zero. Ignore ReservaNoActiva in the processor with a
+      comment stating it is unreachable there because the hold was just created in the same call;
+      the storage tests cover that variant.
+    files:
+      - crates/hexcell/src/procesador.rs
+  - step: 10
+    action: >-
+      Extend the storage test suite with the surplus, covered-deficit, uncovered-deficit, exact-match,
+      release, double-resolution and ledger-consistency scenarios, following the existing helper style
+      of crates/hexcell-storage/tests/presupuesto.rs.
+    files:
+      - crates/hexcell-storage/tests/presupuesto.rs
+  - step: 11
+    action: >-
+      Update the three RespuestaDeInferencia construction sites so the workspace compiles -
+      ProveedorSimulado, the in-crate ProveedorDePrueba in procesador.rs tests, and ProveedorContador
+      in tests/inferencia.rs. Add the AC-4 integration assertions that no reservation stays 'activa'
+      after success and after provider failure.
+    files:
+      - crates/hexcell/tests/inferencia.rs
+      - crates/hexcell/src/procesador.rs
+  - step: 12
+    action: >-
+      Rewrite the "Fase 2" section of adr-0005 from pending to implemented, recording the three rules
+      this task decides - the capped deficit charge with an explicitly reported uncovered remainder,
+      the suppression of a zero-amount conciliacion movement forced by CHECK (monto <> 0), and the
+      deferral of any real timeout to task 9 with the release path already in place. Update the
+      Consecuencias section, whose current negative limitation about reservations staying 'activa' no
+      longer holds. Add the corresponding STATUS.md entry. Do NOT touch docs/adr/README.md - its row
+      for adr-0005 already reads Vigente and already mentions conciliacion posterior.
+    files:
+      - docs/adr/adr-0005-contabilidad-dos-fases.md
+      - docs/STATUS.md
+
+risks:
+  - >-
+    VERIFIED CONSTRAINT - movimientos enforces CHECK (monto <> 0) at
+    crates/hexcell-storage/migraciones/sesiones/0002-saldo-y-movimientos.sql line 47. A conciliacion
+    whose net delta on disponible is zero (M == N, or a deficit fully uncovered because disponible is
+    already 0) MUST NOT be inserted or the transaction fails and the reservation stays 'activa'. This
+    is the single most likely implementation mistake in this task.
+  - >-
+    VERIFIED CONSTRAINT - saldo enforces CHECK (disponible >= 0) and CHECK (reservado >= 0) at the
+    same migration lines 17-18. The reservado guard is why both functions must filter on
+    estado = 'activa' and report ReservaNoActiva instead of blindly subtracting - a second
+    liberar_presupuesto on an already-released reservation would drive reservado negative and fail.
+  - >-
+    VERIFIED - movimientos.saldo_resultante has CHECK (saldo_resultante >= 0), so it must be read
+    back (or computed) as the post-update disponible, never as the signed delta.
+  - >-
+    VERIFIED - ProcesadorDeInferencia::procesar currently discards the reservation id with
+    "Ok(VeredictoDeReserva::Concedida { .. }) => {}" at crates/hexcell/src/procesador.rs line 116.
+    Failing to bind id_reserva there is a silent way to leave every hold 'activa'.
+  - >-
+    VERIFIED - RespuestaDeInferencia has exactly three construction sites (crates/hexcell/src/inferencia.rs,
+    the tests module of crates/hexcell/src/procesador.rs, crates/hexcell/tests/inferencia.rs). Adding a
+    field is a breaking struct-literal change; all three are in the contract's touch list, and no
+    hexcell-core test constructs the type.
+  - >-
+    VERIFIED - hexcell-storage/src/lib.rs re-exports presupuesto types explicitly at line 58. A new
+    public enum that is not re-exported there is unreachable from crates/hexcell.
+  - >-
+    VERIFIED - PoolDeSesiones holds a single Mutex<Connection> for writes (crates/hexcell-storage/src/pools.rs
+    line 103), so the read-then-write sequence inside unchecked_transaction is serialized. The same
+    assumption already underpins reservar_presupuesto.
+  - >-
+    VERIFIED - no existing test asserts saldo values after running ProcesadorDeInferencia, and the
+    binary harness seeds HEXCELL_PRESUPUESTO_INICIAL_UNIDADES=1000 while injecting at most 4 events, so
+    charging the extra consumed units on the ordinary path cannot exhaust the balance in any current test.
+  - >-
+    OPEN DECISION RESOLVED (a) - deficit semantics. The charge is capped at the current disponible and
+    the uncovered remainder is surfaced as data plus a log event rather than as a ledger row. Chosen
+    over failing the transaction (would break invariant 1) and over adding a 'perdida' movement class
+    (would need a migration, a declared non-goal). Mechanism only, no monetary meaning.
+  - >-
+    OPEN DECISION RESOLVED (b) - timeout. No timeout is introduced. A provider timeout surfaces as Err
+    from ProveedorDeInferencia::generar and therefore takes the liberar_presupuesto path, which is the
+    release mechanism that docs/plan/fase-a-4-admision-presupuesto.md line 116 asks task 8 to deliver.
+    The timeout that triggers it belongs to task 9's HTTPS client and is recorded as deferred in adr-0005.
+  - >-
+    OPEN DECISION RESOLVED (c) - metadata shape. unidades_consumidas is a total u64, not Option<u64>, so
+    the processor has no None branch and no policy for missing metadata is invented in this task; the
+    task 9 adapter owns that mapping.
+  - >-
+    RISK - adr-0005 is the design authority born in HEX-042 and currently states that Fase 2 is pending
+    and that reservations remain 'activa'. Both statements become false with this task, so the ADR must
+    be updated in the same commit. This is an extension of the agent-authored design, not a supersession
+    of a human decision; a superseding ADR is NOT appropriate here.
+  - >-
+    RISK - all added Rust and Markdown prose must be Spanish (repo is public and Spanish-only). English
+    leaks in doc comments and SQL-style comments are the recurring failure mode; the contract carries a
+    deterministic grep over the four touched source files as a verify command.
+  - >-
+    NOTE - quorum task start is known to fail initializing 04-implementation-log.yaml because the
+    directory slug HEX-043-new-spec does not match its task_id pattern. Non-fatal and expected; the
+    worktree and branch are still created.

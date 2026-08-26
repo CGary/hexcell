@@ -1,0 +1,40 @@
+He llevado a cabo la implementación completa de la tarea **HEX-043** (conciliación posterior y liberación de reservas de presupuesto según la Fase 2 del [ADR-0005](file:///home/gary/dev/hexcell/worktrees/HEX-043-new-spec/docs/adr/adr-0005-contabilidad-dos-fases.md)).
+
+### Resumen de cambios técnicos
+
+1. **[hexcell-core](file:///home/gary/dev/hexcell/worktrees/HEX-043-new-spec/crates/hexcell-core/src/inferencia.rs)**:
+   - Se extendió [`RespuestaDeInferencia`](file:///home/gary/dev/hexcell/worktrees/HEX-043-new-spec/crates/hexcell-core/src/inferencia.rs#L48-L54) con el campo `unidades_consumidas: UnidadesDePresupuesto` (`u64` total, no `Option`), manteniendo la tabla de dependencias del núcleo vacía (`std` únicamente).
+
+2. **[hexcell-storage](file:///home/gary/dev/hexcell/worktrees/HEX-043-new-spec/crates/hexcell-storage/src/presupuesto.rs)**:
+   - Se declaró el enum [`ResultadoDeResolucion`](file:///home/gary/dev/hexcell/worktrees/HEX-043-new-spec/crates/hexcell-storage/src/presupuesto.rs#L46-L56) (`Resuelta { ajuste_aplicado, deficit_no_cubierto }` y `ReservaNoActiva`) y se re-exportó en la [raíz del crate](file:///home/gary/dev/hexcell/worktrees/HEX-043-new-spec/crates/hexcell-storage/src/lib.rs#L58).
+   - Se implementaron [`conciliar_presupuesto`](file:///home/gary/dev/hexcell/worktrees/HEX-043-new-spec/crates/hexcell-storage/src/presupuesto.rs#L227-L327) y [`liberar_presupuesto`](file:///home/gary/dev/hexcell/worktrees/HEX-043-new-spec/crates/hexcell-storage/src/presupuesto.rs#L329-L408) en `RepositorioDeSesiones`, cada una ejecutada como una única transacción atómica SQLite.
+   - Respeto estricto de restricciones de esquema: el sobreconsumo se acota al saldo disponible para preservar `CHECK (disponible >= 0)`, reportando el déficit sobrante en `deficit_no_cubierto`; si el delta neto sobre disponible es cero ($M == N$ o déficit sin disponible), se omite la inserción en `movimientos` para cumplir `CHECK (monto <> 0)`.
+
+3. **[hexcell](file:///home/gary/dev/hexcell/worktrees/HEX-043-new-spec/crates/hexcell/src/procesador.rs)**:
+   - En [`ProveedorSimulado::generar`](file:///home/gary/dev/hexcell/worktrees/HEX-043-new-spec/crates/hexcell/src/inferencia.rs#L140-L157), se calcula `unidades_consumidas` de forma determinista como `estimar_coste(prompt) + estimar_coste(respuesta)`.
+   - En [`ProcesadorDeInferencia::procesar`](file:///home/gary/dev/hexcell/worktrees/HEX-043-new-spec/crates/hexcell/src/procesador.rs#L108-L170), se enlaza `id_reserva` y se invoca `conciliar_presupuesto` ante `Ok` o `liberar_presupuesto` ante `Err`, emitiendo el log estructurado `presupuesto_deficit_no_cubierto` ante déficits no cubiertos.
+
+4. **Pruebas y Documentación**:
+   - Tests de almacenamiento en [crates/hexcell-storage/tests/presupuesto.rs](file:///home/gary/dev/hexcell/worktrees/HEX-043-new-spec/crates/hexcell-storage/tests/presupuesto.rs#L164-L409) (excedente, déficit cubierto, déficit no cubierto, coincidencia exacta, liberación, doble resolución y consistencia contable).
+   - Tests de integración en [crates/hexcell/tests/inferencia.rs](file:///home/gary/dev/hexcell/worktrees/HEX-043-new-spec/crates/hexcell/tests/inferencia.rs#L214-L281) validando `AC-4` (cero reservas activas tras éxito y tras fallo).
+   - Actualizados [docs/adr/adr-0005-contabilidad-dos-fases.md](file:///home/gary/dev/hexcell/worktrees/HEX-043-new-spec/docs/adr/adr-0005-contabilidad-dos-fases.md) y [docs/STATUS.md](file:///home/gary/dev/hexcell/worktrees/HEX-043-new-spec/docs/STATUS.md).
+
+---
+
+=== Fin de fase: Implementación ===
+
+Resultado: DONE
+Resumen técnico: Implementada conciliación y liberación posterior de presupuesto en dos fases (ADR-0005) en hexcell-storage y cableada en ProcesadorDeInferencia.
+
+Artefactos producidos:
+- Diff committeado en la rama ai/HEX-043-new-spec (worktrees/HEX-043-new-spec/)
+- .ai/tasks/active/HEX-043-new-spec/04-implementation-log.yaml
+
+No hay transición de estado: el worktree y la rama siguen iguales.
+
+Pasos siguientes (los despacha el orquestador, NO yo):
+1. [Obligatorio] /q-verify HEX-043 — corre verify.commands del contrato dentro del worktree y escribe 05-validation.json.
+
+Si querés volver atrás:
+- [WORKTREE:HEX-043] git -C worktrees/HEX-043-new-spec reset --hard HEAD~1 — descarta el último commit del worktree.
+- [ROOT] quorum task back HEX-043 — borra worktree y rama (perdés todos los commits no mergeados).

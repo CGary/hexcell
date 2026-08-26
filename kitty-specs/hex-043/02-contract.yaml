@@ -1,0 +1,116 @@
+task_id: HEX-043
+summary: >-
+  Implement post-execution reconciliation (surplus return, capped deficit charge, release on
+  failure) and wire it into ProcesadorDeInferencia per ADR-0005 phase 2.
+goal: >-
+  Add conciliar_presupuesto and liberar_presupuesto to
+  crates/hexcell-storage/src/presupuesto.rs, each as a single SQLite transaction that closes an
+  'activa' reservation, adjusts saldo and records the matching movimientos row. Extend
+  RespuestaDeInferencia with a total u64 field unidades_consumidas filled deterministically by
+  ProveedorSimulado. Wire ProcesadorDeInferencia::procesar so an Ok from the provider reconciles the
+  hold with the reported consumption and an Err releases it in full, leaving no reservation in estado
+  'activa'. Update adr-0005 and docs/STATUS.md in the same change. No new migration, no new
+  environment variable, no new crate dependency.
+
+read:
+  - .ai/tasks/active/HEX-043-new-spec/00-spec.yaml
+  - .ai/tasks/active/HEX-043-new-spec/01-blueprint.yaml
+  - crates/hexcell-storage/migraciones/sesiones/0002-saldo-y-movimientos.sql
+  - crates/hexcell-storage/src/pools.rs
+  - crates/hexcell-storage/src/error.rs
+  - crates/hexcell-storage/src/tiempo.rs
+  - crates/hexcell-storage/src/sesiones.rs
+  - crates/hexcell-core/src/presupuesto.rs
+  - crates/hexcell-core/tests/presupuesto.rs
+  - crates/hexcell/src/registro.rs
+  - crates/hexcell/src/main.rs
+  - docs/plan/fase-a-4-admision-presupuesto.md
+  - docs/adr/README.md
+  - CLAUDE.md
+
+touch:
+  - crates/hexcell-core/src/inferencia.rs
+  - crates/hexcell-storage/src/presupuesto.rs
+  - crates/hexcell-storage/src/lib.rs
+  - crates/hexcell/src/inferencia.rs
+  - crates/hexcell/src/procesador.rs
+  - crates/hexcell-storage/tests/presupuesto.rs
+  - crates/hexcell/tests/inferencia.rs
+  - docs/adr/adr-0005-contabilidad-dos-fases.md
+  - docs/STATUS.md
+
+forbid:
+  files:
+    - crates/hexcell/src/motor.rs
+    - crates/hexcell/src/main.rs
+    - crates/hexcell/src/configuracion.rs
+    - crates/hexcell-storage/src/sesiones.rs
+    - crates/hexcell-storage/src/migraciones.rs
+    - crates/hexcell-storage/src/error.rs
+    - crates/hexcell-storage/src/pools.rs
+    - crates/hexcell-storage/migraciones/sesiones/0001-conversaciones-y-mensajes.sql
+    - crates/hexcell-storage/migraciones/sesiones/0002-saldo-y-movimientos.sql
+    - crates/hexcell-core/src/presupuesto.rs
+    - crates/hexcell-core/src/lib.rs
+    - crates/hexcell-core/tests/presupuesto.rs
+    - crates/hexcell/tests/motor.rs
+    - crates/hexcell/tests/admision.rs
+    - crates/hexcell/tests/deduplicacion.rs
+    - crates/hexcell/tests/persistencia.rs
+    - crates/hexcell/tests/continuidad_de_hilo.rs
+    - crates/hexcell/tests/politica_fuera_de_ventana.rs
+    - crates/hexcell/tests/respaldo_y_restauracion.rs
+    - crates/hexcell/tests/comun/mod.rs
+    - crates/hexcell/tests/configuracion.rs
+    - crates/hexcell-storage/tests/migraciones.rs
+    - docs/adr/README.md
+    - docs/PRD.md
+    - Cargo.toml
+    - Cargo.lock
+  behaviors:
+    - "Do NOT create a new SQLite migration or alter 0002-saldo-y-movimientos.sql; schema 0002 already supports reconcile and release."
+    - "Do NOT insert a movimientos row whose monto would be 0; the table enforces CHECK (monto <> 0). When the net delta on saldo.disponible is zero, close the reservation WITHOUT a conciliacion movement."
+    - "Do NOT let a deficit charge drive saldo.disponible below zero; cap the charge at the current disponible and report the uncovered remainder as ResultadoDeResolucion::Resuelta.deficit_no_cubierto."
+    - "Do NOT return Err or panic when the deficit exceeds disponible; the reservation must still be closed, or the task's first invariant (no reservation left 'activa') is broken."
+    - "Do NOT resolve a reservation without filtering on estado = 'activa'; a second resolution must return ResultadoDeResolucion::ReservaNoActiva and touch nothing, otherwise saldo.reservado can go negative."
+    - "Do NOT split conciliar_presupuesto or liberar_presupuesto across more than one SQLite transaction; use one con_escritura + unchecked_transaction block, matching reservar_presupuesto."
+    - "Do NOT add any dependency to any Cargo.toml; hexcell-core must keep its empty dependency table (adr-0002) and unidades_consumidas must use hexcell_core::presupuesto::UnidadesDePresupuesto."
+    - "Do NOT make unidades_consumidas an Option; it is a total u64. Mapping a provider response lacking token metadata onto a number is task 9's concern."
+    - "Do NOT introduce a request timeout, retry, backoff, degraded-mode fallback, apology text or metrics; those are tasks 9, 10 and 11."
+    - "Do NOT introduce any monetary value, currency, price or rate; budget units stay opaque integers."
+    - "Do NOT move ProcesadorDeEco or convert any existing ProcesadorDeEco test into an inference test."
+    - "Do NOT assert structured log entries from an integration test; registro::pruebas is pub(crate), so log assertions belong in the tests module of crates/hexcell/src/procesador.rs."
+    - "All added Rust doc comments, inline comments, SQL-style comments and Markdown prose MUST be in Spanish; only Quorum artifact field values are English."
+    - "Do NOT version or create *.db, *.db-wal, *.db-shm or .env* files."
+    - "Do NOT create a new ADR; extend the existing docs/adr/adr-0005-contabilidad-dos-fases.md and leave docs/adr/README.md untouched (its adr-0005 row already reads Vigente)."
+
+verify:
+  commands:
+    - cargo fmt --check
+    - cargo clippy --workspace -- -D warnings
+    - cargo build --workspace
+    - cargo test --workspace
+    - "bash -c '! grep -nE \"\\b(the|and|with|budget|reservation|surplus|balance|amount|movement)\\b\" crates/hexcell-storage/src/presupuesto.rs crates/hexcell-core/src/inferencia.rs crates/hexcell/src/inferencia.rs crates/hexcell/src/procesador.rs'"
+  target_s: 60
+
+acceptance:
+  human_gate: true
+
+limits:
+  max_files_changed: 9
+  max_diff_lines: 900
+  per_class:
+    - glob: "crates/**/tests/*.rs"
+      max_diff_lines: 420
+    - glob: "crates/hexcell-storage/src/presupuesto.rs"
+      max_diff_lines: 220
+    - glob: "docs/**"
+      max_diff_lines: 90
+
+execution:
+  mode: worktree_edit
+  branch: ai/HEX-043-new-spec
+
+retry_policy:
+  max_attempts: 2
+  escalate_after: 2

@@ -1,0 +1,88 @@
+task_id: HEX-043
+summary: Implement post-execution reconciliation of budget reservations (surplus return, deficit charge, release on failure) per ADR-0005 phase 2.
+goal: >
+  Extend the two-phase budget accounting from ADR-0005 with its second phase: after an
+  inference call completes, adjust the previously created hold ('reserva') according to the
+  real outcome. On success, reconcile the reservation against actual consumed units
+  (returning any surplus to disponible, charging any deficit) and mark it 'conciliada'. On
+  provider failure, release the full reserved amount back to disponible and mark it
+  'liberada'. Extend RespuestaDeInferencia with opaque consumed-units usage metadata (real
+  token extraction is out of scope; a deterministic simulated value is enough for this task)
+  and wire ProcesadorDeInferencia::procesar to call reconcile on Ok and release on Err.
+invariants:
+  - No reservation created by reservar_presupuesto remains in estado 'activa' once its
+    associated inference call has finished (success or failure).
+  - "The CHECK (disponible >= 0) constraint on saldo is never violated by conciliar_presupuesto\
+    \ or liberar_presupuesto."
+  - Every conciliar_presupuesto or liberar_presupuesto call executes as a single atomic
+    SQLite transaction, matching the transactional style of reservar_presupuesto.
+  - Every conciliacion movement and every liberacion movement is recorded in movimientos with
+    the correct clase, and the ledger sum stays consistent with saldo.disponible + saldo.reservado
+    for the affected reservation.
+  - hexcell-core keeps its empty dependency table (adr-0002, std only); new usage metadata on
+    RespuestaDeInferencia must not introduce a new crate dependency.
+acceptance:
+  - id: AC-1
+    statement: Reconciling a reservation whose real consumption is lower than the reserved
+      amount returns the surplus to disponible and closes the reservation as conciliada.
+    given: an active reservation for N units created by reservar_presupuesto
+    when: conciliar_presupuesto is called with a real consumption M < N
+    then: the reservation's estado becomes 'conciliada' with resuelta_ms set, saldo.disponible
+      increases by (N - M), saldo.reservado decreases by N, and exactly one movimientos row
+      with clase 'conciliacion' is inserted
+  - id: AC-2
+    statement: Reconciling a reservation whose real consumption exceeds the reserved amount
+      applies the extra charge per the blueprint's chosen deficit semantics without violating
+      the non-negative disponible invariant.
+    given: an active reservation for N units created by reservar_presupuesto
+    when: conciliar_presupuesto is called with a real consumption M > N
+    then: the reservation's estado becomes 'conciliada' with resuelta_ms set, saldo.reservado
+      decreases by N, the deficit (M - N) is applied to saldo.disponible following the
+      semantics defined in 01-blueprint.yaml, disponible never goes below zero, and exactly
+      one movimientos row with clase 'conciliacion' records the net adjustment
+  - id: AC-3
+    statement: Releasing a reservation after a provider failure returns the full reserved
+      amount and closes the reservation as liberada.
+    given: an active reservation for N units created by reservar_presupuesto
+    when: liberar_presupuesto is called for that reservation following a provider error
+    then: the reservation's estado becomes 'liberada' with resuelta_ms set, saldo.disponible
+      increases by N, saldo.reservado decreases by N, and exactly one movimientos row with
+      clase 'liberacion' is inserted
+  - id: AC-4
+    statement: ProcesadorDeInferencia wires the real outcome of the provider call to the
+      correct budget resolution path.
+    given: ProcesadorDeInferencia::procesar has created a hold via reservar_presupuesto and
+      invoked ProveedorDeInferencia
+    when: the provider call returns Ok(RespuestaDeInferencia) or Err
+    then: an Ok outcome triggers conciliar_presupuesto with the response's consumed-units
+      metadata, and an Err outcome triggers liberar_presupuesto for the full reserved amount,
+      with no reservation left 'activa' afterward
+  - id: AC-5
+    statement: RespuestaDeInferencia carries consumed-units usage metadata and ProveedorSimulado
+      fills it deterministically.
+    given: the existing hexcell-core RespuestaDeInferencia type, which today only has contenido
+    when: ProveedorSimulado produces a response
+    then: the response includes an opaque integer consumed-units field with a deterministic
+      value, and hexcell-core's dependency table remains std-only
+  - cargo build --workspace, cargo test --workspace, cargo fmt --check, and cargo clippy
+    --workspace -- -D warnings all pass.
+risk: medium
+non_goals:
+  - Real inference provider HTTP client and real token extraction from a live response (task 9).
+  - Degraded-mode fallback when budget is exhausted (task 10).
+  - Metrics or observability instrumentation for reconciliation (task 11).
+  - Any monetization values, pricing, or currency conversion.
+  - New SQLite migrations (schema 0002 already supports reconcile and release).
+  - Introducing a real request timeout in ProcesadorDeInferencia (out of scope; task 9's
+    client owns real timeouts). Whether a provider timeout is treated as just another Err
+    for this task's purposes is left as an open decision for 01-blueprint.yaml.
+constraints:
+  - conciliar_presupuesto and liberar_presupuesto must live in crates/hexcell-storage/src/presupuesto.rs
+    alongside reservar_presupuesto and aportar_presupuesto, each as a single SQLite transaction.
+  - No new runtime dependencies in hexcell-core (adr-0002 empty dependency table) or elsewhere
+    beyond what already exists in the workspace.
+  - All added Rust and Markdown prose must be in Spanish except Quorum artifact field values.
+  - Never version *.db, *.db-wal, *.db-shm, or .env* files.
+  - The exact deficit-charge semantics (AC-2) and the exact shape of the usage-metadata field
+    (AC-5) are open design decisions to be resolved and justified in 01-blueprint.yaml, not
+    invented here.

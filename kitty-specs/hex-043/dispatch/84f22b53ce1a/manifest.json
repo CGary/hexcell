@@ -1,0 +1,49 @@
+{
+  "task_id": "HEX-043",
+  "bundle_hash": "84f22b53ce1a7b4541ba82f6d80afa6e58502ae85521464299bfc860e45f8a0d",
+  "files": [
+    ".ai/tasks/active/HEX-043-new-spec/00-spec.yaml",
+    ".ai/tasks/active/HEX-043-new-spec/01-blueprint.yaml",
+    "CLAUDE.md",
+    "crates/hexcell-core/src/inferencia.rs",
+    "crates/hexcell-core/src/presupuesto.rs",
+    "crates/hexcell-core/tests/presupuesto.rs",
+    "crates/hexcell-storage/migraciones/sesiones/0002-saldo-y-movimientos.sql",
+    "crates/hexcell-storage/src/error.rs",
+    "crates/hexcell-storage/src/lib.rs",
+    "crates/hexcell-storage/src/pools.rs",
+    "crates/hexcell-storage/src/presupuesto.rs",
+    "crates/hexcell-storage/src/sesiones.rs",
+    "crates/hexcell-storage/src/tiempo.rs",
+    "crates/hexcell-storage/tests/presupuesto.rs",
+    "crates/hexcell/src/inferencia.rs",
+    "crates/hexcell/src/main.rs",
+    "crates/hexcell/src/procesador.rs",
+    "crates/hexcell/src/registro.rs",
+    "crates/hexcell/tests/inferencia.rs"
+  ],
+  "protocol_version": "fleet-bundle-protocol/v2",
+  "created_at": "2026-08-26T16:32:38Z",
+  "dropped": [
+    {
+      "component": "code_slice",
+      "path": "docs/plan/fase-a-4-admision-presupuesto.md",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "docs/adr/adr-0005-contabilidad-dos-fases.md",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "docs/adr/README.md",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "docs/STATUS.md",
+      "reason": "bundle exceeded max_bytes budget"
+    }
+  ]
+}
