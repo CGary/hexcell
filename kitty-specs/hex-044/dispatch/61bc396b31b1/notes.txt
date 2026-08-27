@@ -1,0 +1,30 @@
+NOTES:
+1. Se implementó el adaptador `ProveedorOpenAi` en `crates/hexcell/src/proveedor_openai.rs` para soportar inferencia HTTPS saliente agnóstica compatible con OpenAI (chat-completions).
+2. Se introdujo el enum `ProveedorDeCelula` en `crates/hexcell/src/inferencia.rs` para permitir la selección estática entre `ProveedorSimulado` y `ProveedorOpenAi` sin violar la compatibilidad de objetos de trait (`dyn`).
+3. Se extendió `crates/hexcell/src/configuracion.rs` para procesar y validar las variables de entorno `HEXCELL_INFERENCIA_URL_BASE`, `HEXCELL_INFERENCIA_API_KEY`, `HEXCELL_INFERENCIA_MODELO`, `HEXCELL_INFERENCIA_TIMEOUT_MS` y `HEXCELL_INFERENCIA_REINTENTOS` con validación fail-closed y política de esquema (https obligatorio salvo loopback http).
+4. Se garantizó la protección estricta de credenciales mediante `fmt::Debug` escrito a mano con redacción (`«redactado»`).
+5. Se añadieron las dependencias `hyper-rustls 0.27` (con la biblioteca `ring`), `rustls 0.23` y `webpki-roots 1` en el workspace y en `crates/hexcell/Cargo.toml`.
+6. Se crearon las pruebas unitarias e integración offline con `std::net::TcpListener` en `crates/hexcell/tests/proveedor_openai.rs` y `crates/hexcell/tests/configuracion.rs`.
+7. Se formalizó la documentación normativa creando `docs/adr/adr-0012-inferencia-externa.md`, actualizando `docs/adr/README.md`, registrando la entrada `D-27` en `docs/bitacora-de-descartes.md` y actualizando `docs/STATUS.md`.
+8. Nota sobre el contrato: `crates/hexcell/src/apagado.rs` se conservó intacto para no violar la lista restrictiva de `touch` del contrato.
+END NOTES
+
+DONE: Implemented ProveedorOpenAi HTTPS provider, ProveedorDeCelula enum, environment-driven configuration, API key redaction, offline test suite, and normative documentation (ADR-0012, STATUS.md, D-27).
+
+=== Fin de fase: Implementación ===
+
+Resultado: DONE
+Resumen técnico: Se implementó `ProveedorOpenAi`Detrás de `ProveedorDeInferencia` con configuración guiada por entorno, redacción de credenciales en trazas, dependencias `hyper`+`rustls`/`ring`, suite de pruebas offline y documentación normativa completa (`adr-0012`, `STATUS.md`, `D-27`).
+
+Artefactos producidos:
+- Modificaciones y nuevos archivos en el worktree `worktrees/HEX-044-new-spec/`
+- `.ai/tasks/active/HEX-044-new-spec/04-implementation-log.yaml`
+
+No hay transición de estado: el worktree y la rama siguen iguales.
+
+Pasos siguientes (los despacha el orquestador, NO yo):
+1. [Obligatorio] `/q-verify HEX-044-new-spec` — corre `verify.commands` del contrato dentro del worktree y escribe `05-validation.json`.
+
+Si querés volver atrás:
+- [WORKTREE:HEX-044-new-spec] `git -C worktrees/HEX-044-new-spec checkout -- .` — descarta los cambios no committeados.
+- [ROOT] `quorum task back HEX-044-new-spec` — borra worktree y rama.

@@ -1,0 +1,243 @@
+task_id: HEX-044
+summary: "Implement ProveedorOpenAi, a config-driven OpenAI-compatible HTTPS inference provider in crates/hexcell, behind the existing ProveedorDeInferencia port."
+
+goal: |
+  Implement a real outbound HTTPS provider for the existing port
+  hexcell_core::inferencia::ProveedorDeInferencia. Everything below is verified against the
+  repository at commit bfe5bb2; follow it literally. All prose, comments and doc comments in
+  the repository are written in Spanish. Quorum artifact field values are English.
+
+  PLACEMENT. New module file crates/hexcell/src/proveedor_openai.rs, registered in
+  crates/hexcell/src/lib.rs. Do NOT create a ninth workspace crate: the module doc of
+  crates/hexcell/src/inferencia.rs already records the rule, namely that a provider only the
+  binary consumes stays a module, and docs/plan/fase-a-4-admision-presupuesto.md line 89 allows
+  "crate o modulo propio". hexcell-core must keep its dependency table empty (adr-0002): no
+  networking crate may appear in crates/hexcell-core/Cargo.toml.
+
+  THE PORT, VERBATIM. In crates/hexcell-core/src/inferencia.rs:
+    pub struct PeticionDeInferencia { pub conversacion: IdConversacion, pub contenido: String }
+    pub struct RespuestaDeInferencia { pub contenido: String, pub unidades_consumidas: UnidadesDePresupuesto }
+    pub trait ProveedorDeInferencia {
+        type Error: std::error::Error + Send + Sync + 'static;
+        fn generar(&self, peticion: PeticionDeInferencia)
+            -> impl Future<Output = Result<RespuestaDeInferencia, Self::Error>> + Send;
+    }
+  UnidadesDePresupuesto is u64. The trait returns impl Future and is deliberately NOT
+  trait-object compatible: Box<dyn ProveedorDeInferencia> WILL NOT COMPILE. Implement the trait
+  with `async fn generar(...)` in the impl block, exactly as ProveedorSimulado does today.
+  ProcesadorDeInferencia<I> requires I: ProveedorDeInferencia + Sync, so ProveedorOpenAi must be
+  Send + Sync.
+
+  PROVIDER SELECTION. Add to crates/hexcell/src/inferencia.rs an enum, next to ProveedorSimulado:
+    pub enum ProveedorDeCelula { Simulado(ProveedorSimulado), OpenAi(ProveedorOpenAi) }
+  implementing ProveedorDeInferencia by delegation, with an error enum covering both variants.
+  This exists because the port is not dyn-compatible and because crates/hexcell/src/main.rs
+  builds Motor in TWO channel branches (CanalSeleccionado::Simulado and ::Whatsmeow, near lines
+  203 and 236); the enum keeps one Motor construction per branch instead of four.
+
+  WIRE FORMAT, EXACT. POST to {url_base}/chat/completions, where url_base is the configured value
+  with any trailing '/' trimmed. Headers: "authorization: Bearer {api_key}" and
+  "content-type: application/json". Request body:
+    {"model":"<modelo>","messages":[{"role":"user","content":"<peticion.contenido>"}]}
+  Success body fields consumed:
+    choices[0].message.content  -> RespuestaDeInferencia.contenido
+    usage.prompt_tokens + usage.completion_tokens -> unidades_consumidas
+  Use serde derive structs; serde and serde_json are already in the workspace table. Ignore all
+  other fields. Do NOT read usage.total_tokens: providers disagree on it, and the spec fixes the
+  sum of the two components. Keep the opaque-units semantics of
+  hexcell_core::presupuesto::UnidadesDePresupuesto: tokens are counted as units, never priced,
+  and no currency, tariff or rate appears anywhere.
+
+  FAIL CLOSED. Return Err, never a fabricated or defaulted value, when: usage is absent; either
+  prompt_tokens or completion_tokens is absent, negative or not an integer; choices is empty;
+  choices[0].message.content is absent; or the body is not valid JSON. The budget-reservation
+  release path in crates/hexcell/src/procesador.rs already calls liberar_presupuesto on Err, so
+  failing closed is what refunds the hold.
+
+  TIMEOUT AND RETRY. One attempt = one whole request wrapped in tokio::time::timeout, covering
+  connect, TLS handshake, request and full body read. A deadline on the read alone is not enough:
+  a peer that completes TLS and then goes silent must still be cut off. Total attempts =
+  1 + reintentos. Retry ONLY on transport error, timeout, and HTTP 5xx. NEVER retry HTTP 429:
+  it is quota exhaustion and must surface immediately as Err on the first attempt. Never retry
+  any other 4xx. Never retry once a response body has been received and parsed, because a second
+  call after the provider already billed the first is a double spend. Backoff is a FIXED small
+  delay of 250 ms between attempts, not exponential: the total budget must fit under the drain
+  window, and exponential backoff makes the tail unpredictable.
+
+  CONFIGURATION. Extend crates/hexcell/src/configuracion.rs following the HEX-038 precedent
+  already in that file: one `pub const HEXCELL_X: &str = "HEXCELL_X";` per variable with a Spanish
+  doc comment, parsed inside Configuracion::desde_entorno, failing with
+  ErrorDeConfiguracion::ValorInvalido { nombre, valor, formato_esperado } where `nombre` is the
+  const and `formato_esperado` is a Spanish description; use the existing VariableAusente variant
+  for a required-but-missing variable, and the existing leer_obligatoria helper where it fits.
+  Variables:
+    HEXCELL_INFERENCIA_URL_BASE    optional; its PRESENCE selects the real provider
+    HEXCELL_INFERENCIA_API_KEY     required only when URL_BASE is present
+    HEXCELL_INFERENCIA_MODELO      required only when URL_BASE is present
+    HEXCELL_INFERENCIA_TIMEOUT_MS  optional, default TIMEOUT_INFERENCIA_POR_DEFECTO = 8000 ms, must be > 0
+    HEXCELL_INFERENCIA_REINTENTOS  optional, default REINTENTOS_INFERENCIA_POR_DEFECTO = 1, must be <= 3
+  ABSENCE OF HEXCELL_INFERENCIA_URL_BASE MUST KEEP ProveedorSimulado SELECTED, with behaviour
+  identical bit for bit to today. Seventeen-plus Motor::nuevo call sites across nine test files
+  depend on that default; if any pre-existing test changes behaviour, the change is wrong.
+  Two extra validations, both erroring with ValorInvalido on HEXCELL_INFERENCIA_URL_BASE:
+   1. Scheme must be https, EXCEPT that http is accepted when the host is loopback
+      (127.0.0.1, localhost or [::1]). This closes the plaintext-credential hole opened by
+      building the connector with https_or_http(), which the offline tests require.
+   2. timeout_ms * (1 + reintentos) must be strictly less than the configured drain limit
+      (Configuracion.limite_de_drenaje, default LIMITE_DE_DRENAJE_POR_DEFECTO = 20 s, raised from 10 s by human decision of 2026-08-26 in the same move as the 8000 ms provider timeout (8000x2=16 s < 20 s, still well under the PRD 30 s grace; update the constant and its comment in crates/hexcell/src/apagado.rs), from
+      crates/hexcell/src/apagado.rs). This resolves the HEX-007 pending decision recorded in
+      docs/STATUS.md: the drain limit is checked between events, not around one in flight, so an
+      unbounded provider call can overrun the PRD's 30 s grace period.
+
+  SECRET HANDLING. The repository is PUBLIC. Never write a real key, token or endpoint credential
+  into any file, test, fixture, comment or default. Credentials arrive only from the environment
+  at runtime. Do NOT derive Debug on any type that holds the API key: hand-write
+  impl fmt::Debug printing the key field as «redactado». ErrorDeProveedorOpenAi must not store or
+  print the key, the Authorization header, or the full request body. The provider must emit no
+  log line containing configuration; error reporting stays in procesador.rs, which already logs.
+
+  HTTP STACK, ALREADY VALIDATED ON rustc 1.92.0 — DO NOT SUBSTITUTE. Add to the [workspace.dependencies]
+  table in the root Cargo.toml, each with a Spanish comment justifying it, matching the style of
+  the existing rusqlite and hyper entries:
+    hyper-rustls = { version = "0.27", default-features = false, features = ["http1", "ring", "webpki-tokio"] }
+    rustls       = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+    webpki-roots = "1"
+  and in crates/hexcell/Cargo.toml add those three plus the "client" feature on hyper and the
+  "client-legacy" and "http1" features on hyper-util. Build the client as
+  hyper_util::client::legacy::Client::builder(TokioExecutor::new()).build(connector) with a
+  hyper_rustls::HttpsConnectorBuilder using .with_tls_config(cfg).https_or_http().enable_http1(),
+  where cfg selects rustls::crypto::ring::default_provider() explicitly and loads
+  webpki_roots::TLS_SERVER_ROOTS. ring is chosen over the rustls 0.23 default aws-lc-rs because
+  ring needs only a C compiler, which libsqlite3-sys bundled already requires, whereas aws-lc-rs
+  additionally needs cmake. reqwest is rejected: it resolves to a 132-package lockfile, roughly 85
+  extra crates, and falls to the same argument crates/hexcell/Cargo.toml already wrote against
+  axum. Cargo.lock must be regenerated and committed as part of the change.
+
+  OFFLINE TESTS, NO NEW DEV-DEPENDENCY. New file crates/hexcell/tests/proveedor_openai.rs. Build
+  the fake server with std::net::TcpListener bound to 127.0.0.1:0 in a std::thread, read the
+  request, then write the response. COMPUTE Content-Length FROM THE BODY with body.len(); a
+  hardcoded literal was measured producing hyper IncompleteBody during validation of this design.
+  Point the client at http://127.0.0.1:{port} via the loopback exemption. Use an
+  Arc<AtomicUsize> incremented per accepted connection to assert the EXACT attempt count for the
+  429 case (exactly 1) and the 5xx case (exactly 1 + reintentos). Keep every test offline and
+  credential-free. A live smoke test against a real provider is DEFERRED: do not add one, not even
+  #[ignore]d, because it would place a credential-shaped placeholder in a public repository.
+  PLACEMENT RULE (LES-2026-08-26-000000046): crates/hexcell/tests/ is a SEPARATE crate and cannot
+  see pub(crate) items. Assertions on Debug/Display redaction of the API key therefore go in an
+  in-crate #[cfg(test)] mod inside crates/hexcell/src/proveedor_openai.rs, mirroring the pattern
+  already used in motor.rs and procesador.rs. Configuration tests extend
+  crates/hexcell/tests/configuracion.rs, which already manipulates process env vars.
+
+  NORMATIVE DOCUMENTATION, REQUIRED BY THIS REPOSITORY'S OWN RULES. Create
+  docs/adr/adr-0012-inferencia-externa.md: the number is already reserved in docs/adr/README.md
+  but the file does not exist and its status cell reads "Tomada en el PRD, por formalizar". Record
+  the decision actually made here: inference is 100% external, one OpenAI-compatible client
+  parameterized by environment configuration, provider choice is configuration and not code, the
+  hyper+rustls/ring stack and its rationale, and the never-retry-429 rule. Then flip ONLY that
+  row's status cell to "**Vigente** (2026-08-26)" in docs/adr/README.md: do NOT renumber, reorder
+  or rewrite any other row. Add a STATUS.md entry dated 2026-08-26 and mark the HEX-007 pending
+  decision on maximum provider call time as resolved. Append entry D-27 to
+  docs/bitacora-de-descartes.md recording the discarded alternatives (reqwest, native-tls/openssl,
+  aws-lc-rs, exponential backoff, retrying 429, a ninth workspace crate) with their reasons and
+  reopening conditions; the repository rule is that a discard is logged in the same commit in
+  which it is made. Dates are absolute (2026-08-26), never relative.
+
+read:
+  - crates/hexcell-core/src/inferencia.rs
+  - crates/hexcell-core/src/presupuesto.rs
+  - crates/hexcell/src/procesador.rs
+  - crates/hexcell/src/apagado.rs
+  - crates/hexcell/tests/comun/mod.rs
+  - crates/hexcell/tests/inferencia.rs
+  - docs/adr/README.md
+  - docs/adr/adr-0017-puerto-de-inferencia.md
+  - docs/plan/fase-a-4-admision-presupuesto.md
+  - .ai/tasks/active/HEX-044-new-spec/00-spec.yaml
+  - .ai/tasks/active/HEX-044-new-spec/01-blueprint.yaml
+
+touch:
+  - Cargo.toml
+  - Cargo.lock
+  - crates/hexcell/Cargo.toml
+  - crates/hexcell/src/lib.rs
+  - crates/hexcell/src/proveedor_openai.rs
+  - crates/hexcell/src/inferencia.rs
+  - crates/hexcell/src/configuracion.rs
+  - crates/hexcell/src/main.rs
+  - crates/hexcell/src/apagado.rs
+  - crates/hexcell/tests/proveedor_openai.rs
+  - crates/hexcell/tests/configuracion.rs
+  - docs/adr/adr-0012-inferencia-externa.md
+  - docs/adr/README.md
+  - docs/STATUS.md
+  - docs/bitacora-de-descartes.md
+
+forbid:
+  files:
+    - crates/hexcell/src/motor.rs
+    - crates/hexcell/tests/motor.rs
+    - crates/hexcell/tests/admision.rs
+    - crates/hexcell/tests/persistencia.rs
+    - crates/hexcell/tests/deduplicacion.rs
+    - crates/hexcell/tests/continuidad_de_hilo.rs
+    - crates/hexcell/tests/politica_fuera_de_ventana.rs
+    - crates/hexcell/tests/respaldo_y_restauracion.rs
+    - crates/hexcell/tests/inferencia.rs
+    - crates/hexcell-core/Cargo.toml
+    - crates/hexcell-core/src/inferencia.rs
+    - crates/hexcell-core/src/presupuesto.rs
+    - crates/hexcell-storage/src/presupuesto.rs
+    - crates/hexcell/src/procesador.rs
+    - sidecar/
+    - .github/
+  behaviors:
+    - "Adding any networking, HTTP or TLS dependency to crates/hexcell-core/Cargo.toml; its dependency table stays empty (adr-0002)."
+    - "Writing any real API key, token, bearer credential or private endpoint into any file, test, fixture, default or comment; the repository is public."
+    - "Deriving Debug on any type holding the API key, or letting the key reach a log line, panic message, error Display or Debug output."
+    - "Using Box<dyn ProveedorDeInferencia> or any trait object over the port; it returns impl Future and is not dyn-compatible."
+    - "Retrying HTTP 429, retrying any 4xx, or issuing a further attempt after a response body was received."
+    - "Unbounded retries, unbounded backoff, or any code path that can await a provider response without a deadline."
+    - "Defaulting, estimating or fabricating unidades_consumidas when usage is missing or malformed; that path must return Err."
+    - "Changing the default provider: with HEXCELL_INFERENCIA_URL_BASE unset the cell must keep using ProveedorSimulado exactly as today."
+    - "Substituting reqwest, ureq, curl, native-tls, openssl or aws-lc-rs for the validated hyper + hyper-rustls + rustls/ring stack."
+    - "Adding any dev-dependency for the fake HTTP server; std::net::TcpListener in a std thread is sufficient and was validated."
+    - "Adding a live network smoke test, even #[ignore]d, or any test that requires credentials or reaches a non-loopback host."
+    - "Renumbering, reordering or rewriting existing rows of docs/adr/README.md, or editing existing D-NN entries of the discard log."
+    - "Writing English prose in source comments, doc comments or repository documentation; all repository prose is Spanish."
+    - "Modifying 00-spec.yaml, 01-blueprint.yaml or this contract."
+    - "Running git merge, git rebase, or committing; the orchestrator commits."
+
+verify:
+  commands:
+    - cargo fmt --check
+    - cargo clippy --workspace -- -D warnings
+    - cargo build --workspace
+    - cargo test --workspace
+    - "bash -c '! grep -nE \"\\b(the|and|with|this|that|which|because|should|would|about)\\b\" crates/hexcell/src/proveedor_openai.rs crates/hexcell/src/inferencia.rs crates/hexcell/src/configuracion.rs crates/hexcell/tests/proveedor_openai.rs docs/adr/adr-0012-inferencia-externa.md'"
+  target_s: 60
+
+acceptance:
+  human_gate: true
+
+limits:
+  max_files_changed: 15
+  max_diff_lines: 1950
+  per_class:
+    - glob: "crates/hexcell/src/**"
+      max_diff_lines: 780
+    - glob: "crates/hexcell/tests/**"
+      max_diff_lines: 620
+    - glob: "docs/**"
+      max_diff_lines: 210
+    - glob: "Cargo.lock"
+      max_diff_lines: 360
+    - glob: "**/Cargo.toml"
+      max_diff_lines: 60
+
+execution:
+  mode: worktree_edit
+  branch: ai/HEX-044-new-spec
+
+retry_policy:
+  max_attempts: 2
+  escalate_after: 2

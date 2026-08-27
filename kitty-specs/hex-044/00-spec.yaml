@@ -1,0 +1,81 @@
+task_id: HEX-044
+summary: Implement an OpenAI-compatible HTTPS inference provider (timeouts, bounded retries, token-usage extraction) behind ProveedorDeInferencia.
+goal: >
+  Provide a real, outbound HTTPS implementation of the ProveedorDeInferencia trait
+  (crates/hexcell-core/src/inferencia.rs) that speaks the OpenAI chat-completions
+  format shared by OpenRouter (free models for MVP), Google AI Studio's
+  OpenAI-compatible endpoint (Gemini free tier), and DeepSeek V4-Flash (production).
+  Provider selection (base URL, API key, model name) is entirely configuration-driven
+  via environment variables, following the HEX-038 configuracion.rs precedent
+  (ErrorDeConfiguracion::ValorInvalido naming the offending variable, documented
+  defaults), so switching provider or model never requires a code change. The client
+  enforces a bounded request timeout and a small bounded retry count (no infinite
+  loops, no retrying HTTP 429), and extracts token-usage metadata from the response
+  into RespuestaDeInferencia.unidades_consumidas so the existing hold/generar/
+  conciliar-liberar accounting flow (ProcesadorDeInferencia, HEX-042/043) receives
+  real consumption data instead of a simulated value. The real client lives in the
+  hexcell crate (or a new crate, if justified) per adr-0002 (hexcell-core stays
+  std-only); the binary can select the simulated or real provider via configuration.
+invariants:
+  - hexcell-core (crates/hexcell-core) remains std-only; the HTTPS client and any
+    networking dependency live outside it (hexcell crate or a new crate).
+  - The API key is never written to logs, error messages, panics, or any persisted
+    artifact, in any code path including error paths.
+  - No credential, token, or secret value is ever committed to the repository; all
+    provider configuration (base URL, API key, model, timeout, retry count) is
+    supplied only via environment variables at runtime.
+  - A malformed or missing usage field in the provider response fails closed (maps
+    to the provider's associated Error type) rather than fabricating or defaulting
+    unidades_consumidas, preserving the existing budget-reservation release path.
+  - Retries are bounded by a small fixed cap; HTTP 429 (quota exhaustion) is never
+    retried and surfaces immediately as an Error so the existing reservation-release
+    path runs.
+  - All new source comments, identifiers exposed in Spanish-language docs, and
+    repository prose stay in Spanish; Quorum artifact field values (this spec,
+    blueprint, contract) stay in English.
+acceptance:
+  - id: AC-1
+    statement: A well-formed provider response yields a RespuestaDeInferencia with contenido populated and unidades_consumidas derived from the response's token-usage metadata.
+    given: the real HTTPS provider is configured against a fake/local HTTP server returning a well-formed OpenAI-style chat-completions response with a usage object
+    when: the client's generar (or equivalent trait method) is invoked with a PeticionDeInferencia
+    then: the returned RespuestaDeInferencia contains the response contenido and unidades_consumidas mapped from usage.prompt_tokens/completion_tokens
+  - id: AC-2
+    statement: A malformed or missing-usage response is rejected rather than defaulted.
+    given: the fake HTTP server returns a response body missing the usage object or with malformed fields
+    when: the client processes that response
+    then: the call returns the provider's associated Error type (fail closed), leaving the existing budget-reservation release path to run
+  - id: AC-3
+    statement: A request that exceeds the configured timeout fails as an error after the bounded retry attempts, not before and not indefinitely.
+    given: the fake HTTP server is configured to stall past the configured request timeout
+    when: the client issues the request
+    then: the call fails with the provider's Error type within the configured timeout times the bounded retry cap, and never hangs indefinitely
+  - id: AC-4
+    statement: Retries stop at the fixed cap and HTTP 429 responses are never retried.
+    given: the fake HTTP server returns HTTP 429 on the first attempt, or returns a retryable failure on every attempt up to and beyond the cap
+    when: the client issues the request
+    then: a 429 response short-circuits to Error on the first attempt with no further attempts, and non-429 retryable failures stop after exactly the configured retry cap
+  - id: AC-5
+    statement: Environment-variable configuration parsing validates required values and names the offending variable on error.
+    given: one or more of base URL, API key, model name, timeout, or retry-count environment variables is missing or invalid
+    when: configuration is loaded
+    then: loading fails with ErrorDeConfiguracion::ValorInvalido naming the specific missing/invalid variable, following the HEX-038 precedent
+  - id: AC-6
+    statement: The API key never appears in logs or error output.
+    given: a request is made (successful, failed, or retried) with a configured API key
+    when: any log line or error message produced during that request is inspected
+    then: the API key value does not appear in any log line, error message, or Debug/Display output
+  - Existing cargo test --workspace, cargo fmt --check, and cargo clippy --workspace -- -D warnings all pass without requiring live credentials or network access; any live-provider smoke test is explicitly deferred or gated behind an ignored/env-gated test so it does not run in normal CI.
+risk: medium
+non_goals:
+  - Degraded-mode answers when the provider is unavailable (separate task 10).
+  - Metrics/observability for inference calls (separate task 11).
+  - Streaming responses.
+  - Prices, plans, or committing to a specific paid model; the definitive production model choice beyond DeepSeek V4-Flash is a pending product decision.
+  - Committing any real credential to the repository in any form.
+  - Load testing (a separate stage acceptance criterion).
+constraints:
+  - hexcell-core (adr-0002) must remain free of networking/HTTP dependencies; the real provider implementation belongs in the hexcell crate or a new crate.
+  - Provider configuration (OpenRouter, AI Studio, DeepSeek) must be selectable via environment variables only; no provider-specific code branching for base URL/model.
+  - No new runtime dependency may introduce a hard requirement on live network access for the test suite; tests must run offline against a local fake HTTP server or serialized fixtures.
+  - Follow the HEX-038 configuracion.rs precedent for environment-variable parsing and error naming (ErrorDeConfiguracion::ValorInvalido).
+  - Retry count and timeout must be small, bounded, and configurable; no unbounded/infinite retry loops; HTTP 429 must never be retried.

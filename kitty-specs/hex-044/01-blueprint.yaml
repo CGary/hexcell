@@ -1,0 +1,116 @@
+task_id: HEX-044
+summary: "Add a config-driven OpenAI-compatible HTTPS inference provider as a module of crates/hexcell, behind the existing ProveedorDeInferencia port."
+
+affected_files:
+  - Cargo.toml
+  - crates/hexcell/Cargo.toml
+  - crates/hexcell/src/lib.rs
+  - crates/hexcell/src/proveedor_openai.rs
+  - crates/hexcell/src/inferencia.rs
+  - crates/hexcell/src/configuracion.rs
+  - crates/hexcell/src/main.rs
+  - crates/hexcell/tests/proveedor_openai.rs
+  - crates/hexcell/tests/configuracion.rs
+  - docs/adr/adr-0012-inferencia-externa.md
+  - docs/adr/README.md
+  - docs/STATUS.md
+  - docs/bitacora-de-descartes.md
+
+symbols:
+  - ProveedorOpenAi
+  - ConfiguracionDeInferencia
+  - ErrorDeProveedorOpenAi
+  - ProveedorDeCelula
+  - HEXCELL_INFERENCIA_URL_BASE
+  - HEXCELL_INFERENCIA_API_KEY
+  - HEXCELL_INFERENCIA_MODELO
+  - HEXCELL_INFERENCIA_TIMEOUT_MS
+  - HEXCELL_INFERENCIA_REINTENTOS
+  - TIMEOUT_INFERENCIA_POR_DEFECTO
+  - REINTENTOS_INFERENCIA_POR_DEFECTO
+
+dependencies:
+  - crates/hexcell-core/src/inferencia.rs
+  - crates/hexcell-core/src/presupuesto.rs
+  - crates/hexcell/src/procesador.rs
+  - crates/hexcell/src/apagado.rs
+  - crates/hexcell/tests/comun/mod.rs
+  - docs/plan/fase-a-4-admision-presupuesto.md
+
+test_scenarios:
+  - statement: "A 200 response with a usage object yields contenido from choices[0].message.content and unidades_consumidas = usage.prompt_tokens + usage.completion_tokens."
+    covers: ["AC-1"]
+  - statement: "A 200 response whose body omits usage, omits prompt_tokens/completion_tokens, or carries a non-integer value returns Err and never fabricates or defaults unidades_consumidas."
+    covers: ["AC-2"]
+  - statement: "A 200 response with an empty choices array returns Err rather than an empty answer."
+    covers: ["AC-2"]
+  - statement: "A fake server that stalls past the configured timeout makes the call fail with Err within timeout*(1+reintentos), bounded, never hanging."
+    covers: ["AC-3"]
+  - statement: "An HTTP 429 on the first attempt short-circuits to Err with exactly one request observed by the fake server, proving quota errors are never retried."
+    covers: ["AC-4"]
+  - statement: "An HTTP 500 on every attempt produces exactly 1+reintentos requests observed by the fake server and then Err, proving the retry cap is exact."
+    covers: ["AC-4"]
+  - statement: "Absence of HEXCELL_INFERENCIA_URL_BASE keeps the simulated provider selected, so every pre-existing test that builds Motor with ProveedorSimulado stays green bit for bit."
+    covers: ["AC-5"]
+  - statement: "With HEXCELL_INFERENCIA_URL_BASE set, a missing API key or model, a non-numeric or zero timeout, or a non-numeric retry count fails with ErrorDeConfiguracion naming the exact offending variable."
+    covers: ["AC-5"]
+  - statement: "A non-loopback http:// base URL is rejected at config load so the API key can never travel in plaintext to a remote host."
+    covers: ["AC-5", "AC-6"]
+  - statement: "timeout*(1+reintentos) not comfortably under the drain limit is rejected at config load, resolving the HEX-007 pending decision on maximum provider call time."
+    covers: ["AC-5"]
+  - statement: "Debug and Display of the provider, its configuration and its error type redact the API key: a sentinel key value appears in none of them."
+    covers: ["AC-6"]
+
+strategy:
+  - step: 1
+    action: "Value objects and anti-corruption layer: declare in a new module the serde request/response DTOs of the OpenAI chat-completions format and ErrorDeProveedorOpenAi, with a hand-written Debug that redacts the key. Never derive Debug on a type holding the key."
+    files:
+      - crates/hexcell/src/proveedor_openai.rs
+  - step: 2
+    action: "Infrastructure adapter: implement ProveedorDeInferencia for ProveedorOpenAi over hyper-util legacy client + hyper-rustls with the ring provider, one request per attempt under tokio::time::timeout, fixed backoff, retrying only transport failures, timeouts and 5xx."
+    files:
+      - crates/hexcell/src/proveedor_openai.rs
+  - step: 3
+    action: "Application service seam: add the ProveedorDeCelula enum next to ProveedorSimulado so the binary picks simulated or real without dyn, since the port is deliberately not trait-object compatible."
+    files:
+      - crates/hexcell/src/inferencia.rs
+      - crates/hexcell/src/lib.rs
+  - step: 4
+    action: "Validator: extend configuracion.rs with the five HEXCELL_INFERENCIA_* variables following the HEX-038 precedent, plus the loopback-only-http rule and the drain-budget cross-check."
+    files:
+      - crates/hexcell/src/configuracion.rs
+  - step: 5
+    action: "Wire the selection into both channel branches of the binary without duplicating the Motor construction per provider."
+    files:
+      - crates/hexcell/src/main.rs
+  - step: 6
+    action: "Declare the dependency additions with their written justification in the workspace table, following the repository convention that the external tree is justified in one place."
+    files:
+      - Cargo.toml
+      - crates/hexcell/Cargo.toml
+  - step: 7
+    action: "Offline tests: a std::net::TcpListener fake server in a std thread, zero new dev-dependencies, driving the client over http:// against loopback."
+    files:
+      - crates/hexcell/tests/proveedor_openai.rs
+      - crates/hexcell/tests/configuracion.rs
+  - step: 8
+    action: "Normative documentation: formalize adr-0012, flip its README status cell without renumbering, record the decision in STATUS.md and log the discarded alternatives as D-27."
+    files:
+      - docs/adr/adr-0012-inferencia-externa.md
+      - docs/adr/README.md
+      - docs/STATUS.md
+      - docs/bitacora-de-descartes.md
+
+risks:
+  - "VALIDATED: the lockfile ships no TLS crate at all (no rustls, ring, native-tls or openssl), so HTTPS is a genuinely new dependency axis, not a feature flag on what is already there."
+  - "VALIDATED on rustc 1.92.0 in a scratch crate: hyper 1.11 client + hyper-util 0.1 client-legacy + hyper-rustls 0.27 + rustls 0.23 (ring, no default features) + webpki-roots 1.0 resolves and compiles clean, adding ~18 non-Windows crates. reqwest 0.12 resolves to a 132-package lock, roughly 85 extra crates, and is rejected by the same argument crates/hexcell/Cargo.toml already used against axum."
+  - "aws-lc-rs, the rustls 0.23 default provider, needs cmake; ring only needs a C compiler, which libsqlite3-sys bundled already requires. The ring provider must be selected explicitly with default-features = false."
+  - "VALIDATED: the fake server needs no HTTP dev-dependency. A std::net::TcpListener in a std thread drove real 200, 429 and stall cases against the real client. Content-Length must be computed from the body, never hardcoded: a hand-counted literal produced IncompleteBody during validation."
+  - "The connector must be built with https_or_http(), not https_only(), or no offline test can reach the fake server. The plaintext-credential hole this opens is closed by rejecting non-loopback http:// base URLs at config load."
+  - "STATUS.md records a pending HEX-007 decision that this stage must resolve: the real provider needs a maximum call time comfortably under LIMITE_DE_DRENAJE_POR_DEFECTO (10 s, against the PRD's 30 s total grace), because the drain limit is checked between events and not around one in flight."
+  - "TENSION FOR THE HUMAN: a 4 s default timeout satisfies that drain constraint but is tight for real free-tier models, which often exceed it. Raising it requires raising HEXCELL_LIMITE_DE_DRENAJE_SEGUNDOS in tandem; the defaults chosen here keep the invariant true and make the coupling explicit rather than hiding it."
+  - "ProveedorDeInferencia returns impl Future and is documented as NOT trait-object compatible. Box<dyn ProveedorDeInferencia> will not compile; provider selection must go through an enum, and ProcesadorDeInferencia<I> requires I: ProveedorDeInferencia + Sync."
+  - "LES-2026-08-26-000000046: pub(crate) does not reach crates/hexcell/tests/, which is a separate crate. Key-redaction assertions therefore live in an in-crate #[cfg(test)] module; only the public surface is exercised from tests/."
+  - "motor.rs and the seven pre-existing ProcesadorDeEco test files must stay untouched; the simulated provider must remain the default when HEXCELL_INFERENCIA_URL_BASE is absent, or 17+ Motor::nuevo call sites change behaviour."
+  - "No prior failed task overlaps these files (quorum analyze failure-lookup returned null; .ai/tasks/failed/ is empty)."
+  - "HSME memory 1332 warns that an HTTP client with no whole-request deadline can hang forever on a peer that completes TLS then goes silent. The timeout must wrap the entire attempt including connect and handshake, not just the read."

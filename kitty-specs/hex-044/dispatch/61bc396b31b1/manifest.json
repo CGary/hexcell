@@ -1,0 +1,51 @@
+{
+  "task_id": "HEX-044",
+  "bundle_hash": "61bc396b31b1994cf7507d3790a8c8522e9081b04ef0c5b4007a8dba3d913769",
+  "files": [
+    ".ai/tasks/active/HEX-044-new-spec/00-spec.yaml",
+    ".ai/tasks/active/HEX-044-new-spec/01-blueprint.yaml",
+    "Cargo.lock",
+    "Cargo.toml",
+    "crates/hexcell-core/src/inferencia.rs",
+    "crates/hexcell-core/src/presupuesto.rs",
+    "crates/hexcell/Cargo.toml",
+    "crates/hexcell/src/apagado.rs",
+    "crates/hexcell/src/configuracion.rs",
+    "crates/hexcell/src/inferencia.rs",
+    "crates/hexcell/src/lib.rs",
+    "crates/hexcell/src/main.rs",
+    "crates/hexcell/src/procesador.rs",
+    "crates/hexcell/tests/comun/mod.rs",
+    "crates/hexcell/tests/configuracion.rs",
+    "crates/hexcell/tests/inferencia.rs"
+  ],
+  "protocol_version": "fleet-bundle-protocol/v2",
+  "created_at": "2026-08-27T03:35:16Z",
+  "dropped": [
+    {
+      "component": "code_slice",
+      "path": "docs/plan/fase-a-4-admision-presupuesto.md",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "docs/bitacora-de-descartes.md",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "docs/adr/adr-0017-puerto-de-inferencia.md",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "docs/adr/README.md",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "docs/STATUS.md",
+      "reason": "bundle exceeded max_bytes budget"
+    }
+  ]
+}

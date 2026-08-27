@@ -1,0 +1,22 @@
+{
+  "task_id": "HEX-044",
+  "summary": "Diff correctly implements ProveedorOpenAi per blueprint/contract, verified by hand; contract amended (apagado.rs added to touch, max_files_changed=15) and now passes with zero violations.",
+  "verdict": "approve",
+  "contract_compliance": true,
+  "forbidden_files_touched": [],
+  "unrequested_refactor": false,
+  "missing_tests": [
+    "No test asserts exact request-attempt count for a malformed/missing-usage 200 response, to prove the double-spend rule (never retry after a response body was received and parsed) holds for RespuestaInvalida paths, not just for 429/5xx."
+  ],
+  "functional_risk": "low",
+  "notes": [
+    "contract-check ok=true after amendment (apagado.rs added to touch, max_files_changed raised 14->15); not_checked: forbid.behaviors (tool limitation, verified manually instead, see below).",
+    "Prior finding resolved by contract amendment, not by a code change: the touch-glob gap for crates/hexcell/src/apagado.rs and the resulting 15>14 file-count violation were an earlier contract-authoring defect (the drain-limit edit is explicitly mandated by the contract's own prose), right-sized by the orchestrator per Guardrail 7. Code diff (2e0de72) is unchanged.",
+    "Manual verification of forbid.behaviors: no networking dep added to hexcell-core/Cargo.toml (confirmed empty diff); no Debug derive on key-holding types (hand-written redacting Debug on both ConfiguracionDeInferencia and ProveedorOpenAi, verified with a dedicated in-crate test); no Box<dyn ProveedorDeInferencia> (enum-based dispatch used, Box only wraps the enum variant for clippy large_enum_variant); 429 and all 4xx short-circuit with zero retry (verified in generar() match arms and by exact-attempt-count test showing counter==1); 5xx retries exactly 1+reintentos (test shows counter==3 with reintentos=2); no unbounded retry/backoff (fixed 250ms, fixed total_intentos=1+reintentos); no fabricated unidades_consumidas (usage/prompt_tokens/completion_tokens missing all map to Err via RespuestaInvalida, tested); simulated provider stays default when HEXCELL_INFERENCIA_URL_BASE is unset (configuracion.rs falls to None, main.rs wires ProveedorSimulado unchanged, and all pre-existing tests pass per 05-validation); no reqwest/native-tls/openssl/aws-lc-rs in Cargo.lock (grep confirmed clean); no new dev-dependency for the fake server (std::net::TcpListener only); no live/credential-shaped smoke test added; docs/adr/README.md row flipped in place without renumbering other rows, D-NN entries not edited; all source comments and docs prose in Spanish (05-validation's English-leak grep passed, and reviewer's own read confirms); 00/01/02 artifacts themselves untouched by the diff.",
+    "Manual secret-pattern grep across the full diff (independent of 05-validation's own grep) found zero credential-shaped strings; only test sentinel values (\"clave-secret-test\", \"CLAVE_SECRET_UNICA_12345\") appear, which are expected fixtures, not real secrets.",
+    "Retry backoff (250ms fixed, applied before each retry attempt) is not counted in the configuracion.rs drain-budget check, which only validates timeout*(1+reintentos) < limite_de_drenaje. Actual worst-case wall time is timeout*(1+reintentos) + reintentos*250ms. With defaults (8000ms, 1 retry, 20s drain) this adds only 250ms against a 4s margin, so risk is low, but at reintentos=3 near the boundary the omitted backoff term could matter. This is a spec-level gap (the blueprint/contract only specify the timeout*(1+reintentos) formula) rather than a deviation from either artifact, so it is recorded as a non-blocking note.",
+    "Code quality is high: retry/timeout state machine correctly distinguishes 429/4xx (no retry), 5xx/transport/timeout (retry), and post-parse RespuestaInvalida (no retry, matching the double-spend invariant) in three distinct match arms.",
+    "main.rs wiring builds ProveedorDeCelula once before the CanalSeleccionado match and clones it into the Simulado branch, avoiding the four-construction-sites problem the contract warned about."
+  ],
+  "fix_tasks": []
+}
