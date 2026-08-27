@@ -20,6 +20,7 @@ pub mod conversaciones;
 pub mod deduplicacion;
 pub mod emparejar;
 pub mod inferencia;
+pub mod metricas;
 pub mod motor;
 pub mod preparacion;
 pub mod procesador;

@@ -406,4 +406,26 @@ impl RepositorioDeSesiones {
             })
         })
     }
+
+    /// Calcula la desviación de conciliación acumulada.
+    ///
+    /// La desviación se calcula como la suma de todos los montos de los movimientos
+    /// con clase `'conciliacion'`. Esto representa la diferencia acumulada entre
+    /// los montos estimados (reservados) y los montos consumidos reales.
+    ///
+    /// Advertencia: En caso de déficit no cubierto (cuando el consumo real
+    /// supera la reserva pero el saldo disponible es insuficiente para cubrir la diferencia),
+    /// el ajuste aplicado se limita a `-disponible`. Por lo tanto, la desviación reportada
+    /// subestima el sobreconsumo real por la cantidad de `deficit_no_cubierto`.
+    pub fn desviacion_de_conciliacion(&self) -> Result<i64, ErrorDeAlmacen> {
+        self.pools.sesiones().con_lectura(|conexion| {
+            conexion
+                .query_row(
+                    "SELECT COALESCE(SUM(monto), 0) FROM movimientos WHERE clase = 'conciliacion'",
+                    [],
+                    |fila| fila.get(0),
+                )
+                .map_err(ErrorDeAlmacen::en("calcular la desviación de conciliación"))
+        })
+    }
 }

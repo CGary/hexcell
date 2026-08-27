@@ -407,3 +407,99 @@ fn suma_de_movimientos_coincide_con_saldo_disponible_y_referencia_reserva() {
     assert_eq!(suma_monto, saldo.disponible);
     assert_eq!(num_movimientos, 3); // aporte, reserva, conciliacion
 }
+
+#[test]
+fn ac_4_saldo_disponible_y_reservado_coincide() {
+    let directorio = DirectorioTemporal::nuevo("saldo-coincide");
+    let repo = repositorio(&directorio);
+    let conv = IdConversacion::nuevo("conv-saldo-coincide");
+    crear_conversacion(&repo, &conv);
+
+    repo.aportar_presupuesto(15, SystemTime::UNIX_EPOCH)
+        .expect("aportar 15");
+
+    let Ok(VeredictoDeReserva::Concedida { id_reserva, .. }) =
+        repo.reservar_presupuesto(&conv, 5, SystemTime::UNIX_EPOCH)
+    else {
+        panic!("reserva concedida");
+    };
+
+    let saldo = repo.saldo().expect("obtener saldo");
+    assert_eq!(saldo.disponible, 10);
+    assert_eq!(saldo.reservado, 5);
+
+    repo.conciliar_presupuesto(id_reserva, 3, SystemTime::UNIX_EPOCH)
+        .expect("conciliar");
+
+    let saldo_final = repo.saldo().expect("obtener saldo final");
+    assert_eq!(saldo_final.disponible, 12);
+    assert_eq!(saldo_final.reservado, 0);
+}
+
+#[test]
+fn ac_5_desviacion_de_conciliacion_acumulada() {
+    let directorio = DirectorioTemporal::nuevo("desviacion-conciliacion");
+    let repo = repositorio(&directorio);
+    let conv = IdConversacion::nuevo("conv-desviacion");
+    crear_conversacion(&repo, &conv);
+
+    assert_eq!(
+        repo.desviacion_de_conciliacion()
+            .expect("desviación inicial"),
+        0
+    );
+
+    repo.aportar_presupuesto(30, SystemTime::UNIX_EPOCH)
+        .expect("aportar 30");
+
+    let Ok(VeredictoDeReserva::Concedida {
+        id_reserva: id_reserva_1,
+        ..
+    }) = repo.reservar_presupuesto(&conv, 10, SystemTime::UNIX_EPOCH)
+    else {
+        panic!("reserva 1 concedida");
+    };
+    assert_eq!(
+        repo.desviacion_de_conciliacion()
+            .expect("desviación tras reserva"),
+        0
+    );
+
+    repo.liberar_presupuesto(id_reserva_1, SystemTime::UNIX_EPOCH)
+        .expect("liberar");
+    assert_eq!(
+        repo.desviacion_de_conciliacion()
+            .expect("desviación tras liberación"),
+        0
+    );
+
+    let Ok(VeredictoDeReserva::Concedida {
+        id_reserva: id_reserva_2,
+        ..
+    }) = repo.reservar_presupuesto(&conv, 10, SystemTime::UNIX_EPOCH)
+    else {
+        panic!("reserva 2 concedida");
+    };
+    repo.conciliar_presupuesto(id_reserva_2, 4, SystemTime::UNIX_EPOCH)
+        .expect("conciliar 2");
+    assert_eq!(
+        repo.desviacion_de_conciliacion()
+            .expect("desviación tras conciliación 2"),
+        6
+    );
+
+    let Ok(VeredictoDeReserva::Concedida {
+        id_reserva: id_reserva_3,
+        ..
+    }) = repo.reservar_presupuesto(&conv, 10, SystemTime::UNIX_EPOCH)
+    else {
+        panic!("reserva 3 concedida");
+    };
+    repo.conciliar_presupuesto(id_reserva_3, 12, SystemTime::UNIX_EPOCH)
+        .expect("conciliar 3");
+    assert_eq!(
+        repo.desviacion_de_conciliacion()
+            .expect("desviación tras conciliación 3"),
+        4
+    );
+}

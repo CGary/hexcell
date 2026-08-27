@@ -37,6 +37,7 @@ impl std::error::Error for MotivoDescarteConcurrencia {}
 /// Limitador de concurrencia basado en un semáforo de Tokio acotado.
 #[derive(Clone, Debug)]
 pub struct LimitadorDeConcurrencia {
+    limite: usize,
     semaforo: Arc<Semaphore>,
 }
 
@@ -44,8 +45,20 @@ impl LimitadorDeConcurrencia {
     /// Crea un nuevo limitador con la cantidad de permisos indicada.
     pub fn nuevo(limite: usize) -> Self {
         Self {
+            limite,
             semaforo: Arc::new(Semaphore::new(limite)),
         }
+    }
+
+    /// Obtiene el límite configurado de concurrencia.
+    pub fn limite(&self) -> usize {
+        self.limite
+    }
+
+    /// Obtiene la cantidad de tareas actualmente en vuelo.
+    pub fn en_vuelo(&self) -> usize {
+        self.limite
+            .saturating_sub(self.semaforo.available_permits())
     }
 
     /// Intenta adquirir un permiso de concurrencia sin bloquear ni esperar asíncronamente.
@@ -81,6 +94,25 @@ mod pruebas {
         // Ahora sí se puede adquirir nuevamente
         let p4 = limitador.intentar_adquirir();
         assert!(p4.is_some());
+    }
+
+    #[test]
+    fn indicador_de_tareas_en_vuelo() {
+        let limitador = LimitadorDeConcurrencia::nuevo(3);
+        assert_eq!(limitador.limite(), 3);
+        assert_eq!(limitador.en_vuelo(), 0);
+
+        let p1 = limitador.intentar_adquirir();
+        assert_eq!(limitador.en_vuelo(), 1);
+
+        let p2 = limitador.intentar_adquirir();
+        assert_eq!(limitador.en_vuelo(), 2);
+
+        drop(p1);
+        assert_eq!(limitador.en_vuelo(), 1);
+
+        drop(p2);
+        assert_eq!(limitador.en_vuelo(), 0);
     }
 
     #[test]

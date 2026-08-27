@@ -51,6 +51,9 @@ use hexcell::concurrencia::LimitadorDeConcurrencia;
 use hexcell::configuracion::{CanalSeleccionado, Configuracion};
 use hexcell::emparejar;
 use hexcell::inferencia::{ProveedorDeCelula, ProveedorSimulado};
+use hexcell::metricas::{
+    INTERVALO_DE_INSTANTANEA, RegistroDeMetricas, emitir_instantanea, tomar_instantanea,
+};
 use hexcell::motor::Motor;
 use hexcell::preparacion::SesionDelCanal;
 use hexcell::procesador::ProcesadorDeInferencia;
@@ -131,6 +134,24 @@ async fn main() -> ExitCode {
     println!("hexcell: almacén de identidad del adaptador abierto y migrado");
 
     let repositorio = Arc::new(RepositorioDeSesiones::nuevo(Arc::clone(&pools)));
+
+    let limitador = LimitadorDeConcurrencia::nuevo(configuracion.limite_de_concurrencia);
+    let metricas = Arc::new(RegistroDeMetricas::nuevo());
+
+    let _metricas_task = {
+        let metricas = Arc::clone(&metricas);
+        let limitador = limitador.clone();
+        let repositorio = Arc::clone(&repositorio);
+        tokio::spawn(async move {
+            let mut intervalo = tokio::time::interval(INTERVALO_DE_INSTANTANEA);
+            loop {
+                intervalo.tick().await;
+                if let Ok(instantanea) = tomar_instantanea(&metricas, &limitador, &repositorio) {
+                    emitir_instantanea(&instantanea);
+                }
+            }
+        })
+    };
 
     if configuracion.presupuesto_inicial_unidades > 0 {
         match repositorio.presupuesto_sin_iniciar() {
@@ -226,9 +247,8 @@ async fn main() -> ExitCode {
                 repositorio,
             )
             .con_configuracion_gcra(configuracion.configuracion_gcra.clone())
-            .con_limite_de_concurrencia(LimitadorDeConcurrencia::nuevo(
-                configuracion.limite_de_concurrencia,
-            ));
+            .con_limite_de_concurrencia(limitador.clone())
+            .con_metricas(metricas.clone());
 
             tokio::select! {
                 () = servidor_salud => {}
@@ -254,9 +274,8 @@ async fn main() -> ExitCode {
                 repositorio,
             )
             .con_configuracion_gcra(configuracion.configuracion_gcra.clone())
-            .con_limite_de_concurrencia(LimitadorDeConcurrencia::nuevo(
-                configuracion.limite_de_concurrencia,
-            ));
+            .con_limite_de_concurrencia(limitador.clone())
+            .con_metricas(metricas.clone());
 
             tokio::select! {
                 () = servidor_salud => {}

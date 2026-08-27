@@ -108,6 +108,7 @@ use crate::concurrencia::{
 };
 use crate::conversaciones::{EstadoDeConversaciones, EventoDeHistorial};
 use crate::deduplicacion::{RegistroDeDeduplicacion, VeredictoDeDeduplicacion};
+use crate::metricas::RegistroDeMetricas;
 use crate::procesador::ProcesadorDeMensajes;
 use crate::registro::{EntradaDeRegistro, NivelDeRegistro, emitir};
 
@@ -124,6 +125,7 @@ where
     concurrencia: LimitadorDeConcurrencia,
     deduplicacion: RegistroDeDeduplicacion,
     conversaciones: EstadoDeConversaciones,
+    metricas: Arc<RegistroDeMetricas>,
 }
 
 impl<A, P> Motor<A, P>
@@ -154,6 +156,7 @@ where
                 ventana_deduplicacion,
             ),
             conversaciones: EstadoDeConversaciones::nuevo(repositorio),
+            metricas: Arc::new(RegistroDeMetricas::nuevo()),
         }
     }
 
@@ -166,6 +169,12 @@ where
     /// Reemplaza el limitador de concurrencia del motor con la instancia dada.
     pub fn con_limite_de_concurrencia(mut self, limitador: LimitadorDeConcurrencia) -> Self {
         self.concurrencia = limitador;
+        self
+    }
+
+    /// Reemplaza el registro de métricas del motor con la instancia dada.
+    pub fn con_metricas(mut self, metricas: Arc<RegistroDeMetricas>) -> Self {
+        self.metricas = metricas;
         self
     }
 
@@ -244,6 +253,7 @@ where
         if let ResultadoDeAdmision::Descartado { clave, motivo } =
             self.admision.admitir(evento.conversacion.como_str())
         {
+            self.metricas.anotar_descarte_por_admision();
             // FR-08: Visibilidad de descartes por control de admisión. Métricas (A-4 t11) y alertas (A-6) diferidas.
             emitir(
                 EntradaDeRegistro::nueva(NivelDeRegistro::Aviso, "admision_descartada")
@@ -255,11 +265,14 @@ where
             return;
         }
 
+        self.metricas.anotar_evento_admitido();
+
         // Límite de concurrencia por contenedor (FR-09): evaluado inmediatamente después del
         // control de admisión GCRA y estrictamente antes de la deduplicación.
         let _permiso_concurrencia = match self.concurrencia.intentar_adquirir() {
             Some(permiso) => permiso,
             None => {
+                self.metricas.anotar_descarte_por_concurrencia();
                 let motivo = MotivoDescarteConcurrencia::Saturacion;
                 emitir(
                     EntradaDeRegistro::nueva(NivelDeRegistro::Aviso, "concurrencia_descartada")
@@ -473,6 +486,7 @@ mod tests {
     };
     use hexcell_core::identidad::{IdDeduplicacion, IdRemitente};
     use hexcell_storage::{GestorDePools, RepositorioDeSesiones};
+    use std::sync::atomic::Ordering;
     use std::time::SystemTime;
 
     type R = Result<ResultadoEnvio, std::convert::Infallible>;
@@ -623,6 +637,59 @@ mod tests {
                 .count(),
             1
         );
+
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[tokio::test]
+    async fn ac_1_conteo_de_admision_en_registro() {
+        let Ok(cfg) = ConfiguracionGcra::nueva(1.0, 0) else {
+            panic!("la configuración GCRA de prueba debe ser válida");
+        };
+        let (m, dir) = motor(cfg);
+        let metricas = Arc::new(RegistroDeMetricas::nuevo());
+        let mut m = m.con_metricas(metricas.clone());
+        let conv_d = IdConversacion::nuevo("conv-descarte");
+
+        m.procesar_evento(evt(&conv_d, "dedup-1")).await;
+        m.procesar_evento(evt(&conv_d, "dedup-2")).await;
+
+        assert_eq!(metricas.admitidos.load(Ordering::Relaxed), 1);
+        assert_eq!(metricas.descartados_admision.load(Ordering::Relaxed), 1);
+
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[tokio::test]
+    async fn ac_2_conteo_de_concurrencia_en_registro() {
+        let (m, dir) = motor(ConfiguracionGcra::default());
+        let limitador = LimitadorDeConcurrencia::nuevo(1);
+        let metricas = Arc::new(RegistroDeMetricas::nuevo());
+        let mut m = m
+            .con_limite_de_concurrencia(limitador.clone())
+            .con_metricas(metricas.clone());
+        let conv = IdConversacion::nuevo("conv-concurrencia");
+
+        let Some(_permiso) = limitador.intentar_adquirir() else {
+            panic!("el único permiso del limitador debe estar disponible");
+        };
+
+        registro::pruebas::instalar();
+        m.procesar_evento(evt(&conv, "dedup-conc-1")).await;
+
+        let logs = registro::pruebas::tomar();
+        assert_eq!(
+            logs.iter()
+                .filter(|e| e.evento == "concurrencia_descartada")
+                .count(),
+            1
+        );
+
+        // El contador de admitidos cuenta el paso de la compuerta GCRA (definicion del
+        // blueprint): un evento admitido por GCRA y descartado por concurrencia suma en ambos.
+        assert_eq!(metricas.admitidos.load(Ordering::Relaxed), 1);
+        assert_eq!(metricas.descartados_admision.load(Ordering::Relaxed), 0);
+        assert_eq!(metricas.descartados_concurrencia.load(Ordering::Relaxed), 1);
 
         let _ = std::fs::remove_dir_all(dir);
     }
