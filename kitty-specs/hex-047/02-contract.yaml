@@ -1,0 +1,121 @@
+task_id: HEX-047
+summary: >-
+  Add tests/carga.rs, an #[ignore]d harness injecting 100 concurrent events at the ChannelAdapter
+  port, reporting latency, exact GCRA discards and a self-contained RSS delta. Measurement only.
+
+goal: >-
+  Implement stage A-4 task 12 (docs/plan/fase-a-4-admision-presupuesto.md lines 123-124) and its
+  acceptance criterion at lines 131-134, which binds the stage to the PRD QA criterion "Prueba de
+  Carga del Canal": with 100 concurrent events injected through the port, GCRA admission activates,
+  the excess is discarded WITHOUT being processed, and resident memory grows no more than 15 %.
+  The harness is a new #[ignore]d integration test, following the only existing precedent in the
+  repository, crates/hexcell/tests/rss_linea_base.rs, which is invoked the same way and already
+  documented in docs/STATUS.md lines 318-324. It is #[ignore]d because it is a host-dependent
+  measurement procedure, not a regression test, and because `cargo test --workspace` must stay fast.
+  It drives the REAL Motor through the REAL AdaptadorSimulado; nothing about the admission path is
+  mocked. It uses ProcesadorDeEco (wrapped for timing) rather than ProcesadorDeInferencia so that no
+  budget reservation, provider call or degraded-mode branch can add noise to a measurement whose
+  subject is ADMISSION. NOTE FOR THE VERIFIER: the harness is deliberately NOT in verify.commands.
+  verify only proves it compiles and that the fast suite still passes; the on-demand run named in
+  this goal IS the acceptance evidence for AC-1..AC-3. Its absence from verify.commands is by
+  design and must not be reported as a coverage gap.
+
+read:
+  - .ai/tasks/active/HEX-047-new-spec/00-spec.yaml
+  - .ai/tasks/active/HEX-047-new-spec/01-blueprint.yaml
+  - crates/hexcell/tests/rss_linea_base.rs
+  - crates/hexcell/tests/admision.rs
+  - crates/hexcell/tests/motor.rs
+  - crates/hexcell/tests/comun/mod.rs
+  - crates/hexcell/src/metricas.rs
+  - crates/hexcell/src/motor.rs
+  - crates/hexcell/src/procesador.rs
+  - crates/hexcell/src/concurrencia.rs
+  - crates/hexcell/src/apagado.rs
+  - crates/hexcell/src/registro.rs
+  - crates/hexcell-core/src/admision.rs
+  - crates/hexcell-core/src/canal.rs
+  - crates/hexcell-core/src/identidad.rs
+  - crates/hexcell-canal-simulado/src/adaptador.rs
+  - crates/hexcell-canal-simulado/src/reloj.rs
+  - docs/plan/fase-a-4-admision-presupuesto.md
+  - docs/PRD.md
+  - CLAUDE.md
+
+touch:
+  - crates/hexcell/tests/carga.rs
+  - docs/STATUS.md
+
+forbid:
+  files:
+    - crates/hexcell/src/
+    - crates/hexcell-core/
+    - crates/hexcell-storage/
+    - crates/hexcell-canal-simulado/
+    - crates/hexcell-canal-whatsmeow/
+    - crates/hexcell-canal-contrato/
+    - crates/hexcell-admin/
+    - crates/hexcell-meta/
+    - crates/hexcell/tests/comun/mod.rs
+    - crates/hexcell/tests/rss_linea_base.rs
+    - crates/hexcell/tests/admision.rs
+    - crates/hexcell/tests/motor.rs
+    - sidecar/
+    - scripts/
+    - docs/PRD.md
+    - docs/plan/
+    - docs/adr/
+    - docs/bitacora-de-descartes.md
+    - Cargo.toml
+    - Cargo.lock
+    - "**/Cargo.toml"
+    - .github/
+    - kitty-specs/
+  behaviors:
+    - "Editing ANY file under crates/hexcell/src/. This task measures the admission path; it does not change it. In particular crates/hexcell/src/motor.rs must not be touched at all: it carries a lexical guard forbidding the literal text `.unwrap(` and `.expect(` in that file, and the harness lives outside it precisely so its own assertions may use unwrap/expect freely."
+    - "Making Motor::procesar_evento, RegistroDeMetricas's pub(crate) counter fields, or registro::pruebas public in order to observe them. They are deliberately encapsulated. Exact counts MUST be obtained by calling the already-public hexcell::metricas::tomar_instantanea(&registro, &limitador, &repositorio) and reading the public fields of InstantaneaDeMetricas."
+    - "Parsing, scraping or asserting on log output to obtain the discard count. crates/hexcell/src/registro.rs only records into its thread-local capture under #[cfg(test)], which does NOT apply when the lib is linked by an integration test, so log capture is unavailable here by construction. The counter snapshot is the only correct source."
+    - "Spreading the 100 events over more than one IdConversacion. GCRA is keyed per conversation (RegistroDeAdmision::admitir receives evento.conversacion.como_str()), so distinct conversations each get a fresh bucket and produce ZERO discards, silently voiding AC-2. All 100 events share exactly ONE IdConversacion and differ only in IdDeduplicacion."
+    - "Removing the #[ignore] attribute, or making the harness run during the default `cargo test --workspace`. That is the sole mechanism keeping the fast suite fast, and it is an explicit spec invariant."
+    - "Adding the harness to verify.commands, to CI, or to any blocking gate. Making a heavy load job CI-mandatory is an explicit non-goal; it is run on demand by an operator."
+    - "Adding any dependency, dev-dependency or feature to any Cargo.toml. Everything needed is std plus the tokio features already enabled (rt, macros, sync, time). In particular do NOT enable tokio's rt-multi-thread: use plain #[tokio::test] and obtain concurrency by spawning 100 tasks that interleave on the current-thread runtime."
+    - "Terminating the drain with a fixed sleep. The Motor owns the mpsc Sender through the adaptador it took ownership of, so the channel never closes on its own and recv() would hang forever. Termination MUST poll tomar_instantanea until admitidos + descartados_admision == 100, bounded by a 30 s deadline, then abort the JoinHandle."
+    - "Using a channel capacity below 100 in AdaptadorSimulado::nuevo. A bounded channel applies backpressure above its capacity, which would serialise the burst and destroy the property under test. Use 128."
+    - "Using ProcesadorDeInferencia, a real inference provider, a network call, or any budget seeding (HEXCELL_PRESUPUESTO_INICIAL_UNIDADES, aportar_presupuesto). The processor is ProcesadorDeEco, wrapped only to timestamp completions, so that budget rejections cannot be mistaken for admission discards."
+    - "Introducing jitter, warm-up, ramp-up, backoff or any other mass-sender folklore to shape the burst. CLAUDE.md forbids it outright. The burst is a flat, deterministic 100 events."
+    - "Reporting or asserting anything about sustained load, soak duration, the <= 80 MB per-cell budget, the cells-per-server ceiling, or multi-cell behaviour. All are explicitly unvalidated and pending in CLAUDE.md, and are non-goals here."
+    - "Hard-coding the 6 MB figure from docs/STATUS.md as the comparison baseline. AC-3 requires a SELF-CONTAINED before/after delta measured within the same run; the documented absolute is context only."
+    - "Comparing VmRSS across processes or spawning the hexcell binary. This harness runs the Motor IN-PROCESS and reads /proc/self/status, unlike tests/rss_linea_base.rs which reads /proc/<pid>/status of a spawned child."
+    - "Writing a *.db, *.db-wal, *.db-shm or .env file into the repository tree, or leaving a temporary directory behind. Persistence goes through comun::DirectorioTemporal, which removes itself on Drop."
+    - "Writing English prose in source comments, doc comments, println! output, identifiers or repository documentation. The repository is PUBLIC and all its prose is Spanish; only Quorum artifact field values are English."
+    - "Rewriting, renumbering or reordering existing docs/STATUS.md bullets, ADR rows or D-NN discard-log entries. The STATUS.md change is an APPENDED entry only."
+    - "Modifying 00-spec.yaml, 01-blueprint.yaml or this contract."
+
+verify:
+  commands:
+    - cargo fmt --check
+    - cargo clippy --workspace -- -D warnings
+    - cargo build --workspace
+    - cargo test --workspace
+    - "bash -c '! grep -nE \"\\b(the|and|with|this|that|which|because|should|would|about|latency|discard|discarded|growth|burst|baseline|harness|injection|concurrent|memory|percent)\\b\" crates/hexcell/tests/carga.rs docs/STATUS.md'"
+  target_s: 60
+
+acceptance:
+  human_gate: true
+
+limits:
+  max_files_changed: 2
+  max_diff_lines: 330
+  per_class:
+    - glob: "crates/hexcell/tests/**"
+      max_diff_lines: 290
+    - glob: "docs/**"
+      max_diff_lines: 40
+
+execution:
+  mode: worktree_edit
+  branch: ai/HEX-047-new-spec
+
+retry_policy:
+  max_attempts: 2
+  escalate_after: 2

@@ -1,0 +1,50 @@
+task_id: HEX-047
+summary: Build a reproducible load-test harness injecting 100 concurrent events through ChannelAdapter, measuring latency, discard rate, and RSS growth.
+goal: >-
+  Add a reproducible load-test harness that injects 100 events concurrently
+  through the ChannelAdapter port against a real Motor instance, so GCRA
+  admission gates the excess. The harness must measure and report, in
+  Spanish output: (1) per-event latency (injection to response or
+  injection to drop), (2) the admission discard rate, and (3) resident
+  memory (VmRSS) growth measured as a self-contained before/after delta
+  within the same run. This closes stage A-4 task 12 (docs/plan/fase-a-4-admision-presupuesto.md,
+  "Construir la prueba de carga") and its acceptance criterion tied to the
+  PRD QA criterion "Prueba de Carga del Canal".
+invariants:
+  - GCRA admission activates under the 100-concurrent-event burst when configured to admit fewer than 100; the exact discard count is observable.
+  - Events discarded by GCRA are never processed by the Motor (no side effects beyond the admission decision).
+  - The default `cargo test --workspace` path stays fast; the load-test harness is excluded from that default run and must be invoked explicitly.
+  - The RSS growth measurement is self-contained per run (before/after delta), not dependent on comparing against a stale absolute number recorded in prior documentation.
+  - Pre-existing tests remain green after adding the harness.
+acceptance:
+  - id: AC-1
+    statement: The harness runs reproducibly via a documented command and completes without panicking.
+    given: a real Motor instance wired to a channel adapter capable of injecting events, and a documented invocation command
+    when: the harness is invoked to inject 100 events concurrently through the port
+    then: the harness runs to completion and prints latency, discard-rate, and RSS-growth measurements with real numbers
+  - id: AC-2
+    statement: With GCRA configured to admit fewer than 100 events, the discard count is exact and discarded events are not processed.
+    given: a GCRA configuration that forces admission of fewer than 100 events out of a 100-event burst
+    when: the harness injects the 100 events concurrently through the ChannelAdapter port
+    then: the reported admitted count plus discarded count equals 100, discarded count is greater than zero, and no discarded event produces motor-side processing effects
+  - id: AC-3
+    statement: RSS growth is measured and reported as a self-contained before/after delta for the run.
+    given: the harness has a baseline VmRSS reading captured at the start of its own run (via /proc self-inspection)
+    when: the 100-event burst completes and a second VmRSS reading is taken
+    then: the harness reports the growth as a percentage of the run's own baseline, and that percentage is checked against the stage's 15% bound (as a hard assertion or a clearly reported number, per blueprint decision)
+  - Running `cargo test --workspace` does not execute the load-test harness and completes in normal fast-suite time.
+  - All pre-existing tests across the workspace remain green after this change.
+risk: medium
+non_goals:
+  - Sustained or soak load testing (multi-minute/hour continuous load); this task covers a one-shot 100-event burst only.
+  - Multi-cell load testing.
+  - Load testing over a real network channel (whatsmeow sidecar or Cloud API); this harness targets the port in-process.
+  - Making the load-test harness mandatory in CI as a blocking gate.
+  - Performance optimization of the admission or budget path; this task only measures.
+  - Task 13 (per-client token persistence) or any other stage A-4 task besides task 12.
+constraints:
+  - The harness must not run as part of the default `cargo test --workspace` invocation; it must require an explicit, documented separate command.
+  - RSS measurement must use Linux /proc self-inspection (e.g. /proc/self/status or /proc/<pid>/status), consistent with how the A-2 baseline (docs/STATUS.md, 6 MB VmRSS at rest) was originally captured.
+  - The harness must exercise the real Motor and a real event-injecting channel adapter (e.g. AdaptadorSimulado), not a mock of the admission logic.
+  - No new versioned `*.db`, `*.db-wal`, `*.db-shm`, or `.env*` files; no secrets.
+  - motor.rs's lexical guard against `unwrap`/`expect` must not be violated by any code touching that file.

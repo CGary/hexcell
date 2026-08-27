@@ -1,0 +1,22 @@
+{
+  "task_id": "HEX-047",
+  "summary": "Re-adjudicated at 910f4be: trimmed carga.rs (289/302 lines) fits contract limits; design and assertions untouched.",
+  "verdict": "approve",
+  "contract_compliance": true,
+  "forbidden_files_touched": [],
+  "unrequested_refactor": false,
+  "missing_tests": [],
+  "functional_risk": "low",
+  "notes": [
+    "RE-ADJUDICATION at commit 910f4be (was a418e58): quorum analyze contract-check now returns ok=true, violations=[] (not_checked: forbid.behaviors). Diff is 302 total lines (limit 330) with carga.rs at 289 lines (per_class budget 290).",
+    "Diff of the fix confirmed by hand: only decorative banner/comment lines were collapsed (e.g. '// --- N. Step ---' blocks folded into single-line comments, blank lines removed); no assertion, no GCRA config, no conversation-key logic, no wrapper struct, no drain-polling logic, and no println! output line was touched or removed.",
+    "05-validation.json re-run at 910f4be: fmt/clippy/build/test/grep all exit 0; on-demand ignored load test re-verified with identical results (admitidos=10, descartados_admision=90, latencia_p50_us=972, rss_crecimiento_pct=2). Note: the validation artifact's top-level summary/executed_at fields still reference the old commit a418e58 even though the ignored-test entry's output_excerpt documents the re-verification at 910f4be -- cosmetic staleness only, not a blocker.",
+    "--- prior findings from first adjudication (a418e58), preserved for traceability ---",
+    "quorum analyze contract-check (a418e58, superseded): ok=false; violation max_diff_lines_per_class on crates/hexcell/tests/carga.rs (320 lines) exceeded per_class budget 290; violation max_diff_lines: 333 lines exceeded limits.max_diff_lines=330. Both resolved by the trim.",
+    "quorum analyze acceptance-coverage: status=pass, AC-1/AC-2/AC-3 all covered, zero gaps (unaffected by the trim; re-confirmed applicable since no test_scenario-relevant code changed)",
+    "not_checked: forbid.behaviors (manually verified by hand at both a418e58 and 910f4be: single IdConversacion used, capacity 128, no Cargo.toml edits, no rt-multi-thread, no fixed-sleep termination, no jitter/warm-up folklore, STATUS.md only appended, no unwrap/expect added to motor.rs, discard counts read only via metricas::tomar_instantanea, all satisfied)",
+    "Blueprint's admitidos band 10..=15 (instead of exact 10) is a deliberate, documented, spec-compliant choice (RISK-4: RegistroDeAdmision uses the real system clock, not the injected test clock) and satisfies spec AC-2's literal wording (sum==100, discards>0); this is not a finding",
+    "Spanish-only prose confirmed by direct read of carga.rs and the STATUS.md diff; STATUS.md change is a pure append, no existing bullet rewritten or renumbered"
+  ],
+  "fix_tasks": []
+}

@@ -1,0 +1,55 @@
+{
+  "task_id": "HEX-047",
+  "bundle_hash": "e5983cb5f99083d38b10660c11c722e50da8349979c0c230c0740cd4693b4dbf",
+  "files": [
+    ".ai/tasks/active/HEX-047-new-spec/00-spec.yaml",
+    ".ai/tasks/active/HEX-047-new-spec/01-blueprint.yaml",
+    "CLAUDE.md",
+    "crates/hexcell-canal-simulado/src/adaptador.rs",
+    "crates/hexcell-canal-simulado/src/reloj.rs",
+    "crates/hexcell-core/src/admision.rs",
+    "crates/hexcell-core/src/canal.rs",
+    "crates/hexcell-core/src/identidad.rs",
+    "crates/hexcell/src/apagado.rs",
+    "crates/hexcell/src/concurrencia.rs",
+    "crates/hexcell/src/metricas.rs",
+    "crates/hexcell/src/motor.rs",
+    "crates/hexcell/src/procesador.rs",
+    "crates/hexcell/src/registro.rs",
+    "crates/hexcell/tests/admision.rs"
+  ],
+  "protocol_version": "fleet-bundle-protocol/v2",
+  "created_at": "2026-08-27T12:40:45Z",
+  "dropped": [
+    {
+      "component": "code_slice",
+      "path": "docs/plan/fase-a-4-admision-presupuesto.md",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "docs/STATUS.md",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "docs/PRD.md",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "crates/hexcell/tests/rss_linea_base.rs",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "crates/hexcell/tests/motor.rs",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "crates/hexcell/tests/comun/mod.rs",
+      "reason": "bundle exceeded max_bytes budget"
+    }
+  ]
+}

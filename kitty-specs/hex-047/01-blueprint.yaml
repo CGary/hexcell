@@ -1,0 +1,186 @@
+task_id: HEX-047
+summary: >-
+  Add an #[ignore] load-test harness (tests/carga.rs) injecting 100 concurrent events at the
+  ChannelAdapter port, reporting latency, exact GCRA discards and self-contained RSS delta.
+
+affected_files:
+  - crates/hexcell/tests/carga.rs
+  - docs/STATUS.md
+
+symbols:
+  - carga_del_canal_100_eventos_concurrentes
+  - ProcesadorQueMideLatencia
+  - AdaptadorQueDelegaEnArc
+  - leer_vm_rss_kb
+  - percentil
+
+dependencies:
+  - crates/hexcell/tests/comun/mod.rs
+  - crates/hexcell/tests/rss_linea_base.rs
+  - crates/hexcell/tests/admision.rs
+  - crates/hexcell/tests/motor.rs
+  - crates/hexcell/src/metricas.rs
+  - crates/hexcell/src/motor.rs
+  - crates/hexcell/src/procesador.rs
+  - crates/hexcell/src/concurrencia.rs
+  - crates/hexcell/src/apagado.rs
+  - crates/hexcell-core/src/admision.rs
+  - crates/hexcell-canal-simulado/src/adaptador.rs
+  - docs/plan/fase-a-4-admision-presupuesto.md
+
+test_scenarios:
+  - statement: >-
+      AC-1: the harness runs to completion under `cargo test --workspace -- --ignored carga_del_canal
+      --nocapture` without panicking, printing latency, discard-rate and RSS-growth lines with real
+      numbers.
+    covers: [AC-1]
+  - statement: >-
+      AC-2: with ConfiguracionGcra::nueva(0.5, 9) and all 100 events on a SINGLE conversation key,
+      admitidos + descartados_admision == 100 and descartados_admision > 0, read exactly from
+      InstantaneaDeMetricas (never from log parsing).
+    covers: [AC-2]
+  - statement: >-
+      AC-2 (isolation): descartados_concurrencia == 0, because the limiter is built with
+      LimitadorDeConcurrencia::nuevo(100) and the Motor drains sequentially; every discard observed
+      is therefore attributable to GCRA admission and to nothing else.
+    covers: [AC-2]
+  - statement: >-
+      AC-2 (no side effects): adaptador.envios_capturados().len() == admitidos, proving discarded
+      events never reached the processor nor produced an outbound send.
+    covers: [AC-2]
+  - statement: >-
+      AC-3: VmRSS is read from /proc/self/status before injection and after the drain; the harness
+      asserts (despues - antes) * 100 / antes <= 15 and prints both absolute kB values.
+    covers: [AC-3]
+  - statement: >-
+      Determinism band: admitidos falls in 10..=15 (GCRA admits tolerancia_rafaga + 1 = 10 with no
+      clock advance; the 2 s emission interval cannot leak more than a few slots during a
+      millisecond-scale drain).
+    covers: [AC-2]
+  - statement: >-
+      The default `cargo test --workspace` does not execute the harness (the #[ignore] attribute is
+      the gate) and the pre-existing suite stays green.
+    covers: [AC-1]
+
+strategy:
+  - step: 1
+    action: >-
+      Create crates/hexcell/tests/carga.rs as an #[ignore]d #[tokio::test], copying the shape and
+      the Spanish module-doc discipline of the existing tests/rss_linea_base.rs (the repository's
+      only other #[ignore] test, already documented in docs/STATUS.md with the same invocation
+      pattern). Declare `mod comun;` and reuse DirectorioTemporal + repositorio_temporal; both are
+      already pub and comun/mod.rs carries #![allow(dead_code)] at line 24, so no dead-code warning
+      can break `cargo clippy --workspace -- -D warnings`.
+    files:
+      - crates/hexcell/tests/carga.rs
+  - step: 2
+    action: >-
+      Wire the port exactly as tests/admision.rs already does (Application Service assembly, no
+      domain change): AdaptadorSimulado::nuevo(Arc::new(RelojDePrueba::nuevo(UNIX_EPOCH)), 128)
+      returns (adaptador, receptor_eventos); wrap the adaptador in an Arc and give the Motor a local
+      AdaptadorQueDelegaEnArc wrapper implementing ChannelAdapter by delegation, so the harness keeps
+      a handle for inyectar() and envios_capturados() after the Motor takes ownership. Capacity 128
+      (> 100) is load-bearing: a smaller bound applies backpressure and the burst would serialise.
+    files:
+      - crates/hexcell/tests/carga.rs
+  - step: 3
+    action: >-
+      Build the Motor with ProcesadorQueMideLatencia (a harness-local Value Object wrapping
+      ProcesadorDeEco and recording per-event completion instants), then
+      .con_configuracion_gcra(ConfiguracionGcra::nueva(0.5, 9)),
+      .con_limite_de_concurrencia(LimitadorDeConcurrencia::nuevo(100)) and
+      .con_metricas(Arc::clone(&registro)). Keep clones of the limiter, the registry and the
+      repositorio: tomar_instantanea needs all three.
+    files:
+      - crates/hexcell/tests/carga.rs
+  - step: 4
+    action: >-
+      Read VmRSS from /proc/self/status BEFORE injecting, parsing with std only (find the line
+      starting with "VmRSS:", take the second whitespace field, parse to u64 kB) exactly as
+      tests/rss_linea_base.rs does today.
+    files:
+      - crates/hexcell/tests/carga.rs
+  - step: 5
+    action: >-
+      Inject the burst concurrently: spawn 100 tokio tasks, each cloning the Arc<AdaptadorSimulado>
+      and awaiting inyectar() of one EventoEntrante that shares ONE IdConversacion but carries a
+      distinct IdDeduplicacion, recording its injection Instant in a shared map keyed by dedup id.
+      Await every JoinHandle before starting the drain. Use plain #[tokio::test] (current_thread):
+      the rt-multi-thread feature is NOT enabled in crates/hexcell/Cargo.toml and this task must add
+      no feature.
+    files:
+      - crates/hexcell/tests/carga.rs
+  - step: 6
+    action: >-
+      Drive the drain deterministically: spawn motor.ejecutar(SenalDeApagado::nunca()), then poll
+      tomar_instantanea until admitidos + descartados_admision == 100 or a 30 s deadline elapses,
+      then abort the handle. Polling a counter, not sleeping a fixed interval, is what keeps the
+      harness non-flaky; the Motor owns the Sender through the adaptador, so recv() never returns
+      None on its own and an unconditional await would hang.
+    files:
+      - crates/hexcell/tests/carga.rs
+  - step: 7
+    action: >-
+      Read VmRSS again after the drain, compute the integer-percent delta against the run's own
+      baseline, and assert it is <= 15. Compute min/p50/max latency over admitted events from the
+      recorded instants, assert the AC-2 counter identities and the AC-2 no-side-effect identity,
+      and print every figure with println! (visible under --nocapture) in Spanish key=value form.
+    files:
+      - crates/hexcell/tests/carga.rs
+  - step: 8
+    action: >-
+      Append a docs/STATUS.md entry recording the harness, its exact invocation command, the GCRA
+      parameters that force the discards, the Linux-only /proc dependency and the honest limitation
+      that the in-process baseline includes the test runner. Do not edit or renumber any existing
+      bullet.
+    files:
+      - docs/STATUS.md
+
+risks:
+  - >-
+    RISK-1 (falsifies a carry-forward assumption): the bundle proposed capturing latency "around
+    procesar_evento", but Motor::procesar_evento is PRIVATE (crates/hexcell/src/motor.rs:247) and
+    crates/hexcell/src/registro.rs's capture module is `#[cfg(test)] pub(crate) mod pruebas`, so
+    NEITHER is reachable from crates/hexcell/tests/. Per-event latency is therefore measured with a
+    harness-local ProcesadorDeMensajes wrapper. Consequence: latency is observable only for ADMITTED
+    events; a discarded event returns inside the private function and its individual latency cannot
+    be seen from outside. The harness reports the discard path through the exact counter and the
+    total burst wall time instead. Making it observable would require editing motor.rs, which this
+    contract forbids.
+  - >-
+    RISK-2 (would silently void AC-2): GCRA is keyed PER CONVERSATION —
+    RegistroDeAdmision::admitir(evento.conversacion.como_str()) at motor.rs:255 with a HashMap per
+    key. If the 100 events were spread over 100 conversations each would get its own fresh bucket and
+    ZERO discards would occur, making the harness pass while proving nothing. All 100 events MUST
+    share one IdConversacion and differ only in IdDeduplicacion.
+  - >-
+    RISK-3 (weakens, never breaks, AC-3): measuring /proc/self/status in-process includes the cargo
+    test runner and the whole test binary in the baseline, so the denominator is larger than a bare
+    cell's and the 15 % bound is CONSERVATIVE — easier to pass than it would be against the 6 MB
+    at-rest figure of docs/STATUS.md:318-324. This is accepted deliberately because AC-3 demands a
+    self-contained per-run delta rather than a comparison against a documented absolute that rots;
+    the absolute kB figures are printed so an operator can judge the number directly.
+  - >-
+    RISK-4: RegistroDeAdmision uses RelojDelSistema (the real clock), not the injected RelojDePrueba,
+    which only drives the adapter's service window. With tasa 0.5/s the emission interval is 2 s, so
+    a millisecond-scale drain leaks no slots and admitidos is 10; the assertion is nonetheless
+    written as the band 10..=15 so a heavily loaded host that stretches the drain past 2 s cannot
+    produce a false failure.
+  - >-
+    RISK-5: the Motor holds the mpsc Sender inside the adaptador it owns, so the event channel never
+    closes by itself and the drain loop would hang forever on recv().await. Termination MUST come
+    from the counter-polling deadline plus abort (step 6). The tests/admision.rs precedent uses a
+    fixed 50 ms sleep before abort, which is adequate for 5 events and would be flaky for 100.
+  - >-
+    RISK-6: cargo runs the tests of one binary on several threads of one process, so a concurrently
+    running test would pollute an in-process VmRSS reading. Mitigated because #[ignore] means the
+    harness only ever runs under an explicit `--ignored carga_del_canal` filter, which selects this
+    test alone; the operator must not pass a broader filter, and the module doc must say so.
+  - >-
+    RISK-7: this harness measures a ONE-SHOT burst. It is not a soak test and must not be reported as
+    validating the ≤ 80 MB per-cell budget or any sustained-load ceiling, both of which CLAUDE.md
+    records as unvalidated and explicitly pending.
+  - >-
+    RISK-8 (process): the HSME advisory read hook returned INTERNAL_ERROR ("failed to open database
+    ... no such file or directory"), the identical failure recorded for HEX-046. The phase proceeded
+    without semantic context per the skill's graceful-degradation path.

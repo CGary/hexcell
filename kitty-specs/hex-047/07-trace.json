@@ -1,0 +1,141 @@
+{
+  "attempts": [
+    {
+      "duration_s": 0,
+      "phase": "blueprint",
+      "result": "passed"
+    },
+    {
+      "duration_s": 516.236354445,
+      "model": "anthropic/claude-opus-4-6",
+      "notes": "This is a large file. Let me continue reading it and simultaneously start reading the critical dependency files I'll need. Let me read the rest of the dispatch file from line 800 onwards, and also start reading the key dependency files in parallel. Now let me read the key source files I need in parallel to understand the APIs. Let me also read the dispatch file's remaining DATA sections and the STATUS.md file. Good, I now have comprehensive knowledge of all the APIs. Let me also read the remaining part of the dispatch file and the STATUS.md file. Now let me read the STATUS.md to know where to append the new entry. I now have all the information needed. Let me also kill the subagent since I already have all the information from it. Now I have complete understanding of the codebase. Let me create both files. First, the test harness file: Now let me append the entry to STATUS.md: Now let me run the verify commands from the contract: Let me fix the formatting issues: Now let me run the verification commands: Format passes. Now clippy: Clippy passes. Now build: Now run the test suite: All tests pass. Now let me run the English word grep check from the contract: All 5 verification commands pass. Let me review my work against the contract one final time to make sure everything is correct: Everything looks correct. Let me write the NOTES as required by the protocol:  NOTES: - Decisión: se usó `tokio::sync::Mutex` (no `std::sync::Mutex`) para el mapa de instantes de inyección y completados porque ambos se acceden desde dentro de contextos `.await`. El `std::sync::Mutex` habría funcionado aquí (el runtime es `current_thread`), pero `TokioMutex` es idiomáticamente más seguro contra deadlocks en contexto asíncrono y no añade ninguna dependencia (ya habilitado por la feature `sync`). - Decisión: la latencia se mide en microsegundos (`as_micros`) para tener resolución suficiente en un drenaje de milisegundos. - Decisión: el percentil se calcula con indexación entera ...",
+      "phase": "execute",
+      "result": "passed"
+    }
+  ],
+  "completed_at": null,
+  "context_overflows": [],
+  "events": [
+    {
+      "event": "risk_level_calculated",
+      "level": "low",
+      "reasons": [
+        "no_signals_matched"
+      ],
+      "signals": {
+        "files_count": 2,
+        "sensitive_matches": [],
+        "symbols_count": 0
+      }
+    },
+    {
+      "calculated": "low",
+      "declared": "medium",
+      "detail": "00-spec.yaml declares risk: medium; quorum analyze risk-score calculated low because the change touches only 2 files, neither of which matches a sensitive path. The human's declared risk WINS and 00-spec.yaml was not modified. The divergence is real but the declared level is the defensible one: the file count is small, yet the harness asserts a QA gate whose failure modes are silent (see the GCRA per-conversation keying risk), so a scorer that only counts files understates the design risk.",
+      "event": "risk_level_divergence",
+      "reasons": [
+        "no_signals_matched"
+      ]
+    },
+    {
+      "detail": "codebase-memory-mcp index_status for project home-gary-dev-hexcell reported status ready with git.head_sha 90412a3eaa035a95ff80dcb51b5400eb22a70e63, matching git rev-parse HEAD. The graph was fresh; every load-bearing fact was nonetheless confirmed by direct reads of the real files.",
+      "event": "index_freshness_checked",
+      "index_head_sha": "90412a3eaa035a95ff80dcb51b5400eb22a70e63"
+    },
+    {
+      "detail": "The HSME advisory read hook failed: search-fuzzy returned INTERNAL_ERROR 'failed to open database: bootstrap open db: failed to set pragma: unable to open database file: no such file or directory'. This is the identical failure recorded for HEX-046. Per the skill's graceful-degradation path the phase proceeded without semantic context, and the failure is reported rather than silently dropped.",
+      "event": "advisor_unavailable"
+    },
+    {
+      "detail": "The orchestrator bundle proposed measuring per-event latency as wall time captured around procesar_evento. Motor::procesar_evento is PRIVATE (crates/hexcell/src/motor.rs:247) and cannot be called from crates/hexcell/tests/. The bundle also offered log parsing as a fallback source for discard counts; that is likewise impossible, because crates/hexcell/src/registro.rs records into its thread-local capture only under #[cfg(test)] and exposes the capture as `pub(crate) mod pruebas`, neither of which applies when the lib is linked by an integration test. Both options were rejected. Latency is measured with a harness-local ProcesadorDeMensajes wrapper; discard counts come from the already-public metricas::tomar_instantanea.",
+      "event": "carry_forward_assumption_falsified"
+    },
+    {
+      "detail": "Harness placement: a new #[ignore]d #[tokio::test] at crates/hexcell/tests/carga.rs, run with `cargo test --workspace -- --ignored carga_del_canal --nocapture`. Chosen over an example, a bin, or a scripts/laboratorio/ shell script because crates/hexcell/tests/rss_linea_base.rs is the repository's ONLY existing #[ignore] test, is the only other /proc VmRSS measurement, uses that exact invocation shape, and is already documented in docs/STATUS.md lines 318-324; scripts/laboratorio/ holds sh harnesses that drive real external processes (sidecar, QR pairing), which this in-process port test is not. No [[example]] or [[bin]] section exists in any crate manifest, so either would have required a Cargo.toml edit this task forbids. Processor: ProcesadorDeEco wrapped for timing, isolating ADMISSION (the criterion's subject) from budget and provider noise. Discard source: metricas::tomar_instantanea returning InstantaneaDeMetricas public fields, exact and never log-parsed. GCRA: ConfiguracionGcra::nueva(0.5, 9) with all 100 events on ONE conversation key, admitting tolerancia_rafaga + 1 = 10 and discarding ~90 deterministically, since the 2 s emission interval leaks nothing during a millisecond-scale drain. RSS: /proc/self/status VmRSS read before injection and after the drain, asserted HARD at \u003c= 15 % of the run's own baseline (the stage criterion at docs/plan/fase-a-4-admision-presupuesto.md lines 131-134 is worded as a QA bound, so a bound is what is asserted), with both absolute kB values printed for the operator.",
+      "event": "design_decision_recorded"
+    },
+    {
+      "detail": "quorum analyze contract-check simulated the planned 2-file, ~320-line change against 02-contract.yaml and returned ok:true with no violations (not_checked: forbid.behaviors). Guard applied per the hex-044/hex-045/hex-046 precedent, where an execute attempt was BLOCKED for a file the instructions required but touch omitted.",
+      "event": "contract_precheck"
+    },
+    {
+      "detail": "quorum analyze acceptance-coverage returned status pass with zero gaps after explicit `covers` links were added to the blueprint test_scenarios; AC-1, AC-2 and AC-3 are each covered by at least one scenario. The two unnumbered acceptance bullets are legacy_untracked by design: they map to verify.commands, not to test scenarios.",
+      "event": "acceptance_coverage_checked"
+    },
+    {
+      "detail": "The scoped English-leak grep of verify.commands was executed against the current tree before being written into the contract. All 21 candidate words returned 0 hits on docs/STATUS.md, so no pre-existing prose can trip the gate. This pre-empts the HEX-046 failure mode, where a first candidate list including 'metrics' failed on pre-existing prose at docs/STATUS.md:507. crates/hexcell/tests/carga.rs does not exist yet and will be authored in Spanish.",
+      "event": "verify_gate_precheck"
+    },
+    {
+      "detail": "The load-test harness is deliberately EXCLUDED from verify.commands. verify only proves the harness compiles and that the fast suite still passes; the on-demand run `cargo test --workspace -- --ignored carga_del_canal --nocapture` IS the acceptance evidence for AC-1..AC-3. This is stated in the contract goal so a later reviewer does not report the absence as a coverage gap. Making the heavy job a blocking CI gate is an explicit spec non-goal.",
+      "event": "verify_scope_declared"
+    },
+    {
+      "detail": "quorum task start HEX-047-new-spec created worktrees/HEX-047-new-spec on branch ai/HEX-047-new-spec at 90412a3, then failed non-fatally initializing 04-implementation-log.yaml because task_id 'HEX-047-new-spec' does not match the schema pattern ^[A-Z]+-[0-9]+(-[a-z])?$. This 07-trace.json was written by hand following the kitty-specs/hex-046 precedent.",
+      "event": "task_start_partial"
+    },
+    {
+      "blocked": "",
+      "candidate": {
+        "agent": "agy_edit",
+        "level": 1,
+        "model": "anthropic/claude-opus-4-6"
+      },
+      "dispatch_id": "",
+      "inputs_snapshot": {
+        "complexity_band": "M",
+        "control": {
+          "disabled": null,
+          "updated_at": ""
+        },
+        "exclusions": [],
+        "hashes": {
+          "agents_yaml": "c9aadb5ea7388a6a8067f5000472f5d47e58c478e09328652c5f4e847e519f22",
+          "config_yaml": "b56bb8d22b5e37e7ba99304ede50a8e37aa437861312927168d0355ae78da63e",
+          "routing_yaml": "c661109fa2d3bf143fab0751c5001b997d5365322197cb84c9661d688d0ac0ec"
+        },
+        "incumbent_family": "",
+        "level": 1,
+        "phase": "implement",
+        "risk": "medium",
+        "router_version": "fleet-route/v1"
+      },
+      "reasons": null,
+      "reroute_budget": 2,
+      "review_family_degraded": false,
+      "ts": "2026-08-27T12:40:33Z",
+      "type": "routing_decision"
+    },
+    {
+      "bundle_hash": "e5983cb5f99083d38b10660c11c722e50da8349979c0c230c0740cd4693b4dbf",
+      "dispatch_id": "e5983cb5f990",
+      "ts": "2026-08-27T12:40:49Z",
+      "type": "dispatch_started"
+    },
+    {
+      "applied": true,
+      "cause": null,
+      "diff_stat": {
+        "deletions": 0,
+        "empty": false,
+        "files_changed": 2,
+        "indeterminate": false,
+        "insertions": 333
+      },
+      "dispatch_id": "e5983cb5f990",
+      "forensic_ref": "refs/fleet/HEX-047-new-spec/attempt-1-anthropic-claude-opus-4-6",
+      "noop": false,
+      "outcome_class": "attempt",
+      "ts": "2026-08-27T12:49:25Z",
+      "type": "dispatch_finished",
+      "usage_source": "none"
+    }
+  ],
+  "execution_mode": "worktree_edit",
+  "outcome": null,
+  "started_at": "2026-08-27T08:31:00Z",
+  "summary": "Add an #[ignore] load-test harness injecting 100 concurrent events at the ChannelAdapter port, measuring latency, exact GCRA discards and a self-contained RSS delta.",
+  "task_id": "HEX-047",
+  "total_cost_usd": 0,
+  "violations": []
+}

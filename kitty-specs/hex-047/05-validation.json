@@ -1,0 +1,44 @@
+{
+  "commands": [
+    {
+      "command": "cargo fmt --check",
+      "duration_s": 1,
+      "exit_code": 0,
+      "output_excerpt": "sin diferencias de formato"
+    },
+    {
+      "command": "cargo clippy --workspace -- -D warnings",
+      "duration_s": 30,
+      "exit_code": 0,
+      "output_excerpt": "sin warnings con -D warnings"
+    },
+    {
+      "command": "cargo build --workspace",
+      "duration_s": 15,
+      "exit_code": 0,
+      "output_excerpt": "Finished dev profile"
+    },
+    {
+      "command": "cargo test --workspace",
+      "duration_s": 60,
+      "exit_code": 0,
+      "output_excerpt": "test result: ok. 12 passed / ok. 17 passed / ok. 14 passed; suites completas sin fallos"
+    },
+    {
+      "command": "bash -c (grep negado de fugas de ingles sobre los 2 archivos del contrato)",
+      "duration_s": 1,
+      "exit_code": 0,
+      "output_excerpt": "sin coincidencias: 0 fugas de ingles en carga.rs y STATUS.md"
+    },
+    {
+      "command": "cargo test --workspace -- --ignored carga_del_canal --nocapture",
+      "duration_s": 5,
+      "exit_code": 0,
+      "output_excerpt": "re-verificado en el commit enmendado 910f4be tras el recorte ordenado por review (302/289 lineas, limites cumplidos): admitidos=10 descartados_admision=90 latencia_p50_us=972 rss_crecimiento_pct=2 =\u003e criterio 15% cumplido"
+    }
+  ],
+  "executed_at": "2026-08-27T12:50:14Z",
+  "overall_result": "passed",
+  "summary": "Los seis verify.commands pasan (exit 0) en worktrees/HEX-047-new-spec en el commit 910f4be; formato, clippy, build, suites completas, verificación de fugas y prueba de carga en verde.",
+  "task_id": "HEX-047"
+}
