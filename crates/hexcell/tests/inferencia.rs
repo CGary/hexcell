@@ -10,7 +10,7 @@ use comun::{DirectorioTemporal, repositorio_temporal};
 use hexcell::apagado::SenalDeApagado;
 use hexcell::inferencia::{ErrorDeInferenciaSimulada, ProveedorSimulado};
 use hexcell::motor::Motor;
-use hexcell::procesador::ProcesadorDeInferencia;
+use hexcell::procesador::{ProcesadorDeInferencia, ProcesadorDeMensajes};
 use hexcell_canal_simulado::{AdaptadorSimulado, ErrorDelAdaptadorSimulado, RelojDePrueba};
 use hexcell_core::canal::{
     ChannelAdapter, EstadoVentanaServicio, EventoEntrante, MensajeSaliente, ResultadoEnvio,
@@ -307,7 +307,9 @@ async fn con_saldo_insuficiente_el_proveedor_de_inferencia_registra_cero_llamada
         .expect("inyectar evento de prueba");
 
     let repositorio = repositorio_temporal(directorio.ruta());
-    // El saldo inicial es 0, menor que la estimación del prompt
+    repositorio
+        .aportar_presupuesto(3, SystemTime::UNIX_EPOCH)
+        .expect("aportar saldo insuficiente para la estimación");
 
     let (proveedor_contador, contador) = ProveedorContador::nuevo();
     let procesador = ProcesadorDeInferencia::nuevo(proveedor_contador, Arc::clone(&repositorio));
@@ -331,9 +333,30 @@ async fn con_saldo_insuficiente_el_proveedor_de_inferencia_registra_cero_llamada
         0,
         "el proveedor de inferencia no debe ser invocado cuando el saldo es insuficiente"
     );
-    assert!(
-        adaptador.envios_capturados().is_empty(),
-        "no debe haber envíos cuando la reserva es rechazada"
+
+    let capturas = adaptador.envios_capturados();
+    assert_eq!(
+        capturas.len(),
+        1,
+        "debe existir exactamente una respuesta local provisional"
+    );
+    let MensajeSaliente::RespuestaLibre { texto, .. } = &capturas[0].1 else {
+        panic!("se esperaba una respuesta libre");
+    };
+    assert_eq!(
+        texto,
+        hexcell::reglas_locales::TEXTO_DE_RESPUESTA_DEGRADADA,
+        "la respuesta enviada debe ser el texto degradado"
+    );
+
+    let saldo = repositorio.saldo().expect("consultar saldo");
+    assert_eq!(
+        saldo.disponible, 3,
+        "el saldo disponible no debe variar tras una reserva rechazada"
+    );
+    assert_eq!(
+        saldo.reservado, 0,
+        "el saldo reservado debe ser cero tras una reserva rechazada"
     );
 }
 
@@ -381,5 +404,99 @@ async fn con_saldo_suficiente_el_proveedor_de_inferencia_es_invocado() {
         adaptador.envios_capturados().len(),
         1,
         "debe existir un envío saliente tras la inferencia exitosa"
+    );
+}
+
+#[tokio::test]
+async fn retorno_automatico_al_proveedor_tras_recargar_saldo() {
+    let directorio = DirectorioTemporal::nuevo("inferencia-retorno-automatico");
+    let repositorio = repositorio_temporal(directorio.ruta());
+    let (proveedor_contador, contador) = ProveedorContador::nuevo();
+    let procesador = ProcesadorDeInferencia::nuevo(proveedor_contador, Arc::clone(&repositorio));
+    let conversacion = IdConversacion::nuevo("conversacion-retorno");
+
+    // Primer evento sin saldo suficiente (saldo inicial es 0)
+    let primer_evento = EventoEntrante {
+        remitente: IdRemitente::nuevo("remitente-prueba"),
+        conversacion: conversacion.clone(),
+        contenido: "primer mensaje sin saldo".to_string(),
+        marca_temporal: SystemTime::UNIX_EPOCH,
+        deduplicacion: IdDeduplicacion::nuevo("dedup-retorno-1"),
+    };
+
+    let primer_resultado = procesador.procesar(&primer_evento).await;
+    assert_eq!(
+        contador.load(Ordering::Relaxed),
+        0,
+        "el proveedor no debe llamarse con saldo insuficiente"
+    );
+    assert!(
+        primer_resultado.is_some(),
+        "debe retornar respuesta provisional"
+    );
+    if let Some(MensajeSaliente::RespuestaLibre { texto, .. }) = primer_resultado {
+        assert_eq!(
+            texto,
+            hexcell::reglas_locales::TEXTO_DE_RESPUESTA_DEGRADADA,
+            "la respuesta debe ser el texto degradado"
+        );
+    } else {
+        panic!("se esperaba una respuesta libre con texto degradado");
+    }
+
+    // Aportamos saldo suficiente para el coste del segundo mensaje
+    repositorio
+        .aportar_presupuesto(50, SystemTime::UNIX_EPOCH)
+        .expect("aportar saldo");
+
+    // La reserva referencia la conversación por clave foránea: en el flujo real el motor anota
+    // el entrante antes de procesar, y este test llama al procesador directo, así que anota
+    // aquí el entrante por la misma API pública.
+    repositorio
+        .anotar_entrante(
+            &conversacion,
+            &IdRemitente::nuevo("remitente-prueba"),
+            "segundo mensaje con saldo",
+            SystemTime::UNIX_EPOCH,
+        )
+        .expect("anotar el entrante de la conversación");
+
+    // Segundo evento con un IdDeduplicacion DIFERENTE
+    let segundo_evento = EventoEntrante {
+        remitente: IdRemitente::nuevo("remitente-prueba"),
+        conversacion: conversacion.clone(),
+        contenido: "segundo mensaje con saldo".to_string(),
+        marca_temporal: SystemTime::UNIX_EPOCH,
+        deduplicacion: IdDeduplicacion::nuevo("dedup-retorno-2"),
+    };
+
+    let segundo_resultado = procesador.procesar(&segundo_evento).await;
+    assert_eq!(
+        contador.load(Ordering::Relaxed),
+        1,
+        "el proveedor debe haber sido llamado una vez tras aportar saldo"
+    );
+    assert!(
+        segundo_resultado.is_some(),
+        "debe retornar respuesta del proveedor"
+    );
+    if let Some(MensajeSaliente::RespuestaLibre { texto, .. }) = segundo_resultado {
+        assert_ne!(
+            texto,
+            hexcell::reglas_locales::TEXTO_DE_RESPUESTA_DEGRADADA,
+            "la respuesta no debe ser la provisional"
+        );
+        assert_eq!(
+            texto, "respuesta simulada para segundo mensaje con saldo",
+            "la respuesta debe ser la generada por el proveedor"
+        );
+    } else {
+        panic!("se esperaba una respuesta libre del proveedor");
+    }
+
+    let saldo = repositorio.saldo().expect("consultar saldo");
+    assert_eq!(
+        saldo.reservado, 0,
+        "el saldo reservado debe retornar a cero tras conciliar"
     );
 }

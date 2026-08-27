@@ -25,6 +25,7 @@ pub mod preparacion;
 pub mod procesador;
 pub mod proveedor_openai;
 pub mod registro;
+pub mod reglas_locales;
 pub mod respaldar;
 pub mod respaldo;
 pub mod salud;

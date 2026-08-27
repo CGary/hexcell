@@ -23,11 +23,10 @@
 //!
 //! # Qué hace este procesador ante un fallo del proveedor o rechazo de presupuesto
 //!
-//! Ninguna regla de negocio: sin texto fijo de disculpa, sin reintento, sin `backoff`. Qué
-//! contesta una célula cuando la inferencia falla o es rechazada por presupuesto es una decisión
-//! de producto ligada al modo degradado de la etapa A-4 (FR-10), y `docs/STATUS.md` la trata como
-//! bloqueo declarado, no como algo que resolver de paso. Este procesador simplemente no genera
-//! respuesta (`None`); es el motor quien decide qué se registra sobre ese evento.
+//! Ante una avería del proveedor, no se genera respuesta (`None`). Sin embargo, ante un
+//! rechazo de presupuesto por falta de saldo, el procesador activa el modo degradado:
+//! emite un registro estructurado y genera una respuesta local provisional basada en
+//! reglas fijas (`Some(MensajeSaliente)`), sin consumir saldo ni invocar al proveedor.
 
 use std::sync::Arc;
 
@@ -123,7 +122,20 @@ where
                         .con_id_conversacion(evento.conversacion.como_str())
                         .con_detalle(format!("requerido: {requerido}, disponible: {disponible}")),
                 );
-                return None;
+                emitir(
+                    EntradaDeRegistro::nueva(NivelDeRegistro::Aviso, "modo_degradado")
+                        .con_id_conversacion(evento.conversacion.como_str()),
+                );
+                let respuesta_local = crate::reglas_locales::responder_localmente();
+                let testigo = TestigoDeEntrante::observar(evento);
+                return Some(
+                    MensajeSaliente::respuesta_libre(
+                        &testigo,
+                        &evento.conversacion,
+                        respuesta_local.contenido,
+                    )
+                    .expect("la conversación coincide siempre"),
+                );
             }
             Err(error) => {
                 // Política fail-closed: a diferencia de la deduplicación que es fail-open (duplicar
@@ -301,9 +313,19 @@ mod tests {
         let registros = registro::pruebas::tomar();
 
         assert!(
-            resultado.is_none(),
-            "sin saldo suficiente el procesador no debe generar respuesta"
+            resultado.is_some(),
+            "con saldo insuficiente el procesador debe generar respuesta en modo degradado"
         );
+        if let Some(MensajeSaliente::RespuestaLibre { texto, .. }) = resultado {
+            assert_eq!(
+                texto,
+                crate::reglas_locales::TEXTO_DE_RESPUESTA_DEGRADADA,
+                "la respuesta debe ser el texto degradado"
+            );
+        } else {
+            panic!("se esperaba una respuesta libre con el texto degradado");
+        }
+
         let rechazo = registros
             .iter()
             .find(|entrada| entrada.evento == "presupuesto_rechazado");
@@ -313,6 +335,18 @@ mod tests {
         );
         assert_eq!(
             rechazo.unwrap().id_conversacion.as_deref(),
+            Some("conversacion-sin-saldo")
+        );
+
+        let degradado = registros
+            .iter()
+            .find(|entrada| entrada.evento == "modo_degradado");
+        assert!(
+            degradado.is_some(),
+            "debe existir una entrada de registro para modo_degradado"
+        );
+        assert_eq!(
+            degradado.unwrap().id_conversacion.as_deref(),
             Some("conversacion-sin-saldo")
         );
 

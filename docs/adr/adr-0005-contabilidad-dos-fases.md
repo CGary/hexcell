@@ -1,6 +1,6 @@
 # ADR 0005: Contabilidad financiera en dos fases (Reserva previa y Conciliación posterior)
 
-* **Estado**: Vigente (Fase 1: Reserva previa implementada en HEX-042; Fase 2: Conciliación posterior implementada en HEX-043)
+* **Estado**: Vigente (Fase 1: Reserva previa implementada en HEX-042; Fase 2: Conciliación posterior implementada en HEX-043; Fase 3: Modo degradado implementado en HEX-045)
 * **Fecha**: 2026-08-26
 * **Etapa**: A-4 (FR-10)
 
@@ -21,7 +21,7 @@ Adoptar un esquema contable financiero en **dos fases** para el control del pres
    - Si es suficiente, inserta un registro con estado `'activa'` en la tabla `reservas`.
    - Decrementa `saldo.disponible` y aumenta `saldo.reservado`.
    - Registra un movimiento con clase `'reserva'` y monto negativo en la tabla `movimientos`.
-3. Si el saldo es insuficiente, la reserva devuelve `VeredictoDeReserva::Rechazada`. El procesador de inferencia no llama al proveedor, emite un registro estructurado `presupuesto_rechazado` y retorna `None` (fail-closed).
+3. Si el saldo es insuficiente, la reserva devuelve `VeredictoDeReserva::Rechazada`. El procesador de inferencia no llama al proveedor, emite un registro estructurado `presupuesto_rechazado` y retorna `None` (fail-closed) [Nota: Esta última cláusula de retorno `None` queda superada en la Fase 3 por la respuesta local en modo degradado].
 
 ### Fase 2: Conciliación o liberación posterior (HEX-043)
 Una vez completada la llamada al proveedor de inferencia:
@@ -37,6 +37,11 @@ Una vez completada la llamada al proveedor de inferencia:
    - Se inserta un movimiento de clase `'liberacion'` con monto +N.
 3. La gestión de temporizadores (timeouts de red) queda diferida a la tarea 9 (cliente HTTP de inferencia real); cualquier fallo de transporte o timeout provocado por dicho cliente tomará la ruta de `liberar_presupuesto`.
 
+### Fase 3: Respuesta local en modo degradado (HEX-045, 2026-08-27)
+1. Si la reserva devuelve `VeredictoDeReserva::Rechazada` (saldo insuficiente), el procesador de inferencia no llama al proveedor de inferencia ni crea ninguna reserva o movimiento en el libro contable (coste de presupuesto cero).
+2. En su lugar, el procesador emite el registro estructurado `modo_degradado` (además del existente `presupuesto_rechazado`) y genera una respuesta local provisional basada en reglas fijas con cero unidades de presupuesto consumidas (`unidades_consumidas` == 0).
+3. Una vez restaurado el saldo de la célula mediante un aporte, el procesador retoma de forma automática la ruta ordinaria de inferencia en la siguiente petición.
+
 ## Consecuencias
 
 * **Positivas**:
@@ -47,3 +52,4 @@ Una vez completada la llamada al proveedor de inferencia:
   - La política de fallo ante errores de almacenamiento es *fail-closed* en la ruta contable.
 * **Negativas / Limitaciones**:
   - El déficit que supere el saldo disponible en el momento de conciliar se acota a cero disponible y el remanente no cubierto queda registrado únicamente en métricas/logs sin asiento contable negativo en el libro.
+  - El texto de respuesta provisional enviado en el modo degradado es un marcador de posición técnico del mecanismo, cuya redacción final comercial queda pendiente de una decisión de producto.
