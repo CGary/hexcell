@@ -401,6 +401,19 @@ adicional cuando aparezca un cliente que lo justifique. Ver [plan/README.md](pla
 * **Ensayo de restauración extremo a extremo — rama 1 (VALID) y rama 2 (VALID)** (2026-08-20, tarea 18 de la etapa A-3 / plan). El ensayo de la **rama 1** del runbook de restauración se completó con resultado **VALID** según el criterio del plan: `hexcell respaldar` produjo 4 copias verificadas (orden `sqlstore`-primero con fallo-en-vacío observado, identificador de ronda impreso, código de salida 0), la restauración sobre un entorno limpio reanudó la sesión de WhatsApp sin volver a escanear QR, y el bot reconectó **y respondió a un mensaje real**. Queda la **advertencia crítica** de que la célula restaurada reenvió su presentación porque el conjunto de respaldo está incompleto.
   **Continuación 2026-08-20 — rama 2 (VALID):** el ensayo de la **rama 2** (`device_removed`) se completó con resultado **VALID**, cerrando la tarea 18 del plan completamente. Evidencia: desvinculación forzada desde el teléfono clasificada en vivo como `estado=desvinculada causa=desvinculada_dispositivo_removido codigo=401` (terminal), whatsmeow eliminó la sesión local y **cero reintentos** (invariante HEX-027); restauración de las **tres bases no credenciales** (`sessions.db`, `knowledge_live.db`, almacén de identidad del adaptador) **SIN** restaurar `sqlstore`; sidecar arrancó y **rechazó auto-conexión** contra almacén de credenciales vacío (0 reintentos de conexión); recuperación por **re-emparejamiento QR** (segunda capa de defensa); célula reconstruida **reconectó y respondió a un mensaje real**. **Ambas ramas de la regla de restauración quedan probadas extremo a extremo; la tarea 18 del plan está COMPLETA.**
 * **Configuración del sidecar endurecida: outbox configurable y zona horaria requerida** (2026-08-20, `HEX-033`). La ruta de la base de datos de outbox se configura mediante `HEXCELL_RUTA_OUTBOX` (conservando `/var/lib/hexcell/outbox.db` como valor por omisión documentado sin alterar despliegues existentes). Se elimina el valor por omisión implícito de zona horaria (`America/Argentina/Buenos_Aires`), exigiendo `HEXCELL_VENTANA_ZONA` de forma explícita por célula y fallando con error cerrado al arranque antes de abrir almacenes o escuchar puertos si la variable falta o está vacía.
+* **Arnés de carga del canal: ráfaga de 100 eventos concurrentes** (2026-08-27, `HEX-047`, tarea 12 de
+  A-4). `crates/hexcell/tests/carga.rs` es un test `#[ignore]` que inyecta 100 eventos concurrentes a
+  través del puerto `ChannelAdapter` contra un `Motor` real con `ProcesadorDeEco` (envuelto para medir
+  latencia) y `AdaptadorSimulado` (capacidad 128), configurado con `ConfiguracionGcra::nueva(0.5, 9)` y
+  `LimitadorDeConcurrencia::nuevo(100)`. Todos los eventos comparten una única `IdConversacion` para que
+  GCRA aplique su presupuesto de ráfaga por conversación; con tolerancia 9 la banda determinista de
+  admitidos es `10..=15`. El arnés mide y reporta: (1) latencia por evento admitido (mínima, p50,
+  máxima), (2) tasa exacta de descarte de admisión leída de `InstantaneaDeMetricas` (nunca de logs),
+  (3) crecimiento de `VmRSS` como delta autoproporcional antes/después leído de `/proc/self/status`,
+  con aserción `<= 15 %`. Invocación:
+  `cargo test --workspace -- --ignored carga_del_canal --nocapture`. Solo funciona en Linux
+  (`/proc/self/status`). La línea base de RSS incluye el runner de `cargo test` y todo el binario de
+  integración en el denominador; las cifras absolutas en kB se imprimen para juicio directo del operador.
 
 ## Pendiente
 * **Calibración de parámetros de retroceso IPC en el núcleo** (2026-08-08, HEX-015). Los valores por defecto provisionales del cliente IPC para los reintentos de conexión requieren calibración bajo tráfico real. — *Etapa A-3.*
