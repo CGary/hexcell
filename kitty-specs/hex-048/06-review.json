@@ -1,0 +1,20 @@
+{
+  "task_id": "HEX-048",
+  "summary": "Diff matches contract exact-shape: 0003 view anchored on reservas LEFT JOIN conciliacion, ladder v3, additive read-only method. SQL math and full validation verified; no forbidden files touched.",
+  "verdict": "approve",
+  "contract_compliance": true,
+  "forbidden_files_touched": [],
+  "unrequested_refactor": false,
+  "missing_tests": [],
+  "functional_risk": "low",
+  "notes": [
+    "contract-check ok=true; not_checked: forbid.behaviors (verified by hand instead: no movimientos-anchored aggregate, no body edits to reservar/aportar/conciliar/liberar/saldo/presupuesto_sin_iniciar/desviacion_de_conciliacion, no accumulator table, no deficit_no_cubierto persistence, no metricas import, no cell/tenant/price dimension, migrations 0001/0002 untouched, no IF NOT EXISTS/DROP VIEW/CREATE OR REPLACE guard added, migraciones.rs:192 literal replaced with VERSION_DE_ESQUEMA_DE_SESIONES, OBJETOS_ESPERADOS grown to 14, respaldo.rs/pools.rs untouched, no new Cargo dependency, no English prose leak, no *.db artifact left behind, restart proof uses drop+reopen plus a direct rusqlite Connection read).",
+    "acceptance-coverage: AC-1/AC-2/AC-3 all state 'covered'; no gaps reported.",
+    "Manually verified the view's arithmetic against conciliar_presupuesto's ajuste_aplicado (presupuesto.rs:278-290): surplus case, deficit-covered case, deficit-uncovered case, and the zero-delta absent-row case (conv-4 in the new test, consumo==reservado==12, no movimiento row inserted) all reduce correctly to the real consumption or its documented undercount.",
+    "Test test_consumo_por_conversacion_completo exercises exactly the blueprint's prescribed scenarios in one script: 4 conversations, mixed surplus/deficit-covered/liberada/exact-match reservations, empty-db-returns-empty-vector at the top, deterministic id_conversacion ordering, restart via drop+reopen (AC-2), and a raw rusqlite::Connection read of the view for SQL-only proof (AC-2).",
+    "Test upgrade_de_version_2_a_version_3_preserva_datos_preexistentes seeds v2 data (conversacion, reserva, movimiento) before running the full ladder, asserts version==VERSION_DE_ESQUEMA_DE_SESIONES, checks all 14 OBJETOS_ESPERADOS present, verifies pre-existing rows survive, and re-runs the ladder as a no-op — matches AC-3 exactly.",
+    "Re-ran independently at commit 2eb2c67 in worktrees/HEX-048-new-spec: cargo fmt --check (0), cargo clippy --workspace -- -D warnings (0), cargo test -p hexcell-storage (all 4 suites green, 8/8 migraciones incl. the new v2->v3 test, 15/15 presupuesto incl. the new consumption test), and the scoped English-leak grep (0, no matches) — all reconfirm 05-validation.json's overall_result=passed.",
+    "Incidental observation, not a blocker: cargo clippy -p hexcell-storage --tests (a stricter invocation than the contract's verify command) flags a pre-existing useless_asref lint in tests/respaldo.rs:77, a forbidden file this diff does not touch and that is identical on main (4f3b03b); the contract's actual verify command cargo clippy --workspace -- -D warnings passes clean. Latent toolchain-drift issue outside this task's scope."
+  ],
+  "fix_tasks": []
+}

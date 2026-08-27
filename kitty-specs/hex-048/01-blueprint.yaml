@@ -1,0 +1,181 @@
+task_id: HEX-048
+
+summary: >-
+  Add migration 0003 creating the consumo_por_conversacion SQL view over reservas LEFT JOIN
+  movimientos, plus a read-only repository method exposing per-conversation consumed units.
+
+affected_files:
+  - crates/hexcell-storage/migraciones/sesiones/0003-consumo-por-conversacion.sql
+  - crates/hexcell-storage/src/migraciones.rs
+  - crates/hexcell-storage/src/presupuesto.rs
+  - crates/hexcell-storage/src/lib.rs
+  - crates/hexcell-storage/tests/presupuesto.rs
+  - crates/hexcell-storage/tests/migraciones.rs
+
+symbols:
+  - consumo_por_conversacion
+  - ConsumoDeConversacion
+  - RepositorioDeSesiones::consumo_por_conversacion
+  - VERSION_DE_ESQUEMA_DE_SESIONES
+  - ESQUEMA_CONSUMO_POR_CONVERSACION_DE_SESIONES
+  - MIGRACIONES_DE_SESIONES
+  - OBJETOS_ESPERADOS
+
+dependencies:
+  - crates/hexcell-storage/migraciones/sesiones/0002-saldo-y-movimientos.sql
+  - crates/hexcell-storage/src/pools.rs
+  - crates/hexcell-storage/src/sesiones.rs
+  - crates/hexcell-storage/src/error.rs
+  - crates/hexcell-storage/tests/respaldo.rs
+  - crates/hexcell-core/src/identidad.rs
+  - docs/adr/adr-0005-contabilidad-dos-fases.md
+
+test_scenarios:
+  - statement: >-
+      Scripted sequence over 2+ conversations (aportar, several reservations, mixed conciliar with
+      surplus / conciliar with covered deficit / liberar) returns exactly the per-conversation
+      consumed units, with liberadas contributing 0.
+    covers:
+      - AC-1
+  - statement: >-
+      A conversation whose only reservations were liberadas reports a total of 0, not an absent row,
+      because the view is anchored on reservas and not on the conciliacion movements.
+    covers:
+      - AC-1
+  - statement: >-
+      The exact-match case (consumed == reserved) reports the full reserved amount even though
+      conciliar_presupuesto inserts NO movimientos row for it, proving the derivation does not
+      undercount when the ledger delta is zero.
+    covers:
+      - AC-1
+  - statement: >-
+      Totals are unchanged after dropping the repository and reopening sessions.db from the same
+      directory with a fresh RepositorioDeSesiones, proving the values live in the file and not in
+      any in-memory counter.
+    covers:
+      - AC-2
+  - statement: >-
+      Reading the view through a direct rusqlite Connection on the on-disk sessions.db returns the
+      same totals as the repository method, proving the structure is queryable from SQL alone.
+    covers:
+      - AC-2
+  - statement: >-
+      Results are ordered deterministically by id_conversacion across repeated calls, and an empty
+      database returns an empty vector rather than an error.
+    covers:
+      - AC-1
+  - statement: >-
+      A fresh database reaches VERSION_DE_ESQUEMA_DE_SESIONES and exposes the view among the
+      expected schema objects.
+    covers:
+      - AC-3
+  - statement: >-
+      A database left at user_version 2 with pre-existing saldo, reservas and movimientos rows
+      upgrades to version 3, preserves every pre-existing row, and a second run of the ladder is a
+      no-op that neither errors nor duplicates the view.
+    covers:
+      - AC-3
+
+strategy:
+  - step: 1
+    action: >-
+      Add the migration script (Application Service / schema object). Create the view
+      consumo_por_conversacion anchored on reservas, LEFT JOINing only the 'conciliacion' movement
+      of each reserva, computing SUM(CASE WHEN estado = 'conciliada' THEN monto_reservado -
+      COALESCE(monto, 0) ELSE 0 END) GROUP BY id_conversacion. Spanish didactic comments must
+      explain WHY the query is anchored on reservas and not on movimientos - the absent zero-delta
+      row - and must state the deficit_no_cubierto limitation, in the style of 0001/0002.
+    files:
+      - crates/hexcell-storage/migraciones/sesiones/0003-consumo-por-conversacion.sql
+  - step: 2
+    action: >-
+      Wire the ladder step. Add the include_str! constant, append PasoDeMigracion { version: 3 } to
+      MIGRACIONES_DE_SESIONES, and bump VERSION_DE_ESQUEMA_DE_SESIONES from 2 to 3. Idempotency is
+      inherited from the existing runner, which skips steps whose version is not greater than the
+      file's user_version; no IF NOT EXISTS is needed or wanted.
+    files:
+      - crates/hexcell-storage/src/migraciones.rs
+  - step: 3
+    action: >-
+      Add the read-only query surface (Value Object + repository read). Define
+      ConsumoDeConversacion { id_conversacion: IdConversacion, unidades_consumidas: i64 } and
+      RepositorioDeSesiones::consumo_por_conversacion(&self) -> Result<Vec<ConsumoDeConversacion>,
+      ErrorDeAlmacen>, selecting from the view with ORDER BY id_conversacion through
+      pools.sesiones().con_lectura, mirroring the existing saldo() and desviacion_de_conciliacion()
+      shape. Its doc comment carries the derivation and the documented limitation.
+    files:
+      - crates/hexcell-storage/src/presupuesto.rs
+  - step: 4
+    action: Re-export ConsumoDeConversacion from the crate root alongside Saldo and ResultadoDeResolucion.
+    files:
+      - crates/hexcell-storage/src/lib.rs
+  - step: 5
+    action: >-
+      Update the migration tests for the new schema object and version. Grow OBJETOS_ESPERADOS from
+      13 to 14 entries adding ("view", "consumo_por_conversacion"), and replace the hard-coded
+      assert_eq!(version, 2) in the upgrade test with VERSION_DE_ESQUEMA_DE_SESIONES, which is
+      already imported. Add a v2 to v3 upgrade-and-reapply test.
+    files:
+      - crates/hexcell-storage/tests/migraciones.rs
+  - step: 6
+    action: >-
+      Add the consumption tests covering the scripted multi-conversation sequence, the zero-delta
+      exact-match case, the liberada-only conversation, restart persistence and direct-SQL
+      readback.
+    files:
+      - crates/hexcell-storage/tests/presupuesto.rs
+
+risks:
+  - >-
+    CENTRAL TRAP, VALIDATED AND AVOIDED. A view aggregating movimientos alone would UNDERCOUNT.
+    conciliar_presupuesto (crates/hexcell-storage/src/presupuesto.rs:297) inserts the 'conciliacion'
+    row only when ajuste_aplicado != 0, because migration 0002 declares CHECK (monto <> 0). The
+    existing test conciliacion_con_coincidencia_exacta_cierra_reserva_sin_movimiento proves a
+    reserva consumed in full leaves NO ledger row at all. Anchoring on reservas fixes this exactly:
+    monto_reservado - COALESCE(monto, 0) yields the reserved amount precisely when the row is
+    absent, which is the real consumption in that case. Any implementation that starts FROM
+    movimientos is wrong.
+  - >-
+    KNOWN AND ACCEPTED INEXACTNESS, pre-existing, not introduced here. When real consumption exceeds
+    the reserva and saldo.disponible cannot absorb the whole deficit, ajuste_aplicado is capped at
+    -disponible and the remainder is returned only as ResultadoDeResolucion.deficit_no_cubierto,
+    which HEX-043 deliberately never persists. The derivation therefore undercounts by exactly
+    deficit_no_cubierto in that single case. Verified against the existing test
+    conciliacion_con_deficit_no_cubierto_no_viola_saldo_no_negativo_y_reporta_resto (reserved 5,
+    consumed 10, disponible 2, ajuste -2, deficit 3): the view reports 7 rather than 10. This is the
+    same limitation already documented on desviacion_de_conciliacion (presupuesto.rs:416-419) and
+    consistent with adr-0005. It must be written into the SQL and the doc comment, NOT silently
+    fixed by persisting the deficit, which would contradict the HEX-043 decision.
+  - >-
+    SPEC WORDING TO INTERPRET, not to rewrite. 00-spec.yaml invariant 4 and non_goal 4 say
+    reserve/reconcile logic in presupuesto.rs is not modified. This blueprint adds a NEW read-only
+    method and a new struct to that file, and changes no existing function body. That is compliant:
+    the accounting behaviour of reservar/conciliar/liberar is bit-for-bit unchanged, which is
+    exactly why the derived view was chosen over an accumulator table written inside the conciliar
+    transaction. A reviewer must not flag the added method as a violation, nor accept any edit to
+    the existing functions.
+  - >-
+    HARD BREAKAGE IF UNANTICIPATED. crates/hexcell-storage/tests/migraciones.rs:192 asserts
+    assert_eq!(version, 2) in upgrade_de_version_1_a_version_2_preserva_datos_preexistentes, but the
+    test invokes the FULL ladder, which after this change reaches 3. That test WILL fail unless the
+    assertion is switched to VERSION_DE_ESQUEMA_DE_SESIONES. Likewise OBJETOS_ESPERADOS is a
+    fixed-size array typed [(&str, &str); 13] whose length annotation must become 14.
+  - >-
+    NO EDIT NEEDED, verified. crates/hexcell-storage/tests/respaldo.rs:78 and
+    crates/hexcell-storage/src/pools.rs:300 already reference VERSION_DE_ESQUEMA_DE_SESIONES as a
+    constant rather than a literal, so the backup per-copy version assertion follows the bump
+    automatically. respaldo.rs:32 asserts copias.len() == 2, which counts backup files, not schema
+    versions, and is unrelated.
+  - >-
+    docs/STATUS.md is deliberately NOT in touch. It never states the sessions.db schema version
+    number, so the bump introduces no documentation inconsistency, and the closest precedent
+    HEX-041, which authored migration 0002, likewise touched no docs. The FR-10 operator report
+    presentation is a parked spec non-goal.
+  - >-
+    Multiple 'conciliacion' rows per reserva are impossible by construction, since conciliar filters
+    on estado = 'activa' and flips the state in the same transaction, so the LEFT JOIN cannot fan
+    out. The GROUP BY with SUM is nonetheless written to stay correct if that ever changed.
+  - >-
+    No prior failed task overlaps these files: quorum analyze failure-lookup returned null for
+    presupuesto.rs and migraciones.rs. The HSME advisory read hook was unavailable, as in HEX-046
+    and HEX-047.

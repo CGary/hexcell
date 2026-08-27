@@ -1,0 +1,160 @@
+task_id: HEX-048
+
+summary: >-
+  Add migration 0003 creating the consumo_por_conversacion view over reservas LEFT JOIN movimientos,
+  bump the sessions schema to version 3, and expose a read-only per-conversation consumption query.
+
+goal: >-
+  Implement stage A-4 task 13 (docs/plan/fase-a-4-admision-presupuesto.md line 125), the LAST task of
+  the stage: persist per-client accumulated token consumption in a stable, queryable structure in
+  sessions.db, independent of the task-11 in-memory counters, as the data source for the future FR-10
+  operator report. Within a cell, "client" is the conversation (id_conversacion); no multi-tenant
+  dimension exists.
+
+  THE ONE THING THAT MAKES THIS TASK NON-OBVIOUS. Real consumed units are NOT the sum of the
+  movimientos ledger. conciliar_presupuesto inserts its 'conciliacion' row ONLY when the net change
+  on saldo.disponible is non-zero, because migration 0002 declares CHECK (monto <> 0) on movimientos.
+  When consumption exactly equals the reservation, NO row is written at all - see the existing test
+  conciliacion_con_coincidencia_exacta_cierra_reserva_sin_movimiento. Therefore the structure MUST be
+  anchored on the reservas table and pull the conciliacion movement in with a LEFT JOIN, computing
+  per reserva: monto_reservado - COALESCE(monto de la conciliacion, 0). That expression is exact in
+  every case, including the absent-row one, where it correctly yields the full reserved amount.
+  Anchoring on movimientos instead silently undercounts and is the failure mode this contract exists
+  to prevent.
+
+  DELIBERATELY NOT FIXED. When consumption exceeds the reservation AND saldo.disponible cannot absorb
+  the whole deficit, conciliar caps ajuste_aplicado at -disponible and returns the remainder only as
+  ResultadoDeResolucion.deficit_no_cubierto, which HEX-043 decided is never a ledger row. The
+  derivation therefore undercounts by exactly that residue in that one case. This is the SAME
+  limitation already documented on desviacion_de_conciliacion (presupuesto.rs:416-419) and is
+  consistent with adr-0005. Document it in Spanish in the SQL and in the method doc comment. Do NOT
+  "fix" it by persisting the deficit, by adding a movimientos class, or by relaxing the CHECK.
+
+  EXACT SHAPE TO IMPLEMENT, so no discovery is required.
+  New file crates/hexcell-storage/migraciones/sesiones/0003-consumo-por-conversacion.sql containing a
+  view named consumo_por_conversacion with columns (id_conversacion, unidades_consumidas), defined as:
+  SELECT r.id_conversacion, SUM(CASE WHEN r.estado = 'conciliada' THEN r.monto_reservado -
+  COALESCE(m.monto, 0) ELSE 0 END) FROM reservas AS r LEFT JOIN movimientos AS m ON m.id_reserva = r.id
+  AND m.clase = 'conciliacion' GROUP BY r.id_conversacion. Plain CREATE VIEW, no IF NOT EXISTS,
+  matching the 0001/0002 convention; the ladder guarantees single execution.
+  In migraciones.rs: add const ESQUEMA_CONSUMO_POR_CONVERSACION_DE_SESIONES via include_str!, append
+  PasoDeMigracion { version: 3, guion: ... } to MIGRACIONES_DE_SESIONES, and change
+  VERSION_DE_ESQUEMA_DE_SESIONES from 2 to 3.
+  In presupuesto.rs: add pub struct ConsumoDeConversacion { pub id_conversacion: IdConversacion, pub
+  unidades_consumidas: i64 } and pub fn consumo_por_conversacion(&self) ->
+  Result<Vec<ConsumoDeConversacion>, ErrorDeAlmacen> inside the existing impl RepositorioDeSesiones
+  block, reading through self.pools.sesiones().con_lectura with
+  "SELECT id_conversacion, unidades_consumidas FROM consumo_por_conversacion ORDER BY id_conversacion",
+  exactly mirroring the existing saldo() and desviacion_de_conciliacion() style. IdConversacion is
+  rebuilt with IdConversacion::nuevo(...).
+  In lib.rs: extend the existing `pub use presupuesto::{...}` with ConsumoDeConversacion.
+  In tests/migraciones.rs: OBJETOS_ESPERADOS is typed [(&str, &str); 13] - it becomes 14 with the
+  entry ("view", "consumo_por_conversacion") - and the hard-coded assert_eq!(version, 2) at line 192
+  MUST become assert_eq!(version, VERSION_DE_ESQUEMA_DE_SESIONES), because that test runs the full
+  ladder and will otherwise FAIL.
+
+read:
+  - .ai/tasks/active/HEX-048-new-spec/00-spec.yaml
+  - .ai/tasks/active/HEX-048-new-spec/01-blueprint.yaml
+  - crates/hexcell-storage/migraciones/sesiones/0001-esquema-inicial.sql
+  - crates/hexcell-storage/migraciones/sesiones/0002-saldo-y-movimientos.sql
+  - crates/hexcell-storage/src/migraciones.rs
+  - crates/hexcell-storage/src/presupuesto.rs
+  - crates/hexcell-storage/src/lib.rs
+  - crates/hexcell-storage/src/pools.rs
+  - crates/hexcell-storage/src/sesiones.rs
+  - crates/hexcell-storage/src/error.rs
+  - crates/hexcell-storage/tests/presupuesto.rs
+  - crates/hexcell-storage/tests/migraciones.rs
+  - crates/hexcell-storage/tests/respaldo.rs
+  - crates/hexcell-core/src/identidad.rs
+  - docs/adr/adr-0005-contabilidad-dos-fases.md
+  - docs/plan/fase-a-4-admision-presupuesto.md
+  - CLAUDE.md
+
+touch:
+  - crates/hexcell-storage/migraciones/sesiones/0003-consumo-por-conversacion.sql
+  - crates/hexcell-storage/src/migraciones.rs
+  - crates/hexcell-storage/src/presupuesto.rs
+  - crates/hexcell-storage/src/lib.rs
+  - crates/hexcell-storage/tests/presupuesto.rs
+  - crates/hexcell-storage/tests/migraciones.rs
+
+forbid:
+  files:
+    - crates/hexcell-storage/migraciones/sesiones/0001-esquema-inicial.sql
+    - crates/hexcell-storage/migraciones/sesiones/0002-saldo-y-movimientos.sql
+    - crates/hexcell-storage/migraciones/conocimiento/
+    - crates/hexcell-storage/migraciones/identidad/
+    - crates/hexcell-storage/src/pools.rs
+    - crates/hexcell-storage/src/sesiones.rs
+    - crates/hexcell-storage/src/respaldo.rs
+    - crates/hexcell-storage/src/error.rs
+    - crates/hexcell-storage/src/tiempo.rs
+    - crates/hexcell-storage/src/almacen_de_identidad.rs
+    - crates/hexcell-storage/tests/respaldo.rs
+    - crates/hexcell-storage/tests/pools.rs
+    - crates/hexcell-storage/tests/repositorio_de_sesiones.rs
+    - crates/hexcell-storage/tests/almacen_de_identidad.rs
+    - crates/hexcell-core/
+    - crates/hexcell/
+    - crates/hexcell-canal-simulado/
+    - crates/hexcell-canal-whatsmeow/
+    - crates/hexcell-canal-contrato/
+    - crates/hexcell-admin/
+    - crates/hexcell-meta/
+    - sidecar/
+    - scripts/
+    - docs/
+    - Cargo.toml
+    - Cargo.lock
+    - "**/Cargo.toml"
+    - .github/
+    - kitty-specs/
+  behaviors:
+    - "Defining the consumption structure with movimientos as its FROM anchor, or as any aggregate that starts from the ledger and joins reservas afterwards. conciliar_presupuesto writes NO 'conciliacion' row when the net change on disponible is zero (presupuesto.rs:297 guards the INSERT with `if ajuste_aplicado != 0`, because 0002 declares CHECK (monto <> 0)). A reserva consumed exactly in full therefore has no ledger row, and a movimientos-anchored query reports 0 for it instead of the full amount. The anchor MUST be reservas with a LEFT JOIN onto the conciliacion movement."
+    - "Modifying the body of reservar_presupuesto, aportar_presupuesto, conciliar_presupuesto, liberar_presupuesto, saldo, presupuesto_sin_iniciar or desviacion_de_conciliacion. This task is ADDITIVE to presupuesto.rs: a new struct and a new read-only method, nothing else. The spec forbids changing reserve/reconcile logic, and the whole point of choosing a derived view over an accumulator table was to leave those transactions untouched."
+    - "Adding an accumulator/materialized table written inside the conciliar transaction, adding a column to reservas or movimientos, adding a new value to the movimientos.clase CHECK list, or relaxing CHECK (monto <> 0). The derivation is exact wherever the persisted data allows exactness; none of these are needed and all of them modify the accounting write path."
+    - "Persisting deficit_no_cubierto anywhere, or otherwise attempting to make the total exact in the deficit-not-fully-covered case. HEX-043 decided that residue is a verdict field and a log line, never a ledger row. The undercount in that single case is a DOCUMENTED limitation to be written down in Spanish, not a defect to repair."
+    - "Reading, aggregating, importing or referencing the task-11 in-memory metrics counters (metricas / InstantaneaDeMetricas / RegistroDeMetricas) from this code or its tests. Independence from them is an explicit spec invariant, and crates/hexcell/ is forbidden here anyway."
+    - "Introducing any cell, tenant, customer, account or price dimension. Within a cell the client IS the conversation; id_conversacion is the only granularity. No currency, price, rate or monetary value may be named or stored."
+    - "Editing migration 0001 or 0002. Applied migrations are immutable history; the ladder only ever grows forward with a new numbered step."
+    - "Adding IF NOT EXISTS, DROP VIEW, CREATE OR REPLACE, or any re-entrancy guard to the 0003 script. Idempotency already comes from the runner in migraciones.rs, which skips any step whose version is not strictly greater than the file's user_version. Adding a guard would hide a genuinely broken ladder."
+    - "Leaving crates/hexcell-storage/tests/migraciones.rs line 192 as assert_eq!(version, 2). That test applies the FULL ladder from version 1 and will now reach 3, so it FAILS unless the literal becomes VERSION_DE_ESQUEMA_DE_SESIONES, which the file already imports. Its [(&str, &str); 13] array length must also become 14."
+    - "Editing crates/hexcell-storage/tests/respaldo.rs or crates/hexcell-storage/src/pools.rs to chase the version bump. Both already read VERSION_DE_ESQUEMA_DE_SESIONES as a constant (respaldo.rs:78, pools.rs:300) and follow the bump automatically."
+    - "Adding any dependency, dev-dependency or feature to any Cargo.toml. rusqlite and the existing test helpers are sufficient; the spec forbids new runtime dependencies."
+    - "Writing English prose in SQL comments, source comments, doc comments, identifiers, test names or assertion messages. The repository is PUBLIC and all its prose is Spanish; only Quorum artifact field values are English. The 0003 script's comments must be didactic and explain WHY, in the style of 0001 and 0002, and must state both the zero-delta anchoring rationale and the deficit_no_cubierto limitation."
+    - "Writing a *.db, *.db-wal, *.db-shm or .env file into the repository tree, or leaving a temporary directory behind. Persistence in tests goes through the existing DirectorioTemporal helper, which cleans up on Drop."
+    - "Proving restart persistence by mutating in-process state only. AC-2 requires dropping the RepositorioDeSesiones and reopening sessions.db from the same directory, and/or reading the view through a direct rusqlite Connection on the on-disk file, following the idiom already used in tests/migraciones.rs."
+    - "Modifying 00-spec.yaml, 01-blueprint.yaml or this contract."
+
+verify:
+  commands:
+    - cargo fmt --check
+    - cargo clippy --workspace -- -D warnings
+    - cargo build --workspace
+    - cargo test --workspace
+    - "bash -c '! grep -nE \"\\b(the|and|with|this|that|which|because|should|would|about|consumption|accumulated|conversation|ledger|movement|reserve|reserved|reconciled|released|balance|restart|amount|query|column|derived|missing|absent)\\b\" crates/hexcell-storage/migraciones/sesiones/0003-consumo-por-conversacion.sql crates/hexcell-storage/src/migraciones.rs crates/hexcell-storage/src/presupuesto.rs crates/hexcell-storage/src/lib.rs crates/hexcell-storage/tests/presupuesto.rs crates/hexcell-storage/tests/migraciones.rs'"
+  target_s: 60
+
+acceptance:
+  human_gate: true
+
+limits:
+  max_files_changed: 6
+  max_diff_lines: 380
+  per_class:
+    - glob: "crates/hexcell-storage/migraciones/**"
+      max_diff_lines: 55
+    - glob: "crates/hexcell-storage/src/**"
+      max_diff_lines: 90
+    - glob: "crates/hexcell-storage/tests/**"
+      max_diff_lines: 260
+
+execution:
+  mode: worktree_edit
+  branch: ai/HEX-048-new-spec
+
+retry_policy:
+  max_attempts: 2
+  escalate_after: 2

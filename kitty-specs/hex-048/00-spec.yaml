@@ -1,0 +1,39 @@
+task_id: HEX-048
+summary: Persist queryable per-conversation accumulated LLM token consumption in sessions.db, sourced from the movimientos ledger, independent of task-11 in-memory counters.
+goal: Implement a stable, queryable structure in sessions.db that exposes the accumulated consumed LLM token units per conversation (per-client, within one cell), derived from 'conciliacion' movements in the movimientos ledger, independent of the task-11 in-memory aggregate counters, serving as the stable data source for the future operator report (FR-10).
+invariants:
+  - Within one cell, "client" resolves to conversation/contact granularity (id_conversacion); no cross-cell or multi-tenant dimension is introduced.
+  - Only 'conciliacion' movements contribute real consumed units to accumulated consumption; liberated reservations (liberacion / estado liberada) contribute zero.
+  - The queryable consumption structure is independent of task-11's in-memory counters and remains correct after a process restart that resets in-memory state.
+  - Existing reserve/reconcile logic in presupuesto.rs is not modified by this task.
+  - "Any schema migration added is idempotent under the stepped-migration ladder: a fresh database reaches the new version, an existing v2 database upgrades cleanly, and re-applying the migration is a no-op."
+acceptance:
+  - id: AC-1
+    statement: After a scripted sequence (aportar, N reservations across 2+ conversations, mixed conciliar/liberar outcomes), the queryable structure returns exactly the per-conversation accumulated consumed units.
+    given: a cell's sessions.db populated with an aportar event and reservations across at least 2 conversations, some conciliadas and some liberadas
+    when: the per-conversation consumption structure is queried
+    then: each conversation's returned total equals the sum of its real conciliacion consumption only, with liberadas contributing 0
+  - id: AC-2
+    statement: The persisted per-conversation consumption survives a process restart and is proven independent from the task-11 in-memory counters.
+    given: the same populated sessions.db after a process restart (or an in-memory counter reset)
+    when: the per-conversation consumption structure is queried again
+    then: the returned totals are identical to the pre-restart values, demonstrating the structure does not depend on task-11's in-memory counters
+  - id: AC-3
+    statement: If a 0003 migration step is introduced, it is idempotent across fresh, upgrade, and re-apply scenarios.
+    given: the stepped-migration ladder in hexcell-storage
+    when: migrations run against a fresh database, an existing v2 database, and are re-applied a second time
+    then: the fresh database reaches the new version, the v2 database upgrades cleanly, and the second run is a no-op
+  - "cargo build --workspace, cargo test --workspace, cargo fmt --check, and cargo clippy --workspace -- -D warnings all pass; the scoped deterministic English-leak grep passes; all pre-existing tests remain green."
+risk: medium
+non_goals:
+  - The operator report presentation/CLI layer (FR-13) is parked; this task only builds the underlying queryable data source.
+  - Multi-cell or multi-tenant aggregation of consumption.
+  - Prices, currency, or billing calculations.
+  - Changes to reserve/reconcile logic (presupuesto.rs) or to the task-11 in-memory counters, which remain explicitly independent.
+  - Historical time-series reporting beyond the accumulated total.
+constraints:
+  - No new runtime dependencies.
+  - Repository is public; never write secrets; never version *.db, *.db-wal, *.db-shm, or .env* files.
+  - All Quorum artifact field values are written in English; repository prose stays Spanish elsewhere.
+  - Must respect the existing STRICT schema, integer-ms time conventions, and the stepped-migration ladder (PasoDeMigracion) if a migration is added.
+  - The consumption source of truth is the append-only movimientos ledger (id_conversacion FK nullable); the task must not invent a parallel source of truth.

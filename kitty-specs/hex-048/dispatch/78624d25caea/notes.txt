@@ -1,0 +1,54 @@
+I will start by viewing the contents of the dispatch prompt file to understand the task instructions.
+I will view more lines of the dispatch prompt file to ensure I have all the details.
+I will view `crates/hexcell-storage/src/migraciones.rs` to see its exact lines in the workspace.
+I will run the test suite of the workspace first to ensure everything is currently green.
+I will run the workspace tests again with the sandbox bypassed, keeping the exact action and summary descriptions.
+I will wait for the initial test execution to complete.
+I will view `crates/hexcell-storage/src/presupuesto.rs` to locate the implementation of budget/reservation and where to add the new method.
+I will view the rest of `crates/hexcell-storage/src/presupuesto.rs`.
+I will view the migration tests file to see the structure of tests and the assertions on database version.
+I will view the rest of `crates/hexcell-storage/tests/migraciones.rs`.
+I will view the budget tests file to understand the helper functions and structure of the budget tests.
+I will create the new SQL migration script for version 3.
+I will write the SQL migration file again without the `ArtifactMetadata` block since it is a project file, not an artifact.
+I will edit `crates/hexcell-storage/src/migraciones.rs` to bump the schema version, load the new SQL migration script, and register it in the migration list.
+I will define the `ConsumoDeConversacion` struct in `crates/hexcell-storage/src/presupuesto.rs`.
+I will view the final lines of `crates/hexcell-storage/src/presupuesto.rs` to find the exact end of the `impl RepositorioDeSesiones` block.
+I will add the `consumo_por_conversacion` method inside the `impl RepositorioDeSesiones` block in `crates/hexcell-storage/src/presupuesto.rs`.
+I will edit `crates/hexcell-storage/src/lib.rs` to re-export `ConsumoDeConversacion`.
+I will edit `crates/hexcell-storage/tests/migraciones.rs` to include the new SQL view in the expected objects list and update the version assertion in the upgrade test.
+I will view lines 185 to 200 of `crates/hexcell-storage/tests/migraciones.rs` to locate the exact assertion.
+I will modify `crates/hexcell-storage/tests/migraciones.rs` to replace the version assertion with `VERSION_DE_ESQUEMA_DE_SESIONES`.
+I will append the new `upgrade_de_version_2_a_version_3_preserva_datos_preexistentes` test to `crates/hexcell-storage/tests/migraciones.rs`.
+I will view the final lines of `crates/hexcell-storage/tests/presupuesto.rs` to see where to append the new tests.
+I will append the new `test_consumo_por_conversacion_completo` test to `crates/hexcell-storage/tests/presupuesto.rs`.
+I will run a git status command to verify the exact files we modified and ensure no forbidden files were touched.
+I will run the contract-specified English leak check command to verify that no forbidden English words exist in the modified or created files.
+I will run `cargo fmt --check` to ensure the codebase formatting conforms to standard style.
+I will run `cargo fmt` to auto-format the codebase and fix the style check issues.
+I will re-run the format check to verify that all code matches standard style now.
+I will re-run the English leak check to be absolutely certain no forbidden words exist in the formatted files.
+I will run Clippy on the workspace to verify there are no lints or compiler warnings.
+I will now run `cargo test --workspace` to execute all tests in the workspace, including the newly added migration and budget query tests.
+I have successfully carried out the instructions contained in the dispatch prompt and implemented the task **HEX-048** in full compliance with the spec, contract, and formatting rules.
+
+### Summary of Changes
+
+1. **Database Migration Step**:
+   - Created the schema migration file [0003-consumo-por-conversacion.sql](file:///home/gary/dev/hexcell/worktrees/HEX-048-new-spec/crates/hexcell-storage/migraciones/sesiones/0003-consumo-por-conversacion.sql) containing the definition of the `consumo_por_conversacion` view. As required, it aggregates consumption by anchoring on the `reservas` table and performing a `LEFT JOIN` on `movimientos` with class `conciliacion`. This structure correctly handles zero-delta exact matches (which omit movements) and zero-consumption liberated reservations.
+   - Didactic Spanish comments in the SQL file explain this anchoring rationale and outline the known limitation where `deficit_no_cubierto` is not persisted in this step.
+
+2. **Ladder/Migration Wiring**:
+   - Updated [migraciones.rs](file:///home/gary/dev/hexcell/worktrees/HEX-048-new-spec/crates/hexcell-storage/src/migraciones.rs) to bump the schema version `VERSION_DE_ESQUEMA_DE_SESIONES` to 3, included the new schema file using `include_str!`, and added the step to the `MIGRACIONES_DE_SESIONES` list.
+
+3. **Repository Struct and Method**:
+   - Defined [`ConsumoDeConversacion`](file:///home/gary/dev/hexcell/worktrees/HEX-048-new-spec/crates/hexcell-storage/src/presupuesto.rs#L58-L67) in [presupuesto.rs](file:///home/gary/dev/hexcell/worktrees/HEX-048-new-spec/crates/hexcell-storage/src/presupuesto.rs) representing the token consumption per conversation.
+   - Added [`consumo_por_conversacion`](file:///home/gary/dev/hexcell/worktrees/HEX-048-new-spec/crates/hexcell-storage/src/presupuesto.rs#L439-L474) inside `impl RepositorioDeSesiones`, querying the view ordered by `id_conversacion` through the pool's read connection (`con_lectura`).
+   - Re-exported [`ConsumoDeConversacion`](file:///home/gary/dev/hexcell/worktrees/HEX-048-new-spec/crates/hexcell-storage/src/lib.rs#L1149) in [lib.rs](file:///home/gary/dev/hexcell/worktrees/HEX-048-new-spec/crates/hexcell-storage/src/lib.rs).
+
+4. **Testing and Verification**:
+   - Adjusted `OBJETOS_ESPERADOS` and the version upgrade assertion in [migraciones.rs](file:///home/gary/dev/hexcell/worktrees/HEX-048-new-spec/crates/hexcell-storage/tests/migraciones.rs) to reflect the new view and schema version 3.
+   - Added the test `upgrade_de_version_2_a_version_3_preserva_datos_preexistentes` in [migraciones.rs](file:///home/gary/dev/hexcell/worktrees/HEX-048-new-spec/crates/hexcell-storage/tests/migraciones.rs) to verify that existing data is preserved and the migration step is idempotent.
+   - Wrote a comprehensive integration test `test_consumo_por_conversacion_completo` in [presupuesto.rs](file:///home/gary/dev/hexcell/worktrees/HEX-048-new-spec/crates/hexcell-storage/tests/presupuesto.rs) confirming the correct calculation of consumed units, deterministic sorting, zero-delta exact matches, on-disk process restart simulation, and direct SQLite readback validation.
+
+All changes are fully formatted, compile with zero warnings under Clippy, and pass all workspace tests cleanly.
