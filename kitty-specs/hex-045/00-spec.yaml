@@ -1,0 +1,45 @@
+task_id: HEX-045
+summary: Add degraded-mode mechanism to ProcesadorDeInferencia so a rejected reservation gets a local rule-based reply instead of silence, with zero LLM/budget cost. Risk medium.
+goal: >-
+  Implement the degraded mode mechanism required by FR-10 and stage A-4 task 10: when
+  reservar_presupuesto returns VeredictoDeReserva::Rechazada, generate a reply from a minimal
+  set of local fixed rules instead of leaving the event unanswered, without calling the
+  inference provider and without spending budget, log a distinct event on entering degraded
+  handling, and resume the normal LLM path automatically once balance is available again.
+invariants:
+  - On a Rechazada verdict, the inference provider is never called.
+  - On a Rechazada verdict, no reservation or movement rows are created (zero budget spend).
+  - The degraded reply reports zero consumed units (unidades_consumidas = 0).
+  - A distinct registro event is logged when degraded handling is entered for an event.
+  - Once balance exists again, the next incoming event resumes the normal LLM path automatically, with no manual intervention.
+  - Existing reservation, conciliation, and provider integration logic (HEX-042, HEX-043, HEX-044) is left unmodified.
+  - The 7 ProcesadorDeEco test files under motor.rs remain untouched.
+  - Degraded replies are placeholder mechanism text only, explicitly not a commercial answer catalog.
+acceptance:
+  - id: AC-1
+    statement: With zero balance, an incoming event produces a locally generated reply, the provider is called zero times, no reservation/movement rows are created, and a degraded-mode event is logged.
+    given: a cell with insufficient budget (reservar_presupuesto would return Rechazada)
+    when: a new event arrives for processing
+    then: ProcesadorDeInferencia sends a local rule-based reply via the adapter, the provider records zero calls, no reservation or movement rows exist, and a distinct registro event marks degraded handling
+  - id: AC-2
+    statement: After balance is restored, the next event goes through the normal LLM path with no manual intervention.
+    given: degraded handling was active and budget is subsequently topped up
+    when: the next event arrives
+    then: the provider is called once for that event and the reservation is conciliada through the normal two-phase accounting path
+  - id: AC-3
+    statement: The degraded reply is deterministic and clearly marked as a non-commercial placeholder, not a business answer catalog.
+  - id: AC-4
+    statement: All pre-existing tests stay green (cargo test/fmt/clippy/build --workspace), including the 7 ProcesadorDeEco tests in motor.rs, left untouched.
+risk: medium
+non_goals:
+  - Concrete commercial answer catalog or business copy for degraded mode (pending product/monetization decision per stage A-4 scope note).
+  - Metrics or observability beyond the required registro event (covered by stage A-4 task 11).
+  - Any change to reservation/reconciliation logic already shipped in HEX-042/HEX-043.
+  - Any change to provider/inference integration already shipped in HEX-044.
+  - Any change to motor.rs or its ProcesadorDeEco tests.
+constraints:
+  - No new runtime dependencies.
+  - Verification is offline only, via cargo test/fmt/clippy/build --workspace.
+  - Repo prose stays in Spanish; this spec's field values stay in concise English per Quorum convention.
+  - Whether degraded mode is implemented as a stateful flag with enter/exit transition events, or as a stateless per-event decision, is left open for q-blueprint to resolve.
+  - The shape of the minimal rule set (single generic reply vs. small keyword-based rules) and where it lives (module, constants, or config) are left open for q-blueprint to resolve.

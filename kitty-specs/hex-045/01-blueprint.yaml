@@ -1,0 +1,143 @@
+task_id: HEX-045
+summary: >-
+  Wire degraded mode into ProcesadorDeInferencia: on Rechazada return a local placeholder reply
+  from a new reglas_locales module instead of None, at zero budget cost, decided per event.
+
+affected_files:
+  - crates/hexcell/src/reglas_locales.rs
+  - crates/hexcell/src/lib.rs
+  - crates/hexcell/src/procesador.rs
+  - crates/hexcell/tests/inferencia.rs
+  - docs/adr/adr-0005-contabilidad-dos-fases.md
+  - docs/STATUS.md
+
+symbols:
+  - "crates/hexcell/src/reglas_locales.rs::TEXTO_DE_RESPUESTA_DEGRADADA (new pub const &str, Value Object: the placeholder reply text). Use exactly this literal, do not paraphrase or embellish it: \"[modo degradado] Sin saldo de inferencia disponible en este momento. Texto provisional del mecanismo, pendiente de decisión de producto.\""
+  - "crates/hexcell/src/reglas_locales.rs::responder_localmente (new pub fn () -> RespuestaDeInferencia, Domain policy: the minimal local rule set)"
+  - "crates/hexcell/src/lib.rs::pub mod reglas_locales (new module declaration)"
+  - "crates/hexcell/src/procesador.rs::ProcesadorDeInferencia::procesar (Application Service: Rechazada arm now builds and returns Some(MensajeSaliente))"
+  - "crates/hexcell/src/procesador.rs (module-level doc comment stating the processor returns None on rejection: now stale, must be rewritten)"
+  - "crates/hexcell/src/procesador.rs::tests::saldo_insuficiente_deja_registro_presupuesto_rechazado (existing unit test asserting is_none(): MUST be updated)"
+  - "crates/hexcell/tests/inferencia.rs::con_saldo_insuficiente_el_proveedor_de_inferencia_registra_cero_llamadas (existing test asserting envios_capturados().is_empty(): MUST be updated)"
+  - "registro event name 'modo_degradado' (new, NivelDeRegistro::Aviso, emitted in addition to the existing 'presupuesto_rechazado')"
+
+dependencies:
+  - crates/hexcell/src/motor.rs
+  - crates/hexcell/tests/motor.rs
+  - crates/hexcell/tests/comun/mod.rs
+  - crates/hexcell/src/registro.rs
+  - crates/hexcell-core/src/inferencia.rs
+  - crates/hexcell-core/src/presupuesto.rs
+  - crates/hexcell-storage/src/presupuesto.rs
+  - crates/hexcell-canal-simulado/src/adaptador.rs
+  - docs/plan/fase-a-4-admision-presupuesto.md
+  - docs/PRD.md
+
+test_scenarios:
+  - statement: "Full motor run with balance below the estimated cost: the adapter captures exactly one outgoing RespuestaLibre whose text equals TEXTO_DE_RESPUESTA_DEGRADADA, and the provider call counter stays at 0."
+    covers:
+      - AC-1
+  - statement: "Same run: saldo().disponible is unchanged from the seeded amount and saldo().reservado is 0, proving no reservation was created and no reserva/conciliacion/liberacion movement was booked."
+    covers:
+      - AC-1
+  - statement: "In-crate unit test in procesador.rs: on a rejected reservation, procesar returns Some(..) and the captured registro contains both presupuesto_rechazado and the distinct modo_degradado entry, each carrying id_conversacion."
+    covers:
+      - AC-1
+  - statement: "Automatic return: calling procesar with insufficient balance yields the degraded text and 0 provider calls; after aportar_presupuesto tops the balance up, a second event with a different deduplication id yields the provider's text, the provider counter reaches 1, and reservado returns to 0 (reservation conciliada)."
+    covers:
+      - AC-2
+  - statement: "reglas_locales unit tests: responder_localmente is deterministic across repeated calls and always reports unidades_consumidas == 0."
+    covers:
+      - AC-3
+  - statement: "Storage-error path is unchanged: an Err from reservar_presupuesto still logs fallo_de_persistencia and still returns None (fail-closed), so degraded mode never masks a persistence failure."
+    covers:
+      - AC-4
+  - statement: "The 7 ProcesadorDeEco scenarios in crates/hexcell/tests/motor.rs and every other pre-existing test stay green under cargo test --workspace, with motor.rs untouched."
+    covers:
+      - AC-4
+
+strategy:
+  - step: 1
+    action: >-
+      Create the local rule module (domain policy, isolated from orchestration). Declare
+      TEXTO_DE_RESPUESTA_DEGRADADA as a pub const &str holding one deterministic Spanish placeholder
+      that is unmistakably provisional, and responder_localmente() -> RespuestaDeInferencia returning
+      that text with unidades_consumidas 0. Take no parameter: the single rule ignores the incoming
+      content, and adding an unused parameter would both trip unused_variables under -D warnings and
+      repeat the speculative-signature mistake already recorded as D-09 in the discard log. Spanish
+      module doc must state that this is the FR-10 mechanism with a minimal rule set, never a
+      commercial answer catalog, and that the wording stays pending a product decision.
+    files:
+      - crates/hexcell/src/reglas_locales.rs
+  - step: 2
+    action: "Declare pub mod reglas_locales; in the crate's library face, keeping the existing alphabetical order (between registro and respaldar)."
+    files:
+      - crates/hexcell/src/lib.rs
+  - step: 3
+    action: >-
+      Rewire only the Rechazada arm of ProcesadorDeInferencia::procesar (orchestration). Keep the
+      existing presupuesto_rechazado entry untouched to preserve the accounting trace, then emit the
+      new distinct modo_degradado entry at NivelDeRegistro::Aviso with id_conversacion, then build
+      MensajeSaliente::respuesta_libre from TestigoDeEntrante::observar(evento) and the local reply,
+      and return Some(..) so the engine sends it. Do not touch the Concedida arm, the Err arm, or any
+      reservation, conciliation or provider call. Rewrite the now-false module doc paragraph that
+      claims the processor never produces a fixed reply and returns None on rejection.
+    files:
+      - crates/hexcell/src/procesador.rs
+  - step: 4
+    action: >-
+      Update the in-crate unit test saldo_insuficiente_deja_registro_presupuesto_rechazado: flip its
+      resultado.is_none() assertion to is_some() plus a check that the sent text is the degraded
+      constant, and add an assertion for the modo_degradado entry. This test asserts the exact
+      behaviour this task changes, so updating it is required, not a contract violation. Log-event
+      assertions must stay here because registro::pruebas is pub(crate).
+    files:
+      - crates/hexcell/src/procesador.rs
+  - step: 5
+    action: >-
+      Update the existing integration test con_saldo_insuficiente_el_proveedor_de_inferencia_registra_cero_llamadas
+      into the AC-1 test: seed aportar_presupuesto(3, ..) so the balance is positive but below the
+      43-character prompt's estimated cost of 10 units, keep the provider counter assertion at 0,
+      replace envios_capturados().is_empty() with exactly one capture whose RespuestaLibre texto is
+      TEXTO_DE_RESPUESTA_DEGRADADA, and assert saldo().disponible == 3 and saldo().reservado == 0.
+    files:
+      - crates/hexcell/tests/inferencia.rs
+  - step: 6
+    action: >-
+      Add the AC-2 automatic-return test in the same file, driving ProcesadorDeInferencia::procesar
+      directly (no motor, no sleeps, so it is deterministic): assert the degraded text and 0 provider
+      calls with insufficient balance, call aportar_presupuesto, then process a second event carrying
+      a DIFFERENT IdDeduplicacion and assert the provider counter is 1, the reply is the provider's
+      text rather than the degraded constant, and reservado is back to 0.
+    files:
+      - crates/hexcell/tests/inferencia.rs
+  - step: 7
+    action: >-
+      Extend the accounting ADR without rewriting history: append HEX-045 to the phase list on the
+      Estado line, amend decision point 3 so its 'retorna None (fail-closed)' sentence is preserved
+      but marked as superseded by the new phase, add a 'Fase 3' subsection dated 2026-08-27 recording
+      that a rejected reservation now yields a local reply with no reservation, no movement and zero
+      units, and add a Consecuencias bullet noting the placeholder text is a pending product decision.
+    files:
+      - docs/adr/adr-0005-contabilidad-dos-fases.md
+  - step: 8
+    action: >-
+      Add one HEX-045 bullet at the TOP of the 'Definido' list in the living status log, matching the
+      established format of the HEX-042/043/044 entries. Leave the still-pending commercial-exception
+      decision entry exactly as it is: this task ships the mechanism only.
+    files:
+      - docs/STATUS.md
+
+risks:
+  - "SPEC MISMATCH (AC-4): two pre-existing tests assert the exact behaviour this task inverts and CANNOT stay green unmodified. crates/hexcell/src/procesador.rs::saldo_insuficiente_deja_registro_presupuesto_rechazado asserts resultado.is_none(), and crates/hexcell/tests/inferencia.rs::con_saldo_insuficiente_el_proveedor_de_inferencia_registra_cero_llamadas asserts envios_capturados().is_empty() with the comment 'no debe haber envíos cuando la reserva es rechazada'. AC-4's 'left untouched' clause binds only the 7 ProcesadorDeEco tests in motor.rs; these two must be updated. 00-spec.yaml was NOT modified."
+  - "PRIOR FAILURE PATTERN (HEX-044, kitty-specs/hex-044/07-trace.json): the first execute attempt BLOCKED because the contract's instructions required editing crates/hexcell/src/apagado.rs while touch omitted it. Every file named by an instruction here is in touch; the delegate must not have to choose between an instruction and the boundary."
+  - "DOC AUTHORITY CONFLICT: docs/adr/adr-0005-contabilidad-dos-fases.md line 24 codifies the old behaviour verbatim ('emite un registro estructurado presupuesto_rechazado y retorna None (fail-closed)'). CLAUDE.md forbids rewriting a superseded ADR and normally demands a new one, but adr-0005 is stamped 'Etapa A-4 (FR-10)' and already tracks itself phase by phase (Fase 1 HEX-042, Fase 2 HEX-043), so degraded mode is the planned completion of its own scope, not a reversal. Resolution: extend in place, preserve the old sentence, mark it superseded by Fase 3. Flagged for the human reviewer."
+  - "DATE AMBIGUITY: the carry-forward bundle suggested dating the ADR rationale 2026-08-26 (the date of HEX-042/043/044), but the current date is 2026-08-27. The ADR header Fecha and the docs/adr/README.md status date both stay 2026-08-26 because the ADR's Vigente status did not change; only the new Fase 3 subsection and the STATUS.md entry carry 2026-08-27."
+  - "OPEN DECISION RESOLVED (stateful vs stateless): stateless per-event evaluation chosen. ProcesadorDeMensajes::procesar takes &self, so a mode flag would need interior mutability, and it would duplicate a fact SQLite already owns, creating a second source of truth that can desynchronise from the real balance. Re-deriving the verdict per event satisfies both 'conmutación' and 'retorno automático' by construction and needs no transition bookkeeping to test."
+  - "OPEN DECISION RESOLVED (rule shape): one deterministic constant, not a keyword match. A keyword table would require inventing per-topic business copy, which the stage scope explicitly forbids ('se implementa el mecanismo con un conjunto mínimo de reglas, no un catálogo de mensajes comerciales', docs/plan/fase-a-4-admision-presupuesto.md line 71)."
+  - "OPEN DECISION RESOLVED (placement): a separate reglas_locales module, not inline in procesador.rs. The processor is an orchestrator and its own doc insists it holds no product rules; keeping the placeholder policy behind one named function means replacing it when product decides costs one module, not surgery inside the accounting path."
+  - "OPEN DECISION RESOLVED (budget non-consumption): free by construction, and verified against the storage code. reservar_presupuesto returns Rechazada from an early return placed BEFORE the INSERT INTO reservas (crates/hexcell-storage/src/presupuesto.rs lines 90-95), so a rejected event creates no reservation row and books no movement. The degraded arm additionally calls neither conciliar_presupuesto nor liberar_presupuesto."
+  - "TEST-VISIBILITY CONSTRAINT (LES-046): crates/hexcell integration tests cannot see the pools (crate visibility) and the crate has no rusqlite dev-dependency, so 'no reservation or movement rows' must be asserted through the public saldo() API (disponible unchanged AND reservado == 0), exactly as the existing tests already do. Note that aportar_presupuesto legitimately books an 'aporte' movement as part of test seeding; the invariant concerns reserva/conciliacion/liberacion movements only."
+  - "DEDUPLICATION TRAP: the AC-2 test processes two events in the same conversation. The second must carry a different IdDeduplicacion or the engine's deduplication window would swallow it and the test would fail for an unrelated reason."
+  - "SEMANTIC BOUNDARY: degraded mode is for insufficient balance only. The Err arm of reservar_presupuesto (storage failure) must remain fail-closed and keep returning None; answering with a local reply while the ledger is unreadable would produce unaccounted sends. Existing Err semantics must not change."
+  - "PUBLIC REPO: all repository prose, including the placeholder reply text, source comments and both documentation files, stays in Spanish. Only the Quorum artifact field values are English. A scoped English-leak grep runs as the 5th verify command and was confirmed to pass on the current files before any change."

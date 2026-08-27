@@ -1,0 +1,115 @@
+task_id: HEX-045
+summary: >-
+  On a rejected budget reservation, ProcesadorDeInferencia must answer with a local placeholder
+  reply from a new reglas_locales module instead of returning None, at zero budget cost.
+
+goal: >-
+  Implement the FR-10 degraded mode (stage A-4, task 10). Today ProcesadorDeInferencia::procesar
+  logs presupuesto_rechazado and returns None when reservar_presupuesto answers
+  VeredictoDeReserva::Rechazada, so the cell goes silent once the balance runs out. Replace that
+  silence with a deterministic local reply built from a minimal fixed rule set, without calling the
+  inference provider and without creating any reservation or movement, logging a distinct
+  modo_degradado event, and resuming the normal LLM path automatically on the next event once
+  balance exists again. Ship the MECHANISM only: the reply text is an explicit placeholder pending
+  a product decision, never a commercial answer catalog.
+
+read:
+  - .ai/tasks/active/HEX-045-new-spec/00-spec.yaml
+  - .ai/tasks/active/HEX-045-new-spec/01-blueprint.yaml
+  - crates/hexcell/src/motor.rs
+  - crates/hexcell/src/registro.rs
+  - crates/hexcell/src/inferencia.rs
+  - crates/hexcell/tests/comun/mod.rs
+  - crates/hexcell-core/src/inferencia.rs
+  - crates/hexcell-core/src/presupuesto.rs
+  - crates/hexcell-core/src/canal.rs
+  - crates/hexcell-storage/src/presupuesto.rs
+  - crates/hexcell-canal-simulado/src/adaptador.rs
+  - docs/plan/fase-a-4-admision-presupuesto.md
+  - docs/adr/README.md
+  - docs/PRD.md
+  - CLAUDE.md
+
+touch:
+  - crates/hexcell/src/reglas_locales.rs
+  - crates/hexcell/src/lib.rs
+  - crates/hexcell/src/procesador.rs
+  - crates/hexcell/tests/inferencia.rs
+  - docs/adr/adr-0005-contabilidad-dos-fases.md
+  - docs/STATUS.md
+
+forbid:
+  files:
+    - crates/hexcell/src/motor.rs
+    - crates/hexcell/tests/motor.rs
+    - crates/hexcell/src/inferencia.rs
+    - crates/hexcell/src/proveedor_openai.rs
+    - crates/hexcell/src/registro.rs
+    - crates/hexcell/src/configuracion.rs
+    - crates/hexcell/src/main.rs
+    - crates/hexcell-core/
+    - crates/hexcell-storage/
+    - crates/hexcell-canal-simulado/
+    - crates/hexcell-canal-whatsmeow/
+    - crates/hexcell-canal-contrato/
+    - crates/hexcell-admin/
+    - crates/hexcell-meta/
+    - docs/bitacora-de-descartes.md
+    - docs/adr/README.md
+    - docs/PRD.md
+    - docs/plan/
+    - Cargo.toml
+    - Cargo.lock
+    - "**/Cargo.toml"
+    - sidecar/
+    - .github/
+    - kitty-specs/
+  behaviors:
+    - "Modifying crates/hexcell/src/motor.rs or crates/hexcell/tests/motor.rs, or changing ProcesadorDeEco in any way; its 7 scenarios must keep passing byte-identical."
+    - "Confusing crates/hexcell/tests/inferencia.rs (TOUCH, the integration test file) with crates/hexcell/src/inferencia.rs (FORBIDDEN, the simulated provider); only the tests/ path may change."
+    - "Touching the Concedida arm of procesar, conciliar_presupuesto, liberar_presupuesto, aportar_presupuesto, reservar_presupuesto, estimar_coste, or the provider client; only the Rechazada arm and purely additive surface may change."
+    - "Answering with a local reply on the Err arm of reservar_presupuesto. A storage failure stays fail-closed and keeps returning None; degraded mode covers insufficient balance ONLY, never an unreadable ledger."
+    - "Creating a reservation, booking a movement, calling the provider, or reporting non-zero unidades_consumidas on the degraded path; a rejected event must cost exactly zero units."
+    - "Removing or renaming the existing presupuesto_rechazado registro event; modo_degradado is emitted IN ADDITION to it, so the accounting trace survives."
+    - "Introducing a mode flag, AtomicBool, Cell, Mutex or any stored state to remember that degraded mode is active; the decision is re-derived per event from the reservation verdict."
+    - "Writing a commercial answer catalog, business copy, keyword-to-answer tables, apologies with brand voice, or any text that could ship to a real client as approved wording."
+    - "Adding any dependency, dev-dependency or feature to any Cargo.toml, including rusqlite for tests; assert budget effects through the public saldo() API instead."
+    - "Adding any network call, sleep-based flakiness, or #[ignore]d test."
+    - "Asserting registro entries from crates/hexcell/tests/ ; registro::pruebas is pub(crate), so log assertions live only in the #[cfg(test)] module inside crates/hexcell/src/procesador.rs."
+    - "Rewriting, renumbering or reordering existing ADR rows, existing D-NN discard-log entries, or existing docs/STATUS.md bullets; adr-0005 is EXTENDED in place and its old sentence is preserved and marked superseded."
+    - "Adding a new ADR file or a new D-NN discard-log entry; this task extends adr-0005 only."
+    - "Removing the pending commercial-exceptions decision from docs/STATUS.md; it stays pending, this task ships only the mechanism."
+    - "Writing English prose in source comments, doc comments, the placeholder reply text, or repository documentation; all repository prose is Spanish. The repository is public."
+    - "Modifying 00-spec.yaml, 01-blueprint.yaml or this contract."
+    - "Running git merge, git rebase, git commit or git push; the orchestrator handles commits."
+
+verify:
+  commands:
+    - cargo fmt --check
+    - cargo clippy --workspace -- -D warnings
+    - cargo build --workspace
+    - cargo test --workspace
+    - "bash -c '! grep -nE \"\\b(the|and|with|this|that|which|because|should|would|about|degraded|fallback|rules|reply)\\b\" crates/hexcell/src/reglas_locales.rs crates/hexcell/src/procesador.rs crates/hexcell/tests/inferencia.rs docs/adr/adr-0005-contabilidad-dos-fases.md'"
+  target_s: 60
+
+acceptance:
+  human_gate: true
+
+limits:
+  max_files_changed: 8
+  max_diff_lines: 600
+  per_class:
+    - glob: "crates/hexcell/src/**"
+      max_diff_lines: 280
+    - glob: "crates/hexcell/tests/**"
+      max_diff_lines: 220
+    - glob: "docs/**"
+      max_diff_lines: 120
+
+execution:
+  mode: worktree_edit
+  branch: ai/HEX-045-new-spec
+
+retry_policy:
+  max_attempts: 2
+  escalate_after: 2

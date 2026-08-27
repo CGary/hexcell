@@ -1,0 +1,54 @@
+{
+  "task_id": "HEX-045",
+  "bundle_hash": "09a723bfe36039017a6c9f4b32403a599fc171c4091a22ea0e4a23e2f4a25095",
+  "files": [
+    ".ai/tasks/active/HEX-045-new-spec/00-spec.yaml",
+    ".ai/tasks/active/HEX-045-new-spec/01-blueprint.yaml",
+    "CLAUDE.md",
+    "crates/hexcell-canal-simulado/src/adaptador.rs",
+    "crates/hexcell-core/src/canal.rs",
+    "crates/hexcell-core/src/inferencia.rs",
+    "crates/hexcell-core/src/presupuesto.rs",
+    "crates/hexcell-storage/src/presupuesto.rs",
+    "crates/hexcell/src/inferencia.rs",
+    "crates/hexcell/src/lib.rs",
+    "crates/hexcell/src/motor.rs",
+    "crates/hexcell/src/procesador.rs",
+    "crates/hexcell/src/registro.rs",
+    "crates/hexcell/tests/comun/mod.rs"
+  ],
+  "protocol_version": "fleet-bundle-protocol/v2",
+  "created_at": "2026-08-27T04:33:48Z",
+  "dropped": [
+    {
+      "component": "code_slice",
+      "path": "docs/plan/fase-a-4-admision-presupuesto.md",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "docs/adr/adr-0005-contabilidad-dos-fases.md",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "docs/adr/README.md",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "docs/STATUS.md",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "docs/PRD.md",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "crates/hexcell/tests/inferencia.rs",
+      "reason": "bundle exceeded max_bytes budget"
+    }
+  ]
+}
