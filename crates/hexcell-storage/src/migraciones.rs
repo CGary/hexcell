@@ -36,10 +36,12 @@ pub const VERSION_DE_ESQUEMA_DE_SESIONES: i64 = 3;
 
 /// Versión de esquema que este binario espera encontrar en `knowledge_live.db`.
 ///
-/// El esquema real de la base de conocimiento lo diseña la etapa A-5, con la Shadow DB y las
-/// épocas inmutables; esta versión 1 solo crea la tabla mínima de metadatos que permite abrir el
-/// archivo en solo lectura y sondearlo.
-pub const VERSION_DE_ESQUEMA_DE_CONOCIMIENTO: i64 = 1;
+/// La versión 2 introduce el esquema completo de conocimiento de la etapa A-5: las tablas
+/// `documentos`, `fragmentos`, `vectores_de_fragmento` y `metadatos_de_epoca`, más la fila
+/// semilla de `metadatos_de_epoca` con dimensión 768. El contrato de representación de vectores
+/// (f32 IEEE-754, little-endian, empaquetado sin cabecera) y el de identidad intrínseca de la
+/// época quedan documentados en la migración `0002-esquema-de-conocimiento.sql`.
+pub const VERSION_DE_ESQUEMA_DE_CONOCIMIENTO: i64 = 2;
 
 /// Versión de esquema que este binario espera encontrar en `adapter_identity.db`.
 ///
@@ -59,6 +61,9 @@ const ESQUEMA_CONSUMO_POR_CONVERSACION_DE_SESIONES: &str =
 
 const ESQUEMA_MINIMO_DE_CONOCIMIENTO: &str =
     include_str!("../migraciones/conocimiento/0001-esquema-minimo.sql");
+
+const ESQUEMA_DE_CONOCIMIENTO: &str =
+    include_str!("../migraciones/conocimiento/0002-esquema-de-conocimiento.sql");
 
 const ESQUEMA_INICIAL_DE_IDENTIDAD: &str =
     include_str!("../migraciones/identidad/0001-esquema-inicial.sql");
@@ -83,10 +88,16 @@ const MIGRACIONES_DE_SESIONES: &[PasoDeMigracion] = &[
     },
 ];
 
-const MIGRACIONES_DE_CONOCIMIENTO: &[PasoDeMigracion] = &[PasoDeMigracion {
-    version: 1,
-    guion: ESQUEMA_MINIMO_DE_CONOCIMIENTO,
-}];
+const MIGRACIONES_DE_CONOCIMIENTO: &[PasoDeMigracion] = &[
+    PasoDeMigracion {
+        version: 1,
+        guion: ESQUEMA_MINIMO_DE_CONOCIMIENTO,
+    },
+    PasoDeMigracion {
+        version: 2,
+        guion: ESQUEMA_DE_CONOCIMIENTO,
+    },
+];
 
 const MIGRACIONES_DE_IDENTIDAD: &[PasoDeMigracion] = &[PasoDeMigracion {
     version: 1,
