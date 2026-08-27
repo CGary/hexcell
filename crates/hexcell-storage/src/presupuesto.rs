@@ -57,6 +57,15 @@ pub enum ResultadoDeResolucion {
     ReservaNoActiva,
 }
 
+/// Acumulado de unidades de presupuesto consumidas por una conversación.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ConsumoDeConversacion {
+    /// Identificador único de la conversación.
+    pub id_conversacion: IdConversacion,
+    /// Cantidad acumulada de unidades consumidas.
+    pub unidades_consumidas: i64,
+}
+
 impl RepositorioDeSesiones {
     /// Intenta reservar de forma atómica una cantidad de unidades de presupuesto.
     ///
@@ -426,6 +435,40 @@ impl RepositorioDeSesiones {
                     |fila| fila.get(0),
                 )
                 .map_err(ErrorDeAlmacen::en("calcular la desviación de conciliación"))
+        })
+    }
+
+    /// Obtiene el consumo acumulado de unidades de presupuesto por conversación.
+    ///
+    /// Este método consulta la vista `consumo_por_conversacion`, la cual deriva el
+    /// consumo a partir de las reservas en estado `'conciliada'` restando la conciliación
+    /// registrada en el libro contable de movimientos.
+    ///
+    /// Advertencia: Al igual que `desviacion_de_conciliacion`, si existió un déficit
+    /// no cubierto por saldo insuficiente, esta vista subestimará el consumo real de la
+    /// conversación por la cantidad de dicho déficit.
+    pub fn consumo_por_conversacion(&self) -> Result<Vec<ConsumoDeConversacion>, ErrorDeAlmacen> {
+        self.pools.sesiones().con_lectura(|conexion| {
+            let mut sentencia = conexion
+                .prepare("SELECT id_conversacion, unidades_consumidas FROM consumo_por_conversacion ORDER BY id_conversacion")
+                .map_err(ErrorDeAlmacen::en("preparar la consulta de consumo por conversación"))?;
+
+            let filas = sentencia
+                .query_map([], |fila| {
+                    let id_str: String = fila.get(0)?;
+                    let unidades: i64 = fila.get(1)?;
+                    Ok(ConsumoDeConversacion {
+                        id_conversacion: IdConversacion::nuevo(id_str),
+                        unidades_consumidas: unidades,
+                    })
+                })
+                .map_err(ErrorDeAlmacen::en("consultar el consumo por conversación"))?;
+
+            let mut resultado = Vec::new();
+            for fila in filas {
+                resultado.push(fila.map_err(ErrorDeAlmacen::en("leer la fila de consumo por conversación"))?);
+            }
+            Ok(resultado)
         })
     }
 }

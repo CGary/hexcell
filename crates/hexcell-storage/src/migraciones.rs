@@ -32,7 +32,7 @@ use rusqlite::Connection;
 use crate::error::ErrorDeAlmacen;
 
 /// Versión de esquema que este binario espera encontrar en `sessions.db`.
-pub const VERSION_DE_ESQUEMA_DE_SESIONES: i64 = 2;
+pub const VERSION_DE_ESQUEMA_DE_SESIONES: i64 = 3;
 
 /// Versión de esquema que este binario espera encontrar en `knowledge_live.db`.
 ///
@@ -54,6 +54,9 @@ const ESQUEMA_INICIAL_DE_SESIONES: &str =
 const ESQUEMA_SALDO_Y_MOVIMIENTOS_DE_SESIONES: &str =
     include_str!("../migraciones/sesiones/0002-saldo-y-movimientos.sql");
 
+const ESQUEMA_CONSUMO_POR_CONVERSACION_DE_SESIONES: &str =
+    include_str!("../migraciones/sesiones/0003-consumo-por-conversacion.sql");
+
 const ESQUEMA_MINIMO_DE_CONOCIMIENTO: &str =
     include_str!("../migraciones/conocimiento/0001-esquema-minimo.sql");
 
@@ -73,6 +76,10 @@ const MIGRACIONES_DE_SESIONES: &[PasoDeMigracion] = &[
     PasoDeMigracion {
         version: 2,
         guion: ESQUEMA_SALDO_Y_MOVIMIENTOS_DE_SESIONES,
+    },
+    PasoDeMigracion {
+        version: 3,
+        guion: ESQUEMA_CONSUMO_POR_CONVERSACION_DE_SESIONES,
     },
 ];
 

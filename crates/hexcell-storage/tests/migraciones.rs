@@ -9,8 +9,8 @@ use hexcell_storage::{
 };
 use rusqlite::Connection;
 
-/// Tablas e índices que la versión 2 del esquema de `sessions.db` debe dejar creados.
-const OBJETOS_ESPERADOS: [(&str, &str); 13] = [
+/// Tablas, índices y vistas que el esquema de `sessions.db` debe dejar creados.
+const OBJETOS_ESPERADOS: [(&str, &str); 14] = [
     ("table", "contactos"),
     ("table", "conversaciones"),
     ("table", "mensajes"),
@@ -24,6 +24,7 @@ const OBJETOS_ESPERADOS: [(&str, &str); 13] = [
     ("index", "idx_deduplicacion_marca"),
     ("index", "idx_reservas_activas"),
     ("index", "idx_movimientos_conversacion"),
+    ("view", "consumo_por_conversacion"),
 ];
 
 #[test]
@@ -184,12 +185,12 @@ fn upgrade_de_version_1_a_version_2_preserva_datos_preexistentes() {
         )
         .expect("insertar mensaje");
 
-    aplicar_migraciones_de_sesiones(&conexion).expect("upgrade v1->v2");
+    aplicar_migraciones_de_sesiones(&conexion).expect("upgrade v1->v3");
 
     let version: i64 = conexion
         .query_row("PRAGMA user_version", [], |fila| fila.get(0))
         .expect("user_version");
-    assert_eq!(version, 2);
+    assert_eq!(version, VERSION_DE_ESQUEMA_DE_SESIONES);
 
     for (tipo, nombre) in OBJETOS_ESPERADOS {
         let encontrados: i64 = conexion
@@ -277,4 +278,79 @@ fn restricciones_check_y_strict_rechazan_valores_invalidos() {
             .execute("UPDATE saldo SET disponible = 'abc' WHERE id = 1", [])
             .is_err()
     );
+}
+
+#[test]
+fn upgrade_de_version_2_a_version_3_preserva_datos_preexistentes() {
+    let directorio = DirectorioTemporal::nuevo("migraciones-upgrade-v2-v3");
+    let conexion = Connection::open(directorio.ruta().join(NOMBRE_DE_ARCHIVO_DE_SESIONES))
+        .expect("abrir base");
+    conexion
+        .execute_batch(include_str!(
+            "../migraciones/sesiones/0001-esquema-inicial.sql"
+        ))
+        .expect("aplicar v1");
+    conexion
+        .execute_batch(include_str!(
+            "../migraciones/sesiones/0002-saldo-y-movimientos.sql"
+        ))
+        .expect("aplicar v2");
+    conexion
+        .execute_batch("PRAGMA user_version = 2;")
+        .expect("fijar v2");
+
+    conexion
+        .execute(
+            "INSERT INTO conversaciones (id_conversacion, creada_ms, ultima_actividad_ms) VALUES ('conv1', 100, 200)",
+            [],
+        )
+        .expect("insertar conversacion");
+    conexion
+        .execute(
+            "INSERT INTO reservas (id, id_conversacion, monto_reservado, estado, creada_ms, resuelta_ms) VALUES (1, 'conv1', 10, 'conciliada', 100, 150)",
+            [],
+        )
+        .expect("insertar reserva");
+    conexion
+        .execute(
+            "INSERT INTO movimientos (id, id_reserva, id_conversacion, clase, monto, saldo_resultante, registrado_ms) VALUES (1, 1, 'conv1', 'conciliacion', -10, 0, 150)",
+            [],
+        )
+        .expect("insertar movimiento");
+
+    aplicar_migraciones_de_sesiones(&conexion).expect("upgrade v2->v3");
+
+    let version: i64 = conexion
+        .query_row("PRAGMA user_version", [], |fila| fila.get(0))
+        .expect("user_version");
+    assert_eq!(version, VERSION_DE_ESQUEMA_DE_SESIONES);
+
+    for (tipo, nombre) in OBJETOS_ESPERADOS {
+        let encontrados: i64 = conexion
+            .query_row(
+                "SELECT count(*) FROM sqlite_schema WHERE type = ?1 AND name = ?2",
+                rusqlite::params![tipo, nombre],
+                |fila| fila.get(0),
+            )
+            .expect("objeto esquema");
+        assert_eq!(encontrados, 1, "falta objeto {tipo} {nombre}");
+    }
+
+    let monto_reservado: i64 = conexion
+        .query_row(
+            "SELECT monto_reservado FROM reservas WHERE id = 1",
+            [],
+            |fila| fila.get(0),
+        )
+        .expect("consultar reserva");
+    assert_eq!(monto_reservado, 10);
+
+    let monto_movimiento: i64 = conexion
+        .query_row("SELECT monto FROM movimientos WHERE id = 1", [], |fila| {
+            fila.get(0)
+        })
+        .expect("consultar movimiento");
+    assert_eq!(monto_movimiento, -10);
+
+    aplicar_migraciones_de_sesiones(&conexion).expect("segundo upgrade v2->v3: no-op");
 }

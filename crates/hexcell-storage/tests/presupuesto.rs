@@ -503,3 +503,136 @@ fn ac_5_desviacion_de_conciliacion_acumulada() {
         4
     );
 }
+
+#[test]
+fn test_consumo_por_conversacion_completo() {
+    let directorio = DirectorioTemporal::nuevo("consumo-completo");
+
+    {
+        let repo = repositorio(&directorio);
+        let consumo_inicial = repo.consumo_por_conversacion().expect("consumo inicial");
+        assert!(consumo_inicial.is_empty());
+    }
+
+    let repo = repositorio(&directorio);
+    let conv1 = IdConversacion::nuevo("conv-1");
+    let conv2 = IdConversacion::nuevo("conv-2");
+    let conv3 = IdConversacion::nuevo("conv-3");
+    let conv4 = IdConversacion::nuevo("conv-4");
+
+    crear_conversacion(&repo, &conv1);
+    crear_conversacion(&repo, &conv2);
+    crear_conversacion(&repo, &conv3);
+    crear_conversacion(&repo, &conv4);
+
+    repo.aportar_presupuesto(100, SystemTime::UNIX_EPOCH)
+        .expect("aportar 100");
+
+    let Ok(VeredictoDeReserva::Concedida {
+        id_reserva: r1_1, ..
+    }) = repo.reservar_presupuesto(&conv1, 10, SystemTime::UNIX_EPOCH)
+    else {
+        panic!("reserva")
+    };
+    repo.conciliar_presupuesto(r1_1, 4, SystemTime::UNIX_EPOCH)
+        .expect("conciliar");
+
+    let Ok(VeredictoDeReserva::Concedida {
+        id_reserva: r1_2, ..
+    }) = repo.reservar_presupuesto(&conv1, 15, SystemTime::UNIX_EPOCH)
+    else {
+        panic!("reserva")
+    };
+    repo.conciliar_presupuesto(r1_2, 18, SystemTime::UNIX_EPOCH)
+        .expect("conciliar");
+
+    let Ok(VeredictoDeReserva::Concedida {
+        id_reserva: r2_1, ..
+    }) = repo.reservar_presupuesto(&conv2, 20, SystemTime::UNIX_EPOCH)
+    else {
+        panic!("reserva")
+    };
+    repo.conciliar_presupuesto(r2_1, 15, SystemTime::UNIX_EPOCH)
+        .expect("conciliar");
+
+    let Ok(VeredictoDeReserva::Concedida {
+        id_reserva: r2_2, ..
+    }) = repo.reservar_presupuesto(&conv2, 10, SystemTime::UNIX_EPOCH)
+    else {
+        panic!("reserva")
+    };
+    repo.liberar_presupuesto(r2_2, SystemTime::UNIX_EPOCH)
+        .expect("liberar");
+
+    let Ok(VeredictoDeReserva::Concedida {
+        id_reserva: r3_1, ..
+    }) = repo.reservar_presupuesto(&conv3, 8, SystemTime::UNIX_EPOCH)
+    else {
+        panic!("reserva")
+    };
+    repo.liberar_presupuesto(r3_1, SystemTime::UNIX_EPOCH)
+        .expect("liberar");
+
+    let Ok(VeredictoDeReserva::Concedida {
+        id_reserva: r4_1, ..
+    }) = repo.reservar_presupuesto(&conv4, 12, SystemTime::UNIX_EPOCH)
+    else {
+        panic!("reserva")
+    };
+    repo.conciliar_presupuesto(r4_1, 12, SystemTime::UNIX_EPOCH)
+        .expect("conciliar");
+
+    let consumo_antes_reinicio = repo
+        .consumo_por_conversacion()
+        .expect("consultar antes de reiniciar");
+
+    assert_eq!(consumo_antes_reinicio.len(), 4);
+    assert_eq!(
+        consumo_antes_reinicio[0].id_conversacion.como_str(),
+        "conv-1"
+    );
+    assert_eq!(consumo_antes_reinicio[0].unidades_consumidas, 22);
+
+    assert_eq!(
+        consumo_antes_reinicio[1].id_conversacion.como_str(),
+        "conv-2"
+    );
+    assert_eq!(consumo_antes_reinicio[1].unidades_consumidas, 15);
+
+    assert_eq!(
+        consumo_antes_reinicio[2].id_conversacion.como_str(),
+        "conv-3"
+    );
+    assert_eq!(consumo_antes_reinicio[2].unidades_consumidas, 0);
+
+    assert_eq!(
+        consumo_antes_reinicio[3].id_conversacion.como_str(),
+        "conv-4"
+    );
+    assert_eq!(consumo_antes_reinicio[3].unidades_consumidas, 12);
+
+    drop(repo);
+    let repo_nuevo = repositorio(&directorio);
+    let consumo_despues_reinicio = repo_nuevo
+        .consumo_por_conversacion()
+        .expect("consultar despues de reiniciar");
+
+    assert_eq!(consumo_antes_reinicio, consumo_despues_reinicio);
+
+    let ruta_db = directorio.ruta().join(NOMBRE_DE_ARCHIVO_DE_SESIONES);
+    let conexion_directa = Connection::open(ruta_db).expect("abrir conexion directa");
+    let mut sentencia = conexion_directa
+        .prepare("SELECT id_conversacion, unidades_consumidas FROM consumo_por_conversacion ORDER BY id_conversacion")
+        .expect("preparar consulta directa");
+    let filas: Vec<(String, i64)> = sentencia
+        .query_map([], |fila| Ok((fila.get(0)?, fila.get(1)?)))
+        .expect("ejecutar consulta directa")
+        .map(|r| r.expect("leer fila"))
+        .collect();
+
+    assert_eq!(filas.len(), 4);
+    assert_eq!(filas[0], ("conv-1".to_string(), 22));
+    assert_eq!(filas[1], ("conv-2".to_string(), 15));
+    assert_eq!(filas[2], ("conv-3".to_string(), 0));
+    assert_eq!(filas[3], ("conv-4".to_string(), 12));
+}
