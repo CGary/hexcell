@@ -13,6 +13,7 @@
 
 pub mod admision;
 pub mod canal;
+pub mod fragmentacion;
 pub mod identidad;
 pub mod inferencia;
 pub mod presupuesto;
