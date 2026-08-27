@@ -29,6 +29,11 @@ fn limpiar_entorno_de_hexcell() {
         "HEXCELL_VENTANA_DEDUPLICACION_SEGUNDOS",
         "HEXCELL_ADMISION_TASA_SOSTENIDA_POR_SEGUNDO",
         "HEXCELL_ADMISION_TOLERANCIA_RAFAGA",
+        "HEXCELL_INFERENCIA_URL_BASE",
+        "HEXCELL_INFERENCIA_API_KEY",
+        "HEXCELL_INFERENCIA_MODELO",
+        "HEXCELL_INFERENCIA_TIMEOUT_MS",
+        "HEXCELL_INFERENCIA_REINTENTOS",
     ] {
         unsafe {
             std::env::remove_var(variable);
@@ -467,5 +472,69 @@ fn presupuesto_inicial_unidades_por_defecto_y_desde_entorno() {
     unsafe {
         std::env::remove_var("HEXCELL_PRESUPUESTO_INICIAL_UNIDADES");
     }
+    let _ = std::fs::remove_dir_all(&directorio_temporal);
+}
+
+#[test]
+fn configuracion_inferencia_desde_entorno_y_validaciones() {
+    let _guardia = CERROJO_DE_ENTORNO.lock().unwrap_or_else(|e| e.into_inner());
+    limpiar_entorno_de_hexcell();
+    let directorio_temporal = std::env::temp_dir().join(format!(
+        "hexcell-test-config-inferencia-{}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&directorio_temporal)
+        .expect("crear el directorio temporal del test debe funcionar");
+
+    unsafe {
+        std::env::set_var("HEXCELL_ID_CELULA", "piloto-01");
+        std::env::set_var("HEXCELL_RUTA_DATOS", &directorio_temporal);
+    }
+
+    // Sin HEXCELL_INFERENCIA_URL_BASE -> inferencia es None
+    let config = Configuracion::desde_entorno().expect("configuración válida sin inferencia real");
+    assert!(config.inferencia.is_none());
+
+    // Con URL_BASE no-loopback http -> falla
+    unsafe {
+        std::env::set_var("HEXCELL_INFERENCIA_URL_BASE", "http://api.remota.com/v1");
+        std::env::set_var("HEXCELL_INFERENCIA_API_KEY", "key-secret");
+        std::env::set_var("HEXCELL_INFERENCIA_MODELO", "model-1");
+    }
+    let err = Configuracion::desde_entorno().expect_err("debe fallar con http no-loopback");
+    match err {
+        ErrorDeConfiguracion::ValorInvalido { nombre, .. } => {
+            assert_eq!(nombre, "HEXCELL_INFERENCIA_URL_BASE");
+        }
+        otro => panic!("se esperaba ValorInvalido, se obtuvo {otro:?}"),
+    }
+
+    // Con URL_BASE loopback válida
+    unsafe {
+        std::env::set_var("HEXCELL_INFERENCIA_URL_BASE", "http://127.0.0.1:8080");
+    }
+    let config = Configuracion::desde_entorno().expect("configuración válida con inferencia");
+    let inf = config.inferencia.expect("debe existir inferencia");
+    assert_eq!(inf.url_base, "http://127.0.0.1:8080");
+    assert_eq!(inf.api_key, "key-secret");
+    assert_eq!(inf.modelo, "model-1");
+    assert_eq!(inf.timeout, Duration::from_millis(8000));
+    assert_eq!(inf.reintentos, 1);
+
+    // Con tiempo total que excede el límite de drenaje -> falla
+    unsafe {
+        std::env::set_var("HEXCELL_INFERENCIA_TIMEOUT_MS", "15000");
+        std::env::set_var("HEXCELL_INFERENCIA_REINTENTOS", "2");
+        // 15000 * 3 = 45000 ms >= 20000 ms (límite de drenaje por defecto)
+    }
+    let err = Configuracion::desde_entorno().expect_err("debe fallar si excede límite de drenaje");
+    match err {
+        ErrorDeConfiguracion::ValorInvalido { nombre, .. } => {
+            assert_eq!(nombre, "HEXCELL_INFERENCIA_URL_BASE");
+        }
+        otro => panic!("se esperaba ValorInvalido, se obtuvo {otro:?}"),
+    }
+
+    limpiar_entorno_de_hexcell();
     let _ = std::fs::remove_dir_all(&directorio_temporal);
 }

@@ -157,3 +157,63 @@ impl ProveedorDeInferencia for ProveedorSimulado {
         })
     }
 }
+
+/// Error unificado devuelto por el selector de proveedor de inferencia de la célula.
+#[derive(Debug)]
+pub enum ErrorDeProveedorDeCelula {
+    /// Error devuelto por la inferencia simulada.
+    Simulado(ErrorDeInferenciaSimulada),
+    /// Error devuelto por la inferencia real del proveedor OpenAI.
+    OpenAi(crate::proveedor_openai::ErrorDeProveedorOpenAi),
+}
+
+impl fmt::Display for ErrorDeProveedorDeCelula {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Simulado(e) => write!(f, "{e}"),
+            Self::OpenAi(e) => write!(f, "{e}"),
+        }
+    }
+}
+
+impl std::error::Error for ErrorDeProveedorDeCelula {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Simulado(e) => Some(e),
+            Self::OpenAi(e) => Some(e),
+        }
+    }
+}
+
+/// Selector estático del proveedor de inferencia (simulado o real OpenAI-compatible).
+///
+/// Dado que `ProveedorDeInferencia` retorna `impl Future` y por tanto no es compatible con
+/// objetos de trait (`dyn`), esta enumeración permite seleccionar el proveedor activo en
+/// la raíz de composición sin duplicar la construcción del motor.
+#[derive(Clone)]
+pub enum ProveedorDeCelula {
+    /// Proveedor de inferencia simulada sin llamada de red.
+    Simulado(ProveedorSimulado),
+    /// Proveedor de inferencia HTTPS real sobre la API de OpenAI.
+    OpenAi(Box<crate::proveedor_openai::ProveedorOpenAi>),
+}
+
+impl ProveedorDeInferencia for ProveedorDeCelula {
+    type Error = ErrorDeProveedorDeCelula;
+
+    async fn generar(
+        &self,
+        peticion: PeticionDeInferencia,
+    ) -> Result<RespuestaDeInferencia, Self::Error> {
+        match self {
+            Self::Simulado(proveedor) => proveedor
+                .generar(peticion)
+                .await
+                .map_err(ErrorDeProveedorDeCelula::Simulado),
+            Self::OpenAi(proveedor) => proveedor
+                .generar(peticion)
+                .await
+                .map_err(ErrorDeProveedorDeCelula::OpenAi),
+        }
+    }
+}

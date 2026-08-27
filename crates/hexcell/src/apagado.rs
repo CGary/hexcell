@@ -32,10 +32,12 @@ use tokio::sync::watch;
 
 /// Límite de drenaje por defecto tras recibir la señal de apagado.
 ///
-/// Diez segundos, no treinta: el plazo de gracia del PRD para todo el proceso es de treinta
-/// segundos, y el punto de control del WAL más el resto de la salida tienen que caber en lo que
-/// quede tras el drenaje. La etapa A-6 alineará el `stop_timeout` del contenedor con este valor.
-pub const LIMITE_DE_DRENAJE_POR_DEFECTO: Duration = Duration::from_secs(10);
+/// Veinte segundos (decisión del 26 de agosto de 2026, subido de diez en el mismo movimiento que
+/// el plazo de 8000 ms del proveedor real: 8 s x 2 intentos = 16 s deben caber bajo el drenaje).
+/// Sigue lejos de los treinta del plazo de gracia del PRD: el punto de control del WAL más el
+/// resto de la salida tienen que caber en lo que quede tras el drenaje. La etapa A-6 alineará el
+/// `stop_timeout` del contenedor con este valor.
+pub const LIMITE_DE_DRENAJE_POR_DEFECTO: Duration = Duration::from_secs(20);
 
 /// Señal de apagado que el motor observa entre cada evento.
 ///

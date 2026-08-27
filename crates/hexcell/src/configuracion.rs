@@ -68,7 +68,7 @@ pub struct Configuracion {
     pub ventana_deduplicacion: Duration,
     /// Límite temporal de drenaje tras la señal de apagado (`crate::apagado`).
     ///
-    /// Por defecto, `LIMITE_DE_DRENAJE_POR_DEFECTO`: diez segundos, frente al plazo de gracia
+    /// Por defecto, `LIMITE_DE_DRENAJE_POR_DEFECTO`: veinte segundos, frente al plazo de gracia
     /// total de treinta segundos que fija el PRD para todo el proceso.
     pub limite_de_drenaje: Duration,
     /// Latencia artificial del proveedor de inferencia simulado, antes de responder.
@@ -99,6 +99,8 @@ pub struct Configuracion {
     pub limite_de_concurrencia: usize,
     /// Unidades de presupuesto inicial acreditadas en la primera puesta en marcha (opcional, por defecto 0).
     pub presupuesto_inicial_unidades: u64,
+    /// Configuración opcional del proveedor de inferencia HTTPS real compatible con OpenAI.
+    pub inferencia: Option<crate::proveedor_openai::ConfiguracionDeInferencia>,
 }
 
 /// Error de configuración: nombra siempre la variable concreta y su formato esperado.
@@ -195,6 +197,21 @@ pub const HEXCELL_ADMISION_TOLERANCIA_RAFAGA: &str = "HEXCELL_ADMISION_TOLERANCI
 pub const HEXCELL_CONCURRENCIA_LIMITE: &str = "HEXCELL_CONCURRENCIA_LIMITE";
 /// Nombre de la variable de entorno con el presupuesto inicial en unidades (opcional, por defecto 0).
 pub const HEXCELL_PRESUPUESTO_INICIAL_UNIDADES: &str = "HEXCELL_PRESUPUESTO_INICIAL_UNIDADES";
+/// Nombre de la variable de entorno con la URL base del proveedor de inferencia OpenAI (opcional, su presencia activa el proveedor real).
+pub const HEXCELL_INFERENCIA_URL_BASE: &str = "HEXCELL_INFERENCIA_URL_BASE";
+/// Nombre de la variable de entorno con la clave de API del proveedor de inferencia (obligatoria si URL_BASE está presente).
+pub const HEXCELL_INFERENCIA_API_KEY: &str = "HEXCELL_INFERENCIA_API_KEY";
+/// Nombre de la variable de entorno con el nombre del modelo de inferencia (obligatorio si URL_BASE está presente).
+pub const HEXCELL_INFERENCIA_MODELO: &str = "HEXCELL_INFERENCIA_MODELO";
+/// Nombre de la variable de entorno con el tiempo de espera de inferencia en milisegundos (opcional).
+pub const HEXCELL_INFERENCIA_TIMEOUT_MS: &str = "HEXCELL_INFERENCIA_TIMEOUT_MS";
+/// Nombre de la variable de entorno con la cantidad de reintentos de inferencia (opcional).
+pub const HEXCELL_INFERENCIA_REINTENTOS: &str = "HEXCELL_INFERENCIA_REINTENTOS";
+
+/// Tiempo de espera de inferencia por defecto: 8000 milisegundos.
+pub const TIMEOUT_INFERENCIA_POR_DEFECTO: Duration = Duration::from_millis(8000);
+/// Cantidad de reintentos de inferencia por defecto: 1.
+pub const REINTENTOS_INFERENCIA_POR_DEFECTO: u32 = 1;
 
 /// Dirección de salud por defecto: loopback (127.0.0.1), nunca `0.0.0.0`. Una célula sobre canal
 /// propio empaquetada en un contenedor (etapa A-6) necesita sondear esta ruta desde un
@@ -391,6 +408,104 @@ impl Configuracion {
             Err(_) => 0,
         };
 
+        let inferencia = match std::env::var(HEXCELL_INFERENCIA_URL_BASE) {
+            Ok(url_base) if !url_base.trim().is_empty() => {
+                let url_base = url_base.trim().to_string();
+                if let Ok(uri) = url_base.parse::<hyper::Uri>() {
+                    let scheme = uri.scheme_str().unwrap_or("");
+                    let host = uri.host().unwrap_or("");
+                    let es_loopback = host == "127.0.0.1"
+                        || host == "localhost"
+                        || host == "::1"
+                        || host == "[::1]";
+                    if scheme != "https" && (scheme != "http" || !es_loopback) {
+                        return Err(ErrorDeConfiguracion::ValorInvalido {
+                            nombre: HEXCELL_INFERENCIA_URL_BASE,
+                            valor: url_base,
+                            formato_esperado: "URL con esquema https:// (o http:// solo para loopback)",
+                        });
+                    }
+                } else {
+                    return Err(ErrorDeConfiguracion::ValorInvalido {
+                        nombre: HEXCELL_INFERENCIA_URL_BASE,
+                        valor: url_base,
+                        formato_esperado: "URL válida",
+                    });
+                }
+
+                let api_key = leer_obligatoria(
+                    HEXCELL_INFERENCIA_API_KEY,
+                    "cadena no vacía con la clave de API",
+                )?;
+
+                let modelo = leer_obligatoria(
+                    HEXCELL_INFERENCIA_MODELO,
+                    "nombre del modelo, p. ej. deepseek-chat",
+                )?;
+
+                let timeout = match std::env::var(HEXCELL_INFERENCIA_TIMEOUT_MS) {
+                    Ok(valor) => {
+                        let ms = valor.parse::<u64>().map_err(|_| {
+                            ErrorDeConfiguracion::ValorInvalido {
+                                nombre: HEXCELL_INFERENCIA_TIMEOUT_MS,
+                                valor: valor.clone(),
+                                formato_esperado:
+                                    "entero estrictamente positivo de milisegundos, p. ej. 8000",
+                            }
+                        })?;
+                        if ms == 0 {
+                            return Err(ErrorDeConfiguracion::ValorInvalido {
+                                nombre: HEXCELL_INFERENCIA_TIMEOUT_MS,
+                                valor: valor.clone(),
+                                formato_esperado: "entero estrictamente positivo de milisegundos, p. ej. 8000",
+                            });
+                        }
+                        Duration::from_millis(ms)
+                    }
+                    Err(_) => TIMEOUT_INFERENCIA_POR_DEFECTO,
+                };
+
+                let reintentos = match std::env::var(HEXCELL_INFERENCIA_REINTENTOS) {
+                    Ok(valor) => {
+                        let r = valor.parse::<u32>().map_err(|_| {
+                            ErrorDeConfiguracion::ValorInvalido {
+                                nombre: HEXCELL_INFERENCIA_REINTENTOS,
+                                valor: valor.clone(),
+                                formato_esperado: "entero no negativo menor o igual a 3, p. ej. 1",
+                            }
+                        })?;
+                        if r > 3 {
+                            return Err(ErrorDeConfiguracion::ValorInvalido {
+                                nombre: HEXCELL_INFERENCIA_REINTENTOS,
+                                valor: valor.clone(),
+                                formato_esperado: "entero no negativo menor o igual a 3, p. ej. 1",
+                            });
+                        }
+                        r
+                    }
+                    Err(_) => REINTENTOS_INFERENCIA_POR_DEFECTO,
+                };
+
+                let tiempo_maximo_inferencia = timeout * (1 + reintentos);
+                if tiempo_maximo_inferencia >= limite_de_drenaje {
+                    return Err(ErrorDeConfiguracion::ValorInvalido {
+                        nombre: HEXCELL_INFERENCIA_URL_BASE,
+                        valor: url_base,
+                        formato_esperado: "tiempo total de inferencia (timeout * (1 + reintentos)) estrictamente menor que el límite de drenaje",
+                    });
+                }
+
+                Some(crate::proveedor_openai::ConfiguracionDeInferencia {
+                    url_base,
+                    api_key,
+                    modelo,
+                    timeout,
+                    reintentos,
+                })
+            }
+            _ => None,
+        };
+
         Ok(Self {
             id_celula,
             ruta_datos,
@@ -406,6 +521,7 @@ impl Configuracion {
             configuracion_gcra,
             limite_de_concurrencia,
             presupuesto_inicial_unidades,
+            inferencia,
         })
     }
 }

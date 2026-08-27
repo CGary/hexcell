@@ -23,6 +23,7 @@ pub mod inferencia;
 pub mod motor;
 pub mod preparacion;
 pub mod procesador;
+pub mod proveedor_openai;
 pub mod registro;
 pub mod respaldar;
 pub mod respaldo;

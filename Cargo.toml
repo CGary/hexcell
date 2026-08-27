@@ -65,6 +65,13 @@ serde = { version = "1", features = ["derive"] }
 # Comparte la misma justificación frente a adr-0019 para interpretar el JSON de forma segura.
 serde_json = "1"
 
+# Pila cliente HTTPS para el proveedor de inferencia OpenAI-compatible (HEX-044, adr-0012).
+# Selecciona hyper-rustls 0.27 sobre rustls 0.23 con el proveedor ring (sin default-features para
+# evitar la dependencia de aws-lc-rs que exige cmake; ring solo necesita un compilador de C ya presente).
+hyper-rustls = { version = "0.27", default-features = false, features = ["http1", "ring", "webpki-tokio"] }
+rustls       = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+webpki-roots = "1"
+
 # Perfil de release orientado a tamaño de binario, coherente con NFR-01 y con el hardware
 # objetivo (i7 de 10 años, 8 GB RAM): en ese hardware el tamaño del binario y el arranque
 # en frío importan más que el tiempo de compilación.

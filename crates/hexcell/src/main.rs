@@ -50,10 +50,11 @@ use hexcell::apagado::Apagado;
 use hexcell::concurrencia::LimitadorDeConcurrencia;
 use hexcell::configuracion::{CanalSeleccionado, Configuracion};
 use hexcell::emparejar;
-use hexcell::inferencia::ProveedorSimulado;
+use hexcell::inferencia::{ProveedorDeCelula, ProveedorSimulado};
 use hexcell::motor::Motor;
 use hexcell::preparacion::SesionDelCanal;
 use hexcell::procesador::ProcesadorDeInferencia;
+use hexcell::proveedor_openai::ProveedorOpenAi;
 use hexcell::registro::{self, EntradaDeRegistro, NivelDeRegistro};
 use hexcell::salud::{EstadoDeSalud, servir_salud};
 use hexcell_canal_simulado::{AdaptadorSimulado, RelojDelSistema};
@@ -170,6 +171,21 @@ async fn main() -> ExitCode {
             .con_detalle(direccion_salud.to_string()),
     );
 
+    let proveedor = match &configuracion.inferencia {
+        Some(cfg_inferencia) => {
+            let proveedor_openai = ProveedorOpenAi::nuevo(cfg_inferencia.clone());
+            ProveedorDeCelula::OpenAi(Box::new(proveedor_openai))
+        }
+        None => {
+            let simulado = if configuracion.proveedor_de_inferencia_falla {
+                ProveedorSimulado::que_falla()
+            } else {
+                ProveedorSimulado::con_latencia(configuracion.latencia_inferencia_simulada)
+            };
+            ProveedorDeCelula::Simulado(simulado)
+        }
+    };
+
     match configuracion.canal {
         CanalSeleccionado::Simulado => {
             println!("hexcell: canal configurado: simulado");
@@ -200,12 +216,8 @@ async fn main() -> ExitCode {
                 }
             }
 
-            let proveedor = if configuracion.proveedor_de_inferencia_falla {
-                ProveedorSimulado::que_falla()
-            } else {
-                ProveedorSimulado::con_latencia(configuracion.latencia_inferencia_simulada)
-            };
-            let procesador = ProcesadorDeInferencia::nuevo(proveedor, Arc::clone(&repositorio));
+            let procesador =
+                ProcesadorDeInferencia::nuevo(proveedor.clone(), Arc::clone(&repositorio));
             let mut motor = Motor::nuevo(
                 adaptador,
                 procesador,
@@ -233,11 +245,6 @@ async fn main() -> ExitCode {
             );
             adaptador.arrancar();
 
-            let proveedor = if configuracion.proveedor_de_inferencia_falla {
-                ProveedorSimulado::que_falla()
-            } else {
-                ProveedorSimulado::con_latencia(configuracion.latencia_inferencia_simulada)
-            };
             let procesador = ProcesadorDeInferencia::nuevo(proveedor, Arc::clone(&repositorio));
             let mut motor = Motor::nuevo(
                 adaptador,

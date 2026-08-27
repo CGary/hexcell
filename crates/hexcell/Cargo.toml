@@ -34,10 +34,15 @@ tokio = { workspace = true, features = [
     "time",
     "signal",
 ] }
-hyper = { workspace = true, features = ["http1", "server"] }
-hyper-util = { workspace = true, features = ["tokio"] }
+hyper = { workspace = true, features = ["client", "http1", "server"] }
+hyper-util = { workspace = true, features = ["client-legacy", "http1", "tokio"] }
 http-body-util = { workspace = true }
 bytes = { workspace = true }
+hyper-rustls = { workspace = true }
+rustls = { workspace = true }
+webpki-roots = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
 hexcell-core = { path = "../hexcell-core" }
 hexcell-canal-simulado = { path = "../hexcell-canal-simulado" }
 hexcell-canal-whatsmeow = { path = "../hexcell-canal-whatsmeow" }

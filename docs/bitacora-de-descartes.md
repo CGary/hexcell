@@ -1,6 +1,6 @@
 # Bitácora de descartes
 
-> Registro de lo que se consideró y **no** se hizo. Última actualización: 2026-08-21 (D-25, D-26).
+> Registro de lo que se consideró y **no** se hizo. Última actualización: 2026-08-26 (D-27).
 
 ## Para qué sirve este documento
 
@@ -60,6 +60,7 @@ se apoya en un principio de diseño, no.
 | [D-24](#d-24) | Generalizar la orden de respaldo del `sqlstore` con un discriminador de almacén para `identidad.db` | Principio de diseño, no reabrir |
 | [D-25](#d-25) | Centralizar las bases de datos operativas (un RDBMS único multi-inquilino para el camino caliente) | Principio de diseño, no reabrir |
 | [D-26](#d-26) | rqlite / libSQL sqld en el camino caliente (los almacenes operativos del bot por HTTP) | Principio de diseño, no reabrir |
+| [D-27](#d-27) | Alternativas descartadas para la inferencia HTTPS (reqwest, aws-lc-rs, backoff exponencial, reintentar 429, noveno crate) | Principio de diseño, no reabrir |
 
 ---
 
@@ -432,6 +433,14 @@ copiar `sessions.db`, `knowledge_live.db` y el almacén de identidad del adaptad
 * **Por qué se descartó:** latencia de consenso/HTTP en el bucle caliente sobre hardware modesto, opuesto al propósito del SQLite embebido de latencia cero; whatsmeow abre un archivo local vía database/sql y no habla la API HTTP de rqlite; la alta disponibilidad real de rqlite exige múltiples máquinas (en un solo servidor no hay HA de todas formas). RESERVA explícita: rqlite/libSQL no se descarta para la capa de lectura derivada (de cara al cliente); allí sí es candidata.
 * **Registro normativo:** `docs/STATUS.md`.
 * **Qué tendría que cambiar para reabrirlo:** se evalúa libSQL sqld / rqlite únicamente para la capa derivada cuando esa capa se apruebe (ver la entrada Pendiente correspondiente en STATUS), nunca para el camino caliente.
+
+### D-27
+**Alternativas descartadas para la inferencia HTTPS outbound (reqwest, native-tls/openssl, aws-lc-rs, backoff exponencial, reintentar HTTP 429, noveno crate de workspace).**
+
+* **Descartado:** 2026-08-26 (HEX-044).
+* **Por qué se descartó:** `reqwest` añade ~85 crates extra en el lockfile; `native-tls`/`openssl` requieren bibliotecas dinámicas del sistema anfitrión violando el empaquetado autónomo (`adr-0003`); `aws-lc-rs` exige `cmake` como herramienta de compilación adicional mientras `ring` solo exige el compilador C ya usado por SQLite; el backoff exponencial hace impredecible el tiempo total de cola de drenaje del proceso; reintentar HTTP 429 agrava el agotamiento de cuota y retrasa la liberación de reservas de presupuesto; y crear un noveno crate de workspace viola la regla de que lo que solo el binario consume vive como módulo de `hexcell`.
+* **Registro normativo:** `docs/adr/adr-0012-inferencia-externa.md`, `crates/hexcell/Cargo.toml`.
+* **Qué tendría que cambiar para reabrirlo:** Para `reqwest` o `aws-lc-rs`, que la pila `hyper`+`rustls`/`ring` deje de compilar en rustc estable sin `cmake`. Para HTTP 429 o backoff exponencial, que el proveedor especifique cabeceras Retry-After respetables dentro del margen de drenaje sin violar el límite total de apagado.
 
 ---
 
