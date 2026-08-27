@@ -1,0 +1,91 @@
+{
+  "task_id": "HEX-046",
+  "bundle_hash": "4b2d47c77302714bf89a70d9d23011edf0f6b4ad909a658215604f0c7e740c19",
+  "files": [
+    ".ai/tasks/active/HEX-046-new-spec/00-spec.yaml",
+    ".ai/tasks/active/HEX-046-new-spec/01-blueprint.yaml",
+    "CLAUDE.md",
+    "crates/hexcell-core/src/admision.rs",
+    "crates/hexcell-core/src/presupuesto.rs",
+    "crates/hexcell-storage/migraciones/sesiones/0002-saldo-y-movimientos.sql",
+    "crates/hexcell-storage/src/error.rs",
+    "crates/hexcell-storage/src/pools.rs",
+    "crates/hexcell-storage/src/presupuesto.rs",
+    "crates/hexcell-storage/src/sesiones.rs",
+    "crates/hexcell-storage/tests/comun/mod.rs",
+    "crates/hexcell-storage/tests/presupuesto.rs",
+    "crates/hexcell/src/concurrencia.rs",
+    "crates/hexcell/src/configuracion.rs",
+    "crates/hexcell/src/lib.rs",
+    "crates/hexcell/src/main.rs"
+  ],
+  "protocol_version": "fleet-bundle-protocol/v2",
+  "created_at": "2026-08-27T11:50:56Z",
+  "dropped": [
+    {
+      "component": "code_slice",
+      "path": "docs/plan/fase-a-4-admision-presupuesto.md",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "docs/adr/adr-0023-parametros-gcra-por-variable-de-entorno.md",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "docs/adr/adr-0019-registro-estructurado.md",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "docs/adr/README.md",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "docs/STATUS.md",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "docs/PRD.md",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "crates/hexcell/tests/persistencia.rs",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "crates/hexcell/tests/motor.rs",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "crates/hexcell/tests/comun/mod.rs",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "crates/hexcell/src/salud.rs",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "crates/hexcell/src/registro.rs",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "crates/hexcell/src/procesador.rs",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "crates/hexcell/src/motor.rs",
+      "reason": "bundle exceeded max_bytes budget"
+    }
+  ]
+}

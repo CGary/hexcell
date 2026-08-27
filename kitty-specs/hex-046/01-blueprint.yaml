@@ -1,0 +1,206 @@
+task_id: HEX-046
+summary: >-
+  Expose operator-internal metrics (admission, discards, in-flight, balance, reconciliation
+  deviation) as a periodic structured-log snapshot; no HTTP, no new store, no logic change.
+
+affected_files:
+  - crates/hexcell/src/metricas.rs
+  - crates/hexcell/src/lib.rs
+  - crates/hexcell/src/concurrencia.rs
+  - crates/hexcell/src/motor.rs
+  - crates/hexcell/src/main.rs
+  - crates/hexcell-storage/src/presupuesto.rs
+  - crates/hexcell-storage/tests/presupuesto.rs
+  - docs/adr/adr-0024-metricas-internas-de-operacion.md
+  - docs/adr/README.md
+  - docs/STATUS.md
+
+symbols:
+  - "hexcell::metricas (new module, declared in lib.rs)"
+  - "metricas::RegistroDeMetricas (AtomicU64 process-local counters)"
+  - "RegistroDeMetricas::nuevo"
+  - "RegistroDeMetricas::anotar_evento_admitido"
+  - "RegistroDeMetricas::anotar_descarte_por_admision"
+  - "RegistroDeMetricas::anotar_descarte_por_concurrencia"
+  - "metricas::InstantaneaDeMetricas (plain snapshot value object)"
+  - "metricas::tomar_instantanea"
+  - "metricas::emitir_instantanea"
+  - "metricas::INTERVALO_DE_INSTANTANEA"
+  - "LimitadorDeConcurrencia::en_vuelo (additive gauge accessor)"
+  - "LimitadorDeConcurrencia::limite (additive accessor)"
+  - "Motor::con_metricas (additive builder, mirrors con_limite_de_concurrencia)"
+  - "RepositorioDeSesiones::desviacion_de_conciliacion (additive read-only aggregate)"
+
+dependencies:
+  - crates/hexcell/src/registro.rs
+  - crates/hexcell/src/procesador.rs
+  - crates/hexcell/src/salud.rs
+  - crates/hexcell/tests/motor.rs
+  - crates/hexcell/tests/persistencia.rs
+  - crates/hexcell-storage/src/sesiones.rs
+  - crates/hexcell-storage/src/pools.rs
+  - crates/hexcell-storage/migraciones/sesiones/0002-saldo-y-movimientos.sql
+  - crates/hexcell-core/src/admision.rs
+  - docs/plan/fase-a-4-admision-presupuesto.md
+  - docs/adr/adr-0019-registro-estructurado.md
+
+test_scenarios:
+  - statement: >-
+      In the in-crate test module of motor.rs, a scripted sequence of N events where GCRA discards K
+      leaves the registry at exactly N-K admitted and K admission-discarded.
+    covers:
+      - AC-1
+  - statement: >-
+      In the in-crate test module of motor.rs, a Motor built with a pre-saturated
+      LimitadorDeConcurrencia counts concurrency discards in a counter distinct from the GCRA one,
+      and the existing admision_descartada / concurrencia_descartada log events keep being emitted.
+    covers:
+      - AC-2
+  - statement: >-
+      In the in-crate test module of concurrencia.rs, holding N permits makes en_vuelo() report
+      exactly N, and dropping a permit decrements it; en_vuelo() equals limite minus free permits.
+    covers:
+      - AC-3
+  - statement: >-
+      In crates/hexcell-storage/tests/presupuesto.rs, a snapshot taken over a seeded DB reports
+      disponible and reservado equal to the values returned by saldo().
+    covers:
+      - AC-4
+  - statement: >-
+      In crates/hexcell-storage/tests/presupuesto.rs, a scripted reserve-then-conciliate sequence
+      with a deliberate estimate/consumption mismatch makes desviacion_de_conciliacion() equal the
+      sum of reserved minus the sum of consumed units.
+    covers:
+      - AC-5
+  - statement: >-
+      desviacion_de_conciliacion() reports 0 on a fresh database and ignores 'reserva', 'aporte' and
+      'liberacion' movements, counting only 'conciliacion' ones.
+    covers:
+      - AC-5
+  - statement: >-
+      In the in-crate test module of metricas.rs, InstantaneaDeMetricas renders a deterministic
+      single-line key=value detail string carrying every counter, the gauge and the budget values.
+    covers:
+      - AC-1
+      - AC-4
+  - statement: >-
+      The 7 ProcesadorDeEco scenarios in crates/hexcell/tests/motor.rs and the scenarios in
+      crates/hexcell/tests/persistencia.rs keep passing byte-identical, proving Motor::nuevo kept
+      its signature and the counters are purely additive.
+
+strategy:
+  - step: 1
+    action: >-
+      Add the in-flight gauge to the concurrency limiter (Value Object): store the configured limite
+      in LimitadorDeConcurrencia and add en_vuelo() = limite - semaforo.available_permits() plus
+      limite(). Purely additive; nuevo() keeps its signature and existing tests stay untouched.
+    files:
+      - crates/hexcell/src/concurrencia.rs
+  - step: 2
+    action: >-
+      Add the read-only aggregate to the budget repository (Application Service):
+      desviacion_de_conciliacion() runs SELECT COALESCE(SUM(monto),0) FROM movimientos WHERE clase =
+      'conciliacion' through pools.sesiones().con_lectura, never con_escritura. Document the formula
+      in Spanish in its doc comment, including the deficit_no_cubierto caveat.
+    files:
+      - crates/hexcell-storage/src/presupuesto.rs
+  - step: 3
+    action: >-
+      Create the metricas module (Entity + Value Object): RegistroDeMetricas holding three AtomicU64
+      counters with Relaxed ordering, InstantaneaDeMetricas as the immutable snapshot,
+      tomar_instantanea() combining counters + gauge + saldo() + desviacion_de_conciliacion(), and
+      emitir_instantanea() rendering one key=value line into the single free-text detalle field of
+      EntradaDeRegistro under the event name metricas_instantanea.
+    files:
+      - crates/hexcell/src/metricas.rs
+      - crates/hexcell/src/lib.rs
+  - step: 4
+    action: >-
+      Wire the counters into the admission gate of motor.rs additively: a metricas field defaulted in
+      Motor::nuevo and overridable through the con_metricas builder, plus three one-line increments
+      inside procesar_evento (admitted right after the GCRA gate passes, admission-discarded and
+      concurrency-discarded in their existing early-return arms, next to the log emission that is
+      already there). No control flow, ordering or log event may change.
+    files:
+      - crates/hexcell/src/motor.rs
+  - step: 5
+    action: >-
+      Wire the snapshot task in main.rs (orchestration only): build one Arc<RegistroDeMetricas>, pass
+      it to both Motor construction arms via con_metricas, and tokio::spawn a periodic task driving
+      tokio::time::interval(INTERVALO_DE_INSTANTANEA) that calls tomar_instantanea + emitir_instantanea.
+      The first interval tick fires immediately, so a baseline line is emitted at start-up.
+    files:
+      - crates/hexcell/src/main.rs
+  - step: 6
+    action: >-
+      Add the tests: counter and rendering tests in the in-crate module of metricas.rs, gauge tests in
+      concurrencia.rs, admission/concurrency counter tests in the existing in-crate test module of
+      motor.rs, and deviation/balance tests in crates/hexcell-storage/tests/presupuesto.rs reusing its
+      existing repositorio() and crear_conversacion() helpers.
+    files:
+      - crates/hexcell/src/metricas.rs
+      - crates/hexcell/src/concurrencia.rs
+      - crates/hexcell/src/motor.rs
+      - crates/hexcell-storage/tests/presupuesto.rs
+  - step: 7
+    action: >-
+      Record the decision: new adr-0024 explaining why the exposure mechanism is a structured-log
+      snapshot and why an HTTP /metrics endpoint on the existing health server, a hexcell-admin
+      subcommand and a metrics table in sessions.db were all rejected; append its row to the ADR
+      table and add the closing entry to docs/STATUS.md.
+    files:
+      - docs/adr/adr-0024-metricas-internas-de-operacion.md
+      - docs/adr/README.md
+      - docs/STATUS.md
+
+risks:
+  - >-
+    SPEC-VS-CODE MISMATCH (does not block, the human owns the spec): the spec invariant says Fase A
+    introduces no inbound network, but crates/hexcell/src/salud.rs already binds a loopback HTTP
+    server serving /health/live and /health/ready (HEXCELL_DIRECCION_SALUD, exercised by
+    crates/hexcell/tests/salud_http.rs). The invariant is therefore about not ADDING a new endpoint,
+    not about the absence of any listener. This blueprint honours the spec literally and adds no
+    endpoint, but a human may prefer /metrics on that existing server; that would be a spec change.
+  - >-
+    CARRY-FORWARD ASSUMPTION FALSIFIED: hexcell-admin is a 10-line stub with an empty [dependencies]
+    table and no argument parsing, and its doc comment records a deliberate decision to not choose a
+    CLI library until the subcommands are known. It reads no database today, so the assumption that
+    it already opens the cell DB read-only is wrong. A metrics subcommand would force that deferred
+    decision and add a dependency, and it still could not satisfy AC-3: an out-of-process CLI cannot
+    observe a live semaphore. hexcell-admin is therefore left untouched.
+  - >-
+    AC-3 SEMANTICS: motor.rs documents a deliberate decision (2026-08-23) that the event loop is
+    sequential (current_thread, no tokio::spawn per event), so the semaphore acts as a structural
+    gate and real in-flight tasks are 0 or 1 until concurrent dispatch exists. The gauge is therefore
+    defined and tested as held permits on the limiter, which is what AC-3 asks for, and it will read
+    near zero in production today. Introducing concurrent dispatch to make it larger is out of scope.
+  - >-
+    AC-2 SEMANTICS: for the same reason, concurrencia_descartada cannot occur in production today; it
+    is reachable only by injecting a pre-saturated limiter, exactly as the existing motor.rs tests do.
+    The counter is still required so the number is already correct the day dispatch becomes concurrent.
+  - >-
+    DEVIATION FORMULA EDGE CASE: conciliar_presupuesto books no movement at all when ajuste_aplicado
+    is 0 (correct, zero contribution), and clamps ajuste_aplicado at -disponible when the overspend
+    exceeds the balance, leaving deficit_no_cubierto unbooked. The metric then understates the real
+    deviation. This is documented in Spanish in the doc comment and in adr-0024, and the existing
+    presupuesto_deficit_no_cubierto log event marks every occurrence.
+  - >-
+    PERFORMANCE: the deviation aggregate scans movimientos, which has no index on clase and grows
+    without bound, and it runs synchronously inside an async task on a current_thread runtime. At the
+    A-4 traffic profile and a 60 s cadence this is negligible, but if movimientos grows large the
+    follow-up is an index on clase or an incremental counter, not a shorter cadence.
+  - >-
+    ADR-0019 CONSTRAINT: the structured-log record has a fixed typed field set with a single free-text
+    field. The snapshot must therefore be rendered into detalle as one deterministic key=value line;
+    adding JSON fields would require editing registro.rs, which stays forbidden.
+  - >-
+    LES-046/048: registro::pruebas is #[cfg(test)] pub(crate), so every log or counter assertion must
+    live in an in-crate #[cfg(test)] module, never in crates/hexcell/tests/. Budget assertions go
+    through the public saldo() and desviacion_de_conciliacion() API on a temp-dir database.
+  - >-
+    HSME advisory read hook unavailable (SQLITE_DB_PATH points at a missing database); the phase
+    proceeded without semantic context, as the skill's graceful-degradation path allows.
+  - >-
+    Out of scope by design: the sidecar in-memory counters of STATUS.md finding 9
+    (ContadorAplazadasPorHorario / ContadorAplazadasPorRampa in Go) are a separate A-6 item, and plan
+    task 13 (per-client token persistence) is explicitly independent of these aggregate counters.

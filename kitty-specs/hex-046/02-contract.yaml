@@ -1,0 +1,134 @@
+task_id: HEX-046
+summary: >-
+  Add a metricas module exposing admission/discard counters, an in-flight gauge, balance and
+  reconciliation deviation as a periodic structured-log snapshot. Observation only, no logic change.
+
+goal: >-
+  Implement stage A-4 task 11 (docs/plan/fase-a-4-admision-presupuesto.md lines 121-122). Turn the
+  signals that already exist as structured logs and sessions.db rows into live counters and values an
+  operator can read on a running cell without a debugger. The exposure mechanism is a periodic
+  structured-log snapshot line (event metricas_instantanea), chosen because it adds zero new surface,
+  is already how the cell speaks to its operator (adr-0019), works for process-local counters and
+  DB-derived values alike, and is the remedy shape named by STATUS.md finding 9. Counters are
+  process-local AtomicU64 reset on restart, because the plan asks for live operational counters, not
+  history, and the durable financial truth already lives in sessions.db. Every edit to existing files
+  is additive: no admission, concurrency, budget or degraded-mode behaviour may change.
+
+read:
+  - .ai/tasks/active/HEX-046-new-spec/00-spec.yaml
+  - .ai/tasks/active/HEX-046-new-spec/01-blueprint.yaml
+  - crates/hexcell/src/registro.rs
+  - crates/hexcell/src/procesador.rs
+  - crates/hexcell/src/salud.rs
+  - crates/hexcell/src/configuracion.rs
+  - crates/hexcell/tests/motor.rs
+  - crates/hexcell/tests/persistencia.rs
+  - crates/hexcell/tests/comun/mod.rs
+  - crates/hexcell-storage/src/sesiones.rs
+  - crates/hexcell-storage/src/pools.rs
+  - crates/hexcell-storage/src/error.rs
+  - crates/hexcell-storage/tests/comun/mod.rs
+  - crates/hexcell-storage/migraciones/sesiones/0002-saldo-y-movimientos.sql
+  - crates/hexcell-core/src/admision.rs
+  - crates/hexcell-core/src/presupuesto.rs
+  - docs/plan/fase-a-4-admision-presupuesto.md
+  - docs/adr/adr-0019-registro-estructurado.md
+  - docs/adr/adr-0023-parametros-gcra-por-variable-de-entorno.md
+  - docs/PRD.md
+  - CLAUDE.md
+
+touch:
+  - crates/hexcell/src/metricas.rs
+  - crates/hexcell/src/lib.rs
+  - crates/hexcell/src/concurrencia.rs
+  - crates/hexcell/src/motor.rs
+  - crates/hexcell/src/main.rs
+  - crates/hexcell-storage/src/presupuesto.rs
+  - crates/hexcell-storage/tests/presupuesto.rs
+  - docs/adr/adr-0024-metricas-internas-de-operacion.md
+  - docs/adr/README.md
+  - docs/STATUS.md
+
+forbid:
+  files:
+    - crates/hexcell/src/registro.rs
+    - crates/hexcell/src/procesador.rs
+    - crates/hexcell/src/salud.rs
+    - crates/hexcell/src/configuracion.rs
+    - crates/hexcell/src/inferencia.rs
+    - crates/hexcell/src/proveedor_openai.rs
+    - crates/hexcell/src/reglas_locales.rs
+    - crates/hexcell/src/apagado.rs
+    - crates/hexcell/src/deduplicacion.rs
+    - crates/hexcell/tests/
+    - crates/hexcell-core/
+    - crates/hexcell-storage/src/sesiones.rs
+    - crates/hexcell-storage/src/pools.rs
+    - crates/hexcell-storage/migraciones/
+    - crates/hexcell-admin/
+    - crates/hexcell-canal-simulado/
+    - crates/hexcell-canal-whatsmeow/
+    - crates/hexcell-canal-contrato/
+    - crates/hexcell-meta/
+    - sidecar/
+    - docs/PRD.md
+    - docs/plan/
+    - docs/bitacora-de-descartes.md
+    - Cargo.toml
+    - Cargo.lock
+    - "**/Cargo.toml"
+    - .github/
+    - kitty-specs/
+  behaviors:
+    - "Adding an HTTP endpoint, a unix socket, a TCP or UDP listener, or any externally reachable surface. In particular: NOT adding /metrics to the existing loopback health server in crates/hexcell/src/salud.rs, which stays forbidden. The exposure mechanism is the structured-log snapshot line and nothing else."
+    - "Adding a metrics table, a new migration, or any new write to sessions.db. The metrics path performs READS ONLY, always through pools.sesiones().con_lectura, never con_escritura: a counter bump must never touch the single-writer WAL on the hot path."
+    - "Adding a subcommand, argument parser or dependency to crates/hexcell-admin/. It is a deliberate 10-line stub whose doc comment defers the CLI-library choice, and an out-of-process CLI cannot observe a live semaphore anyway."
+    - "Changing Motor::nuevo's signature or parameter list. The metrics registry is defaulted inside nuevo and injected through an additive con_metricas builder, exactly mirroring the existing con_limite_de_concurrencia and con_configuracion_gcra pattern, so crates/hexcell/tests/motor.rs and crates/hexcell/tests/persistencia.rs compile untouched."
+    - "Altering the control flow, gate order, early returns or latency measurement of Motor::procesar_evento. GCRA stays strictly before the concurrency semaphore and both stay before deduplication; the counter increments are added next to the log emissions that are already there and change nothing else."
+    - "Removing, renaming or altering the existing admision_descartada, concurrencia_descartada, presupuesto_rechazado, modo_degradado or presupuesto_deficit_no_cubierto log events. metricas_instantanea is emitted IN ADDITION to all of them."
+    - "Adding fields to EntradaDeRegistro or editing crates/hexcell/src/registro.rs. adr-0019 fixes the typed field set with a single free-text field, so the whole snapshot is rendered into detalle as one deterministic key=value line."
+    - "Changing ProcesadorDeEco or any file under crates/hexcell/tests/. Its 7 scenarios in tests/motor.rs must keep passing byte-identical; every counter and log assertion for this task lives in an in-crate #[cfg(test)] module, because registro::pruebas is pub(crate)."
+    - "Touching reservar_presupuesto, conciliar_presupuesto, liberar_presupuesto, aportar_presupuesto, saldo, estimar_coste or the degraded-mode path. This task OBSERVES the budget; it never changes an amount, a verdict or a movement."
+    - "Persisting counters, adding history, time series, retention, rollups or any long-term metric storage. Counters are in-memory AtomicU64 that reset on restart, by design."
+    - "Adding alert thresholds, alarm conditions or any reaction to a metric value. Alerting is stage A-6."
+    - "Adding a dashboard, a visualization, an export format such as Prometheus or OpenMetrics, or any client-facing surface. This is operator-internal only and distinct from the parked FR-13 read layer."
+    - "Exposing prices, currency, monetary values, tariffs, per-client business data, message content, phone numbers or any transport identifier in the snapshot line. Only opaque aggregate budget units and process counters."
+    - "Adding any dependency, dev-dependency or feature to any Cargo.toml. Everything needed is std (AtomicU64) plus tokio, rusqlite and hexcell-storage, all already present."
+    - "Making the deviation metric depend on wall-clock time, on a rolling window, or on anything other than the movimientos ledger; it is a pure aggregate over clase = 'conciliacion'."
+    - "Introducing concurrent per-event dispatch, tokio::spawn per event, or any change to the sequential loop in order to make the in-flight gauge larger. The gauge reports held permits on the limiter; the sequential-loop decision of 2026-08-23 stands."
+    - "Adding a sleep-based or timing-dependent flaky test, a test that waits on the real 60 s interval, an #[ignore]d test, or any network call in a test. Snapshot logic must be testable synchronously by calling tomar_instantanea directly."
+    - "Rewriting, renumbering or reordering existing ADR rows, existing D-NN discard-log entries or existing docs/STATUS.md bullets. adr-0024 is a NEW file appended as a new row; nothing older is edited."
+    - "Removing or resolving the parked FR-13 entry or any pending human decision in docs/STATUS.md. They stay pending; this task ships the operator-internal counters only."
+    - "Writing English prose in source comments, doc comments, log detail text, identifiers or repository documentation. The repository is PUBLIC and all its prose is Spanish; only Quorum artifact field values are English."
+    - "Modifying 00-spec.yaml, 01-blueprint.yaml or this contract."
+
+verify:
+  commands:
+    - cargo fmt --check
+    - cargo clippy --workspace -- -D warnings
+    - cargo build --workspace
+    - cargo test --workspace
+    - "bash -c '! grep -nE \"\\b(the|and|with|this|that|which|because|should|would|about|counter|counters|snapshot|deviation|gauge|admitted|discarded|available|balance)\\b\" crates/hexcell/src/metricas.rs crates/hexcell/src/lib.rs crates/hexcell/src/concurrencia.rs crates/hexcell/src/motor.rs crates/hexcell/src/main.rs crates/hexcell-storage/src/presupuesto.rs crates/hexcell-storage/tests/presupuesto.rs docs/adr/adr-0024-metricas-internas-de-operacion.md docs/adr/README.md docs/STATUS.md'"
+  target_s: 60
+
+acceptance:
+  human_gate: true
+
+limits:
+  max_files_changed: 10
+  max_diff_lines: 800
+  per_class:
+    - glob: "crates/hexcell/src/**"
+      max_diff_lines: 430
+    - glob: "crates/hexcell-storage/**"
+      max_diff_lines: 210
+    - glob: "docs/**"
+      max_diff_lines: 170
+
+execution:
+  mode: worktree_edit
+  branch: ai/HEX-046-new-spec
+
+retry_policy:
+  max_attempts: 2
+  escalate_after: 2

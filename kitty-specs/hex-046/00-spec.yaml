@@ -1,0 +1,57 @@
+task_id: HEX-046
+summary: Expose internal operator-facing metrics (admission, discards, in-flight, balance, reconciliation deviation) for a running cell. Risk medium.
+goal: >-
+  Turn the existing admission, concurrency, budget, and reconciliation signals
+  (already present as structured logs and sessions.db rows) into counters and
+  values that an operator can observe on a running cell without attaching a
+  debugger, per stage A-4 scope item 11 (docs/plan/fase-a-4-admision-presupuesto.md,
+  lines 121-122).
+invariants:
+  - No inbound HTTP endpoint or externally reachable network surface is introduced; Fase A has no inbound network by design.
+  - No client-facing or externally consumable read store is introduced; this is strictly an operator-internal exposure, distinct from the parked FR-13 centralized multi-tenant HTTP read-store.
+  - Metrics reflect operator-internal mechanisms only (GCRA admission, concurrency limiter, in-flight tasks, budget balance, reconciliation deviation); no client/tenant business data, prices, or monetization values are exposed.
+  - Pre-existing tests (including the 7 ProcesadorDeEco test files) keep passing unchanged; any touch to motor.rs is additive-only.
+  - No secrets or transport-level identifiers are exposed through the metrics surface.
+non_goals:
+  - The FR-13 client-facing centralized multi-tenant HTTP read-store (parked, blocked by pending human decisions) is out of scope.
+  - No new HTTP endpoint or external network-facing store of any kind.
+  - No historical time series or long-term metric storage.
+  - No alerting thresholds or alerting logic (reserved for stage A-6).
+  - No dashboards or visualization UI.
+  - No prices or monetization values.
+constraints:
+  - Exposure mechanism (structured log snapshot, CLI query via hexcell-admin, local metrics table in sessions.db, unix socket, etc.) is left open for the blueprint to decide, weighing the no-inbound-network constraint and existing tooling (hexcell-admin CLI, per-cell sessions.db, structured logs).
+  - Counter storage strategy (in-memory atomics vs. a persisted table) is left open for the blueprint; the plan asks for live counters/values, not history.
+  - Whether motor.rs needs changes to host admission counters is left open for the blueprint; if touched, edits must be additive-only and must not alter existing ProcesadorDeEco test behavior.
+  - Verification must be offline (cargo build/test/fmt/clippy --workspace), with no dependency on a real WhatsApp channel or external network access.
+  - Deterministic English-leak grep must pass; all repo prose stays in Spanish, Quorum artifact field values stay in English.
+acceptance:
+  - id: AC-1
+    statement: Admitted and discarded GCRA admission events are counted exactly and are readable through the chosen exposure mechanism.
+    given: a running cell processing a scripted sequence of N events where K are discarded by GCRA admission control
+    when: the sequence finishes processing
+    then: the exposed admission metrics report exactly (N-K) admitted and K discarded, matching the plan's "eventos admitidos y descartados por GCRA"
+  - id: AC-2
+    statement: Concurrency-limiter discards (tareas en vuelo pressure) are counted and exposed distinctly from GCRA discards.
+    given: a running cell where the concurrency semaphore (limitador in crates/hexcell/src/concurrencia.rs) rejects some in-flight task attempts
+    when: those rejections occur
+    then: the exposed metrics report a concurrencia_descartada count separate from GCRA discards
+  - id: AC-3
+    statement: The in-flight tasks gauge reflects the live state of the concurrency semaphore.
+    given: a scripted sequence that holds a known number of tasks concurrently in-flight
+    when: the exposure mechanism is queried mid-sequence
+    then: the reported in-flight count matches the semaphore's actual held-permit count at that moment
+  - id: AC-4
+    statement: Available and reserved budget balance metrics match the values held in sessions.db.
+    given: a cell with a known saldo/reservas state in sessions.db
+    when: the exposure mechanism is queried
+    then: the reported available balance and reserved amount equal the values from the saldo() query and reservas rows
+  - id: AC-5
+    statement: The reconciliation deviation metric equals reserved-minus-conciliated for a scripted sequence.
+    given: a scripted sequence of reservations followed by their conciliacion movements with a known, deliberate mismatch between estimated (reserved) and consumed (conciliated) amounts
+    then: the exposed deviation metric equals the difference between the summed reserved amounts and the summed conciliated amounts for that sequence
+    when: the exposure mechanism is queried after the sequence completes
+  - Pre-existing tests, including the 7 ProcesadorDeEco test files and all other current cargo test suites, pass unchanged after the change.
+  - cargo build --workspace, cargo test --workspace, cargo fmt --check, and cargo clippy --workspace -- -D warnings all succeed.
+  - The deterministic English-leak grep over repo prose passes with no new violations introduced by this change.
+risk: medium

@@ -1,0 +1,38 @@
+{
+  "commands": [
+    {
+      "command": "cargo fmt --check",
+      "duration_s": 1,
+      "exit_code": 0,
+      "output_excerpt": "sin diferencias de formato"
+    },
+    {
+      "command": "cargo clippy --workspace -- -D warnings",
+      "duration_s": 30,
+      "exit_code": 0,
+      "output_excerpt": "sin warnings con -D warnings"
+    },
+    {
+      "command": "cargo build --workspace",
+      "duration_s": 15,
+      "exit_code": 0,
+      "output_excerpt": "Finished dev profile"
+    },
+    {
+      "command": "cargo test --workspace",
+      "duration_s": 60,
+      "exit_code": 0,
+      "output_excerpt": "test result: ok. 17 passed / ok. 14 passed / ok. 12 passed; suites completas sin fallos"
+    },
+    {
+      "command": "bash -c (grep negado de fugas de ingles sobre los 4 archivos del contrato)",
+      "duration_s": 1,
+      "exit_code": 0,
+      "output_excerpt": "sin coincidencias: 0 fugas de ingles en presupuesto.rs, inferencia.rs (core y hexcell) y procesador.rs"
+    }
+  ],
+  "executed_at": "2026-08-27T11:58:20Z",
+  "overall_result": "passed",
+  "summary": "Los cinco verify.commands pasan (exit 0) en worktrees/HEX-046-new-spec en el commit 6bc82ee; formato, clippy, build, suites completas y verificación de fugas en verde.",
+  "task_id": "HEX-046"
+}

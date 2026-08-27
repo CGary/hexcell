@@ -1,0 +1,22 @@
+{
+  "task_id": "HEX-046",
+  "summary": "Additive metrics snapshot (admission/discard counters, in-flight gauge, balance, reconciliation deviation) as periodic structured log; no new surface. Verify 5/5 green.",
+  "verdict": "approve",
+  "contract_compliance": true,
+  "forbidden_files_touched": [],
+  "unrequested_refactor": false,
+  "missing_tests": [],
+  "functional_risk": "low",
+  "notes": [
+    "contract-check ok=true; not_checked: forbid.behaviors",
+    "acceptance-coverage status=pass; AC-1..AC-5 all covered=true, no gaps",
+    "AC-2 double-counting semantics verified against blueprint line 121: ac_2_conteo_de_concurrencia_en_registro in motor.rs asserts admitidos=1 and descartados_concurrencia=1 for the same event, matching the justifying Spanish comment in the diff",
+    "Lexical guard el_archivo_del_motor_no_asume_aceptado_y_trata_las_cinco_variantes in tests/motor.rs reads src/motor.rs as raw text and forbids .unwrap(/.expect( anywhere in that file including its #[cfg(test)] module; the new AC-1/AC-2 tests correctly use let-else + panic! and pass this guard",
+    "Shutdown/drain path verified manually: _metricas_task in main.rs is spawned but deliberately excluded from the tokio::select! that governs shutdown (servidor_salud / motor.ejecutar(senal_de_apagado)); the 60s tick cannot delay the drain, and current_thread runtime flavor is preserved",
+    "LimitadorDeConcurrencia is now constructed once in main.rs and shared (cloned) between Motor and the metrics task instead of built separately per match arm; this is a required change (not scope creep) so AC-3's gauge observes the same semaphore instance the motor actually uses",
+    "English-leak grep independently re-run against the exact contract command over the worktree: exit 0, no leaks",
+    "MINOR/non-blocking: 05-validation.json's output_excerpt for the grep verify command names unrelated files (presupuesto.rs, inferencia.rs, procesador.rs) instead of the 10 files the contract's grep actually targets; likely a stale/copy-pasted description. Re-ran the literal contract command directly and confirmed exit 0, so this is a validation-artifact documentation nit, not a code or gate defect",
+    "MINOR/non-blocking: the renderizado_de_instantanea_es_determinista test in metricas.rs reconstructs the format! call locally and compares it to a hardcoded string, rather than calling emitir_instantanea's real code path (which has no return value to assert on); it verifies the expected format but would not catch drift if the production format! literal changes without a matching test edit. Does not block approval since AC-1/AC-4 are also covered behaviorally elsewhere"
+  ],
+  "fix_tasks": []
+}

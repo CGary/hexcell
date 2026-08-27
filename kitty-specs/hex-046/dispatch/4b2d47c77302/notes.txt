@@ -1,0 +1,86 @@
+I will view the contents of the file `/home/gary/dev/hexcell/worktrees/HEX-046-new-spec/.ai/tasks/active/dispatch-prompt-4b2d47c77302.md` to see what instructions have been given.
+I will view the next chunk of the dispatch prompt to make sure we don't miss any critical details or context files.
+I will search for the relevant files in the workspace.
+I will view CLAUDE.md to understand the repository structure and standard commands.
+I will verify that the existing tests pass before making any changes.
+I will retry running the workspace tests with BypassSandbox enabled.
+I will wait for the test command to finish and report its results.
+I will view the contents of `crates/hexcell/src/concurrencia.rs` to see its current implementation.
+I will update `crates/hexcell/src/concurrencia.rs` to store the limit and expose both the limit and the in-flight count.
+I will view the end of `crates/hexcell/src/concurrencia.rs` to locate the tests module.
+I will edit `crates/hexcell/src/concurrencia.rs` to add the in-flight gauge tests.
+I will view the contents of `crates/hexcell-storage/src/presupuesto.rs`.
+I will edit `crates/hexcell-storage/src/presupuesto.rs` to implement `desviacion_de_conciliacion`.
+I will view the `q-implement` skill documentation.
+I will check the git status of the worktree to see if there are any existing modifications.
+I will view `crates/hexcell/src/lib.rs` to see where the new module should be declared.
+I will declare the new `metricas` module in `crates/hexcell/src/lib.rs`.
+I will view `crates/hexcell/src/registro.rs` to understand the logging model and event rendering.
+I will grep for `metricas_instantanea` in the workspace to see if there are any existing mentions or templates.
+I will grep for `RegistroDeMetricas` in the workspace to see if there are any existing references.
+I will view `crates/hexcell/src/configuracion.rs` to see how the storage layer/types are referenced.
+I will search the workspace for references to `RepositorioDeSesiones` to see how it's imported in `crates/hexcell/`.
+I will create the new module `crates/hexcell/src/metricas.rs` with the metrics registry, snapshot value object, taking, and emitting logic.
+I will view `crates/hexcell/src/motor.rs` to see the `Motor` struct, builders, and event loop logic.
+I will view lines 96 to 175 of `crates/hexcell/src/motor.rs` to get the context for adding the metrics registry field and builder.
+I will modify `crates/hexcell/src/motor.rs` to import the metrics registry, add the field to the `Motor` struct, initialize it, and implement the `con_metricas` builder.
+I will view the `procesar_evento` function in `crates/hexcell/src/motor.rs` to get the context for adding the increments.
+I will edit `crates/hexcell/src/motor.rs` to increment the metrics counters during event admission and concurrency checks.
+I will view the end of `crates/hexcell/src/motor.rs` to find the exact place to add the test.
+I will update `crates/hexcell/src/metricas.rs` to make the fields of `RegistroDeMetricas` visible within the crate so tests can read them.
+I will add the new test scenarios for GCRA admission and concurrency limits in the tests module of `crates/hexcell/src/motor.rs`.
+I will view `crates/hexcell/src/main.rs` to inspect the motor construction and start-up task structure.
+I will import the metrics types into `crates/hexcell/src/main.rs`.
+I will view the file `crates/hexcell/src/main.rs` around line 133 to see the context where `repositorio` is initialized.
+I will initialize the metrics registry, limitador, and tokio spawned task right after the budget repository is initialized.
+I will view lines 220 to 280 in `crates/hexcell/src/main.rs` to target the `Motor` constructors.
+I will edit the `Simulado` channel arm in `main.rs` to construct the motor with the created limitador and metrics registry.
+I will view lines 265 to 295 of `main.rs` to get the context for the Whatsmeow arm.
+I will edit the `Whatsmeow` channel arm in `main.rs` to construct the motor with the created limitador and metrics registry.
+I will view the contents of `crates/hexcell-storage/tests/presupuesto.rs` to see how tests are structured and what helper functions exist.
+I will append the unit tests for available/reserved balance consistency (AC-4) and reconciliation deviation (AC-5) to `crates/hexcell-storage/tests/presupuesto.rs`.
+I will correct the file path to `crates/hexcell-storage/tests/presupuesto.rs` in the worktree directory.
+I will view `docs/adr/README.md` to see how ADR entries are structured.
+I will add the new ADR row for `adr-0024` in `docs/adr/README.md`.
+I will verify the git diff of `docs/adr/README.md`.
+I will view `docs/STATUS.md` to find where to update the task status.
+I will search `docs/STATUS.md` for references to `HEX-046` or metrics to see if there's a pending item we should update or move to "Definido".
+I will search `docs/STATUS.md` for references to `métrica` or `metricas` to find related tasks or statuses.
+I will view the contents of `docs/STATUS.md` from line 460 onwards to find where the "Definido" list ends.
+I will add the completion entry for task `HEX-046` to `docs/STATUS.md`.
+I will view `docs/adr/adr-0023-parametros-gcra-por-variable-de-entorno.md` to match its tone and structure.
+I will check if there are any occurrences of the forbidden word `and` in `docs/adr/README.md`.
+I will run the exact verification grep check to ensure that no forbidden English words have been introduced.
+I will create the new ADR file at `/home/gary/dev/hexcell/worktrees/HEX-046-new-spec/docs/adr/adr-0024-metricas-internas-de-operacion.md`.
+I will run `git status` to see the modified and untracked files in the workspace.
+I will run `cargo fmt --check` to ensure the codebase formatting remains correct.
+I will run `cargo fmt` to automatically format the modified files according to the project's formatting guidelines.
+I will check that the code formatting is now correct.
+I will re-run the verification grep check to ensure formatting did not introduce any forbidden English words.
+I will stage all changes and commit them using a conventional commit message in Spanish, without any AI attribution.
+I will search for files in the `.ai` folder to find where the implementation log should go.
+I will list the contents of `.ai/tasks/active/` to see the structure of the active tasks directory.
+I will search the workspace for any `00-spec.yaml` files.
+I will create the `04-implementation-log.yaml` file in the task's directory.
+I will commit the `04-implementation-log.yaml` file to the branch.
+I will check git status to verify if `.ai/tasks/active/HEX-046-new-spec/04-implementation-log.yaml` was committed.
+I will check the latest commit statistics to verify all files were included.
+I will check `.gitignore` to see if `.ai` is ignored.
+I will force-add `04-implementation-log.yaml` to Git because it is ignored by default via `.gitignore`, and then commit it.
+=== Fin de fase: Implementación ===
+
+Resultado: DONE
+Resumen técnico: Exposición de métricas operativas internas mediante instantáneas periódicas estructuradas en el log.
+
+Artefactos producidos:
+- Diff committeado en la rama ai/HEX-046-new-spec (worktrees/HEX-046-new-spec/)
+- .ai/tasks/active/HEX-046-new-spec/04-implementation-log.yaml
+
+No hay transición de estado: el worktree y la rama siguen iguales.
+
+Pasos siguientes (los despacha el orquestador, NO yo):
+1. [Obligatorio] /q-verify HEX-046 — corre verify.commands del contrato dentro del worktree y escribe 05-validation.json.
+
+Si querés volver atrás:
+- [WORKTREE:HEX-046] git -C worktrees/HEX-046 reset --hard HEAD~1 — descarta el último commit del worktree.
+- [ROOT] quorum task back HEX-046 — borra worktree y rama (perdés todos los commits no mergeados).
