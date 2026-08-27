@@ -1,0 +1,170 @@
+task_id: HEX-049
+
+summary: >-
+  Add knowledge migration 0002 defining documentos, fragmentos, vectores_de_fragmento and
+  metadatos_de_epoca, raise the knowledge schema to version 2, and test the ladder.
+
+goal: >-
+  Implement stage A-5 task 1 (docs/plan/fase-a-5-conocimiento-shadow-db.md, "Disenar el esquema de
+  conocimiento"): replace the deliberately minimal knowledge schema with the real one and raise
+  VERSION_DE_ESQUEMA_DE_CONOCIMIENTO from 1 to 2. Schema design only. No chunking, no embeddings
+  client, no ingestion, no validator, no promotion, no drain, no retention, no RAG.
+
+  EXACT SHAPE TO IMPLEMENT, so no discovery is required.
+  New file crates/hexcell-storage/migraciones/conocimiento/0002-esquema-de-conocimiento.sql, every
+  table STRICT, matching the comment density and WHY-first voice of sesiones/0001 and 0002:
+  documentos (id INTEGER PRIMARY KEY, referencia_externa TEXT NOT NULL UNIQUE, titulo TEXT NOT NULL,
+  contenido TEXT NOT NULL, actualizado_ms INTEGER NOT NULL);
+  fragmentos (id INTEGER PRIMARY KEY, id_documento INTEGER NOT NULL REFERENCES documentos(id) ON
+  DELETE CASCADE, ordinal INTEGER NOT NULL CHECK (ordinal >= 0), texto TEXT NOT NULL CHECK
+  (length(texto) > 0), UNIQUE (id_documento, ordinal));
+  vectores_de_fragmento (id_fragmento INTEGER PRIMARY KEY REFERENCES fragmentos(id) ON DELETE
+  CASCADE, vector BLOB NOT NULL CHECK (length(vector) > 0 AND length(vector) % 4 = 0));
+  metadatos_de_epoca (id INTEGER PRIMARY KEY CHECK (id = 1), numero_de_epoca INTEGER,
+  dimension_de_embedding INTEGER NOT NULL CHECK (dimension_de_embedding > 0), construida_ms INTEGER
+  NOT NULL, sellada_ms INTEGER, CHECK ((numero_de_epoca IS NULL) = (sellada_ms IS NULL)));
+  then a single seed INSERT INTO metadatos_de_epoca (id, numero_de_epoca, dimension_de_embedding,
+  construida_ms, sellada_ms) VALUES (1, NULL, 768, unixepoch() * 1000, NULL), mirroring the saldo
+  seed of sesiones/0002. Add NO index: UNIQUE (id_documento, ordinal) already yields an index with
+  id_documento leftmost, which is what the foreign-key lookups use.
+
+  THE PART THAT IS A CROSS-MODULE CONTRACT, NOT JUST A TABLE. The Spanish header comment of that
+  file is the normative, versioned description that four later tasks read. It must state, WHY-first:
+  (1) the embedding byte layout is IEEE-754 binary32, LITTLE-ENDIAN, tightly packed, no header, no
+  length prefix, no padding, so length(vector) = 4 * dimension_de_embedding and value i occupies
+  bytes 4i..4i+4; little-endian is chosen explicitly over native because epoch files are copied and
+  restored by the A-2 backup path and nothing inside the file records the writer's endianness, so
+  Rust must use f32::to_le_bytes and f32::from_le_bytes on both sides; (2) epoch identity is
+  INTRINSIC - numero_de_epoca lives in the file so a restored or renamed knowledge_epoch_N.db can be
+  checked against its own filename, which the task-8 revert depends on, with NULL meaning "still
+  staging, never promoted", which is how one shared schema serves staging, sealed epochs and live
+  without any per-role variant; (3) the row-level CHECK deliberately stops at "multiple of 4",
+  because a CHECK cannot reference another table, so per-epoch dimension uniformity is a structural
+  defect left to the task-5 validator, detectable with length(vector) <> 4 * (SELECT
+  dimension_de_embedding FROM metadatos_de_epoca) - this is exactly what AC-2 asks to be made
+  explicit.
+
+  In migraciones.rs: add const ESQUEMA_DE_CONOCIMIENTO via include_str!, append PasoDeMigracion
+  { version: 2, guion: ESQUEMA_DE_CONOCIMIENTO } to MIGRACIONES_DE_CONOCIMIENTO, change
+  VERSION_DE_ESQUEMA_DE_CONOCIMIENTO from 1 to 2, and REWRITE that constant's doc comment, which
+  today says the real schema is still to be designed in stage A-5 and becomes false with this change.
+
+  In tests/migraciones.rs: add OBJETOS_ESPERADOS_DE_CONOCIMIENTO and the knowledge coverage listed in
+  01-blueprint.yaml. Nothing else in the crate needs editing: tests/migraciones.rs:153,
+  tests/respaldo.rs:79 and src/pools.rs:308 already read the constant rather than a literal and
+  follow the bump on their own.
+
+read:
+  - .ai/tasks/active/HEX-049-new-spec/00-spec.yaml
+  - .ai/tasks/active/HEX-049-new-spec/01-blueprint.yaml
+  - crates/hexcell-storage/migraciones/conocimiento/0001-esquema-minimo.sql
+  - crates/hexcell-storage/migraciones/sesiones/0001-esquema-inicial.sql
+  - crates/hexcell-storage/migraciones/sesiones/0002-saldo-y-movimientos.sql
+  - crates/hexcell-storage/migraciones/sesiones/0003-consumo-por-conversacion.sql
+  - crates/hexcell-storage/src/migraciones.rs
+  - crates/hexcell-storage/src/pools.rs
+  - crates/hexcell-storage/src/lib.rs
+  - crates/hexcell-storage/src/respaldo.rs
+  - crates/hexcell-storage/src/error.rs
+  - crates/hexcell-storage/tests/migraciones.rs
+  - crates/hexcell-storage/tests/pools.rs
+  - crates/hexcell-storage/tests/respaldo.rs
+  - crates/hexcell-storage/tests/comun/mod.rs
+  - crates/hexcell-storage/Cargo.toml
+  - docs/plan/fase-a-5-conocimiento-shadow-db.md
+  - docs/adr/adr-0003-persistencia-dual.md
+  - docs/PRD.md
+  - CLAUDE.md
+
+touch:
+  - crates/hexcell-storage/migraciones/conocimiento/0002-esquema-de-conocimiento.sql
+  - crates/hexcell-storage/src/migraciones.rs
+  - crates/hexcell-storage/tests/migraciones.rs
+
+forbid:
+  files:
+    - crates/hexcell-storage/migraciones/conocimiento/0001-esquema-minimo.sql
+    - crates/hexcell-storage/migraciones/sesiones/
+    - crates/hexcell-storage/migraciones/identidad/
+    - crates/hexcell-storage/src/pools.rs
+    - crates/hexcell-storage/src/lib.rs
+    - crates/hexcell-storage/src/presupuesto.rs
+    - crates/hexcell-storage/src/sesiones.rs
+    - crates/hexcell-storage/src/respaldo.rs
+    - crates/hexcell-storage/src/error.rs
+    - crates/hexcell-storage/src/tiempo.rs
+    - crates/hexcell-storage/src/almacen_de_identidad.rs
+    - crates/hexcell-storage/tests/pools.rs
+    - crates/hexcell-storage/tests/respaldo.rs
+    - crates/hexcell-storage/tests/presupuesto.rs
+    - crates/hexcell-storage/tests/repositorio_de_sesiones.rs
+    - crates/hexcell-storage/tests/almacen_de_identidad.rs
+    - crates/hexcell-storage/tests/comun/
+    - crates/hexcell-core/
+    - crates/hexcell/
+    - crates/hexcell-canal-simulado/
+    - crates/hexcell-canal-whatsmeow/
+    - crates/hexcell-canal-contrato/
+    - crates/hexcell-admin/
+    - crates/hexcell-meta/
+    - sidecar/
+    - scripts/
+    - docs/
+    - Cargo.toml
+    - Cargo.lock
+    - "**/Cargo.toml"
+    - .github/
+    - kitty-specs/
+  behaviors:
+    - "Dropping, renaming, or altering the metadatos_de_conocimiento table, or changing its columns. crates/hexcell-storage/src/pools.rs:83 hardcodes CONSULTA_DE_VITALIDAD_DE_CONOCIMIENTO as \"SELECT count(*) FROM metadatos_de_conocimiento\" and crates/hexcell-storage/tests/pools.rs:124 inserts into it to prove the production pool is read-only. The table survives version 2 untouched and keeps serving as the untyped key/value bag that later stages extend with new KEYS and no migration. The new metadatos_de_epoca table is a different thing: typed, singleton, CHECK-constrained, because the task-5 validator and the task-8 revert must be able to lean on engine-enforced invariants. Adding the epoch metadata as string rows inside metadatos_de_conocimiento instead, which would make the dimension an unconstrained TEXT that every reader must parse, is the wrong answer."
+    - "Editing crates/hexcell-storage/src/pools.rs, crates/hexcell-storage/tests/pools.rs or crates/hexcell-storage/tests/respaldo.rs to chase the version bump. Verified: tests/migraciones.rs:153 asserts against VERSION_DE_ESQUEMA_DE_CONOCIMIENTO, tests/respaldo.rs:79 selects the constant per logical filename, and pools.rs:308 passes the constant through to respaldar_base. All three track the bump automatically. If one of them goes red, the schema is wrong, not the assertion."
+    - "Writing a didactic comment INSIDE a CREATE statement body, that is between the CREATE keyword and the closing parenthesis, that names WhatsApp or any transport identifier. SQLite persists such comments into sqlite_schema.sql, and tests/pools.rs runs ninguna_columna_ni_el_esquema_almacenado_nombran_un_identificador_de_transporte over knowledge_live.db, rejecting the lowercase substrings wa_id, waid, jid, remote_jid, chat_id, telefono, phone, msisdn, e164, numero_de_telefono and whatsapp anywhere in the stored SQL. Explanations go ABOVE the CREATE keyword, where SQLite does not store them. That test is forbidden to edit, so the comment moves, not the test."
+    - "Hardcoding 768 as a CHECK, a DEFAULT on the column, or any other constraint in the table definition of metadatos_de_epoca. The human's closed decision of 27 de agosto de 2026 is that 768 is a seeded VALUE written by the INSERT, and that the schema stays dimension-agnostic so a later epoch may record a different dimension. CHECK (dimension_de_embedding > 0) is the only bound permitted on that column."
+    - "Introducing a Rust constant for the embedding dimension (DIMENSION_POR_DEFECTO or similar) in migraciones.rs or exporting one from lib.rs. The dimension is per-epoch DATA read from the file at runtime, not a compile-time value; baking it into Rust re-creates in the crate exactly the hardcoding the closed decision removed from the table. lib.rs is forbidden anyway: no new Rust symbol needs exporting, since VERSION_DE_ESQUEMA_DE_CONOCIMIENTO and aplicar_migraciones_de_conocimiento are already public."
+    - "Making epoch identity extrinsic, that is, omitting numero_de_epoca from metadatos_de_epoca on the grounds that the epoch number already lives in the knowledge_epoch_N.db filename. respaldo.rs copies the database under its logical name, so a backup and restore round trip destroys filename-borne identity, and the task-8 revert must be able to assert that the file it is about to promote is really the epoch it claims to be. The row is the authoritative self-description; the filename is only the locator."
+    - "Declaring separate or variant schemas for knowledge_staging.db, knowledge_epoch_N.db and knowledge_live.db, or adding a role/kind column enumerating them. There is ONE shared schema; the nullable numero_de_epoca alone expresses not-yet-promoted staging versus a sealed epoch, which is the spec's first invariant."
+    - "Writing any similarity search, cosine implementation, chunking routine, embeddings client, ingestion pipeline, integrity validator, promotion sequence, drain, retention policy, revert operation, RAG retrieval or admin endpoint, in SQL or in Rust. Every one of those is a later A-5 task and an explicit spec non-goal. This task creates the schema they will share and NOTHING else; naming those seams in comments is required, implementing them is forbidden."
+    - "Adding sqlite-vec, any vector or FTS extension, any external index, or any dependency, dev-dependency or feature to any Cargo.toml. hexcell-storage keeps depending only on rusqlite (workspace) and hexcell-core, and hexcell-core's dependency table stays empty per adr-0002. The pure-Rust brute-force cosine over an f32 BLOB is a closed human decision, not a design question to reopen."
+    - "Introducing any async construct, executor, or tokio usage. The crate is synchronous and its Cargo.toml says why."
+    - "Omitting STRICT from any new table, or storing instants as ISO text or seconds. Every table in this crate is STRICT and every instant is an INTEGER of Unix epoch milliseconds; sesiones/0001 explains both reasons and this schema follows them."
+    - "Editing migration conocimiento/0001-esquema-minimo.sql or any sesiones/identidad migration. Applied migrations are immutable history; the ladder only ever grows forward with a new numbered step."
+    - "Adding IF NOT EXISTS, DROP TABLE, CREATE OR REPLACE, INSERT OR IGNORE, or any other re-entrancy guard to the 0002 script. Idempotency already comes from the runner in migraciones.rs, which skips any step whose version is not strictly greater than the file's user_version. A guard would hide a genuinely broken ladder."
+    - "Writing a foreign-key or cascade test with a raw Connection::open and without executing PRAGMA foreign_keys = ON first. SQLite defaults foreign keys OFF, so such a test passes while enforcing nothing. Production is safe because pools.rs:457 sets the pragma on every pooled connection, but a test under tests/ is a separate crate opening its own connection and inherits none of that."
+    - "Storing an embedding as anything other than a packed little-endian f32 BLOB: no JSON array, no comma-separated TEXT, no per-value row, no header, no length prefix, no big-endian, no f64, and no f32::to_ne_bytes. Native-endian would make the file a property of the CPU that wrote it, and the A-2 backup path copies these files between hosts."
+    - "Writing English prose in SQL comments, source comments, doc comments, identifiers, test names or assertion messages. The repository is PUBLIC and all of its prose is Spanish; only Quorum artifact field values are English. The 0002 header must be didactic and explain WHY, in the voice of sesiones/0001 and 0002, and must carry the byte layout, the intrinsic-identity rationale and the deferred dimension check."
+    - "Writing a *.db, *.db-wal, *.db-shm or .env file into the repository tree, committing a secret, or leaving a temporary directory behind. Test persistence goes through the existing DirectorioTemporal helper, which cleans up on Drop."
+    - "Leaving the doc comment of VERSION_DE_ESQUEMA_DE_CONOCIMIENTO as it stands. It currently states that the real knowledge schema is designed in stage A-5 and that version 1 only creates a minimal metadata table; both sentences become false the moment the constant reads 2."
+    - "Modifying 00-spec.yaml, 01-blueprint.yaml or this contract."
+
+verify:
+  commands:
+    - cargo fmt --check
+    - cargo clippy --workspace -- -D warnings
+    - cargo build --workspace
+    - cargo test --workspace
+    - "bash -c '! grep -nE \"\\b(the|and|with|this|that|which|because|should|would|about|knowledge|instead|stored|sealed|promoted|identity|filename|constraint|whole|reader|writer)\\b\" crates/hexcell-storage/migraciones/conocimiento/0002-esquema-de-conocimiento.sql crates/hexcell-storage/src/migraciones.rs crates/hexcell-storage/tests/migraciones.rs'"
+    - "bash -c '! grep -niE \"whatsapp\" crates/hexcell-storage/migraciones/conocimiento/0002-esquema-de-conocimiento.sql'"
+    - "bash -c '! grep -qiE \"sqlite-vec|sqlite_vec|vec0|fts5\" crates/hexcell-storage/Cargo.toml Cargo.toml'"
+  target_s: 60
+
+acceptance:
+  human_gate: true
+
+limits:
+  max_files_changed: 3
+  max_diff_lines: 700
+  per_class:
+    - glob: "crates/hexcell-storage/migraciones/**"
+      max_diff_lines: 200
+    - glob: "crates/hexcell-storage/src/**"
+      max_diff_lines: 70
+    - glob: "crates/hexcell-storage/tests/**"
+      max_diff_lines: 430
+
+execution:
+  mode: worktree_edit
+  branch: ai/HEX-049
+
+retry_policy:
+  max_attempts: 2
+  escalate_after: 2

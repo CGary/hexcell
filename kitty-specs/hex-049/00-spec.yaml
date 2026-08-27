@@ -1,0 +1,56 @@
+task_id: HEX-049
+summary: Design the real knowledge schema (documents, fragments, embeddings, metadata) shared by staging/epoch/live knowledge databases, raising schema version 1 to 2.
+goal: >-
+  Replace the deliberately minimal knowledge schema (version 1, a single
+  metadatos_de_conocimiento table) with the real schema for stage A-5 task 1:
+  documents, fragments, per-fragment embedding vectors, and epoch-level
+  metadata. Document how embeddings are stored (an f32 BLOB) and queried
+  (brute-force cosine similarity in pure Rust over one epoch's fragments, no
+  new dependency), and how the schema records each epoch's embedding
+  dimension so a same-epoch dimension-consistency check is possible later.
+  This is schema design only: add one numbered migration file plus its rung
+  in the existing stepped migration ladder in hexcell-storage, raising
+  VERSION_DE_ESQUEMA_DE_CONOCIMIENTO from 1 to 2.
+invariants:
+  - The knowledge schema is the single shared schema for knowledge_staging.db (written), knowledge_epoch_N.db (sealed, immutable) and knowledge_live.db (a symlink to the current epoch, opened read-only); no variant schema exists per file role.
+  - Knowledge content is never migrated in place in production; a schema or data problem in a promoted epoch is fixed by rebuilding the catalog from scratch in staging, not by ALTER TABLE against a live or sealed epoch.
+  - Every embedding vector is stored as a BLOB of IEEE-754 f32 values with no new runtime dependency (no sqlite-vec, no vector extension, no external index); similarity search is brute-force cosine computed in pure Rust over the epoch's fragments.
+  - The schema does not hardcode an embedding dimension; the dimension is recorded as per-epoch metadata, and every vector within one epoch must share that same recorded dimension.
+  - hexcell-storage's Cargo.toml dependency set is unchanged (rusqlite workspace dep and hexcell-core only); hexcell-core's own empty dependency table (adr-0002) is untouched.
+  - "The new migration follows the established stepped-migration ladder pattern in crates/hexcell-storage/src/migraciones.rs: one new numbered .sql file under crates/hexcell-storage/migraciones/conocimiento/, one new rung in MIGRACIONES_DE_CONOCIMIENTO, and PRAGMA user_version bumped to 2 inside the same transaction as the schema change."
+  - The crate remains synchronous; no async executor is introduced.
+  - All repository content this task touches (SQL comments, Rust doc comments, migration file, commit message) is written in Spanish; only Quorum artifact field values (this spec, blueprint, contract) are written in English.
+acceptance:
+  - id: AC-1
+    statement: A new numbered SQL migration under crates/hexcell-storage/migraciones/conocimiento/ defines tables for documents, fragments, embedding vectors (as BLOB), and epoch-level metadata (including the recorded embedding dimension), and is registered as a new rung in the stepped-migration ladder.
+    given: the existing minimal knowledge schema at version 1 (metadatos_de_conocimiento only) in crates/hexcell-storage/migraciones/conocimiento/0001-esquema-minimo.sql and its ladder entry in crates/hexcell-storage/src/migraciones.rs
+    when: the new migration is added and VERSION_DE_ESQUEMA_DE_CONOCIMIENTO is raised to 2
+    then: a fresh knowledge_staging.db created through hexcell-storage's migration path reaches schema version 2 with tables for documents, fragments, embeddings, and epoch metadata, all declared STRICT consistently with the existing minimal table
+  - id: AC-2
+    statement: The schema records an embedding dimension per epoch instead of hardcoding one, enabling a future same-epoch dimension-consistency check.
+    given: the new schema at version 2
+    when: two fragments in the same epoch are inserted with embedding BLOBs of different byte lengths (implying different f32 counts) while the epoch metadata declares a single dimension
+    then: the schema and its documentation make explicit that such a mismatch is a structural-integrity defect to be caught by stage A-5 task 5's validation (deferred, not implemented by this task), and nothing in this task's schema prevents recording the per-epoch dimension needed to detect it later
+  - "cargo build --workspace, cargo test --workspace, cargo fmt --check, and cargo clippy --workspace -- -D warnings all pass against the modified hexcell-storage crate."
+  - "Migration idempotency across the stepped ladder: applying migrations to a fresh database reaches version 2, applying them to an existing version-1 database upgrades cleanly to version 2, and re-applying is a no-op, mirroring the pattern already exercised for sessions.db in this crate."
+  - "DEFERRED (explicitly out of scope for this task, to be validated by later A-5 tasks, not flagged as a gap by q-analyze): actual chunking/fragmentation logic (task 2), the embeddings client and concrete production dimension value (task 3), the staging ingestion pipeline (task 4), the structural/semantic integrity validator (task 5), the epoch promotion sequence (task 6), epoch retention and revert (task 8), and the RAG retrieval engine (task 9). This task's acceptance covers schema shape and migration mechanics only."
+risk: medium
+non_goals:
+  - Chunking/fragmentation strategy and its edge-case tests (stage A-5 task 2).
+  - The embeddings API client, batching, retries, and the concrete production embedding dimension (stage A-5 task 3).
+  - The knowledge_staging.db ingestion pipeline (stage A-5 task 4).
+  - Structural and semantic integrity validation of an epoch, including the test similarity query and its threshold (stage A-5 task 5).
+  - The epoch promotion sequence, ArcSwap pointer swap, and graceful drain (stage A-5 tasks 6-7).
+  - Epoch retention policy and revert-to-prior-epoch operation (stage A-5 task 8).
+  - The RAG retrieval engine and prompt context construction (stage A-5 task 9).
+  - The internal administrative endpoint to trigger a knowledge update (stage A-5 task 10).
+  - Any vector-search engine other than pure-Rust brute-force cosine over an f32 BLOB (no sqlite-vec, no vector extension, no external index) — this choice is closed by prior human decision, not open for reconsideration here.
+constraints:
+  - No new runtime dependencies; hexcell-storage keeps depending only on rusqlite (workspace) and hexcell-core, and hexcell-core's dependency table stays empty (adr-0002).
+  - Repository is public; never write secrets; never version *.db, *.db-wal, *.db-shm, or .env* files.
+  - All Quorum artifact field values (this spec, the blueprint, the contract) are written in English; repository prose, SQL comments, Rust doc comments, and the eventual commit message stay in Spanish.
+  - Must respect the existing STRICT table declarations and the stepped-migration ladder (PasoDeMigracion) convention already used for sessions.db and for the version-1 knowledge migration.
+  - Embeddings are stored as an f32 BLOB and queried via brute-force cosine similarity in pure Rust; this is a closed human decision for this task, not a design question to reopen.
+  - The embedding dimension is not hardcoded in the schema; it is recorded as epoch metadata and must be uniform within one epoch, per closed human decision.
+  - "The epoch metadata carries 768 as the DEFAULT/initial recorded dimension (closed human decision, 27 de agosto de 2026). This is a seeded default value written into the metadata row, NOT a constraint baked into the table definition: the schema stays dimension-agnostic and a later epoch may record a different dimension. The rationale is size on modest hardware: 768 f32 values are 3 KB per fragment, so a 2000-fragment catalog costs about 6 MB, which fits the per-cell 80 MB RAM budget and keeps the brute-force Rust cosine fast on the target i7."
+  - Every scope item traces to FR-06 (Shadow DB / knowledge_staging.db) or FR-07 (atomic epoch switch) of docs/PRD.md; no requirement is invented beyond what stage A-5's task 1 ("Diseñar el esquema de conocimiento") calls for in docs/plan/fase-a-5-conocimiento-shadow-db.md.

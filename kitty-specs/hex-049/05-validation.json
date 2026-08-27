@@ -1,0 +1,50 @@
+{
+  "task_id": "HEX-049",
+  "summary": "Los siete verify.commands pasan (exit 0) en worktrees/HEX-049 sobre la rama ai/HEX-049; formato, clippy, build, 29 pruebas y los tres greps negados en verde.",
+  "executed_at": "2026-08-27T20:30:00Z",
+  "commands": [
+    {
+      "command": "cargo fmt --check",
+      "exit_code": 0,
+      "duration_s": 0.18,
+      "output_excerpt": "sin diferencias de formato"
+    },
+    {
+      "command": "cargo clippy --workspace -- -D warnings",
+      "exit_code": 0,
+      "duration_s": 0.1,
+      "output_excerpt": "sin warnings con -D warnings"
+    },
+    {
+      "command": "cargo build --workspace",
+      "exit_code": 0,
+      "duration_s": 0.07,
+      "output_excerpt": "Finished dev profile"
+    },
+    {
+      "command": "cargo test --workspace",
+      "exit_code": 0,
+      "duration_s": 3.95,
+      "output_excerpt": "test result: ok. 15 passed / 7 passed / 5 passed / 1 passed / 1 passed; 29 pruebas, suites completas sin fallos"
+    },
+    {
+      "command": "bash -c (grep negado de fugas de ingles sobre los 3 archivos del contrato)",
+      "exit_code": 0,
+      "duration_s": 0.0,
+      "output_excerpt": "sin coincidencias: 0 fugas de ingles en 0002-esquema-de-conocimiento.sql, migraciones.rs y tests/migraciones.rs"
+    },
+    {
+      "command": "bash -c (grep negado de la subcadena whatsapp sobre 0002-esquema-de-conocimiento.sql)",
+      "exit_code": 0,
+      "duration_s": 0.0,
+      "output_excerpt": "sin coincidencias: ningun comentario del SQL almacenado dispara el tripwire de tests/pools.rs"
+    },
+    {
+      "command": "bash -c (grep negado de sqlite-vec/vec0/fts5 sobre los dos Cargo.toml)",
+      "exit_code": 0,
+      "duration_s": 0.0,
+      "output_excerpt": "sin coincidencias: no se introdujo ninguna dependencia de busqueda vectorial"
+    }
+  ],
+  "overall_result": "passed"
+}

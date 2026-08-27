@@ -1,0 +1,38 @@
+{
+  "task_id": "HEX-049",
+  "bundle_hash": "22ab5f7e7d1461bc612202c679e01a9c62352e15904cace453a07fcd09c16ee1",
+  "files": [
+    ".ai/tasks/active/HEX-049-new-spec/00-spec.yaml",
+    ".ai/tasks/active/HEX-049-new-spec/01-blueprint.yaml",
+    "CLAUDE.md",
+    "crates/hexcell-storage/Cargo.toml",
+    "crates/hexcell-storage/migraciones/conocimiento/0001-esquema-minimo.sql",
+    "crates/hexcell-storage/migraciones/sesiones/0001-esquema-inicial.sql",
+    "crates/hexcell-storage/migraciones/sesiones/0002-saldo-y-movimientos.sql",
+    "crates/hexcell-storage/migraciones/sesiones/0003-consumo-por-conversacion.sql",
+    "crates/hexcell-storage/src/error.rs",
+    "crates/hexcell-storage/src/lib.rs",
+    "crates/hexcell-storage/src/migraciones.rs",
+    "crates/hexcell-storage/src/pools.rs",
+    "crates/hexcell-storage/src/respaldo.rs",
+    "crates/hexcell-storage/tests/comun/mod.rs",
+    "crates/hexcell-storage/tests/migraciones.rs",
+    "crates/hexcell-storage/tests/pools.rs",
+    "crates/hexcell-storage/tests/respaldo.rs",
+    "docs/PRD.md"
+  ],
+  "protocol_version": "fleet-bundle-protocol/v2",
+  "created_at": "2026-08-27T20:14:51Z",
+  "dropped": [
+    {
+      "component": "code_slice",
+      "path": "docs/plan/fase-a-5-conocimiento-shadow-db.md",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "docs/adr/adr-0003-persistencia-dual.md",
+      "reason": "bundle exceeded max_bytes budget"
+    }
+  ]
+}

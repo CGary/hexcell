@@ -1,0 +1,231 @@
+task_id: HEX-049
+
+summary: >-
+  Add knowledge migration 0002 (documentos, fragmentos, vectores_de_fragmento, metadatos_de_epoca),
+  bump the knowledge schema to version 2, and cover it with migration tests.
+
+affected_files:
+  - crates/hexcell-storage/migraciones/conocimiento/0002-esquema-de-conocimiento.sql
+  - crates/hexcell-storage/src/migraciones.rs
+  - crates/hexcell-storage/tests/migraciones.rs
+
+symbols:
+  - documentos
+  - fragmentos
+  - vectores_de_fragmento
+  - metadatos_de_epoca
+  - metadatos_de_conocimiento
+  - VERSION_DE_ESQUEMA_DE_CONOCIMIENTO
+  - ESQUEMA_DE_CONOCIMIENTO
+  - MIGRACIONES_DE_CONOCIMIENTO
+  - OBJETOS_ESPERADOS_DE_CONOCIMIENTO
+
+dependencies:
+  - crates/hexcell-storage/migraciones/conocimiento/0001-esquema-minimo.sql
+  - crates/hexcell-storage/migraciones/sesiones/0002-saldo-y-movimientos.sql
+  - crates/hexcell-storage/src/pools.rs
+  - crates/hexcell-storage/src/lib.rs
+  - crates/hexcell-storage/tests/pools.rs
+  - crates/hexcell-storage/tests/respaldo.rs
+  - crates/hexcell-storage/tests/comun/mod.rs
+  - docs/plan/fase-a-5-conocimiento-shadow-db.md
+  - docs/adr/adr-0003-persistencia-dual.md
+
+test_scenarios:
+  - statement: >-
+      A fresh knowledge database migrated through aplicar_migraciones_de_conocimiento reaches
+      VERSION_DE_ESQUEMA_DE_CONOCIMIENTO and contains every expected object: the pre-existing
+      metadatos_de_conocimiento table plus documentos, fragmentos, vectores_de_fragmento and
+      metadatos_de_epoca.
+    covers:
+      - AC-1
+  - statement: >-
+      Every table of the knowledge schema is declared STRICT, asserted by reading the strict flag
+      from pragma_table_list, mirroring the existing todas_las_tablas_de_sesiones_se_declaran_strict.
+    covers:
+      - AC-1
+  - statement: >-
+      A database left at user_version 1 with a pre-existing row in metadatos_de_conocimiento upgrades
+      to version 2, preserves that row verbatim, gains the new tables, and a second run of the ladder
+      is a no-op that neither errors nor duplicates any object.
+    covers:
+      - AC-4
+  - statement: >-
+      The migration seeds exactly one row in metadatos_de_epoca, whose recorded embedding dimension
+      is 768 and whose epoch number is NULL, expressing a not-yet-promoted staging file; inserting a
+      second row fails against CHECK (id = 1).
+    covers:
+      - AC-2
+  - statement: >-
+      A vector BLOB whose byte length is not a whole multiple of 4 is rejected by the row-level CHECK,
+      while a 3072-byte BLOB (768 f32 values) is accepted, proving the schema catches truncated
+      vectors without knowing the epoch dimension.
+    covers:
+      - AC-2
+  - statement: >-
+      Two fragments of the same epoch accepting BLOBs of different lengths (both multiples of 4) is
+      NOT prevented by the schema; the deferred task-5 validator detects it with a single query
+      comparing length(vector) against 4 * the dimension recorded in metadatos_de_epoca. The test
+      asserts that detection query returns the offending fragment, documenting the seam without
+      implementing the validator.
+    covers:
+      - AC-2
+  - statement: >-
+      A round trip through the documented byte layout holds: a known slice of f32 values serialised
+      with to_le_bytes, stored as a BLOB, read back and rebuilt with from_le_bytes yields bit-identical
+      values, pinning the little-endian packed contract that later tasks 3, 5 and 9 must share.
+    covers:
+      - AC-2
+  - statement: >-
+      Referential integrity holds with PRAGMA foreign_keys explicitly enabled on the test connection:
+      a fragment referencing a non-existent document is rejected, a vector referencing a non-existent
+      fragment is rejected, and deleting a document cascades away its fragments and their vectors.
+    covers:
+      - AC-1
+  - statement: >-
+      The liveness probe query used in production, SELECT count(*) FROM metadatos_de_conocimiento,
+      still succeeds against a version-2 database, proving the probe anchor survived the redesign.
+    covers:
+      - AC-1
+
+strategy:
+  - step: 1
+    action: >-
+      Write the migration script (schema Entities plus one singleton Value Object). Create documentos
+      (id, referencia_externa UNIQUE, titulo, contenido, actualizado_ms), fragmentos (id,
+      id_documento REFERENCES documentos ON DELETE CASCADE, ordinal, texto, UNIQUE(id_documento,
+      ordinal)), vectores_de_fragmento (id_fragmento INTEGER PRIMARY KEY REFERENCES fragmentos ON
+      DELETE CASCADE, vector BLOB NOT NULL CHECK(length(vector) > 0 AND length(vector) % 4 = 0)), and
+      the singleton metadatos_de_epoca (id INTEGER PRIMARY KEY CHECK (id = 1), numero_de_epoca
+      INTEGER NULL, dimension_de_embedding INTEGER NOT NULL CHECK (> 0), construida_ms INTEGER NOT
+      NULL, sellada_ms INTEGER, CHECK ((numero_de_epoca IS NULL) = (sellada_ms IS NULL))). All STRICT.
+      Seed the single epoch row with dimension 768 and NULL epoch number, mirroring the saldo seed of
+      sessions 0002. Add NO index: the UNIQUE(id_documento, ordinal) constraint already builds an
+      index with id_documento leftmost, which is what the foreign-key lookups need.
+    files:
+      - crates/hexcell-storage/migraciones/conocimiento/0002-esquema-de-conocimiento.sql
+  - step: 2
+    action: >-
+      Document the cross-module contracts inside that same file, in Spanish and didactically, because
+      the migration is the versioned artefact that ships with the schema. Three things must be
+      written down: (a) the embedding BYTE LAYOUT - IEEE-754 binary32, little-endian, tightly packed,
+      no header, no length prefix, no padding, so length(vector) equals 4 * dimension and f32 number
+      i occupies bytes 4i..4i+4; little-endian is chosen explicitly over native so an epoch file
+      copied by the A-2 backup path stays readable on any host, since nothing in the file records the
+      writer's endianness; (b) why epoch identity is intrinsic - numero_de_epoca is stored in the file
+      so a restored or renamed knowledge_epoch_N.db can be checked against its own filename, which
+      task 8's revert depends on, with NULL meaning "still staging, never promoted"; (c) why the
+      per-row CHECK stops at multiples of 4 - a CHECK cannot reference another table, so uniformity of
+      dimension within an epoch is a structural defect deferred to task 5's validator, exactly as
+      AC-2 states.
+    files:
+      - crates/hexcell-storage/migraciones/conocimiento/0002-esquema-de-conocimiento.sql
+  - step: 3
+    action: >-
+      Wire the ladder rung. Add const ESQUEMA_DE_CONOCIMIENTO via include_str!, append PasoDeMigracion
+      { version: 2, guion: ESQUEMA_DE_CONOCIMIENTO } to MIGRACIONES_DE_CONOCIMIENTO, and change
+      VERSION_DE_ESQUEMA_DE_CONOCIMIENTO from 1 to 2. Rewrite that constant's doc comment, which today
+      claims the real schema is still to be designed in A-5 and would become false. Idempotency is
+      inherited from the existing runner, which skips any step whose version is not strictly greater
+      than the file's user_version; no IF NOT EXISTS is wanted.
+    files:
+      - crates/hexcell-storage/src/migraciones.rs
+  - step: 4
+    action: >-
+      Add the knowledge migration tests. Introduce OBJETOS_ESPERADOS_DE_CONOCIMIENTO alongside the
+      existing sessions array, and cover: fresh-schema objects and version, STRICT on every table,
+      the version 1 to 2 upgrade preserving a pre-existing metadatos_de_conocimiento row plus the
+      re-apply no-op, the seeded singleton epoch row with dimension 768, the BLOB length CHECK, the
+      little-endian round trip, and the surviving liveness-probe query. Reach the database with
+      Connection::open on the file, the idiom already used in this file, and apply the version-1
+      script through include_str! of conocimiento/0001-esquema-minimo.sql for the upgrade test.
+    files:
+      - crates/hexcell-storage/tests/migraciones.rs
+  - step: 5
+    action: >-
+      Add the referential-integrity and deferred-detection tests. These MUST execute PRAGMA
+      foreign_keys = ON on the raw test connection first: a Connection::open in tests/ starts with
+      foreign keys OFF, so a cascade or rejection test written without it passes while proving
+      nothing. Also add the query that a future validator would run, comparing length(vector) against
+      4 * the recorded dimension, asserting it flags a deliberately mismatched fragment.
+    files:
+      - crates/hexcell-storage/tests/migraciones.rs
+
+risks:
+  - >-
+    ARCHITECTURAL DECISION, EPOCH IDENTITY IS INTRINSIC. The epoch number lives BOTH in the filename
+    (knowledge_epoch_N.db, the locator the symlink points at) and in a row inside the file
+    (metadatos_de_epoca.numero_de_epoca, the authoritative self-description). The filename alone is
+    not enough: crates/hexcell-storage/src/respaldo.rs copies knowledge_live.db under its logical
+    name, so a restore round trip destroys extrinsic identity entirely, and task 8's revert must be
+    able to assert that the file it is about to promote really is the epoch it claims to be. NULL
+    means "staging, never promoted", which is how ONE shared schema serves knowledge_staging.db,
+    knowledge_epoch_N.db and knowledge_live.db without any per-role variant, as the spec's first
+    invariant demands. A mismatch between the row and the filename is precisely the kind of defect
+    task 5 and task 8 exist to catch, and it is only detectable because the row exists.
+  - >-
+    ARCHITECTURAL DECISION, THE PROBE ANCHOR SURVIVES UNTOUCHED. metadatos_de_conocimiento is NOT
+    dropped, renamed or altered. crates/hexcell-storage/src/pools.rs:83 hardcodes
+    CONSULTA_DE_VITALIDAD_DE_CONOCIMIENTO as "SELECT count(*) FROM metadatos_de_conocimiento", and
+    crates/hexcell-storage/tests/pools.rs:124 inserts into it to prove the pool is read-only. Keeping
+    the table means neither production file nor that test needs to change, which is why pools.rs is
+    forbidden here rather than merely absent from touch. The division of labour is deliberate:
+    metadatos_de_conocimiento stays the untyped key/value bag that later stages extend with new keys
+    and NO migration (the embedding model name of task 3 belongs there), while metadatos_de_epoca is
+    the typed, STRICT, CHECK-constrained singleton whose invariants the integrity validator and the
+    revert operation must be able to lean on. Two tables, two different guarantees, not redundancy.
+  - >-
+    HARD BREAKAGE TRAP, AVOIDED BY CONSTRUCTION, DO NOT CHASE IT. Unlike the sessions bump of HEX-048,
+    nothing asserts the knowledge version as a literal. crates/hexcell-storage/tests/migraciones.rs:153
+    reads VERSION_DE_ESQUEMA_DE_CONOCIMIENTO, crates/hexcell-storage/tests/respaldo.rs:79 selects the
+    constant per logical filename, and crates/hexcell-storage/src/pools.rs:308 passes the constant
+    through to respaldar_base. All three follow the bump automatically and MUST NOT be edited. Verified
+    by grepping every occurrence of the constant and of the table name across the crate.
+  - >-
+    LIVE TRIPWIRE IN A TEST THAT IS NOT IN touch. tests/pools.rs runs
+    ninguna_columna_ni_el_esquema_almacenado_nombran_un_identificador_de_transporte against
+    knowledge_live.db as well as sessions.db. It lowercases the FULL stored SQL of every schema object
+    and rejects the substrings wa_id, waid, jid, remote_jid, chat_id, telefono, phone, msisdn, e164,
+    numero_de_telefono and whatsapp. SQLite stores comments that sit INSIDE the CREATE statement body,
+    so a didactic comment written between the parentheses that mentions WhatsApp - an entirely natural
+    thing to write about a customer-service knowledge catalogue - turns this into a red test with a
+    confusing message. Keep every explanatory comment ABOVE the CREATE keyword, where it is not stored,
+    and never name the transport inside a statement body. None of the proposed column names collide.
+  - >-
+    SILENT-PASS TRAP IN THE NEW TESTS. crates/hexcell-storage/src/pools.rs:457 executes PRAGMA
+    foreign_keys = ON for every pooled connection, so the declared REFERENCES really are enforced in
+    production. A raw Connection::open under tests/ does NOT inherit that: SQLite defaults foreign
+    keys OFF. Any cascade or rejection test that forgets the pragma passes without exercising a single
+    constraint. The pragma must be executed explicitly at the top of those tests.
+  - >-
+    SCOPE BOUNDARY THAT q-analyze MUST NOT FLAG AS A GAP. sellada_ms and the nullable numero_de_epoca
+    are created but never written by this task; the ingestion pipeline (task 4) and the promotion
+    sequence (task 6) fill them. They are columns, not logic, and they are the minimum needed for the
+    single shared schema to distinguish a staging file from a sealed epoch. Likewise the dimension
+    uniformity check, the similarity search and the retention policy are named in comments as deferred
+    seams and deliberately not implemented, per the spec's DEFERRED acceptance clause.
+  - >-
+    DELIBERATE STORAGE TRADEOFF. documentos.contenido keeps the source text of each document even
+    though fragmentos.texto holds the same prose again in chunks. The duplication is accepted because
+    task 5 must be able to check fragment coverage against the original, task 4 rebuilds staging from
+    scratch on every run, and task 9 may want to widen a hit to its whole document. Text is cheap
+    relative to the vectors: at the seeded dimension a single vector is 3 KB, so a 2000-fragment
+    catalogue spends about 6 MB on vectors alone, which is the figure the human's 768 decision was
+    sized against.
+  - >-
+    NO RUST CONSTANT FOR THE DIMENSION. 768 is seeded by the SQL and read back from the file at
+    runtime; it is per-epoch DATA, not a compile-time value. Introducing something like a
+    DIMENSION_POR_DEFECTO constant in migraciones.rs and exporting it from lib.rs would re-create in
+    Rust exactly the hardcoding the human's closed decision removed from the table definition, and
+    would force lib.rs into the diff for no benefit. The test asserts 768 against the migration's own
+    seed, which is immutable history and therefore a stable assertion.
+  - >-
+    NO PRIOR FAILURE OVERLAP. quorum analyze failure-lookup returned null for the migration script,
+    migraciones.rs, tests/migraciones.rs and pools.rs; .ai/tasks/failed/ is empty. The HSME advisory
+    read hook was unavailable (hsme-cli could not open its database), as it also was in HEX-046,
+    HEX-047 and HEX-048, so this blueprint proceeds without semantic context.
+  - >-
+    DOCUMENTATION IS OUT OF SCOPE AND VERIFIED SO. Neither docs/STATUS.md nor any file under docs/
+    names the knowledge schema version or the metadatos_de_conocimiento table, so the bump introduces
+    no documentary inconsistency. adr-0006 on epochs and atomic switching is a stage deliverable owed
+    by task 6, not by this one, and ADR numbering must not be disturbed here.
