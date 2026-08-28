@@ -32,7 +32,13 @@ use rusqlite::Connection;
 use crate::error::ErrorDeAlmacen;
 
 /// Versión de esquema que este binario espera encontrar en `sessions.db`.
-pub const VERSION_DE_ESQUEMA_DE_SESIONES: i64 = 3;
+///
+/// La versión 4 flexibiliza la tabla `reservas` haciendo que `id_conversacion` sea nullable para
+/// dar soporte a las reservas de presupuesto de ingestas de catálogo (las cuales no tienen una
+/// conversación asociada). También filtra `consumo_por_conversacion` para omitir registros con
+/// conversación nula, añade la vista `consumo_de_ingesta` para agruparlos y aplica una compuerta de
+/// integridad en la migración `0004-reservas-sin-conversacion.sql`.
+pub const VERSION_DE_ESQUEMA_DE_SESIONES: i64 = 4;
 
 /// Versión de esquema que este binario espera encontrar en `knowledge_live.db`.
 ///
@@ -58,6 +64,9 @@ const ESQUEMA_SALDO_Y_MOVIMIENTOS_DE_SESIONES: &str =
 
 const ESQUEMA_CONSUMO_POR_CONVERSACION_DE_SESIONES: &str =
     include_str!("../migraciones/sesiones/0003-consumo-por-conversacion.sql");
+
+const ESQUEMA_RESERVAS_SIN_CONVERSACION_DE_SESIONES: &str =
+    include_str!("../migraciones/sesiones/0004-reservas-sin-conversacion.sql");
 
 const ESQUEMA_MINIMO_DE_CONOCIMIENTO: &str =
     include_str!("../migraciones/conocimiento/0001-esquema-minimo.sql");
@@ -85,6 +94,10 @@ const MIGRACIONES_DE_SESIONES: &[PasoDeMigracion] = &[
     PasoDeMigracion {
         version: 3,
         guion: ESQUEMA_CONSUMO_POR_CONVERSACION_DE_SESIONES,
+    },
+    PasoDeMigracion {
+        version: 4,
+        guion: ESQUEMA_RESERVAS_SIN_CONVERSACION_DE_SESIONES,
     },
 ];
 

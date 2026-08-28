@@ -37,6 +37,7 @@ pub mod almacen_de_identidad;
 pub mod error;
 pub mod migraciones;
 pub mod pools;
+/// Módulo de contabilidad y presupuesto en dos fases (reservas y movimientos).
 pub mod presupuesto;
 pub mod respaldo;
 pub mod sesiones;

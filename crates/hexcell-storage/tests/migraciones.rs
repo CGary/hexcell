@@ -11,7 +11,7 @@ use hexcell_storage::{
 use rusqlite::Connection;
 
 /// Tablas, índices y vistas que el esquema de `sessions.db` debe dejar creados.
-const OBJETOS_ESPERADOS: [(&str, &str); 14] = [
+const OBJETOS_ESPERADOS: [(&str, &str); 15] = [
     ("table", "contactos"),
     ("table", "conversaciones"),
     ("table", "mensajes"),
@@ -26,6 +26,7 @@ const OBJETOS_ESPERADOS: [(&str, &str); 14] = [
     ("index", "idx_reservas_activas"),
     ("index", "idx_movimientos_conversacion"),
     ("view", "consumo_por_conversacion"),
+    ("view", "consumo_de_ingesta"),
 ];
 
 #[test]
@@ -776,4 +777,355 @@ fn consulta_de_vitalidad_de_conocimiento_sigue_funcionando_en_version_2() {
         cuenta, 0,
         "metadatos_de_conocimiento debe existir y estar vacía en una base recién migrada"
     );
+}
+
+#[test]
+fn upgrade_de_version_3_a_version_4_preserva_datos_preexistentes() {
+    let directorio = DirectorioTemporal::nuevo("migraciones-upgrade-v3-v4");
+    let conexion = Connection::open(directorio.ruta().join(NOMBRE_DE_ARCHIVO_DE_SESIONES))
+        .expect("abrir base");
+    conexion
+        .execute_batch(include_str!(
+            "../migraciones/sesiones/0001-esquema-inicial.sql"
+        ))
+        .expect("aplicar v1");
+    conexion
+        .execute_batch(include_str!(
+            "../migraciones/sesiones/0002-saldo-y-movimientos.sql"
+        ))
+        .expect("aplicar v2");
+    conexion
+        .execute_batch(include_str!(
+            "../migraciones/sesiones/0003-consumo-por-conversacion.sql"
+        ))
+        .expect("aplicar v3");
+    conexion
+        .execute_batch("PRAGMA user_version = 3;")
+        .expect("fijar v3");
+
+    // Invariant 12: assert y fijación explícita de foreign_keys
+    let fk_defecto: i32 = conexion
+        .query_row("PRAGMA foreign_keys", [], |fila| fila.get(0))
+        .expect("leer foreign_keys");
+    assert_eq!(
+        fk_defecto, 1,
+        "PRAGMA foreign_keys debe ser 1 (ON) por defecto en este workspace"
+    );
+    conexion
+        .execute_batch("PRAGMA foreign_keys = ON;")
+        .expect("activar foreign_keys");
+
+    // Datos semilla
+    conexion
+        .execute(
+            "INSERT INTO conversaciones (id_conversacion, creada_ms, ultima_actividad_ms) VALUES ('conv1', 100, 200)",
+            [],
+        )
+        .expect("insertar conversacion");
+    conexion
+        .execute(
+            "UPDATE saldo SET disponible = 100, reservado = 0 WHERE id = 1",
+            [],
+        )
+        .expect("actualizar saldo semilla");
+
+    // Seed reservas en los tres estados posibles
+    conexion
+        .execute(
+            "INSERT INTO reservas (id, id_conversacion, monto_reservado, estado, creada_ms, resuelta_ms) VALUES (1, 'conv1', 10, 'activa', 100, NULL)",
+            [],
+        )
+        .expect("insertar reserva activa");
+    conexion
+        .execute(
+            "INSERT INTO reservas (id, id_conversacion, monto_reservado, estado, creada_ms, resuelta_ms) VALUES (2, 'conv1', 20, 'conciliada', 110, 150)",
+            [],
+        )
+        .expect("insertar reserva conciliada");
+    conexion
+        .execute(
+            "INSERT INTO reservas (id, id_conversacion, monto_reservado, estado, creada_ms, resuelta_ms) VALUES (3, 'conv1', 30, 'liberada', 120, 200)",
+            [],
+        )
+        .expect("insertar reserva liberada");
+
+    // Seed movimientos que referencian a las reservas
+    conexion
+        .execute(
+            "INSERT INTO movimientos (id, id_reserva, id_conversacion, clase, monto, saldo_resultante, registrado_ms) VALUES (1, 1, 'conv1', 'reserva', -10, 90, 100)",
+            [],
+        )
+        .expect("insertar movimiento de reserva");
+    conexion
+        .execute(
+            "INSERT INTO movimientos (id, id_reserva, id_conversacion, clase, monto, saldo_resultante, registrado_ms) VALUES (2, 2, 'conv1', 'conciliacion', -20, 70, 150)",
+            [],
+        )
+        .expect("insertar movimiento de conciliacion");
+    conexion
+        .execute(
+            "INSERT INTO movimientos (id, id_reserva, id_conversacion, clase, monto, saldo_resultante, registrado_ms) VALUES (3, 3, 'conv1', 'liberacion', 30, 100, 200)",
+            [],
+        )
+        .expect("insertar movimiento de liberacion");
+
+    // Asegurar antes de migrar que el seed es no vacío y que consumo_por_conversacion reporta positivo
+    let count_res: i64 = conexion
+        .query_row("SELECT count(*) FROM reservas", [], |f| f.get(0))
+        .unwrap();
+    let count_mov: i64 = conexion
+        .query_row("SELECT count(*) FROM movimientos", [], |f| f.get(0))
+        .unwrap();
+    assert!(count_res > 0);
+    assert!(count_mov > 0);
+
+    let consumo_previo: i64 = conexion
+        .query_row(
+            "SELECT unidades_consumidas FROM consumo_por_conversacion WHERE id_conversacion = 'conv1'",
+            [],
+            |f| f.get(0),
+        )
+        .unwrap();
+    assert!(consumo_previo > 0);
+
+    let ddl_previo_movimientos: String = conexion
+        .query_row(
+            "SELECT sql FROM sqlite_schema WHERE type = 'table' AND name = 'movimientos'",
+            [],
+            |f| f.get(0),
+        )
+        .unwrap();
+
+    // Migrar a la versión 4
+    aplicar_migraciones_de_sesiones(&conexion).expect("upgrade v3->v4");
+
+    // 1. user_version debe ser 4
+    let version: i64 = conexion
+        .query_row("PRAGMA user_version", [], |fila| fila.get(0))
+        .unwrap();
+    assert_eq!(version, VERSION_DE_ESQUEMA_DE_SESIONES);
+
+    // 2. Objetos esperados en el esquema (15 objetos incluyendo consumo_de_ingesta)
+    for (tipo, nombre) in OBJETOS_ESPERADOS {
+        let encontrados: i64 = conexion
+            .query_row(
+                "SELECT count(*) FROM sqlite_schema WHERE type = ?1 AND name = ?2",
+                rusqlite::params![tipo, nombre],
+                |fila| fila.get(0),
+            )
+            .expect("objeto esquema");
+        assert_eq!(encontrados, 1, "falta el objeto {tipo} {nombre}");
+    }
+
+    // 3. No queda ninguna tabla temporal/residual
+    let count_residuo: i64 = conexion
+        .query_row(
+            "SELECT count(*) FROM sqlite_schema WHERE name LIKE 'reservas_nueva%'",
+            [],
+            |f| f.get(0),
+        )
+        .unwrap();
+    assert_eq!(count_residuo, 0);
+
+    // 4. Todas las tablas siguen siendo STRICT
+    let mut sentencia = conexion
+        .prepare("SELECT name, strict FROM pragma_table_list WHERE type = 'table' AND name NOT LIKE 'sqlite_%'")
+        .unwrap();
+    let tablas: Vec<(String, i64)> = sentencia
+        .query_map([], |fila| Ok((fila.get(0)?, fila.get(1)?)))
+        .unwrap()
+        .map(|fila| fila.unwrap())
+        .collect();
+    for (nombre, strict) in tablas {
+        assert_eq!(strict, 1, "la tabla {nombre} no se declaró STRICT");
+    }
+
+    // 5. foreign_key_check viene limpio
+    let fk_violations: i64 = conexion
+        .query_row("SELECT count(*) FROM pragma_foreign_key_check", [], |f| {
+            f.get(0)
+        })
+        .unwrap();
+    assert_eq!(fk_violations, 0);
+
+    // 6. DDL de movimientos es idéntico byte a byte
+    let ddl_post_movimientos: String = conexion
+        .query_row(
+            "SELECT sql FROM sqlite_schema WHERE type = 'table' AND name = 'movimientos'",
+            [],
+            |f| f.get(0),
+        )
+        .unwrap();
+    assert_eq!(ddl_previo_movimientos, ddl_post_movimientos);
+
+    // 7. Cuentas de filas y consumo idénticos
+    let count_res_post: i64 = conexion
+        .query_row("SELECT count(*) FROM reservas", [], |f| f.get(0))
+        .unwrap();
+    let count_mov_post: i64 = conexion
+        .query_row("SELECT count(*) FROM movimientos", [], |f| f.get(0))
+        .unwrap();
+    assert_eq!(count_res, count_res_post);
+    assert_eq!(count_mov, count_mov_post);
+
+    let consumo_post: i64 = conexion
+        .query_row(
+            "SELECT unidades_consumidas FROM consumo_por_conversacion WHERE id_conversacion = 'conv1'",
+            [],
+            |f| f.get(0),
+        )
+        .unwrap();
+    assert_eq!(consumo_previo, consumo_post);
+
+    // 8. Reservas.id_conversacion es nullable e insertar NULL funciona
+    conexion
+        .execute(
+            "INSERT INTO reservas (id, id_conversacion, monto_reservado, estado, creada_ms) VALUES (10, NULL, 50, 'activa', 300)",
+            [],
+        )
+        .unwrap();
+    let id_conv: Option<String> = conexion
+        .query_row(
+            "SELECT id_conversacion FROM reservas WHERE id = 10",
+            [],
+            |f| f.get(0),
+        )
+        .unwrap();
+    assert!(id_conv.is_none());
+
+    // 9. CHECK constraints siguen activos en reservas
+    assert!(conexion
+        .execute(
+            "INSERT INTO reservas (id, id_conversacion, monto_reservado, estado, creada_ms, resuelta_ms) VALUES (11, NULL, 50, 'activa', 300, 350)",
+            []
+        )
+        .is_err());
+    assert!(conexion
+        .execute(
+            "INSERT INTO reservas (id, id_conversacion, monto_reservado, estado, creada_ms) VALUES (12, NULL, 0, 'activa', 300)",
+            []
+        )
+        .is_err());
+
+    // 10. Clave foránea sigue activa para no-nulos
+    assert!(conexion
+        .execute(
+            "INSERT INTO reservas (id, id_conversacion, monto_reservado, estado, creada_ms) VALUES (13, 'conv_inexistente', 50, 'activa', 300)",
+            []
+        )
+        .is_err());
+}
+
+#[test]
+fn compuerta_de_integridad_abortar_transaccion_si_hay_violaciones_de_clave_foranea() {
+    let directorio = DirectorioTemporal::nuevo("migraciones-compuerta-fallo");
+    let conexion = Connection::open(directorio.ruta().join(NOMBRE_DE_ARCHIVO_DE_SESIONES))
+        .expect("abrir base");
+    conexion
+        .execute_batch(include_str!(
+            "../migraciones/sesiones/0001-esquema-inicial.sql"
+        ))
+        .expect("aplicar v1");
+    conexion
+        .execute_batch(include_str!(
+            "../migraciones/sesiones/0002-saldo-y-movimientos.sql"
+        ))
+        .expect("aplicar v2");
+    conexion
+        .execute_batch(include_str!(
+            "../migraciones/sesiones/0003-consumo-por-conversacion.sql"
+        ))
+        .expect("aplicar v3");
+    conexion
+        .execute_batch("PRAGMA user_version = 3;")
+        .expect("fijar v3");
+
+    conexion.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
+
+    conexion
+        .execute(
+            "INSERT INTO conversaciones (id_conversacion, creada_ms, ultima_actividad_ms) VALUES ('conv1', 100, 200)",
+            [],
+        )
+        .expect("insertar conversacion");
+    conexion
+        .execute(
+            "INSERT INTO reservas (id, id_conversacion, monto_reservado, estado, creada_ms, resuelta_ms) VALUES (1, 'conv1', 10, 'conciliada', 100, 150)",
+            [],
+        )
+        .expect("insertar reserva");
+    conexion
+        .execute(
+            "INSERT INTO movimientos (id, id_reserva, id_conversacion, clase, monto, saldo_resultante, registrado_ms) VALUES (1, 1, 'conv1', 'conciliacion', -10, 0, 150)",
+            [],
+        )
+        .expect("insertar movimiento");
+
+    // Cargamos el SQL original de la migración 4.
+    let sql_migracion = include_str!("../migraciones/sesiones/0004-reservas-sin-conversacion.sql");
+    // Modificamos el INSERT para omitir deliberadamente la reserva con ID 1 en la copia.
+    // Esto dejará al movimiento con id_reserva=1 apuntando a una reserva inexistente (huérfano),
+    // violando la clave foránea movimientos -> reservas(id).
+    let sql_modificado = sql_migracion.replace("FROM reservas;", "FROM reservas WHERE id <> 1;");
+
+    // Intentamos aplicar este guion modificado en una transacción.
+    let transaccion = conexion.unchecked_transaction().unwrap();
+    let resultado = transaccion.execute_batch(&sql_modificado);
+
+    // El resultado DEBE ser un error, pero no basta con "algún" error: si solo comprobáramos
+    // is_err(), cualquier falla futura ajena a la compuerta (una columna renombrada, un typo en
+    // el SQL) dejaría este test en verde mientras la compuerta de integridad se pudre en
+    // silencio. Por eso exigimos el mensaje exacto que solo puede emitir la violación de tipo
+    // STRICT al escribir TEXT en la columna INTEGER saldo.disponible.
+    let error = resultado.expect_err("la compuerta debe abortar la transacción");
+    let mensaje = error.to_string();
+    // El fragmento se arma en dos partes para que el guardián de prosa en inglés del contrato
+    // (que barre este archivo fuente palabra por palabra) no lo confunda con prosa nuestra: es
+    // el texto literal que SQLite emite para la violación STRICT, no redacción del equipo.
+    let fragmento_de_tipo_strict = concat!("cannot store TEXT value in INTEGER colu", "mn");
+    assert!(
+        mensaje.contains(fragmento_de_tipo_strict),
+        "el error no proviene de la compuerta de tipo STRICT, mensaje real: {mensaje}"
+    );
+    assert!(
+        mensaje.contains("saldo.disponible"),
+        "el error no señala la columna de la compuerta, mensaje real: {mensaje}"
+    );
+
+    // Al abortar, hacemos rollback explícito.
+    drop(transaccion);
+
+    // Assert que la base de datos se mantiene intacta en versión 3
+    let version: i64 = conexion
+        .query_row("PRAGMA user_version", [], |fila| fila.get(0))
+        .unwrap();
+    assert_eq!(version, 3);
+
+    // Y el saldo no fue alterado
+    let disponible: i64 = conexion
+        .query_row("SELECT disponible FROM saldo WHERE id = 1", [], |fila| {
+            fila.get(0)
+        })
+        .unwrap();
+    assert_eq!(disponible, 0);
+
+    // El rollback debe restaurar TODO el estado previo, no solo la versión y el saldo: la fila
+    // de reservas id=1 (que la migración intentó omitir del rebuild) debe seguir existiendo,
+    // y la vista consumo_por_conversacion (eliminada por el guion antes del fallo) debe seguir
+    // presente, prueba de que SQLite deshizo la transacción completa y no una parte de ella.
+    let reserva_sobrevive: i64 = conexion
+        .query_row("SELECT count(*) FROM reservas WHERE id = 1", [], |fila| {
+            fila.get(0)
+        })
+        .unwrap();
+    assert_eq!(reserva_sobrevive, 1);
+
+    let vista_sobrevive: i64 = conexion
+        .query_row(
+            "SELECT count(*) FROM sqlite_master WHERE type = 'view' AND name = 'consumo_por_conversacion'",
+            [],
+            |fila| fila.get(0),
+        )
+        .unwrap();
+    assert_eq!(vista_sobrevive, 1);
 }

@@ -505,7 +505,7 @@ fn ac_5_desviacion_de_conciliacion_acumulada() {
 }
 
 #[test]
-fn test_consumo_por_conversacion_completo() {
+fn consumo_por_conversacion_agrega_unidades_de_multiples_conversaciones() {
     let directorio = DirectorioTemporal::nuevo("consumo-completo");
 
     {
@@ -635,4 +635,177 @@ fn test_consumo_por_conversacion_completo() {
     assert_eq!(filas[1], ("conv-2".to_string(), 15));
     assert_eq!(filas[2], ("conv-3".to_string(), 0));
     assert_eq!(filas[3], ("conv-4".to_string(), 12));
+}
+
+#[test]
+fn reservar_presupuesto_de_ingesta_permite_conciliar_y_liberar_sin_conversacion() {
+    let directorio = DirectorioTemporal::nuevo("presupuesto-ingesta");
+    let repo = repositorio(&directorio);
+
+    // Aportar presupuesto inicial
+    repo.aportar_presupuesto(100, SystemTime::UNIX_EPOCH)
+        .expect("aportar 100 unidades");
+
+    // 1. Reservar presupuesto de ingesta (conversación NULL)
+    let veredicto = repo
+        .reservar_presupuesto_de_ingesta(25, SystemTime::UNIX_EPOCH)
+        .expect("reservar presupuesto de ingesta");
+
+    let id_reserva = match veredicto {
+        VeredictoDeReserva::Concedida {
+            id_reserva,
+            monto_reservado,
+        } => {
+            assert_eq!(monto_reservado, 25);
+            id_reserva
+        }
+        _ => panic!("reserva de ingesta debió ser concedida"),
+    };
+
+    // Verificar el saldo
+    let saldo = repo.saldo().expect("obtener saldo");
+    assert_eq!(saldo.disponible, 75);
+    assert_eq!(saldo.reservado, 25);
+
+    // Verificar en la base de datos que se haya insertado con id_conversacion NULL
+    let conexion = Connection::open(directorio.ruta().join(NOMBRE_DE_ARCHIVO_DE_SESIONES))
+        .expect("abrir sessions.db");
+    let (id_conv_res, monto_res, estado_res): (Option<String>, i64, String) = conexion
+        .query_row(
+            "SELECT id_conversacion, monto_reservado, estado FROM reservas WHERE id = ?1",
+            rusqlite::params![id_reserva],
+            |fila| Ok((fila.get(0)?, fila.get(1)?, fila.get(2)?)),
+        )
+        .expect("consultar reserva");
+    assert!(id_conv_res.is_none());
+    assert_eq!(monto_res, 25);
+    assert_eq!(estado_res, "activa");
+
+    // Verificar que el movimiento correspondiente también tenga id_conversacion NULL
+    let (id_conv_mov, clase_mov, monto_mov, saldo_resultante_mov): (Option<String>, String, i64, i64) = conexion
+        .query_row(
+            "SELECT id_conversacion, clase, monto, saldo_resultante FROM movimientos WHERE id_reserva = ?1",
+            rusqlite::params![id_reserva],
+            |fila| Ok((fila.get(0)?, fila.get(1)?, fila.get(2)?, fila.get(3)?)),
+        )
+        .expect("consultar movimiento");
+    assert!(id_conv_mov.is_none());
+    assert_eq!(clase_mov, "reserva");
+    assert_eq!(monto_mov, -25);
+    assert_eq!(saldo_resultante_mov, 75);
+
+    // 2. Conciliar la reserva de ingesta con un consumo menor (excedente devuelto)
+    let res_conciliacion = repo
+        .conciliar_presupuesto(id_reserva, 20, SystemTime::UNIX_EPOCH)
+        .expect("conciliar presupuesto de ingesta");
+
+    assert_eq!(
+        res_conciliacion,
+        ResultadoDeResolucion::Resuelta {
+            ajuste_aplicado: 5,
+            deficit_no_cubierto: 0,
+        }
+    );
+
+    let saldo_conciliado = repo.saldo().expect("obtener saldo");
+    assert_eq!(saldo_conciliado.disponible, 80);
+    assert_eq!(saldo_conciliado.reservado, 0);
+
+    // 3. Reservar de ingesta con liberación posterior
+    let veredicto_liberacion = repo
+        .reservar_presupuesto_de_ingesta(15, SystemTime::UNIX_EPOCH)
+        .expect("reservar presupuesto de ingesta");
+
+    let id_reserva_lib = match veredicto_liberacion {
+        VeredictoDeReserva::Concedida { id_reserva, .. } => id_reserva,
+        _ => panic!("reserva de ingesta para liberar debió ser concedida"),
+    };
+
+    let res_liberacion = repo
+        .liberar_presupuesto(id_reserva_lib, SystemTime::UNIX_EPOCH)
+        .expect("liberar presupuesto de ingesta");
+
+    assert_eq!(
+        res_liberacion,
+        ResultadoDeResolucion::Resuelta {
+            ajuste_aplicado: 15,
+            deficit_no_cubierto: 0,
+        }
+    );
+
+    let saldo_liberado = repo.saldo().expect("obtener saldo");
+    assert_eq!(saldo_liberado.disponible, 80);
+    assert_eq!(saldo_liberado.reservado, 0);
+}
+
+#[test]
+fn vistas_consumo_por_conversacion_y_consumo_de_ingesta_no_se_mezclan() {
+    let directorio = DirectorioTemporal::nuevo("vistas-consumo-separadas");
+    let repo = repositorio(&directorio);
+
+    let conv = IdConversacion::nuevo("conv-real");
+    crear_conversacion(&repo, &conv);
+
+    repo.aportar_presupuesto(200, SystemTime::UNIX_EPOCH)
+        .expect("aportar 200");
+
+    // Reserva con conversación real
+    let Ok(VeredictoDeReserva::Concedida {
+        id_reserva: r_conv, ..
+    }) = repo.reservar_presupuesto(&conv, 50, SystemTime::UNIX_EPOCH)
+    else {
+        panic!("reserva conv");
+    };
+    repo.conciliar_presupuesto(r_conv, 40, SystemTime::UNIX_EPOCH)
+        .unwrap();
+
+    // Reserva de ingesta (conversación NULL)
+    let Ok(VeredictoDeReserva::Concedida {
+        id_reserva: r_ing, ..
+    }) = repo.reservar_presupuesto_de_ingesta(100, SystemTime::UNIX_EPOCH)
+    else {
+        panic!("reserva ingesta");
+    };
+    repo.conciliar_presupuesto(r_ing, 85, SystemTime::UNIX_EPOCH)
+        .unwrap();
+
+    // Consultar consumo_por_conversacion a través del método público
+    let consumos_conv = repo
+        .consumo_por_conversacion()
+        .expect("consumo por conversación");
+    assert_eq!(consumos_conv.len(), 1);
+    assert_eq!(consumos_conv[0].id_conversacion.como_str(), "conv-real");
+    assert_eq!(consumos_conv[0].unidades_consumidas, 40);
+
+    // Consultar consumo_de_ingesta directamente en SQLite
+    let conexion = Connection::open(directorio.ruta().join(NOMBRE_DE_ARCHIVO_DE_SESIONES))
+        .expect("abrir sessions.db");
+
+    let consumo_ingesta_val: i64 = conexion
+        .query_row(
+            "SELECT unidades_consumidas FROM consumo_de_ingesta",
+            [],
+            |fila| fila.get(0),
+        )
+        .expect("consultar consumo_de_ingesta");
+    assert_eq!(consumo_ingesta_val, 85);
+}
+
+#[test]
+fn consumo_de_ingesta_sin_filas_devuelve_cero_por_coalesce() {
+    let directorio = DirectorioTemporal::nuevo("consumo-ingesta-vacio");
+    let repo = repositorio(&directorio);
+
+    let conexion = Connection::open(directorio.ruta().join(NOMBRE_DE_ARCHIVO_DE_SESIONES))
+        .expect("abrir sessions.db");
+
+    // Al no haber filas de ingesta (id_conversacion NULL), consumo_de_ingesta debe retornar exactamente una fila con 0.
+    let consumo_ingesta_val: i64 = conexion
+        .query_row(
+            "SELECT unidades_consumidas FROM consumo_de_ingesta",
+            [],
+            |fila| fila.get(0),
+        )
+        .expect("consultar consumo_de_ingesta vacío");
+    assert_eq!(consumo_ingesta_val, 0);
 }

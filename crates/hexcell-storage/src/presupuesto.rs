@@ -80,6 +80,34 @@ impl RepositorioDeSesiones {
         unidades: UnidadesDePresupuesto,
         marca_temporal: SystemTime,
     ) -> Result<VeredictoDeReserva, ErrorDeAlmacen> {
+        self.reservar_presupuesto_interna(
+            Some(id_conversacion.como_str()),
+            unidades,
+            marca_temporal,
+        )
+    }
+
+    /// Reserva presupuesto para una ingesta de catálogo (sin conversación asociada).
+    ///
+    /// Delegación al ayudante interno de reserva pasándole `None` como conversación.
+    ///
+    /// Razón histórica (decisión del 27 de agosto de 2026): una ingesta de catálogo no pertenece a
+    /// ninguna conversación y se rechazó crear una conversación artificial para no contaminar
+    /// la vista `consumo_por_conversacion` con datos ficticios.
+    pub fn reservar_presupuesto_de_ingesta(
+        &self,
+        unidades: UnidadesDePresupuesto,
+        marca_temporal: SystemTime,
+    ) -> Result<VeredictoDeReserva, ErrorDeAlmacen> {
+        self.reservar_presupuesto_interna(None, unidades, marca_temporal)
+    }
+
+    fn reservar_presupuesto_interna(
+        &self,
+        id_conversacion: Option<&str>,
+        unidades: UnidadesDePresupuesto,
+        marca_temporal: SystemTime,
+    ) -> Result<VeredictoDeReserva, ErrorDeAlmacen> {
         let marca_ms = a_milisegundos(marca_temporal);
         let unidades_i64 = i64::try_from(unidades).unwrap_or(i64::MAX);
 
@@ -107,7 +135,7 @@ impl RepositorioDeSesiones {
                 .execute(
                     "INSERT INTO reservas (id_conversacion, monto_reservado, estado, creada_ms, resuelta_ms) \
                      VALUES (?1, ?2, 'activa', ?3, NULL)",
-                    params![id_conversacion.como_str(), unidades_i64, marca_ms],
+                    params![id_conversacion, unidades_i64, marca_ms],
                 )
                 .map_err(ErrorDeAlmacen::en("insertar la reserva de presupuesto"))?;
 
@@ -129,7 +157,7 @@ impl RepositorioDeSesiones {
                      VALUES (?1, ?2, 'reserva', ?3, ?4, ?5)",
                     params![
                         id_reserva,
-                        id_conversacion.como_str(),
+                        id_conversacion,
                         -unidades_i64,
                         saldo_resultante,
                         marca_ms
@@ -254,7 +282,7 @@ impl RepositorioDeSesiones {
                 .unchecked_transaction()
                 .map_err(ErrorDeAlmacen::en("abrir la transacción de conciliación de presupuesto"))?;
 
-            let fila_reserva: Option<(String, i64)> = transaccion
+            let fila_reserva: Option<(Option<String>, i64)> = transaccion
                 .query_row(
                     "SELECT id_conversacion, monto_reservado FROM reservas WHERE id = ?1 AND estado = 'activa'",
                     params![id_reserva],
@@ -356,7 +384,7 @@ impl RepositorioDeSesiones {
                 .unchecked_transaction()
                 .map_err(ErrorDeAlmacen::en("abrir la transacción de liberación de presupuesto"))?;
 
-            let fila_reserva: Option<(String, i64)> = transaccion
+            let fila_reserva: Option<(Option<String>, i64)> = transaccion
                 .query_row(
                     "SELECT id_conversacion, monto_reservado FROM reservas WHERE id = ?1 AND estado = 'activa'",
                     params![id_reserva],
