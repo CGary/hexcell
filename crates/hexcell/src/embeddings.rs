@@ -157,6 +157,8 @@ pub enum ErrorDeEmbeddingsDeCelula {
     Simulado(ErrorDeEmbeddingsSimulado),
     /// Error devuelto por el proveedor OpenRouter HTTPS.
     OpenRouter(crate::proveedor_embeddings::ErrorDeProveedorDeEmbeddings),
+    /// Error devuelto por el proveedor Gemini HTTPS.
+    Gemini(crate::proveedor_embeddings_gemini::ErrorDeProveedorDeEmbeddingsGemini),
 }
 
 impl fmt::Display for ErrorDeEmbeddingsDeCelula {
@@ -164,6 +166,7 @@ impl fmt::Display for ErrorDeEmbeddingsDeCelula {
         match self {
             Self::Simulado(e) => write!(f, "{e}"),
             Self::OpenRouter(e) => write!(f, "{e}"),
+            Self::Gemini(e) => write!(f, "{e}"),
         }
     }
 }
@@ -173,6 +176,7 @@ impl std::error::Error for ErrorDeEmbeddingsDeCelula {
         match self {
             Self::Simulado(e) => Some(e),
             Self::OpenRouter(e) => Some(e),
+            Self::Gemini(e) => Some(e),
         }
     }
 }
@@ -186,6 +190,8 @@ pub enum ProveedorDeEmbeddingsDeCelula {
     Simulado(ProveedorDeEmbeddingsSimulado),
     /// Variante de red sobre la API compatible de OpenRouter.
     OpenRouter(Box<crate::proveedor_embeddings::ProveedorDeEmbeddingsOpenRouter>),
+    /// Variante de red sobre la API de Gemini.
+    Gemini(Box<crate::proveedor_embeddings_gemini::ProveedorDeEmbeddingsGemini>),
 }
 
 impl ProveedorDeEmbeddings for ProveedorDeEmbeddingsDeCelula {
@@ -204,6 +210,10 @@ impl ProveedorDeEmbeddings for ProveedorDeEmbeddingsDeCelula {
                 .incrustar_lote(peticion)
                 .await
                 .map_err(ErrorDeEmbeddingsDeCelula::OpenRouter),
+            Self::Gemini(proveedor) => proveedor
+                .incrustar_lote(peticion)
+                .await
+                .map_err(ErrorDeEmbeddingsDeCelula::Gemini),
         }
     }
 }

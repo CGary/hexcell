@@ -10,7 +10,9 @@ use std::process::{Command, Stdio};
 use std::sync::Mutex;
 use std::time::Duration;
 
-use hexcell::configuracion::{CanalSeleccionado, Configuracion, ErrorDeConfiguracion};
+use hexcell::configuracion::{
+    CanalSeleccionado, Configuracion, ConfiguracionDeEmbeddingsSegunProveedor, ErrorDeConfiguracion,
+};
 
 /// `cargo test` ejecuta los tests de un mismo binario en hilos distintos del mismo proceso, y
 /// `std::env::set_var`/`remove_var` son estado **del proceso completo**, no del hilo. Sin esta
@@ -587,7 +589,11 @@ fn configuracion_embeddings_desde_entorno_y_validaciones() {
         std::env::set_var("HEXCELL_EMBEDDINGS_URL_BASE", "http://127.0.0.1:8080");
     }
     let config = Configuracion::desde_entorno().expect("configuración válida con embeddings");
-    let emb = config.embeddings.expect("debe existir embeddings");
+    let emb_enum = config.embeddings.expect("debe existir embeddings");
+    let emb = match emb_enum {
+        ConfiguracionDeEmbeddingsSegunProveedor::OpenRouter(c) => c,
+        _ => panic!("se esperaba la variante OpenRouter"),
+    };
     assert_eq!(emb.url_base, "http://127.0.0.1:8080");
     assert_eq!(emb.api_key, "key-secret-emb");
     assert_eq!(emb.modelo, "model-emb-1");
@@ -602,10 +608,49 @@ fn configuracion_embeddings_desde_entorno_y_validaciones() {
         std::env::set_var("HEXCELL_EMBEDDINGS_TAMANO_DE_LOTE", "64");
     }
     let config = Configuracion::desde_entorno().expect("configuración válida personalizada");
-    let emb = config.embeddings.expect("debe existir embeddings");
+    let emb_enum = config.embeddings.expect("debe existir embeddings");
+    let emb = match emb_enum {
+        ConfiguracionDeEmbeddingsSegunProveedor::OpenRouter(c) => c,
+        _ => panic!("se esperaba la variante OpenRouter"),
+    };
     assert_eq!(emb.timeout, Duration::from_millis(5000));
     assert_eq!(emb.reintentos, 2);
     assert_eq!(emb.tamano_de_lote, 64);
+
+    // Con HEXCELL_EMBEDDINGS_PROVEEDOR = "gemini"
+    unsafe {
+        std::env::set_var("HEXCELL_EMBEDDINGS_PROVEEDOR", "gemini");
+    }
+    let config = Configuracion::desde_entorno().expect("configuración válida con gemini");
+    let emb_enum = config.embeddings.expect("debe existir embeddings");
+    match emb_enum {
+        ConfiguracionDeEmbeddingsSegunProveedor::Gemini(c) => {
+            assert_eq!(c.url_base, "http://127.0.0.1:8080");
+            assert_eq!(c.api_key, "key-secret-emb");
+            assert_eq!(c.modelo, "model-emb-1");
+            assert_eq!(c.timeout, Duration::from_millis(5000));
+            assert_eq!(c.reintentos, 2);
+            assert_eq!(c.tamano_de_lote, 64);
+        }
+        _ => panic!("se esperaba la variante Gemini"),
+    }
+
+    // Con valor no reconocido para HEXCELL_EMBEDDINGS_PROVEEDOR -> falla
+    unsafe {
+        std::env::set_var("HEXCELL_EMBEDDINGS_PROVEEDOR", "azure");
+    }
+    let err = Configuracion::desde_entorno().expect_err("debe fallar con proveedor azure");
+    match err {
+        ErrorDeConfiguracion::ValorInvalido { nombre, .. } => {
+            assert_eq!(nombre, "HEXCELL_EMBEDDINGS_PROVEEDOR");
+        }
+        otro => panic!("se esperaba ValorInvalido, se obtuvo {otro:?}"),
+    }
+
+    // Limpiar selector de proveedor para el resto del test
+    unsafe {
+        std::env::remove_var("HEXCELL_EMBEDDINGS_PROVEEDOR");
+    }
 
     // Tamaño de lote 0 -> falla
     unsafe {

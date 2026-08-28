@@ -26,6 +26,7 @@ pub mod motor;
 pub mod preparacion;
 pub mod procesador;
 pub mod proveedor_embeddings;
+pub mod proveedor_embeddings_gemini;
 pub mod proveedor_openai;
 pub mod registro;
 pub mod reglas_locales;

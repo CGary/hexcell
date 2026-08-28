@@ -39,6 +39,15 @@ impl CanalSeleccionado {
     }
 }
 
+/// Configuración de embeddings según el proveedor seleccionado.
+#[derive(Clone, Debug)]
+pub enum ConfiguracionDeEmbeddingsSegunProveedor {
+    /// Proveedor compatible con OpenAI/OpenRouter.
+    OpenRouter(crate::proveedor_embeddings::ConfiguracionDeEmbeddings),
+    /// Proveedor de Gemini (Google AI Studio).
+    Gemini(crate::proveedor_embeddings_gemini::ConfiguracionDeEmbeddingsGemini),
+}
+
 /// Configuración de arranque, ya validada, del binario de la célula.
 #[derive(Clone, Debug)]
 pub struct Configuracion {
@@ -101,8 +110,8 @@ pub struct Configuracion {
     pub presupuesto_inicial_unidades: u64,
     /// Configuración opcional del proveedor de inferencia HTTPS real compatible con OpenAI.
     pub inferencia: Option<crate::proveedor_openai::ConfiguracionDeInferencia>,
-    /// Configuración opcional del proveedor de incrustaciones HTTPS real compatible con OpenAI/OpenRouter.
-    pub embeddings: Option<crate::proveedor_embeddings::ConfiguracionDeEmbeddings>,
+    /// Configuración opcional del proveedor de incrustaciones HTTPS real (OpenRouter o Gemini).
+    pub embeddings: Option<ConfiguracionDeEmbeddingsSegunProveedor>,
 }
 
 /// Error de configuración: nombra siempre la variable concreta y su formato esperado.
@@ -227,6 +236,8 @@ pub const HEXCELL_EMBEDDINGS_TIMEOUT_MS: &str = "HEXCELL_EMBEDDINGS_TIMEOUT_MS";
 pub const HEXCELL_EMBEDDINGS_REINTENTOS: &str = "HEXCELL_EMBEDDINGS_REINTENTOS";
 /// Nombre de la variable de entorno con el tamaño máximo de lote de embeddings (opcional).
 pub const HEXCELL_EMBEDDINGS_TAMANO_DE_LOTE: &str = "HEXCELL_EMBEDDINGS_TAMANO_DE_LOTE";
+/// Nombre de la variable de entorno con el proveedor de embeddings seleccionado (opcional).
+pub const HEXCELL_EMBEDDINGS_PROVEEDOR: &str = "HEXCELL_EMBEDDINGS_PROVEEDOR";
 
 /// Tiempo de espera de embeddings por defecto: 8000 milisegundos.
 pub const TIMEOUT_EMBEDDINGS_POR_DEFECTO: Duration = Duration::from_millis(8000);
@@ -637,14 +648,45 @@ impl Configuracion {
                     });
                 }
 
-                Some(crate::proveedor_embeddings::ConfiguracionDeEmbeddings {
-                    url_base,
-                    api_key,
-                    modelo,
-                    timeout,
-                    reintentos,
-                    tamano_de_lote,
-                })
+                let proveedor_str = match std::env::var(HEXCELL_EMBEDDINGS_PROVEEDOR) {
+                    Ok(val) => {
+                        let trimmed = val.trim();
+                        if trimmed == "openrouter" || trimmed == "gemini" {
+                            trimmed.to_string()
+                        } else {
+                            return Err(ErrorDeConfiguracion::ValorInvalido {
+                                nombre: HEXCELL_EMBEDDINGS_PROVEEDOR,
+                                valor: val,
+                                formato_esperado: "uno de: openrouter | gemini",
+                            });
+                        }
+                    }
+                    Err(_) => "openrouter".to_string(),
+                };
+
+                match proveedor_str.as_str() {
+                    "openrouter" => Some(ConfiguracionDeEmbeddingsSegunProveedor::OpenRouter(
+                        crate::proveedor_embeddings::ConfiguracionDeEmbeddings {
+                            url_base,
+                            api_key,
+                            modelo,
+                            timeout,
+                            reintentos,
+                            tamano_de_lote,
+                        },
+                    )),
+                    "gemini" => Some(ConfiguracionDeEmbeddingsSegunProveedor::Gemini(
+                        crate::proveedor_embeddings_gemini::ConfiguracionDeEmbeddingsGemini {
+                            url_base,
+                            api_key,
+                            modelo,
+                            timeout,
+                            reintentos,
+                            tamano_de_lote,
+                        },
+                    )),
+                    _ => unreachable!(),
+                }
             }
             _ => None,
         };
