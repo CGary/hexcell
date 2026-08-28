@@ -34,6 +34,7 @@
 //! (`docs/adr/adr-0018-apagado-ordenado.md`).
 
 pub mod almacen_de_identidad;
+pub mod conocimiento;
 pub mod error;
 pub mod migraciones;
 pub mod pools;
@@ -44,6 +45,10 @@ pub mod sesiones;
 pub mod tiempo;
 
 pub use almacen_de_identidad::{AlmacenDeIdentidad, NOMBRE_DE_ARCHIVO_DE_IDENTIDAD_DEL_ADAPTADOR};
+pub use conocimiento::{
+    ConstructorDeConocimientoEnSombra, DocumentoDeIngesta,
+    NOMBRE_DE_ARCHIVO_DE_CONOCIMIENTO_EN_SOMBRA, SUFIJO_DE_ARCHIVO_SHM,
+};
 pub use error::ErrorDeAlmacen;
 pub use migraciones::{
     VERSION_DE_ESQUEMA_DE_CONOCIMIENTO, VERSION_DE_ESQUEMA_DE_IDENTIDAD,

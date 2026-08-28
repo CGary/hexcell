@@ -96,7 +96,6 @@ pub struct ProveedorDeEmbeddingsGemini {
     modelo: String,
     timeout: Duration,
     reintentos: u32,
-    #[allow(dead_code)]
     tamano_de_lote: usize,
     cliente: hyper_util::client::legacy::Client<
         hyper_rustls::HttpsConnector<hyper_util::client::legacy::connect::HttpConnector>,
@@ -118,6 +117,12 @@ impl fmt::Debug for ProveedorDeEmbeddingsGemini {
 }
 
 impl ProveedorDeEmbeddingsGemini {
+    /// Devuelve el tamaño de lote configurado para este proveedor.
+    /// Diseñado el 28 de agosto de 2026 para permitir la segmentación del lote en ingestas.
+    pub fn tamano_de_lote(&self) -> usize {
+        self.tamano_de_lote
+    }
+
     /// Construye un nuevo adaptador de Gemini a partir de su configuración.
     pub fn nuevo(configuracion: ConfiguracionDeEmbeddingsGemini) -> Self {
         let mut root_store = rustls::RootCertStore::empty();

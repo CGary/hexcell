@@ -21,6 +21,7 @@ pub mod deduplicacion;
 pub mod embeddings;
 pub mod emparejar;
 pub mod inferencia;
+pub mod ingesta;
 pub mod metricas;
 pub mod motor;
 pub mod preparacion;

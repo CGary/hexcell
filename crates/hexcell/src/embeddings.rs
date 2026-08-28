@@ -57,6 +57,7 @@ pub struct ProveedorDeEmbeddingsSimulado {
     forzar_averia: bool,
     limite_elementos: Option<usize>,
     consumo_personalizado: Option<u64>,
+    tamano_de_lote: usize,
 }
 
 impl Default for ProveedorDeEmbeddingsSimulado {
@@ -66,6 +67,7 @@ impl Default for ProveedorDeEmbeddingsSimulado {
             forzar_averia: false,
             limite_elementos: None,
             consumo_personalizado: None,
+            tamano_de_lote: 32,
         }
     }
 }
@@ -83,6 +85,7 @@ impl ProveedorDeEmbeddingsSimulado {
             forzar_averia: false,
             limite_elementos: None,
             consumo_personalizado: None,
+            tamano_de_lote: 32,
         }
     }
 
@@ -93,6 +96,7 @@ impl ProveedorDeEmbeddingsSimulado {
             forzar_averia: true,
             limite_elementos: None,
             consumo_personalizado: None,
+            tamano_de_lote: 32,
         }
     }
 
@@ -106,6 +110,19 @@ impl ProveedorDeEmbeddingsSimulado {
     pub fn con_consumo_personalizado(mut self, unidades: u64) -> Self {
         self.consumo_personalizado = Some(unidades);
         self
+    }
+
+    /// Establece el tamaño de lote máximo permitido.
+    /// Diseñado el 28 de agosto de 2026 para permitir probar la fragmentación de lotes.
+    pub fn con_tamano_de_lote(mut self, tamano: usize) -> Self {
+        self.tamano_de_lote = tamano;
+        self
+    }
+
+    /// Devuelve el tamaño de lote máximo configurado.
+    /// Diseñado el 28 de agosto de 2026 para dar un accesor unificado al motor.
+    pub fn tamano_de_lote(&self) -> usize {
+        self.tamano_de_lote
     }
 }
 
@@ -192,6 +209,19 @@ pub enum ProveedorDeEmbeddingsDeCelula {
     OpenRouter(Box<crate::proveedor_embeddings::ProveedorDeEmbeddingsOpenRouter>),
     /// Variante de red sobre la API de Gemini.
     Gemini(Box<crate::proveedor_embeddings_gemini::ProveedorDeEmbeddingsGemini>),
+}
+
+impl ProveedorDeEmbeddingsDeCelula {
+    /// Devuelve el tamaño máximo de lote tolerado por el adaptador activo.
+    /// Diseñado el 28 de agosto de 2026 para garantizar que la partición en lotes
+    /// se realice de forma uniforme y estructuralmente idéntica para todos los adaptadores.
+    pub fn tamano_de_lote(&self) -> usize {
+        match self {
+            Self::Simulado(p) => p.tamano_de_lote(),
+            Self::OpenRouter(p) => p.tamano_de_lote(),
+            Self::Gemini(p) => p.tamano_de_lote(),
+        }
+    }
 }
 
 impl ProveedorDeEmbeddings for ProveedorDeEmbeddingsDeCelula {
@@ -393,5 +423,14 @@ where
                 Err(ErrorDeServicioDeEmbeddings::Proveedor(averia))
             }
         }
+    }
+}
+
+impl ServicioDeEmbeddings<ProveedorDeEmbeddingsDeCelula> {
+    /// Expone el tamaño de lote del proveedor activo sin ceder acceso al campo privado.
+    /// Diseñado el 28 de agosto de 2026: un único punto de despacho evita que la partición
+    /// en lotes tenga dos implementaciones que puedan divergir entre adaptadores.
+    pub fn tamano_de_lote(&self) -> usize {
+        self.proveedor.tamano_de_lote()
     }
 }
