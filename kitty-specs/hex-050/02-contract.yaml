@@ -1,0 +1,176 @@
+task_id: HEX-050
+
+summary: >-
+  Add a pure, parameterized, character-window chunking function with overlap to hexcell-core,
+  covered by edge-case tests for short/empty/long/list text and invalid overlap.
+
+goal: >-
+  Implement stage A-5 task 2 (docs/plan/fase-a-5-conocimiento-shadow-db.md, "Implementar la
+  fragmentación de contenido"): an in-memory chunking function only. No embeddings client, no
+  ingestion, no knowledge_staging.db, no ordinal/id_documento assignment, no line/sentence-aware
+  segmentation.
+
+  EXACT SHAPE TO IMPLEMENT, so no discovery is required.
+  New file crates/hexcell-core/src/fragmentacion.rs, matching the module-doc density and
+  WHY-first voice of presupuesto.rs:
+
+  pub struct ConfiguracionDeFragmentacion { pub tamano_de_fragmento: usize, pub solapamiento:
+  usize } — both fields measured in chars().count(), never bytes, never tokens, mirroring
+  estimar_coste's convention in presupuesto.rs.
+
+  pub enum ErrorDeFragmentacion { SolapamientoNoMenorQueTamano { tamano_de_fragmento: usize,
+  solapamiento: usize } }, with #[derive(Clone, Debug, PartialEq, Eq)], impl
+  std::fmt::Display for ErrorDeFragmentacion (Spanish message stating the overlap must be
+  strictly less than the chunk size) and impl std::error::Error for ErrorDeFragmentacion {},
+  copying the exact shape of ErrorDeConfiguracionGcra in admision.rs (lines 83-102) rather than
+  inventing a new error idiom.
+
+  pub fn fragmentar(texto: &str, configuracion: &ConfiguracionDeFragmentacion) ->
+  Result<Vec<String>, ErrorDeFragmentacion>, with this exact algorithm:
+  1. If configuracion.solapamiento >= configuracion.tamano_de_fragmento, return
+  Err(ErrorDeFragmentacion::SolapamientoNoMenorQueTamano { tamano_de_fragmento:
+  configuracion.tamano_de_fragmento, solapamiento: configuracion.solapamiento }) immediately,
+  before touching texto (this single check also rejects tamano_de_fragmento == 0, since every
+  usize solapamiento is >= 0).
+  2. Collect let caracteres: Vec<char> = texto.chars().collect();. If caracteres.is_empty(),
+  return Ok(Vec::new()) immediately (an empty string yields zero chunks, never one blank
+  chunk).
+  3. Otherwise loop: let mut inicio = 0usize; loop { let fin = (inicio +
+  configuracion.tamano_de_fragmento).min(caracteres.len()); fragmentos.push(caracteres[inicio..fin]
+  .iter().collect::<String>()); if fin == caracteres.len() { break; } inicio +=
+  configuracion.tamano_de_fragmento - configuracion.solapamiento; }. Return Ok(fragmentos).
+
+  DOC COMMENTS ARE A CROSS-MODULE CONTRACT, NOT DECORATION, because stage A-5 task 4 reads this
+  function's output directly into the fragmentos table (id INTEGER PRIMARY KEY, id_documento
+  INTEGER NOT NULL REFERENCES documentos(id) ON DELETE CASCADE, ordinal INTEGER NOT NULL CHECK
+  (ordinal >= 0), texto TEXT NOT NULL CHECK (length(texto) > 0), UNIQUE (id_documento, ordinal),
+  defined in crates/hexcell-storage/migraciones/conocimiento/0002-esquema-de-conocimiento.sql).
+  The module/function doc comments MUST state, WHY-first, in Spanish:
+  (a) this function assigns no ordinal and no id_documento; the returned Vec's index IS the
+  future ordinal, gapless and stable because Vec preserves insertion order and this function
+  never produces an empty-text chunk for non-empty input (fin > inicio holds for every pushed
+  chunk by construction, satisfying the table's CHECK (length(texto) > 0) downstream);
+  (b) why the fixed-step advance (tamano_de_fragmento - solapamiento) is what keeps every
+  consecutive chunk pair's overlap exactly solapamiento characters, including the pair ending
+  in the final, possibly-ragged chunk — there is no special-cased "last chunk" branch, the same
+  loop step produces it;
+  (c) chars().collect::<Vec<char>>() plus slicing that Vec (never byte-indexing texto directly)
+  is what guarantees no chunk boundary ever splits a Unicode scalar value, and that this is an
+  O(n) allocation that is negligible at the catalog sizes this project targets (hundreds to a
+  few thousand fragments per cell);
+  (d) the plain character window is the PRIMARY and ONLY splitting strategy; it does not look
+  at line or bullet boundaries, so a chunk boundary can fall mid-line — that is documented,
+  tested, expected behavior, not a gap.
+
+  In crates/hexcell-core/src/lib.rs: add exactly one line, `pub mod fragmentacion;`, in the
+  existing alphabetical module list (admision, canal, fragmentacion, identidad, inferencia,
+  presupuesto). Do not touch the crate-level doc comment; its empty-dependency-table claim
+  stays true.
+
+  In crates/hexcell-core/tests/fragmentacion.rs (new file, mirroring tests/presupuesto.rs's
+  structure and voice): cover AC-1 through AC-6 from 00-spec.yaml with one #[test] fn per
+  scenario, Spanish assertion messages, including: a short-input case (one chunk, unchanged
+  text) for both ASCII and non-ASCII input of equal char count; an empty-string case (zero
+  chunks, not an Err); a long-input case asserting the overlap-reconstruction invariant
+  (chunk[0] plus each later chunk's slice from index `solapamiento` onward reconstitutes the
+  original string); a deliberately constructed short-ragged-final-remainder case (remainder
+  shorter than solapamiento) proving the fixed-step start offset still holds even though the
+  final chunk cannot itself contain a full solapamiento-length prefix beyond its own text; a
+  list/bullet-text case with an explicit assertion of the exact (expected, documented) mid-line
+  split point; both overlap-invalid cases (solapamiento == tamano_de_fragmento and solapamiento
+  > tamano_de_fragmento) returning the exact Err variant; and an accented/ñ/emoji case proving
+  every returned chunk is a valid Rust String and that the non-overlapping concatenation
+  reconstructs the original character sequence. No new dev-dependency: every assertion uses std
+  only.
+
+read:
+  - .ai/tasks/active/HEX-050-new-spec/00-spec.yaml
+  - .ai/tasks/active/HEX-050-new-spec/01-blueprint.yaml
+  - crates/hexcell-core/src/presupuesto.rs
+  - crates/hexcell-core/src/admision.rs
+  - crates/hexcell-core/src/lib.rs
+  - crates/hexcell-core/Cargo.toml
+  - crates/hexcell-core/tests/presupuesto.rs
+  - crates/hexcell-storage/migraciones/conocimiento/0002-esquema-de-conocimiento.sql
+  - docs/plan/fase-a-5-conocimiento-shadow-db.md
+  - docs/adr/adr-0002-estructura-workspace.md
+  - docs/PRD.md
+  - CLAUDE.md
+
+touch:
+  - crates/hexcell-core/src/fragmentacion.rs
+  - crates/hexcell-core/src/lib.rs
+  - crates/hexcell-core/tests/fragmentacion.rs
+
+forbid:
+  files:
+    - crates/hexcell-core/src/presupuesto.rs
+    - crates/hexcell-core/src/admision.rs
+    - crates/hexcell-core/src/canal.rs
+    - crates/hexcell-core/src/identidad.rs
+    - crates/hexcell-core/src/inferencia.rs
+    - crates/hexcell-core/Cargo.toml
+    - crates/hexcell-core/tests/presupuesto.rs
+    - crates/hexcell-core/tests/admision.rs
+    - crates/hexcell-core/tests/canal.rs
+    - crates/hexcell-core/tests/exhaustividad_resultado_envio.rs
+    - crates/hexcell-core/tests/guardian_identidad_conversacion.rs
+    - crates/hexcell-core/tests/testigo_de_entrante.rs
+    - crates/hexcell-storage/
+    - crates/hexcell/
+    - crates/hexcell-canal-simulado/
+    - crates/hexcell-canal-whatsmeow/
+    - crates/hexcell-canal-contrato/
+    - crates/hexcell-admin/
+    - crates/hexcell-meta/
+    - sidecar/
+    - scripts/
+    - docs/
+    - Cargo.toml
+    - Cargo.lock
+    - "**/Cargo.toml"
+    - .github/
+    - kitty-specs/
+  behaviors:
+    - "Adding any dependency or dev-dependency to crates/hexcell-core/Cargo.toml, or to any other crate's Cargo.toml. hexcell-core's dependency table is empty by adr-0002 and that emptiness is a closed human decision restated in 00-spec.yaml's invariants; this task's chunking logic needs nothing beyond std, and if implementing the exact algorithm above seems to require a crate, the algorithm was misread, not the constraint."
+    - "Byte-offset slicing of `texto` (e.g. &texto[a..b], texto.as_bytes(), texto.split_at(n) on byte indices) anywhere in the chunking path. The only permitted mechanism for producing a chunk is chars().collect::<Vec<char>>() followed by slicing that Vec and re-collecting a String; byte slicing risks splitting a multi-byte UTF-8 character and is exactly what AC-6 exists to forbid."
+    - "Producing one chunk for an empty input string, or returning an Err for an empty input string with a valid (size, overlap) pair. AC-2 requires exactly zero chunks; the empty check must run before the chunking loop, not be inferred from a zero-iteration loop that might still push one empty String."
+    - "Looping, retrying, or attempting to produce chunks when solapamiento >= tamano_de_fragmento. That case returns Err(ErrorDeFragmentacion::SolapamientoNoMenorQueTamano) immediately, with no allocation proportional to the input's length and no loop iteration; a hang, a panic, or an unbounded Vec are all violations of AC-5."
+    - "Assigning or inventing a fragmentos.ordinal or fragmentos.id_documento value anywhere in this task's code, or defining a Fragmento{ordinal, texto} wrapper struct. This task's spec explicitly defers that wiring to stage A-5 task 4; the function returns Vec<String> only, and 01-blueprint.yaml's risks section records why a richer return type here would be premature."
+    - "Implementing any line-aware, sentence-aware, or semantic-aware splitting as the primary or a fallback strategy (e.g. never crossing a newline, using a text-segmentation crate, detecting bullet markers). The plain character window is the only mechanism this task implements; AC-4 requires a test that asserts a mid-line split is expected behavior, not a bug to work around."
+    - "Opening, creating, or writing to any SQLite file (knowledge_staging.db, knowledge_live.db, sessions.db, or any *.db/*.db-wal/*.db-shm), or referencing rusqlite/hexcell-storage from this new module. This task produces fragments in memory only."
+    - "Calling any embeddings API, HTTP client, or network I/O of any kind from the new module or its tests."
+    - "Editing crates/hexcell-core/src/lib.rs beyond inserting the single `pub mod fragmentacion;` line in its existing alphabetical position. The crate-level doc comment's claim of an empty dependency table must remain textually true and is not itself edited by this task."
+    - "Writing English prose in Rust doc comments, inline comments, identifiers, test names, or assertion messages inside crates/hexcell-core/src/fragmentacion.rs or crates/hexcell-core/tests/fragmentacion.rs. The repository is PUBLIC and all of its prose is Spanish and didactic (explains why, not what); only this Quorum contract's own field values are English."
+    - "Writing a *.db, *.db-wal, *.db-shm or .env file into the repository tree, committing a secret, or leaving a temporary directory behind."
+    - "Modifying 00-spec.yaml, 01-blueprint.yaml, or this contract."
+
+verify:
+  commands:
+    - cargo fmt --check
+    - cargo clippy --workspace -- -D warnings
+    - cargo build --workspace
+    - cargo test --workspace
+  target_s: 60
+
+acceptance:
+  human_gate: true
+
+limits:
+  max_files_changed: 3
+  max_diff_lines: 650
+  per_class:
+    - glob: "crates/hexcell-core/src/fragmentacion.rs"
+      max_diff_lines: 180
+    - glob: "crates/hexcell-core/src/lib.rs"
+      max_diff_lines: 15
+    - glob: "crates/hexcell-core/tests/fragmentacion.rs"
+      max_diff_lines: 420
+
+execution:
+  mode: worktree_edit
+  branch: ai/HEX-050
+
+retry_policy:
+  max_attempts: 2
+  escalate_after: 2

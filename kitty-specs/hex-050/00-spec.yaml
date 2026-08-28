@@ -1,0 +1,78 @@
+task_id: HEX-050
+summary: Implement parameterized character-based content chunking with overlap for the knowledge pipeline, with edge-case tests for very short text, very long text, and list-structured text.
+goal: >-
+  Add a pure, dependency-free chunking function to hexcell-core (following the
+  precedent of estimar_coste in crates/hexcell-core/src/presupuesto.rs, stage
+  A-4) that splits an input string into overlapping chunks measured in Unicode
+  characters (chars().count()), with chunk size and overlap accepted as
+  parameters rather than hardcoded constants. This is stage A-5 task 2
+  ("Implementar la fragmentación de contenido") from
+  docs/plan/fase-a-5-conocimiento-shadow-db.md: a chunking strategy with
+  overlap, parameterized, tested against edge cases (very short text, very
+  long text, lists). The function produces fragments in memory only; it does
+  not write to any database, call any embeddings API, or touch
+  knowledge_staging.db.
+invariants:
+  - Chunk length and overlap are measured in Unicode characters via chars().count(), never in bytes and never in tokens, matching the precedent set by estimar_coste in crates/hexcell-core/src/presupuesto.rs (stage A-4). Byte-based slicing would risk splitting a multi-byte UTF-8 character; a token-based unit would require a tokenizer dependency, which is forbidden.
+  - Chunk size and overlap are function parameters (or fields of a small config struct), never hardcoded constants; the stage plan requires the strategy to be "parametrizada".
+  - The chunking function lives in hexcell-core, alongside presupuesto.rs, because it is pure character-counting logic requiring nothing beyond std; hexcell-core's dependency table stays empty (adr-0002), and this task adds no new dependency to any crate.
+  - No chunk boundary ever splits a Unicode scalar value; chunking operates on a Vec<char> (or equivalent char-indexed view) of the input, never on raw byte offsets, so Spanish accents, ñ, and multi-byte emoji are never corrupted.
+  - "If overlap is greater than or equal to chunk size, the function returns a Result::Err (a caller-error variant) instead of looping forever or producing an unbounded/infinite number of chunks."
+  - An empty input string produces zero chunks (an empty result), not one empty chunk and not an error; the fragmentos table's CHECK (length(texto) > 0) means this function must never hand back a blank fragment.
+  - The last chunk of a long input receives the same overlap treatment as every interior boundary; it is allowed to be shorter than chunk size (a ragged remainder) but must still overlap with its predecessor by the configured overlap amount whenever there is enough preceding text to provide it.
+  - The function does not attempt semantic-aware or line-aware splitting as its primary strategy (that is a richer feature not requested by the plan for this task); the character window is the primary mechanism, and its behavior on line/bullet-structured text is documented and covered by a test, not silently special-cased.
+  - This task produces chunks in memory only. It does not open, create, or write to knowledge_staging.db or any other SQLite file, does not call the embeddings API, and does not assign fragmentos.ordinal or fragmentos.id_documento — that wiring belongs to stage A-5 task 4 (ingestion pipeline), which is out of scope here.
+  - All repository content this task touches (Rust doc comments, inline comments, identifiers, the eventual commit message) is written in Spanish and is didactic (explains why, not what); only this Quorum spec's field values are written in English.
+acceptance:
+  - id: AC-1
+    statement: Chunking a string shorter than one chunk size returns exactly one chunk containing the whole input.
+    given: an input string whose chars().count() is less than the configured chunk size
+    when: the chunking function is called with that input and any valid (size, overlap) pair
+    then: the result contains exactly one chunk, and that chunk's text equals the original input unchanged
+  - id: AC-2
+    statement: Chunking an empty string returns zero chunks.
+    given: an empty input string ("")
+    when: the chunking function is called with any valid (size, overlap) pair
+    then: the result is an empty collection of chunks, never one empty chunk and never an error
+  - id: AC-3
+    statement: Chunking a long string produces multiple chunks with consistent overlap at every interior boundary and at the final boundary.
+    given: an input string whose chars().count() is several multiples of the configured chunk size, and a chunk size/overlap pair where overlap is strictly less than size
+    when: the chunking function is called
+    then: the result contains more than one chunk, every chunk except the first begins by repeating exactly the configured number of overlap characters from the end of the previous chunk, and the last chunk (which may be shorter than chunk size) still overlaps its predecessor by the same configured amount whenever enough preceding text exists
+  - id: AC-4
+    statement: Chunking list-structured text (multiple short lines/bullets) is covered by an explicit test documenting the character-window behavior at a line boundary.
+    given: an input string made of several short bullet lines whose total length exceeds one chunk size, chosen so that at least one chunk boundary falls in the middle of a bullet line under the character-window strategy
+    when: the chunking function is called
+    then: the test asserts the actual (documented) behavior of the plain character window on that input — that a boundary can fall inside a line — and the doc comment on the function explicitly states that line/bullet-aware splitting is not attempted, so this behavior is a known, tested characteristic and not a silent gap
+  - id: AC-5
+    statement: Calling the chunking function with overlap greater than or equal to chunk size returns an error instead of hanging or producing unbounded chunks.
+    given: a chunk size and an overlap value where overlap >= size (including the case overlap == size)
+    when: the chunking function is called with any non-empty input
+    then: the function returns Result::Err with a descriptive caller-error variant, performs no allocation proportional to an unbounded loop, and returns in bounded time
+  - id: AC-6
+    statement: Chunk boundaries never split a multi-byte UTF-8 character.
+    given: an input string containing Spanish accented letters, ñ, and at least one multi-byte emoji, with a chunk size chosen so a naive byte-offset split would land inside a multi-byte character
+    when: the chunking function is called
+    then: every produced chunk is valid UTF-8 on its own (parses as a valid Rust &str with no replacement characters or panics), and re-joining the chunks' non-overlapping portions reconstructs the original character sequence
+  - "cargo build --workspace, cargo test --workspace, cargo fmt --check, and cargo clippy --workspace -- -D warnings all pass with the new chunking module in hexcell-core."
+  - "DEFERRED (explicitly out of scope for this task, to be exercised by later A-5 tasks, not flagged as a gap by q-analyze): the embeddings client and batching (task 3), writing fragments into knowledge_staging.db and assigning fragmentos.id_documento/ordinal (task 4), structural/semantic integrity validation (task 5), epoch promotion (task 6), drain (task 7), retention/revert (task 8), the RAG engine (task 9), and the admin endpoint (task 10). This task's acceptance covers the in-memory chunking function and its unit tests only."
+risk: low
+non_goals:
+  - The embeddings API client, batching, retries, and partial-failure resumption (stage A-5 task 3).
+  - Writing fragments or vectors to knowledge_staging.db, or assigning fragmentos.id_documento and fragmentos.ordinal (stage A-5 task 4).
+  - Structural and semantic integrity validation of an epoch (stage A-5 task 5).
+  - The epoch promotion sequence, drain, retention, and revert (stage A-5 tasks 6-8).
+  - The RAG retrieval engine and prompt context construction (stage A-5 task 9).
+  - The internal administrative endpoint to trigger a knowledge update (stage A-5 task 10).
+  - Any semantic-, sentence-, or line-aware chunking strategy beyond a plain overlapping character window; the plan calls for "estrategia de troceado con solapamiento", not a smarter segmentation algorithm, and inventing one would be scope not requested.
+  - Any new runtime dependency (a tokenizer, a text-segmentation crate, etc.) — forbidden by adr-0002's empty dependency table for hexcell-core and by the closed human decision that chunking is character-based specifically to avoid needing one.
+constraints:
+  - No new runtime dependencies anywhere in the workspace; the chunking function uses only std. hexcell-core's dependency table (adr-0002) stays empty.
+  - The chunking function and its module live in hexcell-core, alongside crates/hexcell-core/src/presupuesto.rs, following that stage A-4 precedent rather than introducing a new crate or placing domain logic in hexcell-storage.
+  - Chunk size and overlap are measured in chars().count(), matching estimar_coste's existing convention in this codebase; never bytes, never a token count.
+  - Chunk size and overlap must be accepted as parameters (function arguments or a small config struct), never hardcoded constants, per the stage plan's explicit "parametrizada" requirement.
+  - "The overlap >= size case must be rejected with a Result::Err, never allowed to loop or hang; this is a closed human decision, not a design question to reopen."
+  - Repository is public; never write secrets; never version *.db, *.db-wal, *.db-shm, or .env* files (not applicable output for this task, but restated as a standing constraint).
+  - All Quorum artifact field values (this spec, the blueprint, the contract) are written in English; repository prose, Rust doc comments, inline comments, and the eventual commit message stay in Spanish and are didactic (explain why, not what).
+  - This task touches no SQLite file and adds no code to hexcell-storage; the fragmentos table's real columns (id, id_documento, ordinal, texto with CHECK length(texto) > 0, UNIQUE(id_documento, ordinal)) are the contract this function's output must be able to fill later, but this task does not populate them.
+  - Every scope item traces to FR-06 (Shadow DB / knowledge_staging.db ingestion prerequisite) of docs/PRD.md and to stage A-5 task 2 of docs/plan/fase-a-5-conocimiento-shadow-db.md; no requirement is invented beyond what that task names.

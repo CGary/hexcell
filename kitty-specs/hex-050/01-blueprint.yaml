@@ -1,0 +1,184 @@
+task_id: HEX-050
+
+summary: >-
+  Add a pure, parameterized character-window chunking function with overlap to hexcell-core,
+  with edge-case tests (short/empty/long/list text, invalid overlap, multi-byte UTF-8).
+
+affected_files:
+  - crates/hexcell-core/src/fragmentacion.rs
+  - crates/hexcell-core/src/lib.rs
+  - crates/hexcell-core/tests/fragmentacion.rs
+
+symbols:
+  - fragmentacion::ConfiguracionDeFragmentacion
+  - fragmentacion::ErrorDeFragmentacion
+  - fragmentacion::fragmentar
+
+dependencies:
+  - crates/hexcell-core/src/presupuesto.rs
+  - crates/hexcell-core/src/admision.rs
+  - crates/hexcell-core/tests/presupuesto.rs
+  - crates/hexcell-core/Cargo.toml
+  - crates/hexcell-storage/migraciones/conocimiento/0002-esquema-de-conocimiento.sql
+  - docs/plan/fase-a-5-conocimiento-shadow-db.md
+  - docs/adr/adr-0002-estructura-workspace.md
+
+test_scenarios:
+  - statement: >-
+      A string shorter than the configured chunk size returns exactly one chunk whose text
+      equals the original input, verified for ASCII and for a non-ASCII string of the same
+      char count.
+    covers:
+      - AC-1
+  - statement: >-
+      An empty string ("") with a valid (size, overlap) pair returns an empty Vec, never one
+      blank chunk and never an Err.
+    covers:
+      - AC-2
+  - statement: >-
+      A string several multiples of chunk size long produces more than one chunk; every chunk
+      after the first begins with exactly `solapamiento` chars copied from the tail of the
+      previous chunk, verified by reconstructing the original string from chunk[0] plus each
+      subsequent chunk's slice from `solapamiento` onward.
+    covers:
+      - AC-3
+  - statement: >-
+      A deliberately constructed input whose final ragged remainder is shorter than the
+      configured overlap still starts at the exact offset the fixed-step algorithm predicts
+      (previous start + (size - overlap)), so the "whenever there is enough preceding text"
+      clause is exercised, not just the common case.
+    covers:
+      - AC-3
+  - statement: >-
+      A multi-line bulleted/list input, sized so a chunk boundary provably falls mid-line under
+      the plain character window, asserts that exact split point as documented, expected
+      behavior rather than treating it as a bug.
+    covers:
+      - AC-4
+  - statement: >-
+      overlap == size and overlap > size both return Err(ErrorDeFragmentacion::SolapamientoNoMenorQueTamano)
+      immediately (no loop iteration, no allocation proportional to input length) for non-empty
+      input; a zero chunk size is rejected by the same check since any usize overlap satisfies
+      overlap >= 0.
+    covers:
+      - AC-5
+  - statement: >-
+      An input containing Spanish accented letters, ñ, and a multi-byte emoji, chunked with a
+      size chosen so a byte-offset split would land mid-character, produces chunks that are all
+      valid Rust String values (constructed via chars().collect(), never byte slicing) and whose
+      non-overlapping concatenation reconstructs the original char sequence exactly.
+    covers:
+      - AC-6
+
+strategy:
+  - step: 1
+    action: >-
+      Create crates/hexcell-core/src/fragmentacion.rs, a new sibling module to presupuesto.rs.
+      Module doc comment (WHY-first, Spanish, didactic) explains that chunking measures in
+      Unicode characters via chars().count() for the same reason estimar_coste does, and that
+      size/overlap are parameters rather than constants because the stage plan requires
+      "parametrizada". Define pub struct ConfiguracionDeFragmentacion { pub tamano_de_fragmento:
+      usize, pub solapamiento: usize } (Entity-adjacent config Value Object, mirroring
+      ConfiguracionGcra in admision.rs) and pub enum ErrorDeFragmentacion {
+      SolapamientoNoMenorQueTamano { tamano_de_fragmento: usize, solapamiento: usize } } with
+      #[derive(Clone, Debug, PartialEq, Eq)], impl fmt::Display and impl std::error::Error,
+      copying the exact pattern of ErrorDeConfiguracionGcra (admision.rs lines 83-102) rather
+      than inventing a new error-handling idiom.
+    files:
+      - crates/hexcell-core/src/fragmentacion.rs
+  - step: 2
+    action: >-
+      Implement pub fn fragmentar(texto: &str, configuracion: &ConfiguracionDeFragmentacion) ->
+      Result<Vec<String>, ErrorDeFragmentacion>. Validate solapamiento >= tamano_de_fragmento
+      FIRST, before touching the input, and return Err in that case (this single check also
+      rejects tamano_de_fragmento == 0, since any usize solapamiento is >= 0). Then collect
+      texto.chars() into a Vec<char> once; if it is empty, return Ok(vec![]) immediately. Then
+      loop: inicio starts at 0; fin = (inicio + tamano_de_fragmento).min(caracteres.len()); push
+      caracteres[inicio..fin].iter().collect::<String>(); if fin == caracteres.len() break;
+      otherwise inicio += tamano_de_fragmento - solapamiento. Document in the function's doc
+      comment, explicitly and testably, why this fixed-step advance is what keeps every
+      consecutive pair's overlap exactly `solapamiento` characters, including the pair ending in
+      the final ragged chunk, and why it never revisits or special-cases the last chunk. Also
+      document that the primary strategy never inspects line or bullet boundaries by design (a
+      richer feature out of scope for this task) and that a chunk boundary can therefore fall
+      mid-line, which is expected and tested, not a defect.
+    files:
+      - crates/hexcell-core/src/fragmentacion.rs
+  - step: 3
+    action: >-
+      Declare the new module in crates/hexcell-core/src/lib.rs by adding `pub mod
+      fragmentacion;` in the existing alphabetically-ordered module list (admision, canal,
+      fragmentacion, identidad, inferencia, presupuesto), and nothing else; the crate-level doc
+      comment's empty-dependency-table claim stays true and needs no edit.
+    files:
+      - crates/hexcell-core/src/lib.rs
+  - step: 4
+    action: >-
+      Add crates/hexcell-core/tests/fragmentacion.rs as an integration test file, mirroring the
+      structure and voice of tests/presupuesto.rs (module doc comment naming the ACs it covers,
+      one #[test] fn per scenario, Spanish assertion messages). Cover AC-1 through AC-6: short
+      input, empty input, long input with overlap reconstruction, the short-ragged-remainder
+      edge case, list/bullet text with an asserted mid-line split point, both overlap-invalid
+      cases (== and >), and the accented/ñ/emoji UTF-8 safety case with a reconstruction
+      assertion. No new dev-dependency is needed; every assertion uses std only.
+    files:
+      - crates/hexcell-core/tests/fragmentacion.rs
+
+risks:
+  - >-
+    DESIGN DECISION, RETURN TYPE IS Vec<String>, NOT A WRAPPING STRUCT. The function returns
+    plain owned strings in order, not a Fragmento{ordinal, texto} type. Wrapping now would
+    presuppose stage A-5 task 4's ingestion shape before that task exists, and this function has
+    no id_documento to attach; inventing a struct today only to edit it again in task 4 is
+    premature abstraction the spec's own invariants forbid (this task assigns no
+    fragmentos.ordinal or fragmentos.id_documento). Vec index IS the eventual ordinal: task 4 is
+    expected to `.enumerate()` this Vec, and that enumeration is gapless and stable because Vec
+    preserves insertion order and this function never produces or filters out an empty chunk
+    for non-empty input (every chunk pushed has fin > inicio strictly, by loop construction), so
+    fragmentos.texto's CHECK (length(texto) > 0) is satisfied by construction for every chunk of
+    a non-empty result, and the whole-input empty-string case is handled by the separate early
+    return before the loop runs at all.
+  - >-
+    VERIFIED AGAINST MIGRATION COMMENTS, NOT ASSUMED. The task brief asks to confirm SQLite's
+    length(texto) counts characters, not bytes, from the migration's own comments rather than
+    general SQLite knowledge. crates/hexcell-storage/migraciones/conocimiento/0002-esquema-de-conocimiento.sql
+    itself does NOT state this explicitly in its comments (its CHECK comment only says "impide
+    fragmentos vacíos", nothing about the byte/char distinction) — so this blueprint states it
+    as a known SQLite core-function fact (length() on a TEXT operand counts characters; only on
+    a BLOB does it count bytes) rather than as something the migration documents, and flags the
+    gap: if task 4's author wants that fact written down in Rust-adjacent prose, this task is
+    not the place (0002's header is forbidden to touch here; it belongs to HEX-049's completed
+    scope).
+  - >-
+    NAMING PRECEDENT FOLLOWED EXACTLY. ConfiguracionDeFragmentacion mirrors ConfiguracionGcra
+    (admision.rs) as a small parameter-holding struct; ErrorDeFragmentacion mirrors
+    ErrorDeConfiguracionGcra byte-for-byte in derive list and Display/Error impl shape. No new
+    error-handling idiom is introduced into hexcell-core.
+  - >-
+    O(n) chars() COLLECTION IS NOT A PERFORMANCE RISK AT THIS SCALE. The spec asks whether O(n)
+    matters at "hundreds to a few thousand fragments per cell". A Vec<char> of even a very large
+    single document (tens of thousands of characters) costs a few hundred KB of transient memory
+    (4 bytes/char) and completes in low single-digit milliseconds; this function runs once per
+    document during ingestion (task 4), not per request, so no streaming or lazy-chunking design
+    is warranted here. Char-based iteration is also the ONLY mechanism (short of manual
+    byte-boundary arithmetic, which the invariants explicitly reject) that guarantees no
+    Unicode scalar value is ever split.
+  - >-
+    NO PRIOR FAILURE OVERLAP. quorum analyze failure-lookup returned null for
+    crates/hexcell-core/src/presupuesto.rs, src/lib.rs and Cargo.toml; .ai/tasks/failed/ is
+    empty. The HSME advisory read hook (hsme-cli search-fuzzy, project quorum) returned zero
+    results for this task's summary and goal, so this blueprint proceeds without semantic
+    context, per ADR-0008's graceful-degradation rule.
+  - >-
+    LEXICAL-GUARD FOOTGUN AVOIDED. HEX-049's contract shipped a negated-grep English-word guard
+    that banned common English words appearing as SUBSTRINGS of ordinary Spanish words (e.g.
+    "and" inside "cuando", "grande"), and it would have failed against files predating this
+    task. No such lexical guard is included in this contract's verify.commands; Spanish-only
+    prose is left to human/reviewer judgment plus the existing didactic-comment convention,
+    exactly as most other merged tasks in this project already do.
+  - >-
+    SCOPE BOUNDARY q-analyze MUST NOT FLAG AS A GAP. Nothing in this task opens, creates, or
+    writes any SQLite file; assigns fragmentos.id_documento or ordinal; calls an embeddings API;
+    or performs semantic/line-aware splitting as a primary strategy. All of that is explicitly
+    deferred to stage A-5 tasks 3 through 10 per the spec's own DEFERRED acceptance clause and
+    non_goals list.

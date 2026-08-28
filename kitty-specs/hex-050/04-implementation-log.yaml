@@ -1,0 +1,21 @@
+task_id: HEX-050
+summary: Applied fix-loop from 06-review.json revise verdict on the fragmentacion chunking task.
+entries:
+  - changed_files:
+      - crates/hexcell-core/src/fragmentacion.rs
+    notes:
+      - Removed the duplicated inline `#[cfg(test)] mod tests` block; every inline test had a verbatim counterpart in tests/fragmentacion.rs, so no coverage was lost.
+      - File dropped from 303 to 134 lines, back under the 180-line per-class diff limit.
+      - Translated the remaining anglicism in the doc comment ("restante ragged" -> "resto irregular").
+  - changed_files:
+      - crates/hexcell-core/tests/fragmentacion.rs
+    notes:
+      - Renamed ac_3_resta_ragged_todavia_solapada to ac_3_resta_irregular_todavia_solapada.
+      - Fixed the "rágged" anglicism in the AC-3 test comment to "irregular".
+      - Rewrote the AC-4 list/bullet test to assert exact chunk content (tamano=8, solapamiento=3) proving a boundary falls mid-line, instead of only asserting len() >= 2.
+      - Added 3 boundary tests: length exactly equal to tamano_de_fragmento, length exactly tamano_de_fragmento + 1, and tamano_de_fragmento=1/solapamiento=0 (minimum valid config); all assert exact chunk contents.
+  - changed_files:
+      - crates/hexcell-core/src/lib.rs
+    notes:
+      - No change beyond the prior attempt's single `pub mod fragmentacion;` line; untouched in this fix pass.
+verify_pending: false
