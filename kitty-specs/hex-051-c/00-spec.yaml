@@ -1,0 +1,203 @@
+task_id: HEX-051-c
+summary: sessions.db migration 0004 making reservas.id_conversacion nullable for catalog ingestion, adding consumo_de_ingesta and filtering consumo_por_conversacion, plus reservar_presupuesto_de_ingesta.
+goal: >-
+  Subset of HEX-051 (stage A-5 task 3): add migration 0004 to sessions.db, raising
+  VERSION_DE_ESQUEMA_DE_SESIONES from 3 to 4 with its rung in the stepped ladder in
+  crates/hexcell-storage/src/migraciones.rs. The migration rebuilds the reservas table so
+  id_conversacion becomes NULLABLE (a catalog ingestion has no conversation, and the human
+  decision of 27 de agosto de 2026 rejected a fabricated pseudo-conversation row as a
+  workaround because it would inject fake data into consumo_por_conversacion). It updates the
+  view consumo_por_conversacion to exclude rows with a NULL id_conversacion and adds a sibling
+  view consumo_de_ingesta for exactly those rows. It adds a new public function
+  reservar_presupuesto_de_ingesta in crates/hexcell-storage/src/presupuesto.rs that delegates
+  to a private helper taking Option<&str>, so the existing reservar_presupuesto keeps its exact
+  current signature and no existing caller or test changes. This task does not implement the
+  embeddings port, its adapters, batching, or retries (HEX-051-a/b); it only prepares the
+  accounting substrate those tasks will call into.
+invariants:
+  - VERSION_DE_ESQUEMA_DE_SESIONES advances from 3 to 4 exactly, as one new rung (migration
+    0004) appended to the existing stepped ladder in crates/hexcell-storage/src/migraciones.rs;
+    no other migration file or constant changes.
+  - reservas.id_conversacion becomes nullable; every other column and every existing CHECK
+    constraint on reservas is preserved unchanged after the rebuild, including
+    monto_reservado > 0 and the coupling (estado='activa') = (resuelta_ms IS NULL).
+  - The rebuild of reservas must succeed with PRAGMA foreign_keys = ON and with pre-existing
+    seeded rows in reservas and movimientos (both tables non-empty), not only on an empty
+    database; a rebuild that only works when the database is empty is not acceptable because
+    every production cell has data at upgrade time.
+  - "PRAGMA foreign_keys is a no-op when set inside a transaction in SQLite (verified), and the
+    migration runner in crates/hexcell-storage/src/migraciones.rs wraps every rung in
+    unchecked_transaction, so the canonical SQLite 12-step 'turn foreign keys off' rebuild step
+    is unavailable here. PRAGMA defer_foreign_keys, however, DOES take effect inside a
+    transaction (verified by execution against the exact SQLite amalgamation rusqlite links,
+    3.51.3 via libsqlite3-sys 0.37, with the crate's own build flags). The migration therefore
+    defers foreign-key enforcement for the duration of the rung and rebuilds ONLY reservas:
+    drop the view(s) depending on reservas; create the new reservas with the nullable column and
+    all its CHECK constraints; copy the data across; drop the old reservas; rename; recreate
+    idx_reservas_activas; recreate both views. movimientos is NOT dropped, NOT copied and NOT
+    recreated, and no helper/staging table is created. Rationale for this amendment (human
+    decision, 27 de agosto de 2026, superseding the helper-table sequence originally written
+    here): recreating movimientos by hand was the only step that could silently lose one of its
+    six constraints, and it was never necessary. Enforcement must be back in force by the end of
+    the rung, and foreign_key_check must come back clean before the rung commits. AMENDED AGAIN
+    (verified by execution, 27 de agosto de 2026) because the sequence above does NOT commit on
+    its own and cannot be made safe by the obvious means: (i) SQLite's deferred-violation counter
+    is INCREMENTAL, not a sweep, so DROP TABLE reservas increments it and nothing decrements it
+    when the replacement rows were inserted under the temporary name, making COMMIT fail with
+    FOREIGN KEY constraint failed even though pragma_foreign_key_check reports zero violations;
+    and (ii) PRAGMA defer_foreign_keys = OFF mid-transaction does NOT validate the pending
+    violations, it DISCARDS them silently - a deliberately orphaned pair of movimientos rows
+    committed cleanly in the probe. The rung therefore requires PRAGMA defer_foreign_keys = OFF
+    to be able to commit at all, and that statement MUST be immediately preceded by an explicit
+    gate, because pragma_foreign_key_check does not abort by itself and SQLite has no RAISE
+    outside a trigger: the gate assigns TEXT into the STRICT INTEGER column saldo.disponible only
+    on the failure branch of a CASE, so a violation aborts the rung with 'cannot store TEXT value
+    in INTEGER column'. Both branches must be exercised: the healthy rung commits with saldo
+    untouched, and a deliberately broken rung aborts and leaves the database untouched at
+    version 3. The gate is load-bearing, not decorative; removing it re-enables silent ledger
+    corruption. PRAGMA legacy_alter_table is NOT an alternative: in 3.51.3 it does not stop
+    ALTER TABLE from rewriting the movimientos foreign key, so renaming the old reservas corrupts
+    the ledger."
+  - Zero rows are lost from reservas or movimientos across the rebuild, and
+    consumo_por_conversacion returns identical values before and after the migration for every
+    conversation that already had one.
+  - consumo_por_conversacion excludes any row whose id_conversacion is NULL; this is not
+    cosmetic, since crates/hexcell-storage/src/presupuesto.rs reads that column as a
+    non-optional String (fila.get(0)? into a String), and a NULL row would fail at read time.
+  - consumo_de_ingesta mirrors the same LEFT JOIN anchoring on reservas (not movimientos) as
+    consumo_por_conversacion, for the same reason documented in
+    0003-consumo-por-conversacion.sql — a zero-delta reconciliation writes no movimientos row
+    because of CHECK (monto <> 0) — and it covers exactly the rows consumo_por_conversacion now
+    excludes (id_conversacion IS NULL).
+  - reservar_presupuesto keeps its exact current public signature and behavior; no existing
+    caller or existing test is modified by this task.
+  - reservar_presupuesto_de_ingesta is a new public function that reserves budget for a
+    catalog ingestion by inserting a reservas row with id_conversacion = NULL, implemented by
+    delegating to a private helper parameterized over Option<&str> that both the existing and
+    the new public function call.
+  - After the rebuild, all tables remain STRICT (checked by SELECT strict FROM
+    pragma_table_list, per crates/hexcell-storage/tests/migraciones.rs), both indexes
+    (idx_reservas_activas, idx_movimientos_conversacion) are present, no residual helper table
+    exists, and the foreign key referencing conversaciones(id_conversacion) is still enforced
+    for non-null values.
+  - All tests exercising VERSION_DE_ESQUEMA_DE_SESIONES read the named constant, never a
+    literal integer, consistent with the existing HEX-041 lesson and verified still true today
+    across crates/hexcell-storage/tests/.
+  - "CORRECTED (verified by execution, 27 de agosto de 2026): a rusqlite::Connection::open in
+    THIS repository has PRAGMA foreign_keys ON, not off, because build.rs line 126 compiles the
+    bundled amalgamation with -DSQLITE_DEFAULT_FOREIGN_KEYS=1. The widely repeated 'raw
+    Connection::open has foreign keys off' rule is true of stock SQLite but FALSE here, and the
+    comment at crates/hexcell-storage/src/pools.rs:438 is inaccurate for the same reason. A new
+    test must therefore ASSERT the pragma's value rather than assume either default, so it can
+    never pass vacuously."
+  - All repository content this task touches (SQL comments, Rust doc comments, code comments,
+    commit message, identifiers) is written in Spanish and is didactic (explains WHY, not what
+    the line does), matching the voice of 0002-saldo-y-movimientos.sql and
+    0003-consumo-por-conversacion.sql; only this Quorum spec's field values are written in
+    English.
+acceptance:
+  - id: AC-1
+    statement: Migration 0004 exists under crates/hexcell-storage/migraciones/sesiones/ and
+      is wired into the stepped ladder in crates/hexcell-storage/src/migraciones.rs, raising
+      VERSION_DE_ESQUEMA_DE_SESIONES from 3 to 4.
+    given: an existing sessions.db at schema version 3 (the ladder produced by migrations
+      0001-0003)
+    when: aplicar_migraciones_de_sesiones runs against that database
+    then: PRAGMA user_version reports 4 and VERSION_DE_ESQUEMA_DE_SESIONES equals 4 in the
+      crate constant, verified by a test that reads the constant, not a literal
+  - id: AC-2
+    statement: The migration succeeds against a sessions.db seeded with existing rows in
+      reservas and movimientos before the rebuild, not only against an empty database.
+    given: a sessions.db at schema version 3 with at least one reservas row already resolved
+      (estado='conciliada' or 'liberada') and at least one corresponding movimientos row
+      referencing that reservas row
+    when: migration 0004 is applied with PRAGMA foreign_keys = ON on the connection
+    then: the migration completes without a FOREIGN KEY constraint failed error, every
+      pre-existing row in reservas and movimientos is still present afterward with its original
+      values (id_conversacion, monto_reservado, estado, resuelta_ms for reservas; id_reserva,
+      id_conversacion, clase, monto, saldo_resultante for movimientos), and
+      consumo_por_conversacion returns the same unidades_consumidas value for that conversation
+      before and after the migration
+  - id: AC-3
+    statement: reservas.id_conversacion is nullable after the migration, and inserting a row
+      with id_conversacion = NULL succeeds while all pre-existing CHECK constraints on reservas
+      still reject invalid values.
+    given: a sessions.db migrated to version 4
+    when: a row is inserted into reservas with id_conversacion = NULL, monto_reservado > 0, a
+      valid estado, and a coherent resuelta_ms
+    then: the insert succeeds, and separately, an insert violating monto_reservado > 0 or the
+      (estado='activa') = (resuelta_ms IS NULL) coupling is rejected exactly as before the
+      migration
+  - id: AC-4
+    statement: consumo_por_conversacion excludes rows with a NULL id_conversacion, and
+      consumo_de_ingesta returns exactly those excluded rows using the same reservas-anchored
+      LEFT JOIN semantics.
+    given: a sessions.db migrated to version 4 with at least one conciliated reservas row
+      carrying a real id_conversacion and at least one conciliated reservas row carrying
+      id_conversacion = NULL
+    when: both views are queried
+    then: consumo_por_conversacion returns only the row with the real id_conversacion,
+      consumo_de_ingesta returns only the aggregate for the NULL-id_conversacion rows, and the
+      consumed-units arithmetic in consumo_de_ingesta matches monto_reservado - COALESCE(monto,
+      0) for its conciliated rows exactly as consumo_por_conversacion does for its own
+  - id: AC-5
+    statement: reservar_presupuesto_de_ingesta reserves budget for a catalog ingestion without
+      an id_conversacion, while reservar_presupuesto keeps its exact current signature and
+      passes unmodified against the new schema.
+    given: a sessions.db migrated to version 4 with sufficient available balance
+    when: reservar_presupuesto_de_ingesta is called with an amount of budget units and no
+      conversation id
+    then: it returns a Concedida verdict and inserts a reservas row with id_conversacion = NULL,
+      through a private helper taking Option<&str> that reservar_presupuesto also calls
+      internally, and every existing test that calls reservar_presupuesto compiles and passes
+      unchanged
+  - id: AC-6
+    statement: After the rebuild, all tables in sessions.db remain STRICT, both
+      idx_reservas_activas and idx_movimientos_conversacion are present, and no residual helper
+      table used during the rebuild remains.
+    given: a sessions.db migrated to version 4
+    when: SELECT name, strict FROM pragma_table_list and SELECT name FROM sqlite_master WHERE
+      type='index' are queried
+    then: every application table (including reservas and movimientos) reports strict = 1, both
+      named indexes exist, and no extra table beyond the documented schema exists
+  - "cargo build --workspace, cargo test --workspace, cargo fmt --check, and cargo clippy --workspace -- -D warnings all pass."
+  - "DEFERRED (explicitly out of scope for this task, covered by sibling tasks HEX-051-a and HEX-051-b instead, not to be flagged by q-analyze as a gap): the ProveedorDeEmbeddings port trait and its request/response types; the OpenRouter and Google AI Studio (Gemini) adapters and their enum dispatch; retry policy, fixed backoff, and 429/4xx retry exclusions for either adapter; batching of fragment texts into a single call; partial-batch-failure resumption logic; environment variable configuration for either embeddings provider (HEXCELL_EMBEDDINGS_*); the f32 little-endian vector byte layout produced by an adapter call. This task only prepares the sessions.db accounting substrate (schema + reservar_presupuesto_de_ingesta) that those tasks will call into; it performs no HTTP call and touches no adapter code."
+risk: high
+non_goals:
+  - The ProveedorDeEmbeddings port trait, its request/response types, and hexcell-core changes
+    (stage A-5 task 3, covered by sibling task HEX-051-a).
+  - The OpenRouter adapter and the Google AI Studio (Gemini) adapter, their enum dispatch, and
+    any HTTP transport code (sibling tasks HEX-051-a and HEX-051-b).
+  - Retry policy, fixed backoff, batching of fragment texts, and partial-batch-failure
+    resumption logic for either adapter (sibling tasks HEX-051-a and HEX-051-b).
+  - Environment variable configuration for either embeddings provider (HEXCELL_EMBEDDINGS_*
+    constants) (sibling tasks HEX-051-a and HEX-051-b).
+  - The f32 little-endian vector byte layout and any write to knowledge_staging.db (stage A-5
+    task 4, out of scope for all of HEX-051's children).
+  - Any change to reservar_presupuesto's existing public signature or behavior.
+  - Any change to conciliar_presupuesto or liberar_presupuesto beyond what is strictly required
+    for them to keep compiling against the nullable id_conversacion column.
+constraints:
+  - Every scope item traces to FR-06 (Shadow DB indexing via batched external embeddings calls)
+    of docs/PRD.md by way of preparing the accounting substrate stage A-5 task 3 needs; no
+    requirement is invented beyond what is described in this spec.
+  - All SQL and Rust identifiers, comments, and doc comments added by this task are Spanish and
+    didactic, matching the voice of 0002-saldo-y-movimientos.sql and
+    0003-consumo-por-conversacion.sql; only this Quorum spec's field values are English.
+  - Never version *.db, *.db-wal, *.db-shm, or .env* files.
+  - Repository is public; this task introduces no secret, credential, or external network
+    dependency of any kind — it is a pure schema and accounting-function change.
+  - The migration must be idempotent under the existing ladder semantics - re-running
+    aplicar_migraciones_de_sesiones against an already-migrated (version 4) database is a no-op
+    that returns Ok, per the documented behavior in crates/hexcell-storage/src/migraciones.rs.
+  - The rebuild sequence must work under PRAGMA foreign_keys = ON inside a single
+    unchecked_transaction, since that PRAGMA is a no-op when toggled mid-transaction in SQLite
+    and the migration runner never turns it off; any test asserting foreign-key enforcement
+    must enable PRAGMA foreign_keys explicitly on its own raw connection, since it defaults to
+    OFF on a bare rusqlite::Connection::open.
+  - Any helper or staging table created during the rebuild is dropped within the same
+    migration rung; crates/hexcell-storage/tests/migraciones.rs asserts every table is STRICT,
+    and a table created with CREATE TABLE ... AS SELECT is not STRICT.
+  - Dates in prose are absolute ("27 de agosto de 2026"), never relative.
+depends_on: []
+parent_task: HEX-051

@@ -1,0 +1,94 @@
+task_id: HEX-051-c
+summary: sessions.db migration 0004 defers foreign keys and rebuilds only reservas with a nullable id_conversacion, adds the consumo_de_ingesta view, and adds reservar_presupuesto_de_ingesta.
+goal: Prepare the sessions.db accounting substrate that stage A-5 task 3 needs, so a catalog ingestion can reserve budget without a conversation. Raise VERSION_DE_ESQUEMA_DE_SESIONES from 3 to 4 with one new rung in the stepped ladder. The rung defers foreign-key enforcement with PRAGMA defer_foreign_keys and rebuilds ONLY `reservas`; `movimientos` is never dropped, copied or recreated, and no helper or staging table is created. Every guarantee in this migration is VACUOUS on an empty database, where there are no parent rows to orphan, so the seeded upgrade test is the only thing standing between this task and a green suite over a broken migration. Implement no embeddings port, no adapter, no batching, no retry, and no actual consumption of the ingestion budget; those belong to siblings HEX-051-a and HEX-051-b.
+read:
+- .ai/tasks/active/HEX-051-c/00-spec.yaml
+- .ai/tasks/active/HEX-051-c/01-blueprint.yaml
+- crates/hexcell-storage/migraciones/sesiones/0001-esquema-inicial.sql
+- crates/hexcell-storage/migraciones/sesiones/0002-saldo-y-movimientos.sql
+- crates/hexcell-storage/migraciones/sesiones/0003-consumo-por-conversacion.sql
+- crates/hexcell-storage/migraciones/conocimiento/0002-esquema-de-conocimiento.sql
+- crates/hexcell-storage/src/pools.rs
+- crates/hexcell-storage/src/sesiones.rs
+- crates/hexcell-storage/src/error.rs
+- crates/hexcell-storage/src/tiempo.rs
+- crates/hexcell-storage/tests/pools.rs
+- crates/hexcell-storage/tests/respaldo.rs
+- crates/hexcell-storage/tests/comun/mod.rs
+- crates/hexcell/src/procesador.rs
+- crates/hexcell-core/src/presupuesto.rs
+- crates/hexcell-core/src/identidad.rs
+- docs/adr/adr-0005-contabilidad-dos-fases.md
+- docs/plan/fase-a-5-conocimiento-shadow-db.md
+touch:
+- crates/hexcell-storage/migraciones/sesiones/0004-reservas-sin-conversacion.sql
+- crates/hexcell-storage/src/migraciones.rs
+- crates/hexcell-storage/src/presupuesto.rs
+- crates/hexcell-storage/src/lib.rs
+- crates/hexcell-storage/tests/migraciones.rs
+- crates/hexcell-storage/tests/presupuesto.rs
+forbid:
+  files:
+  - crates/hexcell-storage/migraciones/sesiones/0001-esquema-inicial.sql
+  - crates/hexcell-storage/migraciones/sesiones/0002-saldo-y-movimientos.sql
+  - crates/hexcell-storage/migraciones/sesiones/0003-consumo-por-conversacion.sql
+  - crates/hexcell-storage/src/pools.rs
+  - crates/hexcell-storage/tests/pools.rs
+  - crates/hexcell-storage/tests/respaldo.rs
+  - crates/hexcell/src/procesador.rs
+  - crates/hexcell-core/src/presupuesto.rs
+  - docs/adr/README.md
+  - docs/STATUS.md
+  - docs/bitacora-de-descartes.md
+  - .ai/tasks/active/HEX-051-c/00-spec.yaml
+  behaviors:
+  - Never edit an already-applied migration file. Version 4 is reached by appending one new rung, never by modifying 0001, 0002 or 0003, whose scripts have already run against production cells.
+  - Never write a rebuild that relies on turning foreign keys off. PRAGMA foreign_keys is a no-op inside a transaction and the runner wraps every rung in unchecked_transaction, so step 1 of the canonical 12-step rebuild is unavailable. Use PRAGMA defer_foreign_keys, which does take effect inside a transaction.
+  - Never separate the integrity gate from PRAGMA defer_foreign_keys = OFF, never reorder them, and never delete the gate while keeping the pragma. Setting that pragma to OFF mid-transaction DISCARDS pending deferred violations instead of checking them, which was proved by execution to commit a corrupt ledger with orphaned movimientos rows. The gate must immediately precede it, and PRAGMA defer_foreign_keys = OFF must appear exactly once in the rung.
+  - Never drop, copy or recreate `movimientos`, and never create any helper or staging table. Hand-copying the ledger DDL was the only step that could silently lose one of its six constraints, and the human removed it from the design on 27 de agosto de 2026.
+  - Never assume an empty database is a sufficient test. With enforcement deferred, an empty database has no parent rows to orphan, so the counter stays at zero, the gate scans nothing and the commit succeeds however wrong the rung is.
+  - Never let the seeded upgrade test lose its pre-migration guard assertions, and never let a test assume the value of PRAGMA foreign_keys instead of asserting it.
+  - Never change the signature, parameter order, parameter types or return type of reservar_presupuesto, and never edit an existing test in tests/presupuesto.rs. Those tests passing unmodified is the evidence for AC-5.
+  - 'EXPLICITLY PERMITTED, and required by blueprint step 8 (human decision, 27 de agosto de 2026): widening the internal row type of conciliar_presupuesto and liberar_presupuesto from Option<(String, i64)> to Option<(Option<String>, i64)>. Their public signatures, return types and conversation-path behaviour must stay unchanged and no caller may be touched, but this edit is in scope and must NOT be treated as a forbidden change to those functions. Without it units reserved for an ingestion can never be reconciled or released and stay trapped in saldo.reservado.'
+  - Never drop, weaken or reorder a CHECK constraint during the rebuild. monto_reservado > 0, the (estado = 'activa') = (resuelta_ms IS NULL) coupling, the estado enum, and every constraint on the recreated movimientos must be transcribed verbatim from 0002.
+  - Never make consumo_por_conversacion return a NULL id_conversacion. presupuesto.rs reads that column into a non-optional String, so a NULL row is a runtime read failure, not a cosmetic blemish.
+  - Never let consumo_de_ingesta return NULL on a database with no ingestion rows. An aggregate without GROUP BY always returns one row, and SUM over zero rows is NULL, so the COALESCE guard is mandatory.
+  - Never write English prose, English comments or English identifiers in repository content. Comments are didactic Spanish explaining WHY. Dates are absolute, in the form "27 de agosto de 2026".
+  - Never name a raw transport identifier inside a stored schema object. tests/pools.rs scans the full SQL text, comments included, for wa_id, waid, jid, remote_jid, chat_id, telefono, phone, msisdn, e164, numero_de_telefono and whatsapp.
+  - Never assert the sessions schema version as a literal integer. Every assertion reads VERSION_DE_ESQUEMA_DE_SESIONES, which is the HEX-041 lesson.
+  - Never add a new ADR, and never touch docs/. This extends adr-0005 rather than superseding it, and sibling HEX-051-a already claims the ADR index, STATUS.md and the discard log.
+  - Never implement the embeddings port, either adapter, batching, retries, provider configuration, or any HTTP call. This task performs no network access whatsoever.
+  - Never version *.db, *.db-wal, *.db-shm or .env* artifacts produced while testing.
+verify:
+  commands:
+  - cargo fmt --check
+  - cargo clippy --workspace -- -D warnings
+  - cargo build --workspace
+  - cargo test --workspace
+  - bash -c '! grep -nE "\b(the|and|with|this|that|which|because|should|would|about|consumption|accumulated|conversation|ledger|movement|reserve|reserved|reconciled|released|balance|restart|amount|query|column|derived|missing|absent|catalog|budget)\b" crates/hexcell-storage/migraciones/sesiones/0004-reservas-sin-conversacion.sql crates/hexcell-storage/src/migraciones.rs crates/hexcell-storage/src/presupuesto.rs crates/hexcell-storage/src/lib.rs crates/hexcell-storage/tests/migraciones.rs crates/hexcell-storage/tests/presupuesto.rs'
+  - bash -c 'grep -q "consumo_de_ingesta" crates/hexcell-storage/tests/migraciones.rs'
+  - bash -c 'grep -q "defer_foreign_keys" crates/hexcell-storage/migraciones/sesiones/0004-reservas-sin-conversacion.sql'
+  - bash -c 'grep -q "pragma_foreign_key_check" crates/hexcell-storage/migraciones/sesiones/0004-reservas-sin-conversacion.sql'
+  - bash -c 'test "$(sed "s/--.*//" crates/hexcell-storage/migraciones/sesiones/0004-reservas-sin-conversacion.sql | grep -c "defer_foreign_keys = OFF")" = "1"'
+  - 'bash -c ''sed "s/--.*//" crates/hexcell-storage/migraciones/sesiones/0004-reservas-sin-conversacion.sql > /tmp/q-0004-sin-comentarios.sql; test "$(grep -n "pragma_foreign_key_check" /tmp/q-0004-sin-comentarios.sql | head -1 | cut -d: -f1)" -lt "$(grep -n "defer_foreign_keys = OFF" /tmp/q-0004-sin-comentarios.sql | head -1 | cut -d: -f1)"'''
+  - bash -c '! grep -niE "DROP[[:space:]]+TABLE[[:space:]]+movimientos" crates/hexcell-storage/migraciones/sesiones/0004-reservas-sin-conversacion.sql'
+  - bash -c 'grep -qE "foreign_keys[[:space:]]*=[[:space:]]*ON" crates/hexcell-storage/tests/migraciones.rs'
+  target_s: 60
+acceptance:
+  human_gate: true
+limits:
+  max_files_changed: 6
+  max_diff_lines: 900
+  per_class:
+  - glob: crates/hexcell-storage/migraciones/**
+    max_diff_lines: 160
+  - glob: crates/hexcell-storage/src/**
+    max_diff_lines: 280
+  - glob: crates/hexcell-storage/tests/**
+    max_diff_lines: 460
+execution:
+  mode: worktree_edit
+  branch: ai/HEX-051-c
+retry_policy:
+  max_attempts: 2
+  escalate_after: 2

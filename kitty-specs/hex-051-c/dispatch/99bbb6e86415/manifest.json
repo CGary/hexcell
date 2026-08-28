@@ -1,0 +1,61 @@
+{
+  "task_id": "HEX-051-c",
+  "bundle_hash": "99bbb6e864159cdaf56a3218912521a2e54ac6c798ac16cb06f9e19a29dca882",
+  "files": [
+    ".ai/tasks/active/HEX-051-c/00-spec.yaml",
+    ".ai/tasks/active/HEX-051-c/01-blueprint.yaml",
+    "crates/hexcell-core/src/identidad.rs",
+    "crates/hexcell-core/src/presupuesto.rs",
+    "crates/hexcell-storage/migraciones/conocimiento/0002-esquema-de-conocimiento.sql",
+    "crates/hexcell-storage/migraciones/sesiones/0001-esquema-inicial.sql",
+    "crates/hexcell-storage/migraciones/sesiones/0002-saldo-y-movimientos.sql",
+    "crates/hexcell-storage/migraciones/sesiones/0003-consumo-por-conversacion.sql",
+    "crates/hexcell-storage/src/error.rs",
+    "crates/hexcell-storage/src/lib.rs",
+    "crates/hexcell-storage/src/migraciones.rs",
+    "crates/hexcell-storage/src/pools.rs",
+    "crates/hexcell-storage/src/presupuesto.rs",
+    "crates/hexcell-storage/src/sesiones.rs",
+    "crates/hexcell-storage/src/tiempo.rs",
+    "crates/hexcell-storage/tests/comun/mod.rs"
+  ],
+  "protocol_version": "fleet-bundle-protocol/v2",
+  "created_at": "2026-08-28T03:59:44Z",
+  "dropped": [
+    {
+      "component": "code_slice",
+      "path": "docs/plan/fase-a-5-conocimiento-shadow-db.md",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "docs/adr/adr-0005-contabilidad-dos-fases.md",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "crates/hexcell/src/procesador.rs",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "crates/hexcell-storage/tests/respaldo.rs",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "crates/hexcell-storage/tests/presupuesto.rs",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "crates/hexcell-storage/tests/pools.rs",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "crates/hexcell-storage/tests/migraciones.rs",
+      "reason": "bundle exceeded max_bytes budget"
+    }
+  ]
+}

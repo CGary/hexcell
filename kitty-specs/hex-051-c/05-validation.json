@@ -1,0 +1,80 @@
+{
+  "task_id": "HEX-051-c",
+  "summary": "Los doce verify.commands pasan (exit 0) en worktrees/HEX-051-c en el commit 0053305, tras aplicar los dos fix_tasks de la revision.",
+  "executed_at": "2026-08-28T00:55:00Z",
+  "commands": [
+    {
+      "command": "cargo fmt --check",
+      "exit_code": 0,
+      "duration_s": 0.19,
+      "output_excerpt": "sin diferencias de formato tras aplicar cargo fmt"
+    },
+    {
+      "command": "cargo clippy --workspace -- -D warnings",
+      "exit_code": 0,
+      "duration_s": 0.1,
+      "output_excerpt": "sin warnings con -D warnings"
+    },
+    {
+      "command": "cargo build --workspace",
+      "exit_code": 0,
+      "duration_s": 0.07,
+      "output_excerpt": "Finished dev profile"
+    },
+    {
+      "command": "cargo test --workspace",
+      "exit_code": 0,
+      "duration_s": 4.07,
+      "output_excerpt": "suites completas sin fallos, incluidos el upgrade 3->4 con filas sembradas y la rama de fallo de la verja"
+    },
+    {
+      "command": "bash -c (grep negado de fugas de ingles sobre los archivos del contrato)",
+      "exit_code": 0,
+      "duration_s": 0.0,
+      "output_excerpt": "sin coincidencias"
+    },
+    {
+      "command": "bash -c (presencia de consumo_de_ingesta en los tests)",
+      "exit_code": 0,
+      "duration_s": 0.0,
+      "output_excerpt": "presente"
+    },
+    {
+      "command": "bash -c (presencia de defer_foreign_keys en la migracion 0004)",
+      "exit_code": 0,
+      "duration_s": 0.0,
+      "output_excerpt": "presente"
+    },
+    {
+      "command": "bash -c (presencia de pragma_foreign_key_check en la migracion 0004)",
+      "exit_code": 0,
+      "duration_s": 0.0,
+      "output_excerpt": "presente"
+    },
+    {
+      "command": "bash -c (ocurrencia unica de defer_foreign_keys = OFF, ignorando comentarios)",
+      "exit_code": 0,
+      "duration_s": 0.0,
+      "output_excerpt": "exactamente una sentencia"
+    },
+    {
+      "command": "bash -c (la verja pragma_foreign_key_check precede a defer_foreign_keys = OFF, ignorando comentarios)",
+      "exit_code": 0,
+      "duration_s": 0.0,
+      "output_excerpt": "verja en linea 72, OFF en linea 79"
+    },
+    {
+      "command": "bash -c (grep negado de DROP TABLE movimientos)",
+      "exit_code": 0,
+      "duration_s": 0.0,
+      "output_excerpt": "sin coincidencias: movimientos nunca se recrea"
+    },
+    {
+      "command": "bash -c (presencia de foreign_keys = ON en los tests)",
+      "exit_code": 0,
+      "duration_s": 0.0,
+      "output_excerpt": "presente"
+    }
+  ],
+  "overall_result": "passed"
+}

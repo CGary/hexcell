@@ -1,0 +1,307 @@
+task_id: HEX-051-c
+summary: >-
+  Migration 0004 rebuilds only reservas with a nullable id_conversacion under deferred foreign keys, adds the consumo_de_ingesta view, and adds reservar_presupuesto_de_ingesta.
+affected_files:
+  - crates/hexcell-storage/migraciones/sesiones/0004-reservas-sin-conversacion.sql
+  - crates/hexcell-storage/src/migraciones.rs
+  - crates/hexcell-storage/src/presupuesto.rs
+  - crates/hexcell-storage/src/lib.rs
+  - crates/hexcell-storage/tests/migraciones.rs
+  - crates/hexcell-storage/tests/presupuesto.rs
+symbols:
+  - VERSION_DE_ESQUEMA_DE_SESIONES
+  - ESQUEMA_RESERVAS_SIN_CONVERSACION_DE_SESIONES
+  - MIGRACIONES_DE_SESIONES
+  - RepositorioDeSesiones.reservar_presupuesto
+  - RepositorioDeSesiones.reservar_presupuesto_de_ingesta
+  - RepositorioDeSesiones.reservar
+  - RepositorioDeSesiones.conciliar_presupuesto
+  - RepositorioDeSesiones.liberar_presupuesto
+  - reservas
+  - reservas_nueva
+  - movimientos
+  - consumo_por_conversacion
+  - consumo_de_ingesta
+  - idx_reservas_activas
+  - OBJETOS_ESPERADOS
+dependencies:
+  - crates/hexcell-storage/migraciones/sesiones/0002-saldo-y-movimientos.sql
+  - crates/hexcell-storage/migraciones/sesiones/0003-consumo-por-conversacion.sql
+  - crates/hexcell-storage/src/pools.rs
+  - crates/hexcell-storage/tests/pools.rs
+  - crates/hexcell-storage/tests/respaldo.rs
+  - crates/hexcell/src/procesador.rs
+test_scenarios:
+  - >-
+    AC-1: a database at version 3 migrates to version 4; PRAGMA user_version equals
+    VERSION_DE_ESQUEMA_DE_SESIONES read as the named constant, never as the literal 4.
+  - >-
+    AC-2 (the load-bearing test, rationale RESTATED for the deferred-foreign-key design). Seed a
+    version 3 database with reservas rows in all three states and movimientos rows whose
+    id_reserva is non-null, then migrate. Under the new sequence the failure mode is no longer an
+    immediate DROP TABLE error: enforcement is deferred, so a defective rung fails at the
+    integrity gate or at COMMIT instead. What the seeded rows now prove is that the deferred
+    violation counter, the explicit full-database scan and the final commit all agree on a
+    populated database — none of which an empty database exercises at all, because with no
+    reservas rows there is nothing to orphan and every path is vacuously clean.
+  - >-
+    AC-2 (anti-degradation guard, unchanged and mandatory): the test asserts BEFORE migrating
+    that the seed is non-empty and that consumo_por_conversacion already reports a strictly
+    positive figure. If the seed ever silently fails, those pre-assertions fail loudly instead of
+    letting the test decay into the empty-database case.
+  - >-
+    AC-2 (continued): after migrating, every seeded row is still present with its original column
+    values, row counts for reservas and movimientos are unchanged, and consumo_por_conversacion
+    returns the identical unidades_consumidas per conversation that it returned before.
+  - >-
+    Invariant 12: the test ASSERTS the value of PRAGMA foreign_keys on its own connection rather
+    than assuming a default, so it can never pass vacuously. In this repository a raw
+    Connection::open reports 1, because the bundled amalgamation is compiled with
+    -DSQLITE_DEFAULT_FOREIGN_KEYS=1; the test asserts that observed value and then sets the
+    pragma explicitly, staying correct if the workspace ever links a system SQLite.
+  - >-
+    Integrity gate, positive path: after migrating, PRAGMA foreign_key_check returns no rows and
+    saldo.disponible is unchanged, proving the gate's no-op branch did not disturb the balance.
+  - >-
+    Integrity gate, negative path: this is the test that proves the gate is load-bearing rather
+    than decorative. Run the rung's statements against a database while deliberately omitting one
+    parent reservas row from the copy, and assert the transaction ABORTS and leaves the database
+    untouched at version 3. Without the gate this exact case commits a corrupt ledger.
+  - >-
+    AC-3: inserting into reservas with id_conversacion = NULL succeeds, while monto_reservado > 0,
+    the (estado='activa') = (resuelta_ms IS NULL) coupling, the estado enum, the foreign key for
+    non-null values and STRICT typing all still reject invalid rows exactly as before.
+  - >-
+    AC-4: with one conciliated reservation carrying a real id_conversacion and one carrying NULL,
+    consumo_por_conversacion returns only the former and consumo_de_ingesta only the latter, with
+    the same monto_reservado - COALESCE(monto, 0) arithmetic.
+  - >-
+    AC-4 (edge case): on a database with no ingestion rows, consumo_de_ingesta returns exactly one
+    row holding integer 0, never NULL. Without the COALESCE guard a bare aggregate over zero rows
+    yields NULL, which would fail any non-optional read.
+  - >-
+    AC-5: reservar_presupuesto_de_ingesta returns Concedida and inserts a reservas row with
+    id_conversacion = NULL plus its matching movimientos row, moving disponible and reservado
+    exactly as the conversation path does.
+  - >-
+    AC-5 (regression): every existing test calling reservar_presupuesto compiles and passes with no
+    edit, and crates/hexcell/src/procesador.rs keeps compiling untouched.
+  - >-
+    Step 8 round trip: a reservation created by reservar_presupuesto_de_ingesta can be closed by
+    conciliar_presupuesto AND by liberar_presupuesto, returning Resuelta and freeing the held
+    units. Before the step 8 fix both return Err on a NULL id_conversacion, so this test is the
+    direct evidence that budget is no longer trapped in `reservado`.
+  - >-
+    AC-6: after migrating, every application table reports strict = 1, both idx_reservas_activas
+    and idx_movimientos_conversacion exist, the OBJETOS_ESPERADOS inventory (grown from 14 to 15
+    by consumo_de_ingesta) is fully present, and no reservas_nueva or other residual table
+    survives the rung.
+  - >-
+    movimientos is untouched: its stored DDL in sqlite_schema after migrating is byte-identical to
+    its DDL before, and its six constraints (both foreign keys, the clase enum, monto <> 0,
+    saldo_resultante >= 0, STRICT) all still reject invalid rows.
+  - >-
+    Idempotence: re-running aplicar_migraciones_de_sesiones against a version 4 database is a
+    no-op returning Ok, and a sentinel row written between runs survives.
+  - >-
+    Full-ladder path: a brand-new empty database walks 0001 through 0004, ends at version 4 with a
+    clean PRAGMA foreign_key_check and exactly 15 schema objects.
+strategy:
+  - step: 1
+    action: >-
+      Write the new rung as a SQL Value Object with a didactic Spanish header. It must explain WHY
+      PRAGMA foreign_keys cannot be turned off here (it is a no-op inside a transaction and the
+      runner wraps every rung in unchecked_transaction), WHY PRAGMA defer_foreign_keys is the tool
+      that does work inside a transaction, and WHY movimientos is deliberately never dropped or
+      recreated: hand-copying its DDL was the only step that could silently lose one of its six
+      constraints, and it was never necessary (human decision, 27 de agosto de 2026).
+    files:
+      - crates/hexcell-storage/migraciones/sesiones/0004-reservas-sin-conversacion.sql
+  - step: 2
+    action: >-
+      Emit the rebuild, all in one rung so the runner's single transaction covers it. Open with
+      PRAGMA defer_foreign_keys = ON. Then DROP VIEW consumo_por_conversacion; CREATE TABLE
+      reservas_nueva with id_conversacion as plain TEXT REFERENCES conversaciones(id_conversacion)
+      — no NOT NULL — and all three surviving CHECK constraints, declared STRICT; copy every column
+      across explicitly by name, never with SELECT *; DROP TABLE reservas; ALTER TABLE
+      reservas_nueva RENAME TO reservas; CREATE INDEX idx_reservas_activas. movimientos is never
+      dropped, copied or recreated, and no helper or staging table is created.
+    files:
+      - crates/hexcell-storage/migraciones/sesiones/0004-reservas-sin-conversacion.sql
+  - step: 3
+    action: >-
+      Emit the integrity gate, which is the most delicate part of this task and must be written
+      exactly as verified. A bare PRAGMA foreign_key_check only RETURNS rows, it never aborts, and
+      SQLite has no RAISE outside a trigger, so the check is turned into an abort by assigning a
+      TEXT value into a STRICT INTEGER column on the failing branch only: UPDATE saldo SET
+      disponible = CASE WHEN (SELECT count(*) FROM pragma_foreign_key_check) = 0 THEN disponible
+      ELSE '<mensaje en espanol>' END WHERE id = 1. The clean branch rewrites disponible with its
+      own value and is a genuine no-op; the dirty branch fails the statement, which aborts the rung
+      and rolls the whole transaction back. Comment WHY this shape is used, or a future reader will
+      simplify it into something that does not abort.
+    files:
+      - crates/hexcell-storage/migraciones/sesiones/0004-reservas-sin-conversacion.sql
+  - step: 4
+    action: >-
+      Immediately AFTER the gate, and only there, emit PRAGMA defer_foreign_keys = OFF, then create
+      both views. This single line is what allows the rung to commit, because the deferred counter
+      is incremental and was left non-zero by DROP TABLE reservas even though the database is
+      provably consistent. See risk R-1: the same line placed anywhere else, or kept while the gate
+      is removed, silently discards real violations and commits a corrupt ledger. Recreate
+      consumo_por_conversacion identical to 0003 except for WHERE r.id_conversacion IS NOT NULL
+      before the GROUP BY, then create consumo_de_ingesta over the same reservas-anchored LEFT JOIN
+      with WHERE r.id_conversacion IS NULL, no GROUP BY, and the SUM wrapped in COALESCE(..., 0),
+      documenting in Spanish that an aggregate without GROUP BY always returns one row and SUM over
+      zero rows is NULL.
+    files:
+      - crates/hexcell-storage/migraciones/sesiones/0004-reservas-sin-conversacion.sql
+  - step: 5
+    action: >-
+      Wire the rung into the ladder: add the include_str! constant, append the version 4 step to
+      MIGRACIONES_DE_SESIONES, raise VERSION_DE_ESQUEMA_DE_SESIONES to 4, and extend that
+      constant's doc comment to say what version 4 introduces, matching how
+      VERSION_DE_ESQUEMA_DE_CONOCIMIENTO documents its own version 2.
+    files:
+      - crates/hexcell-storage/src/migraciones.rs
+  - step: 6
+    action: >-
+      Refactor the Application Service without changing its surface. Move the body of
+      reservar_presupuesto into a new PRIVATE method whose conversation parameter is Option<&str>;
+      keep it private rather than pub(crate), since tests reach it only through the two public
+      functions. reservar_presupuesto becomes a thin delegation passing
+      Some(id_conversacion.como_str()) and keeps its signature byte-identical. Bind the parameter
+      directly in both the reservas and the movimientos INSERT: rusqlite's ToSql for Option<T>
+      already writes NULL, and movimientos.id_conversacion has been nullable since 0002.
+    files:
+      - crates/hexcell-storage/src/presupuesto.rs
+  - step: 7
+    action: >-
+      Add the public function reservar_presupuesto_de_ingesta(&self, unidades:
+      UnidadesDePresupuesto, marca_temporal: SystemTime) -> Result<VeredictoDeReserva,
+      ErrorDeAlmacen>, delegating to the same private helper with None. This signature is a
+      cross-task contract already documented as a dependency by sibling HEX-051-a and must not
+      drift. Its doc comment records the human decision of 27 de agosto de 2026: a catalog
+      ingestion has no conversation, and a fabricated pseudo-conversation row was rejected because
+      it would inject invented data into the very view that exists to report real per-conversation
+      cost.
+    files:
+      - crates/hexcell-storage/src/presupuesto.rs
+  - step: 8
+    action: >-
+      DELIBERATE, HUMAN-APPROVED SCOPE ADDITION (decision of 27 de agosto de 2026, accepting risk
+      R-1 of the previous revision). Widen the internal row type of conciliar_presupuesto and
+      liberar_presupuesto from Option<(String, i64)> to Option<(Option<String>, i64)>. This is one
+      type annotation per function; both public signatures, their return types and their behaviour
+      on the conversation path stay unchanged, and no caller is touched. Without it both functions
+      return Err at runtime for any ingestion reservation, because rusqlite's FromSql for String is
+      value.as_str() and rejects NULL, so units reserved by reservar_presupuesto_de_ingesta could
+      never be reconciled or released and would stay trapped in saldo.reservado forever. Sibling
+      HEX-051-a cannot supply this fix because its contract holds hexcell-storage read-only, so
+      deferring it would knowingly merge a defect.
+    files:
+      - crates/hexcell-storage/src/presupuesto.rs
+  - step: 9
+    action: >-
+      Extend the migration tests. Grow OBJETOS_ESPERADOS from 14 to 15 entries with the
+      consumo_de_ingesta view, adjusting the declared array length. Add the seeded v3-to-v4 upgrade
+      test with its pre-migration non-empty guard assertions, the explicit assertion of PRAGMA
+      foreign_keys' observed value required by invariant 12, the post-migration foreign_key_check
+      assertion, the byte-identity assertion on movimientos' stored DDL, and the AC-3, AC-4 and
+      AC-6 assertions. Add the gate's negative test described in test_scenarios.
+    files:
+      - crates/hexcell-storage/tests/migraciones.rs
+  - step: 10
+    action: >-
+      Add the accounting tests: reservar_presupuesto_de_ingesta grants and writes a
+      NULL-conversation reservation with its movement and correct saldo effect; the same
+      reservation can be closed by conciliar_presupuesto and by liberar_presupuesto (the step 8
+      evidence); the two views split the rows as AC-4 requires; consumo_de_ingesta returns integer
+      0 rather than NULL on a database with no ingestion. Touch no existing test in this file —
+      their survival unmodified is itself the AC-5 regression evidence.
+    files:
+      - crates/hexcell-storage/tests/presupuesto.rs
+risks:
+  - >-
+    R-1 THE MOST DANGEROUS LINE IN THIS TASK, proven by execution. PRAGMA defer_foreign_keys = OFF
+    issued mid-transaction does NOT validate the pending deferred violations — it silently DISCARDS
+    them. I deleted a parent reservas row that two movimientos rows referenced, set the pragma to
+    OFF, and the COMMIT SUCCEEDED, leaving two orphaned ledger rows in a committed database that
+    PRAGMA foreign_key_check then reported as violations. The rung needs that line to commit at
+    all, so it cannot simply be removed; what makes it safe is that the explicit full-database gate
+    of step 3 runs IMMEDIATELY BEFORE it and aborts on any violation. Gate and pragma are a single
+    indivisible unit: separating them, reordering them, or deleting the gate turns a green test run
+    into a silently corrupt accounting ledger. This must be stated in the SQL comment in Spanish,
+    at that exact line.
+  - >-
+    R-2 THE AMENDED SPEC SEQUENCE DOES NOT COMMIT ON ITS OWN, verified by executing invariant 4
+    exactly as written against SQLite 3.51.3. Creating reservas_nueva, copying the rows, dropping
+    reservas and renaming produces a database that is provably consistent — PRAGMA
+    foreign_key_check returned 0 violations before the commit — yet COMMIT still fails with FOREIGN
+    KEY constraint failed. The reason is that SQLite's deferred-violation counter is incremental,
+    not a scan: DROP TABLE reservas incremented it by the number of referenced parent rows, and
+    nothing decremented it, because the replacement rows were inserted while the table still bore
+    the name reservas_nueva. The counter and the full scan therefore disagree, and only the gate
+    plus the counter-clearing pragma of step 4 reconciles them. The blueprint implements the
+    human's ordering exactly; this note records that the ordering needs those two extra statements
+    to be viable at all.
+  - >-
+    R-3 DEAD END, recorded so nobody retries it. PRAGMA legacy_alter_table = ON does NOT stop
+    ALTER TABLE from rewriting the foreign-key reference in movimientos on SQLite 3.51.3: after
+    renaming reservas out of the way under that pragma, movimientos' stored DDL had already been
+    rewritten to point at the new name. Any rebuild that renames the OLD reservas aside therefore
+    corrupts movimientos' foreign key, which is precisely why the sequence creates the new table
+    under a temporary name instead.
+  - >-
+    R-4 THE EMPTY-DATABASE TRAP, restated for this design. The original DROP TABLE failure mode is
+    now deferred, so the trap has changed shape rather than disappeared: on an empty database there
+    are no parent rows to orphan, so the deferred counter stays at zero, the gate scans nothing and
+    the commit succeeds no matter how wrong the rung is. Every guarantee in this migration is
+    vacuous on an empty database. The seeded AC-2 test and its pre-migration non-empty assertions
+    are the only thing standing between this task and a green suite over a broken migration.
+  - >-
+    R-5 The gate writes to saldo. Its clean branch assigns disponible to itself, which my run
+    confirmed leaves disponible and reservado unchanged, but it is still an UPDATE against the
+    balance table and it relies on saldo being STRICT and on CASE evaluating only the matching
+    branch. If a future migration ever drops STRICT from saldo or changes disponible's type, the
+    gate stops aborting and silently degrades to a no-op. The AC-2 negative test is what would
+    catch that.
+  - >-
+    R-6 tests/pools.rs asserts that no stored schema object names a transport identifier, scanning
+    the full SQL text including comments embedded inside a CREATE statement. The forbidden list is
+    wa_id, waid, jid, remote_jid, chat_id, telefono, phone, msisdn, e164, numero_de_telefono and
+    whatsapp. Comments inside the new CREATE TABLE or CREATE VIEW bodies are stored in
+    sqlite_schema and subject to this check; the file's leading header comments are not.
+  - >-
+    R-7 Atomicity holds and was re-verified under the deferred-foreign-key sequence, not assumed:
+    a ROLLBACK of the full rung left the database at version 3 with id_conversacion still NOT NULL,
+    no consumo_de_ingesta view and no residual reservas_nueva. The gate's abort path was exercised
+    too and left the database equally untouched. Because the runner raises user_version inside the
+    same transaction, schema and version cannot disagree, so a half-rebuilt accounting table is not
+    a reachable state.
+  - >-
+    R-8 FOLLOW-UP FINDING, deliberately NOT fixed here. The comment at
+    crates/hexcell-storage/src/pools.rs:438 claims SQLite's defaults leave foreign_keys disabled;
+    that is false in this workspace, because libsqlite3-sys 0.37 build.rs line 126 compiles the
+    bundled amalgamation with -DSQLITE_DEFAULT_FOREIGN_KEYS=1 and rusqlite never turns it off. A
+    driver built from that exact amalgamation reports foreign_keys = 1 with no pragma set. pools.rs
+    is outside this task's touch list and is explicitly forbidden, so the correction is recorded
+    here, in 00-spec.yaml invariant 12 as amended by the human, and as a trace event in
+    07-trace.json, for a future documentation task to pick up.
+  - >-
+    R-9 The HEX-041 lesson re-verified: every assertion on the sessions schema version reads
+    VERSION_DE_ESQUEMA_DE_SESIONES as the named constant. The call sites are tests/migraciones.rs
+    lines 53, 194 and 327, tests/respaldo.rs line 78, and pools.rs:300. No literal integer assertion
+    exists, so bumping the constant to 4 breaks nothing. The one hard-coded shape is
+    OBJETOS_ESPERADOS's declared length of 14, which step 9 must grow to 15.
+  - >-
+    R-10 Deliberately NOT adopted: a Rust accessor for consumo_de_ingesta on RepositorioDeSesiones.
+    00-spec.yaml requires only that the view exist and behave; adding a reader would invent scope and
+    would duplicate work a sibling task may shape differently. The view is left queryable but unread
+    from Rust in this task.
+  - >-
+    R-11 No new ADR, confirming the earlier call. This extends adr-0005 (two-phase accounting) to a
+    reservation that has no conversation; it neither supersedes nor contradicts it, and CLAUDE.md
+    reserves supersession for derogated decisions. Direct precedent: HEX-048 added migration 0003
+    plus a view and touched no ADR. Avoiding docs/ also removes a merge hazard, since sibling
+    HEX-051-a already claims docs/adr/README.md, docs/STATUS.md and docs/bitacora-de-descartes.md and
+    reserves adr-0025.
