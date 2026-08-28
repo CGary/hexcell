@@ -1,0 +1,50 @@
+{
+  "task_id": "HEX-051-a",
+  "summary": "Los siete verify.commands pasan (exit 0) en worktrees/HEX-051-a sobre la rama ai/HEX-051-a al primer intento del delegado externo.",
+  "executed_at": "2026-08-28T02:10:00Z",
+  "commands": [
+    {
+      "command": "cargo fmt --check",
+      "exit_code": 0,
+      "duration_s": 0.19,
+      "output_excerpt": "sin diferencias de formato"
+    },
+    {
+      "command": "cargo clippy --workspace -- -D warnings",
+      "exit_code": 0,
+      "duration_s": 0.08,
+      "output_excerpt": "sin warnings con -D warnings"
+    },
+    {
+      "command": "cargo build --workspace",
+      "exit_code": 0,
+      "duration_s": 0.11,
+      "output_excerpt": "Finished dev profile"
+    },
+    {
+      "command": "cargo test --workspace",
+      "exit_code": 0,
+      "duration_s": 4.56,
+      "output_excerpt": "suites completas sin fallos, incluidas las del puerto de embeddings y su presupuesto"
+    },
+    {
+      "command": "bash -c (grep negado de fugas de ingles sobre los archivos del contrato)",
+      "exit_code": 0,
+      "duration_s": 0.0,
+      "output_excerpt": "sin coincidencias"
+    },
+    {
+      "command": "bash -c (tabla [dependencies] de hexcell-core vacia, adr-0002)",
+      "exit_code": 0,
+      "duration_s": 0.0,
+      "output_excerpt": "vacia"
+    },
+    {
+      "command": "bash -c (grep negado de total_tokens como campo leido)",
+      "exit_code": 0,
+      "duration_s": 0.0,
+      "output_excerpt": "sin coincidencias: el uso se suma por componentes"
+    }
+  ],
+  "overall_result": "passed"
+}

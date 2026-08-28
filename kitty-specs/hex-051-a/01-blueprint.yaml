@@ -1,0 +1,164 @@
+task_id: HEX-051-a
+summary: "Embeddings port in hexcell-core (std-only, ordered partial-result batch type) plus an OpenRouter HTTPS adapter, enum dispatch, config, and per-call two-phase budget."
+
+affected_files:
+  - crates/hexcell-core/src/lib.rs
+  - crates/hexcell-core/src/embeddings.rs
+  - crates/hexcell-core/src/presupuesto.rs
+  - crates/hexcell-core/tests/embeddings.rs
+  - crates/hexcell-core/tests/presupuesto.rs
+  - crates/hexcell/src/lib.rs
+  - crates/hexcell/src/embeddings.rs
+  - crates/hexcell/src/proveedor_embeddings.rs
+  - crates/hexcell/src/configuracion.rs
+  - crates/hexcell/tests/proveedor_embeddings.rs
+  - crates/hexcell/tests/embeddings_presupuesto.rs
+  - crates/hexcell/tests/configuracion.rs
+  - docs/adr/adr-0025-puerto-de-embeddings.md
+  - docs/adr/README.md
+  - docs/STATUS.md
+  - docs/bitacora-de-descartes.md
+
+symbols:
+  - "hexcell_core::embeddings::ProveedorDeEmbeddings (trait, associated Error, incrustar_lote -> impl Future + Send)"
+  - "hexcell_core::embeddings::PeticionDeEmbeddings { textos: Vec<String> }"
+  - "hexcell_core::embeddings::RespuestaDeEmbeddings { vectores: Vec<Option<VectorDeEmbedding>>, unidades_consumidas }"
+  - "hexcell_core::embeddings::VectorDeEmbedding (newtype over Vec<f32>, a_bytes_le / desde_bytes_le, dimension)"
+  - "hexcell_core::embeddings::LoteDeEmbeddings (resumption accumulator: peticion_pendiente / integrar / completo)"
+  - "hexcell_core::embeddings::ErrorDeIntegracion"
+  - "hexcell_core::presupuesto::estimar_coste_de_lote"
+  - "hexcell::embeddings::ProveedorDeEmbeddingsSimulado"
+  - "hexcell::embeddings::ProveedorDeEmbeddingsDeCelula (enum dispatch, Simulado | OpenRouter)"
+  - "hexcell::embeddings::ErrorDeEmbeddingsDeCelula"
+  - "hexcell::embeddings::ServicioDeEmbeddings (two-phase budget wrapper over any port impl)"
+  - "hexcell::embeddings::ErrorDeServicioDeEmbeddings (PresupuestoAgotado | Proveedor | Almacen)"
+  - "hexcell::proveedor_embeddings::ProveedorDeEmbeddingsOpenRouter"
+  - "hexcell::proveedor_embeddings::ConfiguracionDeEmbeddings (hand-written redacting Debug)"
+  - "hexcell::proveedor_embeddings::ErrorDeProveedorDeEmbeddings"
+  - "hexcell::configuracion::HEXCELL_EMBEDDINGS_URL_BASE / _API_KEY / _MODELO / _TIMEOUT_MS / _REINTENTOS / _TAMANO_DE_LOTE"
+
+dependencies:
+  - crates/hexcell-core/src/inferencia.rs
+  - crates/hexcell-core/src/identidad.rs
+  - crates/hexcell/src/proveedor_openai.rs
+  - crates/hexcell/src/inferencia.rs
+  - crates/hexcell/src/procesador.rs
+  - crates/hexcell/src/apagado.rs
+  - crates/hexcell-storage/src/presupuesto.rs
+  - "HEX-051-c (must be merged first): provides RepositorioDeSesiones::reservar_presupuesto_de_ingesta"
+  - crates/hexcell-storage/src/pools.rs
+  - crates/hexcell-storage/migraciones/sesiones/0002-saldo-y-movimientos.sql
+  - crates/hexcell-storage/migraciones/conocimiento/0002-esquema-de-conocimiento.sql
+  - docs/adr/adr-0002-estructura-workspace.md
+  - docs/adr/adr-0017-puerto-de-inferencia.md
+  - docs/plan/fase-a-5-conocimiento-shadow-db.md
+
+test_scenarios:
+  - statement: "hexcell-core builds with an unchanged empty [dependencies] table and the port compiles using std alone; a compile-time assertion pins ProveedorDeEmbeddings as generic-only, never a trait object."
+    covers: ["AC-1"]
+  - statement: "A batch of N texts yields a RespuestaDeEmbeddings whose vectores length is exactly N, so input index and output slot correspond structurally rather than by convention."
+    covers: ["AC-1"]
+  - statement: "VectorDeEmbedding::a_bytes_le emits 4*dimension bytes of IEEE-754 f32 little-endian with no header or padding, and desde_bytes_le round-trips it; a byte length not a multiple of 4 is rejected."
+    covers: ["AC-1"]
+  - statement: "The adapter places each returned embedding by the response element's explicit index field, never by array position: a fake server returning elements out of order still yields correctly aligned vectors."
+    covers: ["AC-2"]
+  - statement: "A response element carrying a duplicate index, an index >= N, or a zero-length embedding is rejected as RespuestaInvalida instead of silently misaligning or storing an empty vector."
+    covers: ["AC-2"]
+  - statement: "ProveedorDeEmbeddingsDeCelula dispatches to the configured variant through enum matching; adding a further variant requires no change to the port trait."
+    covers: ["AC-2"]
+  - statement: "A 429 from the fake server surfaces immediately with exactly one accepted connection counted; no retry is attempted."
+    covers: ["AC-3"]
+  - statement: "A 500 from the fake server is retried exactly 1 + reintentos times with a fixed 250 ms delay, and the observed elapsed time excludes any exponential growth."
+    covers: ["AC-3"]
+  - statement: "A malformed JSON body served under HTTP 200 surfaces as RespuestaInvalida with exactly one accepted connection; a body already received is never retried."
+    covers: ["AC-3"]
+  - statement: "An embeddings response whose usage object omits completion_tokens is accepted and billed as prompt_tokens alone, proving the chat parser's mandatory completion_tokens rule does not leak into this path."
+    covers: ["AC-3", "AC-4"]
+  - statement: "An embeddings response with no usage object at all, or with usage present but prompt_tokens absent, is reconciled against the reserved estimate and never against zero; the reservation is consumed in full, not released."
+    covers: ["AC-4"]
+  - statement: "With a Saldo below the batch estimate, reservar_presupuesto returns Rechazada, the fake server records zero accepted connections, and the error is PresupuestoAgotado, distinguishable from a transport error."
+    covers: ["AC-4"]
+  - statement: "A provider failure after a granted reservation releases it via liberar_presupuesto, leaving saldo.reservado at zero and no reserva row in state 'activa'."
+    covers: ["AC-4"]
+  - statement: "Given a batch of N where the server returns M < N elements, LoteDeEmbeddings reports exactly the N-M unresolved original indices, and the follow-up peticion_pendiente contains only those texts."
+    covers: ["AC-5"]
+  - statement: "Across a first partial call and a resumption call, every original text is sent to the provider at most once, and the sum of reconciled units equals the real usage of both calls with no reserva left in state 'activa'."
+    covers: ["AC-5"]
+  - statement: "LoteDeEmbeddings::integrar rejects a response whose length disagrees with the pending index slice, so a caller cannot write a vector into the wrong fragment slot."
+    covers: ["AC-5"]
+  - statement: "Absence of HEXCELL_EMBEDDINGS_URL_BASE leaves Configuracion.embeddings as None and changes no existing behaviour of any pre-existing test."
+    covers: ["AC-6"]
+  - statement: "A non-loopback http:// base URL is rejected at startup with ValorInvalido, while http://127.0.0.1:PORT is accepted, mirroring the inference validation."
+    covers: ["AC-6"]
+  - statement: "Startup rejects a configuration where timeout_ms * (1 + reintentos) + reintentos * 250 ms is not strictly less than the configured drain limit."
+    covers: ["AC-6"]
+  - statement: "Debug and Display of ConfiguracionDeEmbeddings, of the provider, and of every error variant redact the API key sentinel; Configuracion's derived Debug never exposes it."
+    covers: ["AC-6"]
+
+strategy:
+  - step: 1
+    action: "Declare the domain port (Entity-free Value Objects plus one trait) in a new hexcell-core module, using only std: PeticionDeEmbeddings, VectorDeEmbedding, RespuestaDeEmbeddings, ProveedorDeEmbeddings with an associated Error and incrustar_lote returning impl Future + Send, exactly mirroring ProveedorDeInferencia's rustc 1.92 async-in-trait workaround. Register the module in lib.rs."
+    files:
+      - crates/hexcell-core/src/embeddings.rs
+      - crates/hexcell-core/src/lib.rs
+  - step: 2
+    action: "Add LoteDeEmbeddings as the resumption Value Object: it owns the ordered texts and a Vec<Option<VectorDeEmbedding>> accumulator, hands out only the unresolved remainder plus its original indices, and refuses to integrate a response of mismatched length. Resumption correctness becomes structural instead of a caller-side promise."
+    files:
+      - crates/hexcell-core/src/embeddings.rs
+  - step: 3
+    action: "Extend the existing domain estimator with estimar_coste_de_lote, reusing CARACTERES_POR_UNIDAD_ESTIMADA and applying UNIDADES_MINIMAS_POR_LLAMADA once per call rather than once per text, so a batch of many short fragments is not systematically over-reserved by the per-text floor."
+    files:
+      - crates/hexcell-core/src/presupuesto.rs
+  - step: 4
+    action: "Add the OpenRouter Application Service adapter in a new module of the binary crate, duplicating the hyper/hyper-rustls connector construction from proveedor_openai.rs rather than sharing it, and declaring its own serde response types so the chat path's mandatory completion_tokens validation cannot be weakened. Request body pins encoding_format to float; response elements are placed by their explicit index."
+    files:
+      - crates/hexcell/src/proveedor_embeddings.rs
+      - crates/hexcell/src/lib.rs
+  - step: 5
+    action: "Add the deterministic simulated provider and the enum selector ProveedorDeEmbeddingsDeCelula with its unified error enum, mirroring ProveedorDeCelula so a further provider variant is a pure append; box the network variant to keep clippy's large_enum_variant quiet under -D warnings."
+    files:
+      - crates/hexcell/src/embeddings.rs
+  - step: 6
+    action: "Add ServicioDeEmbeddings, the two-phase accounting wrapper: one reservation per provider call sized by estimar_coste_de_lote over that call's pending texts, conciliar on success against reported usage, conciliar against the reserved estimate when usage metadata is absent, liberar on every failure path."
+    files:
+      - crates/hexcell/src/embeddings.rs
+  - step: 7
+    action: "Extend startup configuration with the six HEXCELL_EMBEDDINGS_* variables following the HEX-038/HEX-044 precedent, keeping the API key inside a type with a hand-written redacting Debug because Configuracion derives Debug; validate scheme, loopback exemption, and the drain-window arithmetic including fixed backoff."
+    files:
+      - crates/hexcell/src/configuracion.rs
+  - step: 8
+    action: "Write offline tests: a std::net::TcpListener fake server with a per-connection AtomicUsize counter for exact attempt assertions and Content-Length computed from the body, plus in-crate #[cfg(test)] modules for redaction assertions that cannot see pub(crate) items from the tests directory."
+    files:
+      - crates/hexcell/tests/proveedor_embeddings.rs
+      - crates/hexcell/tests/embeddings_presupuesto.rs
+      - crates/hexcell/tests/configuracion.rs
+      - crates/hexcell-core/tests/embeddings.rs
+      - crates/hexcell-core/tests/presupuesto.rs
+  - step: 9
+    action: "Author adr-0025 recording the embeddings port decision, flip only its new row into the ADR index, add a dated STATUS entry, and append the discard-log entry for the alternatives rejected here; a discard is logged in the same commit in which it is made."
+    files:
+      - docs/adr/adr-0025-puerto-de-embeddings.md
+      - docs/adr/README.md
+      - docs/STATUS.md
+      - docs/bitacora-de-descartes.md
+
+risks:
+  - "VERIFIED DEFECT IN THE REUSE PATH: crates/hexcell/src/proveedor_openai.rs lines 229-235 unwraps BOTH usage.prompt_tokens AND usage.completion_tokens with ok_or_else, failing as RespuestaInvalida when either is absent. An OpenAI-compatible /embeddings response reports usage as prompt_tokens plus total_tokens and carries NO completion_tokens, so reusing that parser verbatim would reject its own provider's valid response. Resolution: a SEPARATE response type in a separate module, and proveedor_openai.rs placed in forbid.files so the chat path's validation cannot be weakened by this diff."
+  - "MONEY FLOOR, the most dangerous failure mode here: when usage is absent entirely, or present with prompt_tokens absent, the call must NOT reconcile to zero. A real network call that the provider already billed would then be free in the ledger. Rule adopted: reconcile against the amount already reserved (estimar_coste_de_lote over that call's texts), never zero and never a release. Since conciliar_presupuesto with consumed == reserved yields a net-zero adjustment and inserts no movimientos row by design (presupuesto.rs line 241), the reservation is consumed in full rather than refunded. total_tokens is never read as a substitute, per the HEX-044 rule."
+  - "UNVERIFIED PROVIDER SHAPE: OpenRouter's /embeddings response has NOT been checked against a live key, and this repository forbids adding one. The stand-in is crates/hexcell/tests/proveedor_embeddings.rs, whose fake std::net::TcpListener server serves a hand-written body modelled on the documented OpenAI /v1/embeddings shape: object list, data array of elements carrying object, index and embedding, plus model and usage. Every deserialized field is Option and unknown fields are ignored, so a divergent live shape fails closed with a named error rather than a panic. Concrete known divergence guarded against: some OpenAI-compatible servers return base64 embeddings unless encoding_format is pinned, so the request body always sends encoding_format float."
+  - "SEQUENCING, HARD BLOCKER FOR IMPLEMENTATION: this task depends_on HEX-051-c and CANNOT be implemented until HEX-051-c is merged into main, because the budget path calls RepositorioDeSesiones::reservar_presupuesto_de_ingesta, which HEX-051-c delivers. The worktree worktrees/HEX-051-a was created from main at 3261cdb, BEFORE that decision existed, so it is already a stale base: it must be recreated (quorum task back then quorum task start) or rebased onto main after HEX-051-c merges. Implementing against the current worktree would fail to compile at the first budget call."
+  - "CONSUMED DEPENDENCY, NOT DESIGNED HERE: HEX-051-c provides the ingestion reservation entry point. Expected signature, which this contract assumes: pub fn reservar_presupuesto_de_ingesta(&self, unidades: UnidadesDePresupuesto, marca_temporal: SystemTime) -> Result<VeredictoDeReserva, ErrorDeAlmacen> on RepositorioDeSesiones, inserting NULL into reservas.id_conversacion and into the matching movimientos row, and returning the SAME VeredictoDeReserva::{Concedida { id_reserva, monto_reservado }, Rechazada { disponible, requerido }} shape as reservar_presupuesto. conciliar_presupuesto and liberar_presupuesto take the reservation id and are unchanged, so they already work for a NULL-conversation reservation."
+  - "RISK ON THAT DEPENDENCY: if HEX-051-c lands a different name, argument order, or return shape for reservar_presupuesto_de_ingesta, this contract needs a matching adjustment BEFORE implementation. That is a contract edit, not something the implementer may improvise: it must not invent a local reservation path, change reservar_presupuesto, or reintroduce a pseudo-conversation."
+  - "MIGRATION SCOPE MOVED OUT, NOT LOST: the sessions.db schema-4 migration, the reservas rebuild, both views and reservar_presupuesto_de_ingesta are now HEX-051-c. Everything verified empirically during this blueprint (PRAGMA foreign_keys being a no-op inside a transaction, DROP TABLE reservas failing with live children while succeeding on an empty database, and the rung ordering that survives with foreign keys left ON) was handed to that task in full. crates/hexcell-storage is now READ-ONLY for this task and its whole src tree sits in forbid.files."
+  - "INGESTION SPEND OBSERVABILITY is delivered by HEX-051-c through the consumo_de_ingesta view, so it remains covered by the parent feature even though this task no longer ships it."
+  - "ORPHANED RESERVATIONS: nothing in the repository sweeps reservas left in state 'activa'. Within one call every exit path resolves the reservation (conciliar on success, liberar on any error, including timeout), but a process killed between reserving and resolving leaves units permanently trapped in saldo.reservado. This is a pre-existing gap, not introduced here; the concrete proposal, a startup sweep releasing 'activa' reservations older than the drain limit, is recorded and deliberately NOT implemented in this task."
+  - "TIMEOUT ARITHMETIC, per call it holds with a thinner margin than it looks. Measured constants: TIMEOUT_INFERENCIA_POR_DEFECTO 8000 ms and REINTENTOS_INFERENCIA_POR_DEFECTO 1 (configuracion.rs lines 212 and 214), fixed backoff 250 ms applied OUTSIDE the per-attempt timeout (proveedor_openai.rs line 258), LIMITE_DE_DRENAJE_POR_DEFECTO 20 s (apagado.rs line 40). Embeddings defaults adopted: 8000 ms and 1 retry, giving worst case 2 * 8000 + 1 * 250 = 16250 ms < 20000 ms, margin 3750 ms. The lever chosen against a slower batched call is the BATCH SIZE, not a longer timeout: HEXCELL_EMBEDDINGS_TAMANO_DE_LOTE defaults to 32 and is capped at 128, because lengthening the timeout is the single change that breaks the drain invariant. The startup check adopted is stricter than the inference one already in the file, adding the backoff term; the existing inference check is left untouched."
+  - "MULTI-BATCH WALL TIME EXCEEDS THE DRAIN WINDOW and is deliberately out of scope: the invariant demonstrated above holds per port call, which is the unit that can be in flight when SIGTERM arrives. A caller looping five batches worst-case spends 5 * 16.25 s, far beyond 20 s. Sequencing many batches and handling shutdown across them belongs to stage A-5 task 4, which owns the ingestion pipeline; this task must not silently assume the per-call invariant covers it."
+  - "SECRET-LEAK FOOTGUN: Configuracion is #[derive(Clone, Debug)] (configuracion.rs line 43) and holds the inference credentials only safely because ConfiguracionDeInferencia hand-writes a redacting Debug. The embeddings configuration MUST repeat that pattern; deriving Debug on a type holding HEXCELL_EMBEDDINGS_API_KEY would print the key of a public repository."
+  - "TEXTUAL TEST GUARD: crates/hexcell/tests/motor.rs lines 160-168 reads src/motor.rs as text and forbids .unwrap( anywhere in it. No file this task touches is subject to that guard, and motor.rs is placed in forbid.files so the guard cannot be tripped."
+  - "pub(crate) items are invisible from crates/*/tests/, which are separate crates. API-key redaction assertions therefore live in in-crate #[cfg(test)] modules, mirroring the existing pruebas_redaccion module in proveedor_openai.rs."
+  - "adr-0025 confirmed free: docs/adr/ ends at adr-0024 and the index's last row is adr-0024. Numbering is correlative and the pending gaps (0004, 0006, 0007, 0013) are reserved elsewhere and must not be reused or reordered."
+  - "Dimension is observed from the provider response, not configured, and the adapter validates only the degenerate case: a zero-length embedding is rejected, because a zero-byte BLOB satisfies the schema's multiple-of-4 CHECK and would enter an epoch looking valid. Cross-vector uniformity against metadatos_de_epoca.dimension_de_embedding stays stage A-5 task 5's responsibility, as the spec requires."
+  - "No workspace dependency change is needed: crates/hexcell/Cargo.toml already carries hyper, hyper-util, http-body-util, bytes, hyper-rustls, rustls, webpki-roots, serde and serde_json. Cargo.toml and Cargo.lock are in touch purely as headroom, and adding a new crate is forbidden."
+  - "LEXICAL GUARDS DELIBERATELY OMITTED, applying the HEX-049 lesson that a guard must be run against main before it is written. A `! grep dyn ProveedorDeEmbeddings` guard was drafted and DISCARDED after proving it a false-positive trap: crates/hexcell-core/src/inferencia.rs line 38 already documents the precedent port with the literal phrase `nunca como Box<dyn ProveedorDeInferencia>`, so a faithful didactic mirror of that doc comment would fail the guard. It is redundant anyway, since a trait returning impl Future cannot be made into a trait object and cargo build already rejects it. A jitter/proxy guard was likewise discarded: the repository's own didactic style requires explaining WHY those techniques are excluded, so the guard would punish the comment that policy demands. The total_tokens guard was NARROWED to a field-declaration anchor, verified to catch a real serde field and to ignore prose naming it. The retained guards were each executed against main and pass."
+  - "HSME advisory read hook unavailable (hsme-cli reports no database file); proceeding without semantic context, as the skill's graceful-degradation rule allows. No prior failed task overlaps these files."

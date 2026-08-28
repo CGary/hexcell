@@ -1,0 +1,144 @@
+{
+  "attempts": [
+    {
+      "duration_s": 0,
+      "phase": "blueprint",
+      "result": "passed"
+    },
+    {
+      "duration_s": 565.294726224,
+      "model": "google/gemini-3.7-flash-high",
+      "notes": "Se ha completado la implementación integral de la tarea **HEX-051-a** correspondiente al puerto de incrustaciones vectoriales (*embeddings*) y su adaptador HTTPS compatible con OpenAI / OpenRouter:  ### Componentes implementados y archivos modificados  1. **Puerto de dominio y Value Objects ([`crates/hexcell-core/src/embeddings.rs`](file:///home/gary/dev/hexcell/worktrees/HEX-051-a/crates/hexcell-core/src/embeddings.rs)):**    - Declaración del trait [`ProveedorDeEmbeddings`](file:///home/gary/dev/hexcell/worktrees/HEX-051-a/crates/hexcell-core/src/embeddings.rs#L14-L24) con retorno `impl Future\u003cOutput = Result\u003cRespuestaDeEmbeddings, Self::Error\u003e\u003e + Send`, preservando la tabla `[dependencies]` de `hexcell-core` estrictamente vacía ([`adr-0002`](file:///home/gary/dev/hexcell/worktrees/HEX-051-a/docs/adr/adr-0002-estructura-workspace.md)).    - Value Objects: [`VectorDeEmbedding`](file:///home/gary/dev/hexcell/worktrees/HEX-051-a/crates/hexcell-core/src/embeddings.rs#L30-L88) (con conversión binaria IEEE-754 *little-endian* `a_bytes_le` / `desde_bytes_le`), [`PeticionDeEmbeddings`](file:///home/gary/dev/hexcell/worktrees/HEX-051-a/crates/hexcell-core/src/embeddings.rs#L91-L98) y [`RespuestaDeEmbeddings`](file:///home/gary/dev/hexcell/worktrees/HEX-051-a/crates/hexcell-core/src/embeddings.rs#L101-L113).    - Acumulador ordenado [`LoteDeEmbeddings`](file:///home/gary/dev/hexcell/worktrees/HEX-051-a/crates/hexcell-core/src/embeddings.rs#L141-L248) con soporte determinista de reanudación y extracción de fragmentos pendientes.    - Función [`estimar_coste_de_lote`](file:///home/gary/dev/hexcell/worktrees/HEX-051-a/crates/hexcell-core/src/presupuesto.rs#L40-L54) en [`crates/hexcell-core/src/presupuesto.rs`](file:///home/gary/dev/hexcell/worktrees/HEX-051-a/crates/hexcell-core/src/presupuesto.rs), aplicando el suelo mínimo de una unidad por llamada.  2. **Adaptador HTTPS OpenRouter / OpenAI ([`crates/hexcell/src/proveedor_embeddings.rs`](file:///home/gary/dev/hexcell...",
+      "phase": "execute",
+      "result": "passed"
+    }
+  ],
+  "completed_at": null,
+  "context_overflows": [],
+  "events": [
+    {
+      "detail": "codebase-memory-mcp index_status for project home-gary-dev-hexcell reported status ready with git.head_sha 3261cdb340b95fe1b3970967792db1906bfec2cc, matching git rev-parse HEAD, so the graph was fresh. Every load-bearing fact in this blueprint was nonetheless confirmed by direct reads of the real files, because the task turns on the exact token-usage validation of an existing parser, an exact foreign-key constraint, and exact timeout constants.",
+      "event": "index_freshness_checked"
+    },
+    {
+      "detail": "hsme-cli search-fuzzy failed with INTERNAL_ERROR (failed to open database: no such file or directory). Proceeding without semantic context per the skill's graceful-degradation rule. quorum analyze failure-lookup returned null: no prior failed task overlaps these files.",
+      "event": "advisor_unavailable"
+    },
+    {
+      "event": "risk_level_calculated",
+      "level": "medium",
+      "reasons": [
+        "file_count_high: 18"
+      ],
+      "signals": {
+        "files_count": 18,
+        "sensitive_matches": [],
+        "symbols_count": 0
+      }
+    },
+    {
+      "calculated": "medium",
+      "declared": "high",
+      "detail": "00-spec.yaml declares risk: high; quorum analyze risk-score calculated medium from file count alone. The human's declared risk wins and 00-spec.yaml was NOT modified. The scorer's signals are structural (file count) and do not see the two money-losing failure modes this task carries: an embeddings response with absent usage metadata reconciling to zero, and a budget reservation that cannot satisfy the reservas.id_conversacion foreign key. High is the correct level.",
+      "event": "risk_level_divergence",
+      "reasons": [
+        "file_count_high: 18"
+      ]
+    },
+    {
+      "detail": "Every non-cargo verify command was executed against main before being written into the contract, per the HEX-049 lesson. Two drafted guards were discarded as proven false-positive traps: a grep forbidding 'dyn ProveedorDeEmbeddings' would fail against a faithful mirror of crates/hexcell-core/src/inferencia.rs line 38, which documents the precedent port with that exact phrase, and is redundant because the compiler already rejects trait objects over a trait returning impl Future; a jitter/proxy guard would punish the didactic comment that project policy requires. The total_tokens guard was narrowed to a field-declaration anchor and verified to catch a real serde field while ignoring prose that names it.",
+      "event": "verify_guards_pretested"
+    },
+    {
+      "detail": "27 de agosto de 2026: the human decided reservas.id_conversacion becomes NULLABLE via a sessions.db migration to schema version 4, and REJECTED the pseudo-conversation workaround. Reason recorded: an ingestion genuinely has no conversation, so NULL is the truthful value, and a fabricated conversation row would inject invented data into consumo_por_conversacion, the very view whose purpose is reporting real per-conversation cost. Decision is closed; 00-spec.yaml was not modified.",
+      "event": "human_decision_recorded"
+    },
+    {
+      "detail": "The 0004 rebuild was executed against SQLite 3.53.4 using the repository's real 0001+0002+0003 DDL with seeded reservas and movimientos rows. Two hazards were confirmed, not assumed: PRAGMA foreign_keys is a NO-OP inside a transaction (returned 1 after being set OFF), so the standard 12-step procedure's first step cannot be performed by a runner that wraps each rung in unchecked_transaction; and DROP TABLE reservas FAILS with FOREIGN KEY constraint failed while movimientos rows reference it, yet SUCCEEDS on an empty database, so a naive rebuild would pass the entire test suite and brick every existing cell on upgrade. The ordering written into the contract (drop view, stage and drop movimientos, rebuild reservas, rename, recreate index, recreate movimientos and copy back, drop staging, recreate index, create both views) was verified to apply inside one transaction with foreign keys left ON, preserving every row, keeping consumo_por_conversacion at its identical pre-migration value, recreating both indexes, leaving no staging table, and keeping every CHECK, STRICT typing and the foreign key enforced for non-NULL values.",
+      "event": "migration_verified_empirically"
+    },
+    {
+      "detail": "Every sessions schema-version assertion reads the constant VERSION_DE_ESQUEMA_DE_SESIONES (tests/migraciones.rs lines 53, 194, 327; tests/respaldo.rs line 78), never a literal, so the 3 -\u003e 4 bump breaks no assertion. The expected-schema-object list at tests/migraciones.rs lines 18-28 and the foreign-key test at line 216 were nonetheless placed in touch, and the all-tables-are-STRICT assertion at line 57 is why the rebuild staging table must be dropped in the same rung.",
+      "event": "hex041_lesson_checked"
+    },
+    {
+      "detail": "touch grew from 21 to 24 files against a raised cap of 25; max_diff_lines raised from 3300 to 3800 with per_class totalling 3730. Recorded recommendation: the migration half is a natural separate task with strong precedent in this repository (HEX-048 and HEX-049 were each standalone sessions/knowledge migration tasks of 3 files), and splitting is a human decision, not the worker's.",
+      "event": "contract_resized"
+    },
+    {
+      "detail": "27 de agosto de 2026: the human accepted the recommendation to split. The sessions.db migration became sibling task HEX-051-c (depends_on []), which runs FIRST; HEX-051-a now depends_on HEX-051-c; HEX-051-b (Gemini) depends_on HEX-051-a. Removed from HEX-051-a: migration 0004, crates/hexcell-storage/src/migraciones.rs, both view files, crates/hexcell-storage/src/presupuesto.rs and the storage test files. crates/hexcell-storage is now READ-ONLY here and the whole crate sits in forbid.files; its presupuesto.rs stays in read for context only. reservar_presupuesto_de_ingesta is documented as an already-existing dependency with its expected signature, not designed here.",
+      "event": "scope_split_applied"
+    },
+    {
+      "detail": "worktrees/HEX-051-a was created from main at 3261cdb before the split existed and is therefore a stale base: HEX-051-a calls reservar_presupuesto_de_ingesta, which only exists once HEX-051-c merges. The worktree must be recreated (quorum task back then quorum task start) or rebased onto a main containing HEX-051-c before implementation. This is a hard blocker on implementation ordering, not on the artifacts.",
+      "event": "stale_worktree_flagged"
+    },
+    {
+      "detail": "touch fell from 24 to 19 files against a cap lowered from 25 to 21; max_diff_lines from 3800 to 3150 with per_class totalling 3080 across seven globs (the three hexcell-storage globs were removed and docs went from 330 to 280). The PRAGMA-in-migrations guard was removed because it pointed at files this task no longer touches, and the migration .sql was dropped from the English-word guard's file list; the three remaining non-cargo guards were re-executed verbatim against main and all pass.",
+      "event": "contract_resized_down"
+    },
+    {
+      "blocked": "",
+      "candidate": {
+        "agent": "agy_edit",
+        "level": 3,
+        "model": "google/gemini-3.7-flash-high"
+      },
+      "dispatch_id": "",
+      "inputs_snapshot": {
+        "complexity_band": "L",
+        "control": {
+          "disabled": null,
+          "updated_at": ""
+        },
+        "exclusions": [],
+        "hashes": {
+          "agents_yaml": "c9aadb5ea7388a6a8067f5000472f5d47e58c478e09328652c5f4e847e519f22",
+          "config_yaml": "f6d456a8a600c246a083a4454dc413f515693be4c84dd487e0149e660e9b8b84",
+          "routing_yaml": "c661109fa2d3bf143fab0751c5001b997d5365322197cb84c9661d688d0ac0ec"
+        },
+        "incumbent_family": "",
+        "level": 3,
+        "phase": "implement",
+        "risk": "high",
+        "router_version": "fleet-route/v1"
+      },
+      "reasons": null,
+      "reroute_budget": 2,
+      "review_family_degraded": false,
+      "ts": "2026-08-28T16:49:36Z",
+      "type": "routing_decision"
+    },
+    {
+      "bundle_hash": "5911e0d9c2c398c035f831f093c88ba6d71ec43baad4b00b6c37cb84a5721bed",
+      "dispatch_id": "5911e0d9c2c3",
+      "ts": "2026-08-28T16:49:49Z",
+      "type": "dispatch_started"
+    },
+    {
+      "applied": true,
+      "cause": null,
+      "diff_stat": {
+        "deletions": 1,
+        "empty": false,
+        "files_changed": 16,
+        "indeterminate": false,
+        "insertions": 2263
+      },
+      "dispatch_id": "5911e0d9c2c3",
+      "forensic_ref": "refs/fleet/HEX-051-a/attempt-1-google-gemini-3.7-flash-high",
+      "noop": false,
+      "outcome_class": "attempt",
+      "ts": "2026-08-28T16:59:15Z",
+      "type": "dispatch_finished",
+      "usage_source": "none"
+    }
+  ],
+  "execution_mode": "worktree_edit",
+  "outcome": null,
+  "started_at": "2026-08-27T19:20:00Z",
+  "summary": "Embeddings port in hexcell-core plus an OpenRouter HTTPS adapter, enum dispatch, configuration, and two-phase budget consumption.",
+  "task_id": "HEX-051-a",
+  "total_cost_usd": 0,
+  "violations": []
+}

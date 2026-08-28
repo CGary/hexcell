@@ -1,0 +1,37 @@
+Se ha completado la implementación integral de la tarea **HEX-051-a** correspondiente al puerto de incrustaciones vectoriales (*embeddings*) y su adaptador HTTPS compatible con OpenAI / OpenRouter:
+
+### Componentes implementados y archivos modificados
+
+1. **Puerto de dominio y Value Objects ([`crates/hexcell-core/src/embeddings.rs`](file:///home/gary/dev/hexcell/worktrees/HEX-051-a/crates/hexcell-core/src/embeddings.rs)):**
+   - Declaración del trait [`ProveedorDeEmbeddings`](file:///home/gary/dev/hexcell/worktrees/HEX-051-a/crates/hexcell-core/src/embeddings.rs#L14-L24) con retorno `impl Future<Output = Result<RespuestaDeEmbeddings, Self::Error>> + Send`, preservando la tabla `[dependencies]` de `hexcell-core` estrictamente vacía ([`adr-0002`](file:///home/gary/dev/hexcell/worktrees/HEX-051-a/docs/adr/adr-0002-estructura-workspace.md)).
+   - Value Objects: [`VectorDeEmbedding`](file:///home/gary/dev/hexcell/worktrees/HEX-051-a/crates/hexcell-core/src/embeddings.rs#L30-L88) (con conversión binaria IEEE-754 *little-endian* `a_bytes_le` / `desde_bytes_le`), [`PeticionDeEmbeddings`](file:///home/gary/dev/hexcell/worktrees/HEX-051-a/crates/hexcell-core/src/embeddings.rs#L91-L98) y [`RespuestaDeEmbeddings`](file:///home/gary/dev/hexcell/worktrees/HEX-051-a/crates/hexcell-core/src/embeddings.rs#L101-L113).
+   - Acumulador ordenado [`LoteDeEmbeddings`](file:///home/gary/dev/hexcell/worktrees/HEX-051-a/crates/hexcell-core/src/embeddings.rs#L141-L248) con soporte determinista de reanudación y extracción de fragmentos pendientes.
+   - Función [`estimar_coste_de_lote`](file:///home/gary/dev/hexcell/worktrees/HEX-051-a/crates/hexcell-core/src/presupuesto.rs#L40-L54) en [`crates/hexcell-core/src/presupuesto.rs`](file:///home/gary/dev/hexcell/worktrees/HEX-051-a/crates/hexcell-core/src/presupuesto.rs), aplicando el suelo mínimo de una unidad por llamada.
+
+2. **Adaptador HTTPS OpenRouter / OpenAI ([`crates/hexcell/src/proveedor_embeddings.rs`](file:///home/gary/dev/hexcell/worktrees/HEX-051-a/crates/hexcell/src/proveedor_embeddings.rs)):**
+   - [`ProveedorDeEmbeddingsOpenRouter`](file:///home/gary/dev/hexcell/worktrees/HEX-051-a/crates/hexcell/src/proveedor_embeddings.rs#L85-L277) y [`ConfiguracionDeEmbeddings`](file:///home/gary/dev/hexcell/worktrees/HEX-051-a/crates/hexcell/src/proveedor_embeddings.rs#L16-L40) con redacción explícita de `api_key` en `Debug`/`Display` y registros.
+   - Petición POST contra `{url_base}/embeddings` con `encoding_format: "float"` y colocación estricta por `item.index` en el arreglo de vectores.
+   - Desacoplamiento de tipos JSON respecto a chat (omisión de `completion_tokens` en embeddings sin alterar la obligatoriedad en inferencia).
+   - Reintentos acotados (máximo 3 con retroceso fijo de 250 ms) exclusivamente para fallos de red/transporte, timeout y HTTP 5xx (HTTP 429 y 4xx fallan inmediatamente).
+
+3. **Selector y Servicio de Presupuesto en dos fases ([`crates/hexcell/src/embeddings.rs`](file:///home/gary/dev/hexcell/worktrees/HEX-051-a/crates/hexcell/src/embeddings.rs)):**
+   - [`ProveedorDeEmbeddingsSimulado`](file:///home/gary/dev/hexcell/worktrees/HEX-051-a/crates/hexcell/src/embeddings.rs#L47-L125) determinista con huella FNV-1a.
+   - Selector estático enum [`ProveedorDeEmbeddingsDeCelula`](file:///home/gary/dev/hexcell/worktrees/HEX-051-a/crates/hexcell/src/embeddings.rs#L166-L192) (`Simulado` | `OpenRouter`).
+   - [`ServicioDeEmbeddings`](file:///home/gary/dev/hexcell/worktrees/HEX-051-a/crates/hexcell/src/embeddings.rs#L225-L336): coordina `reservar_presupuesto_de_ingesta`, conciliación con uso real (o suelo de estimación previa ante ausencia de metadatos de uso) y liberación íntegra ante errores.
+
+4. **Variables de configuración ([`crates/hexcell/src/configuracion.rs`](file:///home/gary/dev/hexcell/worktrees/HEX-051-a/crates/hexcell/src/configuracion.rs)):**
+   - Parámetros `HEXCELL_EMBEDDINGS_*` (`URL_BASE`, `API_KEY`, `MODELO`, `TIMEOUT_MS`, `REINTENTOS`, `TAMANO_DE_LOTE`).
+   - Validación de esquema (`https://` o `http://` loopback), límites de reintentos (0..=3), tamaño de lote (1..=128) y comprobación temporal estricta respecto al margen de drenaje.
+
+5. **Batería de pruebas automatizadas y aisladas:**
+   - [`crates/hexcell-core/tests/embeddings.rs`](file:///home/gary/dev/hexcell/worktrees/HEX-051-a/crates/hexcell-core/tests/embeddings.rs) y [`crates/hexcell-core/tests/presupuesto.rs`](file:///home/gary/dev/hexcell/worktrees/HEX-051-a/crates/hexcell-core/tests/presupuesto.rs) (ejecución síncrona `std` pura sin `tokio`).
+   - [`crates/hexcell/tests/proveedor_embeddings.rs`](file:///home/gary/dev/hexcell/worktrees/HEX-051-a/crates/hexcell/tests/proveedor_embeddings.rs) (mock HTTP loopback con `TcpListener`, colocación por índice, 429 sin reintento, 500 con backoff, payload malformado).
+   - [`crates/hexcell/tests/embeddings_presupuesto.rs`](file:///home/gary/dev/hexcell/worktrees/HEX-051-a/crates/hexcell/tests/embeddings_presupuesto.rs) (reserva rechazada, conciliación, suelo ante ausencia de uso, liberación ante fallo, reanudación parcial).
+   - [`crates/hexcell/tests/configuracion.rs`](file:///home/gary/dev/hexcell/worktrees/HEX-051-a/crates/hexcell/tests/configuracion.rs) (análisis de entorno, validaciones y valores por omisión).
+
+6. **Documentación arquitectónica y registro normativo:**
+   - Creación de [`docs/adr/adr-0025-puerto-de-embeddings.md`](file:///home/gary/dev/hexcell/worktrees/HEX-051-a/docs/adr/adr-0025-puerto-de-embeddings.md).
+   - Actualización de [`docs/adr/README.md`](file:///home/gary/dev/hexcell/worktrees/HEX-051-a/docs/adr/README.md) con la fila correspondiente a `adr-0025`.
+   - Actualización de [`docs/STATUS.md`](file:///home/gary/dev/hexcell/worktrees/HEX-051-a/docs/STATUS.md) (entradas en *Definido* y registro de la decisión pendiente de barrido de reservas huérfanas en *Pendiente*).
+   - Registro de alternativas descartadas **D-28** en [`docs/bitacora-de-descartes.md`](file:///home/gary/dev/hexcell/worktrees/HEX-051-a/docs/bitacora-de-descartes.md).
+   - Almacenamiento proactivo de la decisión en la memoria semántica HSME (Memoria ID: 924).

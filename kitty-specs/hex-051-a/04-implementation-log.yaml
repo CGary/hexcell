@@ -1,0 +1,3 @@
+entries: []
+summary: Implement the ProveedorDeEmbeddings port in hexcell-core plus an OpenRouter HTTPS adapter, enum dispatch, configuration, and per-call two-phase budget accounting.
+task_id: HEX-051-a
