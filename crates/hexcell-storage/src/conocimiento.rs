@@ -204,61 +204,61 @@ pub struct MetadatosDeEpocaLeidos {
     pub sellada_ms: Option<i64>,
 }
 
-/// Abre una conexión de solo lectura sobre la base en sombra ya construida y cerrada.
-/// Existe únicamente para que crates externos, como el binario de la célula, verifiquen
-/// el contenido persistido sin declarar rusqlite como dependencia propia: la frontera de
-/// adr-0010 exige que ninguna sentencia SQL viva fuera de esta capa.
-fn abrir_conexion_de_verificacion(ruta_datos: &Path) -> Result<Connection, ErrorDeAlmacen> {
+/// Fotografía de solo lectura del estado de la base en sombra tras una ingesta, agrupando en un
+/// único valor todo lo que un consumidor externo necesita para verificar el resultado: cuántos
+/// fragmentos hay, con qué ordinales, si alguno quedó sin vector, qué dice la fila de metadatos
+/// de época y si el documento fuente sigue presente.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ResumenDeInspeccion {
+    pub cantidad_de_fragmentos: i64,
+    pub ordinales: Vec<i64>,
+    pub fragmentos_sin_vector: i64,
+    pub metadatos_de_epoca: Option<MetadatosDeEpocaLeidos>,
+    pub documento_sobrevive: bool,
+}
+
+/// Abre la base en sombra ya construida y cerrada en una única conexión de solo lectura, y reúne
+/// de una sola vez todo lo que crates externos, como el binario de la célula, necesitan verificar
+/// sin declarar rusqlite como dependencia propia: la frontera de adr-0010 exige que ninguna
+/// sentencia SQL viva fuera de esta capa.
+///
+/// Se usa `pools::abrir_solo_lectura`, que abre con `SQLITE_OPEN_READ_ONLY`, precisamente porque
+/// un `Connection::open` corriente CREA el archivo cuando falta: llamar a esta función sobre un
+/// directorio donde nunca corrió una ingesta debe fallar de inmediato señalando la ausencia real,
+/// nunca materializar en silencio una base vacía que luego falle con "no existe la tabla".
+pub fn inspeccionar_base_en_sombra(
+    ruta_datos: &Path,
+) -> Result<ResumenDeInspeccion, ErrorDeAlmacen> {
     let ruta_base = ruta_datos.join(NOMBRE_DE_ARCHIVO_DE_CONOCIMIENTO_EN_SOMBRA);
-    Connection::open(&ruta_base).map_err(ErrorDeAlmacen::en(
-        "abrir la base en sombra para verificación",
-    ))
-}
+    let conexion = crate::pools::abrir_solo_lectura(&ruta_base)?;
 
-/// Cuenta las filas de la tabla de fragmentos ya escritos en la base en sombra.
-pub fn contar_fragmentos(ruta_datos: &Path) -> Result<i64, ErrorDeAlmacen> {
-    let conexion = abrir_conexion_de_verificacion(ruta_datos)?;
-    conexion
+    let cantidad_de_fragmentos: i64 = conexion
         .query_row("SELECT COUNT(*) FROM fragmentos", [], |fila| fila.get(0))
-        .map_err(ErrorDeAlmacen::en("contar las filas de fragmentos"))
-}
+        .map_err(ErrorDeAlmacen::en("contar las filas de fragmentos"))?;
 
-/// Lista, en orden ascendente, los ordinales de los fragmentos ya escritos en la base en sombra.
-pub fn listar_ordinales(ruta_datos: &Path) -> Result<Vec<i64>, ErrorDeAlmacen> {
-    let conexion = abrir_conexion_de_verificacion(ruta_datos)?;
-    let mut sentencia = conexion
-        .prepare("SELECT ordinal FROM fragmentos ORDER BY ordinal")
-        .map_err(ErrorDeAlmacen::en("preparar la lectura de ordinales"))?;
-    let filas = sentencia
-        .query_map([], |fila| fila.get(0))
-        .map_err(ErrorDeAlmacen::en("recorrer los ordinales de fragmentos"))?;
-    let mut ordinales = Vec::new();
-    for fila in filas {
-        ordinales.push(fila.map_err(ErrorDeAlmacen::en("leer un ordinal de fragmento"))?);
-    }
-    Ok(ordinales)
-}
+    let ordinales = {
+        let mut sentencia = conexion
+            .prepare("SELECT ordinal FROM fragmentos ORDER BY ordinal")
+            .map_err(ErrorDeAlmacen::en("preparar la lectura de ordinales"))?;
+        let filas = sentencia
+            .query_map([], |fila| fila.get(0))
+            .map_err(ErrorDeAlmacen::en("recorrer los ordinales de fragmentos"))?;
+        let mut acumulado = Vec::new();
+        for fila in filas {
+            acumulado.push(fila.map_err(ErrorDeAlmacen::en("leer un ordinal de fragmento"))?);
+        }
+        acumulado
+    };
 
-/// Cuenta cuántos fragmentos carecen de su vector correspondiente, algo que este módulo
-/// nunca debe producir: la escritura por lotes inserta ambas filas o ninguna.
-pub fn contar_fragmentos_sin_vector(ruta_datos: &Path) -> Result<i64, ErrorDeAlmacen> {
-    let conexion = abrir_conexion_de_verificacion(ruta_datos)?;
-    conexion
+    let fragmentos_sin_vector: i64 = conexion
         .query_row(
             "SELECT COUNT(*) FROM fragmentos f LEFT JOIN vectores_de_fragmento v ON f.id = v.id_fragmento WHERE v.id_fragmento IS NULL",
             [],
             |fila| fila.get(0),
         )
-        .map_err(ErrorDeAlmacen::en("contar fragmentos sin vector"))
-}
+        .map_err(ErrorDeAlmacen::en("contar fragmentos sin vector"))?;
 
-/// Lee la fila única de metadatos de época, o `None` si fue descartada por cero embeddings
-/// resueltos durante la ejecución.
-pub fn leer_metadatos_de_epoca(
-    ruta_datos: &Path,
-) -> Result<Option<MetadatosDeEpocaLeidos>, ErrorDeAlmacen> {
-    let conexion = abrir_conexion_de_verificacion(ruta_datos)?;
-    let resultado = conexion.query_row(
+    let resultado_de_metadatos = conexion.query_row(
         "SELECT numero_de_epoca, dimension_de_embedding, sellada_ms FROM metadatos_de_epoca WHERE id = 1",
         [],
         |fila| {
@@ -269,18 +269,13 @@ pub fn leer_metadatos_de_epoca(
             })
         },
     );
-    match resultado {
-        Ok(metadatos) => Ok(Some(metadatos)),
-        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
-        Err(causa) => Err(ErrorDeAlmacen::en("leer los metadatos de época")(causa)),
-    }
-}
+    let metadatos_de_epoca = match resultado_de_metadatos {
+        Ok(metadatos) => Some(metadatos),
+        Err(rusqlite::Error::QueryReturnedNoRows) => None,
+        Err(causa) => return Err(ErrorDeAlmacen::en("leer los metadatos de época")(causa)),
+    };
 
-/// Indica si sobrevive al menos un documento fuente en la base en sombra, útil para
-/// confirmar que una ejecución sin ningún embedding resuelto no perdió el registro original.
-pub fn documento_sobrevive(ruta_datos: &Path) -> Result<bool, ErrorDeAlmacen> {
-    let conexion = abrir_conexion_de_verificacion(ruta_datos)?;
-    conexion
+    let documento_sobrevive: bool = conexion
         .query_row(
             "SELECT EXISTS(SELECT 1 FROM documentos LIMIT 1)",
             [],
@@ -288,5 +283,13 @@ pub fn documento_sobrevive(ruta_datos: &Path) -> Result<bool, ErrorDeAlmacen> {
         )
         .map_err(ErrorDeAlmacen::en(
             "comprobar si sobrevive el documento fuente",
-        ))
+        ))?;
+
+    Ok(ResumenDeInspeccion {
+        cantidad_de_fragmentos,
+        ordinales,
+        fragmentos_sin_vector,
+        metadatos_de_epoca,
+        documento_sobrevive,
+    })
 }

@@ -113,11 +113,11 @@ where
         }
 
         let fin_de_particion = (inicio_de_particion + tamano_lote).min(fragmentos.len());
-        let slice = &fragmentos[inicio_de_particion..fin_de_particion];
+        let porcion = &fragmentos[inicio_de_particion..fin_de_particion];
 
         let ordinal_inicial = inicio_de_particion;
         let peticion = PeticionDeEmbeddings {
-            textos: slice.to_vec(),
+            textos: porcion.to_vec(),
         };
 
         lotes_emitidos += 1;
@@ -130,10 +130,11 @@ where
         {
             Ok(respuesta) => {
                 let mut lote_a_escribir = Vec::with_capacity(respuesta.vectores.len());
-                for (offset, opt_vector) in respuesta.vectores.into_iter().enumerate() {
-                    if let Some(vector) = opt_vector {
-                        let ordinal = ordinal_inicial + offset;
-                        let texto = slice[offset].clone();
+                for (desplazamiento, vector_opcional) in respuesta.vectores.into_iter().enumerate()
+                {
+                    if let Some(vector) = vector_opcional {
+                        let ordinal = ordinal_inicial + desplazamiento;
+                        let texto = porcion[desplazamiento].clone();
                         lote_a_escribir.push((ordinal, texto, vector.valores().to_vec()));
 
                         if dimension_observada.is_none() {

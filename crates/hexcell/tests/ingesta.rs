@@ -10,8 +10,8 @@
 mod comun;
 
 use std::fs;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime};
 
 use hexcell::embeddings::{
@@ -38,28 +38,34 @@ where
 {
     use std::io::{BufRead, BufReader, Read, Write};
     use std::net::TcpListener;
-    let listener = TcpListener::bind("127.0.0.1:0").expect("vincular puerto en loopback");
-    let puerto = listener.local_addr().unwrap().port();
+    let escucha = TcpListener::bind("127.0.0.1:0").expect("vincular puerto en loopback");
+    let puerto = escucha.local_addr().unwrap().port();
     let contador = Arc::new(AtomicUsize::new(0));
     let contador_clon = Arc::clone(&contador);
     let manejador = Arc::new(manejador);
 
     std::thread::spawn(move || {
-        for stream in listener.incoming() {
-            let Ok(mut stream) = stream else { break };
+        // Un error de aceptación transitorio no debe apagar el servidor entero: si se corta la
+        // escucha ante el primer fallo, un único evento efímero deja sin atender el resto de
+        // las conexiones que el test todavía espera recibir.
+        for flujo in escucha.incoming() {
+            let mut flujo = match flujo {
+                Ok(flujo) => flujo,
+                Err(_) => continue,
+            };
             let num_peticion = contador_clon.fetch_add(1, Ordering::SeqCst);
             let manejador = Arc::clone(&manejador);
             std::thread::spawn(move || {
-                let mut reader = BufReader::new(&stream);
+                let mut lector = BufReader::new(&flujo);
                 let mut primera_linea = String::new();
-                if reader.read_line(&mut primera_linea).is_err() {
+                if lector.read_line(&mut primera_linea).is_err() {
                     return;
                 }
 
                 let mut longitud_cuerpo = 0;
                 loop {
                     let mut linea = String::new();
-                    if reader.read_line(&mut linea).is_err() || linea.trim().is_empty() {
+                    if lector.read_line(&mut linea).is_err() || linea.trim().is_empty() {
                         break;
                     }
                     if linea.to_lowercase().starts_with("content-length:") {
@@ -71,7 +77,7 @@ where
 
                 let mut cuerpo = vec![0u8; longitud_cuerpo];
                 if longitud_cuerpo > 0 {
-                    let _ = reader.read_exact(&mut cuerpo);
+                    let _ = lector.read_exact(&mut cuerpo);
                 }
                 let cuerpo_str = String::from_utf8_lossy(&cuerpo);
 
@@ -80,7 +86,7 @@ where
                     "HTTP/1.1 {codigo} OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{cuerpo_respuesta}",
                     cuerpo_respuesta.len()
                 );
-                let _ = stream.write_all(respuesta_http.as_bytes());
+                let _ = flujo.write_all(respuesta_http.as_bytes());
             });
         }
     });
@@ -89,7 +95,7 @@ where
 }
 
 #[tokio::test]
-async fn test_ac_1_limpieza_de_basura_previa() {
+async fn ac_1_limpieza_de_basura_previa() {
     let temp = DirectorioTemporal::nuevo("ac1-limpieza");
     let ruta_datos = temp.ruta();
     let (_, repositorio) = abrir_persistencia(ruta_datos);
@@ -124,23 +130,25 @@ async fn test_ac_1_limpieza_de_basura_previa() {
 
     assert_eq!(resumen.desenlace, DesenlaceDeIngesta::Completa);
     // La base vieja debió ser sobreescrita.
-    let count = hexcell_storage::conocimiento::contar_fragmentos(ruta_datos).unwrap();
-    assert!(count > 0);
+    let cantidad = hexcell_storage::conocimiento::inspeccionar_base_en_sombra(ruta_datos)
+        .unwrap()
+        .cantidad_de_fragmentos;
+    assert!(cantidad > 0);
 }
 
 #[tokio::test]
-async fn test_ac_2_aislamiento_de_knowledge_live() {
+async fn ac_2_aislamiento_de_la_base_en_vivo() {
     let temp = DirectorioTemporal::nuevo("ac2-aislamiento");
     let ruta_datos = temp.ruta();
     let (pools, repositorio) = abrir_persistencia(ruta_datos);
 
     pools.conocimiento().con_lectura(|_conn| Ok(())).unwrap();
-    let path_live = ruta_datos.join("knowledge_live.db");
-    fs::write(&path_live, b"contenido vivo inalterado").unwrap();
+    let ruta_viva = ruta_datos.join("knowledge_live.db");
+    fs::write(&ruta_viva, b"contenido vivo inalterado").unwrap();
 
-    let meta_ant = fs::metadata(&path_live).unwrap();
+    let meta_ant = fs::metadata(&ruta_viva).unwrap();
     let mtime_ant = meta_ant.modified().unwrap();
-    let size_ant = meta_ant.len();
+    let tamano_ant = meta_ant.len();
 
     repositorio
         .aportar_presupuesto(1000, SystemTime::now())
@@ -168,17 +176,22 @@ async fn test_ac_2_aislamiento_de_knowledge_live() {
         .await
         .unwrap();
 
-    let meta_post = fs::metadata(&path_live).unwrap();
-    assert_eq!(meta_post.len(), size_ant);
+    let meta_post = fs::metadata(&ruta_viva).unwrap();
+    assert_eq!(meta_post.len(), tamano_ant);
     assert_eq!(meta_post.modified().unwrap(), mtime_ant);
 }
 
 #[tokio::test]
-async fn test_ac_3_tamano_de_lote_openrouter_y_gemini() {
+async fn ac_3_tamano_de_lote_openrouter_y_gemini() {
     // 1. Probamos con ProveedorDeEmbeddingsOpenRouter
     // El manejador responde con tantos elementos como textos traiga la petición, porque el
     // proveedor rechaza una respuesta cuyo tamaño no case exactamente con el lote solicitado.
-    let servidor_or = crear_servidor_falso(|_num, cuerpo_peticion| {
+    // Además registra el tamaño de cada petición recibida: contar los lotes emitidos no basta
+    // para probar el criterio de aceptación, porque un reparto 3+1+1 también produciría tres
+    // lotes sin respetar el tamaño de lote configurado.
+    let tamanos_or = Arc::new(Mutex::new(Vec::new()));
+    let tamanos_or_clon = Arc::clone(&tamanos_or);
+    let servidor_or = crear_servidor_falso(move |_num, cuerpo_peticion| {
         let peticion: serde_json::Value =
             serde_json::from_str(cuerpo_peticion).unwrap_or(serde_json::Value::Null);
         let cantidad = peticion
@@ -186,6 +199,10 @@ async fn test_ac_3_tamano_de_lote_openrouter_y_gemini() {
             .and_then(|v| v.as_array())
             .map(|a| a.len())
             .unwrap_or(0);
+        tamanos_or_clon
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .push(cantidad);
         let elementos: Vec<String> = (0..cantidad)
             .map(|i| format!(r#"{{"object":"embedding","index":{i},"embedding":[0.1,0.2]}}"#))
             .collect();
@@ -201,7 +218,9 @@ async fn test_ac_3_tamano_de_lote_openrouter_y_gemini() {
         api_key: "key-or".to_string(),
         modelo: "model-or".to_string(),
         timeout: Duration::from_secs(5),
-        reintentos: 1,
+        // Sin reintentos: un timeout transitorio no debe poder sumar una conexión extra al
+        // contador del servidor falso. Este test mide reparto de lotes, no tolerancia a fallos.
+        reintentos: 0,
         tamano_de_lote: 2, // Lote de tamaño 2
     };
     let proveedor_or = ProveedorDeEmbeddingsOpenRouter::nuevo(config_or);
@@ -245,11 +264,22 @@ async fn test_ac_3_tamano_de_lote_openrouter_y_gemini() {
         "Deberían emitirse exactamente 3 lotes (2+2+1)"
     );
     assert_eq!(servidor_or.contador.load(Ordering::SeqCst), 3);
+    // Se comprueba el tamaño real de cada petición: el criterio de aceptación exige que ninguna
+    // exceda el tamaño de lote configurado, y el reparto exacto 2+2+1 descarta que un reparto
+    // desigual como 3+1+1 pase la prueba solo por coincidir en la cantidad de lotes.
+    assert_eq!(
+        *tamanos_or.lock().unwrap(),
+        vec![2, 2, 1],
+        "Cada petición al proveedor debe respetar el tamaño de lote configurado"
+    );
 
     // 2. Probamos con ProveedorDeEmbeddingsGemini
     // El manejador responde con tantos elementos como peticiones traiga el arreglo `requests`,
-    // porque este proveedor rechaza una respuesta cuya longitud no case con la petición.
-    let servidor_gem = crear_servidor_falso(|_num, cuerpo_peticion| {
+    // porque este proveedor rechaza una respuesta cuya longitud no case con la petición. También
+    // registra el tamaño de cada petición por la misma razón que en el bloque de OpenRouter.
+    let tamanos_gem = Arc::new(Mutex::new(Vec::new()));
+    let tamanos_gem_clon = Arc::clone(&tamanos_gem);
+    let servidor_gem = crear_servidor_falso(move |_num, cuerpo_peticion| {
         let peticion: serde_json::Value =
             serde_json::from_str(cuerpo_peticion).unwrap_or(serde_json::Value::Null);
         let cantidad = peticion
@@ -257,6 +287,10 @@ async fn test_ac_3_tamano_de_lote_openrouter_y_gemini() {
             .and_then(|v| v.as_array())
             .map(|a| a.len())
             .unwrap_or(0);
+        tamanos_gem_clon
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .push(cantidad);
         let elementos: Vec<&str> = std::iter::repeat(r#"{"values":[0.1,0.2]}"#)
             .take(cantidad)
             .collect();
@@ -272,7 +306,9 @@ async fn test_ac_3_tamano_de_lote_openrouter_y_gemini() {
         api_key: "key-gem".to_string(),
         modelo: "model-gem".to_string(),
         timeout: Duration::from_secs(5),
-        reintentos: 1,
+        // Igual que en el bloque de OpenRouter: sin reintentos, para que un timeout transitorio
+        // no pueda sumar una conexión extra al contador del servidor falso.
+        reintentos: 0,
         tamano_de_lote: 2, // Lote de tamaño 2
     };
     let proveedor_gem = ProveedorDeEmbeddingsGemini::nuevo(config_gem);
@@ -298,10 +334,15 @@ async fn test_ac_3_tamano_de_lote_openrouter_y_gemini() {
         "Deberían emitirse exactamente 3 lotes (2+2+1)"
     );
     assert_eq!(servidor_gem.contador.load(Ordering::SeqCst), 3);
+    assert_eq!(
+        *tamanos_gem.lock().unwrap(),
+        vec![2, 2, 1],
+        "Cada petición al proveedor debe respetar el tamaño de lote configurado"
+    );
 }
 
 #[tokio::test]
-async fn test_ac_4_parcial_y_huecos_ordinales_sin_huerfanos() {
+async fn ac_4_parcial_y_huecos_ordinales_sin_huerfanos() {
     let temp = DirectorioTemporal::nuevo("ac4-parcial");
     let ruta_datos = temp.ruta();
     let (_, repositorio) = abrir_persistencia(ruta_datos);
@@ -343,26 +384,24 @@ async fn test_ac_4_parcial_y_huecos_ordinales_sin_huerfanos() {
     assert_eq!(resumen.fragmentos_solicitados, 5);
     assert_eq!(resumen.fragmentos_escritos, 3);
 
-    // Verificamos ordinales escritos.
-    let ordinales = hexcell_storage::conocimiento::listar_ordinales(ruta_datos).unwrap();
+    // Verificamos ordinales escritos y ausencia de huérfanos con una sola inspección.
+    let inspeccion =
+        hexcell_storage::conocimiento::inspeccionar_base_en_sombra(ruta_datos).unwrap();
     assert_eq!(
-        ordinales,
+        inspeccion.ordinales,
         vec![0, 2, 4],
         "Se debieron respetar los ordinales originales sin compactar"
     );
 
-    // Verificamos que no existan huérfanos.
     // Cada fragmento escrito debe tener su vector, y no debe haber vectores sin fragmento.
-    let huerfanos_fragmento =
-        hexcell_storage::conocimiento::contar_fragmentos_sin_vector(ruta_datos).unwrap();
     assert_eq!(
-        huerfanos_fragmento, 0,
+        inspeccion.fragmentos_sin_vector, 0,
         "No debe haber ningún fragmento sin vector"
     );
 }
 
 #[tokio::test]
-async fn test_ac_5_dimension_y_descarte_de_metadatos() {
+async fn ac_5_dimension_y_descarte_de_metadatos() {
     // Escenario A: Con embeddings resueltos con dimensión 8.
     let temp_a = DirectorioTemporal::nuevo("ac5-metadata-a");
     let ruta_datos_a = temp_a.ruta();
@@ -400,8 +439,9 @@ async fn test_ac_5_dimension_y_descarte_de_metadatos() {
 
     assert_eq!(resumen_a.dimension_observada, Some(8));
 
-    let metadatos_a = hexcell_storage::conocimiento::leer_metadatos_de_epoca(ruta_datos_a)
+    let metadatos_a = hexcell_storage::conocimiento::inspeccionar_base_en_sombra(ruta_datos_a)
         .unwrap()
+        .metadatos_de_epoca
         .expect("la fila de metadatos debe sobrevivir cuando hubo al menos un embedding resuelto");
 
     assert!(metadatos_a.numero_de_epoca.is_none());
@@ -432,17 +472,20 @@ async fn test_ac_5_dimension_y_descarte_de_metadatos() {
     assert_eq!(resumen_b.desenlace, DesenlaceDeIngesta::SinIncrustaciones);
     assert_eq!(resumen_b.fragmentos_escritos, 0);
 
+    // Una sola inspección basta para verificar tanto el descarte de metadatos como la
+    // supervivencia del documento fuente.
+    let inspeccion_b =
+        hexcell_storage::conocimiento::inspeccionar_base_en_sombra(ruta_datos_b).unwrap();
+
     // El registro de metadatos de época debe haber sido eliminado para no mentar una dimensión no observada.
-    let metadatos_b = hexcell_storage::conocimiento::leer_metadatos_de_epoca(ruta_datos_b).unwrap();
-    assert!(metadatos_b.is_none());
+    assert!(inspeccion_b.metadatos_de_epoca.is_none());
 
     // El documento fuente debe sobrevivir para diagnóstico.
-    let doc_existe = hexcell_storage::conocimiento::documento_sobrevive(ruta_datos_b).unwrap();
-    assert!(doc_existe);
+    assert!(inspeccion_b.documento_sobrevive);
 }
 
 #[tokio::test]
-async fn test_ac_6_apagado_en_frontera_de_lote_y_capas_de_presupuesto() {
+async fn ac_6_apagado_en_frontera_de_lote_y_capas_de_presupuesto() {
     let temp = DirectorioTemporal::nuevo("ac6-apagado");
     let ruta_datos = temp.ruta();
     let (pools, repositorio) = abrir_persistencia(ruta_datos);
@@ -453,7 +496,7 @@ async fn test_ac_6_apagado_en_frontera_de_lote_y_capas_de_presupuesto() {
     let doc = DocumentoDeIngesta {
         referencia_externa: "https://ejemplo.com/ref-ac6".to_string(),
         titulo: "AC6".to_string(),
-        contenido: "A B C D E".to_string(), // Chunks de 1 -> 5 fragmentos
+        contenido: "A B C D E".to_string(), // Fragmentos de tamaño 1 -> 5 fragmentos
         actualizado_ms: 1000,
     };
     let config = ConfiguracionDeFragmentacion {
@@ -534,4 +577,84 @@ async fn test_ac_6_apagado_en_frontera_de_lote_y_capas_de_presupuesto() {
         })
         .unwrap();
     assert_eq!(total_reservas, 1);
+}
+
+#[tokio::test]
+async fn ac_1_segunda_ingesta_reemplaza_por_completo_una_base_previa_real() {
+    // AC-1 solo se probaba contra bytes basura no válidos como SQLite. La garantía que le importa
+    // a este módulo es más fuerte: una SEGUNDA ingesta real, sobre el archivo que dejó una primera
+    // ingesta real, no debe arrastrar ni un solo fragmento de la corrida anterior. Probarlo contra
+    // basura no ejercita el camino que de verdad usa la célula en producción, donde siempre existe
+    // una base previa válida antes de la siguiente ronda.
+    let temp = DirectorioTemporal::nuevo("ac1-reconstruccion-real");
+    let ruta_datos = temp.ruta();
+    let (_, repositorio) = abrir_persistencia(ruta_datos);
+    repositorio
+        .aportar_presupuesto(1000, SystemTime::now())
+        .unwrap();
+
+    let config = ConfiguracionDeFragmentacion {
+        tamano_de_fragmento: 1,
+        solapamiento: 0,
+    };
+
+    // Primera corrida: cinco fragmentos, todos resueltos.
+    let doc_primera = DocumentoDeIngesta {
+        referencia_externa: "https://ejemplo.com/ref-ac1-real-primera".to_string(),
+        titulo: "Primera corrida".to_string(),
+        contenido: "ABCDE".to_string(),
+        actualizado_ms: 1000,
+    };
+    let proveedor_primera = ProveedorDeEmbeddingsSimulado::con_dimension(4).con_tamano_de_lote(2);
+    let servicio_primera = ServicioDeEmbeddings::nuevo(
+        ProveedorDeEmbeddingsDeCelula::Simulado(proveedor_primera),
+        repositorio.clone(),
+    );
+    let resumen_primera = ejecutar_ingesta(
+        doc_primera,
+        config.clone(),
+        &servicio_primera,
+        ruta_datos,
+        || false,
+    )
+    .await
+    .unwrap();
+    assert_eq!(resumen_primera.fragmentos_escritos, 5);
+
+    let inspeccion_primera =
+        hexcell_storage::conocimiento::inspeccionar_base_en_sombra(ruta_datos).unwrap();
+    assert_eq!(inspeccion_primera.cantidad_de_fragmentos, 5);
+
+    // Segunda corrida: un documento más corto y distinto, sobre la MISMA ruta de datos.
+    let doc_segunda = DocumentoDeIngesta {
+        referencia_externa: "https://ejemplo.com/ref-ac1-real-segunda".to_string(),
+        titulo: "Segunda corrida".to_string(),
+        contenido: "XY".to_string(),
+        actualizado_ms: 2000,
+    };
+    let proveedor_segunda = ProveedorDeEmbeddingsSimulado::con_dimension(4).con_tamano_de_lote(2);
+    let servicio_segunda = ServicioDeEmbeddings::nuevo(
+        ProveedorDeEmbeddingsDeCelula::Simulado(proveedor_segunda),
+        repositorio,
+    );
+    let resumen_segunda =
+        ejecutar_ingesta(doc_segunda, config, &servicio_segunda, ruta_datos, || false)
+            .await
+            .unwrap();
+    assert_eq!(resumen_segunda.fragmentos_escritos, 2);
+
+    // Si algún fragmento de la primera corrida sobreviviera, la cuenta sería 7 (5 + 2) en vez de
+    // 2, o los ordinales incluirían huecos heredados de la corrida anterior. Ninguna de las dos
+    // cosas debe ocurrir: la reconstrucción desde cero es total, no un mero añadido.
+    let inspeccion_segunda =
+        hexcell_storage::conocimiento::inspeccionar_base_en_sombra(ruta_datos).unwrap();
+    assert_eq!(
+        inspeccion_segunda.cantidad_de_fragmentos, 2,
+        "Ningún fragmento de la primera corrida debe sobrevivir a la segunda"
+    );
+    assert_eq!(
+        inspeccion_segunda.ordinales,
+        vec![0, 1],
+        "Los ordinales deben pertenecer solo a la segunda corrida, sin arrastrar los de la primera"
+    );
 }
