@@ -48,12 +48,52 @@ fn verificar_reconstruccion_limpia_y_borrado_de_residuos() {
     // Al crear un nuevo constructor, se debe limpiar todo vestigio anterior.
     let constructor = ConstructorDeConocimientoEnSombra::crear(ruta_datos, &doc).unwrap();
 
-    // Se verifica que la base de datos se ha inicializado y que no quedan archivos de desecho previos.
-    // Además, el constructor mantendrá sus propios bloqueos.
+    // La base existe y ya NO es la basura previa: se comprueba por contenido, porque un
+    // `exists()` seguiría siendo cierto sobre el archivo obsoleto sin reconstruir.
     assert!(ruta_base.exists());
+    let cabecera = fs::read(&ruta_base).unwrap();
+    assert_ne!(
+        &cabecera[..],
+        b"datos obsoletos",
+        "La base debe haberse reconstruido, no conservarse tal cual"
+    );
+    assert!(
+        cabecera.starts_with(b"SQLite format 3\0"),
+        "La base reconstruida debe ser un archivo SQLite valido"
+    );
+
+    // Los residuos de la corrida anterior no pueden sobrevivir. No se afirma que los archivos
+    // auxiliares no existan —SQLite crea los suyos mientras la conexion esta viva, y afirmarlo
+    // aqui seria falso—, sino que su CONTENIDO ya no es el heredado.
+    if ruta_wal.exists() {
+        assert_ne!(
+            &fs::read(&ruta_wal).unwrap()[..],
+            b"wal obsoleto",
+            "El WAL heredado debe haberse borrado, no reutilizado"
+        );
+    }
+    if ruta_shm.exists() {
+        assert_ne!(
+            &fs::read(&ruta_shm).unwrap()[..],
+            b"shm obsoleto",
+            "El SHM heredado debe haberse borrado, no reutilizado"
+        );
+    }
 
     // Finalizamos para liberar conexiones y poder leer el archivo.
     constructor.finalizar().unwrap();
+
+    // Tras un cierre limpio no puede quedar ningun auxiliar huerfano: ese es justamente el
+    // fallo que la etapa A-5 existe para evitar, porque un -wal suelto corrompe al siguiente
+    // lector que abra la base.
+    assert!(
+        !ruta_wal.exists(),
+        "Tras finalizar no debe quedar un archivo -wal huerfano"
+    );
+    assert!(
+        !ruta_shm.exists(),
+        "Tras finalizar no debe quedar un archivo -shm huerfano"
+    );
 }
 
 #[test]
