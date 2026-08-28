@@ -1,6 +1,6 @@
 # Bitácora de descartes
 
-> Registro de lo que se consideró y **no** se hizo. Última actualización: 2026-08-26 (D-27).
+> Registro de lo que se consideró y **no** se hizo. Última actualización: 2026-08-27 (D-28).
 
 ## Para qué sirve este documento
 
@@ -61,6 +61,7 @@ se apoya en un principio de diseño, no.
 | [D-25](#d-25) | Centralizar las bases de datos operativas (un RDBMS único multi-inquilino para el camino caliente) | Principio de diseño, no reabrir |
 | [D-26](#d-26) | rqlite / libSQL sqld en el camino caliente (los almacenes operativos del bot por HTTP) | Principio de diseño, no reabrir |
 | [D-27](#d-27) | Alternativas descartadas para la inferencia HTTPS (reqwest, aws-lc-rs, backoff exponencial, reintentar 429, noveno crate) | Principio de diseño, no reabrir |
+| [D-28](#d-28) | Alternativas descartadas para el puerto de embeddings y adaptador OpenRouter (compartir parser de chat, zipping posicional, reserva por fragmento/ingesta, elevar timeout, base64, pseudo-conversación) | Principio de diseño, no reabrir |
 
 ---
 
@@ -441,6 +442,20 @@ copiar `sessions.db`, `knowledge_live.db` y el almacén de identidad del adaptad
 * **Por qué se descartó:** `reqwest` añade ~85 crates extra en el lockfile; `native-tls`/`openssl` requieren bibliotecas dinámicas del sistema anfitrión violando el empaquetado autónomo (`adr-0003`); `aws-lc-rs` exige `cmake` como herramienta de compilación adicional mientras `ring` solo exige el compilador C ya usado por SQLite; el backoff exponencial hace impredecible el tiempo total de cola de drenaje del proceso; reintentar HTTP 429 agrava el agotamiento de cuota y retrasa la liberación de reservas de presupuesto; y crear un noveno crate de workspace viola la regla de que lo que solo el binario consume vive como módulo de `hexcell`.
 * **Registro normativo:** `docs/adr/adr-0012-inferencia-externa.md`, `crates/hexcell/Cargo.toml`.
 * **Qué tendría que cambiar para reabrirlo:** Para `reqwest` o `aws-lc-rs`, que la pila `hyper`+`rustls`/`ring` deje de compilar en rustc estable sin `cmake`. Para HTTP 429 o backoff exponencial, que el proveedor especifique cabeceras Retry-After respetables dentro del margen de drenaje sin violar el límite total de apagado.
+
+### D-28
+**Alternativas descartadas para el puerto de embeddings y adaptador OpenRouter (compartir parser de chat, zipping posicional, reserva por fragmento/ingesta, elevar timeout, base64, pseudo-conversación).**
+
+* **Descartado:** 2026-08-27 (HEX-051-a).
+* **Por qué se descartó:**
+  * *Compartir el analizador de chat:* `proveedor_openai.rs` exige obligatoriamente `completion_tokens` para evitar subfacturación. El endpoint `/embeddings` carece de completaciones; relajar la validación de chat abriría una vulnerabilidad financiera en la inferencia.
+  * *Emparejamiento posicional:* los proveedores externos pueden retornar elementos desordenados o parciales; la unión por posición vincularía vectores al fragmento equivocado corrompiendo la búsqueda semántica.
+  * *Granularidad por fragmento o por ingesta:* por fragmento multiplicaría filas y suelos mínimos; por ingesta global impediría la conciliación atómica tras cada lote HTTP.
+  * *Elevar tiempo de espera o límite de drenaje:* rompería el presupuesto de apagado ordenado de 20 segundos; la solución arquitectónica correcta es acotar el tamaño del lote (`HEXCELL_EMBEDDINGS_TAMANO_DE_LOTE`).
+  * *Formato base64:* incrementa la latencia de decodificación y riesgo de fallos silenciosos; se fija `encoding_format: "float"`.
+  * *Pseudo-conversación artificial:* ensuciaría la auditoría de `consumo_por_conversacion` con registros ficticios; la reserva de catálogo es explícitamente sin conversación (`id_conversacion NULL`).
+* **Registro normativo:** `docs/adr/adr-0025-puerto-de-embeddings.md`, `crates/hexcell-core/src/embeddings.rs`, `crates/hexcell/src/proveedor_embeddings.rs`.
+* **Qué tendría que cambiar para reabrirlo:** *Principio de diseño.* **No reabrir.**
 
 ---
 

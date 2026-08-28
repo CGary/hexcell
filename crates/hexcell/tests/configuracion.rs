@@ -34,6 +34,12 @@ fn limpiar_entorno_de_hexcell() {
         "HEXCELL_INFERENCIA_MODELO",
         "HEXCELL_INFERENCIA_TIMEOUT_MS",
         "HEXCELL_INFERENCIA_REINTENTOS",
+        "HEXCELL_EMBEDDINGS_URL_BASE",
+        "HEXCELL_EMBEDDINGS_API_KEY",
+        "HEXCELL_EMBEDDINGS_MODELO",
+        "HEXCELL_EMBEDDINGS_TIMEOUT_MS",
+        "HEXCELL_EMBEDDINGS_REINTENTOS",
+        "HEXCELL_EMBEDDINGS_TAMANO_DE_LOTE",
     ] {
         unsafe {
             std::env::remove_var(variable);
@@ -531,6 +537,123 @@ fn configuracion_inferencia_desde_entorno_y_validaciones() {
     match err {
         ErrorDeConfiguracion::ValorInvalido { nombre, .. } => {
             assert_eq!(nombre, "HEXCELL_INFERENCIA_URL_BASE");
+        }
+        otro => panic!("se esperaba ValorInvalido, se obtuvo {otro:?}"),
+    }
+
+    limpiar_entorno_de_hexcell();
+    let _ = std::fs::remove_dir_all(&directorio_temporal);
+}
+
+#[test]
+fn configuracion_embeddings_desde_entorno_y_validaciones() {
+    let _guardia = CERROJO_DE_ENTORNO.lock().unwrap_or_else(|e| e.into_inner());
+    limpiar_entorno_de_hexcell();
+    let directorio_temporal = std::env::temp_dir().join(format!(
+        "hexcell-test-config-embeddings-{}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&directorio_temporal)
+        .expect("crear el directorio temporal del test debe funcionar");
+
+    unsafe {
+        std::env::set_var("HEXCELL_ID_CELULA", "piloto-01");
+        std::env::set_var("HEXCELL_RUTA_DATOS", &directorio_temporal);
+    }
+
+    // Sin HEXCELL_EMBEDDINGS_URL_BASE -> embeddings es None
+    let config = Configuracion::desde_entorno().expect("configuración válida sin embeddings real");
+    assert!(config.embeddings.is_none());
+
+    // Con URL_BASE no-loopback http -> falla
+    unsafe {
+        std::env::set_var(
+            "HEXCELL_EMBEDDINGS_URL_BASE",
+            "http://api.embeddings.com/v1",
+        );
+        std::env::set_var("HEXCELL_EMBEDDINGS_API_KEY", "key-secret-emb");
+        std::env::set_var("HEXCELL_EMBEDDINGS_MODELO", "model-emb-1");
+    }
+    let err = Configuracion::desde_entorno().expect_err("debe fallar con http no-loopback");
+    match err {
+        ErrorDeConfiguracion::ValorInvalido { nombre, .. } => {
+            assert_eq!(nombre, "HEXCELL_EMBEDDINGS_URL_BASE");
+        }
+        otro => panic!("se esperaba ValorInvalido, se obtuvo {otro:?}"),
+    }
+
+    // Con URL_BASE loopback válida y valores por defecto
+    unsafe {
+        std::env::set_var("HEXCELL_EMBEDDINGS_URL_BASE", "http://127.0.0.1:8080");
+    }
+    let config = Configuracion::desde_entorno().expect("configuración válida con embeddings");
+    let emb = config.embeddings.expect("debe existir embeddings");
+    assert_eq!(emb.url_base, "http://127.0.0.1:8080");
+    assert_eq!(emb.api_key, "key-secret-emb");
+    assert_eq!(emb.modelo, "model-emb-1");
+    assert_eq!(emb.timeout, Duration::from_millis(8000));
+    assert_eq!(emb.reintentos, 1);
+    assert_eq!(emb.tamano_de_lote, 32);
+
+    // Con valores personalizados válidos
+    unsafe {
+        std::env::set_var("HEXCELL_EMBEDDINGS_TIMEOUT_MS", "5000");
+        std::env::set_var("HEXCELL_EMBEDDINGS_REINTENTOS", "2");
+        std::env::set_var("HEXCELL_EMBEDDINGS_TAMANO_DE_LOTE", "64");
+    }
+    let config = Configuracion::desde_entorno().expect("configuración válida personalizada");
+    let emb = config.embeddings.expect("debe existir embeddings");
+    assert_eq!(emb.timeout, Duration::from_millis(5000));
+    assert_eq!(emb.reintentos, 2);
+    assert_eq!(emb.tamano_de_lote, 64);
+
+    // Tamaño de lote 0 -> falla
+    unsafe {
+        std::env::set_var("HEXCELL_EMBEDDINGS_TAMANO_DE_LOTE", "0");
+    }
+    let err = Configuracion::desde_entorno().expect_err("debe fallar con tamaño de lote 0");
+    match err {
+        ErrorDeConfiguracion::ValorInvalido { nombre, .. } => {
+            assert_eq!(nombre, "HEXCELL_EMBEDDINGS_TAMANO_DE_LOTE");
+        }
+        otro => panic!("se esperaba ValorInvalido, se obtuvo {otro:?}"),
+    }
+
+    // Tamaño de lote > 128 -> falla
+    unsafe {
+        std::env::set_var("HEXCELL_EMBEDDINGS_TAMANO_DE_LOTE", "129");
+    }
+    let err = Configuracion::desde_entorno().expect_err("debe fallar con tamaño de lote 129");
+    match err {
+        ErrorDeConfiguracion::ValorInvalido { nombre, .. } => {
+            assert_eq!(nombre, "HEXCELL_EMBEDDINGS_TAMANO_DE_LOTE");
+        }
+        otro => panic!("se esperaba ValorInvalido, se obtuvo {otro:?}"),
+    }
+
+    // Reintentos > 3 -> falla
+    unsafe {
+        std::env::set_var("HEXCELL_EMBEDDINGS_TAMANO_DE_LOTE", "32");
+        std::env::set_var("HEXCELL_EMBEDDINGS_REINTENTOS", "4");
+    }
+    let err = Configuracion::desde_entorno().expect_err("debe fallar con reintentos 4");
+    match err {
+        ErrorDeConfiguracion::ValorInvalido { nombre, .. } => {
+            assert_eq!(nombre, "HEXCELL_EMBEDDINGS_REINTENTOS");
+        }
+        otro => panic!("se esperaba ValorInvalido, se obtuvo {otro:?}"),
+    }
+
+    // Tiempo total (timeout * (1 + reintentos) + reintentos * 250) que excede el límite de drenaje -> falla
+    unsafe {
+        std::env::set_var("HEXCELL_EMBEDDINGS_TIMEOUT_MS", "10000");
+        std::env::set_var("HEXCELL_EMBEDDINGS_REINTENTOS", "1");
+        // 10000 * 2 + 250 = 20250 ms >= 20000 ms (límite de drenaje por defecto)
+    }
+    let err = Configuracion::desde_entorno().expect_err("debe fallar si excede límite de drenaje");
+    match err {
+        ErrorDeConfiguracion::ValorInvalido { nombre, .. } => {
+            assert_eq!(nombre, "HEXCELL_EMBEDDINGS_URL_BASE");
         }
         otro => panic!("se esperaba ValorInvalido, se obtuvo {otro:?}"),
     }

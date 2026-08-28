@@ -101,6 +101,8 @@ pub struct Configuracion {
     pub presupuesto_inicial_unidades: u64,
     /// Configuración opcional del proveedor de inferencia HTTPS real compatible con OpenAI.
     pub inferencia: Option<crate::proveedor_openai::ConfiguracionDeInferencia>,
+    /// Configuración opcional del proveedor de incrustaciones HTTPS real compatible con OpenAI/OpenRouter.
+    pub embeddings: Option<crate::proveedor_embeddings::ConfiguracionDeEmbeddings>,
 }
 
 /// Error de configuración: nombra siempre la variable concreta y su formato esperado.
@@ -212,6 +214,26 @@ pub const HEXCELL_INFERENCIA_REINTENTOS: &str = "HEXCELL_INFERENCIA_REINTENTOS";
 pub const TIMEOUT_INFERENCIA_POR_DEFECTO: Duration = Duration::from_millis(8000);
 /// Cantidad de reintentos de inferencia por defecto: 1.
 pub const REINTENTOS_INFERENCIA_POR_DEFECTO: u32 = 1;
+
+/// Nombre de la variable de entorno con la URL base del proveedor de embeddings (opcional, su presencia activa el proveedor real).
+pub const HEXCELL_EMBEDDINGS_URL_BASE: &str = "HEXCELL_EMBEDDINGS_URL_BASE";
+/// Nombre de la variable de entorno con la clave de API del proveedor de embeddings (obligatoria si URL_BASE está presente).
+pub const HEXCELL_EMBEDDINGS_API_KEY: &str = "HEXCELL_EMBEDDINGS_API_KEY";
+/// Nombre de la variable de entorno con el nombre del modelo de embeddings (obligatorio si URL_BASE está presente).
+pub const HEXCELL_EMBEDDINGS_MODELO: &str = "HEXCELL_EMBEDDINGS_MODELO";
+/// Nombre de la variable de entorno con el tiempo de espera de embeddings en milisegundos (opcional).
+pub const HEXCELL_EMBEDDINGS_TIMEOUT_MS: &str = "HEXCELL_EMBEDDINGS_TIMEOUT_MS";
+/// Nombre de la variable de entorno con la cantidad de reintentos de embeddings (opcional).
+pub const HEXCELL_EMBEDDINGS_REINTENTOS: &str = "HEXCELL_EMBEDDINGS_REINTENTOS";
+/// Nombre de la variable de entorno con el tamaño máximo de lote de embeddings (opcional).
+pub const HEXCELL_EMBEDDINGS_TAMANO_DE_LOTE: &str = "HEXCELL_EMBEDDINGS_TAMANO_DE_LOTE";
+
+/// Tiempo de espera de embeddings por defecto: 8000 milisegundos.
+pub const TIMEOUT_EMBEDDINGS_POR_DEFECTO: Duration = Duration::from_millis(8000);
+/// Cantidad de reintentos de embeddings por defecto: 1.
+pub const REINTENTOS_EMBEDDINGS_POR_DEFECTO: u32 = 1;
+/// Tamaño de lote de embeddings por defecto: 32.
+pub const TAMANO_DE_LOTE_EMBEDDINGS_POR_DEFECTO: usize = 32;
 
 /// Dirección de salud por defecto: loopback (127.0.0.1), nunca `0.0.0.0`. Una célula sobre canal
 /// propio empaquetada en un contenedor (etapa A-6) necesita sondear esta ruta desde un
@@ -506,6 +528,127 @@ impl Configuracion {
             _ => None,
         };
 
+        let embeddings = match std::env::var(HEXCELL_EMBEDDINGS_URL_BASE) {
+            Ok(url_base) if !url_base.trim().is_empty() => {
+                let url_base = url_base.trim().to_string();
+                if let Ok(uri) = url_base.parse::<hyper::Uri>() {
+                    let scheme = uri.scheme_str().unwrap_or("");
+                    let host = uri.host().unwrap_or("");
+                    let es_loopback = host == "127.0.0.1"
+                        || host == "localhost"
+                        || host == "::1"
+                        || host == "[::1]";
+                    if scheme != "https" && (scheme != "http" || !es_loopback) {
+                        return Err(ErrorDeConfiguracion::ValorInvalido {
+                            nombre: HEXCELL_EMBEDDINGS_URL_BASE,
+                            valor: url_base,
+                            formato_esperado: "URL con esquema https:// (o http:// solo para loopback)",
+                        });
+                    }
+                } else {
+                    return Err(ErrorDeConfiguracion::ValorInvalido {
+                        nombre: HEXCELL_EMBEDDINGS_URL_BASE,
+                        valor: url_base,
+                        formato_esperado: "URL válida",
+                    });
+                }
+
+                let api_key = leer_obligatoria(
+                    HEXCELL_EMBEDDINGS_API_KEY,
+                    "cadena no vacía con la clave de API",
+                )?;
+
+                let modelo = leer_obligatoria(
+                    HEXCELL_EMBEDDINGS_MODELO,
+                    "nombre del modelo, p. ej. text-embedding-3-small",
+                )?;
+
+                let timeout = match std::env::var(HEXCELL_EMBEDDINGS_TIMEOUT_MS) {
+                    Ok(valor) => {
+                        let ms = valor.parse::<u64>().map_err(|_| {
+                            ErrorDeConfiguracion::ValorInvalido {
+                                nombre: HEXCELL_EMBEDDINGS_TIMEOUT_MS,
+                                valor: valor.clone(),
+                                formato_esperado:
+                                    "entero estrictamente positivo de milisegundos, p. ej. 8000",
+                            }
+                        })?;
+                        if ms == 0 {
+                            return Err(ErrorDeConfiguracion::ValorInvalido {
+                                nombre: HEXCELL_EMBEDDINGS_TIMEOUT_MS,
+                                valor: valor.clone(),
+                                formato_esperado: "entero estrictamente positivo de milisegundos, p. ej. 8000",
+                            });
+                        }
+                        Duration::from_millis(ms)
+                    }
+                    Err(_) => TIMEOUT_EMBEDDINGS_POR_DEFECTO,
+                };
+
+                let reintentos = match std::env::var(HEXCELL_EMBEDDINGS_REINTENTOS) {
+                    Ok(valor) => {
+                        let r = valor.parse::<u32>().map_err(|_| {
+                            ErrorDeConfiguracion::ValorInvalido {
+                                nombre: HEXCELL_EMBEDDINGS_REINTENTOS,
+                                valor: valor.clone(),
+                                formato_esperado: "entero no negativo menor o igual a 3, p. ej. 1",
+                            }
+                        })?;
+                        if r > 3 {
+                            return Err(ErrorDeConfiguracion::ValorInvalido {
+                                nombre: HEXCELL_EMBEDDINGS_REINTENTOS,
+                                valor: valor.clone(),
+                                formato_esperado: "entero no negativo menor o igual a 3, p. ej. 1",
+                            });
+                        }
+                        r
+                    }
+                    Err(_) => REINTENTOS_EMBEDDINGS_POR_DEFECTO,
+                };
+
+                let tamano_de_lote = match std::env::var(HEXCELL_EMBEDDINGS_TAMANO_DE_LOTE) {
+                    Ok(valor) => {
+                        let tam = valor.parse::<usize>().map_err(|_| {
+                            ErrorDeConfiguracion::ValorInvalido {
+                                nombre: HEXCELL_EMBEDDINGS_TAMANO_DE_LOTE,
+                                valor: valor.clone(),
+                                formato_esperado: "entero positivo entre 1 y 128, p. ej. 32",
+                            }
+                        })?;
+                        if !(1..=128).contains(&tam) {
+                            return Err(ErrorDeConfiguracion::ValorInvalido {
+                                nombre: HEXCELL_EMBEDDINGS_TAMANO_DE_LOTE,
+                                valor: valor.clone(),
+                                formato_esperado: "entero positivo entre 1 y 128, p. ej. 32",
+                            });
+                        }
+                        tam
+                    }
+                    Err(_) => TAMANO_DE_LOTE_EMBEDDINGS_POR_DEFECTO,
+                };
+
+                let tiempo_maximo_embeddings =
+                    timeout * (1 + reintentos) + Duration::from_millis(u64::from(reintentos) * 250);
+                if tiempo_maximo_embeddings >= limite_de_drenaje {
+                    return Err(ErrorDeConfiguracion::ValorInvalido {
+                        nombre: HEXCELL_EMBEDDINGS_URL_BASE,
+                        valor: url_base,
+                        formato_esperado: "tiempo total de embeddings (timeout * (1 + reintentos) + reintentos * 250ms) estrictamente menor que el límite de drenaje",
+                    });
+                }
+
+                Some(crate::proveedor_embeddings::ConfiguracionDeEmbeddings {
+                    url_base,
+                    api_key,
+                    modelo,
+                    timeout,
+                    reintentos,
+                    tamano_de_lote,
+                })
+            }
+            _ => None,
+        };
+
         Ok(Self {
             id_celula,
             ruta_datos,
@@ -522,6 +665,7 @@ impl Configuracion {
             limite_de_concurrencia,
             presupuesto_inicial_unidades,
             inferencia,
+            embeddings,
         })
     }
 }

@@ -21,3 +21,14 @@ pub fn estimar_coste(prompt: &str) -> UnidadesDePresupuesto {
     let estimacion = num_caracteres / CARACTERES_POR_UNIDAD_ESTIMADA;
     estimacion.max(UNIDADES_MINIMAS_POR_LLAMADA)
 }
+
+/// Calcula el coste estimado de un lote de fragmentos de texto para una petición de incrustaciones.
+///
+/// Suma la cantidad total de caracteres Unicode de todos los textos del lote, divide entre
+/// [`CARACTERES_POR_UNIDAD_ESTIMADA`] y aplica [`UNIDADES_MINIMAS_POR_LLAMADA`] como suelo único
+/// para la llamada completa, evitando sobre-reservar en lotes con múltiples fragmentos cortos.
+pub fn estimar_coste_de_lote(textos: &[String]) -> UnidadesDePresupuesto {
+    let total_caracteres: u64 = textos.iter().map(|t| t.chars().count() as u64).sum();
+    let estimacion = total_caracteres / CARACTERES_POR_UNIDAD_ESTIMADA;
+    estimacion.max(UNIDADES_MINIMAS_POR_LLAMADA)
+}
