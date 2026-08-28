@@ -1,0 +1,105 @@
+task_id: HEX-051
+summary: Build the batch embeddings client port (FR-06) with OpenRouter and Google AI Studio adapters, bounded retries, partial-failure resumption, and two-phase budget accounting.
+goal: >-
+  Implement stage A-5 task 3: a `ProveedorDeEmbeddings` port in hexcell-core (std-only,
+  adr-0002) with two live enum-dispatched implementations in the hexcell binary crate —
+  an OpenRouter adapter that reuses the existing OpenAI-compatible HTTPS transport built
+  in stage A-4 (crates/hexcell/src/proveedor_openai.rs, HEX-044) against OpenRouter's
+  OpenAI-compatible `/embeddings` endpoint, and a Google AI Studio (Gemini) adapter with
+  its own request/response shapes because that API is not OpenAI-compatible. The port
+  batches fragment texts, applies the same fixed-cap/fixed-backoff retry discipline as
+  the chat-completions client (no retry on 429, no retry on any 4xx, no retry once a
+  response body has been received), defines an explicit contract for resuming an
+  ingestion after a partial batch failure, and routes every call through the existing
+  two-phase budget accounting (reservar_presupuesto / conciliar_presupuesto /
+  liberar_presupuesto in hexcell-storage, estimar_coste in hexcell-core), aborting when
+  there is no balance. This task returns embedding vectors in memory, matching the f32
+  little-endian BLOB byte layout documented in
+  crates/hexcell-storage/migraciones/conocimiento/0002-esquema-de-conocimiento.sql; it
+  does not write to knowledge_staging.db (stage A-5 task 4's responsibility) and does not
+  depend on the unmerged fragmentation branch (ai/HEX-050) — it is implementable and
+  testable from main today, consuming ordered chunk texts as an abstract input.
+invariants:
+  - The embeddings port (`ProveedorDeEmbeddings` or equivalent trait name) is declared in hexcell-core and is expressible using std alone; hexcell-core's dependency table stays empty per adr-0002.
+  - Both concrete adapters (OpenRouter, Google AI Studio/Gemini) live in the hexcell binary crate and are selected through an enum (mirroring ProveedorDeCelula in crates/hexcell/src/inferencia.rs), never through `dyn` trait objects, because the port's async method returns `impl Future` and is therefore not object-safe.
+  - The OpenRouter adapter reuses the hyper + hyper-util + hyper-rustls + rustls + webpki-roots transport stack already present in crates/hexcell/Cargo.toml (stage A-4, HEX-044); no new HTTP client crate is introduced for this task.
+  - "Token/usage accounting for any adapter that reports it follows the same rule established in HEX-044 for chat completions: computed usage is prompt_tokens + completion_tokens and NEVER total_tokens, when the provider's response distinguishes them."
+  - "Every embedding call is fail-closed: a transport error, a timeout, or a malformed response body surfaces as an error to the caller and never fabricates a zero vector or a partial result silently."
+  - Retries are bounded by a fixed cap and a fixed backoff (no exponential backoff), mirroring D-27 in docs/bitacora-de-descartes.md; a 429 response, any 4xx response, and any response after a body has already been received are never retried, to avoid double-spend and to avoid deepening provider-side quota exhaustion.
+  - "Per-attempt timeout is 8 seconds with 1 retry (closed human decision, mirroring HEXCELL_INFERENCIA_TIMEOUT_MS/HEXCELL_INFERENCIA_REINTENTOS defaults of 8000 ms / 1 retry in crates/hexcell/src/configuracion.rs), and the invariant timeout * (1 + retries) < graceful-drain limit (LIMITE_DE_DRENAJE_POR_DEFECTO = 20 s in crates/hexcell/src/apagado.rs) must hold for the embeddings path exactly as it holds for inference (16 s < 20 s). Because a batched embeddings call is slower per call than a single chat completion, this arithmetic is recorded as an explicit risk in this task, not assumed to carry over silently."
+  - No embedding call proceeds without a successful two-phase budget reservation (reservar_presupuesto) against an estimated cost; the call is aborted before any network request is made when reservar_presupuesto reports no balance (VeredictoDeReserva denying the reservation).
+  - After a call returns, the exact cost is reconciled via conciliar_presupuesto against the real usage reported by the provider (or, when the provider reports no usage metadata, via a documented fallback estimate using estimar_coste), and any reservation left unresolved by a failed call is released via liberar_presupuesto so it never leaks as phantom consumed budget.
+  - Resuming an ingestion after a partial batch failure never re-spends budget or re-calls the provider for fragments whose vectors were already obtained successfully in a prior attempt; only the unresolved remainder is retried.
+  - No API key, provider URL secret, or credential is ever written into any file in the repository; both adapters read their configuration exclusively from environment variables, following the existing HEXCELL_INFERENCIA_* naming convention in crates/hexcell/src/configuracion.rs.
+  - This task returns embedding vectors and their originating fragment ordering in memory; it performs no disk I/O against knowledge_staging.db or any other SQLite file, preserving the boundary with stage A-5 task 4.
+  - Vectors produced by this task are laid out as IEEE-754 f32, little-endian, no header, no padding — the exact byte contract documented in the header of crates/hexcell-storage/migraciones/conocimiento/0002-esquema-de-conocimiento.sql — so task 4 can write them into vectores_de_fragmento unchanged.
+  - No mass-sending folklore (jitter, "warm-up" protocols), proxies, VPN, or IP rotation is introduced anywhere in this task's retry or batching logic; these are forbidden by standing project policy.
+  - All repository content this task touches (Rust doc comments, code comments, commit message) is written in Spanish and is didactic (explains WHY, not what the line does); only this Quorum spec's field values are written in English.
+acceptance:
+  - id: AC-1
+    statement: A `ProveedorDeEmbeddings` port trait exists in hexcell-core expressible in std alone, with request/response types carrying at minimum ordered input texts and ordered output vectors (as Vec<f32> or an equivalent in-memory representation matching the f32 little-endian BLOB contract).
+    given: hexcell-core's existing empty [dependencies] table (adr-0002) and the precedent of ProveedorDeInferencia in crates/hexcell-core/src/inferencia.rs
+    when: the new port module is added to hexcell-core
+    then: cargo build -p hexcell-core succeeds with no new dependency added to its Cargo.toml, and the trait method batches a list of texts into a single call rather than one call per fragment
+  - id: AC-2
+    statement: An OpenRouter adapter and a Google AI Studio (Gemini) adapter both implement the port, selected via an enum in the hexcell binary crate, and the OpenRouter adapter reuses the existing hyper/rustls transport stack from crates/hexcell/src/proveedor_openai.rs rather than introducing a new HTTP client dependency.
+    given: crates/hexcell/Cargo.toml already depends on hyper, hyper-util, hyper-rustls, rustls, and webpki-roots (HEX-044)
+    when: the two adapters are added as a new module in the hexcell binary crate
+    then: cargo build --workspace succeeds with no new HTTP client crate added, and an enum equivalent to ProveedorDeCelula dispatches to whichever adapter is configured, never through `dyn`
+  - id: AC-3
+    statement: Retries are capped and use fixed backoff; a 429 or any 4xx response, and any error occurring after a response body has been received, are never retried by either adapter.
+    given: a local fake HTTP server (offline, no live API key) that returns a 429, then a 500, then a malformed body, in sequence
+    when: the adapter under test is pointed at the fake server via its configured URL and the batch call is invoked
+    then: the 429 response is surfaced as an error on the first attempt with zero retries attempted for it, the 500 response is retried up to the fixed cap with fixed (non-exponential) delay, and a malformed body received after a 200 status is surfaced as an error without a retry
+  - id: AC-4
+    statement: A batch embeddings call reserves an estimated budget before the network request and reconciles the exact cost afterward; a denied reservation aborts the call before any request is sent.
+    given: a Saldo in hexcell-storage's presupuesto module with insufficient balance for the estimated cost of a batch
+    when: the batch embeddings call is invoked against that conversation's budget
+    then: reservar_presupuesto denies the reservation, no HTTP request is made to the fake server, and the call returns an explicit budget-exhausted error distinguishable from a transport error
+  - id: AC-5
+    statement: "Resuming an ingestion after a partial batch failure (fewer vectors returned than fragments requested, or an intermediate batch of several failing) does not re-request or re-charge budget for the fragments whose vectors were already obtained."
+    given: a fake server that returns M < N vectors for a batch of N fragments, or fails the third of five sequential batches after the first two succeeded
+    when: the resumption path is invoked with the partial result already known
+    then: only the unresolved fragments are re-sent in a subsequent call, and the reconciled budget total reflects real cost for completed fragments plus real cost for the retried remainder, with no double reservation left unresolved for the fragments that already succeeded
+  - id: AC-6
+    statement: Both providers' credentials, base URL, and model identifier are supplied exclusively through environment variables named following the existing HEXCELL_INFERENCIA_* convention, never hardcoded or written to any file.
+    given: crates/hexcell/src/configuracion.rs's existing HEXCELL_INFERENCIA_URL_BASE / HEXCELL_INFERENCIA_API_KEY / HEXCELL_INFERENCIA_MODELO / HEXCELL_INFERENCIA_TIMEOUT_MS / HEXCELL_INFERENCIA_REINTENTOS naming convention
+    when: this task adds the equivalent embeddings configuration
+    then: new constants (e.g. HEXCELL_EMBEDDINGS_PROVEEDOR, HEXCELL_EMBEDDINGS_URL_BASE, HEXCELL_EMBEDDINGS_API_KEY, HEXCELL_EMBEDDINGS_MODELO, HEXCELL_EMBEDDINGS_TIMEOUT_MS, HEXCELL_EMBEDDINGS_REINTENTOS) are defined analogously, no default value embeds a real key, and grep across the repository for the literal key value (used only in a local offline test fixture, never a real key) finds nothing committed
+  - "cargo build --workspace, cargo test --workspace, cargo fmt --check, and cargo clippy --workspace -- -D warnings all pass, with every test in this task's scope running fully offline against a local fake/fixture HTTP server — no test contacts a live OpenRouter or Google AI Studio endpoint."
+  - "DEFERRED (explicitly out of scope for this task, later A-5 tasks, not to be flagged by q-analyze as a gap): any acceptance criterion requiring a live API key or a real network call to OpenRouter or Google AI Studio; the knowledge_staging.db ingestion pipeline and its writes (task 4); structural/semantic integrity validation of an epoch (task 5); the epoch promotion sequence (task 6); graceful drain of the old epoch pool (task 7); epoch retention and revert (task 8); the RAG retrieval engine (task 9); and the internal administrative endpoint (task 10). Whether DeepSeek offers an embeddings endpoint is an open question (its official repositories still track it as a feature request, not a shipped capability) and is NOT decided by this task; the production inference provider (DeepSeek) and the embeddings provider are independent choices and nothing here forces them to match."
+risk: high
+non_goals:
+  - Writing embedding vectors or fragments to knowledge_staging.db or any other SQLite file (stage A-5 task 4).
+  - Structural or semantic integrity validation of an epoch, including the test similarity query and its threshold (stage A-5 task 5).
+  - The epoch promotion sequence, ArcSwap pointer swap, and graceful drain of the old pool (stage A-5 tasks 6-7).
+  - Epoch retention policy and revert-to-prior-epoch operation (stage A-5 task 8).
+  - The RAG retrieval engine and prompt context construction (stage A-5 task 9).
+  - The internal administrative endpoint to trigger a knowledge update (stage A-5 task 10).
+  - Any dependency on the unmerged fragmentation branch (ai/HEX-050); this task consumes an abstract ordered-chunk-texts input, not fragmentacion.rs's concrete types, and is implementable and testable from main today.
+  - Deciding or confirming whether DeepSeek offers an embeddings endpoint, or changing the production inference provider; this remains an open question recorded, not resolved, by this task.
+  - Any live integration test against a real OpenRouter or Google AI Studio endpoint; all tests in this task's scope run offline.
+constraints:
+  - No new runtime dependencies for hexcell-core (adr-0002, empty dependency table); the OpenRouter adapter must reuse the existing hyper/hyper-util/hyper-rustls/rustls/webpki-roots stack already in crates/hexcell/Cargo.toml rather than adding a new HTTP client crate.
+  - Repository is public; API keys, provider URLs with embedded secrets, and any credential NEVER enter the repository — they arrive exclusively through environment variables (HEXCELL_EMBEDDINGS_* constants, named after the existing HEXCELL_INFERENCIA_* convention). This is the first task in the repository that needs a real external API key end-to-end, and its spec/blueprint/contract must say so explicitly.
+  - Never version *.db, *.db-wal, *.db-shm, or .env* files; this task does not touch any of them directly since it performs no disk I/O.
+  - Retry policy is fixed-cap and fixed-backoff only, per D-27 in docs/bitacora-de-descartes.md; exponential backoff, retrying HTTP 429, and adding a ninth workspace crate are closed decisions, not open for reconsideration here.
+  - No mass-sending folklore (jitter, "warm-up" protocols), proxies, VPN, or IP rotation, per standing project policy.
+  - Per-attempt timeout is 8 seconds with 1 retry, matching HEXCELL_INFERENCIA_TIMEOUT_MS/HEXCELL_INFERENCIA_REINTENTOS defaults; the blueprint must show the arithmetic timeout * (1 + retries) < LIMITE_DE_DRENAJE_POR_DEFECTO (20 s) holds for the batched embeddings path, and must record as a risk that batched calls are slower than a single chat completion so this margin is tighter in practice.
+  - All budget movements go through crates/hexcell-storage/src/presupuesto.rs's existing reservar_presupuesto / conciliar_presupuesto / liberar_presupuesto and crates/hexcell-core/src/presupuesto.rs's estimar_coste; no parallel or duplicate accounting mechanism is introduced.
+  - Enum dispatch only for the two adapters (mirroring ProveedorDeCelula), never `dyn` trait objects, because the port's method returns `impl Future` and is not object-safe.
+  - Vectors are produced as IEEE-754 f32, little-endian, no header, no padding, matching the byte contract in crates/hexcell-storage/migraciones/conocimiento/0002-esquema-de-conocimiento.sql, so task 4 can persist them unchanged.
+  - Every scope item traces to FR-06 (Shadow DB indexing via batched external embeddings calls) of docs/PRD.md; no requirement is invented beyond what stage A-5 task 3 ("Integrar el cliente de embeddings por lotes") calls for in docs/plan/fase-a-5-conocimiento-shadow-db.md.
+  - All tests exercising retries, batching, resumption, and budget consumption run fully offline against a local fake/fixture HTTP server; no test contacts a live provider endpoint, and any criterion that would require one is declared DEFERRED instead.
+decomposition:
+  - child_id: HEX-051-a
+    summary: Embeddings port in hexcell-core with batching, timeouts, bounded retries, partial-failure resumption, two-phase budget, and the OpenRouter adapter reusing the existing HTTPS transport.
+    depends_on:
+      - HEX-051-c
+  - child_id: HEX-051-b
+    summary: Google AI Studio (Gemini) adapter behind the same embeddings port, with its own non-OpenAI request/response shapes and environment variables.
+    depends_on:
+      - HEX-051-a
+  - child_id: HEX-051-c
+    summary: sessions.db migration 0004 rebuilding reservas with a nullable id_conversacion, the consumo_de_ingesta sibling view, the consumo_por_conversacion filter, and reservar_presupuesto_de_ingesta.
+    depends_on: []
