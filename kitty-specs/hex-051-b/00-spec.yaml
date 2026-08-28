@@ -1,0 +1,83 @@
+task_id: HEX-051-b
+summary: Google AI Studio (Gemini) embeddings adapter behind the existing merged ProveedorDeEmbeddings port, with its own non-OpenAI request/response shapes and environment variables.
+goal: >-
+  Subset of HEX-051 (stage A-5 task 3, FR-06). The port (`ProveedorDeEmbeddings` in
+  hexcell-core), the enum-dispatch selector (`ProveedorDeEmbeddingsDeCelula` in
+  crates/hexcell/src/embeddings.rs), the OpenRouter adapter, and the two-phase budget
+  accounting integration (`ServicioDeEmbeddings`, `reservar_presupuesto_de_ingesta`) are
+  ALL ALREADY MERGED into main (HEX-051-a, HEX-051-c) and are consumed, not redesigned, by
+  this task. This task adds exactly one thing: a Google AI Studio (Gemini) adapter
+  implementing the existing `ProveedorDeEmbeddings` trait, with its own serde request/response
+  types (Gemini's batch embedding API is not OpenAI-compatible), added to
+  `ProveedorDeEmbeddingsDeCelula` as a new enum variant (`Gemini`) alongside the existing
+  `Simulado` and `OpenRouter` variants. adr-0025 already documents this as a pure addition
+  that requires no change to the port trait or restructuring of the enum. The adapter reuses
+  the same HTTPS transport stack (hyper + hyper-util + hyper-rustls + rustls + webpki-roots)
+  already present in crates/hexcell/Cargo.toml; no new HTTP client crate is introduced. This
+  task does not touch hexcell-storage (read-only) and does not alter budget accounting logic.
+invariants:
+  - The Gemini adapter implements the existing `ProveedorDeEmbeddings` trait from hexcell-core exactly as declared; this task does not modify the trait signature, its associated types, or hexcell-core's empty dependency table (adr-0002).
+  - Adding the Gemini adapter is a pure addition to `ProveedorDeEmbeddingsDeCelula` (a new `Gemini(...)` variant) and to `ErrorDeEmbeddingsDeCelula` (a new `Gemini(...)` error variant); the existing `Simulado` and `OpenRouter` variants, and every call site that matches on the enum, are otherwise unchanged.
+  - The Gemini adapter reuses the existing hyper + hyper-util + hyper-rustls + rustls + webpki-roots transport stack already present in crates/hexcell/Cargo.toml; no new HTTP client crate is introduced for this task.
+  - The Gemini adapter's serde request/response types are its own (Gemini's batch embedding API is not OpenAI-compatible) and are never reused from, nor merged into, the existing OpenAI-shaped types in crates/hexcell/src/proveedor_embeddings.rs.
+  - "A batch of N requested texts always produces a structure of length N; each vector returned by Gemini is placed at the position corresponding to its ORIGINATING request text, never by a positional `zip` assumed without verification. Because Gemini's batch embedding response does not carry an explicit per-item index field, correspondence between response position and request position relies on the documented API guarantee that the response array preserves request order; the adapter's mapping logic must be written to make a violation of that order guarantee (a swapped or dropped position) detectable rather than silently trusted, and a test must exercise that detection using response vectors that structurally encode their expected source index."
+  - A response whose vector count does not match the requested count, a duplicate-target integration, or an out-of-range index is rejected by the existing `LoteDeEmbeddings::integrar` machinery (already merged); the Gemini adapter does not bypass or duplicate this validation.
+  - "Usage/cost for a Gemini call is computed by summing the components Gemini's usage metadata actually reports, never read from any single aggregate/total-style field; if Gemini's response omits usage metadata entirely, the call is never billed as zero — it reconciles against the already-reserved estimate (the same fail-closed floor already established for the OpenRouter adapter in HEX-051-a), even though Gemini's usage metadata differs in field names and shape from OpenAI's."
+  - Retries for the Gemini adapter are bounded by a fixed cap and fixed backoff (no exponential backoff), mirroring D-27 in docs/bitacora-de-descartes.md and the existing OpenRouter adapter; a 429 response, any 4xx response, and any error occurring after a response body has been received are never retried, to avoid double-spend.
+  - Vectors produced by the Gemini adapter are laid out as IEEE-754 f32, little-endian, no header, no padding, matching the byte contract documented in the header of crates/hexcell-storage/migraciones/conocimiento/0002-esquema-de-conocimiento.sql, via the existing `VectorDeEmbedding` type; this task does not alter that type or the storage schema.
+  - The Gemini API key is read exclusively from an environment variable; it is never written to any file in the repository, never appears in a `Debug` or `Display` implementation, error message, panic payload, or test fixture. The Gemini configuration type redacts the key in its hand-written `Debug` implementation exactly as `ConfiguracionDeEmbeddings` already does for the OpenRouter adapter (emitting `«redactado»`).
+  - All tests for the Gemini adapter run fully offline against a local fake HTTP server on loopback, following the existing pattern (`https_or_http()` connector plus rejection of plain http on non-loopback hosts); no test contacts a live Google AI Studio endpoint.
+  - This task does not touch crates/hexcell-storage (read-only for this task); it does not modify `reservar_presupuesto_de_ingesta`, `conciliar_presupuesto`, or `liberar_presupuesto`, and routes every call through the existing `ServicioDeEmbeddings` wrapper exactly as the OpenRouter adapter already does.
+  - No mass-sending folklore (jitter, "warm-up" protocols), proxies, VPN, or IP rotation is introduced anywhere in this adapter's retry logic; these are forbidden by standing project policy.
+  - All repository content this task touches (Rust doc comments, code comments, commit message, identifiers) is written in Spanish and is didactic (explains WHY, not what the line does); only this Quorum spec's field values are written in English.
+acceptance:
+  - id: AC-1
+    statement: A Gemini adapter implementing `ProveedorDeEmbeddings` is added as a new `Gemini` variant of `ProveedorDeEmbeddingsDeCelula`, requiring no change to the port trait, hexcell-core, or the enum's existing `Simulado`/`OpenRouter` variants.
+    given: the merged port trait at crates/hexcell-core/src/embeddings.rs and the merged enum at crates/hexcell/src/embeddings.rs with variants `Simulado` and `OpenRouter`
+    when: the Gemini adapter module is added to the hexcell binary crate and wired into the enum
+    then: cargo build --workspace succeeds, hexcell-core's Cargo.toml gains no dependency, and no existing match arm on `ProveedorDeEmbeddingsDeCelula` or `ErrorDeEmbeddingsDeCelula` requires restructuring beyond adding the new arm
+  - id: AC-2
+    statement: A batch of N texts sent to the Gemini adapter always yields a result structure of length N with each vector assigned to its correct originating position, and a test proves this using response fixtures that structurally encode their expected source index rather than relying on an unverified positional zip.
+    given: a local fake HTTP server returning a batch embedding response with vectors ordered to match the request order, where each fixture vector's value encodes the index of its intended source text
+    when: the adapter's incrustar_lote is invoked with a batch of several distinguishable texts
+    then: each decoded vector's encoded index matches the position of its originating text, and the test fails if the mapping is naively swapped or shifted
+  - id: AC-3
+    statement: Retries for the Gemini adapter are capped and use fixed backoff; a 429 response, any 4xx response, and any error after a response body has been received are never retried.
+    given: a local fake HTTP server that returns a 429, then a 500, then a malformed body, in sequence
+    when: the Gemini adapter is pointed at the fake server and the batch call is invoked
+    then: the 429 is surfaced as an error with zero retries, the 500 is retried up to the fixed cap with fixed delay, and the malformed body received after a 200 status is surfaced as an error without a retry
+  - id: AC-4
+    statement: When Gemini's response omits usage metadata, the call is never billed as zero; it reconciles against the already-reserved estimate instead.
+    given: a local fake HTTP server returning a successful batch response with vectors but no usage/token metadata field
+    when: the batch call completes and budget reconciliation runs via the existing `ServicioDeEmbeddings`
+    then: the reconciled cost equals the previously reserved estimate, not zero, and no phantom reservation is left unresolved
+  - id: AC-5
+    statement: The Gemini API key, base URL, and model identifier are supplied exclusively through environment variables, never hardcoded, and never appear in any Debug/Display output, error message, or panic payload.
+    given: the existing HEXCELL_EMBEDDINGS_* and HEXCELL_INFERENCIA_* naming convention in crates/hexcell/src/configuracion.rs
+    when: this task adds the Gemini-specific configuration and a provider-selector variable distinguishing it from the existing OpenRouter configuration
+    then: the new constants are defined analogously, the Gemini configuration type's hand-written Debug implementation redacts the key as `«redactado»`, no default value embeds a real key, and grep across the repository for the literal key value (used only in a local offline test fixture, never a real key) finds nothing committed
+  - "cargo build --workspace, cargo test --workspace, cargo fmt --check, and cargo clippy --workspace -- -D warnings all pass, with every Gemini-adapter test running fully offline against a local fake HTTP server on loopback — no test contacts a live Google AI Studio endpoint."
+  - "DEFERRED (explicitly out of scope, not to be flagged by q-analyze as a gap): any criterion requiring a live Google AI Studio API key or a real network call; redesigning or modifying the ProveedorDeEmbeddings port trait, the ProveedorDeEmbeddingsDeCelula enum's existing variants, or the OpenRouter adapter (HEX-051-a, merged); modifying two-phase budget accounting, reservar_presupuesto_de_ingesta, or any hexcell-storage migration (HEX-051-c, merged); enforcing tamano_de_lote at call time for either adapter — the OpenRouter adapter already stores it behind #[allow(dead_code)] because enforcing batch size at call time belongs to A-5 task 4 (ingestion), and the Gemini adapter inherits the identical inert-parameter situation: tamano_de_lote is validated arithmetically at startup (timeout * (1 + retries) + backoff < LIMITE_DE_DRENAJE_POR_DEFECTO) but not enforced when actually slicing a call's text list, so A-5 task 4 must enforce batch slicing for BOTH adapters uniformly, not just Gemini; the knowledge_staging.db ingestion pipeline (task 4); epoch validation, promotion, drain, retention, RAG retrieval, and the admin endpoint (tasks 5-10); and whether DeepSeek offers an embeddings endpoint, an open question this task does not resolve."
+risk: medium
+non_goals:
+  - Redesigning, extending, or restructuring the `ProveedorDeEmbeddings` port trait in hexcell-core; it is already merged and consumed as-is.
+  - Modifying the `ProveedorDeEmbeddingsDeCelula` enum's existing `Simulado` or `OpenRouter` variants, or the OpenRouter adapter itself (crates/hexcell/src/proveedor_embeddings.rs); this task only appends a new variant.
+  - Modifying two-phase budget accounting (`reservar_presupuesto_de_ingesta`, `conciliar_presupuesto`, `liberar_presupuesto`) or any hexcell-storage migration; hexcell-storage is read-only for this task.
+  - Enforcing `tamano_de_lote` (batch size) at call time for either adapter; that remains stage A-5 task 4's responsibility for both adapters, as already recorded for the OpenRouter adapter.
+  - Writing embedding vectors or fragments to knowledge_staging.db or any other SQLite file (stage A-5 task 4).
+  - Structural or semantic integrity validation of an epoch, epoch promotion, graceful drain, epoch retention/revert, the RAG retrieval engine, and the internal administrative endpoint (stage A-5 tasks 5-10).
+  - Any dependency on the unmerged fragmentation branch (ai/HEX-050).
+  - Deciding or confirming whether DeepSeek offers an embeddings endpoint, or changing the production inference provider.
+  - Any live integration test against a real Google AI Studio endpoint; all tests in this task's scope run offline.
+  - Authoring a new ADR; adr-0025 already documents the Gemini variant as an anticipated pure addition to the enum, and this task makes no decision adr-0025 did not anticipate.
+constraints:
+  - No new runtime dependency for hexcell-core (adr-0002, empty dependency table stays empty); the Gemini adapter must reuse the existing hyper/hyper-util/hyper-rustls/rustls/webpki-roots stack already in crates/hexcell/Cargo.toml rather than adding a new HTTP client crate.
+  - "Repository is public: the Gemini API key arrives exclusively through an environment variable and must never reach a log, a Debug output, an error message, a panic payload, or a test fixture; the Gemini configuration type must redact the key in a hand-written Debug implementation exactly as the existing ConfiguracionDeEmbeddings does."
+  - Never version *.db, *.db-wal, *.db-shm, or .env* files; this task performs no disk I/O against hexcell-storage.
+  - Retry policy is fixed-cap and fixed-backoff only, per D-27 in docs/bitacora-de-descartes.md; exponential backoff and retrying HTTP 429 are closed decisions, not open for reconsideration here.
+  - No mass-sending folklore (jitter, "warm-up" protocols), proxies, VPN, or IP rotation, per standing project policy.
+  - Enum dispatch only (adding a `Gemini` variant to `ProveedorDeEmbeddingsDeCelula`), never `dyn` trait objects; this is the pure-addition case adr-0025 already anticipated.
+  - Vectors are produced via the existing `VectorDeEmbedding` type (IEEE-754 f32, little-endian, no header, no padding); this task does not modify that type or the storage schema.
+  - Every scope item traces to FR-06 (Shadow DB indexing via batched external embeddings calls) of docs/PRD.md; no requirement is invented beyond the Gemini-adapter portion of stage A-5 task 3, since the port, the OpenRouter adapter, and the accounting integration are already delivered by HEX-051-a and HEX-051-c.
+  - All tests exercising the Gemini adapter's batching, retries, index correspondence, and usage-metadata fallback run fully offline against a local fake HTTP server on loopback; any criterion that would require a live key is declared DEFERRED instead.
+  - This task does not author a new ADR; if implementation surfaces a decision adr-0025 did not anticipate, that must be reported back as a blocker for a human decision, not resolved silently.

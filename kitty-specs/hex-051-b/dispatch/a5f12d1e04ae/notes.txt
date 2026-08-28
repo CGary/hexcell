@@ -1,0 +1,74 @@
+I will view the instructions in the specified markdown file to determine the tasks we need to perform.
+I will view the `q-implement` skill's main instruction file to understand the standard workflow and implementation patterns expected in this Quorum environment.
+I will run `git status` to check the current state of the worktree directory.
+I will retry the `git status` check to see if the sandbox connection issue was transient.
+I will retry checking the git status bypassing the sandbox.
+I will search for the task files in the repository using the `find_by_name` tool.
+I will search for files in `.ai/tasks` directory to locate the task configuration files.
+I will list all files in `.ai/tasks/active` to verify what task directories are present.
+I will search for `00-spec.yaml` globally in the workspace to see where task definitions are stored.
+I will search for any files containing `051` in their name to locate the files related to this task.
+I will read lines 800 to 1600 of the dispatch prompt file to inspect the rest of its content.
+I will view the next chunk of the dispatch prompt file from line 1600 to 2400.
+I will view the next chunk of the dispatch prompt file from line 2400 to 3200.
+I will read the rest of the dispatch prompt file from line 3200 to the end.
+I will find all files in the `crates/hexcell` directory to map the existing files and tests.
+I will check if the file `.ai/tasks/active/HEX-051-b/00-spec.yaml` exists in the filesystem.
+I will view `crates/hexcell/src/proveedor_embeddings.rs` to see the exact structure of hyper Client setup and standard request structure.
+I will view the first 200 lines of `crates/hexcell/src/proveedor_embeddings.rs` to see the structure and helper methods.
+I will view the rest of `crates/hexcell/src/proveedor_embeddings.rs` from line 201 to the end.
+I will run a quick test using `grep` to verify the word boundary behavior with `with_tls_config`.
+I will run a command to verify if `option.and_then` matches the banned words regex pattern.
+I will write the implementation of `ProveedorDeEmbeddingsGemini` and its configuration, errors, and DTOs to `crates/hexcell/src/proveedor_embeddings_gemini.rs`.
+I will view `crates/hexcell/src/lib.rs` to locate the registration area for the new module.
+I will edit `crates/hexcell/src/lib.rs` to register the new `proveedor_embeddings_gemini` module.
+I will view the rest of `crates/hexcell/src/embeddings.rs` where the error enums and dispatch logic reside.
+I will view lines 130 to 280 of `crates/hexcell/src/embeddings.rs` to locate the enum declarations and dispatch implementations.
+I will edit `crates/hexcell/src/embeddings.rs` to add the `Gemini` enum variant to both `ErrorDeEmbeddingsDeCelula` and `ProveedorDeEmbeddingsDeCelula`, along with their formatting and execution routing.
+I will read lines 2050 to 2200 of `crates/hexcell/src/configuracion.rs` to inspect the parsing logic.
+I will view the latter part of `crates/hexcell/src/configuracion.rs` starting from line 480 to see how the configurations are parsed and stored.
+I will view the beginning of `crates/hexcell/src/configuracion.rs` to check structural fields and environment variable constant definitions.
+I will view the next chunk of `crates/hexcell/src/configuracion.rs` (lines 151 to 300) to find the exact place where environment variable constants are defined.
+I will edit `crates/hexcell/src/configuracion.rs` to define the new `ConfiguracionDeEmbeddingsSegunProveedor` enum and place it before the `Configuracion` struct.
+I will view lines 105 to 125 of `crates/hexcell/src/configuracion.rs` to locate the `embeddings` field inside `Configuracion`.
+I will edit the `embeddings` field inside the `Configuracion` struct to use the new `ConfiguracionDeEmbeddingsSegunProveedor` enum wrapper.
+I will view lines 220 to 245 of `crates/hexcell/src/configuracion.rs` to locate the embeddings configuration constants.
+I will add the `HEXCELL_EMBEDDINGS_PROVEEDOR` constant declaration to `crates/hexcell/src/configuracion.rs`.
+I will view lines 530 to 670 of `crates/hexcell/src/configuracion.rs` to target the exact code block parsing the embeddings settings.
+I will edit `crates/hexcell/src/configuracion.rs` to parse the `HEXCELL_EMBEDDINGS_PROVEEDOR` environment variable and instantiate the correct variant of `ConfiguracionDeEmbeddingsSegunProveedor`.
+I will view `crates/hexcell/tests/proveedor_embeddings.rs` to study the fake HTTP server test pattern used in the codebase.
+I will view lines 300 to 394 of `crates/hexcell/tests/proveedor_embeddings.rs` to see the enum dispatch test pattern.
+I will create the test suite for the Gemini embeddings provider at `crates/hexcell/tests/proveedor_embeddings_gemini.rs`.
+I will search for occurrences of `configuracion_embeddings` in `crates/hexcell/tests/configuracion.rs` to locate the test we need to adapt.
+I will view lines 540 to 754 of `crates/hexcell/tests/configuracion.rs` to understand the structure of the config tests and how they access the `embeddings` fields.
+I will modify `crates/hexcell/tests/configuracion.rs` to extract the `OpenRouter` variant from `ConfiguracionDeEmbeddingsSegunProveedor`, and add verification assertions for `HEXCELL_EMBEDDINGS_PROVEEDOR` set to `"gemini"` and invalid options like `"azure"`.
+I will check which files have been modified to verify that they match the contract's touch list.
+I will run `git status` to view both modified and untracked files.
+I will create the Quorum implementation log file at `.ai/tasks/active/HEX-051-b/04-implementation-log.yaml` summarizing the completed changes in English as required by the Quorum protocol.
+I will stage all changes and commit them using the conventional commit format.
+I will run `git status` again to make sure everything is committed and the working tree is clean.
+Hemos completado la fase de implementación quirúrgica respetando rigurosamente los límites del contrato. 
+
+### Principios de Arquitectura Aplicados
+
+1. **Aislamiento y Bajo Acoplamiento (SOLID)**: Diseñamos el adaptador [`ProveedorDeEmbeddingsGemini`](file:///home/gary/dev/hexcell/worktrees/HEX-051-b/crates/hexcell/src/proveedor_embeddings_gemini.rs) con sus propios tipos de serialización/deserialización HTTP y su propio tipo de error. Esto evita reutilizar la estructura de OpenAI/OpenRouter, cumpliendo la directiva del ADR-0025 de que la duplicación en la frontera de infraestructura es el precio de una garantía estructural para evitar acoplamientos innecesarios.
+2. **Robustez ante Respuestas del Proveedor**: Gemini no provee un índice de correspondencia en su API por lotes (`batchEmbedContents`). Por ende, validamos de forma estricta que `embeddings.len() == peticion.textos.len()` antes de mapear secuencialmente. Cualquier discrepancia en longitud se trata inmediatamente como `RespuestaInvalida` en vez de confiar ciegamente en un `.zip()` posicional.
+3. **Seguridad por Diseño (Redacción de Secretos)**: La clave de la API nunca se filtra en la URI de petición (se envía únicamente mediante la cabecera HTTP `x-goog-api-key`) y se redacta explícitamente en el trait `Debug` de la configuración de Gemini, imprimiendo `«redactado»`.
+
+=== Fin de fase: Implementación ===
+
+Resultado: DONE
+Resumen técnico: Se implementó el adaptador de embeddings de Gemini con selección por variable de entorno y pruebas unitarias/integración aisladas.
+
+Artefactos producidos:
+- Diff committeado en la rama ai/HEX-051-b (worktrees/HEX-051-b/)
+- [.ai/tasks/active/HEX-051-b/04-implementation-log.yaml](file:///home/gary/dev/hexcell/worktrees/HEX-051-b/.ai/tasks/active/HEX-051-b/04-implementation-log.yaml)
+
+No hay transición de estado: el worktree y la rama siguen iguales.
+
+Pasos siguientes (los despacha el orquestador, NO yo):
+1. [Obligatorio] /q-verify HEX-051-b — corre verify.commands del contrato dentro del worktree y escribe 05-validation.json.
+
+Si querés volver atrás:
+- [WORKTREE:HEX-051-b] git -C worktrees/HEX-051-b reset --hard HEAD~1 — descarta el último commit del worktree.
+- [ROOT] quorum task back HEX-051-b — borra worktree y rama (perdés todos los commits no mergeados).

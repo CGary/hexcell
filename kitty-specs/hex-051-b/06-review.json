@@ -1,0 +1,27 @@
+{
+  "task_id": "HEX-051-b",
+  "summary": "Pure-addition Gemini embeddings adapter behind the merged port; index-order test, hard-error short response, redacted key, fail-closed billing and bounded retries all verified in the diff.",
+  "verdict": "approve",
+  "contract_compliance": true,
+  "forbidden_files_touched": [],
+  "unrequested_refactor": false,
+  "missing_tests": [],
+  "functional_risk": "low",
+  "notes": [
+    "contract-check ok=true; not_checked: forbid.behaviors (verified manually below)",
+    "acceptance-coverage: AC-1..AC-5 all covered; two legacy_untracked items are the known blueprint annotation artifact (build-pass criterion and DEFERRED list), not real gaps",
+    "6 files changed (4 tracked modified + 2 untracked new), matching touch list and max_files_changed=6 exactly; forbid.files diff against main is empty for every listed path (hexcell-core, hexcell-storage, docs/adr, docs/STATUS.md, docs/bitacora-de-descartes.md, sidecar/, .github/, Cargo.toml/.lock, proveedor_openai.rs, proveedor_embeddings.rs, motor.rs, main.rs, apagado.rs all untouched)",
+    "AC-2 index-correspondence test (respuesta_exitosa_coloca_vectores_por_orden_y_calcula_uso) uses fixture vectors whose first component literally encodes source index (0.0/1.0/2.0) and asserts vectores[i].valores()[0]==i; the adapter's mapping is a straight in-order push over the deserialized embeddings Vec, so a reversed/shifted response would fail this assertion, not merely a count check",
+    "AC-2 short/length-mismatch test (error_si_longitud_no_coincide) sends 2 embeddings for 3 texts and asserts RespuestaInvalida; code checks embeddings.len() != peticion.textos.len() symmetrically (catches both fewer and more) before any partial Vec is built",
+    "AC-3 retry tests confirm all three exclusions: 429 -> 1 request, <100ms (no retry); 500 -> 1+reintentos=3 requests, fixed 250ms backoff, elapsed>=500ms (no exponential growth); malformed 200 body -> 1 request only (no retry after body received/parsed)",
+    "AC-4 billing: unidades_consumidas reads only usageMetadata.promptTokenCount, defaults to 0 when usageMetadata absent (respuesta_sin_uso_de_token_devuelve_cero test); per blueprint this 0 is reconciled against the reserved estimate by the already-merged, provider-agnostic ServicioDeEmbeddings floor, not re-implemented in the adapter -- consistent with forbid.behaviors and with the OpenRouter precedent already tested in tests/embeddings_presupuesto.rs",
+    "AC-5 secret safety: api_key sent only via x-goog-api-key header (never '?key=' query param, verified in code and by clave_api_solo_en_cabecera_no_en_url test capturing the raw request line/headers); ConfiguracionDeEmbeddingsGemini and ProveedorDeEmbeddingsGemini both hand-write Debug emitting «redactado» (pruebas_redaccion module); no error variant carries api_key; grep for sentinel literals found only clearly-marked local test fixtures, no real key anywhere",
+    "AC-1/pure-addition: Gemini variant appended to both ProveedorDeEmbeddingsDeCelula and ErrorDeEmbeddingsDeCelula with only new match arms; existing Simulado/OpenRouter arms, hexcell-core's port trait and its empty Cargo.toml, and proveedor_embeddings.rs (OpenRouter adapter) are byte-for-byte untouched",
+    "Config selector (HEXCELL_EMBEDDINGS_PROVEEDOR): absent -> openrouter (byte-identical merged construction, tested), 'gemini' -> new variant (tested), unrecognised value e.g. 'azure' -> ErrorDeConfiguracion::ValorInvalido naming the variable, hard startup error not silent fallback (tested); the two pre-existing assertions broken by the Option<ConfiguracionDeEmbeddings> -> Option<ConfiguracionDeEmbeddingsSegunProveedor> type change were the anticipated, in-scope edit and nothing else in tests/configuracion.rs changed",
+    "No retry folklore: fixed 250ms delay only, no jitter/warm-up/proxy/VPN/IP-rotation anywhere in the retry loop",
+    "No new ADR authored; adr-0025 diff against main is empty, matching the non-goal",
+    "Two orchestrator-applied mechanical fixes (removing an unused Future import; adding ConfiguracionDeEmbeddingsSegunProveedor to the existing test import) are both correct, minimal, and idiomatic -- not delegate defects",
+    "Minor non-blocking nit: the Gemini module's top-of-file doc comment ('para aislar los tipos de serializacion') is thinner than the OpenRouter sibling's ('deliberadamente ... para aislar los tipos de serializacion y evitar relajar la validacion de tokens del flujo de chat (adr-0025)') and a couple of inline comments (e.g. 'Construir la URL del endpoint') describe WHAT rather than WHY; cosmetic only, does not block approval"
+  ],
+  "fix_tasks": []
+}

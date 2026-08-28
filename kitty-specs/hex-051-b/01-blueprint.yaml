@@ -1,0 +1,256 @@
+task_id: HEX-051-b
+summary: >-
+  Add a Gemini embeddings adapter as a pure-addition variant of the merged
+  ProveedorDeEmbeddingsDeCelula enum, plus a HEXCELL_EMBEDDINGS_PROVEEDOR config selector.
+affected_files:
+  - crates/hexcell/src/lib.rs
+  - crates/hexcell/src/embeddings.rs
+  - crates/hexcell/src/proveedor_embeddings_gemini.rs
+  - crates/hexcell/src/proveedor_embeddings.rs
+  - crates/hexcell/src/configuracion.rs
+  - crates/hexcell/tests/proveedor_embeddings_gemini.rs
+  - crates/hexcell/tests/configuracion.rs
+  - crates/hexcell-core/src/embeddings.rs
+  - docs/adr/adr-0025-puerto-de-embeddings.md
+symbols:
+  - crate::proveedor_embeddings_gemini::ConfiguracionDeEmbeddingsGemini
+  - crate::proveedor_embeddings_gemini::ErrorDeProveedorDeEmbeddingsGemini
+  - crate::proveedor_embeddings_gemini::ProveedorDeEmbeddingsGemini
+  - crate::embeddings::ProveedorDeEmbeddingsDeCelula::Gemini
+  - crate::embeddings::ErrorDeEmbeddingsDeCelula::Gemini
+  - crate::configuracion::HEXCELL_EMBEDDINGS_PROVEEDOR
+  - crate::configuracion::ConfiguracionDeEmbeddingsSegunProveedor
+dependencies:
+  - crates/hexcell-core/src/embeddings.rs
+  - crates/hexcell-core/src/presupuesto.rs
+  - crates/hexcell/src/proveedor_openai.rs
+  - crates/hexcell/tests/proveedor_embeddings.rs
+  - crates/hexcell/tests/embeddings_presupuesto.rs
+  - docs/adr/adr-0025-puerto-de-embeddings.md
+  - docs/bitacora-de-descartes.md
+test_scenarios:
+  - statement: >-
+      cargo build --workspace succeeds after the Gemini variant is added; hexcell-core's
+      Cargo.toml gains no new dependency; no existing match arm on ProveedorDeEmbeddingsDeCelula
+      or ErrorDeEmbeddingsDeCelula needed anything beyond one new arm each.
+    covers: ["AC-1"]
+  - statement: >-
+      A fake server returns a batchEmbedContents-shaped response ({"embeddings":[{"values":[...]}]})
+      for N=3 distinguishable texts, where each fixture vector's first component numerically
+      encodes its expected source index (0.0, 1.0, 2.0). The test asserts vectores[i]'s decoded
+      first component equals i for every i, proving the position-based assignment is correct
+      rather than trusted; because Gemini's response carries no index field, this is the only
+      verification surface available, and the fixture is built precisely so a reversed or
+      off-by-one assignment bug would fail the assertion instead of passing silently.
+    covers: ["AC-2"]
+  - statement: >-
+      A fake server returns an "embeddings" array with fewer elements than requested texts (e.g.
+      2 items for a 3-text request). Because Gemini's response has no index field, a length
+      mismatch cannot be safely attributed to a specific request/response pair. The adapter must
+      reject this as RespuestaInvalida (a detected error), never silently truncate or return a
+      partially-filled Vec<Option<VectorDeEmbedding>> for a length-mismatched Gemini response.
+    covers: ["AC-2"]
+  - statement: >-
+      Sequence test against a fake server returning 429 then 500 then a malformed 200 body: the
+      429 is surfaced with zero retries (exactly 1 attempt observed), the 500 is retried up to
+      the fixed cap with fixed (non-exponential) delay (attempt count == 1 + reintentos, elapsed
+      time >= reintentos * 250ms), and the malformed body after a 200 status surfaces as an error
+      with zero further retries (exactly 1 attempt observed for that case).
+    covers: ["AC-3"]
+  - statement: >-
+      A fake server returns a successful {"embeddings":[...]} body with NO "usageMetadata" field
+      at all. The adapter's incrustar_lote must return unidades_consumidas == 0 in that case
+      (mirroring ProveedorDeEmbeddingsOpenRouter's respuesta_sin_uso_reporta_cero_unidades
+      pattern); this is sufficient because ServicioDeEmbeddings::incrustar_lote (already merged,
+      generic over P: ProveedorDeEmbeddings) already reconciles any unidades_consumidas == 0
+      against the previously reserved estimate rather than against zero — this floor is provider-
+      agnostic and already exercised end-to-end for ProveedorDeEmbeddingsSimulado in
+      tests/embeddings_presupuesto.rs::llamada_sin_metadatos_de_uso_concilia_contra_estimacion_previa.
+      No new ServicioDeEmbeddings-level integration test is required for this to hold for Gemini.
+    covers: ["AC-4"]
+  - statement: >-
+      A fake server also returns usageMetadata.promptTokenCount as the ONLY summed component
+      (Gemini's batchEmbedContents has no completion-token analogue); the adapter reports
+      unidades_consumidas == promptTokenCount and never reads any total-style field.
+    covers: ["AC-4"]
+  - statement: >-
+      The fake server's request handler additionally captures the raw HTTP request line and
+      headers (not only the body, as the existing OpenRouter test harness does). With a sentinel
+      API key, the test asserts the sentinel appears in the "x-goog-api-key" request header and
+      does NOT appear anywhere in the request line/URI, proving the key never becomes part of a
+      loggable/Displayable URL. A parallel unit test (in-module, mirroring
+      proveedor_embeddings.rs::pruebas_redaccion) asserts the sentinel never appears in
+      ConfiguracionDeEmbeddingsGemini's Debug, ProveedorDeEmbeddingsGemini's Debug, or any
+      ErrorDeProveedorDeEmbeddingsGemini variant's Display/Debug.
+    covers: ["AC-5"]
+  - statement: >-
+      tests/configuracion.rs: with HEXCELL_EMBEDDINGS_URL_BASE set and HEXCELL_EMBEDDINGS_PROVEEDOR
+      absent, config.embeddings resolves to ConfiguracionDeEmbeddingsSegunProveedor::OpenRouter
+      (unchanged merged behaviour). With HEXCELL_EMBEDDINGS_PROVEEDOR="gemini", it resolves to
+      the Gemini variant carrying the same six parsed values. With an unrecognised value (e.g.
+      "azure"), Configuracion::desde_entorno returns ErrorDeConfiguracion::ValorInvalido naming
+      HEXCELL_EMBEDDINGS_PROVEEDOR, not a silent fallback.
+    covers: ["AC-5"]
+  - statement: >-
+      cargo fmt --check, cargo clippy --workspace -- -D warnings, cargo build --workspace and
+      cargo test --workspace all pass; every new test runs against a std::net::TcpListener fake
+      server on 127.0.0.1, never a live Google AI Studio endpoint.
+strategy:
+  - step: 1
+    action: >-
+      Value Object / Application-adapter layer: create crates/hexcell/src/proveedor_embeddings_gemini.rs
+      implementing hexcell_core::embeddings::ProveedorDeEmbeddings for a new
+      ProveedorDeEmbeddingsGemini, with its own ConfiguracionDeEmbeddingsGemini (hand-written
+      Debug redacting api_key as «redactado», mirroring ConfiguracionDeEmbeddings exactly) and its
+      own ErrorDeProveedorDeEmbeddingsGemini (ErrorDeTransporte/TiempoAgotado/CodigoDeEstadoHttp/
+      RespuestaInvalida, same shape as the OpenRouter error type but a SEPARATE type, never
+      imported from proveedor_embeddings.rs). Duplicate the HTTPS connector construction
+      (rustls::ClientConfig::builder_with_provider + ring provider + webpki_roots +
+      hyper_rustls::HttpsConnectorBuilder::new().with_tls_config(cfg).https_or_http().enable_http1()
+      + hyper_util legacy Client) exactly as proveedor_embeddings.rs does; do not extract a shared
+      helper (same "duplication is the price of a structural guarantee" reasoning as adr-0025).
+    files:
+      - crates/hexcell/src/proveedor_embeddings_gemini.rs
+  - step: 2
+    action: >-
+      Wire the request/response shape verified against Google's own public REST reference during
+      this blueprint (POST {url_base}/v1beta/models/{modelo}:batchEmbedContents, body
+      {"requests":[{"model":"models/{modelo}","content":{"parts":[{"text":"..."}]}}, ...]}, auth
+      via the "x-goog-api-key" HEADER — never a "?key=" query parameter, so the constructed URI
+      never becomes secret-bearing in the first place; response
+      {"embeddings":[{"values":[...]}],"usageMetadata":{"promptTokenCount":N}}). Serde
+      DTOs: PeticionEmbeddingsGemini/PeticionEmbeddingItemGemini/ContenidoGemini/ParteGemini
+      (Serialize) and RespuestaEmbeddingsGemini{embeddings: Option<Vec<EmbeddingItemGemini>>,
+      #[serde(rename="usageMetadata")] usage_metadata: Option<UsoDeEmbeddingsGemini>} /
+      EmbeddingItemGemini{values: Option<Vec<f32>>} / UsoDeEmbeddingsGemini{#[serde(rename=
+      "promptTokenCount")] prompt_token_count: Option<u64>} (Deserialize), every field Option so
+      an unfamiliar live shape fails closed with RespuestaInvalida rather than panicking.
+    files:
+      - crates/hexcell/src/proveedor_embeddings_gemini.rs
+  - step: 3
+    action: >-
+      Domain-rule enforcement inside ejecutar_un_intento: because batchEmbedContents carries NO
+      per-item index field (only a documented order guarantee), assign embeddings[i].values to
+      vectores[i] ONLY when embeddings.len() == peticion.textos.len(); any length mismatch
+      (fewer OR more returned) is RespuestaInvalida — Gemini gives no way to attribute which
+      subset succeeded when counts differ, unlike OpenRouter's explicit index field, so partial
+      results cannot be safely modeled here and every position resolves together or the whole
+      call errors. Usage: unidades_consumidas = usage_metadata.and_then(|u| u.prompt_token_count)
+      .unwrap_or(0); NEVER read any hypothetical total-style field. Retry loop: total_intentos =
+      1 + reintentos, fixed 250ms backoff applied OUTSIDE the per-attempt timeout (mirroring
+      proveedor_embeddings.rs lines 282-317 exactly): retry on transport error/timeout/5xx only;
+      return immediately on 429, any other 4xx, or RespuestaInvalida (received-body case).
+    files:
+      - crates/hexcell/src/proveedor_embeddings_gemini.rs
+  - step: 4
+    action: >-
+      Pure-addition wiring in crates/hexcell/src/embeddings.rs: add
+      ErrorDeEmbeddingsDeCelula::Gemini(ErrorDeProveedorDeEmbeddingsGemini) with its Display and
+      Error::source arms; add ProveedorDeEmbeddingsDeCelula::Gemini(Box<ProveedorDeEmbeddingsGemini>)
+      (boxed, mirroring OpenRouter's box, avoiding clippy::large_enum_variant) with its
+      incrustar_lote dispatch arm. Register `pub mod proveedor_embeddings_gemini;` in
+      crates/hexcell/src/lib.rs. No existing Simulado/OpenRouter arm changes; no trait change in
+      hexcell-core/src/embeddings.rs (read-verified, not touched).
+    files:
+      - crates/hexcell/src/lib.rs
+      - crates/hexcell/src/embeddings.rs
+  - step: 5
+    action: >-
+      Application-config layer in crates/hexcell/src/configuracion.rs: add
+      `pub const HEXCELL_EMBEDDINGS_PROVEEDOR: &str = "HEXCELL_EMBEDDINGS_PROVEEDOR";` and a new
+      `pub enum ConfiguracionDeEmbeddingsSegunProveedor { OpenRouter(proveedor_embeddings::
+      ConfiguracionDeEmbeddings), Gemini(proveedor_embeddings_gemini::ConfiguracionDeEmbeddingsGemini) }`
+      (mirrors the existing CanalSeleccionado desde_str precedent at line 25-40). Change
+      `Configuracion.embeddings` from `Option<ConfiguracionDeEmbeddings>` to
+      `Option<ConfiguracionDeEmbeddingsSegunProveedor>`. Inside the existing
+      HEXCELL_EMBEDDINGS_URL_BASE-gated branch (unchanged activation gate, unchanged parsing of
+      api_key/modelo/timeout/reintentos/tamano_de_lote — parse ONCE, do not duplicate that block
+      per provider), read HEXCELL_EMBEDDINGS_PROVEEDOR: absent -> "openrouter" (preserves merged
+      behaviour byte-for-byte); "openrouter" or "gemini" (trimmed, case-sensitive) -> select that
+      variant; anything else -> ErrorDeConfiguracion::ValorInvalido{nombre:
+      HEXCELL_EMBEDDINGS_PROVEEDOR, valor, formato_esperado: "uno de: openrouter | gemini"} as a
+      hard startup error, never a silent fallback. Deriving Debug on the new wrapper enum is safe
+      and sufficient (not a redaction gap): each variant's inner type already hand-redacts its own
+      api_key, so the wrapper's derived Debug only ever calls an already-safe inner Debug.
+    files:
+      - crates/hexcell/src/configuracion.rs
+  - step: 6
+    action: >-
+      Test layer: create crates/hexcell/tests/proveedor_embeddings_gemini.rs duplicating the
+      local std::net::TcpListener fake-server harness pattern from tests/proveedor_embeddings.rs
+      (deliberately, not extracted into tests/comun/mod.rs — same isolation rationale as the
+      adapter duplication), extended to also expose the captured request line/headers (not only
+      the body) so the AC-5 URL-leak test can inspect where the sentinel key landed. Cover: index-
+      encoding correctness (AC-2), length-mismatch-is-error (AC-2), 429/500/malformed sequence
+      (AC-3), usage-present and usage-absent (AC-4), key-in-header-not-URL (AC-5), and one
+      ProveedorDeEmbeddingsDeCelula::Gemini dispatch test (mirrors
+      proveedor_de_embeddings_de_celula_despacho_por_enum in tests/proveedor_embeddings.rs, which
+      is NOT touched). Extend tests/configuracion.rs's existing
+      configuracion_embeddings_desde_entorno_y_validaciones to unwrap
+      ConfiguracionDeEmbeddingsSegunProveedor::OpenRouter(...) instead of the old bare struct
+      (the only edit this task makes to an existing assertion), and add new assertions for the
+      "gemini" selection and the unrecognised-value startup error.
+    files:
+      - crates/hexcell/tests/proveedor_embeddings_gemini.rs
+      - crates/hexcell/tests/configuracion.rs
+risks:
+  - >-
+    CONFIG FIELD TYPE CHANGE BREAKS AN EXISTING MERGED TEST BY DESIGN, NOT BY ACCIDENT.
+    Configuracion.embeddings changing from Option<ConfiguracionDeEmbeddings> to
+    Option<ConfiguracionDeEmbeddingsSegunProveedor> is required by the human's own configuration
+    decision ("ONE config slot, ONE active provider per cell") and necessarily breaks
+    tests/configuracion.rs's current `config.embeddings.expect(...).url_base` field access
+    (verified at that file's lines 590/605). This is an intentional, in-scope, minimal edit to an
+    already-merged test file, not scope creep; tests/configuracion.rs is in `touch` for exactly
+    this reason and nothing else in that file changes.
+  - >-
+    GEMINI'S REQUEST/RESPONSE SHAPE AND AUTH HEADER WERE VERIFIED LIVE, NOT ASSUMED. Fetched
+    https://ai.google.dev/api/embeddings and https://ai.google.dev/gemini-api/docs/embeddings
+    during this blueprint (2026-08-28): batchEmbedContents responds with
+    {"embeddings":[{"values":[...],"shape":[...]}],"usageMetadata":{"promptTokenCount":N,
+    "promptTokenDetails":[...]}} — confirming the spec's claim of "no per-item index field,
+    order-preserving only" and giving the exact usage field name (promptTokenCount, no
+    completion-token analogue, no documented total-style field). Both docs pages show
+    authentication via the "x-goog-api-key" HTTP header and do NOT document "?key=" query-string
+    auth for this endpoint. This resolves the human brief's open question (i) whether the key
+    travels as a query parameter: per current public documentation it does not, so the adapter
+    is designed to send it exclusively as a header, which removes the URL-secret-leak vector
+    structurally rather than mitigating it after the fact. Because this task's tests are offline-
+    only (no live call, by explicit invariant), if a future Gemini API revision changes this
+    contract it will surface as a live 4xx during actual production use, not as a test failure
+    here; that residual gap is inherent to the "offline tests only" constraint and is accepted,
+    not something this task's blueprint can close further.
+  - >-
+    LENGTH-MISMATCH HANDLING DIVERGES FROM THE OPENROUTER ADAPTER, DELIBERATELY. OpenRouter's
+    adapter tolerates a response shorter than the request (leaving unresolved slots as None,
+    because its explicit `index` field tells it exactly which slots those are). Gemini's response
+    has no index field, so a length mismatch cannot be attributed to specific texts and is treated
+    as a hard RespuestaInvalida instead of a partial result. This is a genuine design asymmetry
+    between the two adapters that follows directly from the API shapes, not an inconsistency to
+    "fix" toward parity — flagging it so q-analyze does not read it as a contradiction with
+    HEX-051-a's precedent.
+  - >-
+    A-5 TASK 4 CARRY-FORWARD (do not fix here, single instruction for both adapters). Both the
+    OpenRouter adapter (already merged) and this Gemini adapter store tamano_de_lote behind
+    #[allow(dead_code)] and validate it only arithmetically at startup (timeout * (1 + reintentos)
+    [+ backoff] < LIMITE_DE_DRENAJE_POR_DEFECTO); neither adapter slices a call's text list to
+    that size at call time. Stage A-5 task 4 (ingestion) must enforce batch slicing uniformly
+    across BOTH adapters when it lands, not rediscover the gap per-adapter.
+  - >-
+    PHASE 1B (BLIND EXTERNAL SUMMARIZATION) WAS SKIPPED IN FAVOUR OF DIRECT VERIFICATION. Every
+    file in affected_files was read directly and cross-checked against the code graph
+    (codebase-memory-mcp, index fresh at HEAD bc3fccf) rather than bundled into a blind
+    `quorum fleet run` summarization cell; this exceeds the reliability the bounded 80-word-per-
+    file summary would have provided for a task this dependent on exact byte-for-byte JSON field
+    names and exact line ranges. No file content entered this analysis via an unverified external
+    summary.
+  - >-
+    NO NEW ADR IS AUTHORED, per the human's explicit instruction; adr-0025 already anticipated
+    the enum addition as a pure addition, and the configuration-selector rationale ("exactly one
+    active provider per cell because mixing providers within one knowledge epoch would break the
+    dimension-uniformity invariant the schema depends on, and inferring the provider from the URL
+    host would be implicit magic this project avoids") is recorded here in the blueprint, as
+    instructed, rather than in a new or edited ADR. adr-0025 itself is read-only context in this
+    task (listed in affected_files/dependencies for verification purposes only, not for editing);
+    the next free ADR number, if a future task needs one, is adr-0026 (verified: docs/adr/ ends at
+    adr-0025, and README.md's table's last row is adr-0025).

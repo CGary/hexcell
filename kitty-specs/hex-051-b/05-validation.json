@@ -1,0 +1,56 @@
+{
+  "task_id": "HEX-051-b",
+  "summary": "Los ocho verify.commands pasan (exit 0) en worktrees/HEX-051-b tras dos correcciones mecanicas de compilacion aplicadas por el orquestador.",
+  "executed_at": "2026-08-28T03:50:00Z",
+  "commands": [
+    {
+      "command": "cargo fmt --check",
+      "exit_code": 0,
+      "duration_s": 0.19,
+      "output_excerpt": "sin diferencias de formato tras aplicar cargo fmt"
+    },
+    {
+      "command": "cargo clippy --workspace -- -D warnings",
+      "exit_code": 0,
+      "duration_s": 0.55,
+      "output_excerpt": "sin warnings con -D warnings"
+    },
+    {
+      "command": "cargo build --workspace",
+      "exit_code": 0,
+      "duration_s": 0.47,
+      "output_excerpt": "Finished dev profile"
+    },
+    {
+      "command": "cargo test --workspace",
+      "exit_code": 0,
+      "duration_s": 6.16,
+      "output_excerpt": "57 pruebas, suites completas sin fallos"
+    },
+    {
+      "command": "bash -c (grep negado de fugas de ingles)",
+      "exit_code": 0,
+      "duration_s": 0.0,
+      "output_excerpt": "sin coincidencias"
+    },
+    {
+      "command": "bash -c (tabla [dependencies] de hexcell-core vacia, adr-0002)",
+      "exit_code": 0,
+      "duration_s": 0.0,
+      "output_excerpt": "vacia"
+    },
+    {
+      "command": "bash -c (grep negado de total_tokens como campo leido)",
+      "exit_code": 0,
+      "duration_s": 0.0,
+      "output_excerpt": "sin coincidencias"
+    },
+    {
+      "command": "bash -c (ningun Cargo.toml modificado respecto de main)",
+      "exit_code": 0,
+      "duration_s": 0.0,
+      "output_excerpt": "sin cambios: cero dependencias nuevas"
+    }
+  ],
+  "overall_result": "passed"
+}

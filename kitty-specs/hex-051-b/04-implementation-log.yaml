@@ -1,0 +1,3 @@
+entries: []
+summary: Add a Gemini embeddings adapter as a pure-addition enum variant, plus a HEXCELL_EMBEDDINGS_PROVEEDOR config selector, behind the merged ProveedorDeEmbeddings port.
+task_id: HEX-051-b

@@ -1,0 +1,57 @@
+{
+  "task_id": "HEX-051-b",
+  "bundle_hash": "a5f12d1e04ae1e18c71aff3f61cffabf32ac2723ea1a45f40ee57893a66f39ef",
+  "files": [
+    ".ai/tasks/active/HEX-051-b/00-spec.yaml",
+    ".ai/tasks/active/HEX-051-b/01-blueprint.yaml",
+    "crates/hexcell-core/src/embeddings.rs",
+    "crates/hexcell-core/src/presupuesto.rs",
+    "crates/hexcell-storage/migraciones/conocimiento/0002-esquema-de-conocimiento.sql",
+    "crates/hexcell/Cargo.toml",
+    "crates/hexcell/src/apagado.rs",
+    "crates/hexcell/src/configuracion.rs",
+    "crates/hexcell/src/embeddings.rs",
+    "crates/hexcell/src/lib.rs",
+    "crates/hexcell/src/proveedor_embeddings.rs",
+    "crates/hexcell/src/proveedor_openai.rs"
+  ],
+  "protocol_version": "fleet-bundle-protocol/v2",
+  "created_at": "2026-08-28T19:37:45Z",
+  "dropped": [
+    {
+      "component": "code_slice",
+      "path": "docs/plan/fase-a-5-conocimiento-shadow-db.md",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "docs/bitacora-de-descartes.md",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "docs/adr/adr-0025-puerto-de-embeddings.md",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "docs/adr/README.md",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "crates/hexcell/tests/proveedor_embeddings.rs",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "crates/hexcell/tests/embeddings_presupuesto.rs",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "crates/hexcell/tests/configuracion.rs",
+      "reason": "bundle exceeded max_bytes budget"
+    }
+  ]
+}

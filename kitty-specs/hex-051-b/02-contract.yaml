@@ -1,0 +1,151 @@
+task_id: HEX-051-b
+summary: >-
+  Add a Gemini embeddings adapter as a pure-addition enum variant, plus a
+  HEXCELL_EMBEDDINGS_PROVEEDOR config selector, behind the merged ProveedorDeEmbeddings port.
+goal: >-
+  Implement stage A-5 task 3's Gemini half (FR-06), verified against main at bc3fccf. The port
+  (hexcell-core/src/embeddings.rs), the dispatch enum (hexcell/src/embeddings.rs, currently
+  Simulado | OpenRouter), the OpenRouter adapter (hexcell/src/proveedor_embeddings.rs), and the
+  two-phase accounting wrapper (ServicioDeEmbeddings, reservar_presupuesto_de_ingesta) are ALL
+  already merged (HEX-051-a, HEX-051-c) and are consumed as-is, never redesigned. This task adds
+  exactly: (1) a new module crates/hexcell/src/proveedor_embeddings_gemini.rs implementing
+  ProveedorDeEmbeddings against Google's batchEmbedContents REST shape (verified live against
+  https://ai.google.dev/api/embeddings and https://ai.google.dev/gemini-api/docs/embeddings during
+  blueprinting: response is {"embeddings":[{"values":[...]}],"usageMetadata":
+  {"promptTokenCount":N}}, no per-item index field, auth via the "x-goog-api-key" header, not a
+  query parameter); (2) one Gemini(...) variant appended to ProveedorDeEmbeddingsDeCelula and to
+  ErrorDeEmbeddingsDeCelula; (3) one HEXCELL_EMBEDDINGS_PROVEEDOR env var (openrouter | gemini,
+  default openrouter when absent) selecting which of two config structs
+  Configuracion.embeddings holds, via a new ConfiguracionDeEmbeddingsSegunProveedor enum, reusing
+  the SAME six existing HEXCELL_EMBEDDINGS_* variables for both providers — no new Gemini-specific
+  env var names beyond the selector. All tests run offline against a local fake HTTP server on
+  loopback; no live Google AI Studio call is made anywhere in this task.
+
+read:
+  - crates/hexcell-core/src/embeddings.rs
+  - crates/hexcell-core/src/presupuesto.rs
+  - crates/hexcell/src/embeddings.rs
+  - crates/hexcell/src/proveedor_embeddings.rs
+  - crates/hexcell/src/proveedor_openai.rs
+  - crates/hexcell/src/apagado.rs
+  - crates/hexcell/tests/proveedor_embeddings.rs
+  - crates/hexcell/tests/embeddings_presupuesto.rs
+  - crates/hexcell/Cargo.toml
+  - crates/hexcell-storage/migraciones/conocimiento/0002-esquema-de-conocimiento.sql
+  - docs/adr/adr-0025-puerto-de-embeddings.md
+  - docs/adr/README.md
+  - docs/bitacora-de-descartes.md
+  - docs/plan/fase-a-5-conocimiento-shadow-db.md
+  - .ai/tasks/active/HEX-051-b/00-spec.yaml
+  - .ai/tasks/active/HEX-051-b/01-blueprint.yaml
+
+touch:
+  - crates/hexcell/src/lib.rs
+  - crates/hexcell/src/embeddings.rs
+  - crates/hexcell/src/proveedor_embeddings_gemini.rs
+  - crates/hexcell/src/configuracion.rs
+  - crates/hexcell/tests/proveedor_embeddings_gemini.rs
+  - crates/hexcell/tests/configuracion.rs
+
+forbid:
+  files:
+    - crates/hexcell-core/Cargo.toml
+    - crates/hexcell-core/src/embeddings.rs
+    - crates/hexcell-core/src/presupuesto.rs
+    - crates/hexcell-core/src/inferencia.rs
+    - crates/hexcell-core/src/canal.rs
+    - crates/hexcell-core/src/admision.rs
+    - crates/hexcell/src/proveedor_openai.rs
+    - crates/hexcell/src/proveedor_embeddings.rs
+    - crates/hexcell/src/inferencia.rs
+    - crates/hexcell/src/procesador.rs
+    - crates/hexcell/src/motor.rs
+    - crates/hexcell/src/main.rs
+    - crates/hexcell/src/apagado.rs
+    - crates/hexcell/tests/proveedor_openai.rs
+    - crates/hexcell/tests/proveedor_embeddings.rs
+    - crates/hexcell/tests/embeddings_presupuesto.rs
+    - crates/hexcell/tests/motor.rs
+    - crates/hexcell/tests/inferencia.rs
+    - crates/hexcell/tests/admision.rs
+    - crates/hexcell/tests/persistencia.rs
+    - crates/hexcell/tests/apagado_ordenado.rs
+    - crates/hexcell/tests/comun/mod.rs
+    - crates/hexcell/Cargo.toml
+    - crates/hexcell-storage/
+    - docs/adr/
+    - docs/STATUS.md
+    - docs/bitacora-de-descartes.md
+    - sidecar/
+    - .github/
+    - Cargo.toml
+    - Cargo.lock
+  behaviors:
+    - "Modifying the ProveedorDeEmbeddings trait, its associated Error type, or its incrustar_lote signature in hexcell-core; this task consumes the port exactly as merged."
+    - "Adding any dependency to crates/hexcell-core/Cargo.toml or crates/hexcell/Cargo.toml; the existing hyper/hyper-util/hyper-rustls/rustls/webpki-roots/serde/serde_json stack already suffices and no new HTTP client or dev-dependency crate is needed."
+    - "Restructuring ProveedorDeEmbeddingsDeCelula or ErrorDeEmbeddingsDeCelula beyond appending one Gemini arm each; changing, removing or renaming the existing Simulado or OpenRouter arms."
+    - "Using async fn in the port trait, or Box<dyn ProveedorDeEmbeddings>/any trait object over it or over ProveedorDeEmbeddingsDeCelula; enum dispatch only."
+    - "Modifying crates/hexcell/src/proveedor_embeddings.rs (the OpenRouter adapter) or reusing/importing its serde request/response types, its ConfiguracionDeEmbeddings, or its ErrorDeProveedorDeEmbeddings for the Gemini adapter; Gemini defines its own separate types even where the shape looks similar."
+    - "Modifying, relaxing or sharing the chat-completions usage validation in crates/hexcell/src/proveedor_openai.rs."
+    - "Reading any hypothetical Gemini total-style usage field, or any field name other than usageMetadata.promptTokenCount, as the billed amount."
+    - "Reconciling a completed Gemini call to zero units, or releasing its reservation, when usageMetadata is missing or promptTokenCount is absent; the adapter must report unidades_consumidas = 0 in that case and rely on the ALREADY-MERGED ServicioDeEmbeddings floor to reconcile against the reserved estimate — do not add a second, parallel floor mechanism inside the adapter."
+    - "Assigning Gemini's embeddings[] array to request positions when embeddings.len() != peticion.textos.len(); that is RespuestaInvalida, never a partial-result Vec<Option<...>> for Gemini specifically (unlike the OpenRouter adapter's index-driven partial tolerance)."
+    - "Returning a RespuestaDeEmbeddings whose vectores length differs from the request's textos length."
+    - "Fabricating a zero vector, default vector or partial result on transport error, timeout or malformed body; those paths return Err."
+    - "Retrying HTTP 429, retrying any other 4xx, or issuing a further attempt after a response body has already been received and parsed."
+    - "Exponential backoff, unbounded retries, or any await on the Gemini response without a deadline."
+    - "Jitter, warm-up protocols, proxies, VPN or IP rotation anywhere in the retry logic; forbidden by standing project policy."
+    - "Sending the Gemini API key as a '?key=' query parameter in the request URI; it travels exclusively via the 'x-goog-api-key' HTTP header, per the live-verified public API reference."
+    - "Formatting the API key into any string passed to ErrorDeTransporte/RespuestaInvalida/CodigoDeEstadoHttp{detalle}, any log line, any panic payload, or any test fixture other than a clearly-marked local sentinel string used only in offline tests."
+    - "Deriving Debug on ConfiguracionDeEmbeddingsGemini or ProveedorDeEmbeddingsGemini without hand-writing it to redact api_key as «redactado», exactly as ConfiguracionDeEmbeddings/ProveedorDeEmbeddingsOpenRouter already do."
+    - "Adding a live network test, even #[ignore]d, or any test reaching a non-loopback host."
+    - "Enforcing tamano_de_lote at call time (batch slicing) for either adapter; that remains stage A-5 task 4's job for both adapters uniformly."
+    - "Any disk I/O against knowledge_staging.db, knowledge_live.db, sessions.db or any SQLite file; this task performs no direct storage I/O and crates/hexcell-storage is read-only."
+    - "Changing behaviour when HEXCELL_EMBEDDINGS_URL_BASE is absent, or when it is present with HEXCELL_EMBEDDINGS_PROVEEDOR absent; both cases must preserve the exact already-merged OpenRouter-only behaviour."
+    - "Adding Gemini-specific environment variable names beyond HEXCELL_EMBEDDINGS_PROVEEDOR; both adapters read the same six existing HEXCELL_EMBEDDINGS_* variables."
+    - "Authoring a new ADR, or editing docs/adr/adr-0025-puerto-de-embeddings.md, docs/adr/README.md, docs/STATUS.md or docs/bitacora-de-descartes.md; this task's design rationale is recorded in 01-blueprint.yaml only, per explicit human instruction, and adr-0025 already anticipated the enum addition as a pure addition."
+    - "Referencing crates/hexcell-core/src/fragmentacion.rs or anything from the unmerged ai/HEX-050 branch."
+    - "Writing English prose in source comments, doc comments, identifiers or repository documentation; only this contract's own field values are English."
+    - "Wiring Configuracion.embeddings into crates/hexcell/src/motor.rs or src/main.rs (the composition root); that wiring does not exist yet even for the merged OpenRouter path and is out of this task's scope."
+    - "Modifying 00-spec.yaml, 01-blueprint.yaml, or this contract."
+    - "Running git merge, git rebase, or committing; the orchestrator commits."
+
+verify:
+  commands:
+    - cargo fmt --check
+    - cargo clippy --workspace -- -D warnings
+    - cargo build --workspace
+    - cargo test --workspace
+    - "bash -c '! grep -nE \"\\b(the|and|with|this|that|which|because|should|would|about)\\b\" crates/hexcell/src/proveedor_embeddings_gemini.rs crates/hexcell/src/embeddings.rs crates/hexcell/src/configuracion.rs'"
+    - "bash -c 'test \"$(sed -n \"/^\\[dependencies\\]/,\\$p\" crates/hexcell-core/Cargo.toml | grep -vcE \"^[[:space:]]*(#.*|\\[dependencies\\]|)$\")\" = \"0\"'"
+    - "bash -c '! grep -rnE \"^[[:space:]]*total_tokens[[:space:]]*:\" crates/hexcell/src/ crates/hexcell-core/src/'"
+    - "bash -c '! git diff --stat main -- crates/hexcell/Cargo.toml crates/hexcell-core/Cargo.toml Cargo.toml Cargo.lock | grep -q .'"
+  target_s: 60
+
+acceptance:
+  human_gate: true
+
+limits:
+  max_files_changed: 6
+  max_diff_lines: 1400
+  per_class:
+    - glob: "crates/hexcell/src/proveedor_embeddings_gemini.rs"
+      max_diff_lines: 480
+    - glob: "crates/hexcell/src/embeddings.rs"
+      max_diff_lines: 60
+    - glob: "crates/hexcell/src/configuracion.rs"
+      max_diff_lines: 180
+    - glob: "crates/hexcell/src/lib.rs"
+      max_diff_lines: 10
+    - glob: "crates/hexcell/tests/proveedor_embeddings_gemini.rs"
+      max_diff_lines: 480
+    - glob: "crates/hexcell/tests/configuracion.rs"
+      max_diff_lines: 150
+
+execution:
+  mode: worktree_edit
+  branch: ai/HEX-051-b
+
+retry_policy:
+  max_attempts: 2
+  escalate_after: 2
