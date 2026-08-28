@@ -1,11 +1,14 @@
 # Estado del Proyecto
 
-> Registro vivo del avance. Última actualización: 2026-08-26.
+> Registro vivo del avance. Última actualización: 2026-08-28.
 
 ## Fase actual
-**Canal propio en producción — etapa A-1, fundaciones.** Ya existe el workspace Rust con sus cinco
-crates y la declaración del puerto de canal; no existe todavía ninguna lógica funcional, ni
-adaptador, ni módulo Go del sidecar.
+**Canal propio en producción — etapa A-5, motor de conocimiento (Shadow DB y épocas), en marcha.**
+Las etapas A-1 a A-4 están cerradas (cierre de A-4 auditado el 2026-08-27, HEX-037..HEX-048): el
+workspace Rust tiene ocho crates con el motor de mensajería sobre el puerto de canal, la
+persistencia dual SQLite con respaldo en caliente, el adaptador whatsmeow con su sidecar Go
+conectado por IPC, y el control de admisión GCRA con la contabilidad de presupuesto en dos fases.
+La etapa A-5 arrancó con HEX-049 (esquema real de la base de conocimiento en `hexcell-storage`).
 
 El proyecto opera sobre **dos canales que conviven**, no sobre dos fases que se suceden. El **canal
 propio** (whatsmeow, sidecar Go) es el canal por defecto y permanente, con clientes de pago reales.
@@ -18,6 +21,12 @@ adicional cuando aparezca un cliente que lo justifique. Ver [plan/README.md](pla
 > idea ya está allí, no se discute desde cero.
 
 ## Definido
+* **Esquema real de la base de conocimiento con vectores f32 y metadatos de época (HEX-049, etapa
+  A-5, tarea 1).** (2026-08-27). La migración `0002-esquema-de-conocimiento.sql` de
+  `hexcell-storage` materializa la versión 2 del esquema de conocimiento: tablas `STRICT` para
+  documentos y fragmentos, embeddings como BLOB de vectores f32 y metadatos por época, sin añadir
+  ninguna dependencia nueva en tiempo de ejecución. La escalera de migraciones (`migraciones.rs`)
+  incorpora el peldaño nuevo con su batería de tests de idempotencia.
 * **Métricas operativas internas expuestas por instantánea estructurada en log periódico (HEX-046, FR-10).** (2026-08-27, `adr-0024`). Se implementa el registro y exposición de métricas operativas internas de la célula sin introducir endpoints HTTP, unix sockets, persistencia en base de datos ni comandos CLI. Se introduce el struct `RegistroDeMetricas` que almacena tres contadores atómicos locales (`admitidos`, `descartados_admision`, `descartados_concurrencia`), incrementados oportunamente en las compuertas de admisión de `Motor::procesar_evento`. `LimitadorDeConcurrencia` se modifica de forma aditiva para almacenar el límite e informar las tareas activas mediante `en_vuelo()`. `RepositorioDeSesiones` expone de forma agregada de solo lectura `desviacion_de_conciliacion()` consultando la tabla de movimientos para la clase `'conciliacion'`. En el arranque del binario (`main.rs`), se inicia una tarea en segundo plano que emite periódicamente (cada 60 segundos, `INTERVALO_DE_INSTANTANEA`) una línea de log estructurado con el evento `metricas_instantanea`, imprimiendo el detalle en formato `key=value` con todos los contadores, el indicador de tareas en vuelo y los saldos financieros.
 * **Modo degradado local sin consumo de saldo ante reserva rechazada (HEX-045, FR-10).** (2026-08-27, `adr-0005`). Se implementa la respuesta en modo degradado local y determinista cuando `reservar_presupuesto` devuelve `VeredictoDeReserva::Rechazada` (saldo insuficiente). En lugar de silenciar el evento retornando `None`, el procesador emite el nuevo registro estructurado `modo_degradado` a nivel de aviso con su identificador de conversación, genera una respuesta local provisional basada en reglas locales desde el módulo `reglas_locales` con cero unidades de presupuesto consumidas, y retorna `Some(MensajeSaliente::respuesta_libre)` para ser enviada por el motor. La contabilidad y el proveedor de inferencia no se invocan en esta ruta (coste de presupuesto cero). Una vez que el saldo se restablece, las peticiones subsiguientes retoman de forma automática la ruta ordinaria de inferencia.
 * **Inferencia HTTPS outbound OpenAI-compatible (HEX-044, FR-10).** (2026-08-26, `adr-0012`). Se implementa `ProveedorOpenAi` en `crates/hexcell/src/proveedor_openai.rs` detrás de `ProveedorDeInferencia`. Selección 100 % guiada por entorno (`HEXCELL_INFERENCIA_URL_BASE`, `API_KEY`, `MODELO`, `TIMEOUT_MS`, `REINTENTOS`) vía `ConfiguracionDeInferencia` y `ProveedorDeCelula`. Con `HEXCELL_INFERENCIA_URL_BASE` ausente, la célula mantiene `ProveedorSimulado` por omisión sin alteración. Pila cliente `hyper 1.11` + `hyper-rustls 0.27` (`ring`). Validación de esquema (`https` o `http` loopback) y verificación del presupuesto de drenaje (`timeout * (1 + reintentos) < limite_de_drenaje`, resolviendo la decisión pendiente HEX-007). Extracción fail-closed de `unidades_consumidas` desde `usage.prompt_tokens + usage.completion_tokens`. Reintentos acotados (máximo 3, 250 ms fijo) solo en transporte, timeout y 5xx; HTTP 429 y 4xx nunca se reintentan. Clave de API redactada en todo `Debug`/`Display` y registros. `adr-0012` formalizado como Vigente.

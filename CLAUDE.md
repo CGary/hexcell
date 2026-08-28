@@ -2,46 +2,73 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Qué es este repositorio
+## What this repository is
 
-**HexCell Orchestrator**: orquestador multi-célula (multi-tenant) en Rust para desplegar bots de WhatsApp para microempresas sobre hardware local modesto (i7 de 10 años, 8 GB RAM).
+**HexCell Orchestrator**: a multi-cell (multi-tenant) orchestrator in Rust that deploys WhatsApp bots for micro-businesses on modest local hardware (10-year-old i7, 8 GB RAM).
 
-**Estado actual: etapa A-1 en marcha.** Ya existe el workspace Rust de cinco crates con el
-puerto de canal `ChannelAdapter` declarado (HEX-002), y ahora también el módulo `sidecar/`
-en Go y la integración continua (HEX-003). Comandos reales: `cargo build --workspace`,
-`cargo test --workspace`, `cargo fmt --check`, `cargo clippy --workspace -- -D warnings`
-para el workspace Rust, y `cd sidecar && go build ./... && go vet ./...` para el sidecar.
+**Language rule**: ALL repository content is in **Spanish** — docs, code identifiers, comments, and commit messages (conventional commits: `docs:`, `feat:`, etc., never with AI attribution). This file is the single deliberate exception, kept in English for instruction-following efficiency.
 
-Todo el contenido del repositorio está en **español**, incluidos los mensajes de commit (conventional commits: `docs:`, `feat:`, etc., sin atribución de AI).
+**Current state**: do not trust any hardcoded stage claim — check `docs/STATUS.md` and `git log` first. As of 2026-08-27, stages A-1 through A-4 are closed and A-5 (knowledge engine, Shadow DB) is in progress. Task artifacts are archived under `kitty-specs/hex-NNN/`; work branches follow `ai/<ID>` (Quorum tasks) and `feature/<short-description>` (see `CONTRIBUTING.md`).
 
-## Jerarquía documental (rango normativo)
+## Commands
 
-Ante contradicciones, manda el orden siguiente:
+Rust workspace (eight crates):
 
-1. **`docs/PRD.md`** — fuente normativa: requisitos FR-01..FR-12, NFR-01..NFR-05 y criterios de QA.
-2. **`README.md`** — detalle operativo y de arquitectura que el PRD no recoge (CLI, onboarding Fase B).
-3. **`docs/plan/README.md`** — índice del plan de implementación; un archivo por etapa (`fase-a-N-*.md`, `fase-b-N-*.md`). Cada etapa declara qué FR/NFR cubre.
-4. **`docs/STATUS.md`** — registro vivo del avance (Definido / Pendiente). **Actualizarlo cuando una decisión cambie de estado.**
-5. **`docs/adr/README.md`** — tabla de ADRs; su numeración es fuente de verdad, correlativa, nunca se reutiliza ni reordena. Formato de archivo: `adr-NNNN-titulo.md`.
-6. **`docs/bitacora-de-descartes.md`** — registro de lo que se estudió y **no** se hizo, con el motivo y las condiciones de reapertura. No es normativo: no decide nada, deja rastro. Numeración `D-NN`, correlativa, nunca reutilizada; las entradas no se editan ni se borran, se marcan `REABIERTO`.
+```bash
+cargo build --workspace
+cargo test --workspace
+cargo fmt --check
+cargo clippy --workspace -- -D warnings
+cargo test -p <crate> <test_name>            # single test
+cargo test --workspace -- --ignored rss_linea_base --nocapture  # RSS baseline (ignored test)
+```
 
-## Arquitectura (lo esencial para no romper el diseño)
+Go sidecar:
 
-* **Dos canales que conviven, no dos fases en secuencia** (rumbo fijado el 28 de julio de 2026). Los nombres "Fase A" y "Fase B" y los archivos `fase-*.md` se conservan, pero su significado cambió:
-  * **Fase A = canal propio en producción.** **whatsmeow** (sidecar Go, websocket saliente, sin webhook/Caddy/TLS entrante) es el canal **por defecto y permanente**, con clientes de pago reales. `piloto-01` y `piloto-02` son las dos primeras células, no el alcance total.
-  * **Fase B = canal oficial adicional** (Meta Cloud API + webhooks) que **convive** con el propio. Sigue congelada, pero ahora se activa por **demanda de un cliente que la justifique**, no por número de clientes ni por fecha.
-  * **La compuerta del tercer cliente está DEROGADA**, igual que la regla "no se comercializa sobre canal no oficial". **Nunca escribir que la Fase B sustituye, reemplaza o cierra la Fase A, ni que el sidecar se retira.** Lo que disciplina el crecimiento son las compuertas de riesgo (techo duro de cartera y umbral de incidentes que congela altas, etapa A-7); sus valores son decisiones de negocio pendientes.
-* **Puerto de canal (`ChannelAdapter`, FR-12)** — la frontera de **coexistencia**: dos adaptadores vivos a la vez en células distintas. El núcleo Rust nunca conoce el transporte de WhatsApp; sumar un canal = escribir otro adaptador, no reescribir el producto. Se abstrae hacia el caso más restrictivo (Cloud API), con esta distinción: **el TIPO admite el resultado restrictivo; la POLÍTICA de cada adaptador decide si lo produce** — el adaptador del canal propio no impone ventana de 24 h artificial. El adaptador simulado de tests imita la semántica restrictiva de la Cloud API (ventana de 24 h, `FueraDeVentana`, `PlantillaRequerida`), no la de whatsmeow. `sessions.db` nunca almacena identificadores de transporte crudos.
-* **Célula** (`cell` en CLI/código): unidad desplegable por cliente. Sobre canal propio = dos contenedores (núcleo Rust + sidecar Go) con red local y volumen compartidos, IPC por socket local, **con el sidecar como coste permanente**; sobre canal oficial = un contenedor. Presupuesto de línea base: ≤ 80 MB RAM por célula sobre canal propio, < 50 MB sobre canal oficial. **Ninguna de las dos cifras está validada bajo carga sostenida**, y el techo de células por servidor es desconocido hasta medirlo (probablemente lo limite la CPU y la E/S, no la memoria).
-* **Persistencia dual SQLite por célula**: `sessions.db` (lectura/escritura caliente) + `knowledge_live.db` (solo lectura en producción). Actualizaciones de conocimiento vía Shadow DB (`knowledge_staging.db`) → épocas inmutables (`knowledge_epoch_N.db`) con conmutación atómica (symlink + `ArcSwap` + Graceful Drain).
-* **GCRA sobre el flujo normalizado del puerto** (no sobre HTTP) para admisión, y contabilidad financiera de LLM en dos fases (reserva previa + conciliación exacta). La inferencia LLM es 100 % externa (Gemini Flash/Groq/OpenRouter); el hardware local nunca ejecuta modelos.
-* **Orden del plan**: nada se conecta a un canal real hasta que el consumidor sabe protegerse (admisión y presupuesto antes que pilotos); los respaldos se diseñan en A-2 y cubren **cuatro** bases (`sessions.db`, `knowledge_live.db`, el almacén de identidad del adaptador y el `sqlstore` del sidecar) — una restauración solo es válida si el bot reconecta y responde, criterio que exige sidecar y canal real y por eso se ejecuta en A-3, no en A-2.
+```bash
+cd sidecar && go build ./... && go vet ./... && go test ./... -count=1
+```
 
-## Reglas prácticas
+CI (`.github/workflows/ci.yml`) blocks on all of the above; the sidecar test suite must be non-empty.
 
-* Nunca versionar `*.db`, `*.db-wal`, `*.db-shm` ni `.env*` (ya en `.gitignore`).
-* El plan no inventa requisitos: toda etapa nueva o cambio de alcance debe trazarse a FR/NFR del PRD o registrarse como decisión pendiente en STATUS.md.
-* Decisiones de producto abiertas (monetización, flujos de usuario, excepciones comerciales, entrada pública de la Fase B — `adr-0013`, techo duro de cartera, umbral de incidentes) se tratan como bloqueos declarados, no se resuelven de pasada. No inventar números de clientes, de células ni de precios que la documentación no fije.
-* **El riesgo de baneo del canal propio es estructural**, no conductual: Meta detecta la biblioteca por su huella de protocolo. Se documenta como evento esperado, no como fallo; las medidas de mayor valor son las que reducen el daño, no las que reducen la probabilidad. No introducir folclore de proveedores de envío masivo (jitter, protocolos de "calentamiento"), ni proxies, VPN o rotación de IP.
-* Una decisión derogada se **supersede con un ADR nuevo**; nunca se reescribe el viejo ni se reordena la numeración. Las fechas se escriben en formato absoluto (28 de julio de 2026 / 2026-07-28), nunca relativas.
-* **Antes de proponer un cambio de rumbo, un atajo o una técnica nueva, consultar `docs/bitacora-de-descartes.md`.** Si la idea ya está allí, no se vuelve a debatir desde cero: se lee su motivo y su condición de reapertura, y solo se reabre si esa condición se cumple. Todo descarte nuevo se anota en la bitácora **en el mismo commit en que se descarta**; un descarte sin motivo escrito es un descarte perdido.
+## Documentary hierarchy (normative rank)
+
+On contradiction, this order rules:
+
+1. **`docs/PRD.md`** — normative source: requirements FR-01..FR-12, NFR-01..NFR-05, QA criteria.
+2. **`README.md`** — operational/architecture detail the PRD doesn't cover (CLI, Phase B onboarding).
+3. **`docs/plan/README.md`** — implementation plan index; one file per stage (`fase-a-N-*.md`, `fase-b-N-*.md`). Each stage declares which FR/NFR it covers.
+4. **`docs/STATUS.md`** — living progress record (Definido / Pendiente). **Update it when a decision changes state.**
+5. **`docs/adr/README.md`** — ADR table; its numbering is the source of truth, sequential, never reused or reordered. File format: `adr-NNNN-titulo.md`.
+6. **`docs/bitacora-de-descartes.md`** — record of what was studied and **not** done, with the reason and reopening conditions. Not normative: it decides nothing, it leaves a trail. Numbering `D-NN`, sequential, never reused; entries are never edited or deleted, only marked `REABIERTO`.
+
+## Architecture (the essentials to not break the design)
+
+* **Two channels that coexist, not two sequential phases** (course set on 2026-07-28). The names "Fase A"/"Fase B" and the `fase-*.md` files remain, but their meaning changed:
+  * **Fase A = own channel in production.** **whatsmeow** (Go sidecar, outbound websocket, no webhook/Caddy/inbound TLS) is the **default and permanent** channel, with real paying clients. `piloto-01` and `piloto-02` are the first two cells, not the total scope.
+  * **Fase B = additional official channel** (Meta Cloud API + webhooks) that **coexists** with the own channel. Still frozen, but now activated by **demand from a client who justifies it**, not by client count or date.
+  * **The third-client gate is REPEALED**, as is the rule "no commercialization on an unofficial channel". **Never write that Fase B replaces, substitutes, or closes Fase A, or that the sidecar is retired.** Growth is disciplined by the risk gates (hard portfolio ceiling and incident threshold that freezes sign-ups, stage A-7); their values are pending business decisions.
+* **Channel port (`ChannelAdapter`, FR-12)** — the **coexistence** boundary: two adapters live at once in different cells. The Rust core never knows the WhatsApp transport; adding a channel = writing another adapter, not rewriting the product. Abstracted toward the most restrictive case (Cloud API), with this distinction: **the TYPE admits the restrictive result; each adapter's POLICY decides whether to produce it** — the own-channel adapter does not impose an artificial 24 h window. The simulated test adapter mimics the restrictive Cloud API semantics (24 h window, `FueraDeVentana`, `PlantillaRequerida`), not whatsmeow's. `sessions.db` never stores raw transport identifiers.
+* **Cell** (`cell` in CLI/code): deployable unit per client. On the own channel = two containers (Rust core + Go sidecar) with shared local network and volume, IPC over a local socket, **with the sidecar as a permanent cost**; on the official channel = one container. Baseline budget: ≤ 80 MB RAM per cell on the own channel, < 50 MB on the official channel. **Neither figure is validated under sustained load**, and the per-server cell ceiling is unknown until measured (likely CPU- and I/O-bound, not memory-bound).
+* **Dual SQLite persistence per cell**: `sessions.db` (hot read/write) + `knowledge_live.db` (read-only in production). Knowledge updates via Shadow DB (`knowledge_staging.db`) → immutable epochs (`knowledge_epoch_N.db`) with atomic switchover (symlink + `ArcSwap` + Graceful Drain).
+* **GCRA over the port's normalized flow** (not over HTTP) for admission, and two-phase LLM financial accounting (prior reservation + exact reconciliation). LLM inference is 100% external (Gemini Flash/Groq/OpenRouter); local hardware never runs models.
+* **Plan order**: nothing connects to a real channel until the consumer knows how to protect itself (admission and budget before pilots); backups are designed in A-2 and cover **four** databases (`sessions.db`, `knowledge_live.db`, the adapter identity store, and the sidecar's `sqlstore`) — a restore is only valid if the bot reconnects and responds, a criterion that requires the sidecar and a real channel and is therefore executed in A-3, not A-2.
+
+## Workspace layout
+
+* `crates/hexcell-core` — domain and channel port declaration, **zero external dependencies** (an acceptance criterion, verifiable with `cargo tree -p hexcell-core`).
+* `crates/hexcell` — cell binary (engine, health endpoints, inference pipeline).
+* `crates/hexcell-storage` — dual SQLite persistence (`rusqlite` 0.39 pinned; see the note in `Cargo.toml` before upgrading).
+* `crates/hexcell-admin` — central CLI.
+* `crates/hexcell-canal-simulado`, `hexcell-canal-contrato`, `hexcell-canal-whatsmeow` — simulated adapter, contract tests, whatsmeow adapter.
+* `crates/hexcell-meta` — **empty and exposing nothing** until `adr-0013` is resolved.
+* `sidecar/` — Go module hosting the whatsmeow session; talks to the core via versioned IPC (`docs/protocolo-ipc-nucleo-sidecar.md`).
+
+## Practical rules
+
+* Never version `*.db`, `*.db-wal`, `*.db-shm`, or `.env*` (already in `.gitignore`).
+* The plan invents no requirements: every new stage or scope change must trace to an FR/NFR in the PRD or be recorded as a pending decision in STATUS.md.
+* Open product decisions (monetization, user flows, commercial exceptions, Fase B public entry — `adr-0013`, hard portfolio ceiling, incident threshold) are treated as declared blockers, never resolved in passing. Do not invent client counts, cell counts, or prices the documentation doesn't fix.
+* **The own channel's ban risk is structural**, not behavioral: Meta detects the library by its protocol fingerprint. It is documented as an expected event, not a failure; the highest-value measures reduce damage, not probability. Do not introduce bulk-sender folklore (jitter, "warm-up" protocols), nor proxies, VPNs, or IP rotation.
+* A repealed decision is **superseded by a new ADR**; the old one is never rewritten and the numbering never reordered. Dates are always absolute (28 de julio de 2026 / 2026-07-28), never relative.
+* **Before proposing a course change, shortcut, or new technique, consult `docs/bitacora-de-descartes.md`.** If the idea is already there, it is not re-debated from scratch: read its reason and reopening condition, and only reopen if that condition is met. Every new discard is logged in the bitácora **in the same commit that discards it**; a discard without a written reason is a lost discard.
