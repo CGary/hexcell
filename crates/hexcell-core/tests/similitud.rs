@@ -72,3 +72,52 @@ fn verificar_magnitud_nula_retorna_none() {
         "Vector destino nulo debe retornar None"
     );
 }
+
+#[test]
+fn verificar_componente_nan_retorna_none() {
+    let a = vec![1.0, f32::NAN, 3.0];
+    let b = vec![1.0, 2.0, 3.0];
+
+    let resultado_a = similitud_coseno(&a, &b);
+    assert!(
+        resultado_a.is_none(),
+        "Un NaN en el primer vector nunca debe producir una puntuacion numerica"
+    );
+
+    let resultado_b = similitud_coseno(&b, &a);
+    assert!(
+        resultado_b.is_none(),
+        "Un NaN en el segundo vector nunca debe producir una puntuacion numerica"
+    );
+}
+
+#[test]
+fn verificar_componente_infinito_retorna_none() {
+    let a = vec![f32::INFINITY, 2.0, 3.0];
+    let b = vec![1.0, 2.0, 3.0];
+
+    let resultado_a = similitud_coseno(&a, &b);
+    assert!(
+        resultado_a.is_none(),
+        "Un infinito en el primer vector nunca debe producir una puntuacion numerica"
+    );
+
+    let c = vec![f32::NEG_INFINITY, 2.0, 3.0];
+    let resultado_c = similitud_coseno(&b, &c);
+    assert!(
+        resultado_c.is_none(),
+        "Un infinito negativo en el segundo vector nunca debe producir una puntuacion numerica"
+    );
+}
+
+#[test]
+fn verificar_mezcla_de_nan_infinito_y_valores_finitos_retorna_none() {
+    let mezclado = vec![1.0, f32::NAN, f32::INFINITY, 4.0];
+    let finito = vec![1.0, 2.0, 3.0, 4.0];
+
+    let resultado = similitud_coseno(&mezclado, &finito);
+    assert!(
+        resultado.is_none(),
+        "Una mezcla de componentes corruptos junto a valores finitos nunca debe escapar como puntuacion"
+    );
+}

@@ -53,18 +53,18 @@ pub enum MotivoDeRechazo {
         /// Cantidad real registrada en la tabla de fragmentos.
         recibido: i64,
     },
-    /// El re-troceado de un documento almacenado no pudo completarse con la configuración
-    /// suministrada por el llamador, así que la cobertura queda sin poder calcularse.
+    /// La configuración de fragmentación suministrada por el llamador es inválida en sí
+    /// misma: el solapamiento no es estrictamente menor que el tamaño de fragmento.
     ///
-    /// Esto no es un fallo de la base de datos: es la configuración de fragmentación la que
-    /// resultó inválida para el contenido guardado, algo ajeno a la naturaleza estructural
-    /// de las demás comprobaciones de esta compuerta.
-    FragmentacionDeCoberturaFallida {
-        /// Identificador del documento cuyo contenido no pudo re-trocearse.
-        id_documento: i64,
-        /// Descripción textual del motivo de fragmentación original, capturada como texto
-        /// propio para no obligar a este módulo a depender del tipo de error de dominio.
-        descripcion: String,
+    /// Se detecta antes de abrir el archivo, sin leer ningún documento, porque este es el
+    /// único caso en que `fragmentar` falla y depende únicamente de estos dos números, no
+    /// de una fila en particular. Nombrar un documento aquí culparía a un dato inocente por
+    /// un defecto que pertenece exclusivamente al argumento del llamador.
+    ConfiguracionDeFragmentacionInvalida {
+        /// Tamaño de fragmento suministrado por el llamador.
+        tamano_de_fragmento: usize,
+        /// Solapamiento suministrado por el llamador.
+        solapamiento: usize,
     },
     /// Algún vector almacenado posee un tamaño en bytes que no se corresponde con la dimensión declarada.
     DimensionDeVectorNoUniforme {
@@ -86,6 +86,17 @@ pub enum MotivoDeRechazo {
         similitud_observada: f32,
         /// Límite mínimo requerido para la aprobación.
         umbral_requerido: f32,
+    },
+    /// Ningún vector del índice pudo decodificarse o compararse contra la sonda semántica.
+    ///
+    /// Un `BLOB` corrupto, o un vector con componentes no finitos, hace que
+    /// `similitud_coseno` devuelva `None` para esa fila: la similitud queda indefinida,
+    /// no baja. Reportar aquí un número de similitud inventado (como -1.0) sería mentir
+    /// sobre una observación que jamás ocurrió, así que esta compuerta rechaza en su lugar
+    /// con la cuenta exacta de filas que no pudieron compararse.
+    VectoresIncomparables {
+        /// Cantidad de vectores de fragmento que no pudieron decodificarse o compararse.
+        cantidad: i64,
     },
     /// No se pudo validar la cobertura del troceado porque no se dispone de metadatos de época.
     CalculoDeCoberturaOmitidoPorMetadatosAusentes,
@@ -129,6 +140,20 @@ pub fn validar_integridad_del_indice(
     configuracion_de_fragmentacion: &ConfiguracionDeFragmentacion,
     sonda: &SondaResuelta,
 ) -> Result<VeredictoDeIntegridad, ErrorDeAlmacen> {
+    // 0. Validar la configuración de fragmentación antes de abrir el archivo o leer una
+    // sola fila: es el único argumento del que depende un posible fallo de `fragmentar`,
+    // así que el defecto (si existe) ya se conoce sin haber tocado la base de datos.
+    if configuracion_de_fragmentacion.solapamiento
+        >= configuracion_de_fragmentacion.tamano_de_fragmento
+    {
+        return Ok(VeredictoDeIntegridad::Rechazado {
+            motivos: vec![MotivoDeRechazo::ConfiguracionDeFragmentacionInvalida {
+                tamano_de_fragmento: configuracion_de_fragmentacion.tamano_de_fragmento,
+                solapamiento: configuracion_de_fragmentacion.solapamiento,
+            }],
+        });
+    }
+
     let mut motivos = Vec::new();
 
     // 1. Obtener la inspección factual básica del archivo utilizando la función existente.
@@ -179,43 +204,25 @@ pub fn validar_integridad_del_indice(
         ))?;
 
         let mut total_esperado = 0i64;
-        let mut fragmentacion_correcta = true;
 
         while let Some(fila) = filas_docs
             .next()
             .map_err(ErrorDeAlmacen::en("leer fila de documento"))?
         {
-            let id_documento: i64 = fila
-                .get(0)
-                .map_err(ErrorDeAlmacen::en("obtener identificador de documento"))?;
             let contenido: String = fila
                 .get(1)
                 .map_err(ErrorDeAlmacen::en("obtener contenido de documento"))?;
-            match hexcell_core::fragmentacion::fragmentar(
-                &contenido,
-                configuracion_de_fragmentacion,
-            ) {
-                Ok(fragmentos) => {
-                    total_esperado += fragmentos.len() as i64;
-                }
-                Err(e) => {
-                    // Un re-troceado que falla no es un desperfecto de la base de datos sino
-                    // una configuración de fragmentación inválida para este contenido: la
-                    // cobertura queda sin poder calcularse, así que el motivo se acumula como
-                    // rechazo en lugar de abortar la función con un Err. Se detiene aquí este
-                    // bucle porque la causa depende solo de la configuración, no de cada fila,
-                    // así que seguir iterando no produciría información adicional.
-                    fragmentacion_correcta = false;
-                    motivos.push(MotivoDeRechazo::FragmentacionDeCoberturaFallida {
-                        id_documento,
-                        descripcion: e.to_string(),
-                    });
-                    break;
-                }
+            // La comprobación 0 ya garantizó que esta configuración es válida para
+            // `fragmentar`, así que el brazo `Err` es inalcanzable en este punto: la única
+            // causa de ese error es la propia configuración, no el contenido de una fila.
+            if let Ok(fragmentos) =
+                hexcell_core::fragmentacion::fragmentar(&contenido, configuracion_de_fragmentacion)
+            {
+                total_esperado += fragmentos.len() as i64;
             }
         }
 
-        if fragmentacion_correcta && total_esperado != resumen.cantidad_de_fragmentos {
+        if total_esperado != resumen.cantidad_de_fragmentos {
             motivos.push(MotivoDeRechazo::DiferenciaDeFragmentos {
                 esperado: total_esperado,
                 recibido: resumen.cantidad_de_fragmentos,
@@ -266,6 +273,11 @@ pub fn validar_integridad_del_indice(
                 "ejecutar consulta de vectores de fragmentos",
             ))?;
 
+            // Cuenta las filas cuyo vector no pudo decodificarse o compararse: un BLOB
+            // corrupto o un componente no finito nunca debe desaparecer en silencio, porque
+            // esa fila es exactamente la que un índice degradado necesita esconder.
+            let mut incomparables = 0i64;
+
             while let Some(fila) = filas_vectores
                 .next()
                 .map_err(ErrorDeAlmacen::en("leer fila de vector"))?
@@ -273,31 +285,47 @@ pub fn validar_integridad_del_indice(
                 let bytes_vector: Vec<u8> = fila
                     .get(0)
                     .map_err(ErrorDeAlmacen::en("obtener bytes de vector"))?;
-                if let Some(vector_emb) =
+                let similitud_de_esta_fila =
                     hexcell_core::embeddings::VectorDeEmbedding::desde_bytes_le(&bytes_vector)
-                    && let Some(similitud) = hexcell_core::similitud::similitud_coseno(
-                        vector_emb.valores(),
-                        &sonda.vector,
-                    )
-                {
-                    match mejor_similitud {
+                        .and_then(|vector_emb| {
+                            hexcell_core::similitud::similitud_coseno(
+                                vector_emb.valores(),
+                                &sonda.vector,
+                            )
+                        });
+
+                match similitud_de_esta_fila {
+                    Some(similitud) => match mejor_similitud {
                         None => mejor_similitud = Some(similitud),
                         Some(actual_mejor) => {
                             if similitud > actual_mejor {
                                 mejor_similitud = Some(similitud);
                             }
                         }
-                    }
+                    },
+                    None => incomparables += 1,
                 }
             }
 
-            if let Some(sim) = mejor_similitud
-                && sim < sonda.umbral_de_aceptacion
-            {
-                motivos.push(MotivoDeRechazo::SimilitudInsuficiente {
-                    similitud_observada: sim,
-                    umbral_requerido: sonda.umbral_de_aceptacion,
-                });
+            // `similitud_coseno` ya descarta todo componente no finito (NaN o infinito), así
+            // que un `Some` aquí es siempre un número comparable: la aprobación nunca puede
+            // apoyarse en una similitud indefinida.
+            match mejor_similitud {
+                Some(sim) if sim < sonda.umbral_de_aceptacion => {
+                    motivos.push(MotivoDeRechazo::SimilitudInsuficiente {
+                        similitud_observada: sim,
+                        umbral_requerido: sonda.umbral_de_aceptacion,
+                    });
+                }
+                Some(_) => {}
+                None => {
+                    // Ninguna fila produjo una similitud válida: no hay un "mejor" candidato
+                    // sobre el cual comparar el umbral, así que el rechazo nombra la causa
+                    // real (filas incomparables) en vez de inventar una similitud de -1.0.
+                    motivos.push(MotivoDeRechazo::VectoresIncomparables {
+                        cantidad: incomparables,
+                    });
+                }
             }
         }
     } else {
@@ -305,25 +333,20 @@ pub fn validar_integridad_del_indice(
     }
 
     // 7. Retornar el veredicto consolidado de la compuerta.
-    if motivos.is_empty() {
-        if let Some(sim) = mejor_similitud
-            && let Some(meta) = metadatos
-        {
-            return Ok(VeredictoDeIntegridad::Aprobado {
-                cantidad_de_fragmentos: resumen.cantidad_de_fragmentos,
-                dimension_de_embedding: meta.dimension_de_embedding,
-                similitud_observada: sim,
-                umbral_aplicado: sonda.umbral_de_aceptacion,
-            });
-        }
-        // Salvaguarda matemática para índices que por algún motivo no completaron la similitud.
-        Ok(VeredictoDeIntegridad::Rechazado {
-            motivos: vec![MotivoDeRechazo::SimilitudInsuficiente {
-                similitud_observada: -1.0,
-                umbral_requerido: sonda.umbral_de_aceptacion,
-            }],
-        })
-    } else {
-        Ok(VeredictoDeIntegridad::Rechazado { motivos })
+    if motivos.is_empty()
+        && let Some(sim) = mejor_similitud
+        && let Some(meta) = metadatos
+    {
+        return Ok(VeredictoDeIntegridad::Aprobado {
+            cantidad_de_fragmentos: resumen.cantidad_de_fragmentos,
+            dimension_de_embedding: meta.dimension_de_embedding,
+            similitud_observada: sim,
+            umbral_aplicado: sonda.umbral_de_aceptacion,
+        });
     }
+    // Inalcanzable en la práctica: si `motivos` quedó vacío, la comprobación 6 ya
+    // garantizó metadatos y una similitud finita, así que la rama de aprobación de
+    // arriba ya habría retornado. Este es el cierre honesto para el resto de los casos:
+    // un rechazo con la colección completa de motivos acumulados.
+    Ok(VeredictoDeIntegridad::Rechazado { motivos })
 }

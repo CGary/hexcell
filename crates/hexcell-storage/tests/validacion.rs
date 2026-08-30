@@ -689,46 +689,8 @@ fn verificar_multiples_fallos_simultaneos() {
 }
 
 #[test]
-fn verificar_fallo_de_refragmentacion_para_calculo_de_cobertura() {
-    let temp = DirectorioTemporal::nuevo("cobertura-refragmentacion-fallida");
-    let conexion = crear_base_de_prueba(&temp);
-
-    conexion
-        .execute(
-            "UPDATE metadatos_de_epoca SET dimension_de_embedding = 4 WHERE id = 1",
-            [],
-        )
-        .unwrap();
-
-    // El contenido en si es irrelevante: lo que provoca el fallo es la configuracion
-    // invalida suministrada mas abajo, no una particularidad de este documento.
-    conexion.execute(
-        "INSERT INTO documentos (id, referencia_externa, titulo, contenido, actualizado_ms) VALUES (1, 'ref1', 'doc1', 'textotrozo', 1000)",
-        [],
-    ).unwrap();
-
-    let vector_valido = vec![0.0f32, 0.0f32, 0.0f32, 0.0f32];
-    let bytes_vector = vector_valido
-        .iter()
-        .flat_map(|val| val.to_le_bytes())
-        .collect::<Vec<u8>>();
-
-    conexion
-        .execute(
-            "INSERT INTO fragmentos (id, id_documento, ordinal, texto) VALUES (10, 1, 0, 'texto')",
-            [],
-        )
-        .unwrap();
-    conexion
-        .execute(
-            "INSERT INTO vectores_de_fragmento (id_fragmento, vector) VALUES (10, ?1)",
-            rusqlite::params![bytes_vector],
-        )
-        .unwrap();
-
-    // Configuracion invalida a proposito: el solapamiento no es estrictamente menor
-    // que el tamano del fragmento, lo cual hace que fragmentar() siempre falle,
-    // sin importar el contenido de cada documento.
+fn verificar_configuracion_de_fragmentacion_invalida_se_rechaza_en_la_entrada() {
+    // La comprobacion 0 corre antes de abrir el archivo: una ruta inexistente basta.
     let config = ConfiguracionDeFragmentacion {
         tamano_de_fragmento: 5,
         solapamiento: 5,
@@ -737,34 +699,102 @@ fn verificar_fallo_de_refragmentacion_para_calculo_de_cobertura() {
         vector: vec![1.0, 0.0, 0.0, 0.0],
         umbral_de_aceptacion: 0.5,
     };
+    let ruta = Path::new("/ruta/inexistente/no-se-abre.db");
 
-    let veredicto = validar_integridad_del_indice(
-        &temp
-            .ruta()
-            .join(NOMBRE_DE_ARCHIVO_DE_CONOCIMIENTO_EN_SOMBRA),
-        &config,
-        &sonda,
-    )
-    .unwrap();
+    assert_eq!(
+        validar_integridad_del_indice(ruta, &config, &sonda).unwrap(),
+        VeredictoDeIntegridad::Rechazado {
+            motivos: vec![MotivoDeRechazo::ConfiguracionDeFragmentacionInvalida {
+                tamano_de_fragmento: 5,
+                solapamiento: 5,
+            }],
+        },
+        "debe reportarse sola, sin abrir el archivo ni nombrar un documento"
+    );
+}
 
-    if let VeredictoDeIntegridad::Rechazado { motivos } = veredicto {
-        let mut reportado = false;
-        for m in motivos {
-            if let MotivoDeRechazo::FragmentacionDeCoberturaFallida {
-                id_documento,
-                descripcion,
-            } = m
-            {
-                assert_eq!(id_documento, 1);
-                assert!(!descripcion.is_empty());
-                reportado = true;
-            }
-        }
-        assert!(
-            reportado,
-            "Debe reportar el fallo de refragmentacion en vez de un Err"
-        );
-    } else {
-        panic!("El veredicto debe ser de rechazo, nunca una aprobacion silenciosa");
+fn bytes_le(valores: &[f32]) -> Vec<u8> {
+    valores.iter().flat_map(|v| v.to_le_bytes()).collect()
+}
+fn preparar_base_con_fragmentos_sin_vector(conexion: &Connection, cantidad: i64) {
+    conexion
+        .execute_batch(
+            "UPDATE metadatos_de_epoca SET dimension_de_embedding = 4 WHERE id = 1;
+             INSERT INTO documentos (id, referencia_externa, titulo, contenido, actualizado_ms)
+                 VALUES (1, 'ref1', 'doc1', 'texto', 1000);",
+        )
+        .unwrap();
+    for i in 0..cantidad {
+        conexion
+            .execute(
+                "INSERT INTO fragmentos (id, id_documento, ordinal, texto) VALUES (?1, 1, ?1, 'texto')",
+                rusqlite::params![10 + i],
+            )
+            .unwrap();
     }
+}
+
+fn afirmar_rechazo_por_incomparables(temp: &DirectorioTemporal, cantidad: i64, motivo: &str) {
+    let config = ConfiguracionDeFragmentacion {
+        tamano_de_fragmento: 5,
+        solapamiento: 0,
+    };
+    let sonda = SondaResuelta {
+        vector: vec![1.0, 0.0, 0.0, 0.0],
+        umbral_de_aceptacion: 0.5,
+    };
+    let ruta = temp
+        .ruta()
+        .join(NOMBRE_DE_ARCHIVO_DE_CONOCIMIENTO_EN_SOMBRA);
+    match validar_integridad_del_indice(&ruta, &config, &sonda).unwrap() {
+        VeredictoDeIntegridad::Rechazado { motivos } => assert!(
+            motivos.iter().any(
+                |m| matches!(m, MotivoDeRechazo::VectoresIncomparables { cantidad: c } if *c == cantidad)
+            ),
+            "{motivo}"
+        ),
+        VeredictoDeIntegridad::Aprobado { .. } => panic!("{motivo}"),
+    }
+}
+
+#[test]
+fn verificar_vector_degradado_a_nan_se_rechaza_en_vez_de_aprobarse() {
+    let temp = DirectorioTemporal::nuevo("vector-nan-degradado");
+    let conexion = crear_base_de_prueba(&temp);
+    preparar_base_con_fragmentos_sin_vector(&conexion, 1);
+
+    // BLOB de tamano correcto pero cada componente es NaN: sin esta correccion,
+    // el maximo en curso queda envenenado para siempre y se aprueba un indice corrupto.
+    conexion
+        .execute(
+            "INSERT INTO vectores_de_fragmento (id_fragmento, vector) VALUES (10, ?1)",
+            rusqlite::params![bytes_le(&[f32::NAN; 4])],
+        )
+        .unwrap();
+
+    afirmar_rechazo_por_incomparables(&temp, 1, "un vector NaN nunca debe aprobarse");
+}
+
+#[test]
+fn verificar_todos_los_vectores_de_dimension_distinta_se_rechazan_como_incomparables() {
+    let temp = DirectorioTemporal::nuevo("vectores-indecodificables");
+    let conexion = crear_base_de_prueba(&temp);
+    preparar_base_con_fragmentos_sin_vector(&conexion, 2);
+
+    // Dos BLOBs de dimension distinta a la sonda: se decodifican, pero
+    // `similitud_coseno` no compara longitudes distintas y da None para ambos.
+    conexion
+        .execute(
+            "INSERT INTO vectores_de_fragmento (id_fragmento, vector) VALUES (10, ?1)",
+            rusqlite::params![bytes_le(&[1.0, 2.0])],
+        )
+        .unwrap();
+    conexion
+        .execute(
+            "INSERT INTO vectores_de_fragmento (id_fragmento, vector) VALUES (11, ?1)",
+            rusqlite::params![bytes_le(&[1.0, 2.0, 3.0])],
+        )
+        .unwrap();
+
+    afirmar_rechazo_por_incomparables(&temp, 2, "sin vectores decodificables debe rechazarse");
 }
