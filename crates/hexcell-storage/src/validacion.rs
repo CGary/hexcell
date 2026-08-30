@@ -307,25 +307,14 @@ pub fn validar_integridad_del_indice(
                 }
             }
 
-            // `similitud_coseno` ya descarta todo componente no finito (NaN o infinito), así
-            // que un `Some` aquí es siempre un número comparable: la aprobación nunca puede
-            // apoyarse en una similitud indefinida.
-            match mejor_similitud {
-                Some(sim) if sim < sonda.umbral_de_aceptacion => {
-                    motivos.push(MotivoDeRechazo::SimilitudInsuficiente {
-                        similitud_observada: sim,
-                        umbral_requerido: sonda.umbral_de_aceptacion,
-                    });
-                }
-                Some(_) => {}
-                None => {
-                    // Ninguna fila produjo una similitud válida: no hay un "mejor" candidato
-                    // sobre el cual comparar el umbral, así que el rechazo nombra la causa
-                    // real (filas incomparables) en vez de inventar una similitud de -1.0.
-                    motivos.push(MotivoDeRechazo::VectoresIncomparables {
-                        cantidad: incomparables,
-                    });
-                }
+            // El máximo acumulado depende de un contrato entre crates (`similitud_coseno`
+            // nunca debería devolver un número no finito), pero un contrato ajeno no es una
+            // garantía propia: se delega la decisión a una función pura, comprobable por
+            // separado, en lugar de confiar ciegamente en esa promesa dentro de este bucle.
+            if let Some(motivo) =
+                decidir_motivo_semantico(mejor_similitud, incomparables, sonda.umbral_de_aceptacion)
+            {
+                motivos.push(motivo);
             }
         }
     } else {
@@ -333,8 +322,15 @@ pub fn validar_integridad_del_indice(
     }
 
     // 7. Retornar el veredicto consolidado de la compuerta.
+    //
+    // La condición `sim.is_finite()` de abajo es deliberadamente redundante con la
+    // comprobación 6: si un número no finito lograra colarse hasta aquí por algún camino
+    // no previsto, esta línea sigue impidiendo que se declare aprobado un índice cuya
+    // similitud observada no significa nada. Esta compuerta nunca debe apoyar su decisión
+    // más grave en una garantía prestada por otro módulo.
     if motivos.is_empty()
         && let Some(sim) = mejor_similitud
+        && sim.is_finite()
         && let Some(meta) = metadatos
     {
         return Ok(VeredictoDeIntegridad::Aprobado {
@@ -344,9 +340,64 @@ pub fn validar_integridad_del_indice(
             umbral_aplicado: sonda.umbral_de_aceptacion,
         });
     }
-    // Inalcanzable en la práctica: si `motivos` quedó vacío, la comprobación 6 ya
-    // garantizó metadatos y una similitud finita, así que la rama de aprobación de
-    // arriba ya habría retornado. Este es el cierre honesto para el resto de los casos:
-    // un rechazo con la colección completa de motivos acumulados.
+    // Cierre honesto para el resto de los casos: un rechazo con la colección completa de
+    // motivos acumulados durante toda la auditoría.
     Ok(VeredictoDeIntegridad::Rechazado { motivos })
+}
+
+/// Decide el motivo de rechazo semántico a partir del mejor valor acumulado, sin abrir ningún
+/// archivo ni depender de una fila real.
+///
+/// # Razón de diseño
+/// Aislar esta decisión en una función propia (en vez de dejarla incrustada dentro del bucle
+/// que recorre filas) es lo que permite alimentarla directamente con un número no finito en una
+/// prueba unitaria. `similitud_coseno` nunca deja escapar un valor así por el camino público,
+/// así que sin esta separación el guardián de esta línea 349 quedaría probado solo por
+/// inspección, nunca por un caso reproducible.
+fn decidir_motivo_semantico(
+    mejor_similitud: Option<f32>,
+    incomparables: i64,
+    umbral_de_aceptacion: f32,
+) -> Option<MotivoDeRechazo> {
+    match mejor_similitud {
+        // Un máximo no finito significa que, en algún punto de la acumulación, un valor
+        // indefinido desplazó al criterio de comparación `>`: NaN nunca es mayor que nada,
+        // así que un valor corrupto puede quedar sosteniendo el máximo sin ser desplazado por
+        // uno sano posterior. Tratarlo como comparable sería aprobar sobre una cifra inventada.
+        Some(sim) if !sim.is_finite() => Some(MotivoDeRechazo::VectoresIncomparables {
+            cantidad: incomparables + 1,
+        }),
+        Some(sim) if sim < umbral_de_aceptacion => Some(MotivoDeRechazo::SimilitudInsuficiente {
+            similitud_observada: sim,
+            umbral_requerido: umbral_de_aceptacion,
+        }),
+        Some(_) => None,
+        None => Some(MotivoDeRechazo::VectoresIncomparables {
+            cantidad: incomparables,
+        }),
+    }
+}
+
+#[cfg(test)]
+mod pruebas_del_guardian_de_finitud {
+    use super::*;
+
+    // Reproduce el escenario que un guardián ausente dejaría pasar: una fila corrupta deja el
+    // máximo acumulado en un valor no finito y una fila sana posterior nunca logra desplazarlo.
+    // Sin la comprobación `!sim.is_finite()` de arriba, este caso caería en el brazo `Some(_)`
+    // y la compuerta aprobaría con una cifra que nunca representó una comparación real.
+    #[test]
+    fn un_maximo_no_finito_se_rechaza_en_lugar_de_aprobarse() {
+        let motivo = decidir_motivo_semantico(Some(f32::NAN), 0, 0.5);
+        assert_eq!(
+            motivo,
+            Some(MotivoDeRechazo::VectoresIncomparables { cantidad: 1 })
+        );
+    }
+
+    #[test]
+    fn una_similitud_finita_por_encima_del_umbral_no_produce_motivo() {
+        let motivo = decidir_motivo_semantico(Some(0.95), 0, 0.5);
+        assert_eq!(motivo, None);
+    }
 }
