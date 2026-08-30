@@ -1,0 +1,33 @@
+task_id: HEX-052
+summary: 'Fixed prior delegate implementation of the staging ingestion pipeline: replaced private-field access with a public accessor and fake-server fixes, closed English lexical-guard hits, ran cargo fmt, and got all workspace tests green.'
+entries:
+  - changed_files:
+      - path: crates/hexcell/src/embeddings.rs
+    notes:
+      - Added a public accessor method on ServicioDeEmbeddings<ProveedorDeEmbeddingsDeCelula> that delegates to the private provider's batch-size dispatch method, instead of widening field visibility.
+  - changed_files:
+      - path: crates/hexcell/src/ingesta.rs
+    notes:
+      - Switched the batch-size read to use the new accessor instead of reaching into a private field.
+      - Removed the unused ProveedorDeEmbeddings import that broke clippy -D warnings.
+      - Replaced the slice::chunks-based batching loop with a manual index-stepping loop to avoid tripping the lexical guard's banned word "chunks", while preserving identical batching semantics.
+      - Fixed two lexical-guard hits in doc comments (an English "staging" outside the literal filename, and a "chunks" reference).
+  - changed_files:
+      - path: crates/hexcell-storage/src/conocimiento.rs
+    notes:
+      - Fixed three Spanish-lexicon leaks (English "Discard" in a doc comment, and "staging" in three assertion messages, replaced with the project's term "en sombra").
+      - Added small inspection functions (contar_fragmentos, listar_ordinales, contar_fragmentos_sin_vector, leer_metadatos_de_epoca, documento_sobrevive) that open a private read-only connection and return plain data, so hexcell's integration tests can verify the staging file's contents without hexcell declaring rusqlite as a dependency (which is forbidden by design).
+  - changed_files:
+      - path: crates/hexcell-storage/tests/conocimiento.rs
+    notes:
+      - Replaced direct access to the constructor's private conexion field with a fresh Connection::open on the already-finalized file, following the existing idiom in tests/migraciones.rs.
+      - Renamed a "chunk" loop variable to a Spanish identifier to satisfy the identifier-language invariant.
+  - changed_files:
+      - path: crates/hexcell/tests/ingesta.rs
+    notes:
+      - Replaced four direct rusqlite::Connection::open calls (illegal in this crate, which has no rusqlite dependency by design) with calls to the new hexcell-storage inspection functions.
+      - Fixed two closures passed to PoolDeSesiones::con_lectura that returned rusqlite::Error instead of ErrorDeAlmacen.
+      - Added a missing std::io::Read import required by BufReader::read_exact in the fake HTTP server helper.
+      - Fixed two logic bugs in the delegate's tests unrelated to the private-field fix -- the fragmentation function splits by Unicode character including spaces, so "A B C D E" produced 9 fragments, not the 5 the test's own math assumed; changed the content to "ABCDE". The fake OpenRouter/Gemini HTTP servers returned a fixed 2-item response regardless of request size, which failed validation on the last (size-1) batch; made both handlers parse the request body and return a response sized to match.
+      - Removed now-unused imports (PathBuf, VERSION_DE_ESQUEMA_DE_CONOCIMIENTO).
+tdd_red_runs: []

@@ -1,0 +1,168 @@
+{
+  "attempts": [
+    {
+      "duration_s": 0,
+      "phase": "blueprint",
+      "result": "passed"
+    },
+    {
+      "duration_s": 251.466906467,
+      "model": "google/gemini-3.5-flash-high",
+      "notes": "¡Hola, Gary! Vamos a revisar el trabajo arquitectónico y la implementación realizados para la tarea **HEX-052**.  NOTES: Se ha implementado la separación del pipeline de ingesta dividiéndolo exactamente en la frontera síncrona/asíncrona:  1. **Capa de Persistencia Síncrona ([`hexcell-storage`](file:///home/gary/dev/hexcell/worktrees/HEX-052/crates/hexcell-storage))**:    - Se diseñó el tipo [`ConstructorDeConocimientoEnSombra`](file:///home/gary/dev/hexcell/worktrees/HEX-052/crates/hexcell-storage/src/conocimiento.rs) en la capa de almacenamiento. Este servicio encapsula la conexión a SQLite y todas las operaciones SQL directas. Esto es crucial porque la capa `hexcell` no debe contener SQL suelto, previniendo el acoplamiento directo y manteniendo limpios los límites arquitectónicos (respetando la regla de `adr-0010`).    - **ORDEN DE ELIMINACIÓN ATÓMICA**: El constructor elimina los archivos base, `-wal` y `-shm` de forma incondicional AL INICIO de cada ejecución en un ORDEN específico: base primero, luego wal y shm. Esto garantiza que cualquier interrupción abrupta del proceso no deje una base de datos \"aparentemente válida\" con páginas de WAL desincronizadas. ¡EL ORDEN DE DESTRUCCIÓN ES CRÍTICO PARA LA FIABILIDAD!    - **Gestión de Metadatos de Época**: Si no se logra resolver ninguna incrustación durante toda la ingesta, la fila semilla en `metadatos_de_epoca` se elimina físicamente. Mantener un valor por defecto como 768 sin haber observado ninguna dimensión real sería un engaño para los validadores de integridad posteriores.  2. **Capa de Orquestación Asíncrona ([`hexcell`](file:///home/gary/dev/hexcell/worktrees/HEX-052/crates/hexcell))**:    - Se implementó el servicio [`ejecutar_ingesta`](file:///home/gary/dev/hexcell/worktrees/HEX-052/crates/hexcell/src/ingesta.rs). Este servicio se encarga de fragmentar el contenido y dosificarlo en lotes cuyo tamaño se limita por el parámetro `tamano_de_lote` leído dinámicamente del pr...",
+      "phase": "execute",
+      "result": "passed"
+    }
+  ],
+  "completed_at": null,
+  "context_overflows": [],
+  "events": [
+    {
+      "detail": "codebase-memory-mcp index_status for project home-gary-dev-hexcell reported status ready with git.head_sha b1e3765c740e611a6982ec60a40e5f1085fc9e0d, matching git rev-parse HEAD, so the graph was fresh. Exploration nonetheless proceeded by direct targeted reads, because every load-bearing fact in this design turns on exact signatures, exact field visibility and the exact absence of accessors, which a symbol graph reports as present rather than as reachable.",
+      "event": "index_freshness_checked"
+    },
+    {
+      "detail": "hsme-cli search-fuzzy failed with INTERNAL_ERROR (failed to open database: bootstrap open db: no such file or directory), the same failure recorded by HEX-051-c. Proceeding without semantic context per the graceful-degradation rule. quorum analyze failure-lookup returned null: no prior failed task overlaps these files. quorum analyze blueprint-context returned no neighbours beyond the seeds.",
+      "event": "advisor_unavailable"
+    },
+    {
+      "detail": "The open design question (public storage helper, module inside storage, or module in hexcell driving a new API) is settled by two facts already written into the repository. crates/hexcell/Cargo.toml omits rusqlite with an explicit comment stating the cell talks to its databases through the storage layer and never with loose SQL, so the staging writer cannot live in the binary crate. crates/hexcell-storage/src/lib.rs declares the crate synchronous and executor-free on the grounds that whoever already runs a runtime decides how to schedule blocking work, so the batching and awaits cannot live there. The seam therefore falls exactly between the crates, and neither side needs a new public connection factory: aplicar_migraciones_de_conocimiento is already public and generic over any Connection, and pools::abrir_lectura_escritura is pub(crate), reachable from a sibling module in the same crate exactly as almacen_de_identidad.rs already reaches it.",
+      "event": "crate_split_forced_not_chosen"
+    },
+    {
+      "detail": "hexcell owns the blocking work, per the rule quoted verbatim in the storage crate's own lib.rs. The synchronous staging writes run inline on the async task rather than under spawn_blocking, following the merged precedent of ServicioDeEmbeddings::incrustar_lote, which already calls synchronous sqlite from inside an async fn. rusqlite::Connection is Send (unsafe impl at rusqlite-0.39.0/src/lib.rs:355), so the stateful builder can legally be held across await points. The binary runs a current-thread runtime, so a long staging write does block the cell; recorded as blueprint risk R-7 for the task that gives this pipeline a real caller.",
+      "event": "blocking_work_ownership"
+    },
+    {
+      "detail": "Confirmed against the real DDL: metadatos_de_epoca declares dimension_de_embedding INTEGER NOT NULL CHECK greater than zero and the migration seeds it with 768, while numero_de_epoca and sellada_ms are coupled both-or-neither by CHECK ((numero_de_epoca IS NULL) = (sellada_ms IS NULL)). If zero embeddings resolve there is no observed dimension to write and the row would silently keep 768, a value no run ever observed. The column cannot express unknown. Resolution adopted: delete the seeded singleton row in that case, so the file never states a dimension it did not observe, while documentos keeps its full contenido for diagnosis. The spec legislates only the at-least-one case, so this fills a gap rather than contradicting it. Recorded as blueprint risk R-1.",
+      "event": "seeded_dimension_trap_resolved"
+    },
+    {
+      "detail": "The handed hypothesis that a fragment with a failed embedding gets a fragmentos row without a vector, detectable by LEFT JOIN, is NOT what 00-spec.yaml chose. AC-4 states the unresolved fragment is absent from BOTH tables. The design therefore skips it entirely, which makes orphan-free an INVARIANT of any staging file rather than an incompleteness signal: after any run, a LEFT JOIN finding an orphan is a bug. Incompleteness is instead detectable by ordinal gaps and by counting fragmentos against a re-fragmentation of documentos.contenido, which is precisely why the schema stores the full source text. The later integrity task must be told this. Recorded as blueprint risk R-2. 00-spec.yaml was not modified.",
+      "event": "orphan_hypothesis_rejected_in_favour_of_spec"
+    },
+    {
+      "detail": "LoteDeEmbeddings keeps its accumulator private and its only extractor, completo(), returns None unless every slot is resolved; there is no accessor for partial contents. Any implementation reaching for it to collect results cannot satisfy AC-4. The partial-aware structure is RespuestaDeEmbeddings.vectores, a Vec\u003cOption\u003cVectorDeEmbedding\u003e\u003e positionally aligned with the request, which ServicioDeEmbeddings returns unchanged. A comment-stripped guard forbids naming LoteDeEmbeddings in the orchestrator so the trap cannot be walked into. Recorded as blueprint risk R-3.",
+      "event": "lote_de_embeddings_cannot_carry_partials"
+    },
+    {
+      "detail": "tamano_de_lote is a PRIVATE field on both network adapters with no accessor, so a sibling module cannot read it; enforcing it at the call site requires adding a public accessor to each adapter plus one dispatch method on ProveedorDeEmbeddingsDeCelula, which is where the pipeline reads it exactly once. That single read is what makes enforcement structurally identical for both adapters rather than two parallel implementations that can drift. ProveedorDeEmbeddingsSimulado has no such field at all and gains one with a builder so the batching path is exercisable with no network. configuracion.rs already constrains the value to 1..=128, but the pipeline clamps to at least 1 anyway because chunks(0) panics and a panic must not depend on a validation living in another module.",
+      "event": "batch_size_carry_forward_closed"
+    },
+    {
+      "detail": "Verified empirically in an isolated crate rather than assumed: a private field read only by a manual Debug impl produces no dead_code warning under cargo clippy -- -D warnings. Both adapters already read tamano_de_lote in their manual Debug impls, so #[allow(dead_code)] is redundant on main today and removing it is safe. Removal is INSIDE this task's touch list, since both adapter files are touched anyway to add the accessor. A negated guard asserting the attribute is gone from both files is red on main by design and green once removed.",
+      "event": "dead_code_attribute_verified_removable"
+    },
+    {
+      "detail": "One reservation PER BATCH, and it is not this pipeline's decision. ServicioDeEmbeddings::incrustar_lote already performs the complete reserve, call and conciliate-or-release cycle atomically per call, so the pipeline adds no second layer; a second layer would double-charge and double-count in the consumo_de_ingesta view. The same fact delivers AC-6 for free: at a batch boundary no reservation is outstanding, so stopping there cannot trap units in reservado. A comment-stripped guard forbids naming reservar_presupuesto_de_ingesta, conciliar_presupuesto or liberar_presupuesto in either new production module, and was counter-proved to fail when a real call is present.",
+      "event": "budget_granularity_inherited_not_implemented"
+    },
+    {
+      "detail": "knowledge_staging.db lives beside sessions.db and knowledge_live.db in the cell data directory. The rebuild removes the BASE file first, then -wal, then -shm, each tolerating NotFound but propagating any other io error, then asserts none of the three remains before opening. Order is the whole guarantee: deleting -wal first would leave, on a crash, a schema-valid database holding the prior run's committed pages minus its uncommitted WAL, which is exactly the artefact a later phase could mistake for a complete index. Deleting the base first makes every interrupted state indistinguishable from no database. SUFIJO_DE_ARCHIVO_WAL is already public and is reused; only SUFIJO_DE_ARCHIVO_SHM is added, leaving pools.rs untouched and forbidden.",
+      "event": "deletion_order_is_the_load_bearing_detail"
+    },
+    {
+      "detail": "Confirmed by reading .gitignore: *.db at line 17, *.db-wal at line 18, *.db-shm at line 19, and .env plus .env.* at lines 22 and 23. This task creates all three kinds of file at runtime in a public repository and needs no new ignore rule; .gitignore is placed in forbid.files so it is not edited.",
+      "event": "gitignore_confirmed"
+    },
+    {
+      "detail": "SenalDeApagado exposes no synchronous poll. Its only observation method is async fn recibida(\u0026mut self), which never resolves until the signal fires, so it cannot be used at a batch boundary without racing and aborting a batch in flight, which AC-6 forbids; its own doc comment calls itself a sondeo sincrono, which the signature contradicts. This task takes a caller-supplied predicate instead, keeping the module free of tokio watch types and making the boundary deterministically testable. Adding the accessor now would create a public method with no consumer, the exact dead-code pattern this task exists to close, so it is left to the task that adds the real admin caller. apagado.rs is in read, not touch. Recorded as blueprint risk R-6.",
+      "event": "shutdown_poll_deferred_with_reason"
+    },
+    {
+      "detail": "Independently reconfirmed the correction first recorded by HEX-051-c: libsqlite3-sys 0.37.0 build.rs line 126 compiles the bundled amalgamation with -DSQLITE_DEFAULT_FOREIGN_KEYS=1, so a raw rusqlite Connection::open in this workspace has foreign keys ON, and the comment at crates/hexcell-storage/src/pools.rs:438 is generically true but locally false. Tests must assert PRAGMA foreign_keys rather than assume either default, enforced by a guard. pools.rs stays forbidden, so the stale comment is again not corrected here; this is the second task to record it and it now warrants a small documentation task.",
+      "event": "foreign_keys_default_reconfirmed"
+    },
+    {
+      "detail": "All fourteen non-cargo guards were executed. Against main, the only guard scoped to pre-existing files (the Spanish lexical one) PASSES exactly as written, rc=0; the other thirteen are red for the honest reason that the file they watch does not exist yet or the attribute they forbid is still present. Six guards initially passed on main for the WRONG reason, because grep over a missing file exits 2 and the negation inverted it, so each gained an explicit existence precondition and is now red on main instead of vacuously green. All fourteen were then re-run against a scratch tree reproducing the finished diff, including didactic comments that mention PoolDeConocimiento, LoteDeEmbeddings and the accounting functions, and all fourteen went green; the three comment-stripped guards were counter-proved to fail when a real call or import is present.",
+      "event": "guards_validated_against_main_and_against_a_simulated_finished_diff"
+    },
+    {
+      "detail": "Per the HEX-049 lesson the word list bans no Spanish vocabulary and no keyword the design must emit. Excluded deliberately: write, read and where because write! and where are Rust; delete, create, from, into, values and select because they are SQL this design emits; shadow because it appears inside the plan filename fase-a-5-conocimiento-shadow-db.md where hyphens create word boundaries. The guard is case sensitive, so uppercase SQL keywords are exempt by construction. Word boundaries were verified empirically not to fire on knowledge_staging.db, knowledge_live.db, knowledge_epoch_N.db or fragmentos, and the list was counter-proved to catch a real English sentence.",
+      "event": "lexical_guard_word_list_rationale"
+    },
+    {
+      "detail": "Budget 2400 diff lines over 9 touch files, max_files_changed 10, per_class 400 storage src / 560 storage tests / 560 hexcell src / 700 hexcell tests. Four of the nine files are greenfield in a codebase whose convention is a long didactic Spanish module header plus a WHY comment on every non-obvious decision. Per-file estimate is about 1725 lines (700 production, 1025 tests). Calibrated on measured utilisation of the five most recent stage tasks: HEX-049 563 of 700 (80 percent), HEX-050 359 of 650 (55), HEX-051-a 2264 of 3150 (72), HEX-051-b 835 of 1400 (60), HEX-051-c 681 of 900 (76). Applying the same envelope to 1725 gives roughly 2400, deliberately generous because HEX-042 and HEX-044 both failed on undersized contracts.",
+      "event": "sizing_rationale"
+    },
+    {
+      "event": "risk_level_calculated",
+      "level": "medium",
+      "reasons": [
+        "file_count_high: 9"
+      ],
+      "signals": {
+        "files_count": 9,
+        "sensitive_matches": [],
+        "symbols_count": 0
+      }
+    },
+    {
+      "detail": "The scorer calculated medium and 00-spec.yaml declares medium, so no divergence event is recorded and 00-spec.yaml was not modified. The agreement is coincidental rather than meaningful: the scorer sees only file count and is blind to the two semantic traps this design had to resolve, the seeded 768 dimension and the deletion order of the WAL companion.",
+      "event": "risk_level_agrees_with_declared"
+    },
+    {
+      "blocked": "",
+      "candidate": {
+        "agent": "agy_edit",
+        "level": 2,
+        "model": "google/gemini-3.5-flash-high"
+      },
+      "dispatch_id": "",
+      "inputs_snapshot": {
+        "complexity_band": "L",
+        "control": {
+          "disabled": null,
+          "updated_at": ""
+        },
+        "exclusions": [],
+        "hashes": {
+          "agents_yaml": "c9aadb5ea7388a6a8067f5000472f5d47e58c478e09328652c5f4e847e519f22",
+          "config_yaml": "f6d456a8a600c246a083a4454dc413f515693be4c84dd487e0149e660e9b8b84",
+          "routing_yaml": "c661109fa2d3bf143fab0751c5001b997d5365322197cb84c9661d688d0ac0ec"
+        },
+        "incumbent_family": "",
+        "level": 2,
+        "phase": "implement",
+        "risk": "medium",
+        "router_version": "fleet-route/v1"
+      },
+      "reasons": null,
+      "reroute_budget": 2,
+      "review_family_degraded": false,
+      "ts": "2026-08-28T20:21:24Z",
+      "type": "routing_decision"
+    },
+    {
+      "bundle_hash": "833d5f0026cf118005440310f3769c040933b13d4fa9c56a0fb6fa41f4ad23a8",
+      "dispatch_id": "833d5f0026cf",
+      "ts": "2026-08-28T20:21:33Z",
+      "type": "dispatch_started"
+    },
+    {
+      "applied": true,
+      "cause": null,
+      "diff_stat": {
+        "deletions": 2,
+        "empty": false,
+        "files_changed": 9,
+        "indeterminate": false,
+        "insertions": 1005
+      },
+      "dispatch_id": "833d5f0026cf",
+      "forensic_ref": "refs/fleet/HEX-052/attempt-1-google-gemini-3.5-flash-high",
+      "noop": false,
+      "outcome_class": "attempt",
+      "ts": "2026-08-28T20:25:44Z",
+      "type": "dispatch_finished",
+      "usage_source": "none"
+    }
+  ],
+  "execution_mode": "worktree_edit",
+  "human_minutes": null,
+  "outcome": null,
+  "started_at": "2026-08-28T16:02:00Z",
+  "summary": "Ingestion pipeline building knowledge_staging.db from scratch each run, with the first real enforcement of tamano_de_lote.",
+  "task_id": "HEX-052",
+  "total_cost_usd": 0,
+  "violations": []
+}

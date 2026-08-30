@@ -1,0 +1,83 @@
+task_id: HEX-052
+summary: Build the knowledge_staging.db ingestion pipeline (A-5 task 4, FR-06) -- fresh shadow DB per run, chunking, batched embeddings under budget accounting, isolated from knowledge_live.db.
+goal: >-
+  Deliver the first integration point of stage A-5: an in-process ingestion pipeline that
+  consumes the already-merged knowledge schema (HEX-049), chunking function (HEX-050), embeddings
+  port/enum/budget accounting (HEX-051-a/b/c) to build `knowledge_staging.db` from a single
+  in-memory document input. On every invocation the pipeline discards and recreates
+  `knowledge_staging.db` (and its `-wal`/`-shm` siblings) from scratch before writing anything,
+  runs the existing knowledge migrations against it, chunks the document's text with `fragmentar`,
+  slices the resulting texts into batches actually bounded by each embeddings adapter's configured
+  `tamano_de_lote` (currently declared but never enforced by either adapter -- this task is where
+  that enforcement lands, uniformly for `ProveedorDeEmbeddingsOpenRouter` and
+  `ProveedorDeEmbeddingsGemini`), calls `ServicioDeEmbeddings::incrustar_lote` per batch, and
+  writes resolved fragments plus their vectors into staging. It records `metadatos_de_epoca`
+  (singleton, `numero_de_epoca` left NULL) with the embedding dimension observed from the first
+  successful response, because task 5 (integrity validation, out of scope here) needs that value
+  already present to check vector uniformity. `knowledge_live.db` is never opened, referenced, or
+  imported by this pipeline; isolation is structural (a distinct file path and distinct
+  connections), not a runtime check. The HTTP admin endpoint that will eventually drive this
+  (stage A-5 task 10) is out of scope: this task's entry point is a plain in-process Rust function
+  taking an already-decoded document struct, not a JSON/HTTP surface.
+invariants:
+  - "`knowledge_staging.db`, together with any `-wal`/`-shm` sibling files, is unconditionally removed and rebuilt from scratch at the START of every ingestion run, before any migration or write happens; this is the sole guarantee that a half-built staging database from a prior interrupted run can never be mistaken by a later phase (task 5) for a complete one, and it holds whether the prior run ended by graceful shutdown or by an abrupt process kill."
+  - "The ingestion pipeline never opens, reads, writes, or imports `knowledge_live.db`, `PoolDeConocimiento`, or any symlink/epoch file; isolation from the live database is structural (a distinct file path under a distinct `Connection`, with no shared `Mutex`/`Arc` and no call path into `crates/hexcell-storage/src/pools.rs`'s `PoolDeConocimiento`), not a runtime lock or check that could be bypassed."
+  - "Both `ProveedorDeEmbeddingsOpenRouter` and `ProveedorDeEmbeddingsGemini` have their `tamano_de_lote` field enforced identically at this task's call site: the pipeline slices the ordered chunk list into sub-batches no larger than the active adapter's configured `tamano_de_lote` before ever calling `incrustar_lote`; neither adapter's internal code changes, and the existing `#[allow(dead_code)]` on `tamano_de_lote` in both `crates/hexcell/src/proveedor_embeddings.rs` and `crates/hexcell/src/proveedor_embeddings_gemini.rs` is removed because the field becomes genuinely read."
+  - "Chunk ordinals are assigned by this pipeline as the zero-based index into the `Vec<String>` returned by `fragmentar`, gapless by construction (per HEX-050's contract), and written verbatim into `fragmentos.ordinal`; the pipeline never re-orders or renumbers chunks across batch boundaries."
+  - "A fragment whose embedding never resolves after an adapter's own bounded retries (adapter-internal, already merged) does NOT abort the whole ingestion run and does NOT roll back fragments already written: the pipeline writes every fragment that DID resolve to `fragmentos` and `vectores_de_fragmento`, skips the unresolved ones, and returns an honest summary (requested count vs written count) from its entry point, so an incomplete staging database is possible but always DETECTABLE by task 5's fragment-count check rather than silently promotable."
+  - "A shutdown signal observed at a batch boundary (between two sequential `incrustar_lote` calls) stops the pipeline from issuing further batches; it never aborts a batch already in flight and never leaves a budget reservation trapped in `reservado`, because each batch's reserve/reconcile/release cycle is already atomic and self-contained inside `ServicioDeEmbeddings::incrustar_lote` (merged, unchanged by this task) -- this task's own responsibility is limited to not starting a NEW batch once the shutdown signal fires, and to leaving the resulting (necessarily incomplete) staging file in place for the next run's from-scratch rebuild to discard."
+  - "`metadatos_de_epoca` in `knowledge_staging.db` is written by this pipeline with `numero_de_epoca` left NULL (per the migration's documented contract: NULL means \"in preparation, never promoted\") and `dimension_de_embedding` set to the vector length OBSERVED from the first successfully resolved embedding response of the run, never a value read from configuration; this task does not decide `numero_de_epoca` (promotion, task 6) or validate dimensional uniformity across fragments (structural check, task 5) -- it only records the observed value once."
+  - "The document input to this pipeline is an in-process, already-deserialized Rust struct mirroring the future JSON payload's shape; this task defines no HTTP route, no JSON deserialization endpoint, and no admin-network exposure -- those belong to stage A-5 task 10, explicitly deferred."
+  - "This task does not modify `crates/hexcell-core`'s empty dependency table (adr-0002), the `ProveedorDeEmbeddings` trait, the `ProveedorDeEmbeddingsDeCelula` enum's existing variants, `reservar_presupuesto_de_ingesta`/`conciliar_presupuesto`/`liberar_presupuesto`, or the knowledge schema migration itself; it is a pure consumer of all of these, wired together for the first time."
+  - "All repository content this task touches (Rust doc comments, code comments, identifiers, commit message) is written in Spanish and is didactic (explains WHY, not what the line does); only this Quorum spec's field values are written in English."
+acceptance:
+  - id: AC-1
+    statement: Every ingestion run unconditionally discards and recreates knowledge_staging.db (plus -wal/-shm) before writing anything, so an interrupted prior run's partial file can never survive into a later phase's view.
+    given: a leftover knowledge_staging.db (and knowledge_staging.db-wal) on disk from a previous run that was interrupted mid-ingestion
+    when: a new ingestion run starts against the same data directory
+    then: the old files are removed before any migration runs, a fresh schema-v2 knowledge_staging.db is created, and no row from the prior run's partial content is present
+  - id: AC-2
+    statement: The ingestion pipeline never touches knowledge_live.db; isolation is structural, not a runtime check.
+    given: a cell data directory containing both a populated knowledge_live.db (via the existing PoolDeConocimiento) and an ingestion run in progress against knowledge_staging.db
+    when: the ingestion pipeline runs to completion
+    then: knowledge_live.db's file metadata (size, mtime) is unchanged, and the ingestion module contains no import of and no call into pools::PoolDeConocimiento -- a code-level absence-of-call-path check, accepted as evidence given the structural nature of this isolation claim
+  - id: AC-3
+    statement: tamano_de_lote is enforced identically for both the OpenRouter and Gemini adapters at this task's call site, and the prior #[allow(dead_code)] on the field is removed from both adapters.
+    given: a document that chunks into more fragments than a configured tamano_de_lote of, for instance, 2
+    when: the ingestion pipeline embeds those fragments through either adapter variant
+    then: incrustar_lote is invoked multiple times, each call carrying no more texts than tamano_de_lote, for both ProveedorDeEmbeddingsOpenRouter and ProveedorDeEmbeddingsGemini, and cargo build --workspace no longer needs #[allow(dead_code)] on either struct's tamano_de_lote field
+  - id: AC-4
+    statement: A fragment that never resolves an embedding does not abort the run; the pipeline writes every fragment that did resolve and reports an honest requested-vs-written count.
+    given: a simulated provider batch response with one fragment position left unresolved (None) after exhausting the adapter's bounded retries
+    when: the ingestion pipeline finishes processing all batches
+    then: every resolved fragment is present in fragmentos and vectores_de_fragmento with correct ordinals, the unresolved fragment is absent from both tables, and the pipeline's returned summary reports requested_count > written_count rather than reporting success as if all fragments were written
+  - id: AC-5
+    statement: metadatos_de_epoca in knowledge_staging.db is written with numero_de_epoca NULL and dimension_de_embedding set to the value observed from the first successful embedding response of the run.
+    given: a simulated embeddings provider configured to return vectors of a fixed dimension (e.g. 8, distinct from the seeded production default of 768)
+    when: an ingestion run completes with at least one resolved fragment
+    then: metadatos_de_epoca's single row has numero_de_epoca = NULL and dimension_de_embedding equal to the observed vector length, not the schema's seeded default
+  - id: AC-6
+    statement: A shutdown signal raised between two sequential batch calls stops the pipeline from starting a new batch and never leaves a budget reservation trapped in reservado.
+    given: a document large enough to require at least three sequential embedding batches, and a shutdown signal fired after the first batch completes but before the second is issued
+    when: the ingestion pipeline observes the shutdown signal at the batch boundary
+    then: no further incrustar_lote call is made, the reserva rows already resolved by the first batch's reserve/reconcile cycle are not left in estado = 'activa', and the run returns a result that distinguishes this interrupted outcome from a completed one
+  - "cargo build --workspace, cargo test --workspace, cargo fmt --check, and cargo clippy --workspace -- -D warnings all pass; every test in this task's scope runs fully offline against the existing Simulado embeddings adapter or a local fake HTTP server on loopback, never a live embeddings API."
+  - "DEFERRED (explicitly out of scope, not to be flagged by q-analyze as a gap): structural and semantic integrity validation of the built index, including the fragment-count-vs-source check and the dimensional-uniformity check across vectores_de_fragmento (stage A-5 task 5); the epoch promotion sequence, WAL checkpoint-and-rename, symlink reassignment, and ArcSwap pointer substitution (task 6); graceful drain of the old pool (task 7); epoch retention and revert (task 8); the RAG retrieval engine (task 9); the internal admin HTTP endpoint and its JSON payload deserialization (task 10); the switchover stress test under concurrent RAG reads (task 11); and the backup-interaction check during a switchover (task 12). Also deferred: any criterion requiring a live embeddings API key or network call; redesigning the knowledge schema, the ProveedorDeEmbeddings port, the ProveedorDeEmbeddingsDeCelula enum, or the two-phase budget accounting functions, all of which are merged and consumed as-is; and authoring a new ADR, since none of this task's decisions (from-scratch staging rebuild, structural isolation, uniform batch enforcement, incomplete-but-detectable staging) revises or extends any existing ADR's scope -- adr-0006 (épocas y conmutación atómica) covers tasks 6-8, not this one."
+risk: medium
+non_goals:
+  - Structural or semantic integrity validation of the built staging index (stage A-5 task 5); this task may leave an incomplete-but-detectable staging database by design.
+  - Epoch promotion, WAL checkpoint-and-rename, symlink reassignment, ArcSwap pointer substitution, graceful drain of the old pool, and epoch retention/revert (stage A-5 tasks 6-8).
+  - The RAG retrieval engine and the internal admin HTTP endpoint, including its JSON deserialization surface (stage A-5 tasks 9-10).
+  - The switchover stress test and the backup-interaction check (stage A-5 tasks 11-12).
+  - Modifying the knowledge schema migration, the ProveedorDeEmbeddings port trait, the ProveedorDeEmbeddingsDeCelula enum's existing variants, or the two-phase budget accounting functions (reservar_presupuesto_de_ingesta, conciliar_presupuesto, liberar_presupuesto); all are merged and consumed as-is.
+  - Authoring a new ADR; this task's decisions extend none of the existing architecture ADRs' scope.
+  - Any live integration test against a real embeddings API; all tests in this task's scope run offline.
+constraints:
+  - No new runtime dependency for hexcell-core (adr-0002, empty dependency table stays empty); this task's logic lives in hexcell-storage and/or the hexcell binary crate, reusing existing dependencies only.
+  - "Repository is public: this task creates a *.db file at runtime (knowledge_staging.db) plus its -wal/-shm siblings; .gitignore already covers *.db, *.db-wal, and *.db-shm (verified), so no new ignore rule is required."
+  - No mass-sending folklore (jitter, warm-up protocols), proxies, VPN, or IP rotation, per standing project policy; this task introduces no network retry behavior beyond what the already-merged adapters provide.
+  - Every scope item traces to FR-06 (indexación en sombra sin bloquear la producción, docs/PRD.md) and to stage A-5 task 4 of docs/plan/fase-a-5-conocimiento-shadow-db.md; no requirement is invented beyond that task's stated scope.
+  - Instants are stored as integer milliseconds, matching the existing convention in crates/hexcell-storage; all new or touched tables remain STRICT.
+  - No raw transport identifier is introduced into sessions.db or knowledge_staging.db by this task.
+  - All tests exercising the ingestion pipeline's batching, chunk-to-batch slicing, partial-failure handling, and shutdown-boundary behavior run fully offline against the existing Simulado embeddings adapter; any criterion needing a live provider key is declared DEFERRED instead.
+  - This task does not author a new ADR; if implementation surfaces a decision no existing ADR anticipated, that must be reported back as a blocker for a human decision, not resolved silently.

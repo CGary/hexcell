@@ -1,0 +1,151 @@
+task_id: HEX-052
+summary: "Split the ingestion pipeline across the sync/async seam: a synchronous staging builder in hexcell-storage and an async batching orchestrator in hexcell that finally enforces tamano_de_lote."
+affected_files:
+- crates/hexcell-storage/src/conocimiento.rs
+- crates/hexcell-storage/src/lib.rs
+- crates/hexcell-storage/tests/conocimiento.rs
+- crates/hexcell/src/ingesta.rs
+- crates/hexcell/src/lib.rs
+- crates/hexcell/src/embeddings.rs
+- crates/hexcell/src/proveedor_embeddings.rs
+- crates/hexcell/src/proveedor_embeddings_gemini.rs
+- crates/hexcell/tests/ingesta.rs
+symbols:
+- 'hexcell_storage::conocimiento (new module, Application Service: owns the staging file lifecycle and every SQL statement)'
+- 'NOMBRE_DE_ARCHIVO_DE_CONOCIMIENTO_EN_SOMBRA (Value Object: the constant "knowledge_staging.db")'
+- 'SUFIJO_DE_ARCHIVO_SHM (Value Object: "-shm"; SUFIJO_DE_ARCHIVO_WAL is already public in pools.rs and is reused, not redeclared)'
+- 'DocumentoDeIngesta (Entity: referencia_externa, titulo, contenido, actualizado_ms -- the storage row shape, deliberately NOT a wire DTO and deliberately without serde)'
+- 'ConstructorDeConocimientoEnSombra (Application Service, stateful across batches, holds one rusqlite Connection which is Send and may therefore be held across await points)'
+- 'ConstructorDeConocimientoEnSombra::crear (deletes base file FIRST then -wal then -shm, asserts all three are gone, opens read-write via the existing pub(crate) pools::abrir_lectura_escritura, migrates to schema v2, inserts the documento row)'
+- 'ConstructorDeConocimientoEnSombra::escribir_lote_de_fragmentos (one transaction per batch; writes only resolved pairs of (ordinal, texto, vector))'
+- 'ConstructorDeConocimientoEnSombra::finalizar (updates metadatos_de_epoca.dimension_de_embedding with the observed value, leaves numero_de_epoca and sellada_ms both NULL, consumes self so the Connection is dropped)'
+- 'ConstructorDeConocimientoEnSombra::descartar_metadatos_de_epoca (deletes the seeded singleton row when zero embeddings resolved, so the file never claims a dimension the run did not observe)'
+- 'hexcell::ingesta (new module, Application Service: the only place that knows both chunking and embedding)'
+- 'ejecutar_ingesta (async entry point; takes an already-decoded DocumentoDeIngesta, a ConfiguracionDeFragmentacion, a ServicioDeEmbeddings, a data directory and a shutdown predicate)'
+- 'ResumenDeIngesta (Value Object: fragmentos_solicitados, fragmentos_escritos, lotes_emitidos, dimension_observada, desenlace)'
+- 'DesenlaceDeIngesta (Value Object: Completa | Parcial | DetenidaPorApagado | SinIncrustaciones)'
+- ErrorDeIngesta
+- 'ProveedorDeEmbeddingsOpenRouter::tamano_de_lote (new public accessor; makes the field genuinely read and retires its #[allow(dead_code)])'
+- 'ProveedorDeEmbeddingsGemini::tamano_de_lote (same)'
+- 'ProveedorDeEmbeddingsDeCelula::tamano_de_lote (the SINGLE dispatch point the pipeline reads, which is what makes enforcement structurally identical for both adapters instead of identical by convention)'
+- 'ProveedorDeEmbeddingsSimulado::con_tamano_de_lote (builder, so the batching path is exercisable with no network at all)'
+dependencies:
+- crates/hexcell-core/src/fragmentacion.rs
+- crates/hexcell-core/src/embeddings.rs
+- crates/hexcell-core/src/presupuesto.rs
+- crates/hexcell-storage/src/pools.rs
+- crates/hexcell-storage/src/migraciones.rs
+- crates/hexcell-storage/src/presupuesto.rs
+- crates/hexcell-storage/migraciones/conocimiento/0002-esquema-de-conocimiento.sql
+- crates/hexcell-storage/tests/comun/mod.rs
+- crates/hexcell/tests/comun/mod.rs
+- crates/hexcell/tests/embeddings_presupuesto.rs
+- crates/hexcell/tests/proveedor_embeddings.rs
+- crates/hexcell/src/configuracion.rs
+- crates/hexcell/src/apagado.rs
+- docs/plan/fase-a-5-conocimiento-shadow-db.md
+test_scenarios:
+- statement: A leftover knowledge_staging.db plus a leftover -wal and -shm from an interrupted run are all removed before any migration runs, and no row of the prior content survives into the fresh database.
+  covers:
+  - AC-1
+- statement: The base file is deleted BEFORE its -wal companion, so no intermediate state can present a schema-valid database whose content is the prior run minus its uncommitted WAL pages.
+  covers:
+  - AC-1
+- statement: A populated knowledge_live.db in the same data directory has identical size and mtime after a full ingestion run, and neither new module names PoolDeConocimiento anywhere outside a comment.
+  covers:
+  - AC-2
+- statement: A document chunking into 5 fragments with a configured tamano_de_lote of 2 produces exactly 3 calls to incrustar_lote, none carrying more than 2 texts, through ProveedorDeEmbeddingsOpenRouter against a loopback fake server.
+  covers:
+  - AC-3
+- statement: The same slicing holds identically through ProveedorDeEmbeddingsGemini against a loopback fake server, proving the split happens once at the shared call site rather than twice inside the adapters.
+  covers:
+  - AC-3
+- statement: cargo clippy --workspace -- -D warnings passes with #[allow(dead_code)] removed from tamano_de_lote in both adapters, because the new public accessor is a genuine read.
+  covers:
+  - AC-3
+- statement: A batch whose response leaves one position unresolved writes every resolved fragment with its source ordinal, omits the unresolved fragment from BOTH fragmentos and vectores_de_fragmento, and reports fragmentos_solicitados greater than fragmentos_escritos.
+  covers:
+  - AC-4
+- statement: Ordinals written are the zero-based indices returned by fragmentar and are never renumbered, so a failed embedding leaves a visible gap in the ordinal sequence rather than a silently compacted one.
+  covers:
+  - AC-4
+- statement: Every row in fragmentos has exactly one row in vectores_de_fragmento; a LEFT JOIN finds zero orphans even after a partial run, because a fragment without a vector is never written.
+  covers:
+  - AC-4
+- statement: With a simulated provider fixed at dimension 8, metadatos_de_epoca holds numero_de_epoca NULL, sellada_ms NULL and dimension_de_embedding 8, not the migration's seeded 768.
+  covers:
+  - AC-5
+- statement: When zero embeddings resolve, the metadatos_de_epoca row is removed instead of being left at the seeded 768, the summary reports SinIncrustaciones with fragmentos_escritos zero, and the documento row survives for diagnosis.
+  covers:
+  - AC-5
+- statement: A shutdown predicate that turns true after the first batch stops the pipeline from issuing a second incrustar_lote, leaves saldo.reservado at zero with no reserva in estado 'activa', and returns DetenidaPorApagado rather than Completa.
+  covers:
+  - AC-6
+- statement: The ingestion pipeline never calls reservar_presupuesto_de_ingesta, conciliar_presupuesto or liberar_presupuesto itself; the number of reserva rows after a run equals the number of batches issued, proving accounting is performed once by ServicioDeEmbeddings and not double-wrapped.
+  covers:
+  - AC-6
+- statement: The staging connection reports PRAGMA foreign_keys = 1 and PRAGMA user_version = VERSION_DE_ESQUEMA_DE_CONOCIMIENTO, asserted rather than assumed, and deleting the documento cascades to its fragmentos and their vectors.
+- statement: A vector written and read back round-trips through f32 little-endian bytes with length exactly 4 times its dimension, matching the normative contract in the migration header.
+strategy:
+- step: 1
+  action: 'Decide the crate split and record why it is forced rather than chosen. crates/hexcell/Cargo.toml deliberately omits rusqlite with an explicit comment ("la celula habla con sessions.db a traves del repositorio de esta capa, nunca con SQL suelto"), so the staging writer CANNOT live in the binary crate without breaking a documented boundary. crates/hexcell-storage declares itself synchronous and executor-free in its own lib.rs, so the batching orchestration CANNOT live there. The seam therefore falls exactly between them: storage owns every SQL statement and the file lifecycle, hexcell owns the runtime, the batching and the awaits.'
+  files:
+  - crates/hexcell-storage/src/lib.rs
+  - crates/hexcell/src/lib.rs
+- step: 2
+  action: 'Add the synchronous staging builder as a new module in hexcell-storage. Reuse the existing pub(crate) pools::abrir_lectura_escritura, exactly as almacen_de_identidad.rs already does, so the module inherits WAL, busy_timeout, synchronous=NORMAL and foreign_keys=ON without duplicating them and without adding any new public connection factory. Reuse the already-public SUFIJO_DE_ARCHIVO_WAL and add only SUFIJO_DE_ARCHIVO_SHM, leaving pools.rs untouched.'
+  files:
+  - crates/hexcell-storage/src/conocimiento.rs
+  - crates/hexcell-storage/src/lib.rs
+- step: 3
+  action: 'Implement the from-scratch rebuild with the deletion ORDER as the load-bearing detail: remove the base file first, then -wal, then -shm, tolerating NotFound on each but propagating any other io error, then assert none of the three exists before opening. Deleting -wal first would leave, on a crash, a schema-valid database holding the previous run committed pages minus its WAL -- the exact artefact that a later phase could mistake for a complete index. Deleting the base first makes every interrupted state indistinguishable from "no database".'
+  files:
+  - crates/hexcell-storage/src/conocimiento.rs
+- step: 4
+  action: 'Write fragments in one transaction per batch, taking only resolved (ordinal, texto, vector) triples. The ordinal is the zero-based index into the Vec<String> that fragmentar returned and is never renumbered, so a skipped fragment leaves a gap that a later phase can see; documentos.contenido stores the full source precisely so that gap can be measured against a re-fragmentation.'
+  files:
+  - crates/hexcell-storage/src/conocimiento.rs
+- step: 5
+  action: 'Close the epoch metadata honestly. On at least one resolved embedding, UPDATE dimension_de_embedding to the observed vector length and leave numero_de_epoca and sellada_ms both NULL, which the schema CHECK requires to move together. On zero resolved embeddings, DELETE the seeded singleton row instead, because the column is NOT NULL with CHECK > 0 and therefore cannot represent "no dimension observed" -- leaving the seeded 768 would be a value the run never observed.'
+  files:
+  - crates/hexcell-storage/src/conocimiento.rs
+- step: 6
+  action: 'Add the public tamano_de_lote accessor to both network adapters and remove their #[allow(dead_code)]. Verified empirically that the attribute is not load-bearing today: a private field read only by a manual Debug impl produces no dead_code warning under clippy -D warnings, so the attribute was already redundant and the accessor makes the read unambiguous.'
+  files:
+  - crates/hexcell/src/proveedor_embeddings.rs
+  - crates/hexcell/src/proveedor_embeddings_gemini.rs
+- step: 7
+  action: 'Expose one dispatch point, ProveedorDeEmbeddingsDeCelula::tamano_de_lote, and give ProveedorDeEmbeddingsSimulado its own batch size with a builder so the batching path is testable with no network. A single accessor read once by the pipeline is what makes the enforcement identical across adapters by construction rather than by two parallel implementations that could drift.'
+  files:
+  - crates/hexcell/src/embeddings.rs
+- step: 8
+  action: 'Add the async orchestrator in hexcell: fragmentar the contenido, read tamano_de_lote once, slice with chunks() clamped to at least 1 (chunks(0) panics, and the pipeline must not depend on a validation living in configuracion.rs to avoid a panic), and await ServicioDeEmbeddings::incrustar_lote per slice. Consume RespuestaDeEmbeddings.vectores positionally: it is Vec<Option<VectorDeEmbedding>> aligned with the slice, which is the only structure that exposes partial results at all.'
+  files:
+  - crates/hexcell/src/ingesta.rs
+  - crates/hexcell/src/lib.rs
+- step: 9
+  action: 'Reserve nothing. ServicioDeEmbeddings::incrustar_lote already performs the whole reserve, call, conciliate-or-release cycle atomically per call, so budget granularity is one reservation PER BATCH and the pipeline adds no second layer; a second layer would double-charge and double-count in the consumo_de_ingesta view. The same fact delivers the shutdown guarantee for free: at a batch boundary no reservation is outstanding, so stopping there cannot trap units in reservado.'
+  files:
+  - crates/hexcell/src/ingesta.rs
+- step: 10
+  action: 'Observe the shutdown at the batch boundary through a caller-supplied predicate, checked before issuing each new batch and never during one. A predicate keeps the module free of tokio watch types and makes the boundary deterministically testable; SenalDeApagado currently offers no synchronous poll, so wiring it is left to the task that gets a real caller.'
+  files:
+  - crates/hexcell/src/ingesta.rs
+- step: 11
+  action: 'Write the storage tests against a real temporary directory, reusing the existing DirectorioTemporal helper, and assert the pragmas rather than assuming them.'
+  files:
+  - crates/hexcell-storage/tests/conocimiento.rs
+- step: 12
+  action: 'Write the pipeline tests, reusing the loopback fake-server pattern already established in tests/proveedor_embeddings.rs and the seeded-balance pattern from tests/embeddings_presupuesto.rs, extending the fake server to serve and count several sequential requests.'
+  files:
+  - crates/hexcell/tests/ingesta.rs
+risks:
+- 'R-1 (RESOLVED IN THIS DESIGN, spec gap): the migration SEEDS metadatos_de_epoca with dimension_de_embedding 768, and the column is NOT NULL with CHECK > 0. If zero embeddings resolve, the spec instruction to write the OBSERVED dimension has nothing to write, and the row silently keeps 768 -- a value no run ever observed, against which a later phase would validate uniformity vacuously. The schema cannot represent "unknown". Resolution: delete the singleton row when zero embeddings resolved. The spec legislates only the at-least-one case, so this fills a gap rather than contradicting it, and it never sets numero_de_epoca or sellada_ms independently, which the CHECK forbids.'
+- 'R-2 (mismatch with a hypothesis handed down, resolved in favour of the spec): a fragment whose embedding fails is SKIPPED ENTIRELY, not written as a row without a vector. 00-spec.yaml AC-4 is explicit that "the unresolved fragment is absent from both tables". The 1:1 split therefore does NOT become the incompleteness signal here: after any run, orphan-free is an INVARIANT and a LEFT JOIN finding an orphan is a bug, not a partial run. The later integrity phase must detect incompleteness by ordinal gaps and by counting fragmentos against a re-fragmentation of documentos.contenido, which is exactly why the schema stores the full source text.'
+- 'R-3 (carry-forward closed, plus a correction): LoteDeEmbeddings cannot carry partial results out of the pipeline. Its accumulator is private and its only extractor, completo(), returns None unless every slot is resolved. Any implementation that reaches for LoteDeEmbeddings to collect results will be unable to satisfy AC-4. The partial-aware structure is RespuestaDeEmbeddings.vectores, a Vec<Option<VectorDeEmbedding>> positionally aligned with the request, returned unchanged by ServicioDeEmbeddings.'
+- 'R-4 (empirically verified, contradicts an in-repo comment): a raw rusqlite Connection::open in THIS workspace has foreign keys ON, because libsqlite3-sys 0.37.0 build.rs line 126 compiles the bundled amalgamation with -DSQLITE_DEFAULT_FOREIGN_KEYS=1. The comment at crates/hexcell-storage/src/pools.rs:438 says the opposite and is generically true but locally false. Tests must ASSERT PRAGMA foreign_keys rather than assume either default. pools.rs is forbidden here, so the stale comment is not corrected by this task; this is the second task to record it.'
+- 'R-5 (empirically verified): #[allow(dead_code)] on tamano_de_lote is already redundant on main. A private field read only by a manual Debug impl raises no dead_code warning under clippy -D warnings, reproduced in an isolated crate. Removing both attributes is therefore safe and is inside this task touch list; the accessor added in step 6 makes the read unambiguous rather than incidental.'
+- 'R-6 (deferred deliberately, with a reason): SenalDeApagado exposes no synchronous poll. Its only observation method is async fn recibida(&mut self), which never resolves until the signal fires, so it cannot be used to test a batch boundary without racing and aborting a batch in flight -- which AC-6 forbids. Its own doc comment describes itself as a "sondeo sincrono", which the signature contradicts. This task uses a caller-supplied predicate instead. The task that adds the real admin caller will need to add that accessor; adding it now would create a public method with no consumer, which is the exact dead-code pattern this task exists to close.'
+- 'R-7 (accepted, follows merged precedent): the synchronous staging writes run inline on the async task rather than under spawn_blocking. ServicioDeEmbeddings::incrustar_lote already calls synchronous sqlite from inside an async fn, and the binary runs a current-thread runtime, so a long staging write does block the cell. Ingestion is an administrative path with no production caller yet, so following the merged precedent is preferred over introducing a second scheduling model; the task that gives it a real caller should revisit it.'
+- 'R-8 (sizing): the two new production modules and the two new test files are all greenfield in a codebase whose convention is a long didactic Spanish module header plus a WHY comment on every non-obvious decision. HEX-042 and HEX-044 both failed on undersized contracts. The budget is calibrated on measured utilisation of the five most recent stage tasks (HEX-049 80 percent, HEX-050 55, HEX-051-a 72, HEX-051-b 60, HEX-051-c 76) applied to a per-file estimate of about 1725 lines.'
+- 'R-9 (guard hygiene): the Spanish lexical guard was run against main exactly as written and passes over the five pre-existing files. The words shadow, write, read, where, from, into, delete and create were deliberately EXCLUDED: write! and where are Rust, the rest are SQL this design must emit, and shadow appears inside the plan filename fase-a-5-conocimiento-shadow-db.md where hyphens create word boundaries. The guard is case sensitive so uppercase SQL keywords are exempt by construction, and word boundaries were verified not to fire on knowledge_staging.db, knowledge_live.db, knowledge_epoch_N.db or fragmentos.'

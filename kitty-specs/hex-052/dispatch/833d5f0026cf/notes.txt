@@ -1,0 +1,37 @@
+¡Hola, Gary! Vamos a revisar el trabajo arquitectónico y la implementación realizados para la tarea **HEX-052**.
+
+NOTES:
+Se ha implementado la separación del pipeline de ingesta dividiéndolo exactamente en la frontera síncrona/asíncrona:
+
+1. **Capa de Persistencia Síncrona ([`hexcell-storage`](file:///home/gary/dev/hexcell/worktrees/HEX-052/crates/hexcell-storage))**:
+   - Se diseñó el tipo [`ConstructorDeConocimientoEnSombra`](file:///home/gary/dev/hexcell/worktrees/HEX-052/crates/hexcell-storage/src/conocimiento.rs) en la capa de almacenamiento. Este servicio encapsula la conexión a SQLite y todas las operaciones SQL directas. Esto es crucial porque la capa `hexcell` no debe contener SQL suelto, previniendo el acoplamiento directo y manteniendo limpios los límites arquitectónicos (respetando la regla de `adr-0010`).
+   - **ORDEN DE ELIMINACIÓN ATÓMICA**: El constructor elimina los archivos base, `-wal` y `-shm` de forma incondicional AL INICIO de cada ejecución en un ORDEN específico: base primero, luego wal y shm. Esto garantiza que cualquier interrupción abrupta del proceso no deje una base de datos "aparentemente válida" con páginas de WAL desincronizadas. ¡EL ORDEN DE DESTRUCCIÓN ES CRÍTICO PARA LA FIABILIDAD!
+   - **Gestión de Metadatos de Época**: Si no se logra resolver ninguna incrustación durante toda la ingesta, la fila semilla en `metadatos_de_epoca` se elimina físicamente. Mantener un valor por defecto como 768 sin haber observado ninguna dimensión real sería un engaño para los validadores de integridad posteriores.
+
+2. **Capa de Orquestación Asíncrona ([`hexcell`](file:///home/gary/dev/hexcell/worktrees/HEX-052/crates/hexcell))**:
+   - Se implementó el servicio [`ejecutar_ingesta`](file:///home/gary/dev/hexcell/worktrees/HEX-052/crates/hexcell/src/ingesta.rs). Este servicio se encarga de fragmentar el contenido y dosificarlo en lotes cuyo tamaño se limita por el parámetro `tamano_de_lote` leído dinámicamente del proveedor activo.
+   - **CERO RESERVAS REDUNDANTES**: El orquestador no realiza llamadas de presupuesto duplicadas. Delega la contabilidad financiera completamente en la ejecución atómica interna de `ServicioDeEmbeddings::incrustar_lote`, previniendo la doble contabilidad del consumo de la ingesta.
+   - **Punto de Control de Apagado**: Se comprueba el estado de apagado ordenado estrictamente en la frontera del lote. Esto evita que dejemos saldo bloqueado de forma activa y previene la interrupción a mitad de una transacción.
+
+Se han escrito pruebas exhaustivas tanto en [`crates/hexcell-storage/tests/conocimiento.rs`](file:///home/gary/dev/hexcell/worktrees/HEX-052/crates/hexcell-storage/tests/conocimiento.rs) como en [`crates/hexcell/tests/ingesta.rs`](file:///home/gary/dev/hexcell/worktrees/HEX-052/crates/hexcell/tests/ingesta.rs) empleando servidores TCP locales en loopback para emular las respuestas de OpenRouter y Gemini, y el ayudante `DirectorioTemporal` para asegurar ejecuciones limpias de bases de datos.
+END NOTES
+
+De acuerdo con el flujo estricto y la directiva de no compilar después de realizar cambios, no se ejecutaron compilaciones locales tras realizar las modificaciones. El pipeline y la suite de pruebas quedan completamente preparados para el paso de verificación.
+
+=== Fin de fase: Implementación ===
+
+Resultado: DONE
+Resumen técnico: Implemented storage staging builder and async batching orchestrator.
+
+Artefactos producidos:
+- Diff committeado en la rama ai/HEX-052 (worktrees/HEX-052/)
+- .ai/tasks/active/HEX-052-new-spec/04-implementation-log.yaml
+
+No hay transición de estado: el worktree y la rama siguen iguales.
+
+Pasos siguientes (los despacha el orquestador, NO yo):
+1. [Obligatorio] /q-verify HEX-052 — corre verify.commands del contrato dentro del worktree y escribe 05-validation.json.
+
+Si querés volver atrás:
+- [WORKTREE:HEX-052] git -C worktrees/HEX-052 reset --hard HEAD~1 — descarta el último commit del worktree.
+- [ROOT] quorum task back HEX-052 — borra worktree y rama (perdés todos los commits no mergeados).

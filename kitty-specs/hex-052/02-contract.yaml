@@ -1,0 +1,145 @@
+task_id: HEX-052
+summary: "Build knowledge_staging.db from scratch each run: sync staging builder in hexcell-storage, async batching orchestrator in hexcell, and the first real enforcement of tamano_de_lote."
+goal: >-
+  Deliver stage A-5 task 4 (FR-06), the first integration point that consumes the merged knowledge
+  schema, the chunking function, the embeddings port and the two-phase budget accounting all at once.
+  The crate split is FORCED, not chosen: crates/hexcell/Cargo.toml deliberately omits rusqlite with an
+  explicit comment, so the SQL cannot live in the binary crate; crates/hexcell-storage declares itself
+  synchronous and executor-free in its own lib.rs, so the awaits cannot live there. Storage therefore
+  gets a synchronous staging builder that reuses the existing pub(crate) open helper, and hexcell gets
+  the async orchestrator that owns the runtime, slices the chunk list by the adapter's configured
+  tamano_de_lote and calls ServicioDeEmbeddings::incrustar_lote per slice. Reserve nothing: that
+  service already performs a complete reserve/conciliate-or-release cycle per call, so budget
+  granularity is one reservation PER BATCH and a second layer would double-charge. A fragment whose
+  embedding never resolves is skipped entirely from both tables, per 00-spec.yaml AC-4, and the run
+  returns an honest requested-versus-written summary. Implement no integrity validation, no epoch
+  promotion, no symlink or ArcSwap work, no RAG engine, no HTTP endpoint and no new ADR.
+read:
+- .ai/tasks/active/HEX-052-new-spec/00-spec.yaml
+- .ai/tasks/active/HEX-052-new-spec/01-blueprint.yaml
+- crates/hexcell-storage/migraciones/conocimiento/0002-esquema-de-conocimiento.sql
+- crates/hexcell-storage/src/pools.rs
+- crates/hexcell-storage/src/migraciones.rs
+- crates/hexcell-storage/src/almacen_de_identidad.rs
+- crates/hexcell-storage/src/presupuesto.rs
+- crates/hexcell-storage/src/error.rs
+- crates/hexcell-storage/src/tiempo.rs
+- crates/hexcell-storage/tests/comun/mod.rs
+- crates/hexcell-storage/tests/migraciones.rs
+- crates/hexcell-core/src/fragmentacion.rs
+- crates/hexcell-core/src/embeddings.rs
+- crates/hexcell-core/src/presupuesto.rs
+- crates/hexcell/src/configuracion.rs
+- crates/hexcell/src/apagado.rs
+- crates/hexcell/src/registro.rs
+- crates/hexcell/tests/comun/mod.rs
+- crates/hexcell/tests/embeddings_presupuesto.rs
+- crates/hexcell/tests/proveedor_embeddings.rs
+- crates/hexcell/tests/proveedor_embeddings_gemini.rs
+- crates/hexcell/Cargo.toml
+- crates/hexcell-storage/Cargo.toml
+- docs/plan/fase-a-5-conocimiento-shadow-db.md
+- docs/adr/adr-0002-estructura-workspace.md
+- docs/adr/adr-0003-persistencia-dual.md
+- docs/adr/adr-0005-contabilidad-dos-fases.md
+touch:
+- crates/hexcell-storage/src/conocimiento.rs
+- crates/hexcell-storage/src/lib.rs
+- crates/hexcell-storage/tests/conocimiento.rs
+- crates/hexcell/src/ingesta.rs
+- crates/hexcell/src/lib.rs
+- crates/hexcell/src/embeddings.rs
+- crates/hexcell/src/proveedor_embeddings.rs
+- crates/hexcell/src/proveedor_embeddings_gemini.rs
+- crates/hexcell/tests/ingesta.rs
+forbid:
+  files:
+  - crates/hexcell-storage/src/pools.rs
+  - crates/hexcell-storage/src/migraciones.rs
+  - crates/hexcell-storage/src/presupuesto.rs
+  - crates/hexcell-storage/src/sesiones.rs
+  - crates/hexcell-storage/migraciones/conocimiento/0002-esquema-de-conocimiento.sql
+  - crates/hexcell-storage/migraciones/sesiones/0004-reservas-sin-conversacion.sql
+  - crates/hexcell-core/src/embeddings.rs
+  - crates/hexcell-core/src/fragmentacion.rs
+  - crates/hexcell-core/src/presupuesto.rs
+  - crates/hexcell-core/src/lib.rs
+  - crates/hexcell-core/Cargo.toml
+  - crates/hexcell/src/configuracion.rs
+  - crates/hexcell/src/apagado.rs
+  - crates/hexcell/src/motor.rs
+  - crates/hexcell/src/main.rs
+  - crates/hexcell/Cargo.toml
+  - crates/hexcell-storage/Cargo.toml
+  - Cargo.toml
+  - Cargo.lock
+  - docs/adr/README.md
+  - docs/STATUS.md
+  - docs/bitacora-de-descartes.md
+  - .gitignore
+  - .ai/tasks/active/HEX-052-new-spec/00-spec.yaml
+  behaviors:
+  - 'Never add rusqlite, or any SQL, to crates/hexcell. Its manifest omits the driver on purpose and says so in a comment: the cell talks to its databases through the storage layer, never with loose SQL. If the orchestrator seems to need a Connection, the design is wrong; move that statement into crates/hexcell-storage/src/conocimiento.rs.'
+  - 'Never add an async executor, a tokio dependency, or a spawn_blocking wrapper to crates/hexcell-storage. That crate declares itself synchronous in its own lib.rs on the grounds that whoever already runs a runtime is who schedules blocking work; a storage layer carrying its own executor would impose it on every consumer, tests included.'
+  - 'Never add a new public helper to hexcell-storage that merely opens a raw writable connection. Reuse the existing pub(crate) pools::abrir_lectura_escritura, exactly as almacen_de_identidad.rs already does, so WAL, busy_timeout, synchronous and foreign_keys arrive identically and are declared in one place. The new public surface is a purpose-built builder type, not a connection factory.'
+  - 'Never open, read, write, import or name PoolDeConocimiento, knowledge_live.db or any epoch file or symlink from the ingestion modules. Isolation is structural: a distinct path under a distinct Connection with no shared Mutex or Arc, not a runtime lock or check that could be bypassed.'
+  - 'Never delete the -wal companion before the base file. Removing -wal first leaves, on a crash, a schema-valid database holding the prior run committed pages minus its uncommitted WAL -- exactly the artefact a later phase could mistake for a complete index. The order is base, then -wal, then -shm, each tolerating NotFound but propagating any other io error, followed by an assertion that none of the three remains before anything is opened.'
+  - 'Never make the from-scratch rebuild conditional. It runs unconditionally at the start of every invocation, before any migration or write, whether or not a prior file exists and whether the prior run ended cleanly or was killed. A runtime check for completeness is not an acceptable substitute for the structural guarantee.'
+  - 'Never call reservar_presupuesto_de_ingesta, conciliar_presupuesto or liberar_presupuesto from the ingestion pipeline. ServicioDeEmbeddings::incrustar_lote already performs the entire reserve, call and conciliate-or-release cycle atomically per call; a second layer double-charges and double-counts in the consumo_de_ingesta view. One reservation per batch is the granularity, and it is inherited, not implemented.'
+  - 'Never write a fragment whose embedding did not resolve. 00-spec.yaml AC-4 requires the unresolved fragment to be absent from BOTH fragmentos and vectores_de_fragmento. Do not write a fragmentos row without its vector, and do not compact the surviving ordinals to close the gap.'
+  - 'Never renumber ordinals. The ordinal is the zero-based index into the Vec<String> returned by fragmentar, written verbatim, never re-derived per batch and never re-based across batch boundaries. A gap in the written ordinals is the intended incompleteness signal, not a defect to smooth over.'
+  - 'Never leave metadatos_de_epoca claiming a dimension the run did not observe. The migration seeds 768 and the column is NOT NULL with CHECK greater than zero, so it cannot express "unknown". With at least one resolved embedding, UPDATE it to the observed vector length. With zero resolved embeddings, DELETE the singleton row instead. Never read the dimension from configuration.'
+  - 'Never set numero_de_epoca or sellada_ms independently of each other. The schema CHECK makes them both-or-neither, and a staging database is not yet an epoch: both stay NULL here. Sealing belongs to the promotion task.'
+  - 'Never abort a batch already in flight to honour the shutdown signal, and never leave a reservation trapped in estado activa. The only responsibility here is to not START a new batch once the signal is observed, checked between batches; the leftover incomplete file is harmless because the next run deletes and recreates it.'
+  - 'Never reach for LoteDeEmbeddings to collect results. Its accumulator is private and completo() returns None unless every slot resolved, so it cannot carry partial results out and cannot satisfy AC-4. Consume RespuestaDeEmbeddings.vectores directly: it is a Vec<Option<VectorDeEmbedding>> positionally aligned with the request that ServicioDeEmbeddings returns unchanged.'
+  - 'Never slice with a batch size that could be zero. chunks(0) panics. configuracion.rs constrains the value to 1..=128, but the pipeline must not depend on a validation living in another module to avoid a panic; clamp to at least 1 at the call site and say why in a comment.'
+  - 'Never split the batching logic in two. The pipeline reads tamano_de_lote once, through ProveedorDeEmbeddingsDeCelula, and slices in one place. Enforcement identical for both adapters must be structural, not two parallel implementations that can drift apart.'
+  - 'Never modify either adapter beyond removing #[allow(dead_code)] from tamano_de_lote and adding the public accessor. No change to their HTTP paths, retry behaviour, timeouts, error types or request bodies. This task introduces no network retry behaviour of any kind.'
+  - 'Never change the ProveedorDeEmbeddings trait, the existing variants of ProveedorDeEmbeddingsDeCelula, the signatures of the two-phase accounting functions, or the knowledge schema migration. All are merged and consumed as-is.'
+  - 'Never assume the value of PRAGMA foreign_keys; assert it. In this workspace libsqlite3-sys 0.37.0 compiles the bundled amalgamation with -DSQLITE_DEFAULT_FOREIGN_KEYS=1, so a raw open has them ON, and the comment in pools.rs claiming otherwise is locally false. Never assert the knowledge schema version as a literal integer either; read VERSION_DE_ESQUEMA_DE_CONOCIMIENTO.'
+  - 'Never write English prose, English comments or English identifiers in repository content. Comments are didactic Spanish explaining WHY, not what the line does. Dates are absolute, in the form "28 de agosto de 2026". Only the Quorum artifact field values are English.'
+  - 'Never define an HTTP route, a JSON payload, a serde derive or any admin-network surface. The entry point is a plain in-process Rust function taking an already-decoded struct; the admin endpoint is a later task. hexcell-storage has no serde dependency and must not gain one.'
+  - 'Never author a new ADR and never touch docs/. If implementation surfaces a decision no existing ADR anticipated, report it as a blocker for a human decision instead of resolving it silently.'
+  - 'Never introduce mass-sending folklore: no jitter, no warm-up protocol, no proxy, no VPN, no IP rotation. Never version *.db, *.db-wal, *.db-shm or .env* artifacts produced while testing; .gitignore already covers all four and must not be edited.'
+  - 'Never let a test reach a live embeddings API. Every test runs offline against the Simulado adapter or a fake HTTP server the test itself binds on loopback.'
+verify:
+  commands:
+  - cargo fmt --check
+  - cargo clippy --workspace -- -D warnings
+  - cargo build --workspace
+  - cargo test --workspace
+  - bash -c '! grep -inE "\b(the|and|with|this|that|which|because|should|would|about|before|after|every|each|fragment|fragments|chunk|chunks|batch|batches|rebuild|isolated|isolation|shutdown|epoch|epochs|sealed|observed|partial|skipped|requested|budget|reservation|pipeline|ingestion|knowledge|staging)\b" crates/hexcell-storage/src/lib.rs crates/hexcell/src/lib.rs crates/hexcell/src/embeddings.rs crates/hexcell/src/proveedor_embeddings.rs crates/hexcell/src/proveedor_embeddings_gemini.rs'
+  - bash -c 'for f in crates/hexcell-storage/src/conocimiento.rs crates/hexcell-storage/tests/conocimiento.rs crates/hexcell/src/ingesta.rs crates/hexcell/tests/ingesta.rs; do test -f "$f" || { echo "falta $f"; exit 1; }; done; ! grep -inE "\b(the|and|with|this|that|which|because|should|would|about|before|after|every|each|fragment|fragments|chunk|chunks|batch|batches|rebuild|isolated|isolation|shutdown|epoch|epochs|sealed|observed|partial|skipped|requested|budget|reservation|pipeline|ingestion|knowledge|staging)\b" crates/hexcell-storage/src/conocimiento.rs crates/hexcell-storage/tests/conocimiento.rs crates/hexcell/src/ingesta.rs crates/hexcell/tests/ingesta.rs'
+  - bash -c '! grep -n "allow(dead_code)" crates/hexcell/src/proveedor_embeddings.rs crates/hexcell/src/proveedor_embeddings_gemini.rs'
+  - bash -c 'grep -q "tamano_de_lote" crates/hexcell/src/ingesta.rs'
+  - bash -c 'grep -q "fn tamano_de_lote" crates/hexcell/src/embeddings.rs && grep -q "fn tamano_de_lote" crates/hexcell/src/proveedor_embeddings.rs && grep -q "fn tamano_de_lote" crates/hexcell/src/proveedor_embeddings_gemini.rs'
+  - bash -c 'for f in crates/hexcell-storage/src/conocimiento.rs crates/hexcell/src/ingesta.rs; do test -f "$f" || { echo "falta $f"; exit 1; }; done; sed "s|//.*||" crates/hexcell-storage/src/conocimiento.rs crates/hexcell/src/ingesta.rs | grep -q "PoolDeConocimiento" && exit 1 || exit 0'
+  - bash -c 'for f in crates/hexcell-storage/src/conocimiento.rs crates/hexcell/src/ingesta.rs; do test -f "$f" || { echo "falta $f"; exit 1; }; done; sed "s|//.*||" crates/hexcell-storage/src/conocimiento.rs crates/hexcell/src/ingesta.rs | grep -q "knowledge_live" && exit 1 || exit 0'
+  - bash -c 'for f in crates/hexcell-storage/src/conocimiento.rs crates/hexcell/src/ingesta.rs; do test -f "$f" || { echo "falta $f"; exit 1; }; done; sed "s|//.*||" crates/hexcell-storage/src/conocimiento.rs crates/hexcell/src/ingesta.rs | grep -qE "reservar_presupuesto_de_ingesta|conciliar_presupuesto|liberar_presupuesto" && exit 1 || exit 0'
+  - bash -c 'grep -q "knowledge_staging.db" crates/hexcell-storage/src/conocimiento.rs'
+  - bash -c 'grep -q "SUFIJO_DE_ARCHIVO_WAL" crates/hexcell-storage/src/conocimiento.rs && grep -q "abrir_lectura_escritura" crates/hexcell-storage/src/conocimiento.rs'
+  - bash -c 'grep -qE "foreign_keys" crates/hexcell-storage/tests/conocimiento.rs && grep -q "VERSION_DE_ESQUEMA_DE_CONOCIMIENTO" crates/hexcell-storage/tests/conocimiento.rs'
+  - bash -c 'test -f crates/hexcell-storage/src/conocimiento.rs && sed "s|//.*||" crates/hexcell-storage/src/conocimiento.rs | grep -q "dimension_de_embedding"'
+  - bash -c 'test -f crates/hexcell/src/ingesta.rs || exit 1; sed "s|//.*||" crates/hexcell/src/ingesta.rs | grep -q "LoteDeEmbeddings" && exit 1 || exit 0'
+  - bash -c 'for f in crates/hexcell-storage/src/conocimiento.rs crates/hexcell/src/ingesta.rs; do test -f "$f" || { echo "falta $f"; exit 1; }; done; ! grep -rnE "\b(jitter|warm.?up|proxy|vpn)\b" crates/hexcell-storage/src/conocimiento.rs crates/hexcell/src/ingesta.rs'
+  target_s: 60
+acceptance:
+  human_gate: true
+limits:
+  max_files_changed: 10
+  max_diff_lines: 2400
+  per_class:
+  - glob: crates/hexcell-storage/src/**
+    max_diff_lines: 400
+  - glob: crates/hexcell-storage/tests/**
+    max_diff_lines: 560
+  - glob: crates/hexcell/src/**
+    max_diff_lines: 560
+  - glob: crates/hexcell/tests/**
+    max_diff_lines: 700
+execution:
+  mode: worktree_edit
+  branch: ai/HEX-052
+retry_policy:
+  max_attempts: 2
+  escalate_after: 2

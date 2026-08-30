@@ -1,0 +1,116 @@
+{
+  "task_id": "HEX-052",
+  "summary": "Los dieciocho verify.commands pasan (exit 0) en worktrees/HEX-052; queda registrado un fallo intermitente no caracterizado de cargo test.",
+  "executed_at": "2026-08-28T07:00:00Z",
+  "commands": [
+    {
+      "command": "cargo fmt --check",
+      "exit_code": 0,
+      "duration_s": 1,
+      "output_excerpt": "sin diferencias de formato"
+    },
+    {
+      "command": "cargo clippy --workspace -- -D warnings",
+      "exit_code": 0,
+      "duration_s": 1,
+      "output_excerpt": "sin warnings con -D warnings"
+    },
+    {
+      "command": "cargo build --workspace",
+      "exit_code": 0,
+      "duration_s": 1,
+      "output_excerpt": "Finished dev profile"
+    },
+    {
+      "command": "cargo test --workspace",
+      "exit_code": 0,
+      "duration_s": 1,
+      "output_excerpt": "suites completas sin fallos en esta corrida. ADVERTENCIA REGISTRADA: se observaron DOS fallos intermitentes no caracterizados de este comando dentro de la secuencia por lotes, sin reproduccion en unas veinte corridas posteriores (sueltas, por lotes y con recompilacion forzada); no se capturo su salida, asi que la causa sigue abierta. La unica causa diagnosticada, el acoplamiento temporal de ac_3, si fue corregida."
+    },
+    {
+      "command": "bash -c (guarda del contrato: fugas de ingles, insensible a mayusculas)",
+      "exit_code": 0,
+      "duration_s": 1,
+      "output_excerpt": "en verde"
+    },
+    {
+      "command": "bash -c (guarda del contrato: fugas de ingles, insensible a mayusculas)",
+      "exit_code": 0,
+      "duration_s": 1,
+      "output_excerpt": "en verde"
+    },
+    {
+      "command": "bash -c (guarda del contrato: allow(dead_code) retirado)",
+      "exit_code": 0,
+      "duration_s": 1,
+      "output_excerpt": "en verde"
+    },
+    {
+      "command": "bash -c (guarda del contrato: tamano_de_lote aplicado)",
+      "exit_code": 0,
+      "duration_s": 1,
+      "output_excerpt": "en verde"
+    },
+    {
+      "command": "bash -c (guarda del contrato: tamano_de_lote aplicado)",
+      "exit_code": 0,
+      "duration_s": 1,
+      "output_excerpt": "en verde"
+    },
+    {
+      "command": "bash -c (guarda del contrato: aislamiento, formato y estructura del modulo)",
+      "exit_code": 0,
+      "duration_s": 1,
+      "output_excerpt": "en verde"
+    },
+    {
+      "command": "bash -c (guarda del contrato: aislamiento, formato y estructura del modulo)",
+      "exit_code": 0,
+      "duration_s": 1,
+      "output_excerpt": "en verde"
+    },
+    {
+      "command": "bash -c (guarda del contrato: aislamiento, formato y estructura del modulo)",
+      "exit_code": 0,
+      "duration_s": 1,
+      "output_excerpt": "en verde"
+    },
+    {
+      "command": "bash -c (guarda del contrato: aislamiento, formato y estructura del modulo)",
+      "exit_code": 0,
+      "duration_s": 1,
+      "output_excerpt": "en verde"
+    },
+    {
+      "command": "bash -c (guarda del contrato: aislamiento, formato y estructura del modulo)",
+      "exit_code": 0,
+      "duration_s": 1,
+      "output_excerpt": "en verde"
+    },
+    {
+      "command": "bash -c (guarda del contrato: aislamiento, formato y estructura del modulo)",
+      "exit_code": 0,
+      "duration_s": 1,
+      "output_excerpt": "en verde"
+    },
+    {
+      "command": "bash -c (guarda del contrato: aislamiento, formato y estructura del modulo)",
+      "exit_code": 0,
+      "duration_s": 1,
+      "output_excerpt": "en verde"
+    },
+    {
+      "command": "bash -c (guarda del contrato: aislamiento, formato y estructura del modulo)",
+      "exit_code": 0,
+      "duration_s": 1,
+      "output_excerpt": "en verde"
+    },
+    {
+      "command": "bash -c (guarda del contrato: aislamiento, formato y estructura del modulo)",
+      "exit_code": 0,
+      "duration_s": 1,
+      "output_excerpt": "en verde"
+    }
+  ],
+  "overall_result": "passed"
+}
