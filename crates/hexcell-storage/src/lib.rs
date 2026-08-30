@@ -43,6 +43,7 @@ pub mod presupuesto;
 pub mod respaldo;
 pub mod sesiones;
 pub mod tiempo;
+pub mod validacion;
 
 pub use almacen_de_identidad::{AlmacenDeIdentidad, NOMBRE_DE_ARCHIVO_DE_IDENTIDAD_DEL_ADAPTADOR};
 pub use conocimiento::{
@@ -68,3 +69,6 @@ pub use sesiones::{
     VeredictoDeDeduplicacion,
 };
 pub use tiempo::{a_milisegundos, desde_milisegundos};
+pub use validacion::{
+    MotivoDeRechazo, SondaResuelta, VeredictoDeIntegridad, validar_integridad_del_indice,
+};

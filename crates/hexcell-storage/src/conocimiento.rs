@@ -217,20 +217,18 @@ pub struct ResumenDeInspeccion {
     pub documento_sobrevive: bool,
 }
 
-/// Abre la base en sombra ya construida y cerrada en una única conexión de solo lectura, y reúne
-/// de una sola vez todo lo que crates externos, como el binario de la célula, necesitan verificar
-/// sin declarar rusqlite como dependencia propia: la frontera de adr-0010 exige que ninguna
-/// sentencia SQL viva fuera de esta capa.
+/// Abre la base de conocimiento en la ruta de archivo especificada en una única conexión
+/// de solo lectura, y reúne de una sola vez todo lo que los consumidores necesitan
+/// verificar. Recibe una ruta de archivo explícita en lugar de un directorio de datos,
+/// permitiendo auditar tanto el archivo en preparación (knowledge_staging.db) como
+/// cualquier versión de época sellada (knowledge_epoch_N.db) durante la validación
+/// de integridad.
 ///
-/// Se usa `pools::abrir_solo_lectura`, que abre con `SQLITE_OPEN_READ_ONLY`, precisamente porque
-/// un `Connection::open` corriente CREA el archivo cuando falta: llamar a esta función sobre un
-/// directorio donde nunca corrió una ingesta debe fallar de inmediato señalando la ausencia real,
-/// nunca materializar en silencio una base vacía que luego falle con "no existe la tabla".
+/// Se usa `pools::abrir_solo_lectura` para evitar la creación de una base vacía.
 pub fn inspeccionar_base_en_sombra(
-    ruta_datos: &Path,
+    ruta_archivo: &Path,
 ) -> Result<ResumenDeInspeccion, ErrorDeAlmacen> {
-    let ruta_base = ruta_datos.join(NOMBRE_DE_ARCHIVO_DE_CONOCIMIENTO_EN_SOMBRA);
-    let conexion = crate::pools::abrir_solo_lectura(&ruta_base)?;
+    let conexion = crate::pools::abrir_solo_lectura(ruta_archivo)?;
 
     let cantidad_de_fragmentos: i64 = conexion
         .query_row("SELECT COUNT(*) FROM fragmentos", [], |fila| fila.get(0))

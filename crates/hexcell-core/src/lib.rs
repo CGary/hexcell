@@ -18,3 +18,4 @@ pub mod fragmentacion;
 pub mod identidad;
 pub mod inferencia;
 pub mod presupuesto;
+pub mod similitud;

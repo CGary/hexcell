@@ -130,9 +130,11 @@ async fn ac_1_limpieza_de_basura_previa() {
 
     assert_eq!(resumen.desenlace, DesenlaceDeIngesta::Completa);
     // La base vieja debió ser sobreescrita.
-    let cantidad = hexcell_storage::conocimiento::inspeccionar_base_en_sombra(ruta_datos)
-        .unwrap()
-        .cantidad_de_fragmentos;
+    let cantidad = hexcell_storage::conocimiento::inspeccionar_base_en_sombra(
+        &ruta_datos.join(NOMBRE_DE_ARCHIVO_DE_CONOCIMIENTO_EN_SOMBRA),
+    )
+    .unwrap()
+    .cantidad_de_fragmentos;
     assert!(cantidad > 0);
 }
 
@@ -385,8 +387,10 @@ async fn ac_4_parcial_y_huecos_ordinales_sin_huerfanos() {
     assert_eq!(resumen.fragmentos_escritos, 3);
 
     // Verificamos ordinales escritos y ausencia de huérfanos con una sola inspección.
-    let inspeccion =
-        hexcell_storage::conocimiento::inspeccionar_base_en_sombra(ruta_datos).unwrap();
+    let inspeccion = hexcell_storage::conocimiento::inspeccionar_base_en_sombra(
+        &ruta_datos.join(NOMBRE_DE_ARCHIVO_DE_CONOCIMIENTO_EN_SOMBRA),
+    )
+    .unwrap();
     assert_eq!(
         inspeccion.ordinales,
         vec![0, 2, 4],
@@ -439,10 +443,12 @@ async fn ac_5_dimension_y_descarte_de_metadatos() {
 
     assert_eq!(resumen_a.dimension_observada, Some(8));
 
-    let metadatos_a = hexcell_storage::conocimiento::inspeccionar_base_en_sombra(ruta_datos_a)
-        .unwrap()
-        .metadatos_de_epoca
-        .expect("la fila de metadatos debe sobrevivir cuando hubo al menos un embedding resuelto");
+    let metadatos_a = hexcell_storage::conocimiento::inspeccionar_base_en_sombra(
+        &ruta_datos_a.join(NOMBRE_DE_ARCHIVO_DE_CONOCIMIENTO_EN_SOMBRA),
+    )
+    .unwrap()
+    .metadatos_de_epoca
+    .expect("la fila de metadatos debe sobrevivir cuando hubo al menos un embedding resuelto");
 
     assert!(metadatos_a.numero_de_epoca.is_none());
     assert!(metadatos_a.sellada_ms.is_none());
@@ -474,8 +480,10 @@ async fn ac_5_dimension_y_descarte_de_metadatos() {
 
     // Una sola inspección basta para verificar tanto el descarte de metadatos como la
     // supervivencia del documento fuente.
-    let inspeccion_b =
-        hexcell_storage::conocimiento::inspeccionar_base_en_sombra(ruta_datos_b).unwrap();
+    let inspeccion_b = hexcell_storage::conocimiento::inspeccionar_base_en_sombra(
+        &ruta_datos_b.join(NOMBRE_DE_ARCHIVO_DE_CONOCIMIENTO_EN_SOMBRA),
+    )
+    .unwrap();
 
     // El registro de metadatos de época debe haber sido eliminado para no mentar una dimensión no observada.
     assert!(inspeccion_b.metadatos_de_epoca.is_none());
@@ -621,8 +629,10 @@ async fn ac_1_segunda_ingesta_reemplaza_por_completo_una_base_previa_real() {
     .unwrap();
     assert_eq!(resumen_primera.fragmentos_escritos, 5);
 
-    let inspeccion_primera =
-        hexcell_storage::conocimiento::inspeccionar_base_en_sombra(ruta_datos).unwrap();
+    let inspeccion_primera = hexcell_storage::conocimiento::inspeccionar_base_en_sombra(
+        &ruta_datos.join(NOMBRE_DE_ARCHIVO_DE_CONOCIMIENTO_EN_SOMBRA),
+    )
+    .unwrap();
     assert_eq!(inspeccion_primera.cantidad_de_fragmentos, 5);
 
     // Segunda corrida: un documento más corto y distinto, sobre la MISMA ruta de datos.
@@ -646,8 +656,10 @@ async fn ac_1_segunda_ingesta_reemplaza_por_completo_una_base_previa_real() {
     // Si algún fragmento de la primera corrida sobreviviera, la cuenta sería 7 (5 + 2) en vez de
     // 2, o los ordinales incluirían huecos heredados de la corrida anterior. Ninguna de las dos
     // cosas debe ocurrir: la reconstrucción desde cero es total, no un mero añadido.
-    let inspeccion_segunda =
-        hexcell_storage::conocimiento::inspeccionar_base_en_sombra(ruta_datos).unwrap();
+    let inspeccion_segunda = hexcell_storage::conocimiento::inspeccionar_base_en_sombra(
+        &ruta_datos.join(NOMBRE_DE_ARCHIVO_DE_CONOCIMIENTO_EN_SOMBRA),
+    )
+    .unwrap();
     assert_eq!(
         inspeccion_segunda.cantidad_de_fragmentos, 2,
         "Ningún fragmento de la primera corrida debe sobrevivir a la segunda"
