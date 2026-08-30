@@ -21,6 +21,7 @@ adicional cuando aparezca un cliente que lo justifique. Ver [plan/README.md](pla
 > idea ya está allí, no se discute desde cero.
 
 ## Definido
+* **Sonda semántica persistida por época y esquema de conocimiento en versión 3 (HEX-054, etapa A-5, tareas 5 bis).** (2026-08-30). La migración `0003-sonda-semantica.sql` sube el esquema de conocimiento de la versión 2 a la 3 con la tabla singleton `sonda_semantica` (texto, vector, umbral y marca temporal en una fila opcional). La ingesta embebe la sonda en un lote propio antes de los fragmentos, con la misma contabilidad de dos fases, y `finalizar` borra la fila de sonda junto a los metadatos en el caso de cero incrustaciones. El lector `leer_sonda_semantica` devuelve `Option<SondaResuelta>`: fila ausente es `None` (no promovible), fila corrupta es `Err(SondaSemanticaIlegible)`, nunca `None`. Con esto la tarea 8 podrá revalidar una época sellada sin llamada de red, condición previa a que la tarea 6 selle épocas.
 * **Esquema real de la base de conocimiento con vectores f32 y metadatos de época (HEX-049, etapa
   A-5, tarea 1).** (2026-08-27). La migración `0002-esquema-de-conocimiento.sql` de
   `hexcell-storage` materializa la versión 2 del esquema de conocimiento: tablas `STRICT` para
