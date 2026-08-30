@@ -1,0 +1,103 @@
+task_id: HEX-054
+summary: "Persist a required semantic probe (vector + threshold) inside each knowledge epoch file (FR-06/FR-07) so a sealed epoch can be revalidated offline, gateway for stage A-5 task 6."
+goal: >-
+  Close the gap left open by HEX-053's integrity gate: that gate accepts a caller-supplied
+  `SondaResuelta { vector, umbral_de_aceptacion }` and therefore makes zero network calls, but
+  nothing today persists that probe vector and threshold anywhere -- so a future revert (stage
+  A-5 task 8) that must re-validate an already-sealed prior epoch has no way to obtain the probe
+  without a live embeddings call, defeating the whole point of the offline gate. This task adds
+  the persistence layer only: a new schema migration (0003, raising the knowledge schema version
+  from 2 to 3) introducing a singleton table that stores exactly one probe row per epoch database
+  file; ingestion changes so that a probe text and threshold, supplied by the caller of
+  `ejecutar_ingesta`, are embedded through the existing budgeted embeddings service (one extra
+  batch, spent BEFORE the fragment loop so a probe-embedding failure aborts before any fragment
+  money is spent) and written via a new writer method on the shadow-knowledge-builder type; and a
+  read-only reader that opens an arbitrary epoch database file and returns exactly the
+  `SondaResuelta` type HEX-053's validator already accepts, unmodified. This task lands strictly
+  before stage A-5 task 6 (epoch sealing/promotion): an epoch sealed without a persisted probe can
+  never be revalidated offline afterward, which is why this task is a hard prerequisite gate, not
+  an optional enhancement.
+invariants:
+  - "The new table is a standalone singleton (`sonda_semantica`, `id INTEGER PRIMARY KEY CHECK (id = 1)`, no seed row), never new columns bolted onto the existing `metadatos_de_epoca` singleton: SQLite cannot add a table-level CHECK via ALTER TABLE, so coupling probe-and-threshold both-or-neither onto that existing table would force a destructive table rebuild inside the migration runner (the HEX-051-c trap, where `PRAGMA foreign_keys` is a no-op inside `unchecked_transaction`). Two NOT NULL columns inside one optional row encode the same both-or-neither coupling with zero rebuild."
+  - "Row absence in `sonda_semantica` mirrors the existing `metadatos_de_epoca: None` convention: it is a normal, expected state (an index with no persisted probe), never an error or a panic, and the reader returns an Option accordingly."
+  - "The probe vector column carries the same byte-contract discipline as `vectores_de_fragmento.vector`: a BLOB of little-endian f32 values, non-empty, and its length is a multiple of 4 (`CHECK (length(vector) > 0 AND length(vector) % 4 = 0)`); this task does not redefine or relax the existing vector byte contract documented in migration 0002's header."
+  - "The version bump (`VERSION_DE_ESQUEMA_DE_CONOCIMIENTO` from 2 to 3) happens inside the SAME transaction as the table creation, following the existing stepped-ladder pattern in `crates/hexcell-storage/src/migraciones.rs` -- no new ladder mechanism is introduced."
+  - "The new table is STRICT, exactly like every other table in the knowledge schema."
+  - "The probe embedding is spent through the SAME two-phase (reservation + reconciliation) budget accounting as fragment embeddings, via the existing `ServicioDeEmbeddings::incrustar_lote`; this task introduces no second, parallel accounting mechanism."
+  - "The probe batch is embedded and its result checked BEFORE the fragment loop begins, so that a probe-embedding failure aborts the ingestion run before any fragment-embedding cost is incurred."
+  - "In the zero-embeddings outcome (all fragments failed to embed), `finalizar` deletes the `sonda_semantica` row alongside the existing `metadatos_de_epoca` deletion, so the epoch file never carries a persisted probe for an index that observed nothing -- the same all-or-nothing discipline HEX-052 already applies to epoch metadata."
+  - "The probe text and threshold are REQUIRED inputs to `ejecutar_ingesta`, not optional: an epoch built without a probe cannot later be revalidated offline by task 8, which is the exact hole this task exists to close, so making them optional would silently reopen it."
+  - "The reader added by this task returns exactly the `SondaResuelta` type already accepted by HEX-053's merged validator (`crates/hexcell-storage/src/validacion.rs`) -- HEX-053's validation semantics are not touched, reworked, or reinterpreted by this task."
+  - "This task does not modify the existing knowledge tables (`documentos`, `fragmentos`, `vectores_de_fragmento`, `metadatos_de_epoca`) or their CHECK constraints; the schema change is strictly additive (new table only)."
+  - "All repository content this task touches (SQL comments, Rust doc comments, identifiers, commit message) is written in Spanish and is didactic (explains WHY); only this Quorum spec's field values are written in English."
+acceptance:
+  - id: AC-1
+    statement: A fresh knowledge database created from scratch reaches schema version 3 and has the sonda_semantica table, empty (no seed row).
+    given: no existing knowledge database file
+    when: the migration runner opens/creates a new knowledge database
+    then: VERSION_DE_ESQUEMA_DE_CONOCIMIENTO reports 3, the sonda_semantica table exists as STRICT, and it holds zero rows
+  - id: AC-2
+    statement: An existing schema-v2 database (with seeded rows in documentos/fragmentos/vectores_de_fragmento/metadatos_de_epoca) upgrades cleanly to v3 without losing any pre-existing data.
+    given: a v2 knowledge database seeded with representative rows in every existing table
+    when: the migration runner is invoked against that file
+    then: it reaches version 3, every pre-existing seeded row in every existing table is intact and unchanged, and the new sonda_semantica table exists and is empty
+  - id: AC-3
+    statement: Re-running the migration runner against an already-v3 database is a no-op.
+    given: a knowledge database already at schema version 3
+    when: the migration runner is invoked again against that file
+    then: the version stays 3, no error occurs, and no table is altered or recreated
+  - id: AC-4
+    statement: ejecutar_ingesta requires a probe text and threshold and spends one extra embeddings batch for the probe before the fragment loop.
+    given: a catalog payload, a probe text, and an acceptance threshold supplied to ejecutar_ingesta, using the offline Simulado embeddings adapter
+    when: ingestion runs
+    then: exactly one embeddings batch is spent for the probe before any fragment batch is spent, and ResumenDeIngesta reflects the new field describing the probe outcome
+  - id: AC-5
+    statement: A probe-embedding failure aborts ingestion before any fragment-embedding cost is incurred.
+    given: an embeddings adapter configured to fail on the probe batch specifically
+    when: ejecutar_ingesta runs
+    then: ingestion aborts with an error attributable to the probe step, and no fragment batch is ever spent
+  - id: AC-6
+    statement: A successful ingestion persists the probe row (text, vector, threshold, timestamp) inside the resulting knowledge database file.
+    given: a successful ingestion run with a supplied probe text and threshold, using the offline Simulado embeddings adapter
+    when: ingestion completes and finalizar is called
+    then: the resulting database file's sonda_semantica table holds exactly one row whose vector is a valid non-empty little-endian f32 BLOB of length a multiple of 4, whose umbral_de_aceptacion matches the supplied threshold, and whose registrada_ms is a positive integer millisecond timestamp
+  - id: AC-7
+    statement: The zero-embeddings outcome deletes the probe row alongside metadatos_de_epoca, leaving no orphaned probe.
+    given: an ingestion run in which every fragment fails to embed (zero embeddings resolved)
+    when: finalizar runs
+    then: both metadatos_de_epoca and sonda_semantica end up absent (zero rows) in the resulting database file
+  - id: AC-8
+    statement: The new reader returns SondaResuelta for a file that has a persisted probe, and None for a file that does not, without any network call.
+    given: two knowledge database files -- one with a persisted sonda_semantica row, one without (schema v3, empty table)
+    when: the new reader function is invoked against each file path via a read-only connection
+    then: it returns Some(SondaResuelta{..}) for the first file with values matching what was persisted, and None for the second file, with no error, no panic, and no network access in either case
+  - id: AC-9
+    statement: The reader's returned SondaResuelta is accepted unmodified by HEX-053's existing validator against the same file.
+    given: a knowledge database file with a persisted probe and a structurally valid index
+    when: the new reader's output is passed directly into HEX-053's merged integrity validator as its probe input
+    then: the validator runs and produces a verdict without requiring any change to validacion.rs
+  - "cargo build --workspace, cargo test --workspace, cargo fmt --check, and cargo clippy --workspace -- -D warnings all pass; every test in this task's scope runs fully offline (no live embeddings API call), using the existing Simulado embeddings adapter and directly constructed/seeded SQLite fixtures for migration-ladder coverage."
+  - "DEFERRED (explicitly out of scope, not to be flagged by q-analyze as a gap): the epoch promotion sequence, WAL checkpoint-and-rename, symlink reassignment, and ArcSwap pointer substitution (stage A-5 task 6, which this task gates but does not implement); graceful drain of the old pool (task 7); the revert/retention flow itself, which will CONSUME this task's reader later (task 8); the RAG retrieval engine (task 9); the internal admin HTTP endpoint that will eventually supply probe text/threshold over HTTP (task 10); the switchover stress test (task 11); and the backup-interaction check (task 12). Also deferred: any change to HEX-053's validation semantics or verdict types (validacion.rs) -- this task only supplies one of its inputs from disk; and any criterion requiring a live embeddings API key or network call."
+risk: high
+non_goals:
+  - Epoch promotion, WAL checkpoint-and-rename, symlink reassignment, ArcSwap pointer substitution, and graceful drain of the old pool (stage A-5 tasks 6-7); this task is their prerequisite gate, not their implementation.
+  - The revert/retention command and policy (stage A-5 task 8); this task only guarantees its reader exists and returns the right type for that future flow to consume.
+  - The RAG retrieval engine and the internal admin HTTP endpoint (stage A-5 tasks 9-10); the endpoint is expected to eventually supply the probe text/threshold this task's ingestion signature now requires as in-process arguments.
+  - The switchover stress test and the backup-interaction check (stage A-5 tasks 11-12).
+  - Any change to HEX-053's validator, its verdict types, or its validation semantics (crates/hexcell-storage/src/validacion.rs); this task supplies persisted data for one of its existing inputs, nothing more.
+  - Any change to the existing knowledge schema tables (documentos, fragmentos, vectores_de_fragmento, metadatos_de_epoca) or the established f32 little-endian vector byte contract; the schema change here is strictly additive.
+  - Choosing, calibrating, or hardcoding a production probe text or similarity threshold value; both remain required caller-supplied inputs with no default.
+  - Any live integration test against a real embeddings API; all tests in this task's scope run offline via the Simulado adapter.
+constraints:
+  - "New migration file `0003-sonda-semantica.sql` under `crates/hexcell-storage/migraciones/conocimiento/`, raising VERSION_DE_ESQUEMA_DE_CONOCIMIENTO from 2 to 3 as one rung in the existing stepped ladder in crates/hexcell-storage/src/migraciones.rs (sessions schema is independently at 4; this ladder's rung is version-scoped to the knowledge schema only)."
+  - "New table `sonda_semantica` is STRICT, a singleton (`id INTEGER PRIMARY KEY CHECK (id = 1)`), with columns texto_de_la_sonda TEXT NOT NULL, vector BLOB NOT NULL CHECK (length(vector) > 0 AND length(vector) % 4 = 0), umbral_de_aceptacion REAL NOT NULL, registrada_ms INTEGER NOT NULL; no seed row is inserted by the migration."
+  - "adr-0002 (hexcell-core [dependencies] table stays empty) and adr-0010 (no rusqlite dependency in crates/hexcell) are not touched by this task; all new SQL access lives in crates/hexcell-storage."
+  - "ejecutar_ingesta (crates/hexcell/src/ingesta.rs) and ConstructorDeConocimientoEnSombra (crates/hexcell-storage/src/conocimiento.rs) both change: the ingestion input gains a required probe text and threshold, ResumenDeIngesta gains a field describing the probe outcome, and a new writer method persists the probe row; call sites across both crates (roughly eleven, per prior blueprint estimate) are updated to supply the new required arguments -- this is expected, budgeted churn, not scope creep."
+  - "The new reader follows the precedent of inspeccionar_base_en_sombra: a single read-only connection via pools::abrir_solo_lectura, returns plain data (Option<SondaResuelta>), and treats a missing epoch file itself as an error (distinct from a present file with an empty sonda_semantica table, which is a normal None)."
+  - "Whether the reader extends ResumenDeInspeccion or stands alone as its own function is left open for the blueprint phase to decide; this spec only commits to the reader existing and returning Option<SondaResuelta>."
+  - "This task traces to FR-06 (shadow indexing -- the probe is computed and persisted during the same shadow-DB ingestion batch pipeline) and FR-07 (atomic epoch switching -- this is the prerequisite persistence that makes a later epoch's offline revalidation possible) of docs/PRD.md, and to stage A-5 task 5's follow-on persistence commitment (HEX-053) and stage A-5 task 8's dependency on it (docs/plan)."
+  - "Repository is public; no secrets; no new *.db/*.db-wal/*.db-shm/.env* file gets versioned (already covered by .gitignore)."
+  - "No mass-sending folklore (jitter, warm-up protocols), proxies, VPN, or IP rotation, per standing project policy; this task introduces no network behavior beyond the existing budgeted embeddings call."
+  - "Instants remain integer milliseconds (registrada_ms); every new or touched table remains STRICT."
+  - "This task does not require a new ADR: it completes the persistence design already verified and approved during HEX-053's blueprint, within the precedent of adr-0005/adr-0025; adr-0006 remains reserved for stage A-5 tasks 6-8 (epochs and atomic switchover) and is not consumed by this task. If implementation surfaces an unforeseen need for one, the next available number is adr-0026, but authoring one is not decided by this spec."
+  - "All lexical/contract guards touched or introduced by this task must be case-insensitive and validated against main, per the HEX-049/051-c/052 lesson."

@@ -1,0 +1,151 @@
+task_id: HEX-054
+summary: "Persist the semantic probe per knowledge epoch: migration 0003 with a STRICT singleton table, probe-first ingestion, and a standalone reader returning Option<SondaResuelta>."
+goal: >-
+  Close the hole HEX-053 left open. Its integrity gate accepts a caller-supplied SondaResuelta and
+  makes zero network calls, but nothing persists that probe, so a sealed epoch cannot be
+  revalidated offline later. Add migration 0003 raising the knowledge schema from 2 to 3 with a
+  STRICT singleton sonda_semantica table and no seed row; make ejecutar_ingesta require a probe
+  text and threshold, embed them through ONE extra budgeted batch BEFORE the fragment loop so a
+  probe failure costs no fragment money, and persist the row through a new writer on
+  ConstructorDeConocimientoEnSombra that finalizar deletes alongside metadatos_de_epoca in the
+  zero-embeddings case; and add a read-only reader that opens any epoch file by explicit path and
+  returns exactly the Option<SondaResuelta> the merged validator already accepts. This lands
+  strictly BEFORE stage A-5 task 6 seals epochs: an epoch sealed without a probe can never be
+  revalidated offline afterwards.
+read:
+  - .ai/tasks/active/HEX-054-new-spec/00-spec.yaml
+  - .ai/tasks/active/HEX-054-new-spec/01-blueprint.yaml
+  - crates/hexcell-storage/migraciones/conocimiento/0001-esquema-minimo.sql
+  - crates/hexcell-storage/migraciones/conocimiento/0002-esquema-de-conocimiento.sql
+  - crates/hexcell-storage/migraciones/sesiones/0004-reservas-sin-conversacion.sql
+  - crates/hexcell-storage/src/validacion.rs
+  - crates/hexcell-storage/src/pools.rs
+  - crates/hexcell-storage/src/tiempo.rs
+  - crates/hexcell-storage/src/presupuesto.rs
+  - crates/hexcell-storage/tests/comun/mod.rs
+  - crates/hexcell-storage/tests/validacion.rs
+  - crates/hexcell-storage/tests/respaldo.rs
+  - crates/hexcell-core/src/embeddings.rs
+  - crates/hexcell-core/src/fragmentacion.rs
+  - crates/hexcell-core/Cargo.toml
+  - crates/hexcell/src/embeddings.rs
+  - crates/hexcell/tests/comun/mod.rs
+  - crates/hexcell/Cargo.toml
+  - docs/plan/fase-a-5-conocimiento-shadow-db.md
+  - docs/adr/adr-0002-estructura-workspace.md
+  - docs/adr/adr-0010-puerto-de-canal.md
+touch:
+  - crates/hexcell-storage/migraciones/conocimiento/0003-sonda-semantica.sql
+  - crates/hexcell-storage/src/migraciones.rs
+  - crates/hexcell-storage/src/conocimiento.rs
+  - crates/hexcell-storage/src/error.rs
+  - crates/hexcell-storage/src/lib.rs
+  - crates/hexcell-storage/tests/migraciones.rs
+  - crates/hexcell-storage/tests/conocimiento.rs
+  - crates/hexcell/src/ingesta.rs
+  - crates/hexcell/tests/ingesta.rs
+forbid:
+  files:
+    - crates/hexcell-storage/src/validacion.rs
+    - crates/hexcell-storage/tests/validacion.rs
+    - crates/hexcell-storage/src/pools.rs
+    - crates/hexcell-storage/src/presupuesto.rs
+    - crates/hexcell-storage/src/sesiones.rs
+    - crates/hexcell-storage/src/respaldo.rs
+    - crates/hexcell-storage/src/almacen_de_identidad.rs
+    - crates/hexcell-storage/src/tiempo.rs
+    - crates/hexcell-storage/tests/respaldo.rs
+    - crates/hexcell-storage/tests/pools.rs
+    - crates/hexcell-storage/tests/presupuesto.rs
+    - crates/hexcell-storage/tests/comun/mod.rs
+    - crates/hexcell-storage/migraciones/conocimiento/0001-esquema-minimo.sql
+    - crates/hexcell-storage/migraciones/conocimiento/0002-esquema-de-conocimiento.sql
+    - crates/hexcell-core/src/embeddings.rs
+    - crates/hexcell-core/src/similitud.rs
+    - crates/hexcell-core/src/lib.rs
+    - crates/hexcell-core/Cargo.toml
+    - crates/hexcell-storage/Cargo.toml
+    - crates/hexcell/Cargo.toml
+    - Cargo.toml
+    - crates/hexcell/src/embeddings.rs
+    - crates/hexcell/src/main.rs
+    - crates/hexcell/src/motor.rs
+    - crates/hexcell/tests/comun/mod.rs
+    - .gitignore
+    - docs/
+    - .ai/tasks/active/HEX-054-new-spec/00-spec.yaml
+  behaviors:
+    - "Never add columns to metadatos_de_epoca, never rebuild that table, and never touch documentos, fragmentos or vectores_de_fragmento or any of their CHECK constraints. SQLite cannot add a table-level CHECK via ALTER TABLE, so coupling probe-and-threshold onto the existing singleton would force a destructive rebuild inside the runner's unchecked_transaction, where PRAGMA foreign_keys is inert and referential integrity would be lost silently. The schema change is strictly ADDITIVE: one new table."
+    - "Never insert a seed row into sonda_semantica from the migration. The 0002 migration seeds metadatos_de_epoca and that is precisely the pattern NOT followed here: a seeded probe row would carry a vector nobody computed, and its absence is the signal that means not revalidatable. A fresh v3 database has zero rows in this table and AC-1 asserts it."
+    - "Never make the new table anything but STRICT, and never give it a shape other than the singleton the spec fixes: id INTEGER PRIMARY KEY CHECK (id = 1), texto_de_la_sonda TEXT NOT NULL, vector BLOB NOT NULL CHECK (length(vector) > 0 AND length(vector) % 4 = 0), umbral_de_aceptacion REAL NOT NULL, registrada_ms INTEGER NOT NULL. Two NOT NULL columns inside one OPTIONAL row is what encodes both-or-neither with zero rebuild. tests/migraciones.rs asserts STRICT over every table via pragma_table_list, so a non-STRICT table fails without a new test."
+    - "Never edit migration 0001 or 0002 and never renumber the ladder. Applied migrations are immutable history; the ladder only grows forward with a new numbered rung. Raise VERSION_DE_ESQUEMA_DE_CONOCIMIENTO from 2 to 3 and let the EXISTING aplicar runner bump user_version inside the same transaction as the script. Never add a second ladder mechanism, never write a bespoke transaction, and never set user_version outside that runner."
+    - "Never assert the knowledge schema version as a literal integer anywhere. Every existing assertion reads VERSION_DE_ESQUEMA_DE_CONOCIMIENTO (verified across tests/migraciones.rs, tests/conocimiento.rs, tests/respaldo.rs and src/pools.rs) and that is why the bump propagates for free. A literal 3 would rot at the next rung."
+    - "Never fold the probe into ResumenDeInspeccion or inspeccionar_base_en_sombra. ResumenDeInspeccion derives Eq and SondaResuelta cannot (it holds f32), so folding it in strips Eq from a merged public type. The reader is a STANDALONE pub fn leer_sonda_semantica(&Path) -> Result<Option<SondaResuelta>, ErrorDeAlmacen>, because stage A-5 task 8 must ask whether a file even has a probe before deciding to validate, and must not pay for a COUNT, a full ordinal scan and a LEFT JOIN to find out."
+    - "Never modify crates/hexcell-storage/src/validacion.rs or crates/hexcell-storage/tests/validacion.rs. HEX-053's validation semantics are SETTLED and this task only supplies one of its inputs from disk. The reader returns the SondaResuelta type unchanged; the AC-9 handoff test lives in tests/conocimiento.rs precisely so both files stay at zero diff. A guard asserts zero diff against main for both."
+    - "Never add a new MotivoDeRechazo, a new verdict variant, or a dimension check inside ingestion for the probe-versus-fragment dimension. The gate ALREADY reports it as MotivoDeRechazo::DimensionDeLaSondaDiscrepante. Ingestion REPORTS the probe dimension through the new ResumenDeIngesta field and the gate REJECTS; duplicating the check in ingestion would add a second authority for a decision that already has one, and the probe is embedded before any fragment dimension is observed so ingestion cannot compare at probe time anyway."
+    - "Never give ResumenDeIngesta an f32 field. It derives Clone, Debug, PartialEq, Eq and an f32 silently breaks the Eq derive on a merged public type. The new field is dimension_de_la_sonda: Option<usize>, sitting beside the existing dimension_observada. There is exactly ONE construction site (crates/hexcell/src/ingesta.rs:176) and no Default derive, so it cannot be filled with ..Default::default()."
+    - "Never make the probe text or threshold optional, defaulted, or inferred. They are REQUIRED parameters of ejecutar_ingesta with no default anywhere: not a const, not a Default impl, not an unwrap_or. An optional probe silently reopens the exact hole this task closes, and no measured threshold exists for any real catalogue (calibration is stage A-7). Every test passes an explicit test-local value."
+    - "Never embed the probe after, inside, or interleaved with the fragment loop. ONE PeticionDeEmbeddings carrying only the probe text goes through servicio_embeddings.incrustar_lote BEFORE the loop starts, and a failed or empty result returns immediately. That ordering is the whole point: a probe failure must cost zero fragment money. AC-5 asserts exactly one budget reservation exists after an aborted run."
+    - "Never add a second budget accounting path. The probe batch inherits the SAME two-phase reservation and reconciliation as fragment batches by going through the existing ServicioDeEmbeddings::incrustar_lote. Never reserve, reconcile, meter or bill the probe separately, and never bypass the service to call the provider directly."
+    - "Never move ConstructorDeConocimientoEnSombra::crear after the probe batch. crear destroys the previous staging files unconditionally and its doc comment says why: a stale-but-plausible database from an aborted run must never pass a later check. Probing first would leave exactly that residue when the probe fails. Order is crear, then probe, then fragment loop."
+    - "Never change the signature of crear, escribir_lote_de_fragmentos, finalizar or descartar_metadatos_de_epoca. The writer is a NEW additive method and finalizar's change is a body change only, which is what keeps the four existing call sites in tests/conocimiento.rs compiling untouched."
+    - "Never let finalizar delete metadatos_de_epoca without also deleting sonda_semantica in the zero-embeddings branch. An epoch that observed nothing must not carry a persisted probe; the two singletons appear and disappear together, the same all-or-nothing discipline HEX-052 already applies. AC-7 asserts both end at zero rows."
+    - "Never conflate an absent probe with an unreadable one. A missing row is Ok(None), a NORMAL state meaning not revalidatable, mirroring how inspeccionar_base_en_sombra maps an absent metadatos_de_epoca row. A BLOB that VectorDeEmbedding::desde_bytes_le rejects is Err(ErrorDeAlmacen::SondaSemanticaIlegible), a damaged file. Never unwrap, expect or panic to bridge the two, and never return Ok(None) for a decode failure."
+    - "Never re-implement the little-endian decode. Reuse hexcell_core::embeddings::VectorDeEmbedding::desde_bytes_le, the same helper the merged validator already uses for fragment vectors, and take .valores().to_vec(). Serialise with to_le_bytes exactly as escribir_lote_de_fragmentos does, producing bytes identical to VectorDeEmbedding::a_bytes_le. One byte contract, one decoder; migration 0002's header stays normative and is not redefined or relaxed."
+    - "Never open the epoch file with anything but pools::abrir_solo_lectura. SQLITE_OPEN_READ_ONLY is what makes a missing file fail loudly instead of being silently created as an empty database. A reader that creates the thing it is reading is not a reader. Never add a new public connection factory: the pub(crate) helper is reachable from a sibling module, and note it is therefore INVISIBLE from tests, which must go through the new pub reader."
+    - "Never add rusqlite, SQL or a Connection to crates/hexcell or crates/hexcell-core. crates/hexcell omits the driver on purpose (adr-0010) and hexcell-core has an empty [dependencies] table (adr-0002). Every statement in this task lives in crates/hexcell-storage. A comment-stripped guard enforces this because the word rusqlite legitimately appears in a Spanish doc comment in ingesta.rs."
+    - "Never add an async construct, tokio or spawn_blocking to crates/hexcell-storage. That crate declares itself synchronous in its own lib.rs. The writer and the reader are plain synchronous functions; only ejecutar_ingesta, which already is async, awaits anything."
+    - "Never let a test reach a live embeddings API, bind a socket, or read an API key from the environment. Every test runs offline against ProveedorDeEmbeddingsSimulado and directly seeded SQLite fixtures. Reuse the existing DirectorioTemporal helper from tests/comun/mod.rs, which cleans up on Drop; never add a temporary-directory crate."
+    - "Never assume PRAGMA foreign_keys is off; this workspace builds libsqlite3-sys with -DSQLITE_DEFAULT_FOREIGN_KEYS=1, so a raw Connection::open has foreign keys ON and the comment in pools.rs claiming otherwise is locally false. Seeded v2 fixtures for the AC-2 ladder test must insert documentos before fragmentos and vectores_de_fragmento. Also remember the 0002 seed row declares dimension 768 while the Simulado provider emits dimension 4: a fixture that writes 4-dimensional vectors without rewriting that row would fail a later check for the wrong reason."
+    - "Never let OBJETOS_ESPERADOS_DE_CONOCIMIENTO go stale. It is a fixed-size array of five entries in tests/migraciones.rs and must grow to six including sonda_semantica, or the fresh-migration test will pass while never demanding the new table exists."
+    - "Never implement epoch promotion, WAL checkpoint-and-rename, symlink reassignment, ArcSwap substitution, graceful drain, epoch retention, the revert command, the RAG retrieval engine, the admin HTTP endpoint, the switchover stress test or the backup-interaction check. Every one is a later A-5 task and an explicit spec non-goal. This task builds the persistence they will consume and nothing else; naming those seams in comments is welcome, implementing them is forbidden."
+    - "Never define an HTTP route, a JSON payload, a serde derive or any admin-network surface. The probe text and threshold arrive as in-process Rust arguments; stage A-5 task 10 will supply them over HTTP later. hexcell-storage has no serde dependency and must not gain one."
+    - "Never author a new ADR and never touch docs/. The spec records that this task completes a persistence design already approved within adr-0005 and adr-0025, that adr-0006 stays reserved for tasks 6 to 8, and that no ADR is decided here. NOTE for the reviewer: docs/STATUS.md line 26 still says the knowledge schema is at version 2 and becomes stale on merge; that is a KNOWN, deliberately deferred human decision, not an omission to fix inside this contract."
+    - "Never write English prose, English comments or English identifiers in repository content. The repository is PUBLIC and all of its prose, including SQL comments and identifiers, is Spanish; only the Quorum artifact field values are English. Comments are DIDACTIC and explain WHY, matching the voice of migration 0002. Dates are absolute, in the form '30 de agosto de 2026'. A case-insensitive guard enforces this and was verified silent on main across all eight pre-existing touched files and against a realistic draft of the 0003 header, while catching a real English sentence."
+    - "Never introduce mass-sending folklore: no jitter, no warm-up protocol, no proxy, no VPN, no IP rotation. This task adds exactly one extra call to an already budgeted embeddings service and no other network behaviour."
+    - "Never write a *.db, *.db-wal, *.db-shm or .env file into the repository tree, commit a secret, or leave a temporary directory behind. .gitignore already covers all four and is forbidden."
+    - "Never modify 00-spec.yaml, 01-blueprint.yaml or this contract."
+verify:
+  commands:
+    - cargo fmt --check
+    - cargo clippy --workspace -- -D warnings
+    - cargo build --workspace
+    - cargo test --workspace
+    - "bash -c 'F=\"crates/hexcell-storage/migraciones/conocimiento/0003-sonda-semantica.sql crates/hexcell-storage/src/migraciones.rs crates/hexcell-storage/src/conocimiento.rs crates/hexcell-storage/src/error.rs crates/hexcell-storage/src/lib.rs crates/hexcell-storage/tests/migraciones.rs crates/hexcell-storage/tests/conocimiento.rs crates/hexcell/src/ingesta.rs crates/hexcell/tests/ingesta.rs\"; for f in $F; do test -f \"$f\" || exit 1; done; W=\"the|this|that|which|because|should|would|about|threshold|similarity|cosine|verdict|rejection|approval|promotion|integrity|validator|structural|missing|failed|gate|however|therefore|instead|rather|through|against|without|every|their|there|these|those|neither|either\"; ! grep -nEi \"\\b($W)\\b\" $F'"
+    - "bash -c 'S=crates/hexcell-storage/migraciones/conocimiento/0003-sonda-semantica.sql; test -f \"$S\" && sed \"s|--.*||\" \"$S\" | grep -qiE \"CREATE[[:space:]]+TABLE[[:space:]]+sonda_semantica\" && sed \"s|--.*||\" \"$S\" | grep -qE \"STRICT\"'"
+    - "bash -c 'S=crates/hexcell-storage/migraciones/conocimiento/0003-sonda-semantica.sql; test -f \"$S\" && ! sed \"s|--.*||\" \"$S\" | grep -qiE \"INSERT[[:space:]]+INTO|ALTER[[:space:]]+TABLE|DROP[[:space:]]+TABLE|PRAGMA\"'"
+    - "bash -c 'test -f crates/hexcell-storage/src/migraciones.rs && grep -qE \"VERSION_DE_ESQUEMA_DE_CONOCIMIENTO: i64 = 3;\" crates/hexcell-storage/src/migraciones.rs && grep -q \"0003-sonda-semantica.sql\" crates/hexcell-storage/src/migraciones.rs'"
+    - "bash -c 'git diff --name-only main -- crates/hexcell-storage/src/validacion.rs crates/hexcell-storage/tests/validacion.rs crates/hexcell-storage/migraciones/conocimiento/0001-esquema-minimo.sql crates/hexcell-storage/migraciones/conocimiento/0002-esquema-de-conocimiento.sql crates/hexcell-storage/src/pools.rs crates/hexcell-core docs | wc -l | grep -qx 0'"
+    - "bash -c 'for f in $(find crates/hexcell/src -name \"*.rs\"); do sed \"s|//.*||\" \"$f\" | grep -qE \"rusqlite|Connection::open\" && exit 1; done; exit 0'"
+    - "bash -c '! grep -rnE \"rusqlite|Connection::open\" crates/hexcell-core/src crates/hexcell-core/tests'"
+    - "bash -c '! sed -n \"/^\\[dependencies\\]/,\\$p\" crates/hexcell-core/Cargo.toml | tail -n +2 | grep -qvE \"^[[:space:]]*(#.*)?$\"'"
+    - "bash -c 'test -f crates/hexcell-storage/src/conocimiento.rs && ! grep -qiE \"hyper|reqwest|http|ProveedorDeEmbeddings|ServicioDeEmbeddings|incrustar_lote\" crates/hexcell-storage/src/conocimiento.rs'"
+    - "bash -c 'test -f crates/hexcell-storage/src/conocimiento.rs && ! sed \"s|//.*||\" crates/hexcell-storage/src/conocimiento.rs | grep -qE \"\\.unwrap\\(\\)|\\.expect\\(|panic!|unreachable!|todo!\"'"
+    - "bash -c 'test -f crates/hexcell-storage/src/conocimiento.rs && sed \"s|//.*||\" crates/hexcell-storage/src/conocimiento.rs | grep -q \"leer_sonda_semantica\" && grep -q \"leer_sonda_semantica\" crates/hexcell-storage/src/lib.rs'"
+    - "bash -c 'test -f crates/hexcell-storage/src/conocimiento.rs && sed \"s|//.*||\" crates/hexcell-storage/src/conocimiento.rs | grep -q \"desde_bytes_le\" && sed \"s|//.*||\" crates/hexcell-storage/src/conocimiento.rs | grep -qiE \"DELETE[[:space:]]+FROM[[:space:]]+sonda_semantica\"'"
+    - "bash -c '! grep -rqiE \"UMBRAL_POR_DEFECTO|SONDA_POR_DEFECTO|umbral.*unwrap_or\" crates/hexcell/src crates/hexcell-storage/src'"
+    - "bash -c 'test -f crates/hexcell-storage/tests/migraciones.rs && grep -q \"sonda_semantica\" crates/hexcell-storage/tests/migraciones.rs && grep -qE \"OBJETOS_ESPERADOS_DE_CONOCIMIENTO: \\[\\(&str, &str\\); 6\\]\" crates/hexcell-storage/tests/migraciones.rs'"
+    - "bash -c '! git ls-files | grep -qE \"\\.(db|db-wal|db-shm)$|^\\.env\"'"
+  target_s: 60
+acceptance:
+  bdd_suite: "cargo test --workspace -- --nocapture"
+limits:
+  max_files_changed: 9
+  max_diff_lines: 1450
+  per_class:
+    - glob: "crates/hexcell-storage/migraciones/**"
+      max_diff_lines: 90
+    - glob: "crates/hexcell-storage/src/**"
+      max_diff_lines: 320
+    - glob: "crates/hexcell-storage/tests/**"
+      max_diff_lines: 620
+    - glob: "crates/hexcell/src/**"
+      max_diff_lines: 160
+    - glob: "crates/hexcell/tests/**"
+      max_diff_lines: 380
+execution:
+  mode: worktree_edit
+  branch: ai/HEX-054
+retry_policy:
+  max_attempts: 2
+  escalate_after: 2

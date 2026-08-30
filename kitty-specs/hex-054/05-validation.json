@@ -1,0 +1,122 @@
+{
+  "task_id": "HEX-054",
+  "summary": "Los diecinueve verify.commands pasan (exit 0) en worktrees/HEX-054 al primer intento del delegado externo.",
+  "executed_at": "2026-08-30T18:00:00Z",
+  "commands": [
+    {
+      "command": "cargo fmt --check",
+      "exit_code": 0,
+      "duration_s": 1,
+      "output_excerpt": "sin diferencias de formato"
+    },
+    {
+      "command": "cargo clippy --workspace -- -D warnings",
+      "exit_code": 0,
+      "duration_s": 1,
+      "output_excerpt": "sin warnings con -D warnings"
+    },
+    {
+      "command": "cargo build --workspace",
+      "exit_code": 0,
+      "duration_s": 1,
+      "output_excerpt": "Finished dev profile"
+    },
+    {
+      "command": "cargo test --workspace",
+      "exit_code": 0,
+      "duration_s": 1,
+      "output_excerpt": "70 pruebas, suites completas sin fallos"
+    },
+    {
+      "command": "bash -c (guarda del contrato: migracion 0003, idioma, fronteras, sin umbral por defecto, diff cero en validacion.rs, sin .db versionados)",
+      "exit_code": 0,
+      "duration_s": 1,
+      "output_excerpt": "en verde"
+    },
+    {
+      "command": "bash -c (guarda del contrato: migracion 0003, idioma, fronteras, sin umbral por defecto, diff cero en validacion.rs, sin .db versionados)",
+      "exit_code": 0,
+      "duration_s": 1,
+      "output_excerpt": "en verde"
+    },
+    {
+      "command": "bash -c (guarda del contrato: migracion 0003, idioma, fronteras, sin umbral por defecto, diff cero en validacion.rs, sin .db versionados)",
+      "exit_code": 0,
+      "duration_s": 1,
+      "output_excerpt": "en verde"
+    },
+    {
+      "command": "bash -c (guarda del contrato: migracion 0003, idioma, fronteras, sin umbral por defecto, diff cero en validacion.rs, sin .db versionados)",
+      "exit_code": 0,
+      "duration_s": 1,
+      "output_excerpt": "en verde"
+    },
+    {
+      "command": "bash -c (guarda del contrato: migracion 0003, idioma, fronteras, sin umbral por defecto, diff cero en validacion.rs, sin .db versionados)",
+      "exit_code": 0,
+      "duration_s": 1,
+      "output_excerpt": "en verde"
+    },
+    {
+      "command": "bash -c (guarda del contrato: migracion 0003, idioma, fronteras, sin umbral por defecto, diff cero en validacion.rs, sin .db versionados)",
+      "exit_code": 0,
+      "duration_s": 1,
+      "output_excerpt": "en verde"
+    },
+    {
+      "command": "bash -c (guarda del contrato: migracion 0003, idioma, fronteras, sin umbral por defecto, diff cero en validacion.rs, sin .db versionados)",
+      "exit_code": 0,
+      "duration_s": 1,
+      "output_excerpt": "en verde"
+    },
+    {
+      "command": "bash -c (guarda del contrato: migracion 0003, idioma, fronteras, sin umbral por defecto, diff cero en validacion.rs, sin .db versionados)",
+      "exit_code": 0,
+      "duration_s": 1,
+      "output_excerpt": "en verde"
+    },
+    {
+      "command": "bash -c (guarda del contrato: migracion 0003, idioma, fronteras, sin umbral por defecto, diff cero en validacion.rs, sin .db versionados)",
+      "exit_code": 0,
+      "duration_s": 1,
+      "output_excerpt": "en verde"
+    },
+    {
+      "command": "bash -c (guarda del contrato: migracion 0003, idioma, fronteras, sin umbral por defecto, diff cero en validacion.rs, sin .db versionados)",
+      "exit_code": 0,
+      "duration_s": 1,
+      "output_excerpt": "en verde"
+    },
+    {
+      "command": "bash -c (guarda del contrato: migracion 0003, idioma, fronteras, sin umbral por defecto, diff cero en validacion.rs, sin .db versionados)",
+      "exit_code": 0,
+      "duration_s": 1,
+      "output_excerpt": "en verde"
+    },
+    {
+      "command": "bash -c (guarda del contrato: migracion 0003, idioma, fronteras, sin umbral por defecto, diff cero en validacion.rs, sin .db versionados)",
+      "exit_code": 0,
+      "duration_s": 1,
+      "output_excerpt": "en verde"
+    },
+    {
+      "command": "bash -c (guarda del contrato: migracion 0003, idioma, fronteras, sin umbral por defecto, diff cero en validacion.rs, sin .db versionados)",
+      "exit_code": 0,
+      "duration_s": 1,
+      "output_excerpt": "en verde"
+    },
+    {
+      "command": "bash -c (guarda del contrato: migracion 0003, idioma, fronteras, sin umbral por defecto, diff cero en validacion.rs, sin .db versionados)",
+      "exit_code": 0,
+      "duration_s": 1,
+      "output_excerpt": "en verde"
+    },
+    {
+      "command": "bash -c (guarda del contrato: migracion 0003, idioma, fronteras, sin umbral por defecto, diff cero en validacion.rs, sin .db versionados)",
+      "exit_code": 0,
+      "duration_s": 1,
+      "output_excerpt": "en verde"
+    }
+  ],
+  "overall_result": "passed"
+}

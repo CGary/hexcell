@@ -1,0 +1,40 @@
+### Implementación completada: Persistencia de la sonda semántica por época de conocimiento (HEX-054)
+
+Se ha completado la implementación quirúrgica estipulada en los contratos de la tarea HEX-054, garantizando que cada época de conocimiento conserve en SQLite la sonda semántica original con la que se validó, manteniendo la base de datos de conocimiento como un artefacto autocontenido.
+
+---
+
+### Resumen de cambios por componente
+
+1. **Migración del esquema de conocimiento (v2 $\to$ v3)**:
+   - [0003-sonda-semantica.sql](file:///home/gary/dev/hexcell/worktrees/HEX-054/crates/hexcell-storage/migraciones/conocimiento/0003-sonda-semantica.sql): Creación de la tabla `STRICT` singleton `sonda_semantica` (`id INTEGER PRIMARY KEY CHECK (id = 1)`, `texto_de_la_sonda TEXT NOT NULL`, `vector BLOB NOT NULL CHECK (length(vector) > 0 AND length(vector) % 4 = 0)`, `umbral_de_aceptacion REAL NOT NULL`, `registrada_ms INTEGER NOT NULL`), sin fila semilla.
+   - [`crates/hexcell-storage/src/migraciones.rs`](file:///home/gary/dev/hexcell/worktrees/HEX-054/crates/hexcell-storage/src/migraciones.rs): Incremento de [`VERSION_DE_ESQUEMA_DE_CONOCIMIENTO`](file:///home/gary/dev/hexcell/worktrees/HEX-054/crates/hexcell-storage/src/migraciones.rs#L48) a 3 e inclusión de la migración en el vector secuencial.
+
+2. **Modelo de errores y capa de almacenamiento**:
+   - [`crates/hexcell-storage/src/error.rs`](file:///home/gary/dev/hexcell/worktrees/HEX-054/crates/hexcell-storage/src/error.rs): Incorporación de la variante [`ErrorDeAlmacen::SondaSemanticaIlegible`](file:///home/gary/dev/hexcell/worktrees/HEX-054/crates/hexcell-storage/src/error.rs#L60) con su correspondiente formateo pedagógico y encadenamiento en `std::error::Error::source`.
+   - [`crates/hexcell-storage/src/conocimiento.rs`](file:///home/gary/dev/hexcell/worktrees/HEX-054/crates/hexcell-storage/src/conocimiento.rs):
+     - Adición del método [`ConstructorDeConocimientoEnSombra::registrar_sonda_semantica`](file:///home/gary/dev/hexcell/worktrees/HEX-054/crates/hexcell-storage/src/conocimiento.rs#L173) para persistir la sonda serializada en little-endian.
+     - Actualización de [`ConstructorDeConocimientoEnSombra::finalizar`](file:///home/gary/dev/hexcell/worktrees/HEX-054/crates/hexcell-storage/src/conocimiento.rs#L210) para limpiar `sonda_semantica` si la ingesta concluye con 0 incrustaciones resueltas.
+     - Función pública [`leer_sonda_semantica`](file:///home/gary/dev/hexcell/worktrees/HEX-054/crates/hexcell-storage/src/conocimiento.rs#L338) para extraer de forma segura y en modo de solo lectura la sonda almacenada como `Option<SondaResuelta>`.
+   - [`crates/hexcell-storage/src/lib.rs`](file:///home/gary/dev/hexcell/worktrees/HEX-054/crates/hexcell-storage/src/lib.rs): Reexportación pública de [`leer_sonda_semantica`](file:///home/gary/dev/hexcell/worktrees/HEX-054/crates/hexcell-storage/src/lib.rs#L49).
+
+3. **Orquestación de la ingesta**:
+   - [`crates/hexcell/src/ingesta.rs`](file:///home/gary/dev/hexcell/worktrees/HEX-054/crates/hexcell/src/ingesta.rs):
+     - Actualización de la firma de [`ejecutar_ingesta`](file:///home/gary/dev/hexcell/worktrees/HEX-054/crates/hexcell/src/ingesta.rs#L70) para recibir `texto_de_la_sonda: &str` y `umbral_de_aceptacion: f32`.
+     - Inclusión del campo `dimension_de_la_sonda: Option<usize>` en [`ResumenDeIngesta`](file:///home/gary/dev/hexcell/worktrees/HEX-054/crates/hexcell/src/ingesta.rs#L34).
+     - La incrustación y persistencia de la sonda se realiza de forma obligatoria y atómica antes de entrar al bucle de fragmentos del documento fuente.
+
+4. **Batería de pruebas y verificación de contratos**:
+   - [`crates/hexcell-storage/tests/migraciones.rs`](file:///home/gary/dev/hexcell/worktrees/HEX-054/crates/hexcell-storage/tests/migraciones.rs): Verificación del catálogo de tablas de conocimiento en versión 3 y prueba de actualización no destructiva e idempotente de v2 a v3.
+   - [`crates/hexcell-storage/tests/conocimiento.rs`](file:///home/gary/dev/hexcell/worktrees/HEX-054/crates/hexcell-storage/tests/conocimiento.rs): Pruebas de integración para escritura bit a bit, descarte en ausencia de incrustaciones, lectura tolerante (`Some`/`None`/`Err`), manejo de BLOBs corruptos y pase directo al validador de integridad del índice.
+   - [`crates/hexcell/tests/ingesta.rs`](file:///home/gary/dev/hexcell/worktrees/HEX-054/crates/hexcell/tests/ingesta.rs): Pruebas de ciclo de vida completo de ingesta con sonda previa, verificación de reservas financieras en dos fases y aborto preventivo sin consumo en fragmentos cuando la sonda falla.
+
+---
+
+### Verificación de calidad
+
+- `cargo fmt --check`: **OK**
+- `cargo clippy --workspace -- -D warnings`: **OK (0 advertencias)**
+- `cargo test --workspace`: **OK (todos los tests pasaron)**
+- Guardia de prosa y comentarios en español didáctico: **OK**
+- Guardia de inviolabilidad de archivos protegidos (zero-diff): **OK**

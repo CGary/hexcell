@@ -1,0 +1,3 @@
+entries: []
+summary: 'Persist the semantic probe per knowledge epoch: migration 0003 with a STRICT singleton table, probe-first ingestion, and a standalone reader returning Option<SondaResuelta>.'
+task_id: HEX-054

@@ -1,0 +1,117 @@
+task_id: HEX-054
+summary: "Migration 0003 adds a STRICT singleton sonda_semantica table (knowledge schema 2 to 3); ingestion embeds a required probe before the fragment loop; a new reader returns Option<SondaResuelta>."
+affected_files:
+  - crates/hexcell-storage/migraciones/conocimiento/0003-sonda-semantica.sql
+  - crates/hexcell-storage/src/migraciones.rs
+  - crates/hexcell-storage/src/conocimiento.rs
+  - crates/hexcell-storage/src/error.rs
+  - crates/hexcell-storage/src/lib.rs
+  - crates/hexcell-storage/tests/migraciones.rs
+  - crates/hexcell-storage/tests/conocimiento.rs
+  - crates/hexcell/src/ingesta.rs
+  - crates/hexcell/tests/ingesta.rs
+symbols:
+  - VERSION_DE_ESQUEMA_DE_CONOCIMIENTO
+  - ESQUEMA_DE_SONDA_SEMANTICA
+  - MIGRACIONES_DE_CONOCIMIENTO
+  - ConstructorDeConocimientoEnSombra::registrar_sonda_semantica
+  - ConstructorDeConocimientoEnSombra::finalizar
+  - ConstructorDeConocimientoEnSombra::descartar_metadatos_de_epoca
+  - leer_sonda_semantica
+  - ErrorDeAlmacen::SondaSemanticaIlegible
+  - ejecutar_ingesta
+  - ResumenDeIngesta::dimension_de_la_sonda
+  - OBJETOS_ESPERADOS_DE_CONOCIMIENTO
+dependencies:
+  - crates/hexcell-storage/migraciones/conocimiento/0002-esquema-de-conocimiento.sql
+  - crates/hexcell-storage/src/validacion.rs
+  - crates/hexcell-storage/src/pools.rs
+  - crates/hexcell-storage/src/tiempo.rs
+  - crates/hexcell-core/src/embeddings.rs
+  - crates/hexcell/src/embeddings.rs
+  - crates/hexcell-storage/tests/comun/mod.rs
+  - crates/hexcell-storage/tests/validacion.rs
+  - crates/hexcell-storage/tests/respaldo.rs
+test_scenarios:
+  - statement: "A freshly migrated knowledge database reports VERSION_DE_ESQUEMA_DE_CONOCIMIENTO (now 3), contains sonda_semantica, and that table holds zero rows because migration 0003 seeds nothing."
+    covers: ["AC-1"]
+  - statement: "sonda_semantica is reported STRICT by pragma_table_list; the existing todas_las_tablas_de_conocimiento_se_declaran_strict test covers it with no edit, and OBJETOS_ESPERADOS_DE_CONOCIMIENTO grows from 5 to 6 entries so the fresh-migration test demands the new table."
+    covers: ["AC-1"]
+  - statement: "A v2 database seeded with rows in documentos, fragmentos, vectores_de_fragmento and a rewritten metadatos_de_epoca upgrades to 3 with every seeded row byte-identical afterwards, and sonda_semantica present and empty."
+    covers: ["AC-2"]
+  - statement: "Re-running aplicar_migraciones_de_conocimiento on a v3 database is a no-op: version stays 3, sonda_semantica is not recreated, metadatos_de_epoca still holds exactly one row, and the seeded rows are untouched."
+    covers: ["AC-3"]
+  - statement: "ejecutar_ingesta with the Simulado adapter spends exactly one probe batch BEFORE any fragment batch: the reservation ledger in sessions.db shows the probe reservation ordered first, and ResumenDeIngesta.dimension_de_la_sonda reports the probe dimension."
+    covers: ["AC-4"]
+  - statement: "With ProveedorDeEmbeddingsSimulado::que_falla, ejecutar_ingesta returns ErrorDeIngesta::Embeddings, exactly one budget reservation exists (the probe's), zero fragment rows were written, and finalizar was never reached."
+    covers: ["AC-5"]
+  - statement: "A successful ingestion leaves exactly one sonda_semantica row whose vector BLOB is non-empty with length a multiple of 4, whose umbral_de_aceptacion equals the supplied threshold, and whose registrada_ms is positive."
+    covers: ["AC-6"]
+  - statement: "The persisted probe BLOB round-trips: bytes written by registrar_sonda_semantica are byte-identical to VectorDeEmbedding::a_bytes_le of the same values, and desde_bytes_le recovers the original f32 values exactly."
+    covers: ["AC-6"]
+  - statement: "When every fragment fails to embed, finalizar deletes both metadatos_de_epoca and sonda_semantica, leaving zero rows in each, so no probe survives for an index that observed nothing."
+    covers: ["AC-7"]
+  - statement: "leer_sonda_semantica returns Some(SondaResuelta) with the persisted vector and threshold for a file holding a probe, and Ok(None) for a migrated v3 file with an empty sonda_semantica table, with no panic and no network access."
+    covers: ["AC-8"]
+  - statement: "leer_sonda_semantica against a path that does not exist returns Err (pools::abrir_solo_lectura refuses to create the file), which is distinct from the Ok(None) that an existing file with no probe row returns."
+    covers: ["AC-8"]
+  - statement: "The Option<SondaResuelta> that leer_sonda_semantica returns is passed unmodified into validar_integridad_del_indice against the same file and produces a verdict, with zero diff in crates/hexcell-storage/src/validacion.rs."
+    covers: ["AC-9"]
+  - statement: "A probe whose dimension differs from the epoch dimension is rejected by the existing MotivoDeRechazo::DimensionDeLaSondaDiscrepante, proving ingestion needs no redundant dimension guard of its own."
+    covers: ["AC-9"]
+strategy:
+  - step: 1
+    action: "Write migration 0003 (Value Object / schema): CREATE TABLE sonda_semantica STRICT singleton with id CHECK (id = 1), texto_de_la_sonda TEXT NOT NULL, vector BLOB NOT NULL CHECK (length(vector) > 0 AND length(vector) % 4 = 0), umbral_de_aceptacion REAL NOT NULL, registrada_ms INTEGER NOT NULL, and NO seed INSERT. Didactic Spanish header explains WHY a new table beats two columns on metadatos_de_epoca (ALTER TABLE cannot add a table-level CHECK, so coupling would force a rebuild inside unchecked_transaction where PRAGMA foreign_keys is inert) and restates that the BLOB obeys migration 0002's little-endian contract without redefining it."
+    files:
+      - crates/hexcell-storage/migraciones/conocimiento/0003-sonda-semantica.sql
+  - step: 2
+    action: "Add the ladder rung (Application Service): raise VERSION_DE_ESQUEMA_DE_CONOCIMIENTO from 2 to 3, rewrite its doc comment to describe version 3, add ESQUEMA_DE_SONDA_SEMANTICA via include_str!, and append PasoDeMigracion { version: 3 } to MIGRACIONES_DE_CONOCIMIENTO. No change to the aplicar runner: the existing loop already bumps user_version inside the same transaction as the script. Verified no test asserts the knowledge version as a literal, so every existing assertion follows the constant automatically."
+    files:
+      - crates/hexcell-storage/src/migraciones.rs
+  - step: 3
+    action: "Add the error variant (Value Object): ErrorDeAlmacen::SondaSemanticaIlegible { ruta, motivo } plus its arms in the exhaustive Display and source matches. It exists to keep a corrupt probe BLOB distinguishable from an absent probe: Ok(None) means not promotable, an unreadable BLOB means a damaged file, and collapsing the two would let corruption masquerade as a normal state."
+    files:
+      - crates/hexcell-storage/src/error.rs
+  - step: 4
+    action: "Add the writer (Entity method): ConstructorDeConocimientoEnSombra::registrar_sonda_semantica(&mut self, texto, vector: &[f32], umbral_de_aceptacion: f32, registrada_ms: i64) INSERTs the singleton row, serialising with to_le_bytes exactly as escribir_lote_de_fragmentos already does. Extend finalizar's zero-embeddings branch to DELETE FROM sonda_semantica WHERE id = 1 alongside descartar_metadatos_de_epoca, so both singletons vanish together. Neither crear nor finalizar changes signature, so the four existing call sites in tests/conocimiento.rs keep compiling."
+    files:
+      - crates/hexcell-storage/src/conocimiento.rs
+  - step: 5
+    action: "Add the standalone reader (Validator input port): pub fn leer_sonda_semantica(ruta_archivo: &Path) -> Result<Option<SondaResuelta>, ErrorDeAlmacen>, opening one read-only connection via pools::abrir_solo_lectura, selecting the singleton row, decoding the BLOB with the EXISTING hexcell_core::embeddings::VectorDeEmbedding::desde_bytes_le and taking .valores().to_vec(). QueryReturnedNoRows maps to Ok(None) exactly as inspeccionar_base_en_sombra already maps the absent metadatos_de_epoca row; a None from desde_bytes_le maps to Err(SondaSemanticaIlegible). Reads umbral_de_aceptacion as f64 from the REAL column and narrows to f32, documenting the narrowing. Deliberately does NOT extend ResumenDeInspeccion: that struct derives Eq and SondaResuelta cannot (f32), so folding it in would strip Eq from a merged public type, and task 8 needs a cheap standalone probe lookup before deciding whether to validate at all."
+    files:
+      - crates/hexcell-storage/src/conocimiento.rs
+  - step: 6
+    action: "Re-export leer_sonda_semantica from the crate root next to the existing conocimiento re-exports, following the convention already used for ConstructorDeConocimientoEnSombra."
+    files:
+      - crates/hexcell-storage/src/lib.rs
+  - step: 7
+    action: "Change ingestion (Application Service): ejecutar_ingesta gains required texto_de_la_sonda: &str and umbral_de_aceptacion: f32 (7 parameters total, still under clippy's too_many_arguments threshold of 7). After ConstructorDeConocimientoEnSombra::crear and BEFORE the fragment loop, send ONE PeticionDeEmbeddings carrying only the probe text through the existing servicio_embeddings.incrustar_lote, inheriting its two-phase reservation and reconciliation with no second accounting layer. A failed or empty probe result returns ErrorDeIngesta::Embeddings immediately, before any fragment batch is emitted. On success, call registrar_sonda_semantica with a_milisegundos(SystemTime::now())."
+    files:
+      - crates/hexcell/src/ingesta.rs
+  - step: 8
+    action: "Add ResumenDeIngesta.dimension_de_la_sonda: Option<usize> and populate it. The type is Option<usize>, never f32, so the struct keeps its Eq derive; an f32 field would silently drop Eq from a merged public type. It sits beside the existing dimension_observada so a caller can see a probe/fragment dimension drift without ingestion inventing an error the gate already reports as DimensionDeLaSondaDiscrepante. Keep crear before the probe batch so a probe failure leaves a freshly emptied staging file rather than a stale plausible one."
+    files:
+      - crates/hexcell/src/ingesta.rs
+  - step: 9
+    action: "Update the ten ejecutar_ingesta call sites, all in crates/hexcell/tests/ingesta.rs (lines 127, 177, 254, 330, 381, 434, 474, 529, 621, 651), passing an explicit test-local probe text and threshold at each; no assertion changes. Add the AC-4 test asserting the probe reservation precedes every fragment reservation in the sessions ledger, and the AC-5 test using ProveedorDeEmbeddingsSimulado::que_falla asserting the run aborts with exactly one reservation and zero fragment rows."
+    files:
+      - crates/hexcell/tests/ingesta.rs
+  - step: 10
+    action: "Extend the storage test batteries: in tests/migraciones.rs grow OBJETOS_ESPERADOS_DE_CONOCIMIENTO to six entries and add the v2-to-v3 seeded-rows ladder test plus its re-apply no-op assertion, mirroring upgrade_de_conocimiento_v1_a_v2_preserva_datos_preexistentes_y_reaplica_es_un_noop. In tests/conocimiento.rs add the writer, zero-embeddings deletion, reader Some/None/missing-file, byte round-trip and validator-handoff tests. Placing the AC-9 handoff test here rather than in tests/validacion.rs keeps BOTH validacion.rs files at zero diff."
+    files:
+      - crates/hexcell-storage/tests/migraciones.rs
+      - crates/hexcell-storage/tests/conocimiento.rs
+risks:
+  - "DRIFT vs the pre-verified design: the design estimated 'roughly eleven' ejecutar_ingesta call sites 'across both crates'. Measured at 802e2ac there are exactly TEN invocations, ALL inside crates/hexcell/tests/ingesta.rs, plus the definition; there is no production caller in main.rs or anywhere else. The storage crate has ZERO ejecutar_ingesta call sites. Churn is smaller and far more localised than budgeted."
+  - "DRIFT check PASSED: HEX-053 did move inspeccionar_base_en_sombra to an explicit file path (crates/hexcell-storage/src/conocimiento.rs:228 takes ruta_archivo: &Path). The design's assumption is live, so the new reader mirrors the same shape and no adaptation is needed."
+  - "ResumenDeInspeccion derives Eq and SondaResuelta cannot (it holds f32). Folding the probe into ResumenDeInspeccion would force removing Eq from a merged public type. This is the decisive reason the reader stands alone; an implementer who copies the derive list will hit a compile error."
+  - "ResumenDeIngesta derives Clone, Debug, PartialEq, Eq and has no Default. The new field must be Eq-safe (Option<usize>, not f32) or the derive breaks, and it cannot be filled via ..Default::default() at the single construction site (crates/hexcell/src/ingesta.rs:176)."
+  - "conocimiento.rs will `use crate::validacion::SondaResuelta` while validacion.rs already uses crate::conocimiento::inspeccionar_base_en_sombra. Rust permits mutually referential modules inside one crate, so this compiles; it is a use-declaration, not a dependency inversion, and it is what keeps validacion.rs at zero diff. Do NOT try to break the cycle by moving SondaResuelta."
+  - "ejecutar_ingesta reaches exactly 7 parameters. clippy::too_many_arguments fires above 7, so this passes -D warnings, but there is zero headroom: if a later change adds an eighth, group the probe into a small SondaDeIngesta value object rather than silencing the lint."
+  - "pools::abrir_solo_lectura is pub(crate) (crates/hexcell-storage/src/pools.rs:424) and therefore invisible from crates/hexcell-storage/tests/. Tests must exercise the probe reader through the new pub leer_sonda_semantica, never by opening a read-only connection themselves."
+  - "rusqlite Connection::open in this workspace has foreign_keys ON (libsqlite3-sys builds the amalgamation with -DSQLITE_DEFAULT_FOREIGN_KEYS=1), contradicting the comment in pools.rs. Seeded v2 fixtures for the AC-2 ladder test must insert documentos before fragmentos and vectores_de_fragmento, and must not rely on deleting a parent row without cascade."
+  - "The 0002 seed row sets dimension_de_embedding = 768 while ProveedorDeEmbeddingsSimulado produces dimension 4. Any AC-2 fixture that writes 4-dimensional vectors without rewriting that row declares 768 while holding 16-byte BLOBs, which would fail a later dimension check for the wrong reason."
+  - "tests/migraciones.rs was FORBIDDEN under HEX-053 and is now a required touch (version bump plus the OBJETOS_ESPERADOS_DE_CONOCIMIENTO list). Every knowledge-version assertion in the repo reads VERSION_DE_ESQUEMA_DE_CONOCIMIENTO rather than a literal, verified across tests/migraciones.rs, tests/conocimiento.rs, tests/respaldo.rs and src/pools.rs, so the bump propagates without further edits."
+  - "docs/STATUS.md line 26 states that hexcell-storage materialises version 2 of the knowledge schema. After this task that sentence is factually stale. docs/ is forbidden under this contract because the spec puts nothing in docs/ in scope; the human should decide whether to refresh STATUS.md in a follow-up. Flagged, deliberately not silently expanded into scope."
+  - "The corrupt-BLOB branch of the reader is unreachable through SQLite itself because the table CHECK enforces length % 4 = 0; it is reachable only for a file mutated outside the engine. It still gets its own error variant rather than an unwrap, because the whole task rests on Ok(None) meaning exactly one thing."
+  - "HSME advisory read was unavailable (hsme-cli could not open its database). Proceeding without semantic context is the documented degradation path under ADR 0008 and ADR 0013, not a silent drop."
