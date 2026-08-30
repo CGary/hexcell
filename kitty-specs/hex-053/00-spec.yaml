@@ -1,0 +1,95 @@
+task_id: HEX-053
+summary: "Implement the knowledge index integrity gate (A-5 task 5, FR-06/FR-07): structural checks plus a semantic probe with threshold; a failure aborts promotion, production stays untouched."
+goal: >-
+  Deliver the validation gate that stands between a freshly built (or previously sealed) knowledge
+  index and its promotion into production: a function in `hexcell-storage` that opens ANY epoch
+  database file (staging today, an arbitrary `knowledge_epoch_N.db` for task 8's future revert
+  flow) read-only, runs structural integrity checks reusing the data already exposed by
+  `inspeccionar_base_en_sombra` (HEX-052) as its factual base, runs a semantic probe by computing
+  cosine similarity in pure Rust between a pre-embedded probe vector and every fragment vector in
+  the index, and returns a structured verdict an operator can act on -- never a bare boolean. The
+  cosine function itself is added to `crates/hexcell-core` (empty-dependency crate, adr-0002),
+  alongside `fragmentar`, because it needs nothing beyond `std` slices of `f32` and stage A-5 task
+  9 (RAG retrieval) is expected to call the exact same function unchanged. The probe's embedding is
+  computed BEFORE this validator ever runs -- at ingestion time, through the existing budgeted
+  `ServicioDeEmbeddings`, never inside the gate itself -- so the gate has zero network dependency
+  and stays fully testable offline; this task also defines the minimal persistence needed so a
+  later revert (task 8, deferred) can re-run the same semantic check against an old, already-sealed
+  epoch file without any live provider call at revert time. The exact column layout for that
+  persistence is left to the blueprint phase; this spec only commits to the guarantee that the
+  probe vector and its threshold-comparison inputs survive alongside the epoch they were computed
+  for.
+invariants:
+  - "`fragmentos_sin_vector` being non-zero (per `ResumenDeInspeccion`, HEX-052) is treated as a hard STRUCTURAL failure -- a bug in the ingestion invariant that guarantees no orphaned fragment/vector rows are ever written -- never as a partial-run signal; the validator's rejection reason must say so explicitly and distinctly from the incompleteness checks below."
+  - "Incompleteness (as opposed to structural corruption) is detected by two independent checks, both required: (1) ordinal contiguity -- `ResumenDeInspeccion.ordinales` must be exactly `0..cantidad_de_fragmentos` with no gaps; (2) fragment-count coverage -- the validator re-runs `fragmentar` with the SAME `ConfiguracionDeFragmentacion` used at ingestion time over `documentos.contenido` (the full original text, stored precisely for this reason) and compares the resulting chunk count against `cantidad_de_fragmentos`; the caller is responsible for supplying the matching configuration, and a mismatched configuration is a known limitation of this check, not a defect this task can eliminate."
+  - "`metadatos_de_epoca == None` (HEX-052 deletes the singleton row when zero embeddings resolved) is a normal, expected, NOT-PROMOTABLE verdict -- never an error, a panic, or an unexpected-state branch."
+  - "Dimensional uniformity across vectors in the same index is checked via the query the schema migration's own header already documents for this task: `length(vector) <> 4 * dimension_de_embedding` (joined against `metadatos_de_epoca`); any match is a hard structural failure."
+  - "The cosine similarity function lives in `crates/hexcell-core` (new module, or added beside `fragmentar`), operates on plain `&[f32]` slices, adds zero new dependencies to hexcell-core's empty `[dependencies]` table (adr-0002), and is the SAME function stage A-5 task 9's RAG engine is expected to reuse unchanged -- not a parallel or duplicated implementation."
+  - "The semantic probe never triggers a live embeddings-provider call from inside the validator: it receives an ALREADY-RESOLVED probe vector (computed earlier, at ingestion time, through the existing budgeted `ServicioDeEmbeddings`) and only computes cosine similarity locally against every fragment vector in the index being checked. This is what keeps the gate itself fully offline and deterministic."
+  - "This task defines the guarantee that a probe vector and its associated similarity threshold, once computed for a given epoch, are persisted so that a LATER validation run against that same, already-sealed epoch file (task 8's revert flow) can re-run the identical semantic check without recomputing or re-requesting any embedding; the concrete schema/column design for this persistence is a blueprint-phase decision, not fixed here, and it must be reported back as a schema change (a new migration) rather than silently bolted onto an unrelated table."
+  - "The validator's public entry point takes an explicit file path to the epoch database being checked (not a data directory plus a hardcoded filename); it must work identically whether that path is `knowledge_staging.db` or a `knowledge_epoch_N.db` opened for a future revert, because task 8 depends on calling this exact function unchanged against an arbitrary prior epoch."
+  - "The verdict returned is a structured type, never a bare boolean: an approval carries the observed structural counts and similarity score; a rejection enumerates every failed check with concrete, actionable data (e.g. how many fragments lack a vector, which ordinals are missing, the fragment-count mismatch, the observed similarity versus the configured threshold) so an operator can diagnose the abort without reading logs or code."
+  - "The similarity acceptance threshold ships with NO hardcoded default value in this task's code: it is a required, externally supplied configuration input, because no measured/calibrated value exists yet for any real catalog. Tests use an explicit test-local threshold; production calibration (e.g. from A-7 pilot data) is future work, not invented here."
+  - "All repository content this task touches (Rust doc comments, code comments, identifiers, commit message) is written in Spanish and is didactic (explains WHY, not what the line does); only this Quorum spec's field values are written in English."
+  - "This task does not modify the knowledge schema's existing tables (`documentos`, `fragmentos`, `vectores_de_fragmento`) or the vector byte contract (f32 little-endian, no header); any schema addition needed for probe persistence is strictly additive (new migration), never a change to an already-merged column or CHECK."
+acceptance:
+  - id: AC-1
+    statement: A non-zero fragmentos_sin_vector is rejected as a structural bug, with a reason distinct from any incompleteness reason.
+    given: an epoch database file whose vectores_de_fragmento table is missing a row for one fragmento (constructed directly for the test, bypassing the ingestion invariant that normally prevents this)
+    when: the integrity validator runs against that file
+    then: the verdict is a rejection whose reasons explicitly name the orphaned-vector structural failure, separate from and not conflated with the ordinal-gap or fragment-count checks
+  - id: AC-2
+    statement: A gap in fragment ordinals is detected and rejected.
+    given: an epoch database file with fragmentos ordinals 0, 1, 3 (2 missing)
+    when: the integrity validator runs against that file
+    then: the verdict is a rejection naming the missing ordinal
+  - id: AC-3
+    statement: A fragment count that does not match a re-fragmentation of the stored original text is detected and rejected.
+    given: an epoch database file whose documentos.contenido, re-chunked with the same ConfiguracionDeFragmentacion used at ingestion, yields a different fragment count than the fragmentos table actually holds
+    when: the integrity validator runs against that file with that configuration supplied
+    then: the verdict is a rejection reporting both the expected and the actual fragment counts
+  - id: AC-4
+    statement: A non-uniform vector dimension within the same epoch is detected and rejected.
+    given: an epoch database file whose metadatos_de_epoca declares dimension_de_embedding = 768 but at least one vectores_de_fragmento row has a BLOB length not equal to 4 * 768
+    when: the integrity validator runs against that file
+    then: the verdict is a rejection naming the dimensional mismatch
+  - id: AC-5
+    statement: An epoch file with no metadatos_de_epoca row (zero embeddings resolved) yields a clean not-promotable verdict, never an error or panic.
+    given: an epoch database file whose metadatos_de_epoca singleton row was deleted (the documented HEX-052 outcome for a zero-embedding run)
+    when: the integrity validator runs against that file
+    then: the call returns Ok with a rejection verdict stating the index has no epoch metadata and is not promotable, with no panic and no Err variant used for this expected state
+  - id: AC-6
+    statement: The semantic probe approves an index whose average/relevant cosine similarity meets the configured threshold and rejects one that falls below it, using a pre-embedded probe vector supplied by the caller.
+    given: an otherwise-structurally-valid epoch database file, a pre-computed probe vector, and a configured similarity threshold
+    when: the integrity validator runs with a probe vector whose best cosine similarity against the index's fragment vectors is at or above the threshold, and separately with one below it
+    then: the first run's verdict is an approval reporting the observed similarity score, and the second run's verdict is a rejection naming the observed similarity versus the configured threshold; neither run makes any network call
+  - id: AC-7
+    statement: The validator works identically against a database file that is not named knowledge_staging.db, proving it is reusable for a future revert check (task 8) without modification.
+    given: a structurally valid epoch database file copied to a path named knowledge_epoch_3.db (not the staging filename)
+    when: the integrity validator is invoked with that explicit file path
+    then: it opens and validates that file exactly as it would knowledge_staging.db, returning the same verdict shape
+  - id: AC-8
+    statement: The cosine similarity function added to hexcell-core is independently unit-testable and adds no new dependency.
+    given: pairs of f32 vectors with known cosine similarity (identical vectors, orthogonal vectors, opposite vectors)
+    when: the hexcell-core cosine function is called directly in a unit test
+    then: it returns the mathematically expected similarity value within a small floating-point tolerance, and crates/hexcell-core's [dependencies] table remains empty
+  - "cargo build --workspace, cargo test --workspace, cargo fmt --check, and cargo clippy --workspace -- -D warnings all pass; every test in this task's scope runs fully offline (no live embeddings API call), using directly constructed SQLite fixtures and/or the existing Simulado embeddings adapter for any probe-vector setup."
+  - "DEFERRED (explicitly out of scope, not to be flagged by q-analyze as a gap): the epoch promotion sequence, WAL checkpoint-and-rename, symlink reassignment, and ArcSwap pointer substitution (task 6); graceful drain of the old pool (task 7); the revert/retention flow itself, including deciding how many epochs are kept and how the revert command triggers this validator -- task 8 only needs to be ABLE to call this task's validator against an arbitrary epoch file, which AC-7 proves, but wiring the revert command is not this task's job; the RAG retrieval engine (task 9), which is expected to reuse this task's cosine function unchanged; the internal admin HTTP endpoint (task 10); the switchover stress test (task 11); and the backup-interaction check (task 12). Also deferred: choosing or calibrating the actual production similarity threshold value (no measured value exists yet); any criterion requiring a live embeddings API key or network call; and the exact schema/migration design for persisting the probe vector and threshold per epoch -- that design is a blueprint-phase decision, this spec only commits to the guarantee that it must be possible."
+risk: high
+non_goals:
+  - Epoch promotion, WAL checkpoint-and-rename, symlink reassignment, ArcSwap pointer substitution, and graceful drain of the old pool (stage A-5 tasks 6-7).
+  - The revert command and epoch retention policy (stage A-5 task 8); this task only guarantees its validator is callable against an arbitrary epoch file.
+  - The RAG retrieval engine and the internal admin HTTP endpoint (stage A-5 tasks 9-10).
+  - The switchover stress test and the backup-interaction check (stage A-5 tasks 11-12).
+  - Choosing, calibrating, or hardcoding a production similarity threshold value; this task only defines the configuration surface for one.
+  - Modifying the existing knowledge schema tables (documentos, fragmentos, vectores_de_fragmento) or the vector byte contract; any addition for probe persistence is strictly additive and its exact shape is a blueprint decision.
+  - Any live integration test against a real embeddings API; all tests in this task's scope run offline.
+constraints:
+  - No new runtime dependency for hexcell-core (adr-0002, empty dependency table stays empty); the cosine function uses only std.
+  - The validator's SQL access lives entirely in hexcell-storage (adr-0010 boundary); crates/hexcell continues to declare no direct rusqlite dependency and never issues loose SQL against a knowledge database file.
+  - Every scope item traces to FR-06 (shadow indexing) and FR-07 (atomic epoch switching, which this gate protects) of docs/PRD.md, and to stage A-5 task 5 of docs/plan/fase-a-5-conocimiento-shadow-db.md; no requirement is invented beyond that task's stated scope and the two carry-forward facts from HEX-052 documented in this spec's invariants.
+  - Repository is public; no secrets; credentials only via environment variables where relevant; no new *.db/*.db-wal/*.db-shm/.env* file gets versioned (already covered by .gitignore).
+  - No mass-sending folklore (jitter, warm-up protocols), proxies, VPN, or IP rotation, per standing project policy; this task introduces no network behavior of its own.
+  - Instants remain integer milliseconds; any new or touched table remains STRICT.
+  - "If implementation surfaces a need to add columns/tables to the knowledge schema for probe persistence, that is an in-scope, additive migration for this task, but its exact design must be proposed in the blueprint phase and confirmed, not decided ad hoc during implementation."
+  - "Whether this task warrants a new ADR is an open question for a human to settle before or during blueprint: adr-0006 is already reserved for tasks 6-8 (epochs and atomic switchover), so it does not cover this task; if a new ADR is warranted, the next available number is adr-0026 (last existing is adr-0025), but authoring one is not decided by this spec."

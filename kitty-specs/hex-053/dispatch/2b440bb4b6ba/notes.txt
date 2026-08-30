@@ -1,0 +1,90 @@
+I am going to read the dispatch prompt file to understand the task instructions you've laid out. Let's look at the file.
+I will read the next part of the dispatch-prompt file to get the full instructions and rules.
+I will read the final section of the dispatch-prompt file to ensure I have the complete picture of all the invariants, forbidden behaviors, and exact instructions.
+I will read the last lines of the file.
+I will locate files in the workspace to see the existing structure.
+I will find files inside `crates/hexcell-core` and `crates/hexcell-storage` to see their layout.
+I will find files inside `crates/hexcell-storage`.
+I will search for `inspeccionar_base_en_sombra` in the test file `crates/hexcell/tests/ingesta.rs` to find its call sites.
+I will view the first call site of `inspeccionar_base_en_sombra` in `crates/hexcell/tests/ingesta.rs`.
+I will search for `NOMBRE_DE_ARCHIVO_DE_CONOCIMIENTO_EN_SOMBRA` in `crates/hexcell/tests/ingesta.rs` to see if it is already imported.
+I will view the next callsites in `crates/hexcell/tests/ingesta.rs`.
+I will view the rest of `crates/hexcell/tests/ingesta.rs` to verify the final two callsites.
+I will view the contents of `crates/hexcell-core/src/lib.rs`.
+I will create `crates/hexcell-core/src/similitud.rs` to implement the `similitud_coseno` function using standard library only, accumulating norms and dot product in `f64` for numerical stability, and clamping to `[-1.0, 1.0]`.
+I will write to `/home/gary/dev/hexcell/worktrees/HEX-053/crates/hexcell-core/src/similitud.rs` without setting `ArtifactMetadata`, as it is a codebase file, not a chat artifact.
+I will register the new module `similitud` in `crates/hexcell-core/src/lib.rs`.
+I will create the unit test file `crates/hexcell-core/tests/similitud.rs` to verify `similitud_coseno` against all cases specified in AC-8.
+I will view the function `inspeccionar_base_en_sombra` in `crates/hexcell-storage/src/conocimiento.rs` to prepare the signature change.
+I will view `crates/hexcell-storage/src/conocimiento.rs` to locate `inspeccionar_base_en_sombra`.
+I will modify `inspeccionar_base_en_sombra` in `crates/hexcell-storage/src/conocimiento.rs` to accept an explicit file path instead of a data directory.
+I will view the first call site in `crates/hexcell/tests/ingesta.rs` to target it precisely.
+I will update the first call site of `inspeccionar_base_en_sombra` in `crates/hexcell/tests/ingesta.rs` to pass the full file path.
+I will view the second call site in `crates/hexcell/tests/ingesta.rs`.
+I will update the second call site to pass the full file path.
+I will view the third and fourth callsites in `crates/hexcell/tests/ingesta.rs` to target them exactly.
+I will update the third call site (line 446) in `crates/hexcell/tests/ingesta.rs` to pass the full file path.
+I will view the fourth call site in `crates/hexcell/tests/ingesta.rs` to target it exactly.
+I will update the fourth call site in `crates/hexcell/tests/ingesta.rs`.
+I will view the final section of `crates/hexcell/tests/ingesta.rs` to target the remaining two callsites.
+I will update the fifth call site in `crates/hexcell/tests/ingesta.rs` to pass the full file path.
+I will view the final call site in `crates/hexcell/tests/ingesta.rs` to target it exactly.
+I will update the sixth call site in `crates/hexcell/tests/ingesta.rs` to pass the full file path.
+I will search for references to `hexcell_core` inside `crates/hexcell-storage` to see the exact import paths.
+I will search for `desde_bytes_le` or similar vector decoding functions in the repository.
+I will view the `VectorDeEmbedding` structure and its `desde_bytes_le` method in `crates/hexcell-core/src/embeddings.rs`.
+I will view the beginning of `VectorDeEmbedding` implementation to see how its inner fields are exposed.
+I will create `crates/hexcell-storage/src/validacion.rs` implementing the domain types and the integrity gate validator function, adhering strictly to the memory requirements (streaming rows) and the grep guard rules.
+I will view the contents of `crates/hexcell-storage/src/lib.rs` to expose the validation module and its types.
+I will register the new `validacion` module and re-export its public types in `crates/hexcell-storage/src/lib.rs`.
+I will view the end of `crates/hexcell-storage/src/lib.rs` to find the exact target content for the exports.
+I will re-export `validar_integridad_del_indice`, `MotivoDeRechazo`, `SondaResuelta`, and `VeredictoDeIntegridad` from the storage crate root.
+I will create `crates/hexcell-storage/tests/validacion.rs` containing all the integration tests for the index validation gate. The file will be written entirely in Spanish and will strictly follow the rules on forbidden words.
+I will run the exact grep verification command from the contract to ensure we haven't included any forbidden English words in our Spanish codebase.
+I will run the grep check command again to verify that there are no forbidden words.
+I have successfully read the instructions in the dispatch-prompt file and completed the implementation for task **HEX-053** under the exact constraints and rules laid out. 
+
+Here is a summary of the architectural and implementation decisions, along with the file changes made:
+
+### 1. Pure Rust Cosine Similarity (Domain Logic)
+The core vector similarity calculation has been added in the standard-only, empty-dependency crate `hexcell-core`.
+* **File:** [similitud.rs](file:///home/gary/dev/hexcell/worktrees/HEX-053/crates/hexcell-core/src/similitud.rs#L19)
+* **Function:** [`similitud_coseno`](file:///home/gary/dev/hexcell/worktrees/HEX-053/crates/hexcell-core/src/similitud.rs#L19)
+* **Design Decision (f64 Accumulation):** Floating-point drift over 768 dimensions can easily push the cosine similarity value outside the theoretical $[-1.0, 1.0]$ bounds. To prevent this, all dot products and norms are accumulated in `f64` and clamped to `[-1.0, 1.0]` before being downcast to `f32`.
+* **Edge Cases:** It returns `None` if the input vector lengths mismatch or if the magnitude of either vector is zero. Returning an `Option` is crucial because returning `0.0` or `NaN` would hide these errors, which the validator needs to act on.
+* **Module Exposure:** Registered in [lib.rs](file:///home/gary/dev/hexcell/worktrees/HEX-053/crates/hexcell-core/src/lib.rs#L21) under `pub mod similitud;`.
+* **Unit Tests:** Created in [similitud.rs (tests)](file:///home/gary/dev/hexcell/worktrees/HEX-053/crates/hexcell-core/tests/similitud.rs) to verify all scenarios from `AC-8` (orthogonal, identical, opposite vectors, magnitude zero, and length mismatches).
+
+### 2. Generalizing the Storage Inspector
+The storage inspector has been modified to accept an explicit file path instead of a data directory.
+* **File:** [conocimiento.rs](file:///home/gary/dev/hexcell/worktrees/HEX-053/crates/hexcell-storage/src/conocimiento.rs#L228)
+* **Function:** [`inspeccionar_base_en_sombra`](file:///home/gary/dev/hexcell/worktrees/HEX-053/crates/hexcell-storage/src/conocimiento.rs#L228)
+* **Design Decision:** The inspector now takes a path to any SQLite epoch file (e.g. `knowledge_staging.db` or `knowledge_epoch_N.db`). It continues using `abrir_solo_lectura` to guarantee that missing files generate errors instead of silently creating empty databases.
+* **Callsite Churn:** The six test callsites inside [ingesta.rs](file:///home/gary/dev/hexcell/worktrees/HEX-053/crates/hexcell/tests/ingesta.rs) have been updated to join `NOMBRE_DE_ARCHIVO_DE_CONOCIMIENTO_EN_SOMBRA` themselves.
+
+### 3. Implementing the Integrity Gate (Application Service)
+The integrity validator acts as the guard before promoting a staging index to production. It runs fully offline with zero network dependencies.
+* **File:** [validacion.rs](file:///home/gary/dev/hexcell/worktrees/HEX-053/crates/hexcell-storage/src/validacion.rs#L111)
+* **Function:** [`validar_integridad_del_indice`](file:///home/gary/dev/hexcell/worktrees/HEX-053/crates/hexcell-storage/src/validacion.rs#L111)
+* **Domain Types:** Added [`SondaResuelta`](file:///home/gary/dev/hexcell/worktrees/HEX-053/crates/hexcell-storage/src/validacion.rs#L16), [`MotivoDeRechazo`](file:///home/gary/dev/hexcell/worktrees/HEX-053/crates/hexcell-storage/src/validacion.rs#L29), and [`VeredictoDeIntegridad`](file:///home/gary/dev/hexcell/worktrees/HEX-053/crates/hexcell-storage/src/validacion.rs#L77). 
+* **Design Decision (PartialEq Only):** Because `f32` floats (like thresholds and similarity scores) are carried in the payloads, we derive `PartialEq` but NOT `Eq`, `Hash`, or `Ord`, avoiding compilation failures on floating-point comparison boundaries.
+* **Checks Executed (In-Order and Accumulated):**
+  1. **Metadata Existence:** If `metadatos_de_epoca` is absent, we return `Ok` containing `MotivoDeRechazo::MetadatosDeEpocaAusentes` along with skip markers for subsequent checks.
+  2. **Orphan Vectors:** Checks `fragmentos_sin_vector > 0` which points to ingestion-invariant bugs.
+  3. **Ordinal Contiguity:** Verifies that ordinals map strictly from `0..cantidad_de_fragmentos`.
+  4. **Index Emptiness:** Rejects indexes with zero fragments.
+  5. **Fragmentation Coverage:** Re-runs `fragmentar` over streamed `documentos.contenido` values and compares chunk counts against the actual count in the database.
+  6. **Dimensional Uniformity:** Joins tables to identify vectors where the length is not equal to `4 * dimension_de_embedding`.
+  7. **Semantic Probe:** Compares a caller-supplied pre-computed vector against all fragments, keeping the best local similarity and validating it against the threshold.
+* **Memory Discipline (NFR-01):** To respect the 80 MB cell memory budget, `documentos.contenido` and `vectores_de_fragmento` are streamed row-by-row using SQLite prepared statements instead of allocating vector lists in memory at once.
+* **Grep Guards compliance:** The validator does not name or import `hyper`, `reqwest`, `incrustar_lote`, or any external providers, and completely delegating complex mathematics (`sqrt`, `powi`, `abs`) to the core crate, complying with the grep guard.
+* **Module Exposure:** Exposed in storage's [lib.rs (storage)](file:///home/gary/dev/hexcell/worktrees/HEX-053/crates/hexcell-storage/src/lib.rs#L72).
+
+### 4. Integration Tests
+* **File:** [validacion.rs (tests)](file:///home/gary/dev/hexcell/worktrees/HEX-053/crates/hexcell-storage/tests/validacion.rs)
+* **Design Decision (Bypassing Ingestion Invariants):** In accordance with `AC-1`, tests construct defective databases directly via `Rusqlite` raw insertions rather than the ingestion pipeline. 
+* **Scenarios Covered:** Direct tests for orphaned vectors (`AC-1`), ordinal gaps (`AC-2`), re-fragmentation mismatches (`AC-3`), dimensional mismatches (`AC-4`), deleted epoch metadata (`AC-5`), probe threshold passes/failures (`AC-6`), non-standard filenames (`AC-7`), empty indexes, and multi-error accumulation.
+
+All code comments, documentation strings, and identifiers are written in Spanish didactic prose explaining *why* the implementation choices were made. The English banned word guard checks successfully pass without triggering matches on any of the modified files.
+
+As instructed by the rule **"Never build after changes"**, I have not run any build, test, or clippy commands following the edits. The task is fully complete and ready for your review and verification.

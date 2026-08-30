@@ -1,0 +1,54 @@
+{
+  "task_id": "HEX-053",
+  "bundle_hash": "2b440bb4b6ba9a9cf516d0d23e9297e3bd820bd5b256b8f80d1ee586916102ad",
+  "files": [
+    ".ai/tasks/active/HEX-053-new-spec/00-spec.yaml",
+    ".ai/tasks/active/HEX-053-new-spec/01-blueprint.yaml",
+    "crates/hexcell-core/Cargo.toml",
+    "crates/hexcell-core/src/embeddings.rs",
+    "crates/hexcell-core/src/fragmentacion.rs",
+    "crates/hexcell-core/src/lib.rs",
+    "crates/hexcell-storage/migraciones/conocimiento/0002-esquema-de-conocimiento.sql",
+    "crates/hexcell-storage/src/conocimiento.rs",
+    "crates/hexcell-storage/src/error.rs",
+    "crates/hexcell-storage/src/lib.rs",
+    "crates/hexcell-storage/src/migraciones.rs",
+    "crates/hexcell-storage/src/pools.rs",
+    "crates/hexcell-storage/tests/comun/mod.rs",
+    "crates/hexcell-storage/tests/conocimiento.rs"
+  ],
+  "protocol_version": "fleet-bundle-protocol/v2",
+  "created_at": "2026-08-30T20:03:49Z",
+  "dropped": [
+    {
+      "component": "code_slice",
+      "path": "docs/plan/fase-a-5-conocimiento-shadow-db.md",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "docs/adr/adr-0010-puerto-de-canal.md",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "docs/adr/adr-0002-estructura-workspace.md",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "crates/hexcell/tests/ingesta.rs",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "crates/hexcell/src/ingesta.rs",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "crates/hexcell-storage/tests/migraciones.rs",
+      "reason": "bundle exceeded max_bytes budget"
+    }
+  ]
+}

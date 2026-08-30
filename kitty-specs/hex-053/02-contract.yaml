@@ -1,0 +1,130 @@
+task_id: HEX-053
+summary: "Integrity gate refusing promotion of a knowledge index, plus the std-only cosine function stage A-5 task 9 will reuse unchanged."
+goal: >-
+  Add similitud_coseno to hexcell-core using nothing but std, and add a validator to
+  hexcell-storage that opens ANY epoch database file read-only by explicit path, reuses
+  inspeccionar_base_en_sombra as its factual base, runs the structural checks and one semantic
+  probe against a caller-supplied probe vector and threshold, and returns a structured verdict
+  that enumerates every failed check. The gate exists to REFUSE: when it rejects, promotion
+  aborts and production keeps serving the current epoch with no manual intervention. It makes
+  zero network calls, so it can never fail because a provider did.
+read:
+  - .ai/tasks/active/HEX-053-new-spec/00-spec.yaml
+  - .ai/tasks/active/HEX-053-new-spec/01-blueprint.yaml
+  - crates/hexcell-storage/migraciones/conocimiento/0002-esquema-de-conocimiento.sql
+  - crates/hexcell-storage/src/conocimiento.rs
+  - crates/hexcell-storage/src/pools.rs
+  - crates/hexcell-storage/src/error.rs
+  - crates/hexcell-storage/src/migraciones.rs
+  - crates/hexcell-storage/src/lib.rs
+  - crates/hexcell-storage/tests/comun/mod.rs
+  - crates/hexcell-storage/tests/migraciones.rs
+  - crates/hexcell-storage/tests/conocimiento.rs
+  - crates/hexcell-core/src/fragmentacion.rs
+  - crates/hexcell-core/src/embeddings.rs
+  - crates/hexcell-core/src/lib.rs
+  - crates/hexcell-core/Cargo.toml
+  - crates/hexcell/src/ingesta.rs
+  - crates/hexcell/tests/ingesta.rs
+  - docs/plan/fase-a-5-conocimiento-shadow-db.md
+  - docs/adr/adr-0002-estructura-workspace.md
+  - docs/adr/adr-0010-puerto-de-canal.md
+touch:
+  - crates/hexcell-core/src/similitud.rs
+  - crates/hexcell-core/src/lib.rs
+  - crates/hexcell-core/tests/similitud.rs
+  - crates/hexcell-storage/src/validacion.rs
+  - crates/hexcell-storage/src/conocimiento.rs
+  - crates/hexcell-storage/src/lib.rs
+  - crates/hexcell-storage/tests/validacion.rs
+  - crates/hexcell/tests/ingesta.rs
+forbid:
+  files:
+    - crates/hexcell-core/Cargo.toml
+    - crates/hexcell-storage/Cargo.toml
+    - crates/hexcell/Cargo.toml
+    - Cargo.toml
+    - crates/hexcell-storage/src/migraciones.rs
+    - crates/hexcell-storage/src/pools.rs
+    - crates/hexcell-storage/src/error.rs
+    - crates/hexcell-storage/migraciones/conocimiento/0001-esquema-minimo.sql
+    - crates/hexcell-storage/migraciones/conocimiento/0002-esquema-de-conocimiento.sql
+    - crates/hexcell-storage/tests/migraciones.rs
+    - crates/hexcell-storage/tests/conocimiento.rs
+    - crates/hexcell-storage/tests/pools.rs
+    - crates/hexcell-storage/tests/respaldo.rs
+    - crates/hexcell/src/ingesta.rs
+    - crates/hexcell/src/embeddings.rs
+    - .gitignore
+    - .ai/tasks/active/HEX-053-new-spec/00-spec.yaml
+  behaviors:
+    - "Never add any entry to crates/hexcell-core/Cargo.toml. Its [dependencies] table is empty on purpose and its own comment calls that an acceptance criterion (adr-0002). AC-8 asserts it stays empty, a guard checks it, and the file is forbidden anyway. The cosine function needs only f32 arithmetic and f64 accumulation, both in std; there is no case for libm, nalgebra or any numeric crate."
+    - "Never re-implement cosine, dot product or vector norm inside crates/hexcell-storage. Stage A-5 task 9 is expected to call hexcell_core::similitud::similitud_coseno UNCHANGED, and its signature is a cross-task contract. A second copy in the storage layer is the duplication this workspace forbids elsewhere; a comment-stripped guard rejects sqrt, powi and .abs() in the validator for exactly this reason."
+    - "Never give similitud_coseno a bare f32 return type. A length mismatch and a zero-magnitude vector both make cosine undefined, and returning 0.0 or NaN for them makes an undefined comparison look like a real score of maximum dissimilarity. It returns Option<f32>, None in both cases, and the doc comment says why. Clamp the result to [-1, 1]: accumulated float error over 768 dimensions can land just outside."
+    - "Never let the validator perform, import or transitively reach a network call. It receives an ALREADY-RESOLVED probe vector and computes similarity locally. This is the property that makes the gate trustworthy: it cannot fail because the network failed, and it is fully offline-testable. Never name hyper, reqwest, http, ProveedorDeEmbeddings, ServicioDeEmbeddings or incrustar_lote in crates/hexcell-storage/src/validacion.rs; a guard enforces it."
+    - "Never return a bare boolean, an Option, or a bare error string from the validator. The verdict is a structured type: an approval carries the observed fragment count, the declared dimension, the observed similarity and the applied threshold; a rejection carries a collection of typed reasons, each with its concrete data. An aborted promotion has to tell an operator WHAT was wrong without reading logs or source."
+    - "Never short-circuit on the first failed check. Every computable check runs and every failure is accumulated into one rejection. A gate that reports one problem per run turns a single bad index into several build-and-abort cycles. The only checks that may be skipped are the ones that are genuinely not computable, and each skip must surface as its own reason rather than as silence."
+    - "Never treat an absent metadatos_de_epoca row as an error, an Err variant, a panic, an unwrap or an unexpected-state branch. HEX-052 DELETES that singleton when zero embeddings resolved precisely so the file never declares a dimension it did not observe, so None is a NORMAL, EXPECTED outcome meaning not promotable. AC-5 requires Ok with a rejection. No unwrap, expect or panic! anywhere in the validator."
+    - "Never treat fragmentos_sin_vector greater than zero as an incompleteness or partial-run signal. Verified in the merged crates/hexcell/src/ingesta.rs: a fragment whose embedding did not resolve is written to NEITHER table, so orphan-free is an INVARIANT of any file this pipeline produces. A non-zero value means the invariant is broken, which is a hard structural failure, and its reason must be distinct from and not conflated with the ordinal and coverage reasons (AC-1)."
+    - "Never conflate the two incompleteness checks or drop either. Ordinal contiguity over ResumenDeInspeccion.ordinales and the count of fragmentos against a re-fragmentation of documentos.contenido are independent and both required. Never renumber, compact or smooth ordinals to close a gap: the gap is the signal HEX-052 deliberately preserved."
+    - "Never re-fragment with a configuration the validator invented. The ConfiguracionDeFragmentacion is supplied by the caller and must be the one used at ingestion; a mismatched configuration producing a false coverage failure is a known limitation to DOCUMENT in the doc comment, not a defect to paper over by guessing, by storing a second copy, or by weakening the check to a tolerance."
+    - "Never load every fragment vector or every documentos.contenido into memory at once. A cell has 80 MB (NFR-01) and 2000 fragments at 768 dimensions is already 6 MB of vectors. Stream both with a prepared statement, keeping only a running count and a running best similarity. Never SELECT the vectors into a Vec first and iterate afterwards."
+    - "Never hardcode, default, or infer a similarity threshold anywhere in production code, not as a const, not as a Default impl, not as an unwrap_or. No measured value exists for any real catalogue; calibration is stage A-7. The threshold is a required caller-supplied input and every test passes an explicit test-local value."
+    - "Never compute a similarity over an empty index. The maximum of an empty set is undefined, so zero fragments is its own rejection reason, and the semantic comparison is skipped rather than defaulted to 0.0."
+    - "Never take a data directory plus a hardcoded filename as the validator's entry point. It takes an explicit file path so it works unchanged against knowledge_staging.db or any knowledge_epoch_N.db, which is what stage A-5 task 8 depends on and what AC-7 proves against a non-staging filename."
+    - "EXPLICITLY PERMITTED and required by blueprint steps 3 and 4: changing inspeccionar_base_en_sombra's parameter from a data directory to an explicit database file path, rewriting its doc comment accordingly, and updating its six call sites in crates/hexcell/tests/ingesta.rs to join NOMBRE_DE_ARCHIVO_DE_CONOCIMIENTO_EN_SOMBRA themselves. This is in scope and must NOT be treated as a forbidden change to merged code. Verified: it has zero production callers, and crates/hexcell-storage/tests/conocimiento.rs does not call it, so HEX-052's storage-side tests need no edit and stay forbidden. Do not change any assertion in ingesta.rs; only the argument moves."
+    - "Never keep or add a second public inspector that still takes a directory. One function, one shape. A directory-shaped inspector sitting beside a path-shaped validator is the duplicated seam this workspace removes elsewhere."
+    - "Never keep opening the file with anything but pools::abrir_solo_lectura. SQLITE_OPEN_READ_ONLY is what makes a missing file fail loudly instead of being silently created as an empty database that later fails with no such table. A gate that creates the thing it is auditing is not a gate. Never add a new public connection factory to the crate; the pub(crate) helper is reachable from a sibling module exactly as almacen_de_identidad.rs already reaches it."
+    - "Never derive Eq, Hash or Ord on any type carrying an f32. VeredictoDeIntegridad and MotivoDeRechazo hold similarity and threshold values, so PartialEq is the most they can derive; copying the derive list from ResumenDeInspeccion is a compile error. Say why in a comment."
+    - "Never edit a migration file, migraciones.rs, or VERSION_DE_ESQUEMA_DE_CONOCIMIENTO. No schema change is in scope under this contract. Applied migrations are immutable history and the ladder only grows forward with a new numbered step, in a task that owns one."
+    - "Never create the sonda_semantica table, persist a probe vector or a threshold into any database, or add probe-recording to the ingestion pipeline. That work is designed in 01-blueprint.yaml and deliberately deferred to a sibling task pending a human decision; adding it here silently is a scope violation. If it looks necessary to satisfy an acceptance criterion, it is not: AC-6 supplies the probe from the caller."
+    - "Never add rusqlite, SQL or a Connection to crates/hexcell or crates/hexcell-core. crates/hexcell's manifest omits the driver on purpose and says so in a comment (adr-0010); hexcell-core has no dependencies at all (adr-0002). Every statement in this task lives in crates/hexcell-storage. If a design seems to need SQL outside that crate, the design is wrong."
+    - "Never add an async construct, tokio, or a spawn_blocking wrapper to crates/hexcell-storage. That crate declares itself synchronous in its own lib.rs: whoever already runs a runtime decides how to schedule blocking work. The validator is a plain synchronous function."
+    - "Never assume the value of PRAGMA foreign_keys; assert it. In this workspace libsqlite3-sys compiles the bundled amalgamation with -DSQLITE_DEFAULT_FOREIGN_KEYS=1, so a raw Connection::open has foreign keys ON and the comment in pools.rs claiming otherwise is locally false. This matters concretely: deleting a fragmentos row to orphan its vector CASCADES and deletes the vector too, so AC-1's fixture must delete from vectores_de_fragmento instead. Never assert the knowledge schema version as a literal integer either; read VERSION_DE_ESQUEMA_DE_CONOCIMIENTO."
+    - "Never let a fixture forget the seeded dimension. The 0002 migration inserts metadatos_de_epoca with dimension_de_embedding = 768, and HEX-052 only rewrites or deletes it at the end of a real ingestion. A test that migrates and then writes 8-dimensional vectors without updating that row declares 768 while holding 32-byte BLOBs. AC-4 exploits that on purpose; every other fixture must set the row to the dimension it actually wrote or it fails for the wrong reason."
+    - "Never build the defective fixtures through the ingestion pipeline. AC-1 explicitly requires constructing them directly, bypassing the invariant that normally prevents them: apply aplicar_migraciones_de_conocimiento, then write rows with raw rusqlite. Reuse the existing DirectorioTemporal helper from tests/comun/mod.rs, which cleans up on Drop; do not add a temporary-directory crate."
+    - "Never let a test reach a live embeddings API, bind a socket, or read an API key from the environment. Every test in this task runs fully offline against directly constructed SQLite fixtures and hand-written probe vectors."
+    - "Never implement the promotion sequence, WAL checkpoint-and-rename, symlink reassignment, ArcSwap substitution, graceful drain, epoch retention, the revert command, the RAG retrieval engine, the admin HTTP endpoint, the switchover stress test or the backup-interaction check. Every one is a later A-5 task and an explicit spec non-goal. This task builds the gate they will call and nothing else; naming those seams in comments is welcome, implementing them is forbidden."
+    - "Never define an HTTP route, a JSON payload, a serde derive or any admin-network surface. The entry point is a plain in-process Rust function taking already-decoded values. hexcell-storage has no serde dependency and must not gain one."
+    - "Never author a new ADR and never touch docs/. The blueprint records that adr-0002, adr-0010 and adr-0025 already cover every decision here and that adr-0006 is reserved for tasks 6 to 8. If implementation surfaces a decision none of them anticipated, report it as a blocker for a human instead of resolving it silently."
+    - "Never write English prose, English comments or English identifiers in repository content. The repository is PUBLIC and all of its prose is Spanish; only the Quorum artifact field values are English. Comments are didactic and explain WHY, not what the line does. Dates are absolute, in the form '30 de agosto de 2026'. A case-insensitive guard enforces this and was verified on main to be silent on every touched pre-existing file, on Spanish didactic prose and on the SQL this design emits, while catching a real English sentence."
+    - "Never introduce mass-sending folklore: no jitter, no warm-up protocol, no proxy, no VPN, no IP rotation. This task introduces no network behaviour of any kind."
+    - "Never write a *.db, *.db-wal, *.db-shm or .env file into the repository tree, commit a secret, or leave a temporary directory behind. .gitignore already covers all four and is forbidden."
+    - "Never modify 00-spec.yaml, 01-blueprint.yaml or this contract."
+verify:
+  commands:
+    - cargo fmt --check
+    - cargo clippy --workspace -- -D warnings
+    - cargo build --workspace
+    - cargo test --workspace
+    - "bash -c 'F=\"crates/hexcell-core/src/similitud.rs crates/hexcell-core/src/lib.rs crates/hexcell-core/tests/similitud.rs crates/hexcell-storage/src/validacion.rs crates/hexcell-storage/src/conocimiento.rs crates/hexcell-storage/src/lib.rs crates/hexcell-storage/tests/validacion.rs crates/hexcell/tests/ingesta.rs\"; for f in $F; do test -f \"$f\" || exit 1; done; W=\"the|this|that|which|because|should|would|about|threshold|similarity|cosine|verdict|rejection|approval|promotion|integrity|validator|structural|missing|failed|gate|however|therefore|instead|rather|through|against|without|every|their|there|these|those|neither|either\"; ! grep -nEi \"\\b($W)\\b\" $F'"
+    - "bash -c '! sed -n \"/^\\[dependencies\\]/,\\$p\" crates/hexcell-core/Cargo.toml | tail -n +2 | grep -qvE \"^[[:space:]]*(#.*)?$\"'"
+    - "bash -c 'test -f crates/hexcell-storage/src/validacion.rs && ! grep -qiE \"hyper|reqwest|incrustar_lote|ProveedorDeEmbeddings|ServicioDeEmbeddings|http\" crates/hexcell-storage/src/validacion.rs'"
+    - "bash -c 'test -f crates/hexcell-storage/src/validacion.rs && ! sed \"s|//.*||\" crates/hexcell-storage/src/validacion.rs | grep -qE \"sqrt|powi|\\.abs\\(\\)\"'"
+    - "bash -c 'test -f crates/hexcell-storage/src/validacion.rs && sed \"s|//.*||\" crates/hexcell-storage/src/validacion.rs | grep -q \"similitud_coseno\"'"
+    - "bash -c 'test -f crates/hexcell-storage/src/validacion.rs && ! sed \"s|//.*||\" crates/hexcell-storage/src/validacion.rs | grep -qE \"\\.unwrap\\(\\)|\\.expect\\(|panic!|unreachable!|todo!\"'"
+    - "bash -c 'test -f crates/hexcell-core/src/similitud.rs && ! grep -qE \"^[[:space:]]*use +(std::)?(collections|fs|net|io|process|thread)\" crates/hexcell-core/src/similitud.rs'"
+    - "bash -c '! grep -rnE \"rusqlite|Connection::open\" crates/hexcell-core/src crates/hexcell-core/tests'"
+    - "bash -c 'test -f crates/hexcell-storage/tests/validacion.rs && sed \"s|//.*||\" crates/hexcell-storage/tests/validacion.rs | grep -q \"PRAGMA foreign_keys\"'"
+    - "bash -c 'git diff --name-only main -- crates/hexcell-storage/migraciones crates/hexcell-storage/src/migraciones.rs crates/hexcell/src/ingesta.rs | wc -l | grep -qx 0'"
+  target_s: 55
+limits:
+  max_files_changed: 9
+  max_diff_lines: 1600
+  per_class:
+    - glob: "crates/hexcell-core/src/**"
+      max_diff_lines: 180
+    - glob: "crates/hexcell-core/tests/**"
+      max_diff_lines: 220
+    - glob: "crates/hexcell-storage/src/**"
+      max_diff_lines: 560
+    - glob: "crates/hexcell-storage/tests/**"
+      max_diff_lines: 800
+    - glob: "crates/hexcell/tests/**"
+      max_diff_lines: 60
+execution:
+  mode: worktree_edit
+  branch: ai/HEX-053
+retry_policy:
+  max_attempts: 2
+  escalate_after: 2

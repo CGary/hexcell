@@ -1,0 +1,43 @@
+task_id: HEX-053
+summary: Fixed E0599 in validacion.rs (invented rusqlite::Error::Other variant) by adding a new rejection reason, applied cargo fmt, and cleared 3 pre-existing clippy warnings.
+entries:
+  - changed_files:
+      - path: crates/hexcell-storage/src/validacion.rs
+    notes:
+      - "Replaced the illegal wrap of a hexcell-core fragmentation domain error inside ErrorDeAlmacen::Sqlite with a new MotivoDeRechazo::FragmentacionDeCoberturaFallida { id_documento, descripcion } variant, since a re-fragmentation failure means coverage cannot be computed and that is itself grounds for rejection, not an Err."
+      - "Rendered the domain error to an owned String via Display (to_string), avoiding a public dependency on hexcell_core::fragmentacion::ErrorDeFragmentacion inside the rejection type."
+      - "Selected documentos.id alongside contenido so the new variant carries which document failed; break the loop on first failure since the only failure mode (invalid caller-supplied ConfiguracionDeFragmentacion) is content-independent, so further iterations add no information."
+      - "Ran cargo fmt (previously failing cargo fmt --check)."
+      - "Fixed 3 pre-existing clippy -D warnings failures in the same file: match-ergonomics 'ref meta' bindings (E0596-style clippy lint) and two collapsible-if chains rewritten with edition-2024 let-chains."
+  - changed_files:
+      - path: crates/hexcell-storage/tests/validacion.rs
+    notes:
+      - "Added verificar_fallo_de_refragmentacion_para_calculo_de_cobertura: builds a fixture with an invalid ConfiguracionDeFragmentacion (solapamiento == tamano_de_fragmento) and asserts the verdict is Rechazado carrying FragmentacionDeCoberturaFallida { id_documento: 1, .. } with a non-empty descripcion, never an Err and never Aprobado."
+verify_status: all 10 contract verify.commands exit 0; cargo test --workspace run 3x consecutively with 0 failures each time.
+
+fix_round_2:
+  summary: Applied the three fix_tasks from 06-review.json (revise verdict): non-finite similarity, config validation up front, and the misleading id_documento motive.
+  entries:
+    - changed_files:
+        - path: crates/hexcell-core/src/similitud.rs
+      notes:
+        - "similitud_coseno now returns None whenever the accumulated norms, dot product, or final quotient are not finite (NaN or infinite), closing the gap where a NaN silently passed every comparison (NaN <= 0.0 and NaN == 0.0 are both false) and clamp() propagated it unchanged."
+    - changed_files:
+        - path: crates/hexcell-core/tests/similitud.rs
+      notes:
+        - "Added 3 unit tests: NaN component, infinite component, and a mix of NaN/Inf with finite values, all asserting None."
+    - changed_files:
+        - path: crates/hexcell-storage/src/validacion.rs
+      notes:
+        - "Moved ConfiguracionDeFragmentacion validation to the entry point, before opening the file or reading any row; replaced MotivoDeRechazo::FragmentacionDeCoberturaFallida{id_documento, descripcion} with ConfiguracionDeFragmentacionInvalida{tamano_de_fragmento, solapamiento}, which is provably knowable from the argument alone and no longer blames an arbitrary first document row."
+        - "Added MotivoDeRechazo::VectoresIncomparables{cantidad}; the probe loop now counts rows whose vector could not be decoded or compared (via similitud_coseno returning None), and rejects with that exact count instead of the former SimilitudInsuficiente{similitud_observada:-1.0} safeguard, which invented an observation that never happened."
+        - "The running-maximum match now only ever stores a Some(f32) that is guaranteed finite (similitud_coseno already excludes non-finite outputs), so approval is structurally unreachable on an incomputable similarity."
+        - "Simplified the fragmentation-coverage loop: since the config is validated on entry, fragmentar's Err arm is provably unreachable there, so it's now handled with `if let Ok(...)` instead of a match with a dead rejection branch."
+    - changed_files:
+        - path: crates/hexcell-storage/tests/validacion.rs
+      notes:
+        - "Replaced verificar_fallo_de_refragmentacion_para_calculo_de_cobertura with verificar_configuracion_de_fragmentacion_invalida_se_rechaza_en_la_entrada, which calls the validator against a nonexistent path to prove the rejection never opens the file or reads a document."
+        - "Added verificar_vector_degradado_a_nan_se_rechaza_en_vez_de_aprobarse: a single fragment whose vector decodes to 4 NaN f32 components (byte-length-correct BLOB) asserts Rechazado with VectoresIncomparables{cantidad:1}, the direct regression guard for the reviewer-identified wrongful-approval defect."
+        - "Added verificar_todos_los_vectores_de_dimension_distinta_se_rechazan_como_incomparables: two vectors of a different dimension than the probe (2 and 3 components) both decode but cannot be length-compared, asserting Rechazado with VectoresIncomparables{cantidad:2}."
+        - "Trimmed test bodies (shared helpers bytes_le, preparar_base_con_fragmentos_sin_vector, afirmar_rechazo_por_incomparables) to keep the file's diff against main at exactly 800 lines, the per-class contract limit for crates/hexcell-storage/tests/**."
+  verify_status: "all 14 contract verify.commands exit 0 (re-run after the fix round); cargo test --workspace run 3x consecutively with 0 failures each time; per-class diff vs main: core/src 79/180, core/tests 123/220, storage/src 376/560, storage/tests 800/800 (at the limit, not exceeding), hexcell/tests unchanged at 42/60; total diff 1420/1600."

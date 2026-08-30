@@ -1,0 +1,111 @@
+task_id: HEX-053
+summary: "Knowledge index integrity gate in hexcell-storage plus a std-only cosine function in hexcell-core; the gate refuses promotion with a structured verdict and makes zero network calls."
+affected_files:
+  - crates/hexcell-core/src/similitud.rs
+  - crates/hexcell-core/src/lib.rs
+  - crates/hexcell-core/tests/similitud.rs
+  - crates/hexcell-storage/src/validacion.rs
+  - crates/hexcell-storage/src/conocimiento.rs
+  - crates/hexcell-storage/src/lib.rs
+  - crates/hexcell-storage/tests/validacion.rs
+  - crates/hexcell/tests/ingesta.rs
+symbols:
+  - "hexcell_core::similitud::similitud_coseno"
+  - "hexcell_storage::validacion::validar_integridad_del_indice"
+  - "hexcell_storage::validacion::VeredictoDeIntegridad"
+  - "hexcell_storage::validacion::MotivoDeRechazo"
+  - "hexcell_storage::validacion::SondaResuelta"
+  - "hexcell_storage::conocimiento::inspeccionar_base_en_sombra"
+  - "hexcell_storage::conocimiento::ResumenDeInspeccion"
+dependencies:
+  - crates/hexcell-storage/migraciones/conocimiento/0002-esquema-de-conocimiento.sql
+  - crates/hexcell-storage/src/pools.rs
+  - crates/hexcell-storage/src/error.rs
+  - crates/hexcell-storage/src/migraciones.rs
+  - crates/hexcell-core/src/fragmentacion.rs
+  - crates/hexcell-core/src/embeddings.rs
+  - crates/hexcell-core/Cargo.toml
+  - crates/hexcell-storage/tests/comun/mod.rs
+  - crates/hexcell-storage/tests/migraciones.rs
+  - crates/hexcell/src/ingesta.rs
+  - docs/plan/fase-a-5-conocimiento-shadow-db.md
+test_scenarios:
+  - statement: "A fragmento with no row in vectores_de_fragmento, built directly by the test, is rejected with an orphan-specific reason that is not conflated with the ordinal or coverage reasons."
+    covers: ["AC-1"]
+  - statement: "Ordinals 0, 1, 3 are rejected with a reason naming 2 as the missing ordinal."
+    covers: ["AC-2"]
+  - statement: "A fragmentos count that disagrees with re-fragmenting documentos.contenido under the supplied ConfiguracionDeFragmentacion is rejected, reporting both expected and actual counts."
+    covers: ["AC-3"]
+  - statement: "A vector BLOB whose length is not 4 * dimension_de_embedding is rejected with a dimensional reason, while the table CHECK (multiple of 4) still passes."
+    covers: ["AC-4"]
+  - statement: "A file whose metadatos_de_epoca singleton row was deleted returns Ok with a rejection naming the absent epoch metadata; no panic, no Err variant, no unwrap."
+    covers: ["AC-5"]
+  - statement: "With a caller-supplied probe vector and threshold, a best cosine at or above the threshold approves and reports the observed similarity; below it, rejects naming observed versus configured. Neither run opens a socket."
+    covers: ["AC-6"]
+  - statement: "The same structurally valid file copied to knowledge_epoch_3.db validates identically through the explicit path parameter, proving reusability for the task-8 revert."
+    covers: ["AC-7"]
+  - statement: "similitud_coseno returns 1.0 for identical, 0.0 for orthogonal and -1.0 for opposite vectors within tolerance, None for length mismatch and None for a zero-magnitude vector; hexcell-core's [dependencies] table stays empty."
+    covers: ["AC-8"]
+  - statement: "A structurally valid, above-threshold index yields an approval carrying fragment count, declared dimension, observed similarity and applied threshold."
+  - statement: "An index with zero fragments is rejected as empty rather than producing a similarity over an empty set."
+  - statement: "Several independent failures in one file are all enumerated in a single rejection, not short-circuited at the first one."
+strategy:
+  - step: 1
+    action: "Value object: add similitud_coseno(a: &[f32], b: &[f32]) -> Option<f32> in a new hexcell-core module. None when lengths differ or either magnitude is zero, so the caller can never read a sentinel as a score. Accumulate dot and norms in f64 and return f32, clamped to [-1, 1] to absorb float drift over 768 dimensions. std only; the crate's dependency table stays empty."
+    files:
+      - crates/hexcell-core/src/similitud.rs
+      - crates/hexcell-core/src/lib.rs
+  - step: 2
+    action: "Unit-test the value object directly for AC-8, including the two None cases, using an explicit epsilon rather than exact float equality."
+    files:
+      - crates/hexcell-core/tests/similitud.rs
+  - step: 3
+    action: "Generalise the existing inspector: change inspeccionar_base_en_sombra's parameter from a data directory to an explicit database file path, and rewrite its doc comment to say why. It keeps opening the file once with pools::abrir_solo_lectura so a missing file errors instead of being created. This is a deliberate, in-scope signature change to merged code; it has no production caller today and HEX-053 is its first."
+    files:
+      - crates/hexcell-storage/src/conocimiento.rs
+  - step: 4
+    action: "Update the six call sites of that inspector, all in one test file, to join NOMBRE_DE_ARCHIVO_DE_CONOCIMIENTO_EN_SOMBRA themselves. The constant is already imported there and the same join already appears at line 106, so the churn is mechanical and no assertion changes."
+    files:
+      - crates/hexcell/tests/ingesta.rs
+  - step: 5
+    action: "Domain types of the gate: SondaResuelta { vector, umbral_de_aceptacion } as the already-resolved probe input, MotivoDeRechazo enumerating every distinct failure with its concrete data, and VeredictoDeIntegridad as Aprobado{..} or Rechazado{ motivos }. Only PartialEq is derived: an f32 payload makes Eq impossible, and the reason belongs in a comment."
+    files:
+      - crates/hexcell-storage/src/validacion.rs
+  - step: 6
+    action: "Validator (application service): validar_integridad_del_indice(ruta_archivo, configuracion_de_fragmentacion, sonda) opens the file once read-only, reuses inspeccionar_base_en_sombra as its factual base, and ACCUMULATES every failed check instead of short-circuiting, because an aborted promotion must tell an operator everything that was wrong in one pass."
+    files:
+      - crates/hexcell-storage/src/validacion.rs
+  - step: 7
+    action: "Structural checks, in this order: absent epoch metadata (Ok rejection, never Err); fragmentos_sin_vector greater than zero as an ingestion-invariant bug distinct from incompleteness; ordinal contiguity over ResumenDeInspeccion.ordinales; empty index; coverage against a re-fragmentation; and dimensional uniformity via length(vector) <> 4 * dimension_de_embedding. The last two are skipped, with their own reason, when the declared dimension is absent, since neither is computable without it."
+    files:
+      - crates/hexcell-storage/src/validacion.rs
+  - step: 8
+    action: "Memory discipline (NFR-01, 80 MB per cell): stream documentos.contenido row by row, fragmenting each and keeping only a running count, and stream vectores_de_fragmento row by row keeping only the running best similarity. Never collect all texts or all vectors; 2000 fragments at 768 dimensions is 6 MB of vectors alone."
+    files:
+      - crates/hexcell-storage/src/validacion.rs
+  - step: 9
+    action: "Semantic probe: decode each stored BLOB with the merged VectorDeEmbedding::desde_bytes_le, call similitud_coseno against the caller-supplied probe, and take the BEST (maximum) similarity. Compare with >= against the caller-supplied threshold. No default threshold exists anywhere in the code; tests pass an explicit test-local value."
+    files:
+      - crates/hexcell-storage/src/validacion.rs
+  - step: 10
+    action: "Export the module and its three public types from the storage crate root, matching how the crate already re-exports its other domain types."
+    files:
+      - crates/hexcell-storage/src/lib.rs
+  - step: 11
+    action: "Acceptance tests: build each defective file directly with aplicar_migraciones_de_conocimiento plus raw rusqlite INSERTs, bypassing the ingestion invariant exactly as AC-1 requires, on top of the existing DirectorioTemporal helper. Assert PRAGMA foreign_keys rather than assuming it. AC-7 copies a valid file to knowledge_epoch_3.db and revalidates."
+    files:
+      - crates/hexcell-storage/tests/validacion.rs
+risks:
+  - "SCOPE, needs a human decision: the spec's probe-persistence invariant is NOT implemented by this blueprint. It is the only spec item no acceptance criterion covers (AC-6 supplies the probe from the caller), and 00-spec.yaml itself routes its design to blueprint-phase confirmation. Implementing it here would add a schema migration and a change to merged ingestion, roughly doubling the contract. Recommended as sibling HEX-054, cut at the SondaResuelta seam so nothing designed here is reworked."
+  - "Designed but deferred, for the human to confirm: a new additive migration 0003-sonda-semantica.sql creating a singleton table sonda_semantica (id INTEGER PRIMARY KEY CHECK (id = 1), texto_de_la_sonda TEXT NOT NULL, vector BLOB NOT NULL CHECK (length > 0 AND length % 4 = 0), umbral_de_aceptacion REAL NOT NULL, registrada_ms INTEGER NOT NULL) STRICT, with no seed row, bumping VERSION_DE_ESQUEMA_DE_CONOCIMIENTO from 2 to 3."
+  - "Why a new table and not columns on metadatos_de_epoca: SQLite cannot add a table-level CHECK by ALTER TABLE, so coupling probe and threshold both-or-neither on the existing singleton would force a table rebuild, which is exactly the 12-step trap HEX-051-c hit (PRAGMA foreign_keys is a no-op inside the runner's unchecked_transaction). Two NOT NULL columns in one optional row express the same coupling with no rebuild, and the spec forbids altering merged tables."
+  - "Consequence of the deferral: the probe's dimension must equal metadatos_de_epoca.dimension_de_embedding, and no CHECK can span tables (the 0002 header already says so). That check therefore belongs to the validator. It is designed in as MotivoDeRechazo::DimensionDeLaSondaDiscrepante and works today against the caller-supplied probe, so the sibling task adds persistence only, not a new check."
+  - "Ordering risk if the split is accepted: stage A-5 task 6 seals epochs. If the sibling lands after task 6, already-sealed epochs will carry no probe row and task 8 could not revalidate them without a live call. The sibling must land before task 6, or task 6 must be told to seal a probe."
+  - "Spec wording tension recorded, not resolved by editing 00-spec.yaml: AC-6's statement line says 'average/relevant cosine similarity' while its when-clause says 'best cosine similarity'. This blueprint adopts BEST (maximum), because the gate asks whether the index can answer the probe at all, and an average is dragged down by every unrelated fragment in a healthy catalogue."
+  - "inspeccionar_base_en_sombra's signature changes from a directory to a file path. Verified against the merged tree: it has ZERO production callers and exactly six call sites, all in crates/hexcell/tests/ingesta.rs. crates/hexcell-storage/tests/conocimiento.rs does NOT call it, so HEX-052's storage-side tests are untouched. Keeping a second directory-shaped inspector was rejected as a duplicated seam."
+  - "Not-orphans is an INVARIANT of the merged ingestion, not a signal: crates/hexcell/src/ingesta.rs only pushes a fragment when its vector resolved, so fragmentos_sin_vector greater than zero is a bug. Incompleteness shows up instead as an ordinal gap plus a coverage mismatch, which is precisely what a Parcial run produces."
+  - "The seed row of metadatos_de_epoca declares dimension 768 at migration time; HEX-052 deletes it only when zero embeddings resolved. A test fixture that migrates and then writes fragments without touching that row will therefore declare 768 while holding some other dimension. AC-4 exploits this deliberately; the other fixtures must update the row or they will fail for the wrong reason."
+  - "Verified, contradicting the generic rule: a raw rusqlite Connection::open in THIS workspace has foreign keys ON, because libsqlite3-sys compiles the amalgamation with -DSQLITE_DEFAULT_FOREIGN_KEYS=1. The comment in pools.rs claiming the opposite is locally false. Fixtures that DELETE a fragmentos row to orphan a vector must assert the pragma, not assume it; the cascade will remove the vector too, so AC-1 must delete from vectores_de_fragmento instead."
+  - "VeredictoDeIntegridad and MotivoDeRechazo carry f32 payloads, so they cannot derive Eq the way ResumenDeInspeccion does. Deriving it is a compile error, not a style choice."
+  - "No ADR is needed. adr-0002 already governs the empty core dependency table, adr-0010 the SQL boundary, adr-0025 the embeddings port, and adr-0006 is reserved by the plan for epochs and atomic switchover (tasks 6 to 8). This task adds no decision those four do not already cover. If the human folds the deferred persistence back in, the schema decision is still a migration under the existing ladder rationale, not a new ADR."
+  - "quorum analyze failure-lookup returned null: no failed task overlaps these files. hsme-cli was unavailable (bootstrap open db: no such file or directory), the same failure recorded by HEX-051-c and HEX-052, so no semantic advisory context was available."
