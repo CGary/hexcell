@@ -42,12 +42,10 @@ pub const VERSION_DE_ESQUEMA_DE_SESIONES: i64 = 4;
 
 /// Versión de esquema que este binario espera encontrar en `knowledge_live.db`.
 ///
-/// La versión 2 introduce el esquema completo de conocimiento de la etapa A-5: las tablas
-/// `documentos`, `fragmentos`, `vectores_de_fragmento` y `metadatos_de_epoca`, más la fila
-/// semilla de `metadatos_de_epoca` con dimensión 768. El contrato de representación de vectores
-/// (f32 IEEE-754, little-endian, empaquetado sin cabecera) y el de identidad intrínseca de la
-/// época quedan documentados en la migración `0002-esquema-de-conocimiento.sql`.
-pub const VERSION_DE_ESQUEMA_DE_CONOCIMIENTO: i64 = 2;
+/// La versión 3 añade la tabla singleton `sonda_semantica` para almacenar el vector y el
+/// umbral de aceptación requeridos para la validación fuera de línea de la época, conforme
+/// a la migración `0003-sonda-semantica.sql`.
+pub const VERSION_DE_ESQUEMA_DE_CONOCIMIENTO: i64 = 3;
 
 /// Versión de esquema que este binario espera encontrar en `adapter_identity.db`.
 ///
@@ -73,6 +71,9 @@ const ESQUEMA_MINIMO_DE_CONOCIMIENTO: &str =
 
 const ESQUEMA_DE_CONOCIMIENTO: &str =
     include_str!("../migraciones/conocimiento/0002-esquema-de-conocimiento.sql");
+
+const ESQUEMA_DE_SONDA_SEMANTICA: &str =
+    include_str!("../migraciones/conocimiento/0003-sonda-semantica.sql");
 
 const ESQUEMA_INICIAL_DE_IDENTIDAD: &str =
     include_str!("../migraciones/identidad/0001-esquema-inicial.sql");
@@ -109,6 +110,10 @@ const MIGRACIONES_DE_CONOCIMIENTO: &[PasoDeMigracion] = &[
     PasoDeMigracion {
         version: 2,
         guion: ESQUEMA_DE_CONOCIMIENTO,
+    },
+    PasoDeMigracion {
+        version: 3,
+        guion: ESQUEMA_DE_SONDA_SEMANTICA,
     },
 ];
 

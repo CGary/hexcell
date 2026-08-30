@@ -46,6 +46,7 @@ pub mod tiempo;
 pub mod validacion;
 
 pub use almacen_de_identidad::{AlmacenDeIdentidad, NOMBRE_DE_ARCHIVO_DE_IDENTIDAD_DEL_ADAPTADOR};
+pub use conocimiento::leer_sonda_semantica;
 pub use conocimiento::{
     ConstructorDeConocimientoEnSombra, DocumentoDeIngesta,
     NOMBRE_DE_ARCHIVO_DE_CONOCIMIENTO_EN_SOMBRA, SUFIJO_DE_ARCHIVO_SHM,

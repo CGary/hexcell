@@ -10,6 +10,8 @@
 
 use crate::error::ErrorDeAlmacen;
 use crate::pools::{SUFIJO_DE_ARCHIVO_WAL, abrir_lectura_escritura};
+use crate::validacion::SondaResuelta;
+use hexcell_core::embeddings::VectorDeEmbedding;
 use rusqlite::Connection;
 use std::path::{Path, PathBuf};
 
@@ -165,6 +167,35 @@ impl ConstructorDeConocimientoEnSombra {
         Ok(())
     }
 
+    /// Registra la sonda semántica (texto, vector, umbral de aceptación y marca temporal) en la tabla singleton.
+    /// Serializa el vector como secuencia little-endian de valores de punto flotante f32.
+    pub fn registrar_sonda_semantica(
+        &mut self,
+        texto: &str,
+        vector: &[f32],
+        umbral_de_aceptacion: f32,
+        registrada_ms: i64,
+    ) -> Result<(), ErrorDeAlmacen> {
+        let mut vector_bytes = Vec::with_capacity(vector.len() * 4);
+        for &val in vector {
+            vector_bytes.extend_from_slice(&val.to_le_bytes());
+        }
+
+        self.conexion
+            .execute(
+                "INSERT INTO sonda_semantica (id, texto_de_la_sonda, vector, umbral_de_aceptacion, registrada_ms) VALUES (1, ?1, ?2, ?3, ?4)",
+                rusqlite::params![
+                    texto,
+                    vector_bytes,
+                    umbral_de_aceptacion as f64,
+                    registrada_ms,
+                ],
+            )
+            .map_err(ErrorDeAlmacen::en("registrar la sonda semántica"))?;
+
+        Ok(())
+    }
+
     /// Elimina físicamente la fila semilla de metadatos si no se resolvió ningún embedding,
     /// evitando dejar registrada una dimensión de 768 por defecto que nunca se observó realmente.
     pub fn descartar_metadatos_de_epoca(&mut self) -> Result<(), ErrorDeAlmacen> {
@@ -177,7 +208,7 @@ impl ConstructorDeConocimientoEnSombra {
     }
 
     /// Cierra y consolida la época registrando la dimensión observada.
-    /// Si no se procesaron embeddings, se descarta el registro de metadatos.
+    /// Si no se procesaron embeddings, se descarta el registro de metadatos y la sonda semántica.
     /// Al consumir `self`, garantizamos el cierre ordenado de la conexión.
     pub fn finalizar(mut self) -> Result<(), ErrorDeAlmacen> {
         if let Some(dim) = self.dimension_observada {
@@ -191,6 +222,11 @@ impl ConstructorDeConocimientoEnSombra {
                 ))?;
         } else {
             self.descartar_metadatos_de_epoca()?;
+            self.conexion
+                .execute("DELETE FROM sonda_semantica WHERE id = 1", [])
+                .map_err(ErrorDeAlmacen::en(
+                    "descartar la sonda semántica en ausencia de fragmentos con vector",
+                ))?;
         }
         Ok(())
     }
@@ -290,4 +326,40 @@ pub fn inspeccionar_base_en_sombra(
         metadatos_de_epoca,
         documento_sobrevive,
     })
+}
+
+/// Lee la sonda semántica persistida en el archivo de base de conocimiento indicado.
+///
+/// Abre una única conexión de solo lectura vía `pools::abrir_solo_lectura`.
+/// Si la tabla `sonda_semantica` no contiene ninguna fila, devuelve `Ok(None)`, lo cual
+/// representa un estado normal (base de conocimiento sin sonda persistida).
+/// Si la fila existe pero el vector binario es inválido o corrupto, devuelve
+/// `Err(ErrorDeAlmacen::SondaSemanticaIlegible)`.
+pub fn leer_sonda_semantica(ruta_archivo: &Path) -> Result<Option<SondaResuelta>, ErrorDeAlmacen> {
+    let conexion = crate::pools::abrir_solo_lectura(ruta_archivo)?;
+
+    let resultado: Result<(Vec<u8>, f64), rusqlite::Error> = conexion.query_row(
+        "SELECT vector, umbral_de_aceptacion FROM sonda_semantica WHERE id = 1",
+        [],
+        |fila| Ok((fila.get(0)?, fila.get(1)?)),
+    );
+
+    match resultado {
+        Ok((vector_bytes, umbral_f64)) => {
+            let vector_embedding = VectorDeEmbedding::desde_bytes_le(&vector_bytes)
+                .ok_or_else(|| ErrorDeAlmacen::SondaSemanticaIlegible {
+                    ruta: ruta_archivo.to_path_buf(),
+                    motivo: "el bloque binario del vector no tiene una longitud múltiplo de 4 o no se pudo decodificar".to_string(),
+                })?;
+
+            Ok(Some(SondaResuelta {
+                vector: vector_embedding.valores().to_vec(),
+                umbral_de_aceptacion: umbral_f64 as f32,
+            }))
+        }
+        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+        Err(causa) => Err(ErrorDeAlmacen::en(
+            "leer la sonda semántica de la base de conocimiento",
+        )(causa)),
+    }
 }

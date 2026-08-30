@@ -55,6 +55,14 @@ pub enum ErrorDeAlmacen {
         /// Motivo legible, en español, de por qué no verifica.
         motivo: String,
     },
+    /// La sonda semántica almacenada en la base de conocimiento no se pudo interpretar:
+    /// el vector binario no respeta la alineación de bytes requerida o está corrupto.
+    SondaSemanticaIlegible {
+        /// Ruta de la base de conocimiento que contiene la sonda ilegible.
+        ruta: PathBuf,
+        /// Motivo legible de por qué no se pudo decodificar.
+        motivo: String,
+    },
 }
 
 impl ErrorDeAlmacen {
@@ -98,6 +106,11 @@ impl fmt::Display for ErrorDeAlmacen {
                 "la copia de respaldo {} no superó su verificación: {motivo}",
                 ruta.display()
             ),
+            Self::SondaSemanticaIlegible { ruta, motivo } => write!(
+                f,
+                "la sonda semántica en {} no se pudo leer o está corrupta: {motivo}",
+                ruta.display()
+            ),
         }
     }
 }
@@ -111,6 +124,7 @@ impl std::error::Error for ErrorDeAlmacen {
             Self::DestinoDeRespaldoOcupado { .. } => None,
             Self::DirectorioDeRespaldoInaccesible { .. } => None,
             Self::CopiaCorrupta { .. } => None,
+            Self::SondaSemanticaIlegible { .. } => None,
         }
     }
 }

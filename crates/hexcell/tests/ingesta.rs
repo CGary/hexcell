@@ -124,9 +124,17 @@ async fn ac_1_limpieza_de_basura_previa() {
         repositorio,
     );
 
-    let resumen = ejecutar_ingesta(doc, config, &servicio, ruta_datos, || false)
-        .await
-        .unwrap();
+    let resumen = ejecutar_ingesta(
+        doc,
+        config,
+        &servicio,
+        ruta_datos,
+        "sonda de prueba",
+        0.8,
+        || false,
+    )
+    .await
+    .unwrap();
 
     assert_eq!(resumen.desenlace, DesenlaceDeIngesta::Completa);
     // La base vieja debió ser sobreescrita.
@@ -174,9 +182,17 @@ async fn ac_2_aislamiento_de_la_base_en_vivo() {
         repositorio,
     );
 
-    ejecutar_ingesta(doc, config, &servicio, ruta_datos, || false)
-        .await
-        .unwrap();
+    ejecutar_ingesta(
+        doc,
+        config,
+        &servicio,
+        ruta_datos,
+        "sonda de prueba",
+        0.8,
+        || false,
+    )
+    .await
+    .unwrap();
 
     let meta_post = fs::metadata(&ruta_viva).unwrap();
     assert_eq!(meta_post.len(), tamano_ant);
@@ -256,6 +272,8 @@ async fn ac_3_tamano_de_lote_openrouter_y_gemini() {
         config.clone(),
         &servicio_or,
         ruta_datos,
+        "sonda de lote",
+        0.8,
         || false,
     )
     .await
@@ -263,15 +281,15 @@ async fn ac_3_tamano_de_lote_openrouter_y_gemini() {
 
     assert_eq!(
         resumen_or.lotes_emitidos, 3,
-        "Deberían emitirse exactamente 3 lotes (2+2+1)"
+        "Deberían emitirse exactamente 3 lotes de fragmentos (2+2+1)"
     );
-    assert_eq!(servidor_or.contador.load(Ordering::SeqCst), 3);
-    // Se comprueba el tamaño real de cada petición: el criterio de aceptación exige que ninguna
-    // exceda el tamaño de lote configurado, y el reparto exacto 2+2+1 descarta que un reparto
-    // desigual como 3+1+1 pase la prueba solo por coincidir en la cantidad de lotes.
+    assert_eq!(resumen_or.dimension_de_la_sonda, Some(2));
+    assert_eq!(servidor_or.contador.load(Ordering::SeqCst), 4);
+    // Se comprueba el tamaño real de cada petición: 1 petición previa para la sonda y luego
+    // el reparto exacto 2+2+1 para los 5 fragmentos.
     assert_eq!(
         *tamanos_or.lock().unwrap(),
-        vec![2, 2, 1],
+        vec![1, 2, 2, 1],
         "Cada petición al proveedor debe respetar el tamaño de lote configurado"
     );
 
@@ -327,18 +345,27 @@ async fn ac_3_tamano_de_lote_openrouter_y_gemini() {
         repositorio_gem,
     );
 
-    let resumen_gem = ejecutar_ingesta(doc, config, &servicio_gem, ruta_datos_gem, || false)
-        .await
-        .unwrap();
+    let resumen_gem = ejecutar_ingesta(
+        doc,
+        config,
+        &servicio_gem,
+        ruta_datos_gem,
+        "sonda de lote",
+        0.8,
+        || false,
+    )
+    .await
+    .unwrap();
 
     assert_eq!(
         resumen_gem.lotes_emitidos, 3,
-        "Deberían emitirse exactamente 3 lotes (2+2+1)"
+        "Deberían emitirse exactamente 3 lotes de fragmentos (2+2+1)"
     );
-    assert_eq!(servidor_gem.contador.load(Ordering::SeqCst), 3);
+    assert_eq!(resumen_gem.dimension_de_la_sonda, Some(2));
+    assert_eq!(servidor_gem.contador.load(Ordering::SeqCst), 4);
     assert_eq!(
         *tamanos_gem.lock().unwrap(),
-        vec![2, 2, 1],
+        vec![1, 2, 2, 1],
         "Cada petición al proveedor debe respetar el tamaño de lote configurado"
     );
 }
@@ -378,9 +405,17 @@ async fn ac_4_parcial_y_huecos_ordinales_sin_huerfanos() {
         repositorio,
     );
 
-    let resumen = ejecutar_ingesta(doc, config, &servicio, ruta_datos, || false)
-        .await
-        .unwrap();
+    let resumen = ejecutar_ingesta(
+        doc,
+        config,
+        &servicio,
+        ruta_datos,
+        "sonda parcial",
+        0.8,
+        || false,
+    )
+    .await
+    .unwrap();
 
     assert_eq!(resumen.desenlace, DesenlaceDeIngesta::Parcial);
     assert_eq!(resumen.fragmentos_solicitados, 5);
@@ -436,12 +471,15 @@ async fn ac_5_dimension_y_descarte_de_metadatos() {
         config.clone(),
         &servicio_a,
         ruta_datos_a,
+        "sonda a",
+        0.8,
         || false,
     )
     .await
     .unwrap();
 
     assert_eq!(resumen_a.dimension_observada, Some(8));
+    assert_eq!(resumen_a.dimension_de_la_sonda, Some(8));
 
     let metadatos_a = hexcell_storage::conocimiento::inspeccionar_base_en_sombra(
         &ruta_datos_a.join(NOMBRE_DE_ARCHIVO_DE_CONOCIMIENTO_EN_SOMBRA),
@@ -454,7 +492,7 @@ async fn ac_5_dimension_y_descarte_de_metadatos() {
     assert!(metadatos_a.sellada_ms.is_none());
     assert_eq!(metadatos_a.dimension_de_embedding, 8);
 
-    // Escenario B: Con 0 embeddings resueltos.
+    // Escenario B: Con 0 embeddings resueltos en fragmentos.
     let temp_b = DirectorioTemporal::nuevo("ac5-metadata-b");
     let ruta_datos_b = temp_b.ruta();
     let (_, repositorio_b) = abrir_persistencia(ruta_datos_b);
@@ -462,18 +500,44 @@ async fn ac_5_dimension_y_descarte_de_metadatos() {
         .aportar_presupuesto(1000, SystemTime::now())
         .unwrap();
 
-    let proveedor_b = ProveedorDeEmbeddingsSimulado::con_dimension(8)
-        .con_tamano_de_lote(2)
-        .con_limite_elementos(0); // 0 resueltos
+    let servidor_b = crear_servidor_falso(|num_peticion, _cuerpo| {
+        if num_peticion == 0 {
+            // Petición de sonda: devolver 1 vector
+            let cuerpo = r#"{"object":"list","data":[{"object":"embedding","index":0,"embedding":[0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8]}],"usage":{"prompt_tokens":10}}"#;
+            (200, cuerpo.to_string())
+        } else {
+            // Peticiones de fragmentos: lista vacía (0 resueltos)
+            let cuerpo = r#"{"object":"list","data":[],"usage":{"prompt_tokens":10}}"#;
+            (200, cuerpo.to_string())
+        }
+    });
+
+    let config_b = ConfiguracionDeEmbeddings {
+        url_base: format!("http://127.0.0.1:{}", servidor_b.puerto),
+        api_key: "key-b".to_string(),
+        modelo: "model-b".to_string(),
+        timeout: Duration::from_secs(5),
+        reintentos: 0,
+        tamano_de_lote: 2,
+    };
+    let proveedor_b = ProveedorDeEmbeddingsOpenRouter::nuevo(config_b);
 
     let servicio_b = ServicioDeEmbeddings::nuevo(
-        ProveedorDeEmbeddingsDeCelula::Simulado(proveedor_b),
+        ProveedorDeEmbeddingsDeCelula::OpenRouter(Box::new(proveedor_b)),
         repositorio_b,
     );
 
-    let resumen_b = ejecutar_ingesta(doc, config, &servicio_b, ruta_datos_b, || false)
-        .await
-        .unwrap();
+    let resumen_b = ejecutar_ingesta(
+        doc,
+        config,
+        &servicio_b,
+        ruta_datos_b,
+        "sonda b",
+        0.8,
+        || false,
+    )
+    .await
+    .unwrap();
 
     assert_eq!(resumen_b.desenlace, DesenlaceDeIngesta::SinIncrustaciones);
     assert_eq!(resumen_b.fragmentos_escritos, 0);
@@ -526,9 +590,17 @@ async fn ac_6_apagado_en_frontera_de_lote_y_capas_de_presupuesto() {
         val >= 1 // Lote 0 pasa (val=0), Lote 1 se detiene (val=1)
     };
 
-    let resumen = ejecutar_ingesta(doc, config, &servicio, ruta_datos, deudor_apagado)
-        .await
-        .unwrap();
+    let resumen = ejecutar_ingesta(
+        doc,
+        config,
+        &servicio,
+        ruta_datos,
+        "sonda apagado",
+        0.8,
+        deudor_apagado,
+    )
+    .await
+    .unwrap();
 
     assert_eq!(resumen.desenlace, DesenlaceDeIngesta::DetenidaPorApagado);
     assert_eq!(
@@ -573,8 +645,8 @@ async fn ac_6_apagado_en_frontera_de_lote_y_capas_de_presupuesto() {
         .unwrap();
     assert_eq!(reservas_activas, 0);
 
-    // El número total de filas de reservas (independientemente de su estado) debe ser igual al
-    // número de lotes emitidos, demostrando que la ingesta no realiza reservas redundantes.
+    // El número total de filas de reservas (1 para la sonda previa + 1 para el lote de fragmentos procesado)
+    // debe ser exactamente 2.
     let total_reservas: i64 = pools
         .sesiones()
         .con_lectura(|conn| {
@@ -584,7 +656,7 @@ async fn ac_6_apagado_en_frontera_de_lote_y_capas_de_presupuesto() {
             Ok(cantidad)
         })
         .unwrap();
-    assert_eq!(total_reservas, 1);
+    assert_eq!(total_reservas, 2);
 }
 
 #[tokio::test]
@@ -623,6 +695,8 @@ async fn ac_1_segunda_ingesta_reemplaza_por_completo_una_base_previa_real() {
         config.clone(),
         &servicio_primera,
         ruta_datos,
+        "sonda primera",
+        0.8,
         || false,
     )
     .await
@@ -647,10 +721,17 @@ async fn ac_1_segunda_ingesta_reemplaza_por_completo_una_base_previa_real() {
         ProveedorDeEmbeddingsDeCelula::Simulado(proveedor_segunda),
         repositorio,
     );
-    let resumen_segunda =
-        ejecutar_ingesta(doc_segunda, config, &servicio_segunda, ruta_datos, || false)
-            .await
-            .unwrap();
+    let resumen_segunda = ejecutar_ingesta(
+        doc_segunda,
+        config,
+        &servicio_segunda,
+        ruta_datos,
+        "sonda segunda",
+        0.85,
+        || false,
+    )
+    .await
+    .unwrap();
     assert_eq!(resumen_segunda.fragmentos_escritos, 2);
 
     // Si algún fragmento de la primera corrida sobreviviera, la cuenta sería 7 (5 + 2) en vez de
@@ -668,5 +749,151 @@ async fn ac_1_segunda_ingesta_reemplaza_por_completo_una_base_previa_real() {
         inspeccion_segunda.ordinales,
         vec![0, 1],
         "Los ordinales deben pertenecer solo a la segunda corrida, sin arrastrar los de la primera"
+    );
+}
+
+#[tokio::test]
+async fn ac_4_la_sonda_se_presupuesta_y_emite_antes_del_bucle_de_fragmentos() {
+    let temp = DirectorioTemporal::nuevo("ac4-sonda-orden");
+    let ruta_datos = temp.ruta();
+    let (pools, repositorio) = abrir_persistencia(ruta_datos);
+    repositorio
+        .aportar_presupuesto(1000, SystemTime::now())
+        .unwrap();
+
+    let doc = DocumentoDeIngesta {
+        referencia_externa: "https://ejemplo.com/ref-ac4-sonda".to_string(),
+        titulo: "AC4 Sonda".to_string(),
+        contenido: "Texto de prueba para fragmentar".to_string(),
+        actualizado_ms: 1000,
+    };
+    let config = ConfiguracionDeFragmentacion {
+        tamano_de_fragmento: 10,
+        solapamiento: 0,
+    };
+
+    let proveedor = ProveedorDeEmbeddingsSimulado::con_dimension(4).con_tamano_de_lote(2);
+    let servicio = ServicioDeEmbeddings::nuevo(
+        ProveedorDeEmbeddingsDeCelula::Simulado(proveedor),
+        repositorio,
+    );
+
+    let texto_sonda = "¿Cuál es el contenido del documento?";
+    let umbral = 0.85f32;
+
+    let resumen = ejecutar_ingesta(
+        doc,
+        config,
+        &servicio,
+        ruta_datos,
+        texto_sonda,
+        umbral,
+        || false,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(resumen.dimension_de_la_sonda, Some(4));
+    assert_eq!(resumen.desenlace, DesenlaceDeIngesta::Completa);
+
+    // Se verifica en sessions.db que la primera reserva creada en el historial (id = 1)
+    // corresponda al lote de la sonda emitido antes de los fragmentos.
+    let reservas: Vec<(i64, String)> = pools
+        .sesiones()
+        .con_lectura(|conn| {
+            let mut stmt = conn
+                .prepare("SELECT id, estado FROM reservas ORDER BY id ASC")
+                .unwrap();
+            let filas = stmt
+                .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+                .unwrap()
+                .map(|r| r.unwrap())
+                .collect();
+            Ok(filas)
+        })
+        .unwrap();
+
+    assert!(!reservas.is_empty());
+    assert_eq!(reservas[0].1, "conciliada");
+}
+
+#[tokio::test]
+async fn ac_5_fallo_al_incrustar_sonda_aborta_ingesta_sin_gastar_en_fragmentos() {
+    let temp = DirectorioTemporal::nuevo("ac5-fallo-sonda-aborta");
+    let ruta_datos = temp.ruta();
+    let (pools, repositorio) = abrir_persistencia(ruta_datos);
+    repositorio
+        .aportar_presupuesto(1000, SystemTime::now())
+        .unwrap();
+
+    let doc = DocumentoDeIngesta {
+        referencia_externa: "https://ejemplo.com/ref-ac5-fallo".to_string(),
+        titulo: "AC5 Fallo".to_string(),
+        contenido: "Texto extenso que generaría múltiples fragmentos de prueba".to_string(),
+        actualizado_ms: 1000,
+    };
+    let config = ConfiguracionDeFragmentacion {
+        tamano_de_fragmento: 5,
+        solapamiento: 0,
+    };
+
+    let proveedor = ProveedorDeEmbeddingsSimulado::que_falla();
+    let servicio = ServicioDeEmbeddings::nuevo(
+        ProveedorDeEmbeddingsDeCelula::Simulado(proveedor),
+        repositorio,
+    );
+
+    let resultado = ejecutar_ingesta(
+        doc,
+        config,
+        &servicio,
+        ruta_datos,
+        "Sonda condenada al fallo",
+        0.75,
+        || false,
+    )
+    .await;
+
+    assert!(resultado.is_err());
+    match resultado {
+        Err(hexcell::ingesta::ErrorDeIngesta::Embeddings(_)) => {}
+        other => panic!("Se esperaba ErrorDeIngesta::Embeddings pero se recibió: {other:?}"),
+    }
+
+    // Debe existir exactamente 1 reserva (la de la sonda que falló) y ninguna reserva activa
+    let (total_reservas, reservas_activas): (i64, i64) = pools
+        .sesiones()
+        .con_lectura(|conn| {
+            let tot: i64 = conn
+                .query_row("SELECT COUNT(*) FROM reservas", [], |r| r.get(0))
+                .unwrap();
+            let act: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM reservas WHERE estado = 'activa'",
+                    [],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            Ok((tot, act))
+        })
+        .unwrap();
+
+    assert_eq!(
+        total_reservas, 1,
+        "Solo debe haberse emitido la reserva de la sonda"
+    );
+    assert_eq!(
+        reservas_activas, 0,
+        "La reserva debe haber sido liberada tras el fallo"
+    );
+
+    // Verificar que la base en sombra no contiene fragmentos
+    let inspeccion = hexcell_storage::conocimiento::inspeccionar_base_en_sombra(
+        &ruta_datos.join(NOMBRE_DE_ARCHIVO_DE_CONOCIMIENTO_EN_SOMBRA),
+    )
+    .unwrap();
+    assert_eq!(
+        inspeccion.cantidad_de_fragmentos, 0,
+        "No debe haberse insertado ningún fragmento"
     );
 }

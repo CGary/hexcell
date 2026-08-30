@@ -36,6 +36,7 @@ pub struct ResumenDeIngesta {
     pub fragmentos_escritos: usize,
     pub lotes_emitidos: usize,
     pub dimension_observada: Option<usize>,
+    pub dimension_de_la_sonda: Option<usize>,
     pub desenlace: DesenlaceDeIngesta,
 }
 
@@ -71,6 +72,8 @@ pub async fn ejecutar_ingesta<F>(
     config_fragmentacion: ConfiguracionDeFragmentacion,
     servicio_embeddings: &ServicioDeEmbeddings<ProveedorDeEmbeddingsDeCelula>,
     ruta_datos: &Path,
+    texto_de_la_sonda: &str,
+    umbral_de_aceptacion: f32,
     debe_apagar: F,
 ) -> Result<ResumenDeIngesta, ErrorDeIngesta>
 where
@@ -85,6 +88,44 @@ where
     // Se inicializa el constructor en sombra. Esto destruye físicamente cualquier archivo previo
     // para evitar arrastrar residuos consistentes de ejecuciones interrumpidas.
     let mut constructor = ConstructorDeConocimientoEnSombra::crear(ruta_datos, &documento)
+        .map_err(ErrorDeIngesta::Almacen)?;
+
+    // Se envía una única petición con el texto de la sonda a través del servicio de embeddings
+    // antes de iniciar el bucle de fragmentos, heredando la reserva presupuestaria y conciliación.
+    let peticion_sonda = PeticionDeEmbeddings {
+        textos: vec![texto_de_la_sonda.to_string()],
+    };
+    let marca_sonda = std::time::SystemTime::now();
+
+    let respuesta_sonda = match servicio_embeddings
+        .incrustar_lote(peticion_sonda, marca_sonda)
+        .await
+    {
+        Ok(respuesta) => respuesta,
+        Err(e) => return Err(ErrorDeIngesta::Embeddings(e.to_string())),
+    };
+
+    let vector_sonda = respuesta_sonda
+        .vectores
+        .into_iter()
+        .next()
+        .flatten()
+        .ok_or_else(|| {
+            ErrorDeIngesta::Embeddings(
+                "el proveedor no devolvió ningún vector para la sonda semántica".to_string(),
+            )
+        })?;
+
+    let dimension_de_la_sonda = Some(vector_sonda.dimension());
+    let marca_sonda_ms = hexcell_storage::a_milisegundos(marca_sonda);
+
+    constructor
+        .registrar_sonda_semantica(
+            texto_de_la_sonda,
+            vector_sonda.valores(),
+            umbral_de_aceptacion,
+            marca_sonda_ms,
+        )
         .map_err(ErrorDeIngesta::Almacen)?;
 
     // Se extrae el tamaño de lote configurado para el adaptador activo a través del despachador.
@@ -178,6 +219,7 @@ where
         fragmentos_escritos,
         lotes_emitidos,
         dimension_observada,
+        dimension_de_la_sonda,
         desenlace,
     })
 }

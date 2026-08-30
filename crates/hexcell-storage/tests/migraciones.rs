@@ -357,13 +357,14 @@ fn upgrade_de_version_2_a_version_3_preserva_datos_preexistentes() {
     aplicar_migraciones_de_sesiones(&conexion).expect("segundo upgrade v2->v3: no-op");
 }
 
-/// Tablas que el esquema de conocimiento en versión 2 debe dejar creadas.
-const OBJETOS_ESPERADOS_DE_CONOCIMIENTO: [(&str, &str); 5] = [
+/// Tablas que el esquema de conocimiento en versión 3 debe dejar creadas.
+const OBJETOS_ESPERADOS_DE_CONOCIMIENTO: [(&str, &str); 6] = [
     ("table", "metadatos_de_conocimiento"),
     ("table", "documentos"),
     ("table", "fragmentos"),
     ("table", "vectores_de_fragmento"),
     ("table", "metadatos_de_epoca"),
+    ("table", "sonda_semantica"),
 ];
 
 #[test]
@@ -474,6 +475,122 @@ fn upgrade_de_conocimiento_v1_a_v2_preserva_datos_preexistentes_y_reaplica_es_un
         })
         .expect("contar filas de metadatos_de_epoca");
     assert_eq!(filas_de_epoca, 1, "no-op no debe duplicar la fila semilla");
+}
+
+#[test]
+fn upgrade_de_conocimiento_v2_a_v3_preserva_datos_preexistentes_y_reaplica_es_un_noop() {
+    let directorio = DirectorioTemporal::nuevo("migcono-upgrade-v2-v3");
+    let ruta = directorio.ruta().join(NOMBRE_DE_ARCHIVO_DE_CONOCIMIENTO);
+    let conexion = Connection::open(&ruta).expect("abrir base de conocimiento");
+    conexion
+        .execute_batch("PRAGMA foreign_keys = ON;")
+        .expect("activar claves foráneas");
+
+    conexion
+        .execute_batch(include_str!(
+            "../migraciones/conocimiento/0001-esquema-minimo.sql"
+        ))
+        .expect("aplicar v1 de conocimiento");
+    conexion
+        .execute_batch(include_str!(
+            "../migraciones/conocimiento/0002-esquema-de-conocimiento.sql"
+        ))
+        .expect("aplicar v2 de conocimiento");
+    conexion
+        .execute_batch("PRAGMA user_version = 2;")
+        .expect("fijar user_version a 2");
+
+    conexion
+        .execute(
+            "INSERT INTO documentos (id, referencia_externa, titulo, contenido, actualizado_ms) VALUES (1, 'doc-v2', 'Título V2', 'Contenido V2', 1000)",
+            [],
+        )
+        .expect("insertar documento v2");
+    conexion
+        .execute(
+            "INSERT INTO fragmentos (id, id_documento, ordinal, texto) VALUES (1, 1, 0, 'Fragmento V2')",
+            [],
+        )
+        .expect("insertar fragmento v2");
+
+    let vector_valido = vec![0.5f32, -0.25f32, 1.0f32, 0.0f32];
+    let vector_bytes: Vec<u8> = vector_valido.iter().flat_map(|v| v.to_le_bytes()).collect();
+    conexion
+        .execute(
+            "INSERT INTO vectores_de_fragmento (id_fragmento, vector) VALUES (1, ?1)",
+            rusqlite::params![vector_bytes],
+        )
+        .expect("insertar vector v2");
+
+    conexion
+        .execute(
+            "UPDATE metadatos_de_epoca SET dimension_de_embedding = 4 WHERE id = 1",
+            [],
+        )
+        .expect("actualizar dimensión en metadatos de época");
+
+    aplicar_migraciones_de_conocimiento(&conexion).expect("upgrade v2->v3 debe funcionar");
+
+    let version: i64 = conexion
+        .query_row("PRAGMA user_version", [], |fila| fila.get(0))
+        .expect("leer user_version tras upgrade");
+    assert_eq!(version, VERSION_DE_ESQUEMA_DE_CONOCIMIENTO);
+
+    for (tipo, nombre) in OBJETOS_ESPERADOS_DE_CONOCIMIENTO {
+        let encontrados: i64 = conexion
+            .query_row(
+                "SELECT count(*) FROM sqlite_schema WHERE type = ?1 AND name = ?2",
+                rusqlite::params![tipo, nombre],
+                |fila| fila.get(0),
+            )
+            .expect("consultar el esquema almacenado");
+        assert_eq!(
+            encontrados, 1,
+            "falta objeto {tipo} {nombre} tras upgrade a v3"
+        );
+    }
+
+    let cant_sonda: i64 = conexion
+        .query_row("SELECT count(*) FROM sonda_semantica", [], |fila| {
+            fila.get(0)
+        })
+        .expect("contar filas en sonda_semantica");
+    assert_eq!(
+        cant_sonda, 0,
+        "sonda_semantica debe estar vacía tras la migración"
+    );
+
+    let doc_recuperado: String = conexion
+        .query_row(
+            "SELECT contenido FROM documentos WHERE id = 1",
+            [],
+            |fila| fila.get(0),
+        )
+        .expect("recuperar documento tras upgrade");
+    assert_eq!(doc_recuperado, "Contenido V2");
+
+    let vector_recuperado: Vec<u8> = conexion
+        .query_row(
+            "SELECT vector FROM vectores_de_fragmento WHERE id_fragmento = 1",
+            [],
+            |fila| fila.get(0),
+        )
+        .expect("recuperar vector tras upgrade");
+    assert_eq!(vector_recuperado, vector_bytes);
+
+    aplicar_migraciones_de_conocimiento(&conexion).expect("reaplicar sobre v3 debe ser un no-op");
+
+    let version_reaplicada: i64 = conexion
+        .query_row("PRAGMA user_version", [], |fila| fila.get(0))
+        .expect("leer user_version tras segunda aplicación");
+    assert_eq!(version_reaplicada, VERSION_DE_ESQUEMA_DE_CONOCIMIENTO);
+
+    let cant_sonda_post: i64 = conexion
+        .query_row("SELECT count(*) FROM sonda_semantica", [], |fila| {
+            fila.get(0)
+        })
+        .expect("contar filas en sonda_semantica tras reaplicar");
+    assert_eq!(cant_sonda_post, 0);
 }
 
 #[test]
