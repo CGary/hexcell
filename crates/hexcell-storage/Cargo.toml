@@ -20,6 +20,7 @@ license.workspace = true
 # la tabla [workspace.dependencies] del Cargo.toml raíz, que es la vista de conjunto del árbol.
 [dependencies]
 rusqlite = { workspace = true }
+arc-swap = { workspace = true }
 # Los identificadores opacos del dominio (IdConversacion, IdRemitente, IdDeduplicacion) y el
 # mensaje saliente tipado son tipos de hexcell-core. La dirección de la dependencia importa:
 # esta capa depende del dominio, jamás al revés, y hexcell-core conserva su tabla vacía.

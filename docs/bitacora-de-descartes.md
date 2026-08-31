@@ -1,6 +1,6 @@
 # Bitácora de descartes
 
-> Registro de lo que se consideró y **no** se hizo. Última actualización: 2026-08-27 (D-28).
+> Registro de lo que se consideró y **no** se hizo. Última actualización: 2026-08-30 (D-29).
 
 ## Para qué sirve este documento
 
@@ -62,6 +62,7 @@ se apoya en un principio de diseño, no.
 | [D-26](#d-26) | rqlite / libSQL sqld en el camino caliente (los almacenes operativos del bot por HTTP) | Principio de diseño, no reabrir |
 | [D-27](#d-27) | Alternativas descartadas para la inferencia HTTPS (reqwest, aws-lc-rs, backoff exponencial, reintentar 429, noveno crate) | Principio de diseño, no reabrir |
 | [D-28](#d-28) | Alternativas descartadas para el puerto de embeddings y adaptador OpenRouter (compartir parser de chat, zipping posicional, reserva por fragmento/ingesta, elevar timeout, base64, pseudo-conversación) | Principio de diseño, no reabrir |
+| [D-29](#d-29) | Alternativas descartadas para la conmutación atómica de épocas (cerrojo en pool, unlink+symlink, copia en caliente, reinicio de proceso) | Principio de diseño, no reabrir |
 
 ---
 
@@ -455,6 +456,18 @@ copiar `sessions.db`, `knowledge_live.db` y el almacén de identidad del adaptad
   * *Formato base64:* incrementa la latencia de decodificación y riesgo de fallos silenciosos; se fija `encoding_format: "float"`.
   * *Pseudo-conversación artificial:* ensuciaría la auditoría de `consumo_por_conversacion` con registros ficticios; la reserva de catálogo es explícitamente sin conversación (`id_conversacion NULL`).
 * **Registro normativo:** `docs/adr/adr-0025-puerto-de-embeddings.md`, `crates/hexcell-core/src/embeddings.rs`, `crates/hexcell/src/proveedor_embeddings.rs`.
+* **Qué tendría que cambiar para reabrirlo:** *Principio de diseño.* **No reabrir.**
+
+### D-29
+**Alternativas descartadas para la conmutación atómica de épocas de conocimiento (cerrojo en pool, unlink+symlink, copia en caliente, reinicio de proceso).**
+
+* **Descartado:** 2026-08-30 (HEX-055).
+* **Por qué se descartó:**
+  * *Cerrojo (`Mutex` o `RwLock`) alrededor del puntero del pool de conocimiento:* `GestorDePools` vive detrás de `Arc` en múltiples puntos del sistema, por lo que no hay referencias mutables disponibles; un cerrojo penalizaría con adquisición de candado cada consulta de lectura conversacional para una conmutación que ocurre solo una vez por ingesta. Se adoptó `ArcSwap`.
+  * *Reasignación de enlace mediante `unlink` seguido de `symlink`:* introduce una ventana temporal en la cual la ruta no resuelve a ningún archivo, provocando fallos en lectores concurrentes o creación errónea de bases vacías. Se adoptó el modismo POSIX de enlace temporal atómico con `rename()`.
+  * *Copia en caliente (copy-on-promote / sobrescritura de archivo en vivo):* viola la inmutabilidad de las épocas y expone a lectores concurrentes a lecturas corruptas de páginas mixtas o archivos a medio transferir.
+  * *Reinicio del proceso de la célula para conmutar de época:* provocaría caída de servicio y pérdida de conexiones de transporte activas en cada ciclo de ingesta, vulnerando el objetivo de disponibilidad continua (FR-07).
+* **Registro normativo:** `docs/adr/adr-0006-epocas-y-conmutacion-atomica.md`, `crates/hexcell-storage/src/promocion.rs`.
 * **Qué tendría que cambiar para reabrirlo:** *Principio de diseño.* **No reabrir.**
 
 ---

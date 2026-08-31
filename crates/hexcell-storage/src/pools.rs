@@ -31,10 +31,11 @@
 //! una tabla real responde.
 
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use arc_swap::ArcSwap;
 use rusqlite::{Connection, OpenFlags};
 
 use crate::error::ErrorDeAlmacen;
@@ -181,6 +182,38 @@ impl PoolDeConocimiento {
         operacion(&conexion)
     }
 
+    /// Abre un nuevo pool de conocimiento sobre una ruta explícita.
+    ///
+    /// Inicializa las [`CONEXIONES_DE_LECTURA_DE_CONOCIMIENTO`] conexiones en solo lectura
+    /// y configura sus parámetros de SQLite.
+    pub fn abrir_sobre(ruta: &Path) -> Result<Self, ErrorDeAlmacen> {
+        let mut lecturas = Vec::with_capacity(CONEXIONES_DE_LECTURA_DE_CONOCIMIENTO);
+        for _ in 0..CONEXIONES_DE_LECTURA_DE_CONOCIMIENTO {
+            lecturas.push(Mutex::new(abrir_solo_lectura(ruta)?));
+        }
+        Ok(Self {
+            ruta: ruta.to_path_buf(),
+            lecturas,
+            siguiente: AtomicUsize::new(0),
+        })
+    }
+
+    /// Comprueba si todas las conexiones de lectura están actualmente libres.
+    ///
+    /// Intenta adquirir el cerrojo de cada conexión sin bloquear. Si todos los
+    /// cerrojos se adquieren simultáneamente, confirma que no hay consultas
+    /// activas en curso en este instante.
+    pub fn lecturas_en_reposo(&self) -> bool {
+        let mut guardianes = Vec::with_capacity(self.lecturas.len());
+        for celda in &self.lecturas {
+            match celda.try_lock() {
+                Ok(guardian) => guardianes.push(guardian),
+                Err(_) => return false,
+            }
+        }
+        true
+    }
+
     /// Ruta del archivo que respalda este pool.
     pub fn ruta(&self) -> &Path {
         &self.ruta
@@ -196,10 +229,20 @@ impl PoolDeConocimiento {
     }
 }
 
+impl std::fmt::Debug for PoolDeConocimiento {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PoolDeConocimiento")
+            .field("ruta", &self.ruta)
+            .field("conexiones", &self.lecturas.len())
+            .finish()
+    }
+}
+
 /// Agrupa los dos pools de una célula y los abre a partir de su ruta de datos.
 pub struct GestorDePools {
     sesiones: PoolDeSesiones,
-    conocimiento: PoolDeConocimiento,
+    conocimiento: ArcSwap<PoolDeConocimiento>,
+    promocion_en_curso: AtomicBool,
 }
 
 impl GestorDePools {
@@ -239,10 +282,7 @@ impl GestorDePools {
             aplicar_migraciones_de_conocimiento(&inicial)?;
         }
 
-        let mut lecturas = Vec::with_capacity(CONEXIONES_DE_LECTURA_DE_CONOCIMIENTO);
-        for _ in 0..CONEXIONES_DE_LECTURA_DE_CONOCIMIENTO {
-            lecturas.push(Mutex::new(abrir_solo_lectura(&ruta_conocimiento)?));
-        }
+        let pool_conocimiento = PoolDeConocimiento::abrir_sobre(&ruta_conocimiento)?;
 
         Ok(Self {
             sesiones: PoolDeSesiones {
@@ -250,11 +290,8 @@ impl GestorDePools {
                 escritura: Mutex::new(escritura),
                 lectura: Mutex::new(lectura),
             },
-            conocimiento: PoolDeConocimiento {
-                ruta: ruta_conocimiento,
-                lecturas,
-                siguiente: AtomicUsize::new(0),
-            },
+            conocimiento: ArcSwap::from_pointee(pool_conocimiento),
+            promocion_en_curso: AtomicBool::new(false),
         })
     }
 
@@ -264,8 +301,28 @@ impl GestorDePools {
     }
 
     /// Pool de `knowledge_live.db`.
-    pub fn conocimiento(&self) -> &PoolDeConocimiento {
-        &self.conocimiento
+    pub fn conocimiento(&self) -> Arc<PoolDeConocimiento> {
+        self.conocimiento.load_full()
+    }
+
+    /// Intercambia el pool de conocimiento atómicamente y devuelve el pool previo.
+    pub fn intercambiar_pool_de_conocimiento(
+        &self,
+        nuevo_pool: Arc<PoolDeConocimiento>,
+    ) -> Arc<PoolDeConocimiento> {
+        self.conocimiento.swap(nuevo_pool)
+    }
+
+    /// Inicia una conmutación de época adquiriendo la exclusión mutua de promoción.
+    pub fn iniciar_promocion(&self) -> Result<GuardianDePromocion<'_>, ErrorDeAlmacen> {
+        if self
+            .promocion_en_curso
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_err()
+        {
+            return Err(ErrorDeAlmacen::PromocionEnCurso);
+        }
+        Ok(GuardianDePromocion { gestor: self })
     }
 
     /// Respalda en caliente `sessions.db` y `knowledge_live.db` sobre un directorio existente,
@@ -301,7 +358,7 @@ impl GestorDePools {
                 NOMBRE_DE_ARCHIVO_DE_SESIONES,
             )
         })?;
-        let copia_de_conocimiento = self.conocimiento.con_lectura(|conexion| {
+        let copia_de_conocimiento = self.conocimiento.load().con_lectura(|conexion| {
             respaldo::respaldar_base(
                 conexion,
                 &ruta_conocimiento,
@@ -359,6 +416,19 @@ impl GestorDePools {
             ocupado,
             tamano_wal_de_sesiones_bytes,
         }
+    }
+}
+
+/// Guardián RAII para garantizar la liberación de la compuerta de promoción.
+pub struct GuardianDePromocion<'a> {
+    gestor: &'a GestorDePools,
+}
+
+impl Drop for GuardianDePromocion<'_> {
+    fn drop(&mut self) {
+        self.gestor
+            .promocion_en_curso
+            .store(false, Ordering::Release);
     }
 }
 

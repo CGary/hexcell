@@ -63,6 +63,36 @@ pub enum ErrorDeAlmacen {
         /// Motivo legible de por qué no se pudo decodificar.
         motivo: String,
     },
+    /// Ya existe una operación de conmutación de época en curso sobre este gestor.
+    PromocionEnCurso,
+    /// Un archivo de época no se pudo manipular en el sistema de archivos durante la conmutación.
+    ArchivoDeEpocaInaccesible {
+        /// Ruta del archivo de época afectado.
+        ruta: PathBuf,
+        /// Descripción en español de la acción de E/S que falló.
+        operacion: &'static str,
+        /// Causa original de error del sistema de archivos.
+        causa: io::Error,
+    },
+    /// Tras el punto de control TRUNCATE y el cierre de la conexión, el archivo secundario
+    /// `-wal` o `-shm` de staging sigue existiendo. `TRUNCATE` más un cierre limpio los retira
+    /// siempre que el drenaje fue completo, así que su persistencia delata un lector que esta
+    /// capa no conocía o una consolidación incompleta. Se aborta en vez de borrar: el archivo
+    /// puede contener el sellado recién escrito, y borrarlo lo destruiría sin dejar rastro.
+    CompanieroDeStagingSobreviviente {
+        /// Ruta del archivo `-wal` o `-shm` que no debía seguir existiendo.
+        ruta: PathBuf,
+    },
+    /// El renombrado de staging al archivo canónico de la época N encontraría un archivo ya
+    /// existente en ese destino. `rename()` de POSIX sobrescribe en silencio, así que este gate
+    /// se comprueba **antes** de invocarlo: un escaneo que omitió una época sellada legítima
+    /// (fallo transitorio de E/S, permisos) no debe destruirla regresando N.
+    EpocaDestinoYaExiste {
+        /// Número de época que se intentaba asignar.
+        numero_de_epoca: i64,
+        /// Ruta del archivo de época que ya ocupaba el destino.
+        ruta: PathBuf,
+    },
 }
 
 impl ErrorDeAlmacen {
@@ -111,6 +141,32 @@ impl fmt::Display for ErrorDeAlmacen {
                 "la sonda semántica en {} no se pudo leer o está corrupta: {motivo}",
                 ruta.display()
             ),
+            Self::PromocionEnCurso => write!(
+                f,
+                "ya existe una conmutación de época en curso sobre este gestor"
+            ),
+            Self::ArchivoDeEpocaInaccesible {
+                ruta,
+                operacion,
+                causa,
+            } => write!(
+                f,
+                "fallo al {operacion} el archivo de época {}: {causa}",
+                ruta.display()
+            ),
+            Self::CompanieroDeStagingSobreviviente { ruta } => write!(
+                f,
+                "el archivo secundario {} de staging sigue existiendo tras el punto de control, se aborta la promoción sin renombrar",
+                ruta.display()
+            ),
+            Self::EpocaDestinoYaExiste {
+                numero_de_epoca,
+                ruta,
+            } => write!(
+                f,
+                "el archivo de la época {numero_de_epoca} ya existe en {}, se aborta la promoción para no sobrescribirlo",
+                ruta.display()
+            ),
         }
     }
 }
@@ -125,6 +181,10 @@ impl std::error::Error for ErrorDeAlmacen {
             Self::DirectorioDeRespaldoInaccesible { .. } => None,
             Self::CopiaCorrupta { .. } => None,
             Self::SondaSemanticaIlegible { .. } => None,
+            Self::PromocionEnCurso => None,
+            Self::ArchivoDeEpocaInaccesible { causa, .. } => Some(causa),
+            Self::CompanieroDeStagingSobreviviente { .. } => None,
+            Self::EpocaDestinoYaExiste { .. } => None,
         }
     }
 }

@@ -3,7 +3,8 @@
 //! Implementa la persistencia dual de FR-05 —`sessions.db` en lectura y escritura caliente,
 //! `knowledge_live.db` en solo lectura— con sus parámetros de SQLite justificados uno a uno en
 //! `docs/adr/adr-0003-persistencia-dual.md` y en el punto del código donde se aplican. La
-//! conmutación atómica por épocas de FR-07 no está aquí: la diseña la etapa A-5.
+//! conmutación atómica por épocas de FR-07 vive en el módulo `promocion`
+//! (`docs/adr/adr-0006-epocas-y-conmutacion-atomica.md`).
 //!
 //! # Este crate es síncrono
 //!
@@ -40,6 +41,7 @@ pub mod migraciones;
 pub mod pools;
 /// Módulo de contabilidad y presupuesto en dos fases (reservas y movimientos).
 pub mod presupuesto;
+pub mod promocion;
 pub mod respaldo;
 pub mod sesiones;
 pub mod tiempo;
@@ -58,12 +60,17 @@ pub use migraciones::{
     aplicar_migraciones_de_identidad, aplicar_migraciones_de_sesiones,
 };
 pub use pools::{
-    BUSY_TIMEOUT, CONEXIONES_DE_LECTURA_DE_CONOCIMIENTO, GestorDePools,
+    BUSY_TIMEOUT, CONEXIONES_DE_LECTURA_DE_CONOCIMIENTO, GestorDePools, GuardianDePromocion,
     NOMBRE_DE_ARCHIVO_DE_CONOCIMIENTO, NOMBRE_DE_ARCHIVO_DE_SESIONES, PoolDeConocimiento,
     PoolDeSesiones, ResumenDePuntoDeControl, ResumenDeRespaldoDePools, SINCRONIA,
     SUFIJO_DE_ARCHIVO_WAL, Vitalidad,
 };
 pub use presupuesto::{ConsumoDeConversacion, ResultadoDeResolucion, Saldo, VeredictoDeReserva};
+pub use promocion::{
+    DesenlaceDePromocion, EpocaSuperseida, MotivoDeAbortoDePromocion, PREFIJO_DE_ARCHIVO_DE_EPOCA,
+    numero_de_epoca_siguiente, promover_epoca, reasignar_enlace_de_la_epoca_viva,
+    sellar_y_consolidar_staging,
+};
 pub use respaldo::{CopiaVerificada, respaldar_base, verificar_destino_disponible};
 pub use sesiones::{
     EventoDeHistorial, LIMITE_DE_ENTRADAS_RETENIDAS, RepositorioDeSesiones, SalienteHistorico,

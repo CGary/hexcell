@@ -72,6 +72,14 @@ hyper-rustls = { version = "0.27", default-features = false, features = ["http1"
 rustls       = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 webpki-roots = "1"
 
+# Conmutador atómico de punteros en memoria para el reemplazo en caliente de la base de conocimiento
+# (etapa A-5, HEX-055). Primera dependencia de tiempo de ejecución de la etapa A-5: implementa el diseño
+# acordado en el PRD y formalizado en `docs/adr/adr-0006-epocas-y-conmutacion-atomica.md` («symlink + ArcSwap +
+# drenaje ordenado»). Desplaza la alternativa de envolver el pool en un Mutex o RwLock, lo cual impondría la
+# adquisición de un cerrojo en la ruta crítica de cada consulta de lectura de conocimiento para un cambio
+# de época que ocurre únicamente una vez por ciclo de ingesta. Solo lo consume `hexcell-storage`.
+arc-swap = "1.7"
+
 # Perfil de release orientado a tamaño de binario, coherente con NFR-01 y con el hardware
 # objetivo (i7 de 10 años, 8 GB RAM): en ese hardware el tamaño del binario y el arranque
 # en frío importan más que el tiempo de compilación.
