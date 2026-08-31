@@ -37,13 +37,13 @@ No obstante, la operación en producción requiere la capacidad de retornar a un
    - Reasigna atómicamente el enlace simbólico `knowledge_live.db` mediante `reasignar_enlace_simbolico_vivo`.
    - Conmuta atómicamente el pool de conexiones en memoria vía `ArcSwap` e instrumenta la latencia NFR-03 (sub-10 ms).
 
-2. **Guarda de enlace vivo colgante (GUARD 3)**:
+2. **Guarda de enlace vivo colgante (guarda 3)**:
    - Se añade `verificar_enlace_vivo_resoluble` en `crates/hexcell-storage/src/pools.rs`, ejecutada en `GestorDePools::abrir` antes de abrir `ruta_conocimiento` en modo lectura-escritura.
    - Si `knowledge_live.db` es un enlace simbólico cuyo destino no existe, aborta de inmediato con `ErrorDeAlmacen::EnlaceVivoColgante { ruta, destino }` sin crear archivos ni invocar `Connection::open`.
    - Se mantiene deliberadamente fuera de `abrir_solo_lectura` (que ya falla limpiamente bajo SQLite) y de `promover_epoca` para mantener conjuntos de fallo disjuntos.
 
-3. **Guarda de canonicalización ruidosa (GUARD 4)**:
-   - En `promover_epoca`, la resolución canónica de la ruta viva previa antes del swap reemplaza el antiguo `.unwrap_or(ruta_de_apertura)` por un mapeo explícito de error a `ErrorDeAlmacen::ArchivoDeEpocaInaccesible`.
+3. **Guarda de canonicalización ruidosa (guarda 4)**:
+   - En `promover_epoca`, la resolución canónica de la ruta viva previa antes de la conmutación reemplaza el antiguo `.unwrap_or(ruta_de_apertura)` por un mapeo explícito de error a `ErrorDeAlmacen::ArchivoDeEpocaInaccesible`.
    - El aborto en este punto es limpio y reintentable, pues `knowledge_staging.db` permanece intacto y `numero_de_epoca_siguiente` omite archivos de staging por nombre.
 
 ---

@@ -1,8 +1,8 @@
 //! Pruebas de integración para la reversión de épocas de conocimiento.
 //!
-//! Valida la conmutación segura a épocas selladas previas, la compuerta de integridad estructural
-//! (GUARD 1), la compuerta de sonda semántica (GUARD 2), la reutilización de identidad intrínseca
-//! sin colisión (AC-3), y la inercia estricta ante rechazos.
+//! Valida la conmutación segura a épocas selladas previas, la compuerta de integridad estructural,
+//! la compuerta de sonda semántica, la reutilización de identidad intrínseca sin colisión (AC-3),
+//! y la inercia estricta ante rechazos.
 
 mod comun;
 
@@ -463,4 +463,66 @@ fn verificar_particion_de_motivos_semanticos_y_estructurales_es_exhaustiva() {
             "el motivo {motivo:?} debe ser clasificado como estructural"
         );
     }
+}
+
+#[test]
+fn verificar_reversion_rechaza_numero_de_epoca_intrinseco_discrepante() {
+    let temp = DirectorioTemporal::nuevo("reversion-numero-intrinseco-discrepante");
+    let gestor = GestorDePools::abrir(temp.ruta()).expect("abrir gestor");
+    let config = preparar_staging_valido(temp.ruta(), 768);
+
+    // 1. Promover a época 1 (queda con numero_de_epoca = 1 grabado adentro)
+    promover_epoca(&gestor, temp.ruta(), &config, 10_000).expect("promover a 1");
+
+    // 2. Promover a época 2 para que producción esté sirviendo la época 2, ANTES de corromper
+    // el número interno de la época 1: numero_de_epoca_siguiente escanea el número intrínseco de
+    // todos los archivos en disco, así que mutar la época 1 antes de este paso inflaría el
+    // siguiente número calculado y no probaría lo que esta prueba necesita aislar.
+    let config2 = preparar_staging_valido(temp.ruta(), 768);
+    promover_epoca(&gestor, temp.ruta(), &config2, 20_000).expect("promover a 2");
+
+    // 3. Simular un respaldo restaurado que renombró el archivo sin tocar su contenido: el
+    // número interno queda en desacuerdo con el nombre knowledge_epoch_1.db que lo contiene.
+    let ruta_epoca_1 = temp.ruta().join("knowledge_epoch_1.db");
+    {
+        let conexion = Connection::open(&ruta_epoca_1).expect("abrir epoca 1 para mutar");
+        conexion
+            .execute(
+                "UPDATE metadatos_de_epoca SET numero_de_epoca = 99 WHERE id = 1",
+                [],
+            )
+            .expect("desincronizar numero_de_epoca del nombre de archivo");
+    }
+
+    let ruta_live = temp.ruta().join(NOMBRE_DE_ARCHIVO_DE_CONOCIMIENTO);
+    assert_eq!(
+        fs::read_link(&ruta_live).unwrap().to_str().unwrap(),
+        "knowledge_epoch_2.db"
+    );
+
+    // 4. Solicitar reversión a la época 1 por nombre: debe rechazarse por discrepancia intrínseca,
+    // no ejecutarse como si el archivo realmente fuera la época 1.
+    let resultado = revertir_a_epoca(&gestor, temp.ruta(), &config, 1).expect("ejecutar reversion");
+
+    match resultado {
+        DesenlaceDeReversion::Rechazada {
+            motivo:
+                MotivoDeRechazoDeReversion::NumeroDeEpocaIntrinsecoDiscrepante {
+                    numero_solicitado,
+                    numero_leido,
+                },
+        } => {
+            assert_eq!(numero_solicitado, 1);
+            assert_eq!(numero_leido, Some(99));
+        }
+        otro => panic!("se esperaba NumeroDeEpocaIntrinsecoDiscrepante, se obtuvo: {otro:?}"),
+    }
+
+    // 5. Invariantes de inercia: el symlink sigue apuntando a época 2 y ningún archivo fue borrado
+    assert_eq!(
+        fs::read_link(&ruta_live).unwrap().to_str().unwrap(),
+        "knowledge_epoch_2.db"
+    );
+    assert!(ruta_epoca_1.exists());
+    assert!(temp.ruta().join("knowledge_epoch_2.db").exists());
 }

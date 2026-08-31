@@ -37,7 +37,7 @@ pub const PREFIJO_DE_ARCHIVO_DE_EPOCA: &str = "knowledge_epoch_";
 /// (migración 0001) y ninguna migración ni la promoción insertan filas en ella, así que su
 /// conteo es siempre 0. Nombrar la constante hace explícito que la lectura de NFR-03 se compara
 /// contra un valor conocido y no se descarta como si cualquier resultado sirviera.
-const CONTEO_ESPERADO_DE_METADATOS_DE_CONOCIMIENTO: i64 = 0;
+pub(crate) const CONTEO_ESPERADO_DE_METADATOS_DE_CONOCIMIENTO: i64 = 0;
 
 /// Motivo por el cual una promoción de época fue abortada de forma limpia.
 #[derive(Clone, Debug, PartialEq)]
