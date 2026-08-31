@@ -44,6 +44,7 @@ pub mod pools;
 pub mod presupuesto;
 pub mod promocion;
 pub mod respaldo;
+pub mod reversion;
 pub mod sesiones;
 pub mod tiempo;
 pub mod validacion;
@@ -74,9 +75,12 @@ pub use presupuesto::{ConsumoDeConversacion, ResultadoDeResolucion, Saldo, Vered
 pub use promocion::{
     DesenlaceDePromocion, EpocaSuperseida, MotivoDeAbortoDePromocion, PREFIJO_DE_ARCHIVO_DE_EPOCA,
     numero_de_epoca_siguiente, promover_epoca, reasignar_enlace_de_la_epoca_viva,
-    sellar_y_consolidar_staging,
+    reasignar_enlace_simbolico_vivo, sellar_y_consolidar_staging,
 };
 pub use respaldo::{CopiaVerificada, respaldar_base, verificar_destino_disponible};
+pub use reversion::{
+    DesenlaceDeReversion, MotivoDeRechazoDeReversion, es_motivo_semantico, revertir_a_epoca,
+};
 pub use sesiones::{
     EventoDeHistorial, LIMITE_DE_ENTRADAS_RETENIDAS, RepositorioDeSesiones, SalienteHistorico,
     VeredictoDeDeduplicacion,

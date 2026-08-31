@@ -17,6 +17,7 @@ use hexcell_storage::drenaje::{
 use hexcell_storage::error::ErrorDeAlmacen;
 use hexcell_storage::pools::GestorDePools;
 use hexcell_storage::promocion::{DesenlaceDePromocion, EpocaSuperseida, promover_epoca};
+use hexcell_storage::reversion::{DesenlaceDeReversion, revertir_a_epoca};
 
 /// Nombre de la variable de entorno que configura el límite de drenaje de época en milisegundos.
 pub const HEXCELL_LIMITE_DE_DRENAJE_DE_EPOCA_MS: &str = "HEXCELL_LIMITE_DE_DRENAJE_DE_EPOCA_MS";
@@ -43,6 +44,24 @@ pub async fn promover_epoca_de_conocimiento(
     ahora_ms: i64,
 ) -> Result<DesenlaceDePromocion, ErrorDeAlmacen> {
     promover_epoca(gestor, ruta_datos, configuracion_de_fragmentacion, ahora_ms)
+}
+
+/// Orquesta de forma asíncrona la reversión de la base de datos de conocimiento a una época previa.
+///
+/// Invoca la secuencia síncrona de validación de integridad, reasignación atómica del enlace simbólico
+/// y conmutación atómica del pool en el hilo de ejecución actual sin intermediación de `spawn_blocking`.
+pub async fn revertir_epoca_de_conocimiento(
+    gestor: &GestorDePools,
+    ruta_datos: &Path,
+    configuracion_de_fragmentacion: &ConfiguracionDeFragmentacion,
+    numero_destino: i64,
+) -> Result<DesenlaceDeReversion, ErrorDeAlmacen> {
+    revertir_a_epoca(
+        gestor,
+        ruta_datos,
+        configuracion_de_fragmentacion,
+        numero_destino,
+    )
 }
 
 /// Orquesta de forma asíncrona el drenaje ordenado de una época superseída.

@@ -1,6 +1,6 @@
 # Bitácora de descartes
 
-> Registro de lo que se consideró y **no** se hizo. Última actualización: 2026-08-31 (D-30).
+> Registro de lo que se consideró y **no** se hizo. Última actualización: 2026-08-31 (D-31).
 
 ## Para qué sirve este documento
 
@@ -64,6 +64,7 @@ se apoya en un principio de diseño, no.
 | [D-28](#d-28) | Alternativas descartadas para el puerto de embeddings y adaptador OpenRouter (compartir parser de chat, zipping posicional, reserva por fragmento/ingesta, elevar timeout, base64, pseudo-conversación) | Principio de diseño, no reabrir |
 | [D-29](#d-29) | Alternativas descartadas para la conmutación atómica de épocas (cerrojo en pool, unlink+symlink, copia en caliente, reinicio de proceso) | Principio de diseño, no reabrir |
 | [D-30](#d-30) | Alternativas descartadas para el drenaje de la época superseída (notificación por Condvar, cierre forzado, remediación por borrado, sobrecarga de variable de apagado) | Principio de diseño, no reabrir |
+| [D-31](#d-31) | Alternativas descartadas para la reversión de épocas y guardas de fallo silencioso (re-acuñación de épocas, comodín en partición semántica, guarda de enlace colgante en solo lectura, fallback silencioso de ruta canónica) | Principio de diseño, no reabrir |
 
 ---
 
@@ -481,6 +482,18 @@ copiar `sessions.db`, `knowledge_live.db` y el almacén de identidad del adaptad
   * *Remediación por borrado automático de archivos secundarios (`-wal` o `-shm`) supervivientes:* si un archivo `-wal` sobrevive con tamaño mayor a cero tras el cierre, contiene datos no consolidados; eliminarlo destruiría la única evidencia para auditar la anomalía. Se aplica la doctrina de verificar y abortar (`CompanieroDeEpocaSobreviviente`), tolerando como residuo inocuo un `-wal` de cero bytes y un `-shm` de conexiones en solo lectura.
   * *Sobrecargar la variable de entorno `HEXCELL_LIMITE_DE_DRENAJE_SEGUNDOS`:* dicha variable gobierna el apagado ordenado del proceso (HEX-007) con un presupuesto de 20 s; el drenaje de época opera por evento de ingesta con una cota distinta (10 s, `HEXCELL_LIMITE_DE_DRENAJE_DE_EPOCA_MS`) y no debe acoplarse.
 * **Registro normativo:** `docs/adr/adr-0006-epocas-y-conmutacion-atomica.md`, `crates/hexcell-storage/src/drenaje.rs`, `crates/hexcell/src/promocion.rs`.
+* **Qué tendría que cambiar para reabrirlo:** *Principio de diseño.* **No reabrir.**
+
+### D-31
+**Alternativas descartadas para la reversión de épocas y guardas de fallo silencioso (re-acuñación de épocas, comodín en partición semántica, guarda de enlace colgante en solo lectura, fallback silencioso de ruta canónica).**
+
+* **Descartado:** 2026-08-31 (HEX-057-a).
+* **Por qué se descartó:**
+  * *Re-acuñar épocas promoviendo la versión anterior como época $N+1$ (re-promotion as rollback):* incrementaría indefinidamente los números de época y duplicaría copias físicas en disco, creando ambigüedad sobre la procedencia de los embeddings y violando el principio de identidad intrínseca de los datos. La reversión reutiliza el número ordinal y el archivo físico existente (`knowledge_epoch_N.db`).
+  * *Uso de comodín `_` en la función de partición semántica `es_motivo_semantico`:* el uso de un patrón comodín provocaría que cualquier nueva variante de error añadida en el futuro se clasificara silenciosamente en la rama por defecto, rompiendo la partición disjunta de compuertas (AC-6); se exige un `match` exhaustivo de todas las variantes de `MotivoDeRechazo`.
+  * *Dispersar la guarda de enlace vivo colgante (`verificar_enlace_vivo_resoluble`) en `abrir_solo_lectura` o `promover_epoca`:* `abrir_solo_lectura` utiliza `SQLITE_OPEN_READ_ONLY`, por lo que SQLite ya falla limpiamente sin crear archivos ni alterar el disco; añadir la guarda allí sería código muerto redundante y violaría la separación de conjuntos de fallo disjuntos entre las guardas 3 y 4.
+  * *Fallback silencioso mediante `.unwrap_or(ruta_de_apertura)` ante fallo de `canonicalize` en promoción:* ocultaría enlaces rotos o archivos eliminados, provocando que el descriptor superseído contenga una ruta errónea y que el posterior drenaje verifique el diario WAL del archivo equivocado; se mapea explícitamente a `ErrorDeAlmacen::ArchivoDeEpocaInaccesible`.
+* **Registro normativo:** `docs/adr/adr-0026-reversion-de-epocas-y-guardas-de-fallo-silencioso.md`, `crates/hexcell-storage/src/reversion.rs`, `crates/hexcell-storage/src/pools.rs`, `crates/hexcell-storage/src/promocion.rs`.
 * **Qué tendría que cambiar para reabrirlo:** *Principio de diseño.* **No reabrir.**
 
 ---

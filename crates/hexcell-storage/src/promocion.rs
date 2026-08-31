@@ -73,6 +73,25 @@ pub struct EpocaSuperseida {
 }
 
 impl EpocaSuperseida {
+    /// Construye una nueva instancia de descriptor de época superseída.
+    ///
+    /// `pub(crate)` para permitir que el módulo hermano de reversión (`reversion.rs`) instancie
+    /// el descriptor vivo tras conmutar el pool, preservando los campos encapsulados para el
+    /// resto de los consumidores externos.
+    pub(crate) fn nueva(
+        pool: Arc<PoolDeConocimiento>,
+        ruta_del_archivo: PathBuf,
+        numero_de_epoca: Option<i64>,
+        instante_de_reemplazo: std::time::Instant,
+    ) -> Self {
+        Self {
+            pool,
+            ruta_del_archivo,
+            numero_de_epoca,
+            instante_de_reemplazo,
+        }
+    }
+
     /// Referencia al pool de conexiones de la época previa.
     pub fn pool(&self) -> &Arc<PoolDeConocimiento> {
         &self.pool
@@ -259,6 +278,43 @@ pub fn sellar_y_consolidar_staging(
     Ok(None)
 }
 
+/// Reasigna atómicamente el enlace simbólico `knowledge_live.db` apuntando al nombre relativo de archivo indicado.
+///
+/// Modismo POSIX atómico: crea un enlace simbólico temporal con nombre único en el mismo directorio
+/// y luego ejecuta `rename()` sobre `knowledge_live.db`. Esto garantiza que en ningún instante el camino
+/// apunte a la nada.
+pub fn reasignar_enlace_simbolico_vivo(
+    ruta_datos: &Path,
+    nombre_archivo_epoca: &str,
+) -> Result<(), ErrorDeAlmacen> {
+    // Crear un enlace temporal apuntando al nombre relativo del archivo de época.
+    let nombre_enlace_temporal = format!(".knowledge_live.tmp.{}", std::process::id());
+    let ruta_enlace_temporal = ruta_datos.join(&nombre_enlace_temporal);
+    if ruta_enlace_temporal.exists() || std::fs::symlink_metadata(&ruta_enlace_temporal).is_ok() {
+        let _ = std::fs::remove_file(&ruta_enlace_temporal);
+    }
+
+    std::os::unix::fs::symlink(nombre_archivo_epoca, &ruta_enlace_temporal).map_err(|causa| {
+        ErrorDeAlmacen::ArchivoDeEpocaInaccesible {
+            ruta: ruta_enlace_temporal.clone(),
+            operacion: "crear enlace simbólico temporal",
+            causa,
+        }
+    })?;
+
+    // Sobrescritura atómica del enlace en vivo sobre el mismo sistema de archivos.
+    let ruta_live = ruta_datos.join(NOMBRE_DE_ARCHIVO_DE_CONOCIMIENTO);
+    std::fs::rename(&ruta_enlace_temporal, &ruta_live).map_err(|causa| {
+        ErrorDeAlmacen::ArchivoDeEpocaInaccesible {
+            ruta: ruta_live,
+            operacion: "reasignar enlace simbólico knowledge_live.db",
+            causa,
+        }
+    })?;
+
+    Ok(())
+}
+
 /// Renombra la base de staging al archivo canónico de época y actualiza el enlace simbólico en vivo.
 ///
 /// Antes de tocar el sistema de archivos comprueba que `knowledge_epoch_N.db` no exista ya:
@@ -266,9 +322,7 @@ pub fn sellar_y_consolidar_staging(
 /// sellada legítima regresaría N y destruiría un archivo real. Si el destino existe, aborta con
 /// [`ErrorDeAlmacen::EpocaDestinoYaExiste`] sin renombrar nada.
 ///
-/// Utiliza el modismo POSIX atómico: crea un enlace simbólico temporal con nombre único en el
-/// mismo directorio y luego ejecuta `rename()` sobre `knowledge_live.db`. Esto garantiza que
-/// en ningún instante el camino apunte a la nada.
+/// Utiliza el modismo POSIX atómico delegando en [`reasignar_enlace_simbolico_vivo`].
 pub fn reasignar_enlace_de_la_epoca_viva(
     ruta_datos: &Path,
     ruta_staging: &Path,
@@ -297,30 +351,7 @@ pub fn reasignar_enlace_de_la_epoca_viva(
         }
     })?;
 
-    // Crear un enlace temporal apuntando al nombre relativo del archivo de época.
-    let nombre_enlace_temporal = format!(".knowledge_live.tmp.{}", std::process::id());
-    let ruta_enlace_temporal = ruta_datos.join(&nombre_enlace_temporal);
-    if ruta_enlace_temporal.exists() || std::fs::symlink_metadata(&ruta_enlace_temporal).is_ok() {
-        let _ = std::fs::remove_file(&ruta_enlace_temporal);
-    }
-
-    std::os::unix::fs::symlink(&nombre_archivo_epoca, &ruta_enlace_temporal).map_err(|causa| {
-        ErrorDeAlmacen::ArchivoDeEpocaInaccesible {
-            ruta: ruta_enlace_temporal.clone(),
-            operacion: "crear enlace simbólico temporal",
-            causa,
-        }
-    })?;
-
-    // Sobrescritura atómica del enlace en vivo sobre el mismo sistema de archivos.
-    let ruta_live = ruta_datos.join(NOMBRE_DE_ARCHIVO_DE_CONOCIMIENTO);
-    std::fs::rename(&ruta_enlace_temporal, &ruta_live).map_err(|causa| {
-        ErrorDeAlmacen::ArchivoDeEpocaInaccesible {
-            ruta: ruta_live,
-            operacion: "reasignar enlace simbólico knowledge_live.db",
-            causa,
-        }
-    })?;
+    reasignar_enlace_simbolico_vivo(ruta_datos, &nombre_archivo_epoca)?;
 
     Ok(ruta_epoca)
 }
@@ -390,9 +421,23 @@ pub fn promover_epoca(
     // resolverla AQUÍ, mientras el enlace todavía apunta a la época que está por superseder: después
     // del paso 4 apuntaría a la época nueva, y el drenaje de la tarea 7 verificaría el diario
     // equivocado, declarando limpia una época con datos sin consolidar.
+    //
+    // Si la resolución canónica falla (por ejemplo, porque el enlace es colgante o el archivo
+    // destino fue eliminado), la promoción se aborta ruidosamente en lugar de reutilizar una ruta
+    // no resuelta que restauraría silenciosamente el defecto de inspección de diario erróneo.
+    // Abortar en este punto es seguro y reintentable: la base de staging ya fue sellada y
+    // consolidada limpiamente (con punto de control 0,0,0 sin archivos -wal/-shm residuales) pero
+    // no se ha ejecutado ningún renombrado aún; un reintento posterior recomputará el mismo N
+    // (pues `numero_de_epoca_siguiente` omite `knowledge_staging.db` por nombre) y volverá a sellar.
     let ruta_anterior = {
         let ruta_de_apertura = gestor.conocimiento().ruta().to_path_buf();
-        std::fs::canonicalize(&ruta_de_apertura).unwrap_or(ruta_de_apertura)
+        std::fs::canonicalize(&ruta_de_apertura).map_err(|causa| {
+            ErrorDeAlmacen::ArchivoDeEpocaInaccesible {
+                ruta: ruta_de_apertura,
+                operacion: "resolver la ruta fisica de la epoca viva antes de reasignar el enlace",
+                causa,
+            }
+        })?
     };
 
     // Paso 3 & 4: Renombrar staging a knowledge_epoch_N.db y actualizar symlink knowledge_live.db.
@@ -452,12 +497,12 @@ pub fn promover_epoca(
         f64::INFINITY
     };
 
-    let epoca_superseida = EpocaSuperseida {
-        pool: pool_superseido,
-        ruta_del_archivo: ruta_anterior,
-        numero_de_epoca: numero_anterior,
-        instante_de_reemplazo: instante_inicio,
-    };
+    let epoca_superseida = EpocaSuperseida::nueva(
+        pool_superseido,
+        ruta_anterior,
+        numero_anterior,
+        instante_inicio,
+    );
 
     Ok(DesenlaceDePromocion::Promovida {
         numero_de_epoca: numero_siguiente,

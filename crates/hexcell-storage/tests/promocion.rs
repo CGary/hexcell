@@ -782,3 +782,75 @@ fn verificar_ac10_interrupcion_tras_enlace_simbolico_y_antes_del_swap_de_pool() 
     });
     assert!(cuenta_gestor_reiniciado.is_ok());
 }
+
+#[test]
+fn verificar_guarda_4_canonicalize_ruidoso_en_promocion_aborta_y_es_reintentable() {
+    let temp = DirectorioTemporal::nuevo("promocion-guarda-4-canonicalize");
+    // Abrir el gestor sobre el directorio limpio (crea knowledge_live.db como archivo regular)
+    let gestor = GestorDePools::abrir(temp.ruta()).expect("abrir gestor");
+    let config = preparar_staging_valido(temp.ruta(), 768);
+
+    let ruta_live = temp.ruta().join(NOMBRE_DE_ARCHIVO_DE_CONOCIMIENTO);
+    let ruta_live_bak = temp.ruta().join("knowledge_live.db.bak");
+    let ruta_staging = temp
+        .ruta()
+        .join(NOMBRE_DE_ARCHIVO_DE_CONOCIMIENTO_EN_SOMBRA);
+    let ruta_epoca_1 = temp.ruta().join("knowledge_epoch_1.db");
+
+    // Mover knowledge_live.db a un lado para que canonicalize no pueda resolver la ruta física del pool
+    fs::rename(&ruta_live, &ruta_live_bak).expect("mover knowledge_live.db");
+
+    // 1. promover_epoca debe abortar ruidosamente con Err(ArchivoDeEpocaInaccesible)
+    let resultado = promover_epoca(&gestor, temp.ruta(), &config, 10_000);
+    match resultado {
+        Err(ErrorDeAlmacen::ArchivoDeEpocaInaccesible {
+            ruta, operacion, ..
+        }) => {
+            assert_eq!(ruta, ruta_live);
+            assert_eq!(
+                operacion,
+                "resolver la ruta fisica de la epoca viva antes de reasignar el enlace"
+            );
+        }
+        otro => panic!("se esperaba Err(ArchivoDeEpocaInaccesible), se obtuvo: {otro:?}"),
+    }
+
+    // 2. Aborto LIMPIO: knowledge_epoch_1.db no existe, el symlink no fue reasignado,
+    // y knowledge_staging.db sigue existiendo sellado con numero_de_epoca = 1.
+    assert!(
+        !ruta_epoca_1.exists(),
+        "knowledge_epoch_1.db no debe existir tras el aborto"
+    );
+    assert!(
+        !ruta_live.exists(),
+        "knowledge_live.db no debió ser reasignado"
+    );
+    assert!(
+        ruta_staging.exists(),
+        "knowledge_staging.db debe seguir existiendo intacto"
+    );
+
+    // 3. REINTENTABLE: restaurar el archivo live y llamar a promover_epoca de nuevo sobre el MISMO gestor
+    fs::rename(&ruta_live_bak, &ruta_live).expect("restaurar knowledge_live.db");
+
+    let resultado_reintento =
+        promover_epoca(&gestor, temp.ruta(), &config, 20_000).expect("reintentar promocion");
+
+    match resultado_reintento {
+        DesenlaceDePromocion::Promovida {
+            numero_de_epoca,
+            ruta_del_archivo,
+            ..
+        } => {
+            // numero_de_epoca_siguiente omite knowledge_staging.db por nombre, por lo que recomputa N = 1
+            assert_eq!(numero_de_epoca, 1);
+            assert_eq!(ruta_del_archivo, ruta_epoca_1);
+            assert!(ruta_epoca_1.exists());
+            assert_eq!(
+                fs::read_link(&ruta_live).unwrap().to_str().unwrap(),
+                "knowledge_epoch_1.db"
+            );
+        }
+        otro => panic!("se esperaba Promovida tras reintento, se obtuvo: {otro:?}"),
+    }
+}

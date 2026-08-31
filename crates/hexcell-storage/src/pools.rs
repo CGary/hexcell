@@ -273,6 +273,7 @@ impl GestorDePools {
         let lectura = abrir_solo_lectura(&ruta_sesiones)?;
 
         let ruta_conocimiento = ruta_datos.join(NOMBRE_DE_ARCHIVO_DE_CONOCIMIENTO);
+        verificar_enlace_vivo_resoluble(ruta_datos)?;
         // Abrir en solo lectura un archivo que no existe falla, así que la base de conocimiento se
         // crea y se migra una sola vez en lectura y escritura, y esa conexión se cierra —al salir
         // de este bloque— antes de abrir el pool de producción. Es la única escritura que la
@@ -556,5 +557,43 @@ fn sondear(
             componente,
             motivo: error.to_string(),
         },
+    }
+}
+
+/// Verifica que el enlace simbólico `knowledge_live.db`, si existe, apunte a un archivo presente en disco.
+///
+/// Si `knowledge_live.db` es un archivo regular o no existe aún, la verificación aprueba con `Ok(())`, pues `abrir`
+/// creará y migrará la base inicial de producción. Si es un enlace simbólico que apunta a un destino inexistente,
+/// retorna [`ErrorDeAlmacen::EnlaceVivoColgante`] antes de invocar `abrir_lectura_escritura`, previniendo que SQLite
+/// siga el enlace y cree silenciosamente una base de datos vacía en el destino huérfano.
+pub(crate) fn verificar_enlace_vivo_resoluble(ruta_datos: &Path) -> Result<(), ErrorDeAlmacen> {
+    let ruta_live = ruta_datos.join(NOMBRE_DE_ARCHIVO_DE_CONOCIMIENTO);
+    match std::fs::symlink_metadata(&ruta_live) {
+        Ok(metadatos) if metadatos.file_type().is_symlink() => {
+            let destino = std::fs::read_link(&ruta_live).map_err(|causa| {
+                ErrorDeAlmacen::RutaDeDatosInaccesible {
+                    ruta: ruta_live.clone(),
+                    causa,
+                }
+            })?;
+            let ruta_destino_completa = if destino.is_relative() {
+                ruta_datos.join(&destino)
+            } else {
+                destino
+            };
+            if !ruta_destino_completa.exists() {
+                return Err(ErrorDeAlmacen::EnlaceVivoColgante {
+                    ruta: ruta_live,
+                    destino: ruta_destino_completa,
+                });
+            }
+            Ok(())
+        }
+        Ok(_) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(causa) => Err(ErrorDeAlmacen::RutaDeDatosInaccesible {
+            ruta: ruta_live,
+            causa,
+        }),
     }
 }

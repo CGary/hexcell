@@ -320,3 +320,42 @@ fn abrir_sobre_una_ruta_que_no_es_un_directorio_falla_sin_panico() {
         "una ruta que no es directorio debe fallar"
     );
 }
+
+#[test]
+fn verificar_guarda_3_enlace_vivo_colgante_en_abrir_falla_sin_crear_base_vacia() {
+    let directorio = DirectorioTemporal::nuevo("pools-enlace-colgante");
+    let ruta_live = directorio.ruta().join(NOMBRE_DE_ARCHIVO_DE_CONOCIMIENTO);
+    let destino_inexistente = directorio.ruta().join("knowledge_epoch_desaparecida.db");
+
+    // Crear un enlace simbólico colgante apuntando a un archivo que no existe en disco
+    std::os::unix::fs::symlink(&destino_inexistente, &ruta_live)
+        .expect("crear enlace simbólico colgante");
+
+    // 1. GestorDePools::abrir (lectura y escritura) debe abortar con EnlaceVivoColgante antes de abrir la base
+    let resultado_abrir = GestorDePools::abrir(directorio.ruta());
+    match resultado_abrir {
+        Err(ErrorDeAlmacen::EnlaceVivoColgante { ruta, destino }) => {
+            assert_eq!(ruta, ruta_live);
+            assert_eq!(destino, destino_inexistente);
+        }
+        Err(error) => panic!("se esperaba Err(EnlaceVivoColgante), se obtuvo: {error:?}"),
+        Ok(_) => panic!("se esperaba Err(EnlaceVivoColgante), se obtuvo Ok"),
+    }
+
+    // Aserción negativa fundamental: el archivo destino no debe haber sido creado como base vacía de 40960 bytes
+    assert!(
+        !destino_inexistente.exists(),
+        "el destino inexistente jamás debe ser creado por el camino de apertura"
+    );
+
+    // 2. Contrapartida: la apertura en solo lectura sobre el mismo enlace colgante falla limpiamente sin crear nada
+    let resultado_solo_lectura = hexcell_storage::PoolDeConocimiento::abrir_sobre(&ruta_live);
+    assert!(
+        resultado_solo_lectura.is_err(),
+        "la apertura en solo lectura debe fallar sobre un enlace colgante"
+    );
+    assert!(
+        !destino_inexistente.exists(),
+        "la apertura en solo lectura no debe crear ningún archivo en el destino"
+    );
+}

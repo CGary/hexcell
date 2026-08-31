@@ -102,6 +102,22 @@ pub enum ErrorDeAlmacen {
         /// Ruta del archivo de época que ya ocupaba el destino.
         ruta: PathBuf,
     },
+    /// El enlace simbólico `knowledge_live.db` apunta a un destino inexistente en disco.
+    /// Abrir la base en lectura y escritura crearía una base vacía no deseada en ese destino;
+    /// se aborta antes de abrir para prevenir la corrupción silenciosa de la base de conocimiento.
+    EnlaceVivoColgante {
+        /// Ruta del enlace simbólico knowledge_live.db.
+        ruta: PathBuf,
+        /// Destino al que apunta el enlace simbólico y que no existe en disco.
+        destino: PathBuf,
+    },
+    /// El archivo de la época sellada solicitada para reversión no existe en el directorio de datos.
+    EpocaDestinoAusente {
+        /// Número ordinal de época solicitado.
+        numero_de_epoca: i64,
+        /// Ruta del archivo de época esperado que no se encontró en disco.
+        ruta: PathBuf,
+    },
 }
 
 impl ErrorDeAlmacen {
@@ -181,6 +197,20 @@ impl fmt::Display for ErrorDeAlmacen {
                 "el archivo de la época {numero_de_epoca} ya existe en {}, se aborta la promoción para no sobrescribirlo",
                 ruta.display()
             ),
+            Self::EnlaceVivoColgante { ruta, destino } => write!(
+                f,
+                "el enlace simbólico {} apunta a un destino inexistente {}, se aborta la operación",
+                ruta.display(),
+                destino.display()
+            ),
+            Self::EpocaDestinoAusente {
+                numero_de_epoca,
+                ruta,
+            } => write!(
+                f,
+                "el archivo de la época {numero_de_epoca} no existe en {}, no se puede revertir",
+                ruta.display()
+            ),
         }
     }
 }
@@ -200,6 +230,8 @@ impl std::error::Error for ErrorDeAlmacen {
             Self::CompanieroDeStagingSobreviviente { .. } => None,
             Self::CompanieroDeEpocaSobreviviente { .. } => None,
             Self::EpocaDestinoYaExiste { .. } => None,
+            Self::EnlaceVivoColgante { .. } => None,
+            Self::EpocaDestinoAusente { .. } => None,
         }
     }
 }
