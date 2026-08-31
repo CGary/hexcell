@@ -97,6 +97,11 @@ impl EpocaSuperseida {
     pub fn lecturas_en_reposo(&self) -> bool {
         self.pool.lecturas_en_reposo()
     }
+
+    /// Extrae la propiedad del pool de conexiones consumiendo el descriptor.
+    pub fn tomar_pool(self) -> Arc<PoolDeConocimiento> {
+        self.pool
+    }
 }
 
 impl PartialEq for EpocaSuperseida {
@@ -380,6 +385,16 @@ pub fn promover_epoca(
         });
     }
 
+    // La ruta con la que se ABRIÓ el pool anterior suele ser el enlace `knowledge_live.db`, pero
+    // SQLite nombra su diario (`-wal`/`-shm`) según el destino RESUELTO del enlace. Hay que
+    // resolverla AQUÍ, mientras el enlace todavía apunta a la época que está por superseder: después
+    // del paso 4 apuntaría a la época nueva, y el drenaje de la tarea 7 verificaría el diario
+    // equivocado, declarando limpia una época con datos sin consolidar.
+    let ruta_anterior = {
+        let ruta_de_apertura = gestor.conocimiento().ruta().to_path_buf();
+        std::fs::canonicalize(&ruta_de_apertura).unwrap_or(ruta_de_apertura)
+    };
+
     // Paso 3 & 4: Renombrar staging a knowledge_epoch_N.db y actualizar symlink knowledge_live.db.
     let ruta_epoca =
         reasignar_enlace_de_la_epoca_viva(ruta_datos, &ruta_staging, numero_siguiente)?;
@@ -389,7 +404,6 @@ pub fn promover_epoca(
 
     // Capturar el estado de la época previa antes del intercambio atómico.
     let pool_anterior = gestor.conocimiento();
-    let ruta_anterior = pool_anterior.ruta().to_path_buf();
     let numero_anterior: Option<i64> = pool_anterior
         .con_lectura(|conexion| {
             conexion

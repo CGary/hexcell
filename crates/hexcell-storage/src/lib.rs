@@ -36,6 +36,7 @@
 
 pub mod almacen_de_identidad;
 pub mod conocimiento;
+pub mod drenaje;
 pub mod error;
 pub mod migraciones;
 pub mod pools;
@@ -52,6 +53,10 @@ pub use conocimiento::leer_sonda_semantica;
 pub use conocimiento::{
     ConstructorDeConocimientoEnSombra, DocumentoDeIngesta,
     NOMBRE_DE_ARCHIVO_DE_CONOCIMIENTO_EN_SOMBRA, SUFIJO_DE_ARCHIVO_SHM,
+};
+pub use drenaje::{
+    DesenlaceDeDrenaje, INTERVALO_DE_SONDEO_DE_DRENAJE, LIMITE_DE_DRENAJE_DE_EPOCA_POR_DEFECTO,
+    drenar_epoca_superseida,
 };
 pub use error::ErrorDeAlmacen;
 pub use migraciones::{

@@ -1,6 +1,6 @@
 # Bitácora de descartes
 
-> Registro de lo que se consideró y **no** se hizo. Última actualización: 2026-08-30 (D-29).
+> Registro de lo que se consideró y **no** se hizo. Última actualización: 2026-08-31 (D-30).
 
 ## Para qué sirve este documento
 
@@ -63,6 +63,7 @@ se apoya en un principio de diseño, no.
 | [D-27](#d-27) | Alternativas descartadas para la inferencia HTTPS (reqwest, aws-lc-rs, backoff exponencial, reintentar 429, noveno crate) | Principio de diseño, no reabrir |
 | [D-28](#d-28) | Alternativas descartadas para el puerto de embeddings y adaptador OpenRouter (compartir parser de chat, zipping posicional, reserva por fragmento/ingesta, elevar timeout, base64, pseudo-conversación) | Principio de diseño, no reabrir |
 | [D-29](#d-29) | Alternativas descartadas para la conmutación atómica de épocas (cerrojo en pool, unlink+symlink, copia en caliente, reinicio de proceso) | Principio de diseño, no reabrir |
+| [D-30](#d-30) | Alternativas descartadas para el drenaje de la época superseída (notificación por Condvar, cierre forzado, remediación por borrado, sobrecarga de variable de apagado) | Principio de diseño, no reabrir |
 
 ---
 
@@ -468,6 +469,18 @@ copiar `sessions.db`, `knowledge_live.db` y el almacén de identidad del adaptad
   * *Copia en caliente (copy-on-promote / sobrescritura de archivo en vivo):* viola la inmutabilidad de las épocas y expone a lectores concurrentes a lecturas corruptas de páginas mixtas o archivos a medio transferir.
   * *Reinicio del proceso de la célula para conmutar de época:* provocaría caída de servicio y pérdida de conexiones de transporte activas en cada ciclo de ingesta, vulnerando el objetivo de disponibilidad continua (FR-07).
 * **Registro normativo:** `docs/adr/adr-0006-epocas-y-conmutacion-atomica.md`, `crates/hexcell-storage/src/promocion.rs`.
+* **Qué tendría que cambiar para reabrirlo:** *Principio de diseño.* **No reabrir.**
+
+### D-30
+**Alternativas descartadas para el drenaje de la época superseída (notificación por Condvar, cierre forzado, remediación por borrado, sobrecarga de variable de apagado).**
+
+* **Descartado:** 2026-08-31 (HEX-056).
+* **Por qué se descartó:**
+  * *Notificación reactiva mediante `Condvar` o canal en la ruta de lectura de conocimiento:* añadir señalización en `PoolDeConocimiento::con_lectura` penalizaría con sincronización cada consulta de lectura ordinaria en el camino crítico para un evento (conmutación y drenaje) que ocurre solo una vez por ingesta; el sondeo con `INTERVALO_DE_SONDEO_DE_DRENAJE` (5 ms) no bloquea y mantiene libre de sobrecarga el camino caliente.
+  * *Cierre forzado o interrupción abrupta de conexiones con lectores en vuelo:* viola el invariante de consistencia de lecturas en curso; si el límite temporal expira, el drenaje falla cerrado retornando `DesenlaceDeDrenaje::Expirada` con el descriptor vivo para conservar la observabilidad y permitir reintentos sin corromper transacciones de lectura.
+  * *Remediación por borrado automático de archivos secundarios (`-wal` o `-shm`) supervivientes:* si un archivo `-wal` sobrevive con tamaño mayor a cero tras el cierre, contiene datos no consolidados; eliminarlo destruiría la única evidencia para auditar la anomalía. Se aplica la doctrina de verificar y abortar (`CompanieroDeEpocaSobreviviente`), tolerando como residuo inocuo un `-wal` de cero bytes y un `-shm` de conexiones en solo lectura.
+  * *Sobrecargar la variable de entorno `HEXCELL_LIMITE_DE_DRENAJE_SEGUNDOS`:* dicha variable gobierna el apagado ordenado del proceso (HEX-007) con un presupuesto de 20 s; el drenaje de época opera por evento de ingesta con una cota distinta (10 s, `HEXCELL_LIMITE_DE_DRENAJE_DE_EPOCA_MS`) y no debe acoplarse.
+* **Registro normativo:** `docs/adr/adr-0006-epocas-y-conmutacion-atomica.md`, `crates/hexcell-storage/src/drenaje.rs`, `crates/hexcell/src/promocion.rs`.
 * **Qué tendría que cambiar para reabrirlo:** *Principio de diseño.* **No reabrir.**
 
 ---

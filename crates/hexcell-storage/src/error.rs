@@ -83,6 +83,15 @@ pub enum ErrorDeAlmacen {
         /// Ruta del archivo `-wal` o `-shm` que no debía seguir existiendo.
         ruta: PathBuf,
     },
+    /// Tras el drenaje y cierre de la época superseída, el archivo secundario `-wal`
+    /// contiene datos no consolidados (tamaño mayor a cero). Se aborta la verificación
+    /// sin eliminar el archivo para preservar la evidencia.
+    CompanieroDeEpocaSobreviviente {
+        /// Ruta física del archivo secundario `-wal` superviviente.
+        ruta: PathBuf,
+        /// Cantidad de bytes observados en el archivo `-wal`.
+        bytes: u64,
+    },
     /// El renombrado de staging al archivo canónico de la época N encontraría un archivo ya
     /// existente en ese destino. `rename()` de POSIX sobrescribe en silencio, así que este gate
     /// se comprueba **antes** de invocarlo: un escaneo que omitió una época sellada legítima
@@ -159,6 +168,11 @@ impl fmt::Display for ErrorDeAlmacen {
                 "el archivo secundario {} de staging sigue existiendo tras el punto de control, se aborta la promoción sin renombrar",
                 ruta.display()
             ),
+            Self::CompanieroDeEpocaSobreviviente { ruta, bytes } => write!(
+                f,
+                "el archivo secundario {} de la época superseída conserva {bytes} bytes sin consolidar tras el cierre, se aborta la verificación",
+                ruta.display()
+            ),
             Self::EpocaDestinoYaExiste {
                 numero_de_epoca,
                 ruta,
@@ -184,6 +198,7 @@ impl std::error::Error for ErrorDeAlmacen {
             Self::PromocionEnCurso => None,
             Self::ArchivoDeEpocaInaccesible { causa, .. } => Some(causa),
             Self::CompanieroDeStagingSobreviviente { .. } => None,
+            Self::CompanieroDeEpocaSobreviviente { .. } => None,
             Self::EpocaDestinoYaExiste { .. } => None,
         }
     }
