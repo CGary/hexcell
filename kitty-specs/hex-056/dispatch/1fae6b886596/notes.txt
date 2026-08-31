@@ -1,0 +1,38 @@
+He lanzado la ejecución de las pruebas del workspace (`cargo test --workspace`) en segundo plano y aguardaré su finalización.
+NOTES:
+- **Predicado de reposo de dos lados**: Se implementó la conjunción estricta de `epoca.lecturas_en_reposo()` (cerrojos de lectura libres en el instante del sondeo) y `Arc::strong_count(epoca.pool()) == 1` (ausencia de otros poseedores del `Arc<PoolDeConocimiento>`). Esto previene el falso positivo donde el drenaje cerraría prematuramente o reportaría éxito mientras el pool sigue retenido por consumidores concurrentes.
+- **Expiración con fallo cerrado**: Al alcanzarse el límite temporal (`instante_de_reemplazo().elapsed() >= limite`), el drenaje retorna `DesenlaceDeDrenaje::Expirada` devolviendo por valor la estructura viva [`EpocaSuperseida`](file:///home/gary/dev/hexcell/worktrees/HEX-056/crates/hexcell-storage/src/promocion.rs#L68-L103). No se fuerza el cierre ni se eliminan archivos, preservando la observabilidad de descriptores y permitiendo la reintentabilidad del drenaje.
+- **Verificación de archivos secundarios post-cierre por tamaño (resolución RISK-1)**: En [`verificar_companeros_de_la_epoca`](file:///home/gary/dev/hexcell/worktrees/HEX-056/crates/hexcell-storage/src/drenaje.rs#L85-L116), tras el cierre del pool con `Arc::into_inner`, se inspecciona el tamaño del archivo `-wal`. Si conserva bytes > 0, se aborta con [`ErrorDeAlmacen::CompanieroDeEpocaSobreviviente`](file:///home/gary/dev/hexcell/worktrees/HEX-056/crates/hexcell-storage/src/error.rs#L86-L94) sin borrar el archivo; si es de cero bytes o existe solo el `-shm`, se tolera como residuo documentado inocuo de las conexiones SQLite en solo lectura.
+- **Consumo exclusivo de [`EpocaSuperseida`](file:///home/gary/dev/hexcell/worktrees/HEX-056/crates/hexcell-storage/src/promocion.rs#L68-L103)**: Se añadió únicamente el método consumidor [`tomar_pool(self)`](file:///home/gary/dev/hexcell/worktrees/HEX-056/crates/hexcell-storage/src/promocion.rs#L101-L104) para transferir la propiedad del `Arc<PoolDeConocimiento>` sin rediseñar la secuencia de promoción previa.
+- **Envoltorio asíncrono y variable de entorno**: Se implementó [`drenar_epoca_superseida_de_conocimiento`](file:///home/gary/dev/hexcell/worktrees/HEX-056/crates/hexcell/src/promocion.rs#L39-L46) en `hexcell::promocion`, parametrizado mediante `HEXCELL_LIMITE_DE_DRENAJE_DE_EPOCA_MS` con respaldo en [`LIMITE_DE_DRENAJE_DE_EPOCA_POR_DEFECTO`](file:///home/gary/dev/hexcell/worktrees/HEX-056/crates/hexcell-storage/src/drenaje.rs#L40-L46) (10 segundos), sin tocar `configuracion.rs`.
+- **Registro de descartes**: Se documentó la entrada D-30 en [`docs/bitacora-de-descartes.md`](file:///home/gary/dev/hexcell/worktrees/HEX-056/docs/bitacora-de-descartes.md#L474-L489) cubriendo el descarte de notificación por `Condvar`, cierre forzado, remediación por borrado y sobrecarga de variables de entorno de apagado, y se actualizó [`docs/STATUS.md`](file:///home/gary/dev/hexcell/worktrees/HEX-056/docs/STATUS.md#L23-L25).
+END NOTES
+
+### Resumen de cambios implementados
+
+1. **Nuevo módulo de almacenamiento síncrono [`drenaje`](file:///home/gary/dev/hexcell/worktrees/HEX-056/crates/hexcell-storage/src/drenaje.rs)**:
+   - [`drenar_epoca_superseida`](file:///home/gary/dev/hexcell/worktrees/HEX-056/crates/hexcell-storage/src/drenaje.rs#L118-L167): Bucle de sondeo cada 5 ms ([`INTERVALO_DE_SONDEO_DE_DRENAJE`](file:///home/gary/dev/hexcell/worktrees/HEX-056/crates/hexcell-storage/src/drenaje.rs#L48-L49)) con límite por defecto de 10 s ([`LIMITE_DE_DRENAJE_DE_EPOCA_POR_DEFECTO`](file:///home/gary/dev/hexcell/worktrees/HEX-056/crates/hexcell-storage/src/drenaje.rs#L40-L46)).
+   - Enumeración [`DesenlaceDeDrenaje`](file:///home/gary/dev/hexcell/worktrees/HEX-056/crates/hexcell-storage/src/drenaje.rs#L51-L83) con variantes `Drenada`, `Expirada` y `Retenida`.
+   - Función de verificación [`verificar_companeros_de_la_epoca`](file:///home/gary/dev/hexcell/worktrees/HEX-056/crates/hexcell-storage/src/drenaje.rs#L85-L116) sin llamadas a `remove_file` ni mutaciones en disco.
+
+2. **Extensión en [`crates/hexcell-storage/src/promocion.rs`](file:///home/gary/dev/hexcell/worktrees/HEX-056/crates/hexcell-storage/src/promocion.rs#L101-L104)**:
+   - Método consumidor [`tomar_pool(self) -> Arc<PoolDeConocimiento>`](file:///home/gary/dev/hexcell/worktrees/HEX-056/crates/hexcell-storage/src/promocion.rs#L101-L104) sobre [`EpocaSuperseida`](file:///home/gary/dev/hexcell/worktrees/HEX-056/crates/hexcell-storage/src/promocion.rs#L68-L103).
+
+3. **Nuevo error en [`crates/hexcell-storage/src/error.rs`](file:///home/gary/dev/hexcell/worktrees/HEX-056/crates/hexcell-storage/src/error.rs#L86-L94)**:
+   - [`ErrorDeAlmacen::CompanieroDeEpocaSobreviviente { ruta, bytes }`](file:///home/gary/dev/hexcell/worktrees/HEX-056/crates/hexcell-storage/src/error.rs#L86-L94) con sus brazos en `Display` y `source()`.
+
+4. **Re-exportación en [`crates/hexcell-storage/src/lib.rs`](file:///home/gary/dev/hexcell/worktrees/HEX-056/crates/hexcell-storage/src/lib.rs#L55-L58)**:
+   - Módulo `pub mod drenaje` y re-exportaciones de [`drenar_epoca_superseida`](file:///home/gary/dev/hexcell/worktrees/HEX-056/crates/hexcell-storage/src/drenaje.rs#L118-L167), [`DesenlaceDeDrenaje`](file:///home/gary/dev/hexcell/worktrees/HEX-056/crates/hexcell-storage/src/drenaje.rs#L51-L83), [`LIMITE_DE_DRENAJE_DE_EPOCA_POR_DEFECTO`](file:///home/gary/dev/hexcell/worktrees/HEX-056/crates/hexcell-storage/src/drenaje.rs#L40-L46) e [`INTERVALO_DE_SONDEO_DE_DRENAJE`](file:///home/gary/dev/hexcell/worktrees/HEX-056/crates/hexcell-storage/src/drenaje.rs#L48-L49).
+
+5. **Envoltorio asíncrono en [`crates/hexcell/src/promocion.rs`](file:///home/gary/dev/hexcell/worktrees/HEX-056/crates/hexcell/src/promocion.rs#L39-L46)**:
+   - [`drenar_epoca_superseida_de_conocimiento`](file:///home/gary/dev/hexcell/worktrees/HEX-056/crates/hexcell/src/promocion.rs#L39-L46) y constante [`HEXCELL_LIMITE_DE_DRENAJE_DE_EPOCA_MS`](file:///home/gary/dev/hexcell/worktrees/HEX-056/crates/hexcell/src/promocion.rs#L19-L21).
+
+6. **Baterías de pruebas de integración**:
+   - [`crates/hexcell-storage/tests/drenaje.rs`](file:///home/gary/dev/hexcell/worktrees/HEX-056/crates/hexcell-storage/tests/drenaje.rs): Cobertura completa de AC-1, AC-2, AC-3, AC-4 y constantes nombradas.
+   - [`crates/hexcell/tests/promocion.rs`](file:///home/gary/dev/hexcell/worktrees/HEX-056/crates/hexcell/tests/promocion.rs#L83-L153): Prueba de integración para [`drenar_epoca_superseida_de_conocimiento`](file:///home/gary/dev/hexcell/worktrees/HEX-056/crates/hexcell/src/promocion.rs#L39-L46).
+
+7. **Documentación arquitectónica**:
+   - Entrada D-30 en [`docs/bitacora-de-descartes.md`](file:///home/gary/dev/hexcell/worktrees/HEX-056/docs/bitacora-de-descartes.md#L474-L489).
+   - Estado actualizado en [`docs/STATUS.md`](file:///home/gary/dev/hexcell/worktrees/HEX-056/docs/STATUS.md#L23-L25).
+
+Todos los criterios de formato, análisis estático de clippy (`-D warnings`), suite completa de tests de workspace y guardas de contrato han verificado exitosamente.

@@ -1,0 +1,70 @@
+task_id: HEX-056
+summary: Controlled drain of the superseded knowledge pool after promotion, consuming EpocaSuperseida (HEX-055), with a bounded wait and fail-closed timeout.
+goal: >-
+  Implement the controlled drain of the superseded PoolDeConocimiento produced
+  by the promotion sequence (crates/hexcell-storage/src/promocion.rs). The
+  drain must asynchronously wait, using lecturas_en_reposo() as the readiness
+  probe, for in-flight reads on the superseded pool to finish, bounded by a
+  configurable time limit with a sensible default (not a buried constant, and
+  not a hardcoded async runtime assumption). Once the pool is fully closed,
+  the drain must verify that no orphan -wal/-shm files remain for the
+  superseded epoch's database path.
+invariants:
+  - "The superseded pool's underlying database file is never deleted or modified while any read is still in flight (lecturas_en_reposo() must report rest before closing)."
+  - "On timeout (the wait limit expires while reads are still outstanding), the drain fails closed: it reports the stuck condition, never force-deletes files, and leaves the superseded pool alive so the leak is observable."
+# AMENDED 2026-08-30 (human ruling on RISK-1): read-only WAL connections leave a
+# zero-byte -wal and a -shm that SURVIVE close (measured, SQLite 3.53.4), so the
+# strict "absence or error" rule would fire on 100% of production drains. The
+# error is reserved for a NON-EMPTY -wal (data at risk); zero-byte -wal and -shm
+# are tolerated, documented residue. Nothing is ever deleted either way.
+  - "After a successful drain, the post-close verification runs explicitly (never assumed from process exit) and distinguishes benign residue from data at risk: a zero-byte -wal and/or a -shm file are tolerated residue of read-only WAL connections."
+  - "If a NON-EMPTY -wal companion survives after the pool is closed, the drain reports it as an error and does not remove it (verify-and-abort, same doctrine as HEX-055's promotion guard); benign residue is likewise never removed."
+  - "The promotion sequence and the EpocaSuperseida struct are not redesigned; the drain only consumes the handoff already produced by HEX-055."
+  - "crates/hexcell-core keeps an empty dependency table (adr-0002); crates/hexcell never depends on rusqlite (adr-0010)."
+acceptance:
+  - id: AC-1
+    statement: The drain waits while a real reader holds the superseded pool and completes once reads reach rest.
+    given: a superseded pool with an active reader holding a read guard/reference
+    when: the drain is started and the reader later releases its read
+    then: the drain observes lecturas_en_reposo() transition to rest and completes without erroring, only after the reader released
+  - id: AC-2
+    statement: The time limit fires on a stuck reader and the expiry path never deletes files.
+    given: a superseded pool with a reader that never releases before the configured time limit
+    when: the drain's time limit elapses
+    then: the drain reports a timeout/stuck-drain error, the superseded pool remains alive and unclosed, and no file belonging to it is deleted
+  - id: AC-3
+    statement: After a clean drain, no data-bearing companion of the superseded epoch remains; a zero-byte -wal and/or a -shm are tolerated residue (2026-08-30 ruling).
+    given: a superseded pool that has been fully drained and closed, leaving at most the zero-byte -wal and -shm residue that read-only WAL connections produce
+    when: the post-drain verification runs
+    then: it reports success, treating the zero-byte -wal and the -shm as documented benign residue, and deletes nothing
+  - id: AC-4
+    statement: A surviving NON-EMPTY -wal companion after close is reported as an error and never removed.
+    given: a superseded pool that has been closed but leaves a -wal file with more than zero bytes on disk (e.g. from an external writer or an incomplete checkpoint)
+    when: the post-drain verification runs
+    then: it reports the surviving non-empty -wal as an error and does not delete it, leaving the file in place for inspection
+  - id: AC-5
+    statement: Neutralizing the wait-for-rest guard or the verify-and-abort guard makes exactly the corresponding mutation test fail, proving both guards are load-bearing.
+    given: a test suite with dedicated mutation-style scenarios for the wait guard (AC-1/AC-2) and the file-verification guard (AC-3/AC-4)
+    when: each guard is deliberately neutralized one at a time (e.g. skip the readiness wait, or skip the survivor check and delete unconditionally)
+    then: only the scenario(s) covering that specific guard fail; the rest of the suite is unaffected
+  - "`cargo fmt --check` exits 0."
+  - "`cargo clippy --workspace -- -D warnings` exits 0."
+  - "`cargo test --workspace` exits 0, with output captured and no retry-on-failure (reintentos: 0); a known intermittent unrelated failure in the workspace suite must not be silently re-run to pass."
+risk: high
+non_goals:
+  - Epoch retention/reversion policy (A-5 plan task 8).
+  - RAG retrieval over the promoted knowledge pool (A-5 plan task 9).
+  - Admin endpoint exposing drain status (A-5 plan task 10).
+  - Any redesign of the promotion sequence beyond consuming EpocaSuperseida as already delivered by HEX-055.
+constraints:
+  - Public repository; no secrets in code, tests, fixtures, or commit messages.
+  - Never version *.db, *.db-wal, *.db-shm, or .env* files.
+  - crates/hexcell-core dependency table stays empty (adr-0002).
+  - crates/hexcell must not depend on rusqlite (adr-0010).
+  - rusqlite stays pinned at 0.39; build.rs SQLITE_DEFAULT_FOREIGN_KEYS=1 must not be altered by this task.
+  - arc-swap is already a workspace dependency (from HEX-055) and may be reused; do not introduce a redundant alternative.
+  - Do not assume or hardcode a specific async runtime (e.g. tokio); the blueprint phase verifies what crates/hexcell actually uses before choosing the concurrency primitives.
+  - The drain time limit must be a configurable parameter with a sensible default, never a buried/hardcoded constant.
+  - "Verification commands (fmt/clippy/test) must capture output and run with reintentos: 0 (no automatic retries to paper over the known intermittent workspace test failure)."
+  - "Critical guards (wait-for-rest, verify-and-abort on file survivors) must be provable by mutation: neutralizing a guard must make exactly its own test fail."
+  - Conventional commits in Spanish; no AI attribution in commit messages.

@@ -1,0 +1,134 @@
+{
+  "task_id": "HEX-056",
+  "executed_at": "2026-08-31T14:30:58Z",
+  "overall_result": "passed",
+  "summary": "Los 21 verify.commands pasan (exit 0) en worktrees/HEX-056 tras el arreglo del enlace. Las 4 guardas del drenaje quedaron probadas por mutacion aislada y disjunta por el orquestador.",
+  "commands": [
+    {
+      "command": "cargo fmt --check",
+      "exit_code": 0,
+      "duration_s": 1,
+      "output_excerpt": "exit 0"
+    },
+    {
+      "command": "cargo clippy --workspace -- -D warnings",
+      "exit_code": 0,
+      "duration_s": 1,
+      "output_excerpt": "exit 0"
+    },
+    {
+      "command": "cargo test --workspace",
+      "exit_code": 0,
+      "duration_s": 10,
+      "output_excerpt": "exit 0"
+    },
+    {
+      "command": "bash -c 'for f in crates/hexcell-storage/src/drenaje.rs crates/hexcell-storage/tests/dre",
+      "exit_code": 0,
+      "duration_s": 1,
+      "output_excerpt": "exit 0"
+    },
+    {
+      "command": "bash -c 'F=\"crates/hexcell-storage/src/drenaje.rs crates/hexcell-storage/tests/drenaje.r",
+      "exit_code": 0,
+      "duration_s": 1,
+      "output_excerpt": "exit 0"
+    },
+    {
+      "command": "bash -c 'git diff --name-only main -- Cargo.toml Cargo.lock crates/hexcell/Cargo.toml cr",
+      "exit_code": 0,
+      "duration_s": 1,
+      "output_excerpt": "exit 0"
+    },
+    {
+      "command": "bash -c 'test -f crates/hexcell-core/Cargo.toml && ! sed -n \"/^\\[dependencies\\]/,\\$p\" cr",
+      "exit_code": 0,
+      "duration_s": 1,
+      "output_excerpt": "exit 0"
+    },
+    {
+      "command": "bash -c 'for f in $(find crates/hexcell/src -name \"*.rs\"); do sed \"s|//.*||\" \"$f\" | grep",
+      "exit_code": 0,
+      "duration_s": 1,
+      "output_excerpt": "exit 0"
+    },
+    {
+      "command": "bash -c 'for f in $(find crates/hexcell-storage/src -name \"*.rs\"); do sed \"s|//.*||\" \"$f",
+      "exit_code": 0,
+      "duration_s": 1,
+      "output_excerpt": "exit 0"
+    },
+    {
+      "command": "bash -c 'D=crates/hexcell-storage/src/drenaje.rs; N=$(sed \"s|//.*||\" \"$D\"); echo \"$N\" | ",
+      "exit_code": 0,
+      "duration_s": 1,
+      "output_excerpt": "exit 0"
+    },
+    {
+      "command": "bash -c 'D=crates/hexcell-storage/src/drenaje.rs; N=$(sed \"s|//.*||\" \"$D\"); echo \"$N\" | ",
+      "exit_code": 0,
+      "duration_s": 1,
+      "output_excerpt": "exit 0"
+    },
+    {
+      "command": "bash -c 'D=crates/hexcell-storage/src/drenaje.rs; N=$(sed \"s|//.*||\" \"$D\"); echo \"$N\" | ",
+      "exit_code": 0,
+      "duration_s": 1,
+      "output_excerpt": "exit 0"
+    },
+    {
+      "command": "bash -c 'D=crates/hexcell-storage/src/drenaje.rs; N=$(sed \"s|//.*||\" \"$D\"); echo \"$N\" | ",
+      "exit_code": 0,
+      "duration_s": 1,
+      "output_excerpt": "exit 0"
+    },
+    {
+      "command": "bash -c 'grep -qE \"LIMITE_DE_DRENAJE_DE_EPOCA_POR_DEFECTO: Duration\" crates/hexcell-stor",
+      "exit_code": 0,
+      "duration_s": 1,
+      "output_excerpt": "exit 0"
+    },
+    {
+      "command": "bash -c 'grep -q \"HEXCELL_LIMITE_DE_DRENAJE_DE_EPOCA_MS\" crates/hexcell/src/promocion.rs",
+      "exit_code": 0,
+      "duration_s": 1,
+      "output_excerpt": "exit 0"
+    },
+    {
+      "command": "bash -c 'grep -q \"CompanieroDeEpocaSobreviviente\" crates/hexcell-storage/src/error.rs &&",
+      "exit_code": 0,
+      "duration_s": 1,
+      "output_excerpt": "exit 0"
+    },
+    {
+      "command": "bash -c 'for f in crates/hexcell-storage/src/drenaje.rs crates/hexcell/src/promocion.rs;",
+      "exit_code": 0,
+      "duration_s": 1,
+      "output_excerpt": "exit 0"
+    },
+    {
+      "command": "bash -c 'T=crates/hexcell-storage/tests/drenaje.rs; grep -q \"Expirada\" \"$T\" && grep -q \"",
+      "exit_code": 0,
+      "duration_s": 1,
+      "output_excerpt": "exit 0"
+    },
+    {
+      "command": "bash -c 'git diff --name-only main -- crates/hexcell-storage/src/pools.rs crates/hexcell",
+      "exit_code": 0,
+      "duration_s": 1,
+      "output_excerpt": "exit 0"
+    },
+    {
+      "command": "bash -c 'P=crates/hexcell-storage/src/promocion.rs; test \"$(git diff --numstat main -- $",
+      "exit_code": 0,
+      "duration_s": 1,
+      "output_excerpt": "exit 0"
+    },
+    {
+      "command": "bash -c '! git ls-files | grep -qE \"\\.(db|db-wal|db-shm)$|^\\.env\"'",
+      "exit_code": 0,
+      "duration_s": 1,
+      "output_excerpt": "exit 0"
+    }
+  ]
+}

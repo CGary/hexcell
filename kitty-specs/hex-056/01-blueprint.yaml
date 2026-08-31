@@ -1,0 +1,126 @@
+task_id: HEX-056
+summary: 'A-5 task 7: synchronous bounded drain of the superseded knowledge pool in a new hexcell-storage::drenaje module, consuming HEX-055 EpocaSuperseida, with verify-and-abort companion check.'
+affected_files:
+- crates/hexcell-storage/src/drenaje.rs
+- crates/hexcell-storage/src/promocion.rs
+- crates/hexcell-storage/src/error.rs
+- crates/hexcell-storage/src/lib.rs
+- crates/hexcell-storage/tests/drenaje.rs
+- crates/hexcell/src/promocion.rs
+- crates/hexcell/tests/promocion.rs
+- docs/bitacora-de-descartes.md
+- docs/STATUS.md
+symbols:
+- 'hexcell_storage::drenaje (NEW module, synchronous, std-only: no tokio, no new dependency)'
+- 'drenar_epoca_superseida(epoca: EpocaSuperseida, limite: Duration) -> Result<DesenlaceDeDrenaje, ErrorDeAlmacen>'
+- 'DesenlaceDeDrenaje::Drenada { ruta_del_archivo, numero_de_epoca, espera_ms }'
+- 'DesenlaceDeDrenaje::Expirada { epoca_superseida, titulares, lecturas_en_reposo } (carries the LIVE handle back: retryable, nothing closed, nothing deleted)'
+- 'DesenlaceDeDrenaje::Retenida { ruta_del_archivo, numero_de_epoca, titulares } (Arc::into_inner yielded None: another holder appeared, pool stays alive)'
+- 'LIMITE_DE_DRENAJE_DE_EPOCA_POR_DEFECTO: Duration = 10 s (named constant, > BUSY_TIMEOUT 5 s, < the 20 s shutdown drain)'
+- 'INTERVALO_DE_SONDEO_DE_DRENAJE: Duration = 5 ms (poll gap; std::thread::sleep, never a busy spin)'
+- 'verificar_companeros_de_la_epoca(ruta) -> Result<(), ErrorDeAlmacen> (private; verify-and-abort, NEVER remove_file)'
+- 'EpocaSuperseida::tomar_pool(self) -> Arc<PoolDeConocimiento> (ONE consuming accessor added to promocion.rs; the private pool field is otherwise unreachable from a sibling module)'
+- 'ErrorDeAlmacen::CompanieroDeEpocaSobreviviente { ruta, bytes } (mirrors CompanieroDeStagingSobreviviente; bytes records the observed -wal size for RISK-1)'
+- 'hexcell::promocion::drenar_epoca_superseida_de_conocimiento (async wrapper, calls the sync drain INLINE, HEX-052/HEX-055 precedent)'
+- 'hexcell::promocion::HEXCELL_LIMITE_DE_DRENAJE_DE_EPOCA_MS (NEW env var; must NOT reuse HEXCELL_LIMITE_DE_DRENAJE_SEGUNDOS)'
+- 'CONSUMED UNCHANGED: PoolDeConocimiento::lecturas_en_reposo, EpocaSuperseida::ruta_del_archivo/numero_de_epoca/instante_de_reemplazo, SUFIJO_DE_ARCHIVO_WAL, SUFIJO_DE_ARCHIVO_SHM'
+dependencies:
+- crates/hexcell-storage/src/pools.rs
+- crates/hexcell-storage/src/conocimiento.rs
+- crates/hexcell-storage/tests/comun/mod.rs
+- crates/hexcell-storage/tests/promocion.rs
+- crates/hexcell/tests/comun/mod.rs
+- docs/plan/fase-a-5-conocimiento-shadow-db.md
+- docs/adr/adr-0006-epocas-y-conmutacion-atomica.md
+- docs/adr/adr-0003-persistencia-dual.md
+test_scenarios:
+- statement: A reader thread holds one read connection of the superseded pool; the drain blocks, and only after the reader releases AND its Arc clone is dropped does it return Drenada, with espera_ms greater than the reader hold.
+  covers:
+  - AC-1
+- statement: The rest predicate is two-sided; a test that releases the read guard but keeps an Arc clone alive proves the drain still does NOT close, because lecturas_en_reposo alone cannot close the connections.
+  covers:
+  - AC-1
+- statement: A reader that never releases within the configured limit makes the drain return Expirada carrying the live EpocaSuperseida; the epoch file is still present and the pool still answers a read afterwards.
+  covers:
+  - AC-2
+- statement: On expiry no file belonging to the superseded epoch is removed; the directory listing before and after the expired drain is byte-identical.
+  covers:
+  - AC-2
+- statement: An expired drain is retryable; calling the drain again on the returned EpocaSuperseida after the reader releases returns Drenada.
+  covers:
+  - AC-2
+- statement: A superseded pool with no companions on disk drains cleanly and the post-drain verification reports success.
+  covers:
+  - AC-3
+- statement: 'REGRESSION GUARD for the 2026-08-31 ruling on RISK-1: the REAL production shape (a drain whose read-only connections left a ZERO-byte -wal plus a -shm next to the superseded epoch) returns Drenada, not an error, and both files are still on disk afterwards. Without this scenario the tolerance rule is untested and a future strict-ening would pass CI while breaking every production drain.'
+  covers:
+  - AC-3
+- statement: A stray non-empty -wal planted next to the superseded epoch path makes the drain return CompanieroDeEpocaSobreviviente and the file is still on disk afterwards.
+  covers:
+  - AC-4
+- statement: 'A stray -shm with NO non-empty -wal beside it is tolerated residue: the drain returns Drenada and the -shm is still on disk. The -shm carries no committed data of its own (it is the shared-memory index of the -wal), so an empty -wal makes it meaningless by construction; neither file is ever deleted.'
+  covers:
+  - AC-3
+- statement: 'Mutation A: neutralizing the wait-for-rest guard (return Drenada without evaluating the predicate) fails ONLY the AC-1 and AC-2 scenarios.'
+  covers:
+  - AC-5
+- statement: 'Mutation B: neutralizing the verify-and-abort guard (skip the survivor check, or remove_file it) fails ONLY the AC-4 scenarios.'
+  covers:
+  - AC-5
+- statement: The default limit is a named public constant, not a literal buried in the wait loop, and the async wrapper reads it from HEXCELL_LIMITE_DE_DRENAJE_DE_EPOCA_MS with that constant as fallback.
+  covers:
+  - AC-2
+- statement: hexcell-core keeps an empty dependency table, crates/hexcell gains no rusqlite, hexcell-storage gains no async construct, and Cargo.toml plus Cargo.lock stay at zero diff against main.
+strategy:
+- step: 1
+  action: 'Add the ONE consuming accessor tomar_pool(self) to EpocaSuperseida (Value Object). It is consumption, not redesign: the pool field is private to promocion.rs and a sibling module cannot move it out. No other line of the promotion sequence changes.'
+  files:
+  - crates/hexcell-storage/src/promocion.rs
+- step: 2
+  action: 'Add ErrorDeAlmacen::CompanieroDeEpocaSobreviviente { ruta, bytes } with its Display and source arms, worded like the existing CompanieroDeStagingSobreviviente. The bytes field records the observed -wal size, which after the 2026-08-31 ruling is what SEPARATES the anomaly from the residue: the variant is constructed ONLY for a -wal with bytes > 0, so an alert that fires means unconsolidated data actually survived.'
+  files:
+  - crates/hexcell-storage/src/error.rs
+- step: 3
+  action: 'Write the drenaje module (Application Service). Deadline = instante_de_reemplazo() + limite, the baseline HEX-055 declared, evaluated as instante_de_reemplazo().elapsed() >= limite so it is monotonic and cannot overflow. Poll the two-sided rest predicate, sleeping INTERVALO_DE_SONDEO_DE_DRENAJE between evaluations.'
+  files:
+  - crates/hexcell-storage/src/drenaje.rs
+- step: 4
+  action: 'Close only after the predicate holds: tomar_pool then Arc::into_inner. Some(pool) drops every Mutex<Connection> and releases the descriptors; None returns Retenida without touching disk. Then run the companion verification and return Drenada only if it passes.'
+  files:
+  - crates/hexcell-storage/src/drenaje.rs
+- step: 5
+  action: 'Write verificar_companeros_de_la_epoca reusing SUFIJO_DE_ARCHIVO_WAL and SUFIJO_DE_ARCHIVO_SHM (never re-spelling the literals). Per the 2026-08-31 ruling on RISK-1 the check is by SIZE, not by presence: a -wal with bytes > 0 returns Err (unconsolidated data survived); a zero-byte -wal and a -shm of any size are tolerated residue and return Ok. There is no remove_file anywhere in the module in EITHER branch. Document the 2026-08-30 measurement and the ruling in a didactic why-comment, so the next reader does not "fix" the tolerance back into a guard that fires on every healthy drain.'
+  files:
+  - crates/hexcell-storage/src/drenaje.rs
+- step: 6
+  action: Declare pub mod drenaje and re-export the drain, the outcome enum and both constants from lib.rs, following the existing pub use block ordering.
+  files:
+  - crates/hexcell-storage/src/lib.rs
+- step: 7
+  action: 'Add the async wrapper to the existing crates/hexcell/src/promocion.rs, calling the synchronous drain INLINE with no spawn_blocking, plus the env-var name constant and its parser falling back to the default. Do NOT touch configuracion.rs: the epoch drain limit must not collide with HEXCELL_LIMITE_DE_DRENAJE_SEGUNDOS, and a Configuracion field nothing reads until task 10 would be dead config.'
+  files:
+  - crates/hexcell/src/promocion.rs
+- step: 8
+  action: 'Write the storage integration suite in tests/drenaje.rs: build a real promotion with the existing DirectorioTemporal helper, take the EpocaSuperseida from DesenlaceDePromocion::Promovida, and drive readers from spawned threads that hold a connection inside con_lectura. Keep one test per guard so the AC-5 mutations fail disjointly.'
+  files:
+  - crates/hexcell-storage/tests/drenaje.rs
+- step: 9
+  action: Extend crates/hexcell/tests/promocion.rs with the async-wrapper scenario and the env-var default, without disturbing the existing HEX-055 cases in that file.
+  files:
+  - crates/hexcell/tests/promocion.rs
+- step: 10
+  action: 'Record the discards at the next free correlative number in the bitacora (notification via Condvar in the read path, force-close, remediation-by-deletion, reusing the shutdown drain variable) and update STATUS.md. CLAUDE.md requires a discard to be logged in the same commit that discards it.'
+  files:
+  - docs/bitacora-de-descartes.md
+  - docs/STATUS.md
+risks:
+- 'RISK-1 (RESOLVED 2026-08-31 by human ruling: option b, tolerate the data-free residue). MEASURED on 2026-08-30 with SQLite 3.53.4 in a scratch directory: opening a WAL database READ-ONLY creates <db>-shm (32768 bytes) and a ZERO-byte <db>-wal, and BOTH SURVIVE that connection close, because a read-only connection may not delete them; a later read-write open plus close does remove them. Every PoolDeConocimiento connection is read-only by construction (FR-05, adr-0003), and the superseded pool served live traffic, so under the STRICT reading of AC-3 and AC-4 a real production drain will ALWAYS end in CompanieroDeEpocaSobreviviente. RULING (human, 2026-08-31): option (b). A ZERO-byte -wal plus a -shm are tolerated, documented residue of read-only WAL access; the error is reserved for a NON-EMPTY -wal, which is real unconsolidated data. Rationale recorded with the ruling: a guard that fires on 100 percent of healthy drains does not protect anything, it only trains the operator to ignore the alarm, and it would hand task 8 retention a permanent false positive to clean up. Nothing is deleted in either branch, so the verify-and-abort doctrine is intact: what changed is WHICH observation counts as anomalous, never what the code does about it. 00-spec.yaml AC-3/AC-4 and the invariants were amended by the orchestrator the same day. Evidence for (b): the plan says huerfanos and its own drain criterion is the file-descriptor count returning to baseline (docs/plan/fase-a-5-conocimiento-shadow-db.md line 149), and numero_de_epoca_siguiente already skips -wal and -shm entries when scanning epochs. The error carries the observed byte size so either ruling is a one-line change, not a redesign.'
+- 'RISK-2 (spec/reality mismatch). The task brief names a field reemplazada_ms. No such field exists: EpocaSuperseida carries instante_de_reemplazo: std::time::Instant with accessor instante_de_reemplazo() (crates/hexcell-storage/src/promocion.rs:72,92). There is no millisecond field, so the deadline is computed monotonically from that Instant. No spec text was changed.'
+- 'RISK-3 (design correction). lecturas_en_reposo() is NOT Arc strong-count based: it try_locks every read Mutex (pools.rs:206-215). It is necessary but NOT sufficient to close the pool. EpocaSuperseida derives Clone and GestorDePools::conocimiento() hands out ArcSwap::load_full clones, so unless sole Arc ownership is ALSO required, Arc::into_inner never yields the pool, no connection closes, and the drain reports success while leaking every descriptor. The rest predicate is therefore two-sided: lecturas_en_reposo() AND Arc::strong_count == 1.'
+- 'RISK-4 (naming collision). HEXCELL_LIMITE_DE_DRENAJE_SEGUNDOS already exists (crates/hexcell/src/configuracion.rs:192) for the ORDERED SHUTDOWN drain of HEX-007, an unrelated mechanism. The epoch drain must NOT reuse it; a new HEXCELL_LIMITE_DE_DRENAJE_DE_EPOCA_MS is introduced and configuracion.rs is held at zero diff by a guard.'
+- 'RISK-5 (default sizing). The default must exceed BUSY_TIMEOUT (5 s, pools.rs:57) or a legitimately contended read is misreported as stuck, and should stay under the 20 s shutdown drain so an epoch drain in flight at shutdown cannot outlive the grace period. 10 s sits between them and is stated as the reason for the constant.'
+- 'RISK-6 (no production caller yet). promover_epoca_de_conocimiento currently has ZERO callers; task 10 supplies the admin endpoint. The drain wrapper will likewise have no production caller in this task, so its verification is test-only. This is scope, not dead code, and is flagged so review does not read it as an omission.'
+- 'RISK-7 (invariant reading). The spec invariant says the promotion sequence and EpocaSuperseida are not redesigned. This task still adds ONE consuming accessor to promocion.rs, because the pool field is private and a drain in a sibling module cannot otherwise take ownership. Read the invariant as no redesign, NOT as promocion.rs at zero diff.'
+- 'RISK-8 (pipeline consequence of reintentos 0). The spec demands no automatic retries, expressed as retry_policy.max_attempts 0 and escalate_after 0, the only place the contract schema can carry it. A failed verification therefore escalates to the human instead of being re-run, which is exactly the intent, but it also means a genuine implementation fix needs a fresh human-dispatched attempt.'
+- 'RISK-9 (test mechanics). A test thread that holds a read must obtain its Arc clone from epoca.pool(), which by itself raises the strong count; the AC-1 test must join that thread so the clone is dropped before the drain can complete, or it will observe an Expirada it did not intend. pub(crate) helpers such as abrir_solo_lectura are invisible from tests/, and the DirectorioTemporal helper in tests/comun/mod.rs cleans up on Drop, so no temporary-directory crate is added.'
+- 'ADVISOR: HSME unavailable (hsme-cli could not open its database). Proceeding without semantic context, per ADR 0008 graceful degradation. No related failed tasks: .ai/tasks/failed/ is empty.'

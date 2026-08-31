@@ -1,0 +1,21 @@
+{
+  "task_id": "HEX-056",
+  "summary": "Revision adversarial de 5 lentes: 22 hallazgos, 21 refutados 0/3, 1 confirmado 3/3 y reproducido; corregido y probado por mutacion. Segunda revision del arreglo: approve.",
+  "verdict": "approve",
+  "contract_compliance": true,
+  "forbidden_files_touched": [],
+  "unrequested_refactor": false,
+  "missing_tests": [],
+  "functional_risk": "low",
+  "notes": [
+    "Limites del contrato: 9 archivos (tope 10), +796/-10 = 806 lineas (tope 1300). Por clase: storage/src 202/420, storage/tests 470/520, hexcell/src 41/110, hexcell/tests 75/140, docs 18/110.",
+    "DEFECTO CONFIRMADO Y CORREGIDO (major): verificar_companeros_de_la_epoca inspeccionaba el diario del ENLACE knowledge_live.db en vez del de la epoca fisica. Tras la primera promocion el enlace existe y todo reinicio abre el pool por el, pero SQLite nombra el -wal segun el destino resuelto. Un verificador lo reprodujo con codigo real: 4096 bytes sin consolidar en knowledge_epoch_1.db-wal y el drenaje devolvia Drenada. La compuerta AC-4 estaba ciega en el estado estacionario. Arreglo: resolver la ruta fisica en promover_epoca ANTES de reasignar el enlace (despues apuntaria a la epoca nueva).",
+    "Las 9 pruebas originales no podian detectarlo: todas drenan la PRIMERA epoca de un directorio nuevo, unico caso en que ruta de apertura y archivo fisico coinciden. Prueba de regresion anadida que simula reinicio de proceso.",
+    "MUTACIONES (orquestador, aisladas y disjuntas): anular el predicado de reposo tumba exactamente los 4 casos AC-1/AC-2; anular la guarda de tamano tumba exactamente 1, el de AC-4; invertir la resolucion humana del 2026-08-31 tumba 5, incluida la regresion del residuo de cero bytes; anular la resolucion del enlace tumba exactamente la regresion nueva.",
+    "21 hallazgos refutados por unanimidad, dos de ellos sospechas del propio orquestador: 'titulares: 2' es el unico valor alcanzable en esa rama (probado por flujo de control) y el bloque if-let vacio del -shm satisface una guarda del contrato, borrarlo la rompe.",
+    "PENDIENTE PARA EL HUMANO EN LA COMPUERTA DE MERGE: el comportamiento prohibido #9 del contrato dice literalmente 'Do not change promover_epoca', y el arreglo lo cambia. Honra su INTENCION (no toca el orden de seis pasos, ni los motivos de aborto, ni DesenlaceDePromocion, ni los accesores, Clone o PartialEq de EpocaSuperseida) y cabe en el presupuesto de 30 lineas que el propio contrato asigna a ese archivo (usa 16). El defecto no se puede arreglar sin tocarlo, porque el enlace se reasigna dentro de esa funcion. Requiere waiver explicito, no silencioso.",
+    "SEGUIMIENTO (no bloqueante, para la tarea 8): el unwrap_or de promocion.rs:395 recae en silencio a la ruta de apertura si canonicalize falla, reintroduciendo el defecto sin avisar. ErrorDeAlmacen::ArchivoDeEpocaInaccesible ya existe con la forma correcta. No se cambio ahora porque convertirlo en error duro altera CUANDO falla una promocion, y eso amplia una brecha de contrato que el humano aun no ha dispensado.",
+    "NIT aceptado: la prueba de regresion re-escribe el literal knowledge_epoch_1.db en vez de componer PREFIJO_DE_ARCHIVO_DE_EPOCA. Se mantiene por consistencia: las 8 apariciones previas en tests/promocion.rs usan el mismo literal."
+  ],
+  "fix_tasks": []
+}

@@ -1,0 +1,95 @@
+{
+  "task_id": "HEX-056",
+  "bundle_hash": "1fae6b88659699146750aee0f6d5b3a7dbb159f3280929ff625f5be7c3c65e3b",
+  "files": [
+    ".ai/tasks/active/HEX-056-new-spec/00-spec.yaml",
+    ".ai/tasks/active/HEX-056-new-spec/01-blueprint.yaml",
+    "Cargo.toml",
+    "crates/hexcell-core/Cargo.toml",
+    "crates/hexcell-storage/Cargo.toml",
+    "crates/hexcell-storage/src/conocimiento.rs",
+    "crates/hexcell-storage/src/error.rs",
+    "crates/hexcell-storage/src/lib.rs",
+    "crates/hexcell-storage/src/migraciones.rs",
+    "crates/hexcell-storage/src/pools.rs",
+    "crates/hexcell-storage/src/promocion.rs",
+    "crates/hexcell-storage/src/tiempo.rs",
+    "crates/hexcell-storage/src/validacion.rs",
+    "crates/hexcell-storage/tests/comun/mod.rs",
+    "crates/hexcell-storage/tests/pools.rs"
+  ],
+  "protocol_version": "fleet-bundle-protocol/v2",
+  "created_at": "2026-08-31T13:38:50Z",
+  "dropped": [
+    {
+      "component": "code_slice",
+      "path": "docs/plan/fase-a-5-conocimiento-shadow-db.md",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "docs/bitacora-de-descartes.md",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "docs/adr/adr-0006-epocas-y-conmutacion-atomica.md",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "docs/adr/adr-0003-persistencia-dual.md",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "docs/adr/adr-0002-estructura-workspace.md",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "docs/STATUS.md",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "docs/PRD.md",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "crates/hexcell/tests/promocion.rs",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "crates/hexcell/tests/comun/mod.rs",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "crates/hexcell/src/promocion.rs",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "crates/hexcell/src/lib.rs",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "crates/hexcell/src/configuracion.rs",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "crates/hexcell/Cargo.toml",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "crates/hexcell-storage/tests/promocion.rs",
+      "reason": "bundle exceeded max_bytes budget"
+    }
+  ]
+}

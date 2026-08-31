@@ -1,0 +1,152 @@
+task_id: HEX-056
+summary: 'A-5 task 7: bounded synchronous drain of the superseded knowledge pool, two-sided rest predicate, fail-closed expiry that returns the live handle, and verify-and-abort on -wal/-shm survivors.'
+goal: 'Consume the EpocaSuperseida handoff HEX-055 delivered and close the superseded pool WITHOUT ever racing an in-flight read. The whole task turns on three decisions that were measured, not assumed. First, the rest condition is TWO-SIDED: lecturas_en_reposo() try_locks the read mutexes and proves no query is executing, but EpocaSuperseida derives Clone and GestorDePools::conocimiento() hands out ArcSwap::load_full clones, so sole Arc ownership must ALSO hold or Arc::into_inner never yields the pool, no connection ever closes, and the drain reports success while leaking every descriptor. Second, expiry FAILS CLOSED by returning the still-live EpocaSuperseida inside the outcome value, which keeps the pool alive, keeps the leak observable, deletes nothing, and makes the drain retryable; an Err cannot carry a live pool handle without poisoning ErrorDeAlmacen, and a drain that consumed the handle and then returned Err would drop the last Arc and close the pool on the very path that must not close it. Third, the post-close companion check VERIFIES and ABORTS, never deletes, mirroring the CompanieroDeStagingSobreviviente doctrine HEX-055 established: deletion is the corruption vector this stage exists to combat. The drain is synchronous std-only code in hexcell-storage, because that crate declares itself free of any async executor in its own manifest; crates/hexcell owns the tokio wrapper and the env-var limit. No new dependency is added, and Cargo.toml and Cargo.lock stay at zero diff.'
+read:
+- .ai/tasks/active/HEX-056-new-spec/00-spec.yaml
+- .ai/tasks/active/HEX-056-new-spec/01-blueprint.yaml
+- crates/hexcell-storage/src/pools.rs
+- crates/hexcell-storage/src/conocimiento.rs
+- crates/hexcell-storage/src/validacion.rs
+- crates/hexcell-storage/src/migraciones.rs
+- crates/hexcell-storage/src/tiempo.rs
+- crates/hexcell-storage/tests/comun/mod.rs
+- crates/hexcell-storage/tests/promocion.rs
+- crates/hexcell-storage/tests/pools.rs
+- crates/hexcell/src/configuracion.rs
+- crates/hexcell/src/lib.rs
+- crates/hexcell/tests/comun/mod.rs
+- crates/hexcell-core/Cargo.toml
+- crates/hexcell-storage/Cargo.toml
+- crates/hexcell/Cargo.toml
+- Cargo.toml
+- docs/plan/fase-a-5-conocimiento-shadow-db.md
+- docs/adr/adr-0006-epocas-y-conmutacion-atomica.md
+- docs/adr/adr-0003-persistencia-dual.md
+- docs/adr/adr-0002-estructura-workspace.md
+- docs/PRD.md
+touch:
+- crates/hexcell-storage/src/drenaje.rs
+- crates/hexcell-storage/src/promocion.rs
+- crates/hexcell-storage/src/error.rs
+- crates/hexcell-storage/src/lib.rs
+- crates/hexcell-storage/tests/drenaje.rs
+- crates/hexcell/src/promocion.rs
+- crates/hexcell/tests/promocion.rs
+- docs/bitacora-de-descartes.md
+- docs/STATUS.md
+forbid:
+  files:
+  - crates/hexcell-storage/src/pools.rs
+  - crates/hexcell-storage/src/conocimiento.rs
+  - crates/hexcell-storage/src/validacion.rs
+  - crates/hexcell-storage/src/migraciones.rs
+  - crates/hexcell-storage/src/respaldo.rs
+  - crates/hexcell-storage/src/sesiones.rs
+  - crates/hexcell-storage/src/presupuesto.rs
+  - crates/hexcell-storage/src/almacen_de_identidad.rs
+  - crates/hexcell-storage/src/tiempo.rs
+  - crates/hexcell-storage/migraciones/
+  - crates/hexcell-storage/tests/comun/mod.rs
+  - crates/hexcell-storage/tests/promocion.rs
+  - crates/hexcell-storage/tests/pools.rs
+  - crates/hexcell-storage/tests/migraciones.rs
+  - crates/hexcell-storage/tests/validacion.rs
+  - crates/hexcell-storage/tests/conocimiento.rs
+  - crates/hexcell-storage/tests/respaldo.rs
+  - crates/hexcell-core/
+  - crates/hexcell/src/configuracion.rs
+  - crates/hexcell/src/main.rs
+  - crates/hexcell/src/lib.rs
+  - crates/hexcell/src/salud.rs
+  - crates/hexcell/src/motor.rs
+  - crates/hexcell/src/ingesta.rs
+  - crates/hexcell/tests/comun/mod.rs
+  - crates/hexcell/tests/ingesta.rs
+  - crates/hexcell/tests/apagado_ordenado.rs
+  - crates/hexcell/tests/configuracion.rs
+  - crates/hexcell-admin/
+  - crates/hexcell-canal-simulado/
+  - crates/hexcell-canal-contrato/
+  - crates/hexcell-canal-whatsmeow/
+  - sidecar/
+  - Cargo.toml
+  - Cargo.lock
+  - crates/hexcell/Cargo.toml
+  - crates/hexcell-storage/Cargo.toml
+  - .gitignore
+  - .github/
+  - docs/PRD.md
+  - docs/plan/
+  - docs/adr/
+  - .ai/tasks/active/HEX-056-new-spec/00-spec.yaml
+  - .ai/tasks/active/HEX-056-new-spec/01-blueprint.yaml
+  behaviors:
+  - 'Never treat lecturas_en_reposo() as sufficient to close the pool. It try_locks every read Mutex and answers only whether a query is executing AT THIS INSTANT (pools.rs:206-215); it says nothing about who still HOLDS the pool. EpocaSuperseida derives Clone and GestorDePools::conocimiento() returns ArcSwap::load_full clones, so a consumer that took a handle before the swap keeps the strong count above one. The rest predicate is therefore a CONJUNCTION: lecturas_en_reposo() AND Arc::strong_count(pool) == 1. Dropping the second conjunct produces the worst possible failure mode in this stage, a drain that reports Drenada while Arc::into_inner returned None, no Connection was ever dropped, and every file descriptor leaked. Never substitute a strong-count check for the reposo probe either; the spec names the probe and both are required.'
+  - 'Never close the pool on the expiry path, and never let the expiry path drop the last Arc by accident. The drain takes EpocaSuperseida BY VALUE, so a function that returns Err on expiry would drop the handle at the end of the scope and close the pool on the exact path whose invariant is that the pool stays ALIVE. Expiry is therefore an ordinary Ok(DesenlaceDeDrenaje::Expirada { epoca_superseida, .. }) outcome that hands the live handle BACK to the caller, mirroring the Ok(DesenlaceDePromocion::Abortada) shape promocion.rs and validacion.rs already established for clean, expected, non-exceptional anomalies. Calling the drain again on the returned handle must work, because retryability is what makes the leak recoverable rather than terminal. Never put EpocaSuperseida inside an ErrorDeAlmacen variant: that would make a workspace-wide error type carry a live pool with open SQLite connections.'
+  - 'Never delete, truncate, rename, or open for writing any file belonging to the superseded epoch. Not on the success path, not on expiry, not when a companion survives, not to tidy up. The post-close check VERIFIES and ABORTS with ErrorDeAlmacen::CompanieroDeEpocaSobreviviente and leaves the file exactly where it is, which is the same doctrine sellar_y_consolidar_staging already applies to staging and the reason its comment gives: the survivor is the only artifact that can explain the anomaly, and deleting it destroys the evidence in precisely the case where the check had something to say. There must be no remove_file, remove_dir, OpenOptions or truncate anywhere in the drain module. Remediation-by-deletion is the corruption vector this stage combats.'
+  - 'Never build the companion paths from fresh string literals. SUFIJO_DE_ARCHIVO_WAL lives in pools.rs and SUFIJO_DE_ARCHIVO_SHM in conocimiento.rs; both are already public and both are already used this way by sellar_y_consolidar_staging. Re-spelling "-wal" or "-shm" in the drain would let the two spellings drift apart, and the drain would then verify a path SQLite never writes. Build the paths by pushing the constant onto ruta_del_archivo() as an OsString, exactly as promocion.rs:240-252 does, never with format! or with_extension, which would mangle a path that already ends in .db.'
+  - 'Never busy-spin and never hold a pool lock across the wait. The loop evaluates the rest predicate and then sleeps INTERVALO_DE_SONDEO_DE_DRENAJE via std::thread::sleep; lecturas_en_reposo() acquires its try_locks and releases them before returning, so nothing is held while sleeping and try_lock never blocks, which is why the wait cannot deadlock. Do NOT add a Condvar, a channel, or any notification to PoolDeConocimiento::con_lectura to avoid the polling: that would tax the read path of EVERY knowledge query for an event that happens once per ingestion, which is the identical trade-off D-29 already rejected when it chose ArcSwap over a lock around the pool pointer. Record that discard in the bitacora rather than re-litigating it.'
+  - 'Never bury the time limit. The drain takes limite: Duration as an explicit parameter; the default lives in the named public constant LIMITE_DE_DRENAJE_DE_EPOCA_POR_DEFECTO with its reasoning written beside it, and the poll gap in INTERVALO_DE_SONDEO_DE_DRENAJE. The default must exceed BUSY_TIMEOUT (5 s, pools.rs:57) or a read legitimately waiting on a contended database gets misreported as stuck, and must stay under the 20 s ordered-shutdown drain so an epoch drain in flight at shutdown cannot outlive the grace period the PRD fixes; 10 s sits between them and the comment must say so. Never hardcode a Duration inside the wait loop.'
+  - 'Never reuse HEXCELL_LIMITE_DE_DRENAJE_SEGUNDOS. That variable already exists at crates/hexcell/src/configuracion.rs:192 and belongs to HEX-007 ordered shutdown, an unrelated mechanism with a different budget; overloading it would make one operator knob silently govern two systems. Introduce HEXCELL_LIMITE_DE_DRENAJE_DE_EPOCA_MS in crates/hexcell/src/promocion.rs, next to the wrapper that reads it. Do NOT add a field to the Configuracion struct: nothing reads it until task 10 supplies the admin endpoint, and dead config in the central struct is worse than a local reader. configuracion.rs and its tests stay at zero diff.'
+  - 'Never compute the deadline from the moment the drain happens to start. The baseline is instante_de_reemplazo(), the Instant HEX-055 stored expressly as this task''s timeout baseline, so the limit bounds how long a superseded epoch may remain alive AFTER being superseded rather than how long this call has been running. Express it as instante_de_reemplazo().elapsed() >= limite, which is monotonic and cannot overflow or go backwards. There is no reemplazada_ms field and there never was; do not invent one and do not use SystemTime.'
+  - 'Never redesign the promotion sequence. Exactly ONE line of new surface is permitted in promocion.rs, the consuming accessor tomar_pool(self) -> Arc<PoolDeConocimiento>, which exists only because the pool field is private and a sibling module cannot otherwise take ownership. Do not change promover_epoca, the six-step order, the abort reasons, DesenlaceDePromocion, the existing EpocaSuperseida accessors, its Clone or its manual PartialEq, and do not give EpocaSuperseida a Drop implementation. crates/hexcell-storage/tests/promocion.rs is SETTLED and stays at zero diff; a guard asserts it.'
+  - 'Never add a dependency. The drain is std only: Arc, Mutex, Duration, Instant, thread::sleep and std::fs::metadata. No tokio in hexcell-storage, no new crate anywhere, no temporary-directory crate for tests. Cargo.toml, Cargo.lock and every crate manifest stay at ZERO diff against main and a guard enforces it, which is a stronger statement than a sanction note: if the implementation needs a dependency, the design was wrong and the human must be asked before anything is added.'
+  - 'Never add an async construct, tokio, spawn_blocking or .await to crates/hexcell-storage. That crate declares itself synchronous in its own manifest, with the reasoning written there: whoever already runs an executor decides how to schedule blocking work, and a storage layer that dragged its own executor would impose it on every consumer. The async wrapper in crates/hexcell/src/promocion.rs calls the synchronous drain INLINE with no spawn_blocking, exactly as the existing promover_epoca_de_conocimiento wrapper does one function above it.'
+  - 'Never add rusqlite, SQL or a Connection to crates/hexcell or crates/hexcell-core. crates/hexcell omits the driver on purpose (adr-0010) and hexcell-core keeps an empty [dependencies] table (adr-0002). Both guards are comment-normalised because the word rusqlite legitimately appears in Spanish prose.'
+  - 'Never panic, unwrap, expect, or use todo!/unimplemented!/unreachable! in the drain modules. error.rs states the rule for the whole layer and [profile.release] sets panic = abort, so a panic in production leaves no usable message. Every failure travels as a value named in Spanish. In particular, Arc::into_inner returning None must NOT be unwrapped: it is structurally near-impossible once the predicate holds, since the drain owns the only EpocaSuperseida, but it is handled as the Retenida outcome anyway rather than trusted. New error variants get their Display and source arms filled in.'
+  - 'Never let the guards be provable by inspection alone. Each critical guard gets its OWN test so the AC-5 mutations fail disjointly: neutralizing the wait (return Drenada without evaluating the predicate) must fail the AC-1 and AC-2 scenarios and NOTHING else, and neutralizing the companion check (skip the survivor test, or delete the file) must fail the AC-4 scenarios and NOTHING else. Do not fold expiry, rest and companion assertions into one test function, and do not assert the outcome variant only: the AC-2 test must ALSO show the epoch file untouched and the pool still answering a read, and the AC-4 test must ALSO show the planted companion still present on disk afterwards.'
+  - 'Never let a test reach the network, bind a socket, read an API key, sleep longer than it must, or leave a directory behind. Reuse the DirectorioTemporal helper from tests/comun/mod.rs, which cleans up on Drop. Remember that pub(crate) helpers such as abrir_solo_lectura are INVISIBLE from tests/, so a reader is driven by spawning a thread that calls con_lectura on an Arc clone taken from epoca.pool() and blocks inside the closure; that clone raises the strong count, so the AC-1 test MUST join the thread before expecting Drenada or it will observe an Expirada it did not intend.'
+  - 'Never write English prose, English comments or English identifiers into repository content. The repository is PUBLIC and all of its prose, comments and identifiers are Spanish; only Quorum artifact field values are English. Comments are DIDACTIC and explain WHY, not WHAT. Dates are absolute, in the form 30 de agosto de 2026, never relative. A case-insensitive word-list guard enforces this over the touched Rust files.'
+  - 'Never reuse or reorder a bitacora number, and never edit or delete an existing entry. Record at the next free correlative number the alternatives discarded here: notification via Condvar or channel in the read path instead of polling, forced close of a pool with readers still in flight, remediation-by-deletion of surviving companions, and overloading the ordered-shutdown drain variable. CLAUDE.md requires the discard to be logged in the SAME commit that discards it. Update the index table at the top of the file in the same edit.'
+  - 'Never write a new ADR and never edit an existing one. adr-0006 already governs epochs, atomic switchover and the ordered drain; this task IMPLEMENTS that decision rather than taking a new one. docs/adr/ is forbidden. Record the state change in docs/STATUS.md instead, as CLAUDE.md requires when a decision changes state.'
+  - 'Never implement epoch retention, reversion, the RAG engine, the admin endpoint, the 20-reader switchover storm or the backup-during-promotion interaction. Each is a later A-5 task and an explicit spec non-goal. Task 8 will reuse this drain when reversion swaps pools: the seam is that drenar_epoca_superseida accepts an EpocaSuperseida regardless of provenance, so NAME that seam in a comment and implement nothing of it. Define no HTTP route, no JSON payload and no serde derive.'
+  - 'Never write a *.db, *.db-wal, *.db-shm or .env file into the repository tree and never commit a secret. The existing generic *.db glob in .gitignore already covers it, so .gitignore needs no change and is forbidden.'
+  - 'Never introduce mass-sending folklore: no jitter, no warm-up protocol, no proxy, no VPN, no IP rotation. This task adds no network behaviour whatsoever.'
+  - 'Never modify 00-spec.yaml or 01-blueprint.yaml. The human owns the spec. RISK-1 recorded a MEASURED conflict between the original AC-3/AC-4 and platform behaviour (a read-only WAL connection creates a -shm and a zero-byte -wal that SURVIVE its close, so a real drain always finds companions). THE HUMAN RULED ON 2026-08-31 and the orchestrator amended 00-spec.yaml and 01-blueprint.yaml accordingly: the companion check is by SIZE, not by presence. A -wal with bytes > 0 is an anomaly and returns ErrorDeAlmacen::CompanieroDeEpocaSobreviviente carrying that byte count; a ZERO-byte -wal and a -shm of any size are tolerated, documented residue and return success. Implement the AMENDED reading as written in the artifacts, and NEVER delete in either branch: what the ruling changed is which observation counts as anomalous, never what the code does about it. Do not re-strict-en the check to "any companion is an error" — that fires on 100 percent of healthy drains, which is why it was ruled out.'
+verify:
+  commands:
+  - cargo fmt --check
+  - cargo clippy --workspace -- -D warnings
+  - cargo test --workspace
+  - bash -c 'for f in crates/hexcell-storage/src/drenaje.rs crates/hexcell-storage/tests/drenaje.rs crates/hexcell-storage/src/promocion.rs crates/hexcell-storage/src/error.rs crates/hexcell-storage/src/lib.rs crates/hexcell/src/promocion.rs crates/hexcell/tests/promocion.rs; do test -f "$f" || exit 1; done'
+  - bash -c 'F="crates/hexcell-storage/src/drenaje.rs crates/hexcell-storage/tests/drenaje.rs crates/hexcell-storage/src/promocion.rs crates/hexcell-storage/src/error.rs crates/hexcell-storage/src/lib.rs crates/hexcell/src/promocion.rs crates/hexcell/tests/promocion.rs"; W="the|this|that|which|because|should|would|about|however|therefore|instead|rather|through|against|without|every|their|there|these|those|neither|either|drain|drained|superseded|timeout|survivor|surviving|deadline|holder|holders|companion|companions"; ! grep -nEi "\b($W)\b" $F'
+  - bash -c 'git diff --name-only main -- Cargo.toml Cargo.lock crates/hexcell/Cargo.toml crates/hexcell-storage/Cargo.toml crates/hexcell-core/Cargo.toml | wc -l | grep -qx 0'
+  - bash -c 'test -f crates/hexcell-core/Cargo.toml && ! sed -n "/^\[dependencies\]/,\$p" crates/hexcell-core/Cargo.toml | tail -n +2 | grep -qvE "^[[:space:]]*(#.*)?$"'
+  - bash -c 'for f in $(find crates/hexcell/src -name "*.rs"); do sed "s|//.*||" "$f" | grep -qE "rusqlite|Connection::open" && exit 1; done; exit 0'
+  - bash -c 'for f in $(find crates/hexcell-storage/src -name "*.rs"); do sed "s|//.*||" "$f" | grep -qE "\btokio\b|spawn_blocking|async fn|\.await" && exit 1; done; exit 0'
+  - bash -c 'D=crates/hexcell-storage/src/drenaje.rs; N=$(sed "s|//.*||" "$D"); echo "$N" | grep -qE "remove_file|remove_dir|OpenOptions|\.truncate\(|fs::write|File::create" && exit 1; exit 0'
+  - bash -c 'D=crates/hexcell-storage/src/drenaje.rs; N=$(sed "s|//.*||" "$D"); echo "$N" | grep -q "SUFIJO_DE_ARCHIVO_WAL" && echo "$N" | grep -q "SUFIJO_DE_ARCHIVO_SHM" && ! echo "$N" | grep -qE "\"-wal\"|\"-shm\""'
+  - bash -c 'D=crates/hexcell-storage/src/drenaje.rs; N=$(sed "s|//.*||" "$D"); echo "$N" | grep -q "lecturas_en_reposo" && echo "$N" | grep -q "strong_count" && echo "$N" | grep -q "into_inner" && echo "$N" | grep -q "instante_de_reemplazo"'
+  - bash -c 'D=crates/hexcell-storage/src/drenaje.rs; N=$(sed "s|//.*||" "$D"); echo "$N" | grep -qE "metadata\(" && echo "$N" | grep -qE "\.len\(\)"'
+  - 'bash -c ''grep -qE "LIMITE_DE_DRENAJE_DE_EPOCA_POR_DEFECTO: Duration" crates/hexcell-storage/src/drenaje.rs && grep -qE "INTERVALO_DE_SONDEO_DE_DRENAJE: Duration" crates/hexcell-storage/src/drenaje.rs'''
+  - bash -c 'grep -q "HEXCELL_LIMITE_DE_DRENAJE_DE_EPOCA_MS" crates/hexcell/src/promocion.rs && ! grep -q "HEXCELL_LIMITE_DE_DRENAJE_SEGUNDOS" crates/hexcell/src/promocion.rs'
+  - bash -c 'grep -q "CompanieroDeEpocaSobreviviente" crates/hexcell-storage/src/error.rs && test "$(grep -c "CompanieroDeEpocaSobreviviente" crates/hexcell-storage/src/error.rs)" -ge 3'
+  - bash -c 'for f in crates/hexcell-storage/src/drenaje.rs crates/hexcell/src/promocion.rs; do sed "s|//.*||" "$f" | grep -qE "\.unwrap\(\)|\.expect\(|panic!|todo!|unimplemented!|unreachable!" && exit 1; done; exit 0'
+  - bash -c 'T=crates/hexcell-storage/tests/drenaje.rs; grep -q "Expirada" "$T" && grep -q "Drenada" "$T" && grep -q "CompanieroDeEpocaSobreviviente" "$T" && grep -q "lecturas_en_reposo" "$T" && grep -qE "strong_count|Arc::clone" "$T"'
+  - bash -c 'git diff --name-only main -- crates/hexcell-storage/src/pools.rs crates/hexcell-storage/src/conocimiento.rs crates/hexcell-storage/src/validacion.rs crates/hexcell-storage/src/migraciones.rs crates/hexcell-storage/src/respaldo.rs crates/hexcell-storage/src/sesiones.rs crates/hexcell-storage/src/presupuesto.rs crates/hexcell-storage/src/tiempo.rs crates/hexcell-storage/migraciones crates/hexcell-storage/tests/promocion.rs crates/hexcell-storage/tests/pools.rs crates/hexcell-storage/tests/comun crates/hexcell-core crates/hexcell/src/configuracion.rs crates/hexcell/src/main.rs crates/hexcell/src/lib.rs crates/hexcell/src/salud.rs crates/hexcell/src/ingesta.rs crates/hexcell/tests/comun docs/adr docs/plan docs/PRD.md .gitignore | wc -l | grep -qx 0'
+  - bash -c 'P=crates/hexcell-storage/src/promocion.rs; test "$(git diff --numstat main -- $P | awk "{print \$1+\$2}")" -le 30'
+  - bash -c '! git ls-files | grep -qE "\.(db|db-wal|db-shm)$|^\.env"'
+  target_s: 60
+acceptance:
+  bdd_suite: cargo test --workspace -- --nocapture
+  human_gate: true
+limits:
+  max_files_changed: 10
+  max_diff_lines: 1300
+  per_class:
+  - glob: crates/hexcell-storage/src/**
+    max_diff_lines: 420
+  - glob: crates/hexcell-storage/tests/**
+    max_diff_lines: 520
+  - glob: crates/hexcell/src/**
+    max_diff_lines: 110
+  - glob: crates/hexcell/tests/**
+    max_diff_lines: 140
+  - glob: docs/**
+    max_diff_lines: 110
+execution:
+  mode: worktree_edit
+  branch: ai/HEX-056
+retry_policy:
+  max_attempts: 0
+  escalate_after: 0
