@@ -1,0 +1,155 @@
+task_id: HEX-055
+summary: "FR-07 epoch promotion: seal-then-checkpoint staging, rename to epoch N, atomic symlink swap, ArcSwap pool swap with pre-warmed connections, and a drain seam handed to task 7."
+affected_files:
+  - crates/hexcell-storage/src/promocion.rs
+  - crates/hexcell-storage/src/pools.rs
+  - crates/hexcell-storage/src/error.rs
+  - crates/hexcell-storage/src/lib.rs
+  - crates/hexcell-storage/tests/promocion.rs
+  - crates/hexcell/src/promocion.rs
+  - crates/hexcell/src/lib.rs
+  - crates/hexcell/tests/promocion.rs
+  - Cargo.toml
+  - crates/hexcell-storage/Cargo.toml
+  - Cargo.lock
+  - docs/adr/adr-0006-epocas-y-conmutacion-atomica.md
+  - docs/adr/README.md
+  - docs/bitacora-de-descartes.md
+  - docs/STATUS.md
+symbols:
+  - "hexcell_storage::promocion::promover_epoca"
+  - "hexcell_storage::promocion::DesenlaceDePromocion"
+  - "hexcell_storage::promocion::MotivoDeAbortoDePromocion"
+  - "hexcell_storage::promocion::EpocaSuperseida"
+  - "hexcell_storage::promocion::PrefijoDeArchivoDeEpoca"
+  - "hexcell_storage::promocion::numero_de_epoca_siguiente"
+  - "hexcell_storage::promocion::sellar_y_consolidar_staging"
+  - "hexcell_storage::promocion::reasignar_enlace_de_la_epoca_viva"
+  - "hexcell_storage::pools::GestorDePools::conocimiento"
+  - "hexcell_storage::pools::GestorDePools::intercambiar_pool_de_conocimiento"
+  - "hexcell_storage::pools::PoolDeConocimiento::abrir_sobre"
+  - "hexcell_storage::pools::PoolDeConocimiento::lecturas_en_reposo"
+  - "hexcell_storage::error::ErrorDeAlmacen::PromocionEnCurso"
+  - "hexcell_storage::error::ErrorDeAlmacen::ArchivoDeEpocaInaccesible"
+  - "hexcell::promocion::promover_epoca_de_conocimiento"
+dependencies:
+  - crates/hexcell-storage/src/conocimiento.rs
+  - crates/hexcell-storage/src/validacion.rs
+  - crates/hexcell-storage/src/migraciones.rs
+  - crates/hexcell-storage/src/tiempo.rs
+  - crates/hexcell-storage/tests/comun/mod.rs
+  - crates/hexcell-storage/tests/validacion.rs
+  - crates/hexcell-storage/tests/pools.rs
+  - crates/hexcell-storage/tests/migraciones.rs
+  - crates/hexcell-storage/migraciones/conocimiento/0002-esquema-de-conocimiento.sql
+  - crates/hexcell-storage/migraciones/conocimiento/0003-sonda-semantica.sql
+  - crates/hexcell/src/salud.rs
+  - crates/hexcell/src/ingesta.rs
+  - crates/hexcell/tests/ingesta.rs
+  - docs/plan/fase-a-5-conocimiento-shadow-db.md
+test_scenarios:
+  - statement: "A rejected integrity verdict aborts before any file is touched: staging, the live symlink/file and the pool pointer are byte-for-byte and inode-for-inode unchanged, and the returned outcome is Abortada with the rejection reasons carried through."
+    covers: ["AC-1"]
+  - statement: "A staging file with no persisted probe row (leer_sonda_semantica returns None) aborts with MotivoDeAbortoDePromocion::SondaAusente, without calling the integrity gate and without touching disk."
+    covers: ["AC-1"]
+  - statement: "The checkpoint result row is inspected: a wal_checkpoint(TRUNCATE) that does not return (0,0,0) aborts before the rename, the abort reason names the incomplete checkpoint and carries the three counters, and knowledge_staging.db still exists under its own name afterwards."
+    covers: ["AC-2"]
+  - statement: "Sealing writes numero_de_epoca and sellada_ms in ONE UPDATE: after promotion the epoch file's metadatos_de_epoca row has both populated, and a deliberate attempt to set only one of the two is rejected by the CHECK ((numero_de_epoca IS NULL) = (sellada_ms IS NULL)) constraint, proving no half-sealed state is reachable."
+    covers: ["AC-3"]
+  - statement: "The seal survives the checkpoint because it is written BEFORE it: after the rename, the epoch file read through a fresh read-only connection reports the sealed numero_de_epoca with no -wal file present, proving the seal lives in the main database file and not in an orphaned WAL."
+    covers: ["AC-3", "AC-2"]
+  - statement: "Steady-state symlink reassignment: with knowledge_live.db already a symlink to epoch N, a second promotion leaves it a symlink to epoch N+1; readlink resolves to a real existing file both before and after, and no temporary symlink name survives in the data directory."
+    covers: ["AC-4"]
+  - statement: "First promotion over a regular file: a cell whose knowledge_live.db is the bootstrap regular file ends with knowledge_epoch_1.db present (the former staging file, sealed) and knowledge_live.db a symlink resolving to it; a read-only connection opened before the swap still serves the OLD inode's content afterwards, proving in-flight readers keep their floor."
+    covers: ["AC-5", "AC-10"]
+  - statement: "Epoch number N comes from file CONTENTS: a data directory holding sealed epoch files whose internal numero_de_epoca values are 1 and 2, with at least one deliberately stored under a filename whose digits disagree with its internal number, yields N = 3."
+    covers: ["AC-6"]
+  - statement: "A candidate epoch file that is unreadable, unsealed, or not a knowledge database is skipped by the N scan rather than aborting it or being counted as epoch zero."
+    covers: ["AC-6"]
+  - statement: "After promotion the swapped pool's connections are open against the new epoch's explicit path (pool.ruta() equals the epoch file, not knowledge_live.db), and the liveness query SELECT count(*) FROM metadatos_de_conocimiento succeeds through it."
+    covers: ["AC-7"]
+  - statement: "The superseded pool is handed back alive inside EpocaSuperseida: a read through it still succeeds after the promotion returned, its recorded epoch path is the previous epoch (or the bootstrap file on a first promotion), and lecturas_en_reposo reports quiescence so task 7 can build its wait loop on it."
+    covers: ["AC-8"]
+  - statement: "NFR-03: the interval measured with a monotonic Instant from immediately before the ArcSwap store to immediately after the first successful read through the new pool is recorded on the outcome and is below 10 milliseconds; the assertion is two-sided, requiring the read to have returned the expected liveness count so a failed read cannot pass the threshold vacuously, and requiring the recorded millisecond figure to be finite."
+    covers: ["AC-9"]
+  - statement: "Crash-point recoverability, interruption after the rename: with the epoch file present but the symlink untouched, a freshly opened GestorDePools still serves the prior epoch and the orphan epoch file is inert."
+    covers: ["AC-10"]
+  - statement: "Crash-point recoverability, interruption after the symlink swap but before the pointer swap: the still-open old pool keeps serving valid data, and a freshly opened GestorDePools follows the new symlink to the new epoch, proving the state heals on restart with no repair code."
+    covers: ["AC-10"]
+  - statement: "GestorDePools::abrir works unchanged when knowledge_live.db is already a symlink to a sealed epoch: migrations are a no-op at schema version 3, both liveness probes report Sana, and no write reaches the sealed epoch file."
+    covers: ["AC-10"]
+  - statement: "Two concurrent promotions against the same data directory cannot both proceed: the second returns ErrorDeAlmacen::PromocionEnCurso, and after the first finishes a subsequent promotion is admitted again, proving the gate is released on the success path as well as on every abort path."
+    covers: ["AC-10"]
+  - statement: "The async orchestrator in hexcell drives the synchronous sequence inline (the HEX-052 ingestion precedent), returns the same outcome, and no async construct, tokio import or spawn_blocking appears anywhere in hexcell-storage."
+    covers: ["AC-8", "AC-9"]
+strategy:
+  - step: 1
+    action: "Declare arc-swap once in the root [workspace.dependencies] table with a didactic Spanish comment matching the voice of the tokio/hyper/rusqlite entries: name it stage A-5's FIRST new runtime dependency, cite the PRD/CLAUDE.md design it implements (symlink + ArcSwap + Graceful Drain), and record the alternative it displaces (Mutex or RwLock around Arc<PoolDeConocimiento>, which would put a lock acquisition on the read path of every knowledge query). Pin the series, not a patch, exactly as rusqlite and tokio do. Consume it from crates/hexcell-storage/Cargo.toml with workspace = true; hexcell-core's [dependencies] table stays empty (adr-0002) and crates/hexcell does NOT gain it."
+    files:
+      - Cargo.toml
+      - crates/hexcell-storage/Cargo.toml
+      - Cargo.lock
+  - step: 2
+    action: "Make PoolDeConocimiento swappable in place (Application Service / infrastructure boundary). Extract the construction currently inlined in GestorDePools::abrir into PoolDeConocimiento::abrir_sobre(ruta) so a pool can be built against ANY explicit path, then change GestorDePools' field from PoolDeConocimiento to ArcSwap<PoolDeConocimiento>. conocimiento(&self) changes its return type from &PoolDeConocimiento to Arc<PoolDeConocimiento> via load_full(); this is source-compatible with all nine existing call sites because every one of them is a method-call chain on the temporary (salud.rs:61, tests/pools.rs 100/122/198/209/225/229, tests/migraciones.rs:147, hexcell/tests/ingesta.rs:155), none binds a reference. respaldar_en's internal use becomes self.conocimiento.load(). Add PoolDeConocimiento::lecturas_en_reposo(&self) -> bool, which try_locks every read Mutex and reports quiescence: this is the primitive stage A-5 task 7 will poll, defined and tested here so task 7 never reopens this file."
+    files:
+      - crates/hexcell-storage/src/pools.rs
+  - step: 3
+    action: "Add the concurrency gate where the state is, not where the caller is (Validator role). GestorDePools gains an AtomicBool claimed by compare_exchange and released by an RAII guard whose Drop runs on the success path and on every early-return abort path alike. A second concurrent promotion returns ErrorDeAlmacen::PromocionEnCurso. This is decided NOW rather than documented as a precondition for task 10, because two promotions racing on the same knowledge_staging.db is exactly the silent-corruption class this stage exists to prevent, and a precondition that task 10 must remember is not an invariant. Add ErrorDeAlmacen::PromocionEnCurso and ErrorDeAlmacen::ArchivoDeEpocaInaccesible { ruta, operacion, causa } with their Display arms in Spanish and their source() arms."
+    files:
+      - crates/hexcell-storage/src/pools.rs
+      - crates/hexcell-storage/src/error.rs
+  - step: 4
+    action: "Write the promotion module (Application Service, synchronous, no executor). Public surface: promover_epoca(gestor, ruta_datos, configuracion_de_fragmentacion, ahora_ms) -> Result<DesenlaceDePromocion, ErrorDeAlmacen>, with DesenlaceDePromocion::{Promovida{..}, Abortada{motivo}} mirroring the Aprobado/Rechazado shape validacion.rs already established, so an abort is an ordinary Ok outcome and never an error. Step 1 of the sequence: leer_sonda_semantica on staging (None -> Abortada{SondaAusente}), then validar_integridad_del_indice (Rechazado -> Abortada{IntegridadRechazada{motivos}}). Both gates run BEFORE any file is touched, so production keeps its epoch with no manual step."
+    files:
+      - crates/hexcell-storage/src/promocion.rs
+  - step: 5
+    action: "Derive N from file CONTENTS, never from filenames. numero_de_epoca_siguiente scans the data directory for candidate epoch files, opens each read-only, reads its own metadatos_de_epoca.numero_de_epoca, skips anything unreadable or unsealed instead of aborting the scan, and returns highest + 1 (1 when none exist). The rationale is HEX-049's settled contract, already written into migration 0002: the filename is only the locator and the row is the authoritative description, so a backup restored under a renamed file still yields a correct N."
+    files:
+      - crates/hexcell-storage/src/promocion.rs
+  - step: 6
+    action: "Seal BEFORE the checkpoint, and verify the checkpoint's result row. Open staging read-write, issue ONE UPDATE setting numero_de_epoca and sellada_ms together (the coupled CHECK from HEX-051-c admits no other shape), commit, and only THEN run PRAGMA wal_checkpoint(TRUNCATE). The order is load-bearing: the checkpoint drains the WAL into the main file, so an UPDATE issued after it would write fresh frames back into knowledge_staging.db-wal and leave the seal in a WAL that the rename orphans, producing an epoch file that reads back numero_de_epoca NULL. Inspect the returned triple: per the measurement already recorded in pools.rs, a successful TRUNCATE returns (0,0,0), so the gate is equality with (0,0,0) and NOT a positive checkpointed count; anything else is Abortada{PuntoDeControlIncompleto{bloqueado, paginas_en_wal, paginas_consolidadas}}. Drop the read-write connection, then confirm the -wal and -shm companions are gone before renaming."
+    files:
+      - crates/hexcell-storage/src/promocion.rs
+  - step: 7
+    action: "Rename staging to knowledge_epoch_N.db, then reassign knowledge_live.db with the POSIX temporary-symlink idiom: symlink the epoch file under a temporary name in the same directory, then rename() that temporary over knowledge_live.db. Never unlink-then-symlink, which has a window where the path resolves to nothing. Verified empirically on this platform that rename() over a REGULAR file and rename() over an existing SYMLINK both succeed atomically, so the two cases share one code path; the documented first-promotion difference is not the syscall but its consequences, which are recorded in the module prose and the ADR: N is 1 because no epoch file exists, the superseded bootstrap file becomes unlinked and reachable only through the descriptors the old pool still holds, its blocks are freed when task 7 closes the last of them, and there is no prior epoch to fall back to. Both the rename and the symlink are relative to the same directory, so both stay on one filesystem, which is what makes rename() atomic. This is Linux-only by construction (std::os::unix::fs::symlink): the project targets CachyOS in development and Docker in production, so the assumption is stated rather than hidden behind cfg gymnastics."
+    files:
+      - crates/hexcell-storage/src/promocion.rs
+  - step: 8
+    action: "Pre-warm, then swap, then measure. Build the replacement PoolDeConocimiento with PoolDeConocimiento::abrir_sobre(new epoch path) BEFORE the ArcSwap store, so the connections are already open when the pointer moves; opening them lazily afterwards would put two Connection::open_with_flags calls plus their three pragmas each inside the 10 ms budget on the target ten-year-old i7. Building it from the EXPLICIT epoch path (not by re-resolving the symlink) is also what closes the race with a concurrent second promotion. Take a monotonic Instant, store the new Arc through GestorDePools::intercambiar_pool_de_conocimiento, serve one liveness read through the new pool, and stop the clock; record the elapsed Duration on Promovida so the test measures rather than merely asserts (NFR-03). Return the swapped-out Arc inside EpocaSuperseida."
+    files:
+      - crates/hexcell-storage/src/promocion.rs
+      - crates/hexcell-storage/src/pools.rs
+  - step: 9
+    action: "Define the drain seam precisely enough for task 7 to build against, and hand the old pool over ALIVE. EpocaSuperseida holds the Arc<PoolDeConocimiento> (by value is impossible by construction: ArcSwap::swap returns an Arc and in-flight readers hold clones taken from load_full), the superseded epoch's explicit path for the -wal/-shm orphan check, its numero_de_epoca as Option<i64> because the first promotion supersedes the pre-epoch bootstrap file whose value is NULL, and the instant it was replaced as task 7's timeout baseline. It has accessors and deliberately NO Drop implementation: nothing in this task closes or drops a connection inside it. Re-export the promotion surface from lib.rs and update that file's module prose, which today states that FR-07's atomic switchover is not in this crate."
+    files:
+      - crates/hexcell-storage/src/promocion.rs
+      - crates/hexcell-storage/src/lib.rs
+  - step: 10
+    action: "Add the async orchestration seam in hexcell (crates/hexcell/src/promocion.rs), calling the synchronous storage sequence INLINE inside the async fn, exactly as HEX-052's ejecutar_ingesta already calls ConstructorDeConocimientoEnSombra without spawn_blocking. This is the seam stage A-5 task 10's admin endpoint plugs into; it defines no HTTP route, no JSON payload and no serde derive, and it needs no mutex of its own because the gate lives in storage. Register the module in crates/hexcell/src/lib.rs. No rusqlite and no SQL enter crates/hexcell (adr-0010)."
+    files:
+      - crates/hexcell/src/promocion.rs
+      - crates/hexcell/src/lib.rs
+  - step: 11
+    action: "Write the tests. crates/hexcell-storage/tests/promocion.rs is the bulk: it reuses the DirectorioTemporal helper from tests/comun/mod.rs and the fixture pattern of tests/validacion.rs (build a knowledge database directly with rusqlite, seed documentos, fragmentos, vectores_de_fragmento and sonda_semantica so the gate can approve offline), and covers AC-1 through AC-10. Remember pub(crate) helpers such as abrir_solo_lectura are invisible from tests/, so fixtures open their own connections; remember foreign keys are ON in this workspace, so seed documentos before fragmentos; remember the simulated provider's dimension must agree with the 768 the 0002 seed row declares, or rewrite that row in the fixture. crates/hexcell/tests/promocion.rs covers the async seam. tests/pools.rs, tests/migraciones.rs and tests/validacion.rs stay at zero diff, which the changed conocimiento() signature permits precisely because no call site binds a reference."
+    files:
+      - crates/hexcell-storage/tests/promocion.rs
+      - crates/hexcell/tests/promocion.rs
+  - step: 12
+    action: "Write docs/adr/adr-0006-epocas-y-conmutacion-atomica.md following the shape of adr-0025 (title '# ADR-0006 — ...' with an em dash, a bullet metadata block with Estado/Supersede a/Etapa/Requisitos tocados, a --- rule, then ## Contexto and ## Decisión as numbered bold items). It must record: the six-step sequence in order; why the seal precedes the checkpoint; why the checkpoint's result row is compared against (0,0,0) rather than trusted; the intrinsic-identity epoch-numbering rule and why filenames are never parsed; the first-promotion consequences; the temporary-symlink-plus-rename idiom and the Linux/same-filesystem assumption; why ArcSwap and not a lock (GestorDePools lives behind Arc at three sites, so no &mut is ever available and a Mutex would tax every read); the pre-warm decision behind NFR-03; and the handoff-to-drain seam. Date it 30 de agosto de 2026, absolute. Flip the docs/adr/README.md row for adr-0006 from 'Tomada en el PRD, por formalizar' to Vigente with that date, without renumbering or reordering anything. Record the discarded alternatives in docs/bitacora-de-descartes.md starting at the next free number D-29 (a lock around the pool pointer, unlink-then-symlink, copy-on-promote, and restarting the process to switch epochs), in the same commit that discards them, as CLAUDE.md requires. Add one bullet to docs/STATUS.md's Definido list in the established voice."
+    files:
+      - docs/adr/adr-0006-epocas-y-conmutacion-atomica.md
+      - docs/adr/README.md
+      - docs/bitacora-de-descartes.md
+      - docs/STATUS.md
+risks:
+  - "SPEC PREMISE CONTRADICTED BY THE PLATFORM (needs a human read, does not block implementation). The spec's first-promotion invariant states that a regular file cannot be replaced by a symlink through the same atomic rename()-over-a-symlink idiom. Measured on this machine on 30 de agosto de 2026: rename(temporary symlink -> existing REGULAR file) succeeds and atomically leaves a symlink in place, exactly as rename(temporary symlink -> existing symlink) does, and a descriptor opened on the regular file beforehand keeps resolving to the old inode afterwards. POSIX only forbids crossing the directory/non-directory boundary. The blueprint therefore keeps ONE code path for both cases and reinterprets the first promotion's special status as its CONSEQUENCES (N is 1, the superseded bootstrap file becomes unlinked and is freed only when task 7 drains it, there is no prior epoch to revert to) rather than as a different syscall. AC-5 is still satisfied and still gets its dedicated test. The human owns the spec and it is left unmodified."
+  - "AC-5's THEN clause is literally ambiguous. It reads 'the regular file becomes knowledge_epoch_1.db', which taken word for word would mean the old bootstrap knowledge_live.db is itself renamed to epoch 1. That reading is incoherent with the six-step sequence and with the spec's own goal text: the bootstrap file has no fragments, no vectors and no probe, so it could never pass the integrity gate that step 1 runs. The implemented reading is the coherent one: the SEALED FORMER STAGING file becomes knowledge_epoch_1.db and knowledge_live.db becomes a symlink pointing at it. The dedicated AC-5 test asserts that outcome. Flagged for the human rather than silently resolved."
+  - "arc-swap is absent from Cargo.lock AND from the local cargo registry cache, so the first cargo build after adding it REQUIRES network access. A sandboxed or offline implementation run will fail with a registry error that looks nothing like a code defect. CI is unaffected (the workflow does an ordinary cached cargo build). Verify the resolved series against crates.io at implementation time rather than trusting a version pinned from memory."
+  - "DANGLING-SYMLINK HAZARD, deliberately deferred to stage A-5 task 8. If knowledge_live.db ever becomes a symlink to a deleted epoch file, GestorDePools::abrir opens it read-write, which CREATES the missing target as an empty database, migrates it, and yields a knowledge base with zero fragments that still passes the liveness probe SELECT count(*) FROM metadatos_de_conocimiento. That is a silent-emptiness failure, not a loud one. No code path in THIS task can produce it, because the promotion never unlinks an epoch file; it becomes reachable only once something deletes one, which is task 8's epoch-retention and revert flow. Recorded here so task 8 inherits it instead of rediscovering it."
+  - "The vitality probe's reported path changes after a promotion. PoolDeConocimiento::ruta becomes the explicit epoch path, so Vitalidad::Caida's motivo will name knowledge_epoch_N.db instead of knowledge_live.db. The componente field is unaffected because sondear receives the NOMBRE_DE_ARCHIVO_DE_CONOCIMIENTO constant rather than the path, which is what keeps tests/pools.rs at zero diff; operators reading a health payload after a promotion will nonetheless see the epoch filename in the reason text. Intended, and worth one sentence in the ADR."
+  - "This task adds NO migration. metadatos_de_epoca already carries numero_de_epoca and sellada_ms from migration 0002, so VERSION_DE_ESQUEMA_DE_CONOCIMIENTO stays at 3, the fixed-size OBJETOS_ESPERADOS_DE_CONOCIMIENTO array stays at six entries, and tests/migraciones.rs is untouched. A blueprint that quietly added a rung here would break that array and the STRICT sweep; a guard pins the version so the scope decision cannot drift during implementation."
+  - "NFR-03's timing assertion can pass vacuously in a way the HEX-053 non-finite lesson does not literally cover. A std::time::Duration cannot be NaN, so the failure mode is not a non-finite comparison but an unperformed measurement: a first read that errors, or a window that never enclosed a real query, would still elapse in well under 10 ms. The assertion is therefore two-sided, requiring the liveness read to have returned its expected count AND the elapsed time to be under budget, and the recorded millisecond figure is checked finite before it is reported."
+  - "The 20-concurrent-reader storm is stage A-5 task 11 and is explicitly out of scope, so this task's NFR-03 evidence is a single-swap measurement on an idle pool. It is a floor, not a proof: the plan's own acceptance criterion for the stage demands the measurement under 20 simultaneous RAG reads. The ADR should say plainly which of the two has been measured here."
+  - "File-count discipline: HEX-053 and HEX-054 both landed EXACTLY at their max_files_changed cap, leaving the implementer no room for a legitimate extra file. This contract carries fifteen files in touch against a cap of seventeen for that reason."
+  - "No prior failed task overlaps these files (quorum analyze failure-lookup returned null over pools.rs, conocimiento.rs, lib.rs and the root Cargo.toml). The HSME advisory read hook was unavailable in this environment (the engine reported its database file missing), so no semantic context from past tasks informed this blueprint; per ADR 0008 the hook is advisory and never blocking."
+  - "docs/bitacora-de-descartes.md has no existing entry on symlinks, ArcSwap, epochs or hot-swapping, so adr-0006 contradicts no recorded discard. The next free number is D-29; CLAUDE.md requires the new discards to land in the same commit that makes them."

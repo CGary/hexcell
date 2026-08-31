@@ -1,0 +1,38 @@
+Se ha completado satisfactoriamente la implementación de la tarea **HEX-055 (FR-07 / NFR-03)**: conmutación atómica por épocas y gestión de bases de conocimiento en sombra.
+
+---
+
+### Resumen de la Implementación
+
+1. **Secuencia síncrona de seis pasos ([`promocion.rs`](file:///home/gary/dev/hexcell/worktrees/HEX-055/crates/hexcell-storage/src/promocion.rs))**:
+   - **Paso 1**: Revalidación previa de la base en sombra mediante lectura de la sonda persistida (`leer_sonda_semantica`) e invocación de la compuerta de integridad (`validar_integridad_del_indice`). Si la sonda no existe o la integridad es rechazada, se aborta limpiamente retornando [`DesenlaceDePromocion::Abortada`](file:///home/gary/dev/hexcell/worktrees/HEX-055/crates/hexcell-storage/src/promocion.rs) sin alterar ningún archivo en disco.
+   - **Paso 2**: Determinación determinista del número de época ordinal $N$ a partir de la inspección interna de `metadatos_de_epoca.numero_de_epoca` en las bases existentes (`numero_de_epoca_siguiente`), sellado atómico con `UPDATE metadatos_de_epoca SET numero_de_epoca = ?1, sellada_ms = ?2 WHERE id = 1` y consolidación total del WAL con `PRAGMA wal_checkpoint(TRUNCATE)` verificando estrictamente `(0, 0, 0)`.
+   - **Paso 3**: Renombrado físico de `knowledge_staging.db` a `knowledge_epoch_N.db`.
+   - **Paso 4**: Reasignación atómica del enlace simbólico `knowledge_live.db` mediante el modismo POSIX de enlace temporal `.knowledge_live.tmp.<pid>` y `rename()`.
+   - **Paso 5**: Precalentamiento del nuevo pool de lectura (`PoolDeConocimiento::abrir_sobre`), medición de latencia con reloj monótono (`Instant`) y conmutación en memoria mediante `ArcSwap`.
+   - **Paso 6**: Entrega del pool de conexiones previo vivo dentro del descriptor [`EpocaSuperseida`](file:///home/gary/dev/hexcell/worktrees/HEX-055/crates/hexcell-storage/src/promocion.rs) sin cerrar conexiones, exponiendo `lecturas_en_reposo()` para el drenaje ordenado de la tarea 7.
+
+2. **Integración y Concurrencia ([`pools.rs`](file:///home/gary/dev/hexcell/worktrees/HEX-055/crates/hexcell-storage/src/pools.rs))**:
+   - Incorporación de `arc-swap = "1.7"` como primera dependencia externa de la etapa A-5 en el [`Cargo.toml`](file:///home/gary/dev/hexcell/worktrees/HEX-055/Cargo.toml) raíz.
+   - `GestorDePools` almacena `conocimiento: ArcSwap<PoolDeConocimiento>` y `promocion_en_curso: AtomicBool`.
+   - `GestorDePools::conocimiento(&self) -> Arc<PoolDeConocimiento>` mantiene total compatibilidad de código con los sitios de llamada existentes.
+   - Compuerta de exclusión mutua de promociones con `iniciar_promocion()` y liberación garantizada mediante `GuardianDePromocion` en `Drop`.
+
+3. **Orquestación Asíncrona ([`promocion.rs`](file:///home/gary/dev/hexcell/worktrees/HEX-055/crates/hexcell/src/promocion.rs))**:
+   - Función asíncrona `promover_epoca_de_conocimiento` que delega en línea a la secuencia síncrona sin introducir llamadas SQL en el crate `hexcell`.
+
+4. **Documentación Arquitectónica**:
+   - Creado [`adr-0006-epocas-y-conmutacion-atomica.md`](file:///home/gary/dev/hexcell/worktrees/HEX-055/docs/adr/adr-0006-epocas-y-conmutacion-atomica.md) en estado **Vigente**.
+   - Actualizada la tabla de estado en [`docs/adr/README.md`](file:///home/gary/dev/hexcell/worktrees/HEX-055/docs/adr/README.md).
+   - Añadida la entrada **D-29** en [`docs/bitacora-de-descartes.md`](file:///home/gary/dev/hexcell/worktrees/HEX-055/docs/bitacora-de-descartes.md).
+   - Actualizado [`docs/STATUS.md`](file:///home/gary/dev/hexcell/worktrees/HEX-055/docs/STATUS.md).
+
+---
+
+### Verificaciones Ejecutadas
+
+- **Batería de pruebas de almacenamiento**: [`crates/hexcell-storage/tests/promocion.rs`](file:///home/gary/dev/hexcell/worktrees/HEX-055/crates/hexcell-storage/tests/promocion.rs) (9 pruebas pasando: AC-1 a AC-10).
+- **Batería de pruebas asíncronas**: [`crates/hexcell/tests/promocion.rs`](file:///home/gary/dev/hexcell/worktrees/HEX-055/crates/hexcell/tests/promocion.rs) (orquestación asíncrona pasando).
+- **Suite completa del workspace**: `cargo test --workspace` (100% pasando sin regresiones).
+- **Control estricto de calidad**: `cargo fmt --check` y `cargo clippy --workspace -- -D warnings` limpios.
+- **Filtro de vocabulario**: Verificación completa de ausencia de palabras en inglés prohibidas en todo el código y documentación añadida.

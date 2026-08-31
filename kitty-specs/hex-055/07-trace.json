@@ -1,0 +1,91 @@
+{
+  "attempts": [
+    {
+      "duration_s": 14049.464263142,
+      "model": "google/gemini-3.7-flash-high",
+      "notes": "Se ha completado satisfactoriamente la implementación de la tarea **HEX-055 (FR-07 / NFR-03)**: conmutación atómica por épocas y gestión de bases de conocimiento en sombra.  ---  ### Resumen de la Implementación  1. **Secuencia síncrona de seis pasos ([`promocion.rs`](file:///home/gary/dev/hexcell/worktrees/HEX-055/crates/hexcell-storage/src/promocion.rs))**:    - **Paso 1**: Revalidación previa de la base en sombra mediante lectura de la sonda persistida (`leer_sonda_semantica`) e invocación de la compuerta de integridad (`validar_integridad_del_indice`). Si la sonda no existe o la integridad es rechazada, se aborta limpiamente retornando [`DesenlaceDePromocion::Abortada`](file:///home/gary/dev/hexcell/worktrees/HEX-055/crates/hexcell-storage/src/promocion.rs) sin alterar ningún archivo en disco.    - **Paso 2**: Determinación determinista del número de época ordinal $N$ a partir de la inspección interna de `metadatos_de_epoca.numero_de_epoca` en las bases existentes (`numero_de_epoca_siguiente`), sellado atómico con `UPDATE metadatos_de_epoca SET numero_de_epoca = ?1, sellada_ms = ?2 WHERE id = 1` y consolidación total del WAL con `PRAGMA wal_checkpoint(TRUNCATE)` verificando estrictamente `(0, 0, 0)`.    - **Paso 3**: Renombrado físico de `knowledge_staging.db` a `knowledge_epoch_N.db`.    - **Paso 4**: Reasignación atómica del enlace simbólico `knowledge_live.db` mediante el modismo POSIX de enlace temporal `.knowledge_live.tmp.\u003cpid\u003e` y `rename()`.    - **Paso 5**: Precalentamiento del nuevo pool de lectura (`PoolDeConocimiento::abrir_sobre`), medición de latencia con reloj monótono (`Instant`) y conmutación en memoria mediante `ArcSwap`.    - **Paso 6**: Entrega del pool de conexiones previo vivo dentro del descriptor [`EpocaSuperseida`](file:///home/gary/dev/hexcell/worktrees/HEX-055/crates/hexcell-storage/src/promocion.rs) sin cerrar conexiones, exponiendo `lecturas_en_reposo()` para el drenaje ordenado de la tarea 7.  2. **Integración...",
+      "phase": "execute",
+      "result": "passed"
+    }
+  ],
+  "context_overflows": [],
+  "events": [
+    {
+      "event": "risk_level_calculated",
+      "level": "high",
+      "note": "Declared risk (high) and calculated risk (high) agree; no divergence event recorded.",
+      "reasons": [
+        "sensitive_path_match: [Cargo.lock]"
+      ],
+      "signals": {
+        "files_count": 15,
+        "sensitive_matches": [
+          "Cargo.lock"
+        ],
+        "symbols_count": 16
+      }
+    },
+    {
+      "blocked": "",
+      "candidate": {
+        "agent": "agy_edit",
+        "level": 3,
+        "model": "google/gemini-3.7-flash-high"
+      },
+      "dispatch_id": "",
+      "inputs_snapshot": {
+        "complexity_band": "L",
+        "control": {
+          "disabled": null,
+          "updated_at": ""
+        },
+        "exclusions": [],
+        "hashes": {
+          "agents_yaml": "c9aadb5ea7388a6a8067f5000472f5d47e58c478e09328652c5f4e847e519f22",
+          "config_yaml": "f6d456a8a600c246a083a4454dc413f515693be4c84dd487e0149e660e9b8b84",
+          "routing_yaml": "c661109fa2d3bf143fab0751c5001b997d5365322197cb84c9661d688d0ac0ec"
+        },
+        "incumbent_family": "",
+        "level": 3,
+        "phase": "implement",
+        "risk": "high",
+        "router_version": "fleet-route/v1"
+      },
+      "reasons": null,
+      "reroute_budget": 2,
+      "review_family_degraded": false,
+      "ts": "2026-08-30T22:26:06Z",
+      "type": "routing_decision"
+    },
+    {
+      "bundle_hash": "eb391664e2d1e3f5d624822b779979eae34c712823e1bfc61b2bcacb59301316",
+      "dispatch_id": "eb391664e2d1",
+      "ts": "2026-08-30T22:26:17Z",
+      "type": "dispatch_started"
+    },
+    {
+      "applied": true,
+      "cause": null,
+      "diff_stat": {
+        "deletions": 19,
+        "empty": false,
+        "files_changed": 15,
+        "indeterminate": false,
+        "insertions": 1194
+      },
+      "dispatch_id": "eb391664e2d1",
+      "forensic_ref": "refs/fleet/HEX-055/attempt-1-google-gemini-3.7-flash-high",
+      "noop": false,
+      "outcome_class": "attempt",
+      "ts": "2026-08-31T02:20:27Z",
+      "type": "dispatch_finished",
+      "usage_source": "none"
+    }
+  ],
+  "execution_mode": "worktree_edit",
+  "started_at": "2026-08-30T22:24:06Z",
+  "summary": "FR-07 epoch promotion: seal-then-checkpoint staging, rename to epoch N, atomic symlink swap, ArcSwap pool swap with pre-warmed connections, drain seam for task 7, plus adr-0006.",
+  "task_id": "HEX-055",
+  "total_cost_usd": 0,
+  "violations": []
+}

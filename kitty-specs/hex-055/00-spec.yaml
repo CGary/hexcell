@@ -1,0 +1,124 @@
+task_id: HEX-055
+summary: "Implement the epoch promotion sequence (A-5 task 6, FR-07/NFR-03): WAL checkpoint, atomic rename, symlink swap, ArcSwap pool swap. Highest-risk task of the stage."
+goal: >-
+  Deliver the promotion sequence that turns a validated `knowledge_staging.db` into the new live
+  epoch of a cell's knowledge index, without ever exposing an in-flight reader to a half-written
+  file. The sequence is fixed by the plan as six ordered steps: (1) re-validate the staging index
+  by reading its persisted probe (`leer_sonda_semantica`, HEX-054) and running the integrity gate
+  (`validar_integridad_del_indice`, HEX-053) -- a rejection or a missing probe row aborts the
+  promotion and production keeps serving the current epoch with no manual intervention; (2) seal
+  staging with `PRAGMA wal_checkpoint(TRUNCATE)`, checking the returned result row before
+  proceeding (a checkpoint that fails to fully truncate must not be treated as success), then a
+  single UPDATE that sets `numero_de_epoca` and `sellada_ms` together (the CHECK constraint from
+  HEX-051-c/HEX-054 requires both columns transition atomically); (3) rename
+  `knowledge_staging.db` to `knowledge_epoch_N.db`; (4) reassign the `knowledge_live.db` symlink
+  atomically using the POSIX idiom (create a temporary symlink, then `rename()` it over the old
+  one on the same filesystem); (5) swap the in-memory pool pointer via a new `arc-swap` dependency
+  so subsequent reads open connections against the new epoch, while file descriptors already held
+  by in-flight readers keep resolving through their inode and are unaffected by the rename or the
+  symlink change; (6) hand the superseded pool object to stage A-5 task 7 (graceful drain,
+  out of scope here) without closing it -- this task defines that handoff seam precisely enough
+  for task 7 to build against it.
+
+  This is the first task in stage A-5 to touch the runtime pool and file layout: today
+  `PoolDeConocimiento` (`crates/hexcell-storage/src/pools.rs`) opens `knowledge_live.db` as a
+  plain file with a fixed set of read-only connections created once at startup -- there is no
+  symlink handling and no `arc-swap` dependency anywhere in the tree. This task therefore
+  introduces three new structural elements together: the epoch file layout with
+  `knowledge_live.db` as a symlink, `arc-swap` as the stage's first new workspace runtime
+  dependency, and a swappable pool wrapper. It must also define the first-promotion special case
+  (an existing cell's `knowledge_live.db` is a regular file, not a symlink, before its first
+  promotion ever runs) and write `docs/adr/adr-0006-epocas-y-conmutacion-atomica.md`, the ADR the
+  plan reserved for exactly this design.
+invariants:
+  - "A rejection from `validar_integridad_del_indice`, OR a missing probe row (`leer_sonda_semantica` returning `None`), aborts the promotion before any file is touched; production keeps serving the current live epoch unchanged, with no manual intervention required to resume normal operation."
+  - "`PRAGMA wal_checkpoint(TRUNCATE)` on staging is followed by inspecting its result row before any rename happens; a checkpoint that does not report full truncation aborts the promotion instead of proceeding on an assumed success. Staging has no readers by construction (it is never exposed to production traffic before promotion), which is what makes a clean checkpoint possible in the first place."
+  - "The epoch-sealing UPDATE sets `numero_de_epoca` and `sellada_ms` in the same statement, honoring the `metadatos_de_epoca` CHECK constraint `(numero_de_epoca IS NULL) = (sellada_ms IS NULL)` from HEX-051-c/HEX-054; a staging database has both NULL before sealing, and neither column is ever set alone."
+  - "The `knowledge_live.db` symlink is reassigned using the atomic POSIX rename idiom (build a temporary symlink pointing at the new epoch file, then `rename()` it over the existing symlink on the same filesystem) -- never `unlink` followed by a separate `symlink` call, which has a window where the path resolves to nothing."
+  - "The epoch number N used for a promotion is the highest existing sealed epoch's INTERNAL `numero_de_epoca` (read from each candidate epoch file's own `metadatos_de_epoca` row, not parsed or trusted from its filename) plus one; epoch identity is intrinsic to the file (HEX-049), so a directory containing epoch files restored under renamed or unexpected filenames still yields a correct, deterministic N."
+  - "AMENDED (measured on this machine, 30 de agosto de 2026): rename() of a temporary symlink over a REGULAR FILE is just as atomic as over a symlink -- POSIX only forbids crossing the directory/non-directory boundary -- so ONE code path serves the first promotion and every later one, and a descriptor opened before the swap keeps resolving to the old inode. What remains genuinely special about the first promotion is its consequences, not its mechanics: N=1, the bootstrap regular file ends up unlinked and reachable only through the old pool descriptors, and there is no prior epoch to revert to. This case still has a dedicated test."
+  - "New read-only connections opened after a promotion are opened against the new epoch by its explicit epoch-file path, not by re-resolving the `knowledge_live.db` symlink, so a second promotion racing immediately after the first cannot cause the new pool to open a connection against whichever epoch the symlink happens to point to at that instant."
+  - "The old `PoolDeConocimiento` is never closed or dropped abruptly by this task; it is handed off alive to the drain seam defined for stage A-5 task 7, so in-flight reads already using it keep working uninterrupted until that separate, later mechanism closes it gracefully."
+  - "The measured interval from the start of the pointer reassignment (the ArcSwap store) to the first read successfully served by the new epoch is below 10 milliseconds (NFR-03), measured with a monotonic clock and recorded by the test, not merely asserted."
+  - "Every step of the sequence leaves a recoverable, non-corrupting state if the process crashes immediately after it: a completed rename with the symlink not yet swapped leaves production still reading the prior epoch through the untouched symlink; a swapped symlink with the pool not yet swapped leaves reads still served by the old (still valid) in-memory pool, corrected on next restart; a vanished staging file (already renamed) after a crash simply means the next ingestion rebuilds staging from scratch (HEX-052's existing guarantee), never a fatal state requiring manual repair."
+  - "`arc-swap` is declared exactly once, in the workspace `[workspace.dependencies]` table of the root Cargo.toml, with a comment justifying it as stage A-5's first new runtime dependency and naming the PRD/CLAUDE.md design it implements (\"symlink + ArcSwap + Graceful Drain\"), following the same per-dependency justification convention already used for tokio, hyper, and rusqlite in that same table."
+  - "hexcell-core's [dependencies] table remains empty (adr-0002); the promotion sequence, the arc-swap dependency, and the swappable pool all live in hexcell-storage and/or hexcell, never in hexcell-core."
+  - "The synchronous file/SQL operations of the promotion sequence live in hexcell-storage (no async executor); the async orchestration that triggers a promotion and awaits its synchronous steps lives in hexcell, following the same sync-builder-in-storage / async-orchestrator-in-hexcell precedent already established by HEX-052's ingestion pipeline and the merged ServicioDeEmbeddings."
+  - "All repository content this task touches -- Rust doc comments, code comments, identifiers, SQL comments, the ADR prose, and the commit message -- is written in Spanish and is didactic (explains WHY, not what the line does); only this Quorum spec's field values are written in English, matching HEX-041 through HEX-054."
+  - "This task does not modify the ingestion pipeline (HEX-052), the integrity gate's checks (HEX-053), or the probe-persistence schema/reader (HEX-054) beyond calling them as already-built, unchanged dependencies."
+acceptance:
+  - id: AC-1
+    statement: A rejected integrity verdict or a missing probe row aborts the promotion with production left on the current epoch.
+    given: a staging index whose `validar_integridad_del_indice` verdict is a rejection, OR whose `leer_sonda_semantica` call returns None
+    when: the promotion sequence runs against it
+    then: no file is renamed, no symlink is touched, no pool swap occurs, and the function returns without requiring any manual recovery step
+  - id: AC-2
+    statement: A wal_checkpoint(TRUNCATE) result is inspected before the promotion proceeds to renaming.
+    given: a staging database whose checkpoint call returns a result row indicating the checkpoint did not fully truncate the WAL
+    when: the promotion sequence reaches the checkpoint step
+    then: the promotion aborts before the rename step, and the abort reason names the incomplete checkpoint explicitly
+  - id: AC-3
+    statement: Sealing sets numero_de_epoca and sellada_ms together in one statement.
+    given: a staging database passing validation, ready to be sealed
+    when: the sealing step runs
+    then: the resulting metadatos_de_epoca row has both numero_de_epoca and sellada_ms populated, and no intermediate state with exactly one of the two set is ever observable
+  - id: AC-4
+    statement: The symlink reassignment is atomic and never resolves to a missing path.
+    given: an existing knowledge_live.db symlink pointing at the current epoch
+    when: the promotion reassigns it to the newly sealed epoch file
+    then: the reassignment is implemented as a temporary symlink followed by rename() over the existing one, and at every observable instant the symlink resolves to either the old or the new epoch file, never to nothing
+  - id: AC-5
+    statement: The first promotion for a cell still on a regular-file knowledge_live.db is handled by its documented special-case sequence.
+    given: a cell whose knowledge_live.db is a regular file that has never been promoted
+    when: its first promotion runs
+    then: the SEALED STAGING database becomes knowledge_epoch_1.db and knowledge_live.db becomes a symlink pointing at it (AMENDED 30 de agosto de 2026 -- the bootstrap regular file has no fragments and no probe, so it could never pass the step-1 gate; it simply ends up superseded and unlinked), verified by a dedicated test distinct from the steady-state promotion tests
+  - id: AC-6
+    statement: The epoch number N is derived from the highest existing epoch's internal metadata, not its filename.
+    given: a data directory containing sealed epoch files whose internal numero_de_epoca values are 1 and 2, with at least one of them present under a filename that does not match its internal number (simulating a restored backup)
+    when: the promotion computes N for the next epoch
+    then: N is 3, derived by reading each candidate file's own metadatos_de_epoca row rather than parsing any filename
+  - id: AC-7
+    statement: New connections after a promotion are opened against the new epoch's explicit path, not the symlink.
+    given: a completed promotion that swapped both the symlink and the in-memory pool pointer
+    when: a new read-only connection is opened by the swapped pool
+    then: it is opened using the new epoch's own file path, and a liveness probe query (SELECT count(*) FROM metadatos_de_conocimiento) against it succeeds
+  - id: AC-8
+    statement: The old pool is handed off intact to the drain seam, never closed by this task.
+    given: a completed pool pointer swap
+    when: the promotion sequence finishes
+    then: the superseded PoolDeConocimiento value is returned/exposed through the defined handoff seam still open and usable, with no connection inside it closed or dropped by this task's code
+  - id: AC-9
+    statement: The pointer-reassignment-to-first-read interval is measured and stays under 10 milliseconds (NFR-03).
+    given: a sealed new epoch ready to be swapped in, with a monotonic clock available to the test
+    when: the pool pointer is swapped and the first read against the new pool is served
+    then: the recorded elapsed time is below 10 milliseconds, and the measurement (not just an assertion) is captured by the test
+  - id: AC-10
+    statement: A crash simulated after each step leaves a recoverable, non-corrupting state.
+    given: the promotion sequence interrupted (simulated, not a real crash) immediately after each of the rename, symlink-swap, and pool-swap steps in turn
+    when: the cell's state is inspected (or the process is restarted) after each interruption point
+    then: production continues serving a valid epoch at every point -- the prior epoch if interrupted before the symlink swap, the new one afterward -- with no step leaving an ambiguous or corrupt on-disk state
+  - id: AC-11
+    statement: docs/adr/adr-0006-epocas-y-conmutacion-atomica.md is written with the exact sequence and its rationale.
+    given: the promotion sequence implemented and tested
+    when: the ADR is authored
+    then: it documents the six-step sequence, the epoch-numbering rule, the first-promotion special case, the arc-swap dependency justification, and the handoff-to-drain seam, filed under number 0006 as reserved in docs/adr/README.md (confirmed still free for this exact design)
+  - "cargo build --workspace, cargo test --workspace, cargo fmt --check, and cargo clippy --workspace -- -D warnings all pass."
+  - "hexcell-core's Cargo.toml [dependencies] table remains empty, verifiable by inspection/CI check consistent with adr-0002."
+  - "arc-swap appears exactly once in the workspace root Cargo.toml's [workspace.dependencies] table, with an inline justification comment."
+risk: high
+non_goals:
+  - "Graceful drain of the superseded pool (stage A-5 task 7): this task only defines and hands off the seam; the actual wait-for-in-flight-reads, timeout, and -wal/-shm descriptor verification logic is task 7's."
+  - "Epoch retention policy and revert-to-previous-epoch flow (stage A-5 task 8)."
+  - "The RAG retrieval engine that consumes the live pool (stage A-5 task 9)."
+  - "The internal admin endpoint that triggers an ingestion/promotion cycle (stage A-5 task 10)."
+  - "The 20-concurrent-reader switchover stress test (stage A-5 task 11): this task's NFR-03 measurement is a basic single-swap measurement, not the full concurrent storm."
+  - "Backup interaction during an in-progress promotion (stage A-5 task 12)."
+  - "Any change to the ingestion pipeline (HEX-052), the integrity gate's checks (HEX-053), or the probe persistence schema/reader (HEX-054) beyond calling them as already-built dependencies."
+constraints:
+  - "New runtime dependency: arc-swap, declared once in the workspace root Cargo.toml's [workspace.dependencies] table with a written justification, consistent with the existing per-dependency justification convention (tokio, hyper, rusqlite) and explicitly flagged as stage A-5's first new dependency."
+  - "hexcell-core's [dependencies] table stays empty (adr-0002); no rusqlite in crates/hexcell (adr-0010)."
+  - "All identifiers, comments, and doc comments introduced or touched are in Spanish and didactic (explain WHY)."
+  - "No secrets committed; *.db, *.db-wal, *.db-shm, and .env* remain untracked, confirmed to already cover the new knowledge_epoch_*.db pattern via the existing generic *.db glob in .gitignore -- no .gitignore change needed for this task."
+  - "Instants are integer milliseconds; any new or touched table remains STRICT."
+  - "Dates in any written prose (ADR, plan, STATUS.md) are absolute, never relative."
+  - "No mass-sending folklore, proxies, VPN, or IP rotation introduced anywhere (unrelated to this task's surface, stated for completeness per repository-wide convention)."

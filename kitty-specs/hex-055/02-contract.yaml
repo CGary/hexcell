@@ -1,0 +1,165 @@
+task_id: HEX-055
+summary: 'FR-07 epoch promotion: seal-then-checkpoint staging, rename to epoch N, atomic symlink swap, ArcSwap pool swap with pre-warmed connections, drain seam for task 7, plus adr-0006.'
+goal: 'Deliver stage A-5''s highest-risk task: the sequence that turns a validated knowledge_staging.db into the live epoch without ever exposing an in-flight reader to a half-written file. Six ordered steps, all decided: re-validate staging through leer_sonda_semantica (None aborts) and validar_integridad_del_indice (a rejection aborts), touching no file before both gates pass; seal with ONE UPDATE setting numero_de_epoca and sellada_ms together and THEN run PRAGMA wal_checkpoint(TRUNCATE), comparing its result row against (0,0,0) rather than assuming success; rename staging to knowledge_epoch_N.db where N comes from the highest existing epoch''s INTERNAL numero_de_epoca plus one, read from file contents and never parsed from a filename; reassign knowledge_live.db with the temporary-symlink-plus-rename POSIX idiom; store a pre-warmed replacement pool through ArcSwap and measure the swap-to-first-read interval against NFR-03''s 10 ms budget with a monotonic clock; and hand the superseded pool over ALIVE inside the drain seam that stage A-5 task 7 will build against. A defect here surfaces as silent data corruption days later, not as an error, which is why every gate is verified rather than trusted.'
+read:
+- .ai/tasks/active/HEX-055-new-spec/00-spec.yaml
+- .ai/tasks/active/HEX-055-new-spec/01-blueprint.yaml
+- crates/hexcell-storage/src/conocimiento.rs
+- crates/hexcell-storage/src/validacion.rs
+- crates/hexcell-storage/src/migraciones.rs
+- crates/hexcell-storage/src/respaldo.rs
+- crates/hexcell-storage/src/tiempo.rs
+- crates/hexcell-storage/src/sesiones.rs
+- crates/hexcell-storage/migraciones/conocimiento/0001-esquema-minimo.sql
+- crates/hexcell-storage/migraciones/conocimiento/0002-esquema-de-conocimiento.sql
+- crates/hexcell-storage/migraciones/conocimiento/0003-sonda-semantica.sql
+- crates/hexcell-storage/tests/comun/mod.rs
+- crates/hexcell-storage/tests/validacion.rs
+- crates/hexcell-storage/tests/pools.rs
+- crates/hexcell-storage/tests/migraciones.rs
+- crates/hexcell-storage/tests/respaldo.rs
+- crates/hexcell-core/Cargo.toml
+- crates/hexcell/src/ingesta.rs
+- crates/hexcell/src/salud.rs
+- crates/hexcell/src/main.rs
+- crates/hexcell/tests/ingesta.rs
+- crates/hexcell/tests/comun/mod.rs
+- crates/hexcell/Cargo.toml
+- docs/plan/fase-a-5-conocimiento-shadow-db.md
+- docs/adr/adr-0002-estructura-workspace.md
+- docs/adr/adr-0003-persistencia-dual.md
+- docs/adr/adr-0010-puerto-de-canal.md
+- docs/adr/adr-0025-esquema-de-conocimiento.md
+- docs/PRD.md
+touch:
+- crates/hexcell-storage/src/promocion.rs
+- crates/hexcell-storage/src/pools.rs
+- crates/hexcell-storage/src/error.rs
+- crates/hexcell-storage/src/lib.rs
+- crates/hexcell-storage/tests/promocion.rs
+- crates/hexcell/src/promocion.rs
+- crates/hexcell/src/lib.rs
+- crates/hexcell/tests/promocion.rs
+- Cargo.toml
+- Cargo.lock
+- crates/hexcell-storage/Cargo.toml
+- docs/adr/adr-0006-epocas-y-conmutacion-atomica.md
+- docs/adr/README.md
+- docs/bitacora-de-descartes.md
+- docs/STATUS.md
+forbid:
+  files:
+  - crates/hexcell-storage/src/conocimiento.rs
+  - crates/hexcell-storage/src/validacion.rs
+  - crates/hexcell-storage/src/migraciones.rs
+  - crates/hexcell-storage/src/respaldo.rs
+  - crates/hexcell-storage/src/sesiones.rs
+  - crates/hexcell-storage/src/presupuesto.rs
+  - crates/hexcell-storage/src/almacen_de_identidad.rs
+  - crates/hexcell-storage/src/tiempo.rs
+  - crates/hexcell-storage/migraciones/
+  - crates/hexcell-storage/tests/comun/mod.rs
+  - crates/hexcell-storage/tests/pools.rs
+  - crates/hexcell-storage/tests/migraciones.rs
+  - crates/hexcell-storage/tests/validacion.rs
+  - crates/hexcell-storage/tests/conocimiento.rs
+  - crates/hexcell-storage/tests/respaldo.rs
+  - crates/hexcell-storage/tests/presupuesto.rs
+  - crates/hexcell-core/
+  - crates/hexcell/Cargo.toml
+  - crates/hexcell/src/ingesta.rs
+  - crates/hexcell/src/salud.rs
+  - crates/hexcell/src/main.rs
+  - crates/hexcell/src/motor.rs
+  - crates/hexcell/src/embeddings.rs
+  - crates/hexcell/tests/ingesta.rs
+  - crates/hexcell/tests/comun/mod.rs
+  - crates/hexcell-admin/
+  - crates/hexcell-canal-simulado/
+  - crates/hexcell-canal-contrato/
+  - crates/hexcell-canal-whatsmeow/
+  - sidecar/
+  - .gitignore
+  - .github/
+  - docs/PRD.md
+  - docs/plan/
+  - .ai/tasks/active/HEX-055-new-spec/00-spec.yaml
+  - .ai/tasks/active/HEX-055-new-spec/01-blueprint.yaml
+  behaviors:
+  - 'Never run the sealing UPDATE after PRAGMA wal_checkpoint(TRUNCATE). The order is the single most consequential decision in this task. A checkpoint drains the WAL into the main database file and truncates it; an UPDATE issued afterwards writes fresh frames back into knowledge_staging.db-wal, so the seal would live ONLY in that WAL. The rename then moves knowledge_staging.db alone, orphaning the WAL under the old name, and the new epoch file reads back numero_de_epoca NULL: a promoted epoch that does not know it was promoted. Correct order, without exception: open read-write, UPDATE, commit, checkpoint, inspect the result row, drop the connection, verify the -wal and -shm companions are gone, and only then rename. A guard asserts the UPDATE appears before the checkpoint in the source.'
+  - 'Never treat the checkpoint as successful without comparing its result row. PRAGMA wal_checkpoint(TRUNCATE) returns a triple (busy, log, checkpointed) and, per the measurement already recorded in pools.rs on 2026-07-30, a successful TRUNCATE returns (0,0,0). The gate is therefore equality with (0,0,0), NOT a positive checkpointed count and NOT merely busy == 0: a check written as checkpointed > 0 would reject every correct promotion, and one written as busy == 0 alone would accept a partial drain. Anything other than (0,0,0) aborts BEFORE the rename with an abort reason carrying all three counters.'
+  - 'Never derive the epoch number from a filename. N is the highest INTERNAL numero_de_epoca found by opening each candidate epoch file read-only and reading its own metadatos_de_epoca row, plus one, and 1 when no epoch file exists. This is HEX-049''s settled rationale and migration 0002 already writes it into the schema as normative: the filename is only the locator, the row is the authoritative description, and a backup restored under a renamed file must still yield a correct N. Never parse digits out of a path, never sort by name, and never trust a filename to agree with its contents. A candidate that is unreadable, unsealed, or not a knowledge database is SKIPPED, never counted as zero and never allowed to abort the scan.'
+  - Never set numero_de_epoca and sellada_ms in separate statements, and never set one alone. The metadatos_de_epoca CHECK ((numero_de_epoca IS NULL) = (sellada_ms IS NULL)) from migration 0002 admits no half-sealed row, so the seal is ONE UPDATE writing both columns. Never relax, drop or work around that CHECK, and never rebuild the table.
+  - 'Never reassign knowledge_live.db by unlinking it and then creating a symlink. That pair has a window in which the path resolves to nothing and a concurrent open fails or, worse, creates an empty database. The only permitted idiom is: create a symlink to the new epoch file under a temporary name in the SAME directory, then rename() that temporary over knowledge_live.db. Both operands stay on one filesystem, which is what makes rename() atomic. Verified on this platform that rename() succeeds over an existing REGULAR file and over an existing SYMLINK alike, so ONE code path serves both the first promotion and every later one.'
+  - 'Never add a cfg-gated non-Unix code path for symlinks. std::os::unix::fs::symlink is Unix-only and this project targets Linux by construction: CachyOS in development, Docker in production. State that assumption in a comment rather than paying for portability the product does not have.'
+  - 'Never open the replacement pool''s connections after the ArcSwap store. They are PRE-WARMED: built against the new epoch''s EXPLICIT path before the pointer moves. Opening them lazily would place two Connection::open_with_flags calls plus three pragmas each inside NFR-03''s 10 ms window on a ten-year-old i7, measuring filesystem and SQLite open latency instead of the switchover. Building from the explicit epoch path rather than by re-resolving the symlink is also what closes the race against a concurrent second promotion.'
+  - 'Never let the NFR-03 assertion pass vacuously. A std::time::Duration cannot be NaN, so the hazard here is not a non-finite comparison but an unperformed measurement: a first read that errored, or a window that never enclosed a real query, still elapses in far under 10 ms. The assertion must be TWO-SIDED, requiring the liveness read to have returned its expected count AND the elapsed time to be under budget, and any millisecond figure converted to floating point for the record must be checked finite before it is reported. Measure with a monotonic Instant, never with SystemTime, and record the value on the outcome so the test measures rather than merely asserts.'
+  - 'Never close, drop, or reach inside the superseded pool. It is handed back ALIVE inside EpocaSuperseida so in-flight reads keep working until stage A-5 task 7 drains it gracefully. EpocaSuperseida carries the Arc<PoolDeConocimiento>, the superseded epoch''s explicit path for task 7''s -wal/-shm orphan check, its numero_de_epoca as Option<i64> because the first promotion supersedes the pre-epoch bootstrap file whose value is NULL, and the instant of replacement as task 7''s timeout baseline. It must have NO Drop implementation. A by-value handoff is impossible by construction: ArcSwap::swap returns an Arc and in-flight readers hold clones taken from load_full.'
+  - Never implement the graceful drain itself. This task defines the seam and the quiescence primitive PoolDeConocimiento::lecturas_en_reposo, which try_locks every read Mutex and reports whether any reader holds one; the wait loop, the timeout, the forced-close policy and the -wal/-shm orphan verification are stage A-5 task 7 and an explicit spec non-goal. Naming those seams in comments is welcome, implementing them is forbidden.
+  - 'Never leave concurrent promotions ungated. Two promotions racing on the same knowledge_staging.db is precisely the corruption class this stage exists to prevent, and a precondition that stage A-5 task 10 must remember is not an invariant. The gate lives in hexcell-storage where the state is: an AtomicBool on GestorDePools claimed with compare_exchange and released by an RAII guard whose Drop runs on the success path and on every early-return abort path alike. A second concurrent caller gets ErrorDeAlmacen::PromocionEnCurso. Never gate it with a tokio Mutex in hexcell, and never rely on the caller to serialise.'
+  - Never touch a file before both validation gates have passed. leer_sonda_semantica returning None and validar_integridad_del_indice returning Rechazado each abort the promotion with staging, the live path and the pool pointer completely unmodified, so production keeps serving its current epoch with no manual recovery step. An abort is an ordinary Ok(DesenlaceDePromocion::Abortada{..}) outcome, mirroring the Aprobado/Rechazado shape validacion.rs already established, never an Err and never a panic.
+  - Never modify the ingestion pipeline, the integrity gate or the probe reader. HEX-052, HEX-053 and HEX-054 are SETTLED and are called here as unchanged dependencies. crates/hexcell-storage/src/conocimiento.rs, src/validacion.rs and crates/hexcell/src/ingesta.rs stay at zero diff against main, and a guard asserts it. If the epoch-number scan needs a narrower read than inspeccionar_base_en_sombra offers, write that helper inside the new promotion module rather than widening a merged one.
+  - Never add a migration and never change the knowledge schema version. metadatos_de_epoca already carries numero_de_epoca and sellada_ms from migration 0002, so VERSION_DE_ESQUEMA_DE_CONOCIMIENTO stays at 3, the migraciones/ directory keeps exactly three knowledge scripts, the fixed-size OBJETOS_ESPERADOS_DE_CONOCIMIENTO array in tests/migraciones.rs stays at six entries, and tests/migraciones.rs is untouched. A guard pins the version so this scope decision cannot drift mid-implementation.
+  - 'Never change the shape of GestorDePools::conocimiento beyond its return type. It becomes Arc<PoolDeConocimiento> via ArcSwap::load_full, which is source-compatible with all nine existing call sites because every one of them is a method-call chain on the temporary and none binds a reference: crates/hexcell/src/salud.rs:61, crates/hexcell-storage/tests/pools.rs lines 100, 122, 198, 209, 225 and 229, crates/hexcell-storage/tests/migraciones.rs:147, and crates/hexcell/tests/ingesta.rs:155. That compatibility is exactly what keeps tests/pools.rs, tests/migraciones.rs and hexcell/tests/ingesta.rs at zero diff; if any of those files needs editing, the wrapper was placed wrong.'
+  - Never wrap the pool in a Mutex or RwLock instead of ArcSwap. GestorDePools lives behind Arc at three sites (salud.rs:44, sesiones.rs:100, main.rs:108), so no &mut is ever available and interior mutability is forced; a lock would additionally tax the read path of every knowledge query for a write that happens once per ingestion. That contrast IS the ADR's design rationale and must be written there, not merely implied.
+  - Never add an async construct, tokio, spawn_blocking, or .await to crates/hexcell-storage. That crate declares itself synchronous in its own lib.rs and its own Cargo.toml. The async orchestration in crates/hexcell/src/promocion.rs calls the synchronous sequence INLINE, exactly as HEX-052's ejecutar_ingesta already calls ConstructorDeConocimientoEnSombra without spawn_blocking. A comment-normalised guard enforces this, because pools.rs legitimately mentions .await inside a Spanish doc comment.
+  - Never add rusqlite, SQL, or a Connection to crates/hexcell or crates/hexcell-core. crates/hexcell omits the driver on purpose (adr-0010) and hexcell-core keeps an empty [dependencies] table (adr-0002). Every statement in this task lives in crates/hexcell-storage. A comment-normalised guard enforces this because the word rusqlite legitimately appears in Spanish prose.
+  - 'Never declare arc-swap anywhere but once in the root Cargo.toml [workspace.dependencies] table, consumed from crates/hexcell-storage/Cargo.toml with workspace = true. It must carry a didactic Spanish comment in the voice of the existing tokio, hyper and rusqlite entries: stage A-5''s FIRST new runtime dependency, the PRD and CLAUDE.md design it implements (symlink + ArcSwap + Graceful Drain), and the alternative it displaces. Pin the series as the neighbouring entries do, never a bare wildcard, and verify the series resolves against crates.io rather than trusting a version recalled from memory. It must NOT appear in crates/hexcell/Cargo.toml or crates/hexcell-core/Cargo.toml.'
+  - 'Never panic, unwrap, expect, or use todo!/unimplemented!/unreachable! anywhere in either promotion module. error.rs states the rule for the whole layer: no path ends in a panic, because [profile.release] sets panic = abort and a panic in production leaves no usable message. Every failure travels as a value, named in Spanish, with the concrete operation that produced it. New error variants get their Display and source arms filled in.'
+  - Never write English prose, English comments or English identifiers into repository content. The repository is PUBLIC and all of its prose, comments, SQL comments and identifiers are Spanish; only Quorum artifact field values are English. Comments are DIDACTIC and explain WHY. Dates are absolute, in the form '30 de agosto de 2026', never relative. A case-insensitive word-list guard enforces this; it was verified silent on main across every pre-existing touched file, verified to catch a real English sentence, and verified NOT to ban domain vocabulary such as epoch, live, staging, swap, rename, symlink, AtomicBool, read, table or count.
+  - Never write the ADR as a stub. adr-0006 is RESERVED in docs/adr/README.md for exactly this design and is the deliverable AC-11 names. It must record the six-step sequence in order, why the seal precedes the checkpoint, why the checkpoint result is compared against (0,0,0), the intrinsic-identity numbering rule, the first-promotion consequences, the temporary-symlink-plus-rename idiom with its Linux and same-filesystem assumptions, why ArcSwap and not a lock, the pre-warm decision behind NFR-03, the handoff-to-drain seam, and plainly which NFR-03 measurement has actually been taken here (a single swap on an idle pool, not the 20-reader storm, which is task 11). Follow the shape of the neighbouring ADRs and flip the README row from 'Tomada en el PRD, por formalizar' to Vigente, without renumbering or reordering anything.
+  - Never reuse or reorder a bitacora number. Record the discarded alternatives (a lock around the pool pointer, unlink-then-symlink, copy-on-promote, and restarting the process to switch epochs) at the next free correlative number in docs/bitacora-de-descartes.md, in the SAME commit that discards them, as CLAUDE.md requires. Never edit or delete an existing entry.
+  - Never let a test reach the network, bind a socket, read an API key, or leave a directory behind. Every test runs offline against fixtures built directly with rusqlite, reusing the existing DirectorioTemporal helper from tests/comun/mod.rs, which cleans up on Drop; never add a temporary-directory crate. Remember that pub(crate) helpers such as abrir_solo_lectura are INVISIBLE from tests/, that this workspace builds libsqlite3-sys with foreign keys ON so fixtures must seed documentos before fragmentos and vectores_de_fragmento, and that the 0002 seed row declares dimension 768, so a fixture writing vectors of another dimension must rewrite that row or fail a later check for the wrong reason.
+  - 'Never implement epoch retention, the revert-to-previous-epoch flow, the RAG retrieval engine, the admin HTTP endpoint, the 20-concurrent-reader switchover storm, or the backup-during-promotion interaction. Each is a later A-5 task and an explicit spec non-goal. In particular define no HTTP route, no JSON payload and no serde derive: the promotion''s arguments arrive as in-process Rust values, and task 10 supplies them over HTTP later.'
+  - Never write a *.db, *.db-wal, *.db-shm or .env file into the repository tree and never commit a secret. The existing generic *.db glob in .gitignore already covers knowledge_epoch_*.db, so .gitignore needs no change and is forbidden.
+  - 'Never introduce mass-sending folklore: no jitter, no warm-up protocol, no proxy, no VPN, no IP rotation. This task adds no network behaviour whatsoever.'
+  - Never modify 00-spec.yaml or 01-blueprint.yaml. The human owns the spec. Two mismatches between the spec's prose and the measured platform behaviour are recorded as risks in the blueprint (rename() DOES atomically replace a regular file with a symlink, and AC-5's THEN clause is literally ambiguous about which file becomes knowledge_epoch_1.db); implement the blueprint's reading and leave the spec untouched.
+verify:
+  commands:
+  - cargo fmt --check
+  - cargo clippy --workspace -- -D warnings
+  - cargo build --workspace
+  - cargo test --workspace
+  - bash -c 'F="crates/hexcell-storage/src/promocion.rs crates/hexcell-storage/src/pools.rs crates/hexcell-storage/src/error.rs crates/hexcell-storage/src/lib.rs crates/hexcell-storage/tests/promocion.rs crates/hexcell/src/promocion.rs crates/hexcell/src/lib.rs crates/hexcell/tests/promocion.rs Cargo.toml crates/hexcell-storage/Cargo.toml docs/adr/adr-0006-epocas-y-conmutacion-atomica.md"; for f in $F; do test -f "$f" || exit 1; done; W="the|this|that|which|because|should|would|about|however|therefore|instead|rather|through|against|without|every|their|there|these|those|neither|either|promotion|sequence|filename|pointer|handoff|deferred|missing"; ! grep -nEi "\b($W)\b" $F'
+  - bash -c 'test "$(grep -cE "^arc-swap[[:space:]]*=" Cargo.toml)" -eq 1 && grep -B1 -E "^arc-swap[[:space:]]*=" Cargo.toml | grep -q "^#" && grep -qE "arc-swap[[:space:]]*=[[:space:]]*\{[[:space:]]*workspace" crates/hexcell-storage/Cargo.toml'
+  - bash -c '! grep -qiE "^arc-swap" crates/hexcell/Cargo.toml crates/hexcell-core/Cargo.toml'
+  - bash -c 'test -f crates/hexcell-core/Cargo.toml && ! sed -n "/^\[dependencies\]/,\$p" crates/hexcell-core/Cargo.toml | tail -n +2 | grep -qvE "^[[:space:]]*(#.*)?$"'
+  - bash -c 'for f in $(find crates/hexcell/src -name "*.rs"); do sed "s|//.*||" "$f" | grep -qE "rusqlite|Connection::open" && exit 1; done; exit 0'
+  - bash -c 'for f in $(find crates/hexcell-storage/src -name "*.rs"); do sed "s|//.*||" "$f" | grep -qE "\btokio\b|spawn_blocking|async fn|\.await" && exit 1; done; exit 0'
+  - 'bash -c ''grep -qE "VERSION_DE_ESQUEMA_DE_CONOCIMIENTO: i64 = 3;" crates/hexcell-storage/src/migraciones.rs && test "$(ls crates/hexcell-storage/migraciones/conocimiento/ | wc -l)" -eq 3 && grep -qE "OBJETOS_ESPERADOS_DE_CONOCIMIENTO: \[\(&str, &str\); 6\]" crates/hexcell-storage/tests/migraciones.rs'''
+  - bash -c 'git diff --name-only main -- crates/hexcell-storage/src/conocimiento.rs crates/hexcell-storage/src/validacion.rs crates/hexcell-storage/src/migraciones.rs crates/hexcell-storage/src/respaldo.rs crates/hexcell-storage/src/sesiones.rs crates/hexcell-storage/migraciones crates/hexcell-storage/tests/pools.rs crates/hexcell-storage/tests/migraciones.rs crates/hexcell-storage/tests/validacion.rs crates/hexcell-storage/tests/conocimiento.rs crates/hexcell-storage/tests/comun crates/hexcell-core crates/hexcell/Cargo.toml crates/hexcell/src/ingesta.rs crates/hexcell/src/salud.rs crates/hexcell/src/main.rs crates/hexcell/tests/ingesta.rs crates/hexcell/tests/comun .gitignore docs/PRD.md docs/plan | wc -l | grep -qx 0'
+  - bash -c 'P=crates/hexcell-storage/src/promocion.rs; test -f "$P" || exit 1; N=$(sed "s|//.*||" "$P"); echo "$N" | grep -q "std::os::unix::fs::symlink" && echo "$N" | grep -qE "\brename\b" && echo "$N" | grep -qE "wal_checkpoint\(TRUNCATE\)"'
+  - 'bash -c ''P=crates/hexcell-storage/src/promocion.rs; test -f "$P" || exit 1; N=$(mktemp); sed "s|//.*||" "$P" > "$N"; S=$(grep -nEi "UPDATE[[:space:]]+metadatos_de_epoca" "$N" | head -1 | cut -d: -f1); C=$(grep -nE "wal_checkpoint" "$N" | head -1 | cut -d: -f1); rm -f "$N"; test -n "$S" && test -n "$C" && test "$S" -lt "$C"'''
+  - bash -c 'P=crates/hexcell-storage/src/promocion.rs; test -f "$P" || exit 1; sed "s|//.*||" "$P" | grep -qiE "sellada_ms" && ! sed "s|//.*||" "$P" | grep -qE "remove_file.*(CONOCIMIENTO|knowledge_live)"'
+  - bash -c 'for f in crates/hexcell-storage/src/promocion.rs crates/hexcell/src/promocion.rs; do test -f "$f" || exit 1; sed "s|//.*||" "$f" | grep -qE "\.unwrap\(\)|\.expect\(|panic!|todo!|unimplemented!|unreachable!" && exit 1; done; exit 0'
+  - bash -c 'T=crates/hexcell-storage/tests/promocion.rs; test -f "$T" || exit 1; grep -q "Instant" "$T" && grep -q "metadatos_de_conocimiento" "$T" && grep -q "lecturas_en_reposo" "$T" && grep -qE "PromocionEnCurso" "$T"'
+  - bash -c 'test -f docs/adr/adr-0006-epocas-y-conmutacion-atomica.md && grep -q "adr-0006-epocas-y-conmutacion-atomica.md" docs/adr/README.md && ! grep -E "adr-0006-epocas-y-conmutacion-atomica\.md" docs/adr/README.md | grep -qi "por formalizar" && grep -qE "30 de agosto de 2026|2026-08-30" docs/adr/adr-0006-epocas-y-conmutacion-atomica.md'
+  - bash -c '! git ls-files | grep -qE "\.(db|db-wal|db-shm)$|^\.env"'
+  target_s: 60
+acceptance:
+  bdd_suite: cargo test --workspace -- --nocapture
+  human_gate: true
+limits:
+  max_files_changed: 17
+  max_diff_lines: 2300
+  per_class:
+  - glob: crates/hexcell-storage/src/**
+    max_diff_lines: 700
+  - glob: crates/hexcell-storage/tests/**
+    max_diff_lines: 900
+  - glob: crates/hexcell/src/**
+    max_diff_lines: 160
+  - glob: crates/hexcell/tests/**
+    max_diff_lines: 180
+  - glob: docs/**
+    max_diff_lines: 170
+  - glob: '**/Cargo.toml'
+    max_diff_lines: 40
+  - glob: Cargo.lock
+    max_diff_lines: 40
+execution:
+  mode: worktree_edit
+  branch: ai/HEX-055
+retry_policy:
+  max_attempts: 2
+  escalate_after: 2
