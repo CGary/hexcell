@@ -360,6 +360,16 @@ pub fn purgar_epocas_retiradas(
                 Err(_) => continue,
             };
 
+            // El brazo de ruta canónica es hoy inatacable por mutación en aislamiento: la restricción
+            // CHECK ((numero_de_epoca IS NULL) = (sellada_ms IS NULL)) de
+            // migraciones/conocimiento/0002-esquema-de-conocimiento.sql:103 liga ambas columnas, así
+            // que el único archivo cuya ruta canónica puede igualar a ruta_live_canonica es
+            // precisamente aquel del que numero_vivo_intrinseco ya se leyó como Some desde esa misma
+            // fila; el brazo numérico queda entonces necesariamente verdadero también, y mutar M4
+            // (borrar este brazo) da cero pruebas fallidas POR CONSTRUCCIÓN, no por falta de cobertura.
+            // Se conserva deliberadamente como defensa en profundidad para el día en que una
+            // migración futura desacople esa identidad intrínseca de la ruta física: borrar una
+            // guarda por ser hoy inalcanzable es exactamente lo que muerde después de ese cambio.
             let es_viva =
                 ruta_canonica == ruta_live_canonica || Some(num_epoca) == numero_vivo_intrinseco;
 

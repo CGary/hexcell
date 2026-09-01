@@ -612,6 +612,37 @@ fn verificar_guarda_9_fallo_de_escritura_de_marca_aborta_con_produccion_intacta(
     assert!(ruta_marca.is_dir());
 }
 
+/// Aísla el Err real (DEFECT 2) del Ok(None) legítimo: un DROP TABLE deja la fila inexistente,
+/// no NULL, así que numero_anterior debe abortar con `?` en vez de saltar en silencio.
+#[test]
+fn verificar_guarda_reversion_aborta_ante_error_de_lectura_de_numero_anterior() {
+    let temp = DirectorioTemporal::nuevo("guarda-reversion-lectura-falla");
+    let gestor = GestorDePools::abrir(temp.ruta()).expect("abrir gestor");
+    let config = preparar_staging_valido(temp.ruta(), 768);
+    promover_epoca(&gestor, temp.ruta(), &config, 10_000).expect("promover a 1");
+    let config2 = preparar_staging_valido(temp.ruta(), 768);
+    promover_epoca(&gestor, temp.ruta(), &config2, 20_000).expect("promover a 2");
+
+    // Otra conexión rompe la tabla de la época viva: la lectura falla con un Err real, no NULL.
+    let ruta_2 = std::fs::canonicalize(temp.ruta().join("knowledge_epoch_2.db")).unwrap();
+    let conexion_rota = Connection::open(&ruta_2).unwrap();
+    conexion_rota
+        .execute("DROP TABLE metadatos_de_epoca", [])
+        .unwrap();
+
+    let resultado = revertir_a_epoca(&gestor, temp.ruta(), &config, 1);
+    assert!(
+        resultado.is_err(),
+        "debe abortar ante un Err real: {resultado:?}"
+    );
+    assert!(!temp.ruta().join("knowledge_epoch_2.sospechosa").exists());
+    let ruta_live = temp.ruta().join(NOMBRE_DE_ARCHIVO_DE_CONOCIMIENTO);
+    assert_eq!(
+        fs::read_link(&ruta_live).unwrap().to_str().unwrap(),
+        "knowledge_epoch_2.db"
+    );
+}
+
 #[test]
 fn verificar_guarda_10_marcada_no_es_destino_de_reversion() {
     let temp = DirectorioTemporal::nuevo("guarda-10-marcada-no-destino");
