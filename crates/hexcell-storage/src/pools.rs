@@ -30,6 +30,7 @@
 //! sonda comprueba las dos cosas: que la ruta sigue existiendo y que una consulta barata contra
 //! una tabla real responde.
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -38,6 +39,7 @@ use std::time::Duration;
 use arc_swap::ArcSwap;
 use rusqlite::{Connection, OpenFlags};
 
+use crate::drenaje::ConstanciaDeDrenaje;
 use crate::error::ErrorDeAlmacen;
 use crate::migraciones::{aplicar_migraciones_de_conocimiento, aplicar_migraciones_de_sesiones};
 use crate::respaldo::{self, CopiaVerificada};
@@ -243,6 +245,7 @@ pub struct GestorDePools {
     sesiones: PoolDeSesiones,
     conocimiento: ArcSwap<PoolDeConocimiento>,
     promocion_en_curso: AtomicBool,
+    epocas_en_uso: Mutex<BTreeMap<i64, PathBuf>>,
 }
 
 impl GestorDePools {
@@ -293,7 +296,42 @@ impl GestorDePools {
             },
             conocimiento: ArcSwap::from_pointee(pool_conocimiento),
             promocion_en_curso: AtomicBool::new(false),
+            epocas_en_uso: Mutex::new(BTreeMap::new()),
         })
+    }
+
+    /// Registra una época superseída activa en el inventario de épocas en uso.
+    ///
+    /// Se invoca en los puntos de superseído (promoción y reversión) asociando el número ordinal
+    /// intrínseco de la época con su ruta canónica en disco.
+    pub fn registrar_epoca_en_uso(&self, numero_de_epoca: i64, ruta: PathBuf) {
+        let mut guardia = match self.epocas_en_uso.lock() {
+            Ok(g) => g,
+            Err(e) => e.into_inner(),
+        };
+        guardia.insert(numero_de_epoca, ruta);
+    }
+
+    /// Retira una época del registro de épocas en uso presentando una constancia de drenaje no falsificable.
+    ///
+    /// Este es el ÚNICO camino para retirar una época del inventario. Si no se provee una constancia legítima,
+    /// la época permanecerá en el registro y será protegida indefinidamente de cualquier purga.
+    pub fn retirar_epoca_en_uso(&self, constancia: &ConstanciaDeDrenaje) -> Option<PathBuf> {
+        let numero = constancia.numero_de_epoca()?;
+        let mut guardia = match self.epocas_en_uso.lock() {
+            Ok(g) => g,
+            Err(e) => e.into_inner(),
+        };
+        guardia.remove(&numero)
+    }
+
+    /// Obtiene una instantánea de solo lectura del mapa de épocas actualmente en uso.
+    pub fn epocas_en_uso(&self) -> BTreeMap<i64, PathBuf> {
+        let guardia = match self.epocas_en_uso.lock() {
+            Ok(g) => g,
+            Err(e) => e.into_inner(),
+        };
+        guardia.clone()
     }
 
     /// Pool de `sessions.db`.

@@ -35,6 +35,7 @@ escriban los registros no coincida con el orden numérico.
 | `adr-0024-metricas-internas-de-operacion.md` | **Métricas operativas internas expuestas por instantánea estructurada en log periódico.** Justificación del log de instantáneas como único mecanismo de exposición interno para el operador, y descarte de endpoints HTTP, subcomandos CLI y persistencia en base de datos. | A-4 | **Vigente** (2026-08-27) |
 | `adr-0025-puerto-de-embeddings.md` | **Puerto de embeddings `ProveedorDeEmbeddings` y adaptador OpenRouter.** Declarado en `hexcell-core` sin dependencias, con `-> impl Future` y despacho por enumeración, colocación por índice explícito, respuesta tipada separada, suelo de conciliación contra la estimación ante metadatos ausentes y contabilidad en dos fases por llamada. | A-5 | **Vigente** (2026-08-27) |
 | `adr-0026-reversion-de-epocas-y-guardas-de-fallo-silencioso.md` | **Reversión de épocas condicionada por re-chequeo estructural y sonda semántica, y guardas de fallo silencioso.** Extiende `adr-0006`. | A-5 | **Vigente** (2026-08-31) |
+| `adr-0027-retencion-y-purga-de-epocas.md` | **Retención y purga de épocas selladas fuera de ventana, registro de épocas en uso con constancia no falsificable y reserva de número por marca sospechosa.** Extiende `adr-0006` y `adr-0026`. | A-5 | **Vigente** (2026-08-31) |
 
 Estos ADR registran lo que se **decidió**. Las alternativas evaluadas y no elegidas, las decisiones
 derogadas y los supuestos que se demostraron falsos se recogen además en

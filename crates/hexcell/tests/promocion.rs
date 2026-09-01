@@ -10,8 +10,9 @@ use hexcell::embeddings::{
 };
 use hexcell::ingesta::ejecutar_ingesta;
 use hexcell::promocion::{
-    drenar_epoca_superseida_de_conocimiento, promover_epoca_de_conocimiento,
-    revertir_epoca_de_conocimiento,
+    HEXCELL_VENTANA_DE_RETENCION_DE_EPOCAS, drenar_epoca_superseida_de_conocimiento,
+    promover_epoca_de_conocimiento, purgar_epocas_de_conocimiento, revertir_epoca_de_conocimiento,
+    ventana_de_retencion_de_epocas_desde_entorno,
 };
 use hexcell_core::fragmentacion::ConfiguracionDeFragmentacion;
 use hexcell_storage::DocumentoDeIngesta;
@@ -141,7 +142,7 @@ async fn verificar_orquestacion_asincrona_de_drenaje_exitoso() {
         }
     };
 
-    let desenlace_drenaje = drenar_epoca_superseida_de_conocimiento(epoca_superseida)
+    let desenlace_drenaje = drenar_epoca_superseida_de_conocimiento(&gestor, epoca_superseida)
         .await
         .expect("drenar epoca superseida");
 
@@ -156,6 +157,13 @@ async fn verificar_orquestacion_asincrona_de_drenaje_exitoso() {
         }
         otro => panic!("se esperaba Drenada, se obtuvo: {otro:?}"),
     }
+
+    // Aísla en runtime la compuerta que retira la entrada del registro tras un drenaje exitoso:
+    // si el envoltorio asíncrono omitiera `gestor.retirar_epoca_en_uso(&constancia)`, el registro
+    // quedaría vacío igual (esta época base nunca se registró en epocas_en_uso porque no vino de
+    // una promoción con superseída real), así que esta prueba por sí sola no basta para esa
+    // compuerta — se retoma con una época efectivamente registrada más abajo.
+    assert!(gestor.epocas_en_uso().is_empty());
 }
 
 #[tokio::test]
@@ -251,8 +259,12 @@ async fn verificar_orquestacion_asincrona_de_reversion_y_drenaje_exitoso() {
         }
     };
 
+    // La época 2 quedó registrada en epocas_en_uso al superseerse por la reversión (GUARD-3):
+    // sin drenar todavía, la purga la protegería indefinidamente.
+    assert!(gestor.epocas_en_uso().contains_key(&2));
+
     // 4. Drenar la época superseída (época 2)
-    let desenlace_drenaje = drenar_epoca_superseida_de_conocimiento(epoca_superseida)
+    let desenlace_drenaje = drenar_epoca_superseida_de_conocimiento(&gestor, epoca_superseida)
         .await
         .expect("drenar epoca superseida tras reversion");
 
@@ -267,4 +279,180 @@ async fn verificar_orquestacion_asincrona_de_reversion_y_drenaje_exitoso() {
         }
         otro => panic!("se esperaba Drenada tras reversion, se obtuvo: {otro:?}"),
     }
+
+    // Aísla en runtime la compuerta de retiro del registro: esta época SÍ estaba efectivamente
+    // registrada antes del drenaje (a diferencia de la época base del primer test), así que si el
+    // envoltorio asíncrono omitiera `gestor.retirar_epoca_en_uso(&constancia)` tras un drenaje
+    // exitoso, esta aserción por sí sola fallaría y ninguna otra prueba de este archivo lo haría.
+    assert!(
+        !gestor.epocas_en_uso().contains_key(&2),
+        "drenar_epoca_superseida_de_conocimiento debe retirar la entrada del registro tras un drenaje exitoso"
+    );
+}
+
+/// Único test que toca `HEXCELL_VENTANA_DE_RETENCION_DE_EPOCAS`: se ejercen los tres casos
+/// (válido, no numérico, negativo) en la misma función para no arriesgar una carrera con otro
+/// test que leyera la misma variable de entorno de proceso en paralelo — ninguna otra prueba de
+/// este archivo la toca, así que basta con no repartir los casos en funciones separadas.
+#[test]
+fn verificar_ventana_de_retencion_desde_entorno_con_valor_valido_no_numerico_y_negativo() {
+    // Caso 1: valor numérico válido se respeta tal cual.
+    unsafe {
+        std::env::set_var(HEXCELL_VENTANA_DE_RETENCION_DE_EPOCAS, "5");
+    }
+    assert_eq!(ventana_de_retencion_de_epocas_desde_entorno(), 5);
+
+    // Caso 2: valor no numérico cae al valor por omisión en vez de entrar en pánico.
+    unsafe {
+        std::env::set_var(HEXCELL_VENTANA_DE_RETENCION_DE_EPOCAS, "no-es-un-numero");
+    }
+    assert_eq!(
+        ventana_de_retencion_de_epocas_desde_entorno(),
+        hexcell_storage::retencion::VENTANA_DE_RETENCION_DE_EPOCAS_POR_DEFECTO
+    );
+
+    // Caso 3: valor negativo tampoco parsea como usize y cae al mismo valor por omisión.
+    unsafe {
+        std::env::set_var(HEXCELL_VENTANA_DE_RETENCION_DE_EPOCAS, "-1");
+    }
+    assert_eq!(
+        ventana_de_retencion_de_epocas_desde_entorno(),
+        hexcell_storage::retencion::VENTANA_DE_RETENCION_DE_EPOCAS_POR_DEFECTO
+    );
+
+    // Caso 4 (variable ausente): mismo valor por omisión, para no dejar la limpieza final como la
+    // única prueba de este caso.
+    unsafe {
+        std::env::remove_var(HEXCELL_VENTANA_DE_RETENCION_DE_EPOCAS);
+    }
+    assert_eq!(
+        ventana_de_retencion_de_epocas_desde_entorno(),
+        hexcell_storage::retencion::VENTANA_DE_RETENCION_DE_EPOCAS_POR_DEFECTO
+    );
+}
+
+/// Orquestación asíncrona de la purga (AC-4, orquestación en `crates/hexcell`): promueve tres
+/// épocas, drena la primera superseída para que dejar de estar protegida por `epocas_en_uso`, fija
+/// la ventana en 1 vía entorno y confirma que `purgar_epocas_de_conocimiento` elimina exactamente
+/// la época que queda fuera de la viva, la ventana y el registro.
+#[tokio::test]
+async fn verificar_orquestacion_asincrona_de_purga_de_epocas() {
+    let temp = DirectorioTemporal::nuevo("purga-asincrona");
+    let (gestor, repositorio) = abrir_persistencia(temp.ruta());
+    repositorio
+        .aportar_presupuesto(1000, SystemTime::now())
+        .unwrap();
+
+    let config_fragmentacion = ConfiguracionDeFragmentacion {
+        tamano_de_fragmento: 32,
+        solapamiento: 0,
+    };
+
+    let proveedor = ProveedorDeEmbeddingsSimulado::con_dimension(4).con_tamano_de_lote(2);
+    let servicio = ServicioDeEmbeddings::nuevo(
+        ProveedorDeEmbeddingsDeCelula::Simulado(proveedor),
+        repositorio,
+    );
+
+    async fn ingestar_y_promover(
+        servicio: &ServicioDeEmbeddings<hexcell::embeddings::ProveedorDeEmbeddingsDeCelula>,
+        gestor: &hexcell_storage::GestorDePools,
+        ruta_datos: &std::path::Path,
+        config: &ConfiguracionDeFragmentacion,
+        referencia: &str,
+        ahora_ms: i64,
+    ) -> DesenlaceDePromocion {
+        let documento = DocumentoDeIngesta {
+            referencia_externa: referencia.to_string(),
+            titulo: format!("Documento {referencia}"),
+            contenido: "Texto de contenido para orquestación asíncrona de purga.".to_string(),
+            actualizado_ms: ahora_ms,
+        };
+        ejecutar_ingesta(
+            documento,
+            config.clone(),
+            servicio,
+            ruta_datos,
+            "sonda de purga",
+            0.0,
+            || false,
+        )
+        .await
+        .expect("ejecutar ingesta previa a la promoción");
+
+        promover_epoca_de_conocimiento(gestor, ruta_datos, config, ahora_ms)
+            .await
+            .expect("promover epoca asincrona")
+    }
+
+    // Época 1
+    ingestar_y_promover(
+        &servicio,
+        &gestor,
+        temp.ruta(),
+        &config_fragmentacion,
+        "doc_purga_1",
+        10_000,
+    )
+    .await;
+
+    // Época 2 (supersede a la 1)
+    let desenlace_2 = ingestar_y_promover(
+        &servicio,
+        &gestor,
+        temp.ruta(),
+        &config_fragmentacion,
+        "doc_purga_2",
+        20_000,
+    )
+    .await;
+    let epoca_1_superseida = match desenlace_2 {
+        DesenlaceDePromocion::Promovida {
+            epoca_superseida, ..
+        } => epoca_superseida,
+        DesenlaceDePromocion::Abortada { motivo } => panic!("no debió abortar: {motivo:?}"),
+    };
+
+    // Época 3 (viva final, supersede a la 2)
+    ingestar_y_promover(
+        &servicio,
+        &gestor,
+        temp.ruta(),
+        &config_fragmentacion,
+        "doc_purga_3",
+        30_000,
+    )
+    .await;
+
+    // Drenar la época 1 para que quede disponible a purga (ya no protegida por epocas_en_uso).
+    drenar_epoca_superseida_de_conocimiento(&gestor, epoca_1_superseida)
+        .await
+        .expect("drenar epoca 1 superseida");
+    assert!(!gestor.epocas_en_uso().contains_key(&1));
+
+    // Ventana de retención = 1 vía entorno: solo la época 2 (la más reciente no viva) se conserva
+    // por recencia; la época 1, ya drenada, queda fuera de las cuatro invariantes y se purga.
+    unsafe {
+        std::env::set_var(HEXCELL_VENTANA_DE_RETENCION_DE_EPOCAS, "1");
+    }
+    let desenlace_purga = purgar_epocas_de_conocimiento(&gestor, temp.ruta())
+        .await
+        .expect("purgar epocas de conocimiento");
+    unsafe {
+        std::env::remove_var(HEXCELL_VENTANA_DE_RETENCION_DE_EPOCAS);
+    }
+
+    let numeros_purgados: std::collections::BTreeSet<i64> = desenlace_purga
+        .epocas_purgadas
+        .iter()
+        .map(|p| p.numero_de_epoca)
+        .collect();
+    assert_eq!(
+        numeros_purgados,
+        std::collections::BTreeSet::from([1]),
+        "debe purgarse exactamente la época 1, ya drenada y fuera de ventana"
+    );
+    assert!(!temp.ruta().join("knowledge_epoch_1.db").exists());
+    assert!(temp.ruta().join("knowledge_epoch_2.db").exists());
+    assert!(temp.ruta().join("knowledge_epoch_3.db").exists());
 }

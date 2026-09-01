@@ -45,6 +45,48 @@ pub const LIMITE_DE_DRENAJE_DE_EPOCA_POR_DEFECTO: Duration = Duration::from_secs
 /// Intervalo de sondeo entre evaluaciones consecutivas del predicado de reposo (5 milisegundos).
 pub const INTERVALO_DE_SONDEO_DE_DRENAJE: Duration = Duration::from_millis(5);
 
+/// Token infalsificable que certifica que una época superseída concluyó su drenaje y reposo.
+///
+/// Posee campos privados y un constructor visible únicamente a nivel de crate (`pub(crate) fn nueva`),
+/// lo cual impide que consumidores externos puedan fabricar una constancia espuria. Tampoco implementa
+/// `Clone` ni `Copy` para evitar que un mismo token sea reutilizado.
+#[derive(Debug, PartialEq)]
+pub struct ConstanciaDeDrenaje {
+    ruta_del_archivo: PathBuf,
+    numero_de_epoca: Option<i64>,
+    espera_ms: u64,
+}
+
+impl ConstanciaDeDrenaje {
+    /// Construye una nueva constancia de drenaje tras cerrar exitosamente el pool superseído.
+    pub(crate) fn nueva(
+        ruta_del_archivo: PathBuf,
+        numero_de_epoca: Option<i64>,
+        espera_ms: u64,
+    ) -> Self {
+        Self {
+            ruta_del_archivo,
+            numero_de_epoca,
+            espera_ms,
+        }
+    }
+
+    /// Ruta física del archivo de la época cuyo drenaje quedó certificado.
+    pub fn ruta_del_archivo(&self) -> &Path {
+        &self.ruta_del_archivo
+    }
+
+    /// Número ordinal de la época drenada, o `None` si era la base inicial.
+    pub fn numero_de_epoca(&self) -> Option<i64> {
+        self.numero_de_epoca
+    }
+
+    /// Tiempo transcurrido durante la espera en milisegundos.
+    pub fn espera_ms(&self) -> u64 {
+        self.espera_ms
+    }
+}
+
 /// Resultado del proceso de drenaje ordenado de una época superseída.
 #[derive(Debug, PartialEq)]
 pub enum DesenlaceDeDrenaje {
@@ -56,6 +98,8 @@ pub enum DesenlaceDeDrenaje {
         numero_de_epoca: Option<i64>,
         /// Tiempo transcurrido durante la espera en milisegundos.
         espera_ms: u64,
+        /// Constancia infalsificable de drenaje completado.
+        constancia: ConstanciaDeDrenaje,
     },
     /// El límite de tiempo expiró mientras aún existían lectores activos o referencias retenidas.
     Expirada {
@@ -139,10 +183,16 @@ pub fn drenar_epoca_superseida(
                 Some(pool_cerrado) => {
                     drop(pool_cerrado);
                     verificar_companeros_de_la_epoca(&ruta_del_archivo)?;
+                    let constancia = ConstanciaDeDrenaje::nueva(
+                        ruta_del_archivo.clone(),
+                        numero_de_epoca,
+                        espera_ms,
+                    );
                     Ok(DesenlaceDeDrenaje::Drenada {
                         ruta_del_archivo,
                         numero_de_epoca,
                         espera_ms,
+                        constancia,
                     })
                 }
                 None => Ok(DesenlaceDeDrenaje::Retenida {

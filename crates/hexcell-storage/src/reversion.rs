@@ -16,6 +16,7 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::SystemTime;
 
 use hexcell_core::fragmentacion::ConfiguracionDeFragmentacion;
 
@@ -27,6 +28,46 @@ use crate::promocion::{
     reasignar_enlace_simbolico_vivo,
 };
 use crate::validacion::{MotivoDeRechazo, VeredictoDeIntegridad, validar_integridad_del_indice};
+
+/// Deriva la fecha absoluta ISO (`YYYY-MM-DD`) del instante real en que se escribe una marca de
+/// época sospechosa.
+///
+/// La marca es evidencia forense: si su fecha fuera una constante fija, cada marca escrita a
+/// partir de hoy mentiría sobre cuándo ocurrió la reversión. Se reutiliza `tiempo::a_milisegundos`
+/// para no repetir su política de saturación en los extremos del reloj, y solo se añade aquí la
+/// conversión de milisegundos a fecha civil que el formato de la marca exige.
+fn fecha_absoluta_de_hoy() -> String {
+    let milisegundos = crate::tiempo::a_milisegundos(SystemTime::now());
+    let dias_desde_epoch = milisegundos.div_euclid(86_400_000);
+    let (anio, mes, dia) = fecha_civil_desde_dias_desde_epoch(dias_desde_epoch);
+    format!("{anio:04}-{mes:02}-{dia:02}")
+}
+
+/// Convierte días desde el epoch Unix a una fecha civil (calendario gregoriano proléptico).
+///
+/// Es el algoritmo entero de Howard Hinnant (`civil_from_days`): aritmética pura sin división en
+/// punto flotante ni tablas de meses, elegida para no traer una dependencia de calendario nueva
+/// solo para formatear una fecha en un archivo de marca.
+fn fecha_civil_desde_dias_desde_epoch(dias: i64) -> (i64, u32, u32) {
+    let z = dias + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let dia_de_la_era = (z - era * 146_097) as u64; // [0, 146096]
+    let anio_de_la_era = (dia_de_la_era - dia_de_la_era / 1460 + dia_de_la_era / 36_524
+        - dia_de_la_era / 146_096)
+        / 365; // [0, 399]
+    let anio = anio_de_la_era as i64 + era * 400;
+    let dia_del_anio =
+        dia_de_la_era - (365 * anio_de_la_era + anio_de_la_era / 4 - anio_de_la_era / 100); // [0, 365]
+    let mes_desplazado = (5 * dia_del_anio + 2) / 153; // [0, 11]
+    let dia = (dia_del_anio - (153 * mes_desplazado + 2) / 5 + 1) as u32; // [1, 31]
+    let mes = if mes_desplazado < 10 {
+        mes_desplazado + 3
+    } else {
+        mes_desplazado - 9
+    } as u32; // [1, 12]
+    let anio = if mes <= 2 { anio + 1 } else { anio };
+    (anio, mes, dia)
+}
 
 /// Determina si un motivo de rechazo de integridad es de naturaleza semántica o estructural.
 ///
@@ -71,6 +112,11 @@ pub enum MotivoDeRechazoDeReversion {
     /// La época destino solicitada es la que ya se encuentra actualmente activa en producción.
     EpocaYaEsLaViva {
         /// Número ordinal de la época que ya está viva.
+        numero_de_epoca: i64,
+    },
+    /// La época destino porta una marca de sospechosa de defecto y no puede ser destino de reversión.
+    EpocaMarcadaComoSospechosa {
+        /// Número ordinal de la época marcada.
         numero_de_epoca: i64,
     },
     /// El número de época persistido dentro del archivo destino no coincide con el número
@@ -170,6 +216,16 @@ pub fn revertir_a_epoca(
         }
     };
 
+    // 4b. Comprobar si la época destino porta una marca de sospecha de defecto.
+    let marcas = crate::retencion::numeros_de_epoca_marcados(ruta_datos)?;
+    if marcas.contains(&numero_confirmado) {
+        return Ok(DesenlaceDeReversion::Rechazada {
+            motivo: MotivoDeRechazoDeReversion::EpocaMarcadaComoSospechosa {
+                numero_de_epoca: numero_confirmado,
+            },
+        });
+    }
+
     // 5. Rechazar si el destino ya es el archivo activo: revertir a la propia época viva no
     // conmuta nada y encubriría un no-op como si fuese una reversión real.
     let ruta_destino_canonica = std::fs::canonicalize(&ruta_destino).map_err(|causa| {
@@ -253,24 +309,42 @@ pub fn revertir_a_epoca(
     // recalcular la canonicalización una vez que el sistema de archivos está por mutarse.
     let ruta_anterior = ruta_live_canonica;
 
+    // La fila `metadatos_de_epoca` (id = 1) siempre existe una vez que el pool abrió con éxito;
+    // `numero_de_epoca` es la columna nullable. Ok(None) es entonces la ausencia LEGÍTIMA de época
+    // previa (la época base inicial nunca sellada); un Err es un fallo de lectura genuino (E/S,
+    // archivo corrupto) que NO puede colapsarse en ese mismo None con `.ok().flatten()`, porque
+    // eso saltaría la marca de sospecha y dejaría conmutar la reversión sin ella: exactamente el
+    // escenario irrecuperable — número de época reutilizable tras purga — que la compuerta 10b
+    // existe para evitar. Por eso se propaga el error con `?`, abortando ANTES de abrir el pool
+    // nuevo o tocar el enlace, con producción intacta.
     let pool_anterior = gestor.conocimiento();
-    let numero_anterior: Option<i64> = pool_anterior
-        .con_lectura(|conexion| {
-            conexion
-                .query_row(
-                    "SELECT numero_de_epoca FROM metadatos_de_epoca WHERE id = 1",
-                    [],
-                    |fila| fila.get(0),
-                )
-                .map_err(ErrorDeAlmacen::en("leer número de época previa"))
-        })
-        .ok()
-        .flatten();
+    let numero_anterior: Option<i64> = pool_anterior.con_lectura(|conexion| {
+        conexion
+            .query_row(
+                "SELECT numero_de_epoca FROM metadatos_de_epoca WHERE id = 1",
+                [],
+                |fila| fila.get(0),
+            )
+            .map_err(ErrorDeAlmacen::en("leer número de época previa"))
+    })?;
 
     // 10. El pool se abre y precalienta ANTES de reasignar el enlace para que la ventana de
     // conmutación observable sea solo el rename atómico del paso siguiente; abrir conexiones
     // después dejaría el enlace apuntando momentáneamente a un archivo cuyo pool aún no responde.
     let nuevo_pool = Arc::new(PoolDeConocimiento::abrir_sobre(&ruta_destino)?);
+
+    // 10b. Escribir la marca de época sospechosa para la época saliente ANTES de reasignar el enlace.
+    // Razón de diseño (D-32): escribir la marca antes de la conmutación asegura que un fallo de E/S
+    // aborte la reversión dejando intacta la producción y sin conmutar a ciegas; escribirla después
+    // arriesgaría una conmutación sin marca donde el número previo podría reutilizarse.
+    if let Some(num_saliente) = numero_anterior {
+        crate::retencion::escribir_marca_de_epoca_sospechosa(
+            ruta_datos,
+            num_saliente,
+            "reversión de época por defecto sospechoso",
+            &fecha_absoluta_de_hoy(),
+        )?;
+    }
 
     // 11. Se reutiliza el helper extraído de promover_epoca (D-29) en vez de duplicar el modismo
     // unlink+symlink, porque un rename atómico nunca deja una ventana en la que el enlace resuelva
@@ -315,10 +389,14 @@ pub fn revertir_a_epoca(
 
     let epoca_superseida = EpocaSuperseida::nueva(
         pool_superseido,
-        ruta_anterior,
+        ruta_anterior.clone(),
         numero_anterior,
         instante_inicio,
     );
+
+    if let Some(num) = numero_anterior {
+        gestor.registrar_epoca_en_uso(num, ruta_anterior);
+    }
 
     Ok(DesenlaceDeReversion::Revertida {
         // Se reporta el número leído del propio archivo, no el solicitado por nombre: en este

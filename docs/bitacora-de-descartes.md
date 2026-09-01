@@ -1,6 +1,6 @@
 # Bitácora de descartes
 
-> Registro de lo que se consideró y **no** se hizo. Última actualización: 2026-08-31 (D-31).
+> Registro de lo que se consideró y **no** se hizo. Última actualización: 2026-08-31 (D-32).
 
 ## Para qué sirve este documento
 
@@ -65,6 +65,7 @@ se apoya en un principio de diseño, no.
 | [D-29](#d-29) | Alternativas descartadas para la conmutación atómica de épocas (cerrojo en pool, unlink+symlink, copia en caliente, reinicio de proceso) | Principio de diseño, no reabrir |
 | [D-30](#d-30) | Alternativas descartadas para el drenaje de la época superseída (notificación por Condvar, cierre forzado, remediación por borrado, sobrecarga de variable de apagado) | Principio de diseño, no reabrir |
 | [D-31](#d-31) | Alternativas descartadas para la reversión de épocas y guardas de fallo silencioso (re-acuñación de épocas, comodín en partición semántica, guarda de enlace colgante en solo lectura, fallback silencioso de ruta canónica) | Principio de diseño, no reabrir |
+| [D-32](#d-32) | Escribir la marca de sospechosa después de reasignar el enlace simbólico | Principio de diseño, no reabrir |
 
 ---
 
@@ -494,6 +495,14 @@ copiar `sessions.db`, `knowledge_live.db` y el almacén de identidad del adaptad
   * *Dispersar la guarda de enlace vivo colgante (`verificar_enlace_vivo_resoluble`) en `abrir_solo_lectura` o `promover_epoca`:* `abrir_solo_lectura` utiliza `SQLITE_OPEN_READ_ONLY`, por lo que SQLite ya falla limpiamente sin crear archivos ni alterar el disco; añadir la guarda allí sería código muerto redundante y violaría la separación de conjuntos de fallo disjuntos entre las guardas 3 y 4.
   * *Fallback silencioso mediante `.unwrap_or(ruta_de_apertura)` ante fallo de `canonicalize` en promoción:* ocultaría enlaces rotos o archivos eliminados, provocando que el descriptor superseído contenga una ruta errónea y que el posterior drenaje verifique el diario WAL del archivo equivocado; se mapea explícitamente a `ErrorDeAlmacen::ArchivoDeEpocaInaccesible`.
 * **Registro normativo:** `docs/adr/adr-0026-reversion-de-epocas-y-guardas-de-fallo-silencioso.md`, `crates/hexcell-storage/src/reversion.rs`, `crates/hexcell-storage/src/pools.rs`, `crates/hexcell-storage/src/promocion.rs`.
+* **Qué tendría que cambiar para reabrirlo:** *Principio de diseño.* **No reabrir.**
+
+### D-32
+**Escribir la marca de época sospechosa (`.sospechosa`) después de reasignar el enlace simbólico en reversión.**
+
+* **Descartado:** 2026-08-31 (HEX-057-b).
+* **Por qué se descartó:** Si la marca se escribiera después de la conmutación de `knowledge_live.db`, cualquier caída del proceso o fallo de E/S en la escritura de la marca dejaría la conmutación consolidada pero la época previa sin marcar. Esto permitiría que un ciclo posterior de `numero_de_epoca_siguiente` reutilizara el número de la época descartada por sospecha de defecto, violando irreversiblemente la garantía de no-reutilización de identificadores. Escribir la marca antes de la conmutación invierte el riesgo: un fallo de escritura de la marca aborta limpiamente la reversión dejando la producción intacta sirviendo la época previa; el peor caso es una marca espuria sobre una época todavía activa, lo cual es recuperable y tiene un sesgo seguro a favor de la protección del sistema.
+* **Registro normativo:** `docs/adr/adr-0027-retencion-y-purga-de-epocas.md`, `crates/hexcell-storage/src/reversion.rs`.
 * **Qué tendría que cambiar para reabrirlo:** *Principio de diseño.* **No reabrir.**
 
 ---

@@ -526,3 +526,131 @@ fn verificar_reversion_rechaza_numero_de_epoca_intrinseco_discrepante() {
     assert!(ruta_epoca_1.exists());
     assert!(temp.ruta().join("knowledge_epoch_2.db").exists());
 }
+
+#[test]
+fn verificar_guarda_9_reversion_escribe_marca_sospechosa_y_registra_epoca_superseida() {
+    let temp = DirectorioTemporal::nuevo("guarda-9-marca-reversion");
+    let gestor = GestorDePools::abrir(temp.ruta()).expect("abrir gestor");
+    let config = preparar_staging_valido(temp.ruta(), 768);
+
+    // Promover a época 1 y luego a época 2
+    promover_epoca(&gestor, temp.ruta(), &config, 10_000).expect("promover a 1");
+    let config2 = preparar_staging_valido(temp.ruta(), 768);
+    promover_epoca(&gestor, temp.ruta(), &config2, 20_000).expect("promover a 2");
+
+    // Revertir a época 1
+    let resultado = revertir_a_epoca(&gestor, temp.ruta(), &config, 1).expect("revertir a 1");
+    assert!(matches!(resultado, DesenlaceDeReversion::Revertida { .. }));
+
+    // Verificar que se escribió la marca knowledge_epoch_2.sospechosa
+    let ruta_marca = temp.ruta().join("knowledge_epoch_2.sospechosa");
+    assert!(
+        ruta_marca.exists(),
+        "la marca de época sospechosa debe existir"
+    );
+
+    let marcas = hexcell_storage::retencion::leer_marcas_de_epoca_sospechosa(temp.ruta())
+        .expect("leer marcas");
+    assert_eq!(marcas.len(), 1);
+    assert_eq!(marcas[0].numero_de_epoca, 2);
+    // La fecha se deriva del reloj real (ya no es una constante fija), así que solo se valida su
+    // FORMA ISO (YYYY-MM-DD) en vez de un valor exacto que envejecería con el paso de los días.
+    let fecha = &marcas[0].fecha_absoluta;
+    let partes: Vec<&str> = fecha.split('-').collect();
+    let forma_iso_valida = partes.len() == 3
+        && partes[0].len() == 4
+        && partes[1].len() == 2
+        && partes[2].len() == 2
+        && partes.iter().all(|p| p.chars().all(|c| c.is_ascii_digit()));
+    assert!(
+        forma_iso_valida,
+        "fecha_absoluta debe tener forma YYYY-MM-DD: {fecha}"
+    );
+
+    // Verificar que la época 2 superseída quedó registrada en epocas_en_uso
+    let en_uso = gestor.epocas_en_uso();
+    assert!(en_uso.contains_key(&2));
+}
+
+/// Aísla el ORDEN de GUARD-9: un DIRECTORIO ocupa la ruta de la marca `.sospechosa` para que
+/// `std::fs::write` falle de verdad. Si la marca se escribe ANTES del enlace, el fallo aborta con
+/// el symlink intacto; si el orden se invirtiera, ya habría conmutado y esto lo detectaría.
+#[test]
+fn verificar_guarda_9_fallo_de_escritura_de_marca_aborta_con_produccion_intacta() {
+    let temp = DirectorioTemporal::nuevo("guarda-9-fallo-escritura-marca");
+    let gestor = GestorDePools::abrir(temp.ruta()).expect("abrir gestor");
+    let config = preparar_staging_valido(temp.ruta(), 768);
+
+    // Promover a época 1 y luego a época 2
+    promover_epoca(&gestor, temp.ruta(), &config, 10_000).expect("promover a 1");
+    let config2 = preparar_staging_valido(temp.ruta(), 768);
+    promover_epoca(&gestor, temp.ruta(), &config2, 20_000).expect("promover a 2");
+
+    // Un DIRECTORIO en la ruta de la marca hace que std::fs::write falle con un error de E/S real.
+    let ruta_marca = temp.ruta().join("knowledge_epoch_2.sospechosa");
+    std::fs::create_dir(&ruta_marca).expect("crear directorio que bloquea la marca");
+    let ruta_live = temp.ruta().join(NOMBRE_DE_ARCHIVO_DE_CONOCIMIENTO);
+
+    let resultado = revertir_a_epoca(&gestor, temp.ruta(), &config, 1);
+    assert!(
+        resultado.is_err(),
+        "la reversión debe abortar cuando la escritura de la marca falla, se obtuvo: {resultado:?}"
+    );
+
+    // El enlace y el pool activo siguen en la época 2: la conmutación NUNCA debe alcanzar el
+    // rename atómico si la marca no pudo escribirse antes.
+    assert_eq!(
+        fs::read_link(&ruta_live).unwrap().to_str().unwrap(),
+        "knowledge_epoch_2.db",
+        "el enlace vivo debe permanecer intacto tras un fallo de escritura de marca"
+    );
+    assert_eq!(
+        gestor.conocimiento().ruta(),
+        temp.ruta().join("knowledge_epoch_2.db")
+    );
+    // El directorio bloqueante sigue en su lugar: nunca se convirtió en marca válida.
+    assert!(ruta_marca.is_dir());
+}
+
+#[test]
+fn verificar_guarda_10_marcada_no_es_destino_de_reversion() {
+    let temp = DirectorioTemporal::nuevo("guarda-10-marcada-no-destino");
+    let gestor = GestorDePools::abrir(temp.ruta()).expect("abrir gestor");
+    let config = preparar_staging_valido(temp.ruta(), 768);
+
+    // Promover a época 1 y luego a época 2
+    promover_epoca(&gestor, temp.ruta(), &config, 10_000).expect("promover a 1");
+    let config2 = preparar_staging_valido(temp.ruta(), 768);
+    promover_epoca(&gestor, temp.ruta(), &config2, 20_000).expect("promover a 2");
+
+    // Marcar época 1 como sospechosa
+    hexcell_storage::retencion::escribir_marca_de_epoca_sospechosa(
+        temp.ruta(),
+        1,
+        "marcada previamente por defecto",
+        "2026-08-31",
+    )
+    .expect("escribir marca");
+
+    let ruta_live = temp.ruta().join(NOMBRE_DE_ARCHIVO_DE_CONOCIMIENTO);
+    assert_eq!(
+        fs::read_link(&ruta_live).unwrap().to_str().unwrap(),
+        "knowledge_epoch_2.db"
+    );
+
+    // Intentar revertir a época 1 debe ser rechazado antes de abrir pool o tocar symlink
+    let resultado = revertir_a_epoca(&gestor, temp.ruta(), &config, 1).expect("intentar revertir");
+
+    assert_eq!(
+        resultado,
+        DesenlaceDeReversion::Rechazada {
+            motivo: MotivoDeRechazoDeReversion::EpocaMarcadaComoSospechosa { numero_de_epoca: 1 },
+        }
+    );
+
+    // Symlink intacto apuntando a época 2
+    assert_eq!(
+        fs::read_link(&ruta_live).unwrap().to_str().unwrap(),
+        "knowledge_epoch_2.db"
+    );
+}

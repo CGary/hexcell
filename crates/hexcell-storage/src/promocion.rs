@@ -186,6 +186,7 @@ pub fn numero_de_epoca_siguiente(ruta_datos: &Path) -> Result<i64, ErrorDeAlmace
                     || nombre.starts_with('.')
                     || nombre.ends_with("-wal")
                     || nombre.ends_with("-shm")
+                    || nombre.ends_with(crate::retencion::SUFIJO_DE_MARCA_DE_EPOCA_SOSPECHOSA)
             })
         {
             continue;
@@ -205,6 +206,11 @@ pub fn numero_de_epoca_siguiente(ruta_datos: &Path) -> Result<i64, ErrorDeAlmace
         if let Ok((Some(num_epoca), Some(_sellada))) = consulta {
             maxima_epoca_observada = maxima_epoca_observada.max(num_epoca);
         }
+    }
+
+    // Unión con números de épocas marcadas como sospechosas para reservar el número tras la purga
+    for num_marcado in crate::retencion::numeros_de_epoca_marcados(ruta_datos)? {
+        maxima_epoca_observada = maxima_epoca_observada.max(num_marcado);
     }
 
     Ok(maxima_epoca_observada + 1)
@@ -499,10 +505,14 @@ pub fn promover_epoca(
 
     let epoca_superseida = EpocaSuperseida::nueva(
         pool_superseido,
-        ruta_anterior,
+        ruta_anterior.clone(),
         numero_anterior,
         instante_inicio,
     );
+
+    if let Some(num) = numero_anterior {
+        gestor.registrar_epoca_en_uso(num, ruta_anterior);
+    }
 
     Ok(DesenlaceDePromocion::Promovida {
         numero_de_epoca: numero_siguiente,

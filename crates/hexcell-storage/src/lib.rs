@@ -44,6 +44,7 @@ pub mod pools;
 pub mod presupuesto;
 pub mod promocion;
 pub mod respaldo;
+pub mod retencion;
 pub mod reversion;
 pub mod sesiones;
 pub mod tiempo;
@@ -56,8 +57,8 @@ pub use conocimiento::{
     NOMBRE_DE_ARCHIVO_DE_CONOCIMIENTO_EN_SOMBRA, SUFIJO_DE_ARCHIVO_SHM,
 };
 pub use drenaje::{
-    DesenlaceDeDrenaje, INTERVALO_DE_SONDEO_DE_DRENAJE, LIMITE_DE_DRENAJE_DE_EPOCA_POR_DEFECTO,
-    drenar_epoca_superseida,
+    ConstanciaDeDrenaje, DesenlaceDeDrenaje, INTERVALO_DE_SONDEO_DE_DRENAJE,
+    LIMITE_DE_DRENAJE_DE_EPOCA_POR_DEFECTO, drenar_epoca_superseida,
 };
 pub use error::ErrorDeAlmacen;
 pub use migraciones::{
@@ -78,6 +79,12 @@ pub use promocion::{
     reasignar_enlace_simbolico_vivo, sellar_y_consolidar_staging,
 };
 pub use respaldo::{CopiaVerificada, respaldar_base, verificar_destino_disponible};
+pub use retencion::{
+    DesenlaceDePurga, EpocaConservada, EpocaPurgada, MarcaDeEpocaSospechosa, MotivoDeConservacion,
+    SUFIJO_DE_MARCA_DE_EPOCA_SOSPECHOSA, VENTANA_DE_RETENCION_DE_EPOCAS_POR_DEFECTO,
+    escribir_marca_de_epoca_sospechosa, leer_marcas_de_epoca_sospechosa, numeros_de_epoca_marcados,
+    purgar_epocas_retiradas,
+};
 pub use reversion::{
     DesenlaceDeReversion, MotivoDeRechazoDeReversion, es_motivo_semantico, revertir_a_epoca,
 };

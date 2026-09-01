@@ -118,6 +118,29 @@ pub enum ErrorDeAlmacen {
         /// Ruta del archivo de época esperado que no se encontró en disco.
         ruta: PathBuf,
     },
+    /// La marca de época sospechosa no se pudo interpretar o no es válida.
+    MarcaDeEpocaIlegible {
+        /// Ruta del archivo de marca sospechosa afectado.
+        ruta: PathBuf,
+        /// Motivo descriptivo del fallo de lectura o formato.
+        motivo: String,
+    },
+    /// El número de época en el nombre del archivo de marca discrepa del número grabado en su contenido.
+    NumeroDeMarcaDiscrepante {
+        /// Ruta física del archivo de marca con discrepancia.
+        ruta: PathBuf,
+        /// Número de época derivado del nombre del archivo.
+        numero_en_nombre: i64,
+        /// Número de época leído del contenido de la marca.
+        numero_en_contenido: i64,
+    },
+    /// La época viva actual no se pudo identificar leyendo su número intrínseco.
+    EpocaVivaNoIdentificable {
+        /// Ruta física de la época viva que falló la identificación.
+        ruta: PathBuf,
+        /// Motivo del fallo al inspeccionar la época viva.
+        motivo: String,
+    },
 }
 
 impl ErrorDeAlmacen {
@@ -211,6 +234,25 @@ impl fmt::Display for ErrorDeAlmacen {
                 "el archivo de la época {numero_de_epoca} no existe en {}, no se puede revertir",
                 ruta.display()
             ),
+            Self::MarcaDeEpocaIlegible { ruta, motivo } => write!(
+                f,
+                "la marca de época sospechosa en {} no se pudo leer o está corrupta: {motivo}",
+                ruta.display()
+            ),
+            Self::NumeroDeMarcaDiscrepante {
+                ruta,
+                numero_en_nombre,
+                numero_en_contenido,
+            } => write!(
+                f,
+                "el número de época en el nombre de la marca ({numero_en_nombre}) no coincide con el número grabado en su contenido ({numero_en_contenido}) en {}",
+                ruta.display()
+            ),
+            Self::EpocaVivaNoIdentificable { ruta, motivo } => write!(
+                f,
+                "no se pudo identificar el número intrínseco de la época viva en {}: {motivo}",
+                ruta.display()
+            ),
         }
     }
 }
@@ -232,6 +274,9 @@ impl std::error::Error for ErrorDeAlmacen {
             Self::EpocaDestinoYaExiste { .. } => None,
             Self::EnlaceVivoColgante { .. } => None,
             Self::EpocaDestinoAusente { .. } => None,
+            Self::MarcaDeEpocaIlegible { .. } => None,
+            Self::NumeroDeMarcaDiscrepante { .. } => None,
+            Self::EpocaVivaNoIdentificable { .. } => None,
         }
     }
 }

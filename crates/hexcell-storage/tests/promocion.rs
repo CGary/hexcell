@@ -854,3 +854,54 @@ fn verificar_guarda_4_canonicalize_ruidoso_en_promocion_aborta_y_es_reintentable
         otro => panic!("se esperaba Promovida tras reintento, se obtuvo: {otro:?}"),
     }
 }
+
+#[test]
+fn verificar_guarda_8_numero_de_epoca_siguiente_reserva_numero_de_epoca_marcada_sospechosa() {
+    let temp = DirectorioTemporal::nuevo("guarda-8-reserva-numero");
+
+    // Crear época sellada 1
+    let ruta_epoca_1 = temp.ruta().join("knowledge_epoch_1.db");
+    let conexion = Connection::open(&ruta_epoca_1).unwrap();
+    aplicar_migraciones_de_conocimiento(&conexion).unwrap();
+    conexion
+        .execute(
+            "UPDATE metadatos_de_epoca SET numero_de_epoca = 1, sellada_ms = 1000 WHERE id = 1",
+            [],
+        )
+        .unwrap();
+    drop(conexion);
+
+    // Escribir una marca de época sospechosa para la época 2 (cuyo .db ya fue purgado)
+    hexcell_storage::retencion::escribir_marca_de_epoca_sospechosa(
+        temp.ruta(),
+        2,
+        "epoca purgada por defecto",
+        "2026-08-31",
+    )
+    .expect("escribir marca");
+
+    // numero_de_epoca_siguiente debe calcular max(1, 2) + 1 = 3
+    let siguiente = numero_de_epoca_siguiente(temp.ruta()).expect("calcular siguiente");
+    assert_eq!(siguiente, 3);
+}
+
+#[test]
+fn verificar_promocion_registra_epoca_superseida_en_epocas_en_uso() {
+    let temp = DirectorioTemporal::nuevo("promocion-registra-en-uso");
+    let gestor = GestorDePools::abrir(temp.ruta()).expect("abrir gestor");
+
+    // Primera promoción: base inicial (None) no se registra en epocas_en_uso
+    let config1 = preparar_staging_valido(temp.ruta(), 768);
+    promover_epoca(&gestor, temp.ruta(), &config1, 10_000).expect("promover epoca 1");
+    assert!(gestor.epocas_en_uso().is_empty());
+
+    // Segunda promoción: época 1 es superseída y debe registrarse en epocas_en_uso
+    let config2 = preparar_staging_valido(temp.ruta(), 768);
+    promover_epoca(&gestor, temp.ruta(), &config2, 20_000).expect("promover epoca 2");
+
+    let en_uso = gestor.epocas_en_uso();
+    assert_eq!(en_uso.len(), 1);
+    assert!(en_uso.contains_key(&1));
+    let ruta_canon_1 = std::fs::canonicalize(temp.ruta().join("knowledge_epoch_1.db")).unwrap();
+    assert_eq!(en_uso.get(&1).unwrap(), &ruta_canon_1);
+}

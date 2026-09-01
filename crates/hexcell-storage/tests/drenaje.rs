@@ -154,8 +154,11 @@ fn verificar_ac1_drenaje_espera_a_lector_activo_y_completa_en_reposo() {
             numero_de_epoca,
             ruta_del_archivo,
             espera_ms,
+            ref constancia,
         } => {
             assert_eq!(numero_de_epoca, None);
+            assert_eq!(constancia.numero_de_epoca(), None);
+            assert_eq!(constancia.ruta_del_archivo(), ruta_del_archivo.as_path());
             assert!(ruta_del_archivo.exists());
             assert!(
                 espera_ms >= 50,
