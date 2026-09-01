@@ -1,0 +1,30 @@
+Estoy ejecutando `cargo test --workspace` para validar la suite completa de pruebas del workspace. Esperaré a que finalice la ejecución.
+Se ha completado la implementación de la tarea **HEX-057-b** correspondiente a la **Retención y Purga Ordenada de Épocas**, cumpliendo con todas las directivas, compuertas y contratos arquitectónicos:
+
+### 1. Cambios Estructurales Implementados
+- **Token No Falsificable [`ConstanciaDeDrenaje`](file:///home/gary/dev/hexcell/worktrees/HEX-057-b/crates/hexcell-storage/src/drenaje.rs#L40-L75)**: Implementado en `crates/hexcell-storage/src/drenaje.rs` con campos privados y constructor `pub(crate) fn nueva`, sin derivación de `Clone` ni `Default`, emitido únicamente en el desenlace `DesenlaceDeDrenaje::Drenada`.
+- **Registro en Memoria [`epocas_en_uso`](file:///home/gary/dev/hexcell/worktrees/HEX-057-b/crates/hexcell-storage/src/pools.rs#L300-L335)**: Administrado en [`GestorDePools`](file:///home/gary/dev/hexcell/worktrees/HEX-057-b/crates/hexcell-storage/src/pools.rs) mediante un `Mutex<BTreeMap<i64, PathBuf>>`, cuyo único camino de remoción es `retirar_epoca_en_uso(&ConstanciaDeDrenaje)`.
+- **Módulo de Retención [`retencion.rs`](file:///home/gary/dev/hexcell/worktrees/HEX-057-b/crates/hexcell-storage/src/retencion.rs)**:
+  - Función [`purgar_epocas_retiradas`](file:///home/gary/dev/hexcell/worktrees/HEX-057-b/crates/hexcell-storage/src/retencion.rs#L250-L450) como la **única** ruta de eliminación física de archivos en el workspace, bajo cuatro cercas estructurales.
+  - Clasificación de conservación disjunta mediante [`MotivoDeConservacion`](file:///home/gary/dev/hexcell/worktrees/HEX-057-b/crates/hexcell-storage/src/retencion.rs#L85-L125) (`EsLaEpocaViva`, `SuperseidaSinDrenar`, `DentroDeLaVentanaDeRetencion`, `DiarioConDatosSinConsolidar { bytes }`) sin patrones comodín.
+  - Manejo de marcas sospechosas `.sospechosa` garantizando identidad intrínseca y aborto ante [`NumeroDeMarcaDiscrepante`](file:///home/gary/dev/hexcell/worktrees/HEX-057-b/crates/hexcell-storage/src/error.rs).
+- **Reserva Permanente de Ordinales**: [`numero_de_epoca_siguiente`](file:///home/gary/dev/hexcell/worktrees/HEX-057-b/crates/hexcell-storage/src/promocion.rs) calcula el máximo sobre la unión de épocas selladas y épocas con marca `.sospechosa`, impidiendo la reutilización de identificadores revertidos.
+- **Orden de Marcado en Reversión ([ADR D-32](file:///home/gary/dev/hexcell/worktrees/HEX-057-b/docs/bitacora-de-descartes.md#L499-L508))**: En [`revertir_a_epoca`](file:///home/gary/dev/hexcell/worktrees/HEX-057-b/crates/hexcell-storage/src/reversion.rs), la marca sospechosa de la época abandonada se escribe antes de conmutar el symlink en producción.
+- **Orquestación Asíncrona**: En `crates/hexcell/src/promocion.rs`, implementación de [`purgar_epocas_de_conocimiento`](file:///home/gary/dev/hexcell/worktrees/HEX-057-b/crates/hexcell/src/promocion.rs) con lectura de `HEXCELL_VENTANA_DE_RETENCION_DE_EPOCAS` y actualización de `drenar_epoca_superseida_de_conocimiento` para retirar del registro al drenar.
+
+---
+
+### 2. Documentación y Trazabilidad
+- [ADR 0027](file:///home/gary/dev/hexcell/worktrees/HEX-057-b/docs/adr/adr-0027-retencion-y-purga-de-epocas.md): Retención y purga de épocas selladas, registro de épocas en uso con constancia no falsificable y reserva de número por marca sospechosa.
+- [README de ADRs](file:///home/gary/dev/hexcell/worktrees/HEX-057-b/docs/adr/README.md): Añadida la fila correspondiente a `adr-0027`.
+- [Bitácora de Descartes](file:///home/gary/dev/hexcell/worktrees/HEX-057-b/docs/bitacora-de-descartes.md): Registrado el descarte **D-32** (escribir la marca de sospechosa después de conmutar enlaces).
+- [Estado del Proyecto](file:///home/gary/dev/hexcell/worktrees/HEX-057-b/docs/STATUS.md): Actualizado con la entrada de HEX-057-b en *Definido* y las decisiones pendientes asociadas en *Pendiente*.
+
+---
+
+### 3. Verificación de Compilación y Pruebas
+- `cargo fmt --check`: **0 errores**
+- `cargo clippy --workspace -- -D warnings`: **0 advertencias / 0 errores**
+- `cargo test --workspace`: **181 tests superados + 2 doctests superados**
+- Todas las aserciones de compuerta y límites de diff validados con éxito.
+- Commit generado bajo formato convencional en español: `feat(a5): implementar retencion y purga ordenada de epocas con constancia de drenaje`.

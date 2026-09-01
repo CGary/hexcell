@@ -1,0 +1,54 @@
+acceptance:
+- id: AC-1
+  statement: Reversion is rejected when the target epoch fails structural integrity validation, and production stays on the current epoch with the symlink untouched.
+- id: AC-2
+  statement: Reversion is rejected when the target epoch fails ONLY the semantic motive (SimilitudInsuficiente), distinctly from a structural rejection.
+- id: AC-3
+  statement: Reversion succeeds on a healthy target epoch, reusing its existing epoch number and file rather than minting a new one.
+- id: AC-4
+  statement: Purge respects every never-purge invariant simultaneously.
+- id: AC-5
+  statement: The dangling-symlink guard fires instead of silently creating an empty database.
+- id: AC-6
+  statement: Every critical guard added by this task is mutation-provable in isolation.
+- id: AC-7
+  statement: cargo fmt --check exits 0.
+- id: AC-8
+  statement: cargo clippy --workspace -- -D warnings exits 0.
+- id: AC-9
+  statement: 'cargo test --workspace exits 0, with output captured and no automatic retries (reintentos: 0), given a known intermittent, uncharacterized workspace test failure unrelated to this task.'
+constraints:
+- No new runtime dependencies; reuse hexcell_storage::promocion, hexcell_storage::drenaje, and hexcell_storage::validacion as-is.
+- hexcell-core keeps an empty dependency table (adr-0002); this task's logic lives in hexcell-storage / hexcell, never in hexcell-core.
+- No rusqlite usage in crates/hexcell (adr-0010); rusqlite stays pinned at 0.39.
+- 'Retention window default: keep the live epoch plus 2 previous sealed epochs (older ones are purge candidates), configurable via an env var with a named public constant fallback, following the precedent of HEXCELL_VENTANA_DEDUPLICACION_SEGUNDOS and HEXCELL_LIMITE_DE_DRENAJE_DE_EPOCA_MS. The definitive value is a pending declared decision recorded in docs/STATUS.md, same treatment as the dedup window.'
+- Never version *.db, *.db-wal, *.db-shm, or .env* files.
+- No secrets in this public repository.
+- Conventional commits in Spanish, no AI attribution.
+- Any discard is logged in docs/bitacora-de-descartes.md in the same commit that discards it, with correlative numbering continuing after D-30 (HEX-056); consult that bitacora before proposing anything already discarded there.
+- Absolute dates only in all written artifacts and docs (e.g. 2026-08-31), never relative dates.
+- The std::fs::canonicalize(&ruta).unwrap_or(ruta) fallback at promocion.rs around line 395 must be made loud (using the existing ErrorDeAlmacen::ArchivoDeEpocaInaccesible shape) instead of silently reusing the unresolved path; the blueprint must state whether this turns a previously-successful promotion path into an abort and confirm that abort path is clean.
+depends_on:
+- HEX-057-a
+goal: 'Subset of HEX-057: Retention/purge: epocas_en_uso registry gated by ConstanciaDeDrenaje, never-purge invariants honored, sidecar marker for reverted defect-suspect epoch preventing number reuse. Covers AC-4.'
+invariants:
+- Purge never deletes the live epoch (the current symlink target).
+- Purge never deletes an epoch still referenced by an undrained EpocaSuperseida.
+- Purge never deletes an epoch that is the current reversion target.
+- Reversion never repoints the production symlink before the target epoch passes both validar_integridad_del_indice and the persisted semantic probe (leer_sonda_semantica) with its stored umbral_de_aceptacion.
+- A rejected reversion leaves the symlink untouched and production stays on the epoch it was already serving; the rejection is reported, not silently swallowed.
+- Reversion reuses the target epoch's existing internal number and file; it never mints a copy or a new epoch number, because epoch identity is intrinsic (stored inside the file, per HEX-054/numero_de_epoca_siguiente).
+- 'An epoch that was just reverted away from is treated as a defect suspect: even though it is the newest epoch by number, retention must not protect it from purge ordering (it must not survive indefinitely at the expense of older healthy epochs) and it must never be a reversion target while it holds that status.'
+- Neither retention nor reversion ever removes or empties knowledge_live.db by resolving a dangling symlink for write; opening the live path for read-write when its target is missing is a guarded failure, never a silent empty-database creation.
+- No promotion or drain guard introduced by HEX-055/HEX-056 (verify-then-abort on anomaly, no auto-cleanup) is weakened by this task; purge is the sole, narrowly-scoped exception to that doctrine and must not generalize into a broader cleanup path.
+non_goals:
+- RAG retrieval over the live epoch (plan task 9).
+- The internal admin endpoint that triggers ingestion (plan task 10).
+- The switchover stress test under concurrent reads (plan task 11).
+- Interaction between epoch switchover and backups (plan task 12).
+- Changing the promotion sequence's six-step structure or drain module's rest predicate beyond what reversion/retention require.
+- Defining the definitive retention-window value; this task only wires the configurable mechanism with a default.
+parent_task: HEX-057
+risk: high
+summary: 'Retention/purge: epocas_en_uso registry gated by ConstanciaDeDrenaje, never-purge invariants honored, sidecar marker for reverted defect-suspect epoch preventing number reuse. Covers AC-4.'
+task_id: HEX-057-b

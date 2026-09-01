@@ -1,0 +1,394 @@
+task_id: HEX-057-b
+summary: >-
+  Epoch retention/purge in a new retencion.rs, gated by a non-forgeable ConstanciaDeDrenaje and an
+  epocas_en_uso registry, plus the defect-suspect marker that reserves a purged epoch number.
+affected_files:
+  - crates/hexcell-storage/src/retencion.rs
+  - crates/hexcell-storage/src/drenaje.rs
+  - crates/hexcell-storage/src/pools.rs
+  - crates/hexcell-storage/src/promocion.rs
+  - crates/hexcell-storage/src/reversion.rs
+  - crates/hexcell-storage/src/error.rs
+  - crates/hexcell-storage/src/lib.rs
+  - crates/hexcell/src/promocion.rs
+  - crates/hexcell-storage/tests/retencion.rs
+  - crates/hexcell-storage/tests/drenaje.rs
+  - crates/hexcell-storage/tests/promocion.rs
+  - crates/hexcell-storage/tests/reversion.rs
+  - crates/hexcell/tests/promocion.rs
+  - docs/adr/adr-0027-retencion-y-purga-de-epocas.md
+  - docs/adr/README.md
+  - docs/bitacora-de-descartes.md
+  - docs/STATUS.md
+symbols:
+  - hexcell_storage::drenaje::ConstanciaDeDrenaje
+  - hexcell_storage::drenaje::ConstanciaDeDrenaje::nueva
+  - hexcell_storage::drenaje::DesenlaceDeDrenaje::Drenada::constancia
+  - hexcell_storage::pools::GestorDePools::epocas_en_uso
+  - hexcell_storage::pools::GestorDePools::registrar_epoca_en_uso
+  - hexcell_storage::pools::GestorDePools::retirar_epoca_en_uso
+  - hexcell_storage::retencion::VENTANA_DE_RETENCION_DE_EPOCAS_POR_DEFECTO
+  - hexcell_storage::retencion::SUFIJO_DE_MARCA_DE_EPOCA_SOSPECHOSA
+  - hexcell_storage::retencion::MarcaDeEpocaSospechosa
+  - hexcell_storage::retencion::escribir_marca_de_epoca_sospechosa
+  - hexcell_storage::retencion::leer_marcas_de_epoca_sospechosa
+  - hexcell_storage::retencion::numeros_de_epoca_marcados
+  - hexcell_storage::retencion::MotivoDeConservacion
+  - hexcell_storage::retencion::EpocaConservada
+  - hexcell_storage::retencion::EpocaPurgada
+  - hexcell_storage::retencion::DesenlaceDePurga
+  - hexcell_storage::retencion::purgar_epocas_retiradas
+  - hexcell_storage::promocion::numero_de_epoca_siguiente
+  - hexcell_storage::reversion::MotivoDeRechazoDeReversion::EpocaMarcadaComoSospechosa
+  - hexcell_storage::error::ErrorDeAlmacen::MarcaDeEpocaIlegible
+  - hexcell_storage::error::ErrorDeAlmacen::NumeroDeMarcaDiscrepante
+  - hexcell_storage::error::ErrorDeAlmacen::EpocaVivaNoIdentificable
+  - hexcell_storage::error::ErrorDeAlmacen::CompanieroDeEpocaSobreviviente
+  - hexcell::promocion::HEXCELL_VENTANA_DE_RETENCION_DE_EPOCAS
+  - hexcell::promocion::ventana_de_retencion_de_epocas_desde_entorno
+  - hexcell::promocion::purgar_epocas_de_conocimiento
+  - hexcell::promocion::drenar_epoca_superseida_de_conocimiento
+dependencies:
+  - crates/hexcell-storage/src/conocimiento.rs
+  - crates/hexcell-storage/src/validacion.rs
+  - crates/hexcell-storage/src/migraciones.rs
+  - crates/hexcell-storage/tests/comun/mod.rs
+  - docs/plan/fase-a-5-conocimiento-shadow-db.md
+  - docs/adr/adr-0006-epocas-y-conmutacion-atomica.md
+  - docs/adr/adr-0026-reversion-de-epocas-y-guardas-de-fallo-silencioso.md
+  - .ai/tasks/done/HEX-057-a/02-contract.yaml
+test_scenarios:
+  - statement: >-
+      SCOPE MAP - acceptance items 1, 2, 3 and 5 of 00-spec.yaml are ALREADY SATISFIED by merged
+      HEX-057-a (commit 4980392) and are re-proved only by the existing, untouched tests in
+      crates/hexcell-storage/tests/reversion.rs and tests/pools.rs. This task adds no new coverage
+      for them.
+    covers:
+      - AC-1
+      - AC-2
+      - AC-3
+      - AC-5
+  - statement: >-
+      Purga elimina una epoca sellada fuera de la ventana de retencion, ya drenada y retirada del
+      registro con su ConstanciaDeDrenaje, y su archivo desaparece del directorio de datos.
+    covers:
+      - AC-4
+  - statement: >-
+      GUARD-1 (exclusion mutua) - purgar_epocas_retiradas invocada mientras un GuardianDePromocion
+      esta vivo devuelve ErrorDeAlmacen::PromocionEnCurso y no borra nada. Es el mecanismo por el
+      que la epoca destino de una reversion en curso nunca puede ser purgada.
+    covers:
+      - AC-4
+      - AC-6
+  - statement: >-
+      GUARD-2 (epoca viva) - con la ventana de retencion fijada en 0, la epoca apuntada por el
+      enlace knowledge_live.db sobrevive intacta y se reporta conservada por EsLaEpocaViva.
+    covers:
+      - AC-4
+      - AC-6
+  - statement: >-
+      GUARD-3 (superseida sin drenar) - purga ejecutada mientras la EpocaSuperseida devuelta por
+      promover_epoca sigue viva y SIN drenar conserva ese archivo y lo reporta como
+      SuperseidaSinDrenar, aunque quede fuera de la ventana. Tras drenar y retirar con la
+      constancia, una segunda purga si lo elimina.
+    covers:
+      - AC-4
+      - AC-6
+  - statement: >-
+      GUARD-4 (constancia no falsificable) - retirar_epoca_en_uso solo acepta una
+      ConstanciaDeDrenaje emitida por drenar_epoca_superseida; olvidar la retirada deja la entrada
+      en epocas_en_uso y la epoca sobrevive a la purga indefinidamente (sesgo a conservar de mas,
+      nunca a borrar de mas).
+    covers:
+      - AC-4
+      - AC-6
+  - statement: >-
+      GUARD-5 (ventana de retencion) - con cuatro epocas selladas sanas y ventana 2, las dos de
+      numero intrinseco mas alto distintas de la viva sobreviven por DentroDeLaVentanaDeRetencion y
+      las mas antiguas se purgan.
+    covers:
+      - AC-4
+      - AC-6
+  - statement: >-
+      GUARD-6 (preservacion de evidencia) - una epoca candidata cuyo archivo -wal tiene tamano
+      mayor que cero NO se borra; la purga la reporta como conservada por diario con datos sin
+      consolidar y el archivo sigue en disco. Un -wal de cero bytes y un -shm si se retiran junto
+      al .db, misma regla de tamano que el drenaje.
+    covers:
+      - AC-4
+      - AC-6
+  - statement: >-
+      GUARD-7 (la marca es intocable) - la purga jamas borra un archivo con sufijo .sospechosa; tras
+      purgar knowledge_epoch_N.db su marca sigue en disco.
+    covers:
+      - AC-4
+      - AC-6
+  - statement: >-
+      GUARD-8 (sin reuso de numero) - purgado el .db de la epoca de numero maximo y conservada su
+      marca, numero_de_epoca_siguiente devuelve N+1 y no N. Neutralizar la lectura de marcas hace
+      que devuelva N y solo falla esta prueba.
+    covers:
+      - AC-4
+      - AC-6
+  - statement: >-
+      GUARD-9 (marca antes de conmutar) - una reversion exitosa deja escrita la marca de la epoca de
+      la que se salio ANTES de reasignar el enlace; si la escritura de la marca falla, la reversion
+      aborta con produccion intacta sirviendo la epoca previa y sin marca espuria consumada.
+    covers:
+      - AC-4
+      - AC-6
+  - statement: >-
+      GUARD-10 (marcada no es destino) - revertir a una epoca que porta marca de sospechosa devuelve
+      DesenlaceDeReversion::Rechazada con EpocaMarcadaComoSospechosa, antes de abrir ningun pool y
+      sin tocar el enlace simbolico.
+    covers:
+      - AC-4
+      - AC-6
+  - statement: >-
+      GUARD-11 (sospechosa sin proteccion de recencia) - con ventana 2, la epoca marcada como
+      sospechosa NO ocupa plaza de retencion aunque sea la de numero mas alto: se purga y sobreviven
+      dos epocas sanas mas antiguas.
+    covers:
+      - AC-4
+      - AC-6
+  - statement: >-
+      PUNTO CIEGO A (identidad intrinseca del archivo) - directorio donde knowledge_epoch_9.db lleva
+      grabado numero_de_epoca = 3 tras una restauracion que renombro archivos. La purga clasifica por
+      el numero INTRINSECO leido de metadatos_de_epoca, nunca por el nombre; el archivo se trata como
+      epoca 3 a efectos de ventana, viva y registro.
+    covers:
+      - AC-4
+      - AC-6
+  - statement: >-
+      PUNTO CIEGO B (identidad intrinseca de la marca) - una marca cuyo numero en el nombre discrepa
+      del numero escrito dentro del archivo produce ErrorDeAlmacen::NumeroDeMarcaDiscrepante y ABORTA
+      la purga completa, en vez de confiar en el nombre o ignorar la marca en silencio.
+    covers:
+      - AC-4
+      - AC-6
+  - statement: >-
+      GUARD-12 (enlace vivo colgante) - purga sobre un directorio cuyo knowledge_live.db apunta a un
+      destino inexistente aborta con EnlaceVivoColgante sin borrar nada, porque sin saber cual es la
+      epoca viva no se puede purgar ninguna. Neutralizar la llamada dentro de retencion.rs falla solo
+      esta prueba (la guarda compartida sigue probada por HEX-057-a en pools.rs y reversion.rs).
+    covers:
+      - AC-4
+      - AC-6
+  - statement: >-
+      AC-4 COMPUESTA - un unico directorio que satisface las cuatro invariantes de no-purga a la vez
+      (viva, superseida sin drenar, destino de reversion protegido por exclusion mutua, dentro de la
+      ventana) mas una marcada y dos antiguas sanas; una sola pasada de purga borra exactamente las
+      dos antiguas y ninguna otra.
+    covers:
+      - AC-4
+  - statement: >-
+      Orquestacion asincrona en crates/hexcell - purgar_epocas_de_conocimiento lee la ventana de
+      HEXCELL_VENTANA_DE_RETENCION_DE_EPOCAS, un valor no numerico o negativo recae en
+      VENTANA_DE_RETENCION_DE_EPOCAS_POR_DEFECTO, y drenar_epoca_superseida_de_conocimiento retira la
+      entrada del registro con la constancia recibida.
+    covers:
+      - AC-4
+  - statement: >-
+      Mecanicas - cargo fmt --check, cargo clippy --workspace -- -D warnings y cargo test --workspace
+      salen 0, con salida capturada y sin reintentos automaticos.
+    covers:
+      - AC-7
+      - AC-8
+      - AC-9
+strategy:
+  - step: 1
+    action: >-
+      VERIFY FIRST, DO NOT REBUILD. Confirm on the current branch that reversion.rs already provides
+      revertir_a_epoca, DesenlaceDeReversion, MotivoDeRechazoDeReversion, es_motivo_semantico and the
+      intrinsic-number gate; that pools.rs already provides verificar_enlace_vivo_resoluble; and that
+      promocion.rs line 434 already uses map_err into ArchivoDeEpocaInaccesible, NOT unwrap_or. All of
+      these landed with HEX-057-a in commit 4980392. Re-implementing any of them is a contract breach.
+    files:
+      - crates/hexcell-storage/src/reversion.rs
+      - crates/hexcell-storage/src/pools.rs
+      - crates/hexcell-storage/src/promocion.rs
+  - step: 2
+    action: >-
+      Value Object - add ConstanciaDeDrenaje to drenaje.rs as a proof-of-drain token with PRIVATE
+      fields (ruta_del_archivo, numero_de_epoca, espera_ms) and a pub(crate) fn nueva, so no consumer
+      outside hexcell-storage can forge one. Add it as a FOURTH field to the existing
+      DesenlaceDeDrenaje::Drenada variant, keeping the three current fields; update the five existing
+      destructuring sites in tests/drenaje.rs and crates/hexcell/tests/promocion.rs. Derive Debug and
+      PartialEq only; no Clone, so the token cannot be replayed.
+    files:
+      - crates/hexcell-storage/src/drenaje.rs
+  - step: 3
+    action: >-
+      Application state - add the epocas_en_uso registry to GestorDePools as a Mutex over a
+      BTreeMap<i64, PathBuf> keyed by INTRINSIC epoch number. Expose registrar_epoca_en_uso (called
+      at supersession) and retirar_epoca_en_uso(&ConstanciaDeDrenaje) as the ONLY removal path, plus
+      a read-only snapshot accessor. Keep it a plain std Mutex - this crate is executor-free.
+    files:
+      - crates/hexcell-storage/src/pools.rs
+  - step: 4
+    action: >-
+      Register at the two supersession sites - immediately after EpocaSuperseida::nueva in both
+      promover_epoca and revertir_a_epoca, register the superseded epoch's intrinsic number and
+      canonical path. A superseded epoch whose number could not be read (the initial base, None) is
+      NOT registered and is not a purge candidate either, because it carries no intrinsic identity.
+      The six-step promotion structure is otherwise untouched.
+    files:
+      - crates/hexcell-storage/src/promocion.rs
+      - crates/hexcell-storage/src/reversion.rs
+  - step: 5
+    action: >-
+      New module crates/hexcell-storage/src/retencion.rs - Validator + Application Service. Declares
+      VENTANA_DE_RETENCION_DE_EPOCAS_POR_DEFECTO (usize = 2, live epoch plus 2 sealed predecessors),
+      SUFIJO_DE_MARCA_DE_EPOCA_SOSPECHOSA (".sospechosa"), the MarcaDeEpocaSospechosa value object,
+      MotivoDeConservacion (exhaustive, NO wildcard arm, mirroring es_motivo_semantico's doctrine),
+      EpocaConservada, EpocaPurgada and DesenlaceDePurga.
+    files:
+      - crates/hexcell-storage/src/retencion.rs
+  - step: 6
+    action: >-
+      Marker read/write with INTRINSIC identity. escribir_marca_de_epoca_sospechosa writes a small
+      plain-text file knowledge_epoch_N.sospechosa whose CONTENT carries numero_de_epoca, the reason
+      and an absolute date; the filename is only the discovery key, exactly as knowledge_epoch_N.db
+      is. leer_marcas_de_epoca_sospechosa parses the content and, on a filename/content mismatch,
+      returns ErrorDeAlmacen::NumeroDeMarcaDiscrepante rather than trusting either side. An
+      unparseable marker returns MarcaDeEpocaIlegible. Both abort the whole purge run.
+    files:
+      - crates/hexcell-storage/src/retencion.rs
+      - crates/hexcell-storage/src/error.rs
+  - step: 7
+    action: >-
+      purgar_epocas_retiradas(gestor, ruta_datos, ventana) - the ONLY deletion path in the codebase.
+      Order - (a) take gestor.iniciar_promocion(), which is HOW the never-the-reversion-target
+      invariant is enforced; (b) verificar_enlace_vivo_resoluble, abort on dangling; (c) resolve the
+      live file canonically and read its intrinsic number, abort with EpocaVivaNoIdentificable if it
+      cannot be read - never purge blind; (d) scan sealed candidates reading numero_de_epoca from
+      metadatos_de_epoca, reusing the skip rules of numero_de_epoca_siguiente; (e) load the registry
+      snapshot and the markers; (f) classify - live, in-registry and in-window survive, markers do NOT
+      consume a retention slot; (g) delete only the .db plus a ZERO-byte -wal and its -shm, and
+      conserve any candidate whose -wal has bytes, reusing the drain's size ruling.
+    files:
+      - crates/hexcell-storage/src/retencion.rs
+  - step: 8
+    action: >-
+      Reserve the number - numero_de_epoca_siguiente takes the maximum over sealed epoch numbers UNION
+      marker numbers, so purging the highest-numbered epoch can never let a later promotion mint that
+      number again. This is the only change to promocion.rs beyond step 4.
+    files:
+      - crates/hexcell-storage/src/promocion.rs
+  - step: 9
+    action: >-
+      Reversion writes the marker BEFORE repointing the symlink, in the window after the new pool is
+      pre-warmed and before reasignar_enlace_simbolico_vivo. Ordering rationale - a failed marker
+      write then aborts with production untouched (over-marking is recoverable and blocks only a
+      reversion target), whereas marking after the switchover risks a MISSING marker and therefore
+      number reuse, which is unrecoverable. Add MotivoDeRechazoDeReversion::EpocaMarcadaComoSospechosa
+      checked right after the existing intrinsic-number gate, before any pool open or symlink write.
+    files:
+      - crates/hexcell-storage/src/reversion.rs
+  - step: 10
+    action: >-
+      Wire the module into lib.rs (pub mod retencion plus re-exports mirroring the drenaje block) and
+      add the async orchestration in crates/hexcell/src/promocion.rs - the pub const &str
+      HEXCELL_VENTANA_DE_RETENCION_DE_EPOCAS, ventana_de_retencion_de_epocas_desde_entorno falling
+      back to the storage constant exactly as limite_de_drenaje_de_epoca_desde_entorno does, the
+      purgar_epocas_de_conocimiento wrapper calling the synchronous function INLINE with no
+      spawn_blocking, and drenar_epoca_superseida_de_conocimiento extended to take &GestorDePools so
+      it retires the registry entry with the constancia it just received.
+    files:
+      - crates/hexcell-storage/src/lib.rs
+      - crates/hexcell/src/promocion.rs
+  - step: 11
+    action: >-
+      Tests - new crates/hexcell-storage/tests/retencion.rs carrying GUARD-1..GUARD-12, both blind-spot
+      scenarios and the composite AC-4 case, each named so that neutralizing exactly one guard fails
+      exactly one test; extend tests/drenaje.rs for the constancia, tests/promocion.rs for the marker
+      in numero_de_epoca_siguiente, tests/reversion.rs for marker-write ordering and the marked-target
+      rejection, and crates/hexcell/tests/promocion.rs for the env var and the async purge. All
+      databases live under comun::DirectorioTemporal; no fixed paths.
+    files:
+      - crates/hexcell-storage/tests/retencion.rs
+      - crates/hexcell-storage/tests/drenaje.rs
+      - crates/hexcell-storage/tests/promocion.rs
+      - crates/hexcell-storage/tests/reversion.rs
+      - crates/hexcell/tests/promocion.rs
+  - step: 12
+    action: >-
+      Docs in the SAME commit - adr-0027-retencion-y-purga-de-epocas.md stating that purge is the sole
+      narrowly scoped exception to the verify-then-abort doctrine and naming the four structural fences
+      that stop it generalizing, plus its row in docs/adr/README.md; discard D-32 in
+      bitacora-de-descartes.md for the rejected "write the defect-suspect marker AFTER the switchover"
+      ordering; and docs/STATUS.md recording the retention window as DEFINED-with-default and its
+      definitive value plus the operator surface to clear a marker as PENDING DECLARED DECISIONS, same
+      treatment as the dedup window. Absolute dates only (2026-08-31).
+    files:
+      - docs/adr/adr-0027-retencion-y-purga-de-epocas.md
+      - docs/adr/README.md
+      - docs/bitacora-de-descartes.md
+      - docs/STATUS.md
+risks:
+  - >-
+    SCOPE RISK (highest). 00-spec.yaml inherited the PARENT HEX-057 acceptance list verbatim, so its
+    items 1, 2, 3 and 5 describe work already MERGED as HEX-057-a in commit 4980392. Verified on disk
+    - reversion.rs (332 lines) already contains revertir_a_epoca, DesenlaceDeReversion,
+    MotivoDeRechazoDeReversion, es_motivo_semantico with an exhaustive no-wildcard match and the
+    intrinsic-epoch-number gate; pools.rs:569 already contains verificar_enlace_vivo_resoluble
+    returning EnlaceVivoColgante. The spec is human-owned and is NOT rewritten; this blueprint records
+    the mapping instead. Re-implementing any of it is a contract breach.
+  - >-
+    CONSTRAINT ALREADY SATISFIED. 00-spec.yaml's constraint about the
+    std::fs::canonicalize(&ruta).unwrap_or(ruta) fallback "at promocion.rs around line 395" was
+    discharged by HEX-057-a. Verified - promocion.rs:434 now reads
+    std::fs::canonicalize(&ruta_de_apertura).map_err(...) into ArchivoDeEpocaInaccesible, and the file
+    contains no unwrap_or at all. The abort path is clean and re-runnable, as the comment already
+    argues - staging is sealed and checkpointed but nothing has been renamed, and
+    numero_de_epoca_siguiente skips knowledge_staging.db by name so a retry recomputes the same N.
+    Nothing to do; a diff touching that line again is a regression.
+  - >-
+    VISIBILITY TRAP, THIRD OCCURRENCE. The promocion module exposes nothing constructible to siblings
+    by default - HEX-056 stalled on tomar_pool and HEX-057-a stalled on EpocaSuperseida::nueva. For
+    this task the pre-declared visibility decisions are - ConstanciaDeDrenaje::nueva is pub(crate) in
+    drenaje.rs; retencion.rs needs pub(crate) access to abrir_solo_lectura, PREFIJO_DE_ARCHIVO_DE_EPOCA
+    and verificar_enlace_vivo_resoluble, all of which already exist at pub or pub(crate) scope.
+    Widening anything else must be justified, not silently done.
+  - >-
+    API BREAK, BOUNDED. Adding a fourth field to DesenlaceDeDrenaje::Drenada breaks five existing
+    struct-variant patterns - crates/hexcell-storage/tests/drenaje.rs lines 153, 307, 325, 356 and
+    crates/hexcell/tests/promocion.rs lines 149, 260 (line 407 already uses ..). Measured, budgeted in
+    the contract, and the reason tests/drenaje.rs and crates/hexcell/tests/promocion.rs are in touch.
+  - >-
+    DOCTRINE RISK. This is the first deletion path in the stage that HEX-055 and HEX-056 built entirely
+    around verify-then-abort. Four structural fences keep it from generalizing and each has its own
+    test - deletion code exists ONLY in retencion.rs (grep-enforced against the other five source
+    files); it deletes only files it positively identified as sealed epochs by INTRINSIC number; it
+    refuses any candidate with a non-empty -wal; and it never touches a marker. A fifth, softer fence -
+    the registry's failure mode is to over-retain, never to over-delete.
+  - >-
+    TEST BLIND SPOT, CONFIRMED TWICE BEFORE. HEX-056's symlink journal and HEX-057-a's intrinsic epoch
+    number were both bugs that hid where filename identity and intrinsic identity COINCIDE. Two
+    scenarios in this blueprint force them apart - an epoch file named knowledge_epoch_9.db carrying
+    intrinsic number 3, and a marker whose filename and content numbers disagree. Neither may be
+    dropped from the test set.
+  - >-
+    NAME COLLISION. VENTANA_DE_RETENCION_DEDUPLICACION_POR_DEFECTO already exists at
+    crates/hexcell/src/deduplicacion.rs:63 with env var HEXCELL_VENTANA_DEDUPLICACION_SEGUNDOS. The
+    epoch family deliberately reads VENTANA_DE_RETENCION_DE_EPOCAS* and
+    HEXCELL_VENTANA_DE_RETENCION_DE_EPOCAS, verified absent from the tree on 2026-08-31, so the
+    contract's grep guards can tell the two apart.
+  - >-
+    ENVIRONMENT. A known intermittent, uncharacterized cargo test --workspace failure unrelated to this
+    task exists; the contract sets max_attempts 0 so no retry can mask a real regression. yq is not
+    installed. quorum analyze acceptance-coverage and contract-check read JSON on STDIN and take no
+    task id argument.
+  - >-
+    GUARD BASELINE VERIFIED. Every grep-shaped verify command in 02-contract.yaml was executed against
+    main at commit 4980392 on 2026-08-31 - the nine invariant-preserving commands PASS today, so they
+    fire only on a regression, and the fifteen feature-detecting commands FAIL today, so they genuinely
+    detect the new work. The naive "no rusqlite in crates/hexcell" form would have been born broken
+    because of the doc comment at crates/hexcell/src/ingesta.rs:6, and the naive "no remove_file in
+    hexcell-storage" form because of the pre-existing stale-temp-symlink cleanup inside
+    reasignar_enlace_simbolico_vivo; both are handled by stripping comments and by pinning the count at
+    exactly one.
+  - >-
+    ADVISORY LAYER UNAVAILABLE. The HSME read hook was attempted and returned INTERNAL_ERROR "failed to
+    open database ... no such file or directory". Per ADR 0008 the layer is advisory-only and the phase
+    proceeded without semantic context; no blueprint decision depended on it.

@@ -1,0 +1,46 @@
+task_id: HEX-057-b
+summary: Fix-loop for the 6 review fix_tasks - clock-derived marker date, abort-on-read-failure, AC-4 composite test, async orchestration tests, GUARD-9 order test, and guard identifier rename.
+entries:
+  - changed_files:
+      - path/to/crates/hexcell-storage/src/reversion.rs
+    notes:
+      - "DEFECT 1: derive fecha_absoluta from the clock (SystemTime::now via tiempo::a_milisegundos plus a dependency-free civil-date conversion) instead of the hardcoded 2026-08-31 literal."
+      - "DEFECT 2: distinguish Ok(None) (legitimate no-previous-epoch) from Err (read failure) when reading numero_anterior; Err now aborts the reversion via ? before any pool open or symlink swap."
+    verify_pending: false
+  - changed_files:
+      - path/to/crates/hexcell-storage/tests/reversion.rs
+    notes:
+      - Updated the marker-date assertion to check ISO shape instead of the retired constant.
+      - Added a dedicated test forcing a marker-write failure (directory occupying the marker path) asserting abort with symlink and active pool unchanged; this also isolates GUARD-9 ordering.
+      - Renamed 2 English verificar_guard_N test fns to verificar_guarda_N.
+    verify_pending: false
+  - changed_files:
+      - path/to/crates/hexcell-storage/tests/retencion.rs
+    notes:
+      - Added the AC-4 composite scenario (viva, superseida-sin-drenar, dentro-de-ventana, marcada, 2 antiguas in one purge pass).
+      - Split the combined GUARD-3/GUARD-4 test into two dedicated tests for isolation.
+      - Added a dedicated test isolating the numeric arm of the es_viva OR from the canonical-path arm (duplicate file sharing the live epoch's intrinsic number).
+      - Renamed 9 English verificar_guard_N test fns to verificar_guarda_N; renamed doc header GUARD-1..GUARD-12 to GUARDA-1..GUARDA-12.
+    verify_pending: false
+  - changed_files:
+      - path/to/crates/hexcell-storage/src/pools.rs
+    notes:
+      - Renamed 3 English `guard` Mutex locals to `guardia`, matching the existing `guardianes` convention at line 209.
+    verify_pending: false
+  - changed_files:
+      - path/to/crates/hexcell/src/promocion.rs
+    notes:
+      - No source changes; only used as import surface by the new orchestration tests.
+    verify_pending: false
+  - changed_files:
+      - path/to/crates/hexcell/tests/promocion.rs
+    notes:
+      - Added a test for ventana_de_retencion_de_epocas_desde_entorno (valid, non-numeric, negative, absent -> default).
+      - Added an end-to-end test for purgar_epocas_de_conocimiento (promote 3 epochs, drain the first, purge with window from env).
+      - Added assertions in the existing drain tests that gestor.epocas_en_uso() no longer contains the drained entry, isolating the async wrapper's retirar_epoca_en_uso call.
+    verify_pending: false
+  - changed_files:
+      - path/to/crates/hexcell-storage/tests/promocion.rs
+    notes:
+      - Renamed 1 English verificar_guard_N test fn to verificar_guarda_N.
+    verify_pending: false

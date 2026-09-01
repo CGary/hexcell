@@ -1,0 +1,170 @@
+{
+  "commands": [
+    {
+      "command": "cargo fmt --check",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "exit 0"
+    },
+    {
+      "command": "cargo clippy --workspace -- -D warnings",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "exit 0"
+    },
+    {
+      "command": "cargo test --workspace",
+      "duration_s": 11,
+      "exit_code": 0,
+      "output_excerpt": "exit 0"
+    },
+    {
+      "command": "sh -c 'test -f crates/hexcell-storage/src/retencion.rs \u0026\u0026 test -f crates/hexcell-storage/tests/retencion.rs'",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "exit 0"
+    },
+    {
+      "command": "sh -c 'grep -q \"pub mod retencion\" crates/hexcell-storage/src/lib.rs \u0026\u0026 grep -q \"purgar_epocas_retiradas\" crates/hexcell-storage/src/lib.rs'",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "exit 0"
+    },
+    {
+      "command": "sh -c 'sed \"s|//.*||\" crates/hexcell-storage/src/drenaje.rs | grep -q \"pub struct ConstanciaDeDrenaje\" \u0026\u0026 sed \"s|//.*||\" crates/hexcell-storage/src/drenaje.rs | grep -q \"pub(crate) fn nueva\"'",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "exit 0"
+    },
+    {
+      "command": "sh -c '! sed \"s|//.*||\" crates/hexcell-storage/src/drenaje.rs | grep -qE \"derive.*Clone.*ConstanciaDeDrenaje|impl Clone for ConstanciaDeDrenaje\"'",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "exit 0"
+    },
+    {
+      "command": "sh -c 'sed \"s|//.*||\" crates/hexcell-storage/src/pools.rs | grep -q \"epocas_en_uso\" \u0026\u0026 sed \"s|//.*||\" crates/hexcell-storage/src/pools.rs | grep -q \"ConstanciaDeDrenaje\"'",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "exit 0"
+    },
+    {
+      "command": "sh -c 'sed \"s|//.*||\" crates/hexcell-storage/src/retencion.rs | grep -q \"iniciar_promocion\" \u0026\u0026 sed \"s|//.*||\" crates/hexcell-storage/src/retencion.rs | grep -q \"verificar_enlace_vivo_resoluble\"'",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "exit 0"
+    },
+    {
+      "command": "sh -c 'sed \"s|//.*||\" crates/hexcell-storage/src/retencion.rs | grep -q \"metadatos_de_epoca\" \u0026\u0026 sed \"s|//.*||\" crates/hexcell-storage/src/retencion.rs | grep -q \"epocas_en_uso\"'",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "exit 0"
+    },
+    {
+      "command": "sh -c 'sed \"s|//.*||\" crates/hexcell-storage/src/retencion.rs | grep -q \"VENTANA_DE_RETENCION_DE_EPOCAS_POR_DEFECTO\" \u0026\u0026 sed \"s|//.*||\" crates/hexcell-storage/src/retencion.rs | grep -q \"SUFIJO_DE_MARCA_DE_EPOCA_SOSPECHOSA\"'",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "exit 0"
+    },
+    {
+      "command": "sh -c 'sed \"s|//.*||\" crates/hexcell-storage/src/retencion.rs | grep -q \"NumeroDeMarcaDiscrepante\"'",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "exit 0"
+    },
+    {
+      "command": "sh -c 'sed \"s|//.*||\" crates/hexcell-storage/src/promocion.rs | grep -q \"SUFIJO_DE_MARCA_DE_EPOCA_SOSPECHOSA\"'",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "exit 0"
+    },
+    {
+      "command": "sh -c 'sed \"s|//.*||\" crates/hexcell-storage/src/reversion.rs | grep -q \"EpocaMarcadaComoSospechosa\" \u0026\u0026 sed \"s|//.*||\" crates/hexcell-storage/src/reversion.rs | grep -q \"escribir_marca_de_epoca_sospechosa\"'",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "exit 0"
+    },
+    {
+      "command": "sh -c 'grep -q \"HEXCELL_VENTANA_DE_RETENCION_DE_EPOCAS\" crates/hexcell/src/promocion.rs \u0026\u0026 grep -q \"purgar_epocas_de_conocimiento\" crates/hexcell/src/promocion.rs'",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "exit 0"
+    },
+    {
+      "command": "sh -c '! sed \"s|//.*||\" crates/hexcell-storage/src/reversion.rs crates/hexcell-storage/src/drenaje.rs crates/hexcell-storage/src/pools.rs crates/hexcell/src/promocion.rs | grep -qE \"remove_file|remove_dir|set_len\"'",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "exit 0"
+    },
+    {
+      "command": "sh -c 'test \"$(sed \"s|//.*||\" crates/hexcell-storage/src/promocion.rs | grep -c \"remove_file\")\" = \"1\"'",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "exit 0"
+    },
+    {
+      "command": "sh -c 'sed \"s|//.*||\" crates/hexcell-storage/src/promocion.rs | grep -q \"canonicalize\" \u0026\u0026 ! sed \"s|//.*||\" crates/hexcell-storage/src/promocion.rs | grep -q \"unwrap_or\"'",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "exit 0"
+    },
+    {
+      "command": "sh -c 'sed \"s|//.*||\" crates/hexcell-storage/src/pools.rs | grep -q \"EnlaceVivoColgante\" \u0026\u0026 sed \"s|//.*||\" crates/hexcell-storage/src/reversion.rs | grep -q \"es_motivo_semantico\"'",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "exit 0"
+    },
+    {
+      "command": "sh -c '! grep -rnE \"tokio|[.]await|spawn_blocking|async fn\" crates/hexcell-storage/src/ --include=*.rs | sed \"s|//.*||\" | grep -qE \"tokio|[.]await|spawn_blocking|async fn\"'",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "exit 0"
+    },
+    {
+      "command": "sh -c '! grep -rn \"rusqlite\" crates/hexcell/src/ --include=*.rs | sed \"s|//.*||\" | grep -q \"rusqlite\"'",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "exit 0"
+    },
+    {
+      "command": "sh -c 'test \"$(sed -n \"/^\\[dependencies\\]/,\\$p\" crates/hexcell-storage/Cargo.toml | grep -cE \"^[a-z][a-z0-9_-]* = \")\" = \"3\"'",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "exit 0"
+    },
+    {
+      "command": "sh -c 'test \"$(sed -n \"/^\\[dependencies\\]/,\\$p\" crates/hexcell-core/Cargo.toml | grep -cE \"^[a-z]\")\" = \"0\"'",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "exit 0"
+    },
+    {
+      "command": "sh -c 'ls docs/adr/adr-0027-*.md \u003e/dev/null 2\u003e\u00261 \u0026\u0026 grep -q \"adr-0027\" docs/adr/README.md'",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "exit 0"
+    },
+    {
+      "command": "sh -c 'grep -q \"### D-32\" docs/bitacora-de-descartes.md'",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "exit 0"
+    },
+    {
+      "command": "sh -c 'grep -q \"HEXCELL_VENTANA_DE_RETENCION_DE_EPOCAS\" docs/STATUS.md'",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "exit 0"
+    },
+    {
+      "command": "sh -c '! grep -rn \"2026\" docs/adr/adr-0027-*.md docs/bitacora-de-descartes.md | grep -qiE \"hace [0-9]+ (dia|semana|mes)|ayer|la semana pasada\"'",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "exit 0"
+    }
+  ],
+  "executed_at": "2026-09-01T04:29:29Z",
+  "overall_result": "passed",
+  "summary": "27/27 exit 0 on commit 036563f. AC-6 mutation matrix run by the orchestrator: 6 mutations, each guard isolated by its own dedicated test after two fix rounds.",
+  "task_id": "HEX-057-b"
+}
