@@ -1,0 +1,116 @@
+{
+ "task_id": "HEX-057-a",
+ "executed_at": "2026-08-31T21:40:00Z",
+ "overall_result": "passed",
+ "summary": "Los 18 verify.commands pasan (exit 0) tras el bucle de arreglo. Las 5 guardas quedaron probadas por mutacion aislada por el orquestador: ningun test dedicado se cae por la mutacion de otra guarda.",
+ "commands": [
+  {
+   "command": "cargo fmt --check",
+   "exit_code": 0,
+   "duration_s": 2,
+   "output_excerpt": "exit 0"
+  },
+  {
+   "command": "cargo clippy --workspace -- -D warnings",
+   "exit_code": 0,
+   "duration_s": 41,
+   "output_excerpt": "exit 0"
+  },
+  {
+   "command": "cargo test --workspace",
+   "exit_code": 0,
+   "duration_s": 26,
+   "output_excerpt": "exit 0"
+  },
+  {
+   "command": "sh -c 'sed \"s|//.*||\" crates/hexcell-storage/src/pools.rs | grep -q \"EnlaceVivoColgante\"'",
+   "exit_code": 0,
+   "duration_s": 1,
+   "output_excerpt": "exit 0"
+  },
+  {
+   "command": "sh -c 'sed \"s|//.*||\" crates/hexcell-storage/src/promocion.rs | grep -q \"canonicalize\" && ! sed \"s|/",
+   "exit_code": 0,
+   "duration_s": 1,
+   "output_excerpt": "exit 0"
+  },
+  {
+   "command": "sh -c '! sed \"s|//.*||\" crates/hexcell-storage/src/promocion.rs | grep -q \"verificar_enlace_vivo_res",
+   "exit_code": 0,
+   "duration_s": 1,
+   "output_excerpt": "exit 0"
+  },
+  {
+   "command": "sh -c 'sed \"s|//.*||\" crates/hexcell-storage/src/reversion.rs | grep -q \"leer_sonda_semantica\" && se",
+   "exit_code": 0,
+   "duration_s": 1,
+   "output_excerpt": "exit 0"
+  },
+  {
+   "command": "sh -c 'sed \"s|//.*||\" crates/hexcell-storage/src/reversion.rs | grep -q \"reasignar_enlace_simbolico_",
+   "exit_code": 0,
+   "duration_s": 1,
+   "output_excerpt": "exit 0"
+  },
+  {
+   "command": "sh -c 'sed \"s|//.*||\" crates/hexcell-storage/src/reversion.rs | grep -q \"es_motivo_semantico\"'",
+   "exit_code": 0,
+   "duration_s": 1,
+   "output_excerpt": "exit 0"
+  },
+  {
+   "command": "sh -c '! sed \"s|//.*||\" crates/hexcell-storage/src/reversion.rs | grep -qE \"remove_file|remove_dir|s",
+   "exit_code": 0,
+   "duration_s": 1,
+   "output_excerpt": "exit 0"
+  },
+  {
+   "command": "sh -c '! test -e crates/hexcell-storage/src/retencion.rs'",
+   "exit_code": 0,
+   "duration_s": 1,
+   "output_excerpt": "exit 0"
+  },
+  {
+   "command": "sh -c '! grep -rqE \"epocas_en_uso|ConstanciaDeDrenaje|VENTANA_DE_RETENCION_DE_EPOCA\" crates/'",
+   "exit_code": 0,
+   "duration_s": 1,
+   "output_excerpt": "exit 0"
+  },
+  {
+   "command": "sh -c 'grep -q \"D-31\" docs/bitacora-de-descartes.md'",
+   "exit_code": 0,
+   "duration_s": 1,
+   "output_excerpt": "exit 0"
+  },
+  {
+   "command": "sh -c 'test -f docs/adr/adr-0026-reversion-de-epocas-y-guardas-de-fallo-silencioso.md && grep -q \"ad",
+   "exit_code": 0,
+   "duration_s": 1,
+   "output_excerpt": "exit 0"
+  },
+  {
+   "command": "sh -c 'grep -q \"EXTIENDE\" docs/adr/adr-0026-reversion-de-epocas-y-guardas-de-fallo-silencioso.md && ",
+   "exit_code": 0,
+   "duration_s": 1,
+   "output_excerpt": "exit 0"
+  },
+  {
+   "command": "sh -c 'test -z \"$(git diff --name-only -- docs/adr/adr-0006-epocas-y-conmutacion-atomica.md)\"'",
+   "exit_code": 0,
+   "duration_s": 1,
+   "output_excerpt": "exit 0"
+  },
+  {
+   "command": "sh -c 'test \"$(cargo tree -p hexcell-core --edges normal | wc -l)\" -eq 1'",
+   "exit_code": 0,
+   "duration_s": 1,
+   "output_excerpt": "exit 0"
+  },
+  {
+   "command": "sh -c 'residuo=$(git status --porcelain | grep -E \"\\.db($|-wal|-shm)|\\.env\" || true); test -z \"$resi",
+   "exit_code": 0,
+   "duration_s": 1,
+   "output_excerpt": "exit 0"
+  }
+ ]
+}

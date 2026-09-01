@@ -1,0 +1,350 @@
+task_id: HEX-057-a
+summary: 'Epoch reversion in a new hexcell-storage reversion.rs gated by a disjoint structural/semantic re-check, plus the dangling-live-symlink guard and the loud canonicalize in promover_epoca.'
+affected_files:
+  - crates/hexcell-storage/src/reversion.rs
+  - crates/hexcell-storage/src/promocion.rs
+  - crates/hexcell-storage/src/pools.rs
+  - crates/hexcell-storage/src/error.rs
+  - crates/hexcell-storage/src/lib.rs
+  - crates/hexcell/src/promocion.rs
+  - crates/hexcell-storage/tests/reversion.rs
+  - crates/hexcell-storage/tests/pools.rs
+  - crates/hexcell-storage/tests/promocion.rs
+  - crates/hexcell/tests/promocion.rs
+  - docs/adr/adr-0026-reversion-de-epocas-y-guardas-de-fallo-silencioso.md
+  - docs/adr/README.md
+  - docs/bitacora-de-descartes.md
+  - docs/STATUS.md
+symbols:
+  - reversion::revertir_a_epoca
+  - reversion::DesenlaceDeReversion
+  - reversion::MotivoDeRechazoDeReversion
+  - reversion::es_motivo_semantico
+  - pools::verificar_enlace_vivo_resoluble
+  - pools::GestorDePools::abrir
+  - promocion::reasignar_enlace_simbolico_vivo
+  - promocion::reasignar_enlace_de_la_epoca_viva
+  - promocion::promover_epoca
+  - promocion::EpocaSuperseida::nueva
+  - error::ErrorDeAlmacen::EnlaceVivoColgante
+  - error::ErrorDeAlmacen::EpocaDestinoAusente
+  - hexcell::promocion::revertir_epoca_de_conocimiento
+dependencies:
+  - crates/hexcell-storage/src/validacion.rs
+  - crates/hexcell-storage/src/conocimiento.rs
+  - crates/hexcell-storage/src/drenaje.rs
+  - crates/hexcell-storage/src/migraciones.rs
+  - crates/hexcell-storage/tests/comun/mod.rs
+  - crates/hexcell/tests/comun
+  - docs/plan/fase-a-5-conocimiento-shadow-db.md
+  - docs/adr/adr-0006-epocas-y-conmutacion-atomica.md
+test_scenarios:
+  - statement: >-
+      GUARD 1 (structural integrity re-check), dedicated test in tests/reversion.rs. Reversion to a
+      sealed target whose index yields ONLY structural motives is rejected with
+      MotivoDeRechazoDeReversion::IntegridadEstructuralRechazada; knowledge_live.db still resolves to
+      the previously live epoch file, the target file is not deleted and no file is created. Fixture
+      discipline that keeps this disjoint from GUARD 2: seal a healthy epoch, then inject a fragment
+      row with no matching vector, which yields VectoresHuerfanos (and possibly
+      DiferenciaDeFragmentos / FaltaContiguidadOrdinal, all structural) while leaving
+      vectores_de_fragmento and the persisted probe untouched, so the semantic motive set stays EMPTY.
+    covers:
+      - AC-1
+      - AC-6
+  - statement: >-
+      GUARD 2 (semantic-probe re-check), dedicated test in tests/reversion.rs. Reversion to a target
+      that clears every STRUCTURAL check and is rejected solely with SimilitudInsuficiente is rejected
+      with MotivoDeRechazoDeReversion::SondaSemanticaRechazada carrying similitud_observada and
+      umbral_requerido; the symlink is untouched and no file is deleted. Fixture discipline that keeps
+      this disjoint from GUARD 1: seal a structurally perfect epoch and persist a sonda_semantica row
+      whose umbral_de_aceptacion is above the achievable cosine (probe vector not aligned with the
+      stored fragment vector), so the structural motive set stays EMPTY.
+    covers:
+      - AC-2
+      - AC-6
+  - statement: >-
+      Reversion to a healthy sealed target succeeds: knowledge_live.db resolves to that target's
+      EXISTING file, the internal numero_de_epoca read back from the new live pool is unchanged (no
+      copy, no new number minted), and numero_de_epoca_siguiente still returns max+1 over the sealed
+      content on disk. Concretely, with live reverted to epoch 1 while epoch 2 remains on disk, the
+      next number is 3 - no gap, no collision, and EpocaDestinoYaExiste cannot fire in a healthy flow.
+    covers:
+      - AC-3
+  - statement: >-
+      A rejected reversion is inert. Both rejection branches return before any pool open and before
+      any symlink write: gestor.conocimiento() is Arc::ptr_eq to the pool held before the attempt, the
+      symlink's read_link target is byte-identical to the one captured before, and the directory
+      listing is unchanged (no temporary .knowledge_live.tmp.* survivor, no new file).
+    covers:
+      - AC-1
+      - AC-2
+  - statement: >-
+      GUARD 3 (dangling live symlink), dedicated test in tests/pools.rs. GestorDePools::abrir over a
+      data directory whose knowledge_live.db is a symlink to a missing target returns
+      ErrorDeAlmacen::EnlaceVivoColgante naming both link and missing destination, and the target file
+      is NOT created. This is the regression fixture for the measured defect: today abrir returns Ok,
+      Connection::open follows the link and creates a 40960-byte migrated empty database, and
+      vitalidad() then certifies Vitalidad::Sana with fragmentos = 0 because ruta.exists() became true.
+      The same test asserts the counterpart measured half - abrir_solo_lectura over the same dangling
+      link still fails cleanly and creates nothing - so the guard is proven to belong to the
+      read-write path only and is not scattered into the read-only path as dead code.
+    covers:
+      - AC-4
+      - AC-6
+  - statement: >-
+      revertir_a_epoca over a data directory whose live symlink is dangling fails with
+      EnlaceVivoColgante BEFORE any validation, pool open or symlink write. Shares GUARD 3's
+      neutralization point by construction (both call verificar_enlace_vivo_resoluble), so it is a
+      companion assertion of GUARD 3's failure set, not a fifth independent guard.
+    covers:
+      - AC-4
+  - statement: >-
+      GUARD 4 (loud canonicalize), dedicated test in tests/promocion.rs. With a gestor already open on
+      a fresh data directory (its knowledge pool opened over the regular knowledge_live.db that abrir
+      created) and a valid staging prepared, move knowledge_live.db aside so canonicalize cannot
+      resolve the pool's path; promover_epoca aborts with Err(ArchivoDeEpocaInaccesible) carrying ruta,
+      operacion and causa. Assert the abort is CLEAN - knowledge_epoch_1.db does not exist, no symlink
+      was written, knowledge_staging.db still exists and is sealed with numero_de_epoca = 1 - and then
+      RETRYABLE - restore the live file and call promover_epoca again on the same gestor; it succeeds
+      with numero_de_epoca == 1, the SAME N, because numero_de_epoca_siguiente skips
+      knowledge_staging.db by name so the sealed staging never inflates the scan.
+    covers:
+      - AC-5
+      - AC-6
+  - statement: >-
+      Disjointness of the four failure sets, to be exercised by the orchestrator's mutation matrix.
+      Neutralizing GUARD 1 leaves GUARD 2's fixture (no structural motives) still rejected; neutralizing
+      GUARD 2 leaves GUARD 1's fixture (no semantic motives) still rejected; neutralizing GUARD 3 is
+      invisible to GUARDS 1/2 (healthy symlinks) and to GUARD 4 (which reuses an already-open gestor and
+      never re-enters abrir); neutralizing GUARD 4 is invisible to GUARD 3 (which never promotes). The
+      structural precondition for this last pair is that verificar_enlace_vivo_resoluble is NOT called
+      from promover_epoca - adding it there would merge GUARD 3 and GUARD 4 into one failure set and
+      break AC-6.
+    covers:
+      - AC-6
+  - statement: >-
+      Async orchestration parity in crates/hexcell/tests/promocion.rs: revertir_epoca_de_conocimiento
+      promotes twice, reverts to epoch 1 and drains the superseded epoch through the existing
+      drenar_epoca_superseida_de_conocimiento wrapper, proving the reversion hands back a real
+      EpocaSuperseida whose ruta_del_archivo is the RESOLVED previous epoch file (not the link), which
+      is the precondition HEX-056's journal-naming fix depends on.
+    covers:
+      - AC-3
+strategy:
+  - step: 1
+    action: >-
+      Value Object / error surface. Add to ErrorDeAlmacen two variants with Spanish Display arms and
+      matching source() arms - EnlaceVivoColgante { ruta, destino } for a knowledge_live.db symlink
+      whose target does not resolve, and EpocaDestinoAusente { numero_de_epoca, ruta } for a reversion
+      target file that is not on disk. No existing variant is renamed, removed or reordered.
+    files:
+      - crates/hexcell-storage/src/error.rs
+  - step: 2
+    action: >-
+      Validator + call site (AC-4). Add verificar_enlace_vivo_resoluble(ruta_datos) -> Result<(),
+      ErrorDeAlmacen>: when symlink_metadata on knowledge_live.db reports a symlink whose read_link
+      target does not exist, return EnlaceVivoColgante; a regular file, an absent path, or a resolvable
+      link all pass. Call it in GestorDePools::abrir immediately BEFORE the read-write block that opens
+      and migrates knowledge_live.db (currently pools.rs around line 285) - that Connection::open is
+      the exact call that follows the dangling link and creates the empty database. Do NOT call it from
+      abrir_solo_lectura (SQLITE_OPEN_READ_ONLY has no CREATE flag; measured and re-verified by reading
+      the flags, it fails cleanly and creates nothing, so a guard there would be dead code) and do NOT
+      call it from promover_epoca (that would merge GUARD 3 and GUARD 4, breaking AC-6).
+    files:
+      - crates/hexcell-storage/src/pools.rs
+  - step: 3
+    action: >-
+      Extract the reassignment idiom (D-29). Split the temp-symlink + atomic-rename half of
+      reasignar_enlace_de_la_epoca_viva (today promocion.rs lines 300-323) into
+      reasignar_enlace_simbolico_vivo(ruta_datos: &Path, nombre_archivo_epoca: &str) -> Result<(),
+      ErrorDeAlmacen>, preserving the POSIX idiom byte-for-byte: unique temp name from process::id(),
+      stale-temp cleanup, symlink to the RELATIVE epoch file name, then rename onto knowledge_live.db.
+      VERIFIED FEASIBLE against the real function: the cut is clean because the only state crossing the
+      seam is ruta_datos and the nombre_archivo_epoca String, and nothing after the seam reads
+      ruta_staging or numero_de_epoca. reasignar_enlace_de_la_epoca_viva keeps its EXACT public
+      signature and behaviour - it retains the EpocaDestinoYaExiste guard and the staging rename, then
+      delegates and still returns ruta_epoca.
+    files:
+      - crates/hexcell-storage/src/promocion.rs
+  - step: 4
+    action: >-
+      Make the canonicalize fallback loud (AC-5). At promocion.rs line 395 replace
+      std::fs::canonicalize(&ruta_de_apertura).unwrap_or(ruta_de_apertura) with a map_err into
+      ErrorDeAlmacen::ArchivoDeEpocaInaccesible { ruta, operacion: "resolver la ruta fisica de la epoca
+      viva antes de reasignar el enlace", causa }. Extend the didactic comment already there to record
+      WHY aborting is safe - VERIFIED against the real control flow: the block sits after
+      sellar_y_consolidar_staging (line 380) and before reasignar_enlace_de_la_epoca_viva (line 399),
+      so staging is sealed and checkpointed with a verified (0,0,0) and no surviving -wal/-shm, and no
+      rename has happened yet; a retry recomputes the SAME N because numero_de_epoca_siguiente skips
+      knowledge_staging.db by name (line 166) and re-seals over the same row.
+    files:
+      - crates/hexcell-storage/src/promocion.rs
+  - step: 5
+    action: >-
+      Enable sibling construction of the superseded descriptor. Add pub(crate) fn
+      EpocaSuperseida::nueva(pool, ruta_del_archivo, numero_de_epoca, instante_de_reemplazo) -> Self.
+      REQUIRED, not optional: EpocaSuperseida's four fields are private to the promocion module, and
+      reversion is a SIBLING module, not a descendant, so it cannot use the struct literal that
+      promover_epoca uses. This is the same shape of minimal addition HEX-056 made with tomar_pool for
+      the same reason. No public signature changes, no Drop, no new accessors.
+    files:
+      - crates/hexcell-storage/src/promocion.rs
+  - step: 6
+    action: >-
+      Application Service - reversion (AC-1/AC-2/AC-3). New module reversion.rs with
+      revertir_a_epoca(gestor, ruta_datos, configuracion_de_fragmentacion, numero_destino) ->
+      Result<DesenlaceDeReversion, ErrorDeAlmacen>. Strict order - (1) acquire gestor.iniciar_promocion()
+      (the SAME AtomicBool gate promotion takes; both mutate the one symlink and the one ArcSwap, so
+      they must exclude each other), (2) verificar_enlace_vivo_resoluble, (3) resolve
+      knowledge_epoch_N.db for numero_destino and return EpocaDestinoAusente if it is not on disk,
+      (4) reject with EpocaYaEsLaViva if the target canonicalizes to the currently live file, (5)
+      leer_sonda_semantica on the TARGET file (None -> SondaAusente), (6) validar_integridad_del_indice
+      on the target with the persisted probe and its stored umbral_de_aceptacion, (7) PARTITION any
+      Rechazado motives into the two disjoint branches, (8) canonicalize the current live path BEFORE
+      touching the symlink (the HEX-056 journal-naming lesson - after the swap the link would name the
+      wrong -wal), (9) pre-warm the new pool over the explicit target path, (10) only now call
+      reasignar_enlace_simbolico_vivo, (11) swap the ArcSwap and hand back EpocaSuperseida::nueva for
+      the caller to drain. Every rejection returns at step 3-7, before any pool open or symlink write.
+    files:
+      - crates/hexcell-storage/src/reversion.rs
+  - step: 7
+    action: >-
+      The disjoint partition (AC-6 precondition). Add es_motivo_semantico(&MotivoDeRechazo) -> bool as
+      an EXHAUSTIVE match with NO wildcard arm, so adding a MotivoDeRechazo variant later is a compile
+      error rather than a silent default. SEMANTIC = SimilitudInsuficiente, VectoresIncomparables,
+      DimensionDeLaSondaDiscrepante, SondaSemanticaOmitidaPorMetadatosAusentes (the four produced by or
+      about the probe path); everything else is STRUCTURAL. Branch precedence - if any STRUCTURAL motive
+      is present the outcome is IntegridadEstructuralRechazada carrying the structural motives;
+      otherwise it is SondaSemanticaRechazada. This precedence is what makes the two mutation points
+      disjoint, and it must be documented in the doc comment as such.
+    files:
+      - crates/hexcell-storage/src/reversion.rs
+  - step: 8
+    action: >-
+      Re-export the new public surface from lib.rs next to the existing promocion and drenaje
+      re-exports, keeping pub mod declarations alphabetical (reversion goes between respaldo and
+      sesiones in the pub mod list per current ordering, and its pub use block follows the same order).
+    files:
+      - crates/hexcell-storage/src/lib.rs
+  - step: 9
+    action: >-
+      Async orchestration. Add revertir_epoca_de_conocimiento(gestor, ruta_datos,
+      configuracion_de_fragmentacion, numero_destino) to crates/hexcell/src/promocion.rs, calling the
+      synchronous reversion INLINE in the current task with no spawn_blocking, exactly as
+      promover_epoca_de_conocimiento already does one function above. No env var is introduced here -
+      the retention window that would need one belongs to HEX-057-b. No rusqlite and no SQL in this
+      crate (adr-0010).
+    files:
+      - crates/hexcell/src/promocion.rs
+  - step: 10
+    action: >-
+      Deterministic tests, one dedicated test per guard. New tests/reversion.rs reusing
+      comun::DirectorioTemporal and a local sealed-epoch fixture built on the preparar_staging_valido
+      pattern (promote once to obtain a real sealed knowledge_epoch_N.db rather than hand-forging one);
+      the dangling-symlink regression plus the abrir_solo_lectura counterpart in tests/pools.rs; the
+      retryable loud-canonicalize abort in tests/promocion.rs; the async parity test in
+      crates/hexcell/tests/promocion.rs. No test may assert two different guards' failures.
+    files:
+      - crates/hexcell-storage/tests/reversion.rs
+      - crates/hexcell-storage/tests/pools.rs
+      - crates/hexcell-storage/tests/promocion.rs
+      - crates/hexcell/tests/promocion.rs
+  - step: 11
+    action: >-
+      Documentation in the SAME commit, absolute dates (2026-08-31) only. New
+      adr-0026-reversion-de-epocas-y-guardas-de-fallo-silencioso.md whose header states it EXTIENDE
+      -nunca reescribe- adr-0006 (precedent adr-0022 line 5), justified because adr-0006 is scoped to
+      promotion and states verbatim, at its line 35, that the first switchover leaves "sin epoca previa
+      a la cual revertir"; its row appended to docs/adr/README.md; discard entry D-31 in
+      docs/bitacora-de-descartes.md (last existing is D-30, verified) updating the header's "Ultima
+      actualizacion" line; and an A-5 entry in docs/STATUS.md following the HEX-055/HEX-056 paragraph
+      shape.
+    files:
+      - docs/adr/adr-0026-reversion-de-epocas-y-guardas-de-fallo-silencioso.md
+      - docs/adr/README.md
+      - docs/bitacora-de-descartes.md
+      - docs/STATUS.md
+risks:
+  - >-
+    CONTRACT CONFLICT WITH HEX-056, surfaced deliberately rather than breached in silence. HEX-056's
+    archived contract (kitty-specs/hex-056/02-contract.yaml line 92) says verbatim "Do not change
+    promover_epoca" and "crates/hexcell-storage/tests/promocion.rs is SETTLED and stays at zero diff;
+    a guard asserts it". HEX-056 itself changed promover_epoca anyway under a documented waiver (commit
+    1aee401, +15/-1 in src/promocion.rs, tests/promocion.rs genuinely at zero diff). HEX-057-a MUST
+    change promover_epoca (AC-5 is exactly that change) and MUST add to tests/promocion.rs (GUARD 4's
+    only sensible home). This contract therefore does NOT carry that clause; it replaces it with a
+    narrow, budgeted allowance - signature, six-step order, abort reasons and DesenlaceDePromocion all
+    stay frozen, only the canonicalize error handling, the new pub(crate) constructor and the symlink
+    extraction may move. Nothing is being breached quietly.
+  - >-
+    VERIFIED FALSE in the parent's own assumption set, re-verified here: there is NO build.rs anywhere
+    in this repository (find over the whole tree, excluding target/, returns nothing). Foreign keys are
+    enabled PER CONNECTION by PRAGMA foreign_keys = ON in pools::aplicar_parametros_de_conexion, with
+    the didactic comment saying exactly why. Any reasoning that assumes a compile-time SQLite default
+    is dead.
+  - >-
+    VERIFIED: AC-2 as originally worded in the HEX-057 parent was unsatisfiable, and the amendment is
+    correct. SimilitudInsuficiente is a MotivoDeRechazo variant (validacion.rs line 84) produced by
+    decidir_motivo_semantico and pushed INSIDE validar_integridad_del_indice, so a below-threshold probe
+    makes the whole verdict Rechazado. The STRUCTURAL/SEMANTIC partition is the only way AC-1 and AC-2
+    get separate mutation points, which AC-6 requires. The human-owned 00-spec already carries this
+    amendment and was NOT edited.
+  - >-
+    DISCOVERED, not present in the parent blueprint and load-bearing: EpocaSuperseida's four fields are
+    PRIVATE to the promocion module. reversion is a sibling module, so it cannot build the descriptor
+    with a struct literal. A pub(crate) constructor must be added to promocion.rs (step 5). This is the
+    same wall HEX-056 hit when it needed tomar_pool. Without it, reversion cannot hand back a drainable
+    epoch and step 6 stalls at implement time.
+  - >-
+    AC-6 DISJOINTNESS IS FRAGILE IN EXACTLY ONE PLACE. GUARD 4's fixture necessarily makes the live path
+    unresolvable, which is also GUARD 3's trigger condition. They stay disjoint ONLY because
+    verificar_enlace_vivo_resoluble is called from GestorDePools::abrir and revertir_a_epoca but NOT
+    from promover_epoca, and because GUARD 4's test reuses an ALREADY-OPEN gestor instead of re-opening
+    one. An implementer who "helpfully" adds the guard to promover_epoca, or who rebuilds GUARD 4's
+    fixture around a fresh GestorDePools::abrir, merges the two failure sets and fails AC-6. The
+    contract forbids the first and the blueprint prescribes the second.
+  - >-
+    MAKING canonicalize LOUD: analysed, it converts NO previously-successful promotion into an abort.
+    gestor.conocimiento().ruta() is either the regular knowledge_live.db that abrir created, or the
+    explicit knowledge_epoch_N.db that a previous promotion opened; canonicalize succeeds on both. It
+    fails only when that path no longer resolves - a dangling link or a deleted epoch - which is
+    precisely the state in which the old fallback silently restored HEX-056's wrong-journal bug. The
+    residual, accepted exposure is a permission error on a path component, which would now abort a
+    promotion that previously proceeded on an unresolved path; aborting there is still the correct
+    behaviour because the drain that follows would inspect the wrong journal.
+  - >-
+    MEASURED and re-verified by reading the code, not by trusting the claim: numero_de_epoca_siguiente
+    scans every non-hidden, non-staging, non -wal/-shm file, opens it read-only and takes max(sealed
+    numero_de_epoca) + 1. With live pointing at epoch 1 and epoch 2 still on disk it returns 3.
+    Reversion alone therefore causes no gap, no collision, and cannot provoke EpocaDestinoYaExiste in a
+    healthy flow. It is DELETING the newest epoch that would drop the counter and reuse a number - which
+    is why purge is HEX-057-b's problem and why HEX-057-a introduces no deletion whatsoever.
+  - >-
+    ADR NUMBERING CONSEQUENCE FOR HEX-057-b. Verified: the last ADR on disk is adr-0025, so adr-0026 is
+    the next free number and is claimed here. Because HEX-057-a's scope excludes retention, adr-0026 is
+    titled for reversion and the two silent-failure guards, NOT "retencion y reversion" as the parent
+    blueprint drafted. HEX-057-b must therefore take adr-0027 for retention/purge and must not rewrite
+    adr-0026. Same for the bitacora: D-31 is claimed here (last existing is D-30, verified), so
+    HEX-057-b starts at D-32.
+  - >-
+    promocion.rs line 417 has a SECOND silent swallow, .ok().flatten() when reading the previous epoch
+    number into EpocaSuperseida. Deliberately OUT OF SCOPE here: nothing in HEX-057-a keys on
+    numero_de_epoca (reversion keys on the explicit target number the caller passed and on PATHS), so a
+    None there cannot cause a wrong outcome. Flagged so a later task does not assume it is trustworthy.
+  - >-
+    SELF-SUPERSEDE HAZARD, guarded but explicitly OUTSIDE the AC-6 mutation matrix. Reverting to the
+    epoch that is already live would repoint the symlink at itself and swap in a second pool over the
+    SAME file, leaving a superseded descriptor whose drain would then verify the -wal of a file the new
+    pool is still serving - a plausible false CompanieroDeEpocaSobreviviente. Step 6 adds an
+    EpocaYaEsLaViva rejection for it. It is a fifth guard with its own fixture; the orchestrator's
+    mutation matrix stays scoped to the four guards AC-6 names.
+  - >-
+    Prior-failure lookup found no entries: .ai/tasks/failed/ is empty, so no past contract lessons apply
+    to these files. The code graph index (project home-gary-dev-hexcell) was confirmed FRESH at
+    head_sha 8212209 == HEAD before any exploration.
+  - >-
+    SIZING is set against the real surface, not optimism. Reference: HEX-056 landed 801 added / 9 removed
+    across 9 files for a smaller task, using 16 of its 30-line promocion.rs budget. HEX-057-a adds one
+    new source module, one new test module, four narrow edits and four documentation files. The
+    promocion.rs budget deliberately absorbs the symlink extraction, which shows in the diff as both
+    removals and additions of the same ~25 lines plus the new function header.

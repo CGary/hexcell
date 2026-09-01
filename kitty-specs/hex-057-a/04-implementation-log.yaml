@@ -1,0 +1,25 @@
+task_id: HEX-057-a
+summary: Fix loop addressing review fix_tasks 2-5 (intrinsic epoch-number guard, didactic comments, Spanish tokens, shared constant reuse); fix_task 1 was already resolved by contract amendment.
+entries:
+  - changed_files:
+      - crates/hexcell-storage/src/reversion.rs
+      - crates/hexcell-storage/tests/reversion.rs
+    notes:
+      - Added new step 4 in revertir_a_epoca that reads the destination file's own metadatos_de_epoca.numero_de_epoca via the existing inspeccionar_base_en_sombra reader (no parallel reader written) and rejects with a new NumeroDeEpocaIntrinsecoDiscrepante variant on mismatch or missing metadata, before any pool open or symlink write.
+      - Successful outcome now reports the number read from the file (numero_confirmado) instead of the caller-supplied numero_destino.
+      - Added a dedicated test that corrupts a sealed epoch's internal numero_de_epoca after promotion and asserts rejection plus untouched symlink and no removed files; verified in isolation that neutralizing the new guard fails only this test (9 passed, 1 failed) with the rest of the suite unaffected.
+      - Rewrote numbered inline comments 3/5/6/9/10/11 (renumbered to 3/6/7/10/11/12 after inserting the new step) from WHAT-narration to WHY-justification, and restored the two didactic rationales (two-sided NFR-03 assertion, f64::INFINITY sentinel) that were dropped when the block was copied from promover_epoca.
+      - Removed English tokens: "self-supersede" from the function doc, "GUARD 1"/"GUARD 2" from the tests module doc.
+    verify_pending: false
+  - changed_files:
+      - crates/hexcell-storage/src/promocion.rs
+    notes:
+      - Made CONTEO_ESPERADO_DE_METADATOS_DE_CONOCIMIENTO pub(crate) so reversion.rs can reuse it instead of hardcoding the literal 0 in its liveness debug_assert_eq.
+    verify_pending: false
+  - changed_files:
+      - docs/STATUS.md
+      - docs/bitacora-de-descartes.md
+    notes:
+      - Rewrote the HEX-057-a STATUS entry to drop "GUARD 1..4" and "swap" and to describe the new intrinsic-number verification step in the sequence.
+      - Reworded the D-31 bullet on discarded re-promotion-as-rollback to remove the English parenthetical, keeping the same technical content.
+    verify_pending: false

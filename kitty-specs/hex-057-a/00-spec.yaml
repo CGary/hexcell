@@ -1,0 +1,82 @@
+task_id: HEX-057-a
+summary: 'Reversion to a previous sealed epoch re-checked against integrity and semantic probe, plus two silent-failure guards: dangling live symlink and loud promocion.rs unwrap_or.'
+goal: >
+  Implement the reversion path of FR-07 (plan task 8, fase-a-5): production can
+  switch back to a previous sealed epoch, but only after that target epoch
+  re-passes both validar_integridad_del_indice and the persisted semantic
+  probe (leer_sonda_semantica) with its stored umbral_de_aceptacion. Reversion
+  lives in a new crates/hexcell-storage/src/reversion.rs, sharing
+  gestor.iniciar_promocion()'s mutex and reusing an extracted
+  reasignar_enlace_simbolico_vivo helper rather than duplicating the existing
+  reassignment idiom (precedent D-29). This task also closes two silent-failure
+  guards discovered while auditing HEX-055/HEX-056: a dangling live symlink
+  must never resolve into a silently-created empty database, and the
+  unwrap_or fallback added by HEX-056 in promocion.rs must fail loudly instead
+  of silently reusing an unresolved path. Retention/purge and everything
+  downstream of it belongs to HEX-057-b, which depends on this task.
+invariants:
+  - Reversion never repoints the production symlink before the target epoch passes both validar_integridad_del_indice and the persisted semantic probe (leer_sonda_semantica) with its stored umbral_de_aceptacion.
+  - A rejected reversion leaves the symlink untouched and production stays on the epoch it was already serving; the rejection is reported, not silently swallowed.
+  - Reversion reuses the target epoch's existing internal number and file; it never mints a copy or a new epoch number, because epoch identity is intrinsic (stored inside the file, per HEX-054/numero_de_epoca_siguiente).
+  - Opening the live path for read-write when its target is missing is a guarded failure, never a silent empty-database creation; this guard belongs in GestorDePools::abrir before the read-write open, and in the reversion path, but not in abrir_solo_lectura, which already fails cleanly and creates nothing.
+  - No promotion or drain guard introduced by HEX-055/HEX-056 (verify-then-abort on anomaly, no auto-cleanup) is weakened by this task.
+acceptance:
+  - id: AC-1
+    statement: Reversion is rejected when the target epoch fails a structural motive of validar_integridad_del_indice, and production stays on the current epoch with the symlink untouched.
+    given: a target epoch whose index fails validar_integridad_del_indice with a STRUCTURAL motive
+    when: reversion to that epoch is requested
+    then: the reversion returns a rejected outcome with a clear message, the symlink still points at the previously-live epoch, and no file is deleted
+  - id: AC-2
+    statement: 'Reversion is rejected when the target epoch clears every structural check and is rejected solely by the SEMANTIC motive SimilitudInsuficiente. Note: the parent task''s original AC-2 was unsatisfiable as written because it asked for a target that "passes validar_integridad_del_indice" while its probe fails, but SimilitudInsuficiente is itself one of the MotivoDeRechazo values that same function returns (verified at validacion.rs:370). The orchestrator amended it on 2026-08-31 by partitioning the motives into STRUCTURAL vs SEMANTIC disjoint branches; that partition is load-bearing, since without it AC-1 and AC-2 would share a single mutation point and AC-6''s disjointness requirement could not hold.'
+    given: a target epoch that clears every STRUCTURAL check of validar_integridad_del_indice and is rejected solely with the semantic motive SimilitudInsuficiente, its persisted probe similarity falling below its stored umbral_de_aceptacion
+    when: reversion to that epoch is requested
+    then: the reversion returns a rejected outcome with a clear message, the symlink still points at the previously-live epoch, and no file is deleted
+  - id: AC-3
+    statement: 'Reversion succeeds on a healthy target epoch, reusing that epoch''s existing internal number and file rather than minting a copy, because epoch identity is intrinsic (stored inside the file). Measured by the architect: with live pointing at epoch 1 and epoch 2 still on disk, numero_de_epoca_siguiente returns 3 — no gap, no collision, and reversion cannot provoke HEX-055''s EpocaDestinoYaExiste guard in a healthy flow.'
+    given: a sealed target epoch that passes both integrity validation and the semantic probe
+    when: reversion to that epoch is requested
+    then: the symlink is atomically repointed to that target epoch's existing file (same internal number), and the next promotion computes its new number from the current maximum internal epoch number as before, without gap or collision
+  - id: AC-4
+    statement: 'The dangling-symlink guard fires instead of silently creating an empty database. Measured by the architect against the real code: with knowledge_live.db pointing at a missing target, GestorDePools::abrir today returns Ok, creates a 40960-byte migrated empty database at that target, and vitalidad() then reports Vitalidad::Sana with fragmentos = 0 — the health probe actively certifies the total loss of knowledge, because ruta.exists() becomes true thanks to the file the failure path just created. The guard belongs in abrir before the read-write open, and in the reversion path; it does not belong in abrir_solo_lectura, measured to fail cleanly and create nothing.'
+    given: knowledge_live.db is a symlink whose target file is missing
+    when: GestorDePools::abrir (read-write) or the reversion path attempts to open or repoint the live path
+    then: the operation fails with a loud, typed error identifying the missing target instead of proceeding to create or use an empty database; abrir_solo_lectura is unaffected and continues to fail cleanly without creating anything
+  - id: AC-5
+    statement: 'The unwrap_or at crates/hexcell-storage/src/promocion.rs (around line 395, added by HEX-056) is made loud via the existing ErrorDeAlmacen::ArchivoDeEpocaInaccesible { ruta, operacion, causa }. Today it silently restores the pre-fix bug (the drain then inspects the wrong journal). The architect measured that this and the dangling symlink are one defect seen twice, since canonicalize fails on exactly that case. Aborting there is clean and retryable: the abort lands after staging is sealed and checkpointed but before the rename, and numero_de_epoca_siguiente skips knowledge_staging.db by name, so a retry recomputes the same N and re-seals.'
+    given: std::fs::canonicalize fails on the staged epoch path during promotion
+    when: the promotion path reaches the former unwrap_or fallback
+    then: promotion aborts with ErrorDeAlmacen::ArchivoDeEpocaInaccesible carrying ruta, operacion and causa, no rename occurs, and a retry recomputes the same epoch number via numero_de_epoca_siguiente and re-seals cleanly
+  - id: AC-6
+    statement: Every critical guard this task adds is mutation-provable in isolation — neutralizing exactly one guard fails only that guard's own dedicated test, disjointly from all others.
+    given: the full deterministic test suite for reversion and the two silent-failure guards
+    when: exactly one guard (structural integrity re-check, semantic-probe re-check, dangling-symlink check, loud canonicalize failure) is neutralized at a time
+    then: only that guard's own dedicated test fails; no other test in the suite changes outcome; the orchestrator runs these mutations and rejects any guard whose failure set overlaps another's
+  - cargo fmt --check exits 0.
+  - cargo clippy --workspace -- -D warnings exits 0.
+  - 'cargo test --workspace exits 0, with output captured and no automatic retries (reintentos: 0), given a known intermittent, uncharacterized workspace test failure unrelated to this task.'
+risk: high
+non_goals:
+  - Retention window and purge (HEX-057-b).
+  - The epocas_en_uso registry (HEX-057-b).
+  - The ConstanciaDeDrenaje certificate (HEX-057-b).
+  - Defect-suspect sidecar markers for reverted epochs (HEX-057-b).
+  - RAG retrieval over the live epoch (plan task 9).
+  - The internal admin endpoint that triggers ingestion (plan task 10).
+  - The switchover stress test under concurrent reads (plan task 11).
+  - Interaction between epoch switchover and backups (plan task 12).
+constraints:
+  - No new runtime dependencies; reuse hexcell_storage::promocion, hexcell_storage::drenaje, and hexcell_storage::validacion as-is.
+  - hexcell-core keeps an empty dependency table (adr-0002); this task's logic lives in hexcell-storage / hexcell, never in hexcell-core.
+  - No rusqlite usage in crates/hexcell (adr-0010); rusqlite stays pinned at 0.39.
+  - hexcell-storage stays executor-free (no tokio, no async, no .await); async wrappers, if needed, live in crates/hexcell.
+  - 'Reversion lives in a new crates/hexcell-storage/src/reversion.rs, takes the same gestor.iniciar_promocion() mutex (one symlink, one ArcSwap), and reuses an extracted reasignar_enlace_simbolico_vivo helper (the temp-symlink + atomic rename half of reasignar_enlace_de_la_epoca_viva, whose public signature stays unchanged) rather than duplicating that idiom (precedent D-29).'
+  - Every rejection path returns before any pool open or symlink write.
+  - A new correlative ADR adr-0026 extends and never rewrites adr-0006 (precedent adr-0022), because adr-0006 is scoped to promotion and explicitly states there is no previous epoch to revert to.
+  - Never version *.db, *.db-wal, *.db-shm, or .env* files.
+  - No secrets in this public repository.
+  - Conventional commits in Spanish, no AI attribution.
+  - Any discard is logged in docs/bitacora-de-descartes.md in the same commit that discards it, with correlative numbering starting at D-31 (continuing after D-30/HEX-056); consult that bitacora before proposing anything already discarded there.
+  - Absolute dates only in all written artifacts and docs (e.g. 2026-08-31), never relative dates.
+  - 'Foreign keys are enabled per connection with PRAGMA foreign_keys = ON; there is no build.rs in this repository and no compile-time SQLite default enabling them (a prior task propagated that false claim).'
+depends_on: []
+parent_task: HEX-057

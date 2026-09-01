@@ -1,0 +1,193 @@
+task_id: HEX-057-a
+summary: 'Epoch reversion in a new hexcell-storage reversion.rs gated by a disjoint structural/semantic re-check, plus the dangling-live-symlink guard and the loud canonicalize in promover_epoca.'
+goal: >-
+  Implement the reversion half of FR-07 plan task 8: production can switch back to a previous sealed
+  epoch, but only after that epoch re-passes both validar_integridad_del_indice and leer_sonda_semantica
+  with its stored umbral_de_aceptacion. Reversion shares gestor.iniciar_promocion()'s mutex and reuses an
+  EXTRACTED reasignar_enlace_simbolico_vivo helper instead of duplicating the POSIX idiom (D-29). Close
+  two silent-failure defects in the same commit - GestorDePools::abrir creating a 40960-byte empty
+  database over a dangling knowledge_live.db that vitalidad() then certifies as Sana, and the
+  canonicalize().unwrap_or() at promocion.rs line 395 that silently restores HEX-056's wrong-journal bug.
+  Introduce NO deletion of any kind - retention, purge, epocas_en_uso, ConstanciaDeDrenaje and
+  defect-suspect markers all belong to HEX-057-b.
+read:
+  - .ai/tasks/active/HEX-057-a/00-spec.yaml
+  - .ai/tasks/active/HEX-057-a/01-blueprint.yaml
+  - crates/hexcell-storage/src/validacion.rs
+  - crates/hexcell-storage/src/conocimiento.rs
+  - crates/hexcell-storage/src/drenaje.rs
+  - crates/hexcell-storage/src/migraciones.rs
+  - crates/hexcell-storage/tests/comun/mod.rs
+  - crates/hexcell-storage/tests/drenaje.rs
+  - crates/hexcell-storage/tests/validacion.rs
+  - docs/plan/fase-a-5-conocimiento-shadow-db.md
+  - docs/adr/adr-0006-epocas-y-conmutacion-atomica.md
+  - docs/adr/adr-0022-respaldo-identidad-sidecar-por-ipc.md
+  - docs/adr/adr-0003-persistencia-dual.md
+  - docs/bitacora-de-descartes.md
+  - CONTRIBUTING.md
+touch:
+  - crates/hexcell-storage/src/reversion.rs
+  - crates/hexcell-storage/src/promocion.rs
+  - crates/hexcell-storage/src/pools.rs
+  - crates/hexcell-storage/src/error.rs
+  - crates/hexcell-storage/src/lib.rs
+  - crates/hexcell/src/promocion.rs
+  - crates/hexcell-storage/tests/reversion.rs
+  - crates/hexcell-storage/tests/pools.rs
+  - crates/hexcell-storage/tests/promocion.rs
+  - crates/hexcell/tests/promocion.rs
+  - docs/adr/adr-0026-reversion-de-epocas-y-guardas-de-fallo-silencioso.md
+  - docs/adr/README.md
+  - docs/bitacora-de-descartes.md
+  - docs/STATUS.md
+forbid:
+  files:
+    - crates/hexcell-core/**
+    - crates/hexcell-storage/Cargo.toml
+    - crates/hexcell/Cargo.toml
+    - Cargo.toml
+    - Cargo.lock
+    - crates/hexcell-storage/src/validacion.rs
+    - crates/hexcell-storage/src/conocimiento.rs
+    - crates/hexcell-storage/src/drenaje.rs
+    - crates/hexcell-storage/src/migraciones.rs
+    - crates/hexcell-storage/src/retencion.rs
+    - crates/hexcell-meta/**
+    - crates/hexcell-canal-simulado/**
+    - crates/hexcell-canal-contrato/**
+    - crates/hexcell-canal-whatsmeow/**
+    - crates/hexcell-admin/**
+    - sidecar/**
+    - .ai/tasks/active/HEX-057-a/00-spec.yaml
+    - docs/PRD.md
+    - docs/adr/adr-0006-epocas-y-conmutacion-atomica.md
+    - docs/plan/fase-a-5-conocimiento-shadow-db.md
+  behaviors:
+    - >-
+      Do NOT delete, unlink, truncate or rename any database file, -wal, -shm, marker or epoch file in
+      any production code path. HEX-057-a introduces NO purge and NO cleanup whatsoever. Remediation by
+      deletion is the corruption vector this stage fights: every anomalous branch VERIFIES and ABORTS.
+      The only permitted remove_file is the pre-existing stale-temporary-symlink cleanup inside the
+      extracted reasignar_enlace_simbolico_vivo, moved verbatim, not extended.
+    - >-
+      Do NOT implement anything belonging to HEX-057-b: no retencion module, no purge, no epocas_en_uso
+      registry on GestorDePools, no ConstanciaDeDrenaje, no defect-suspect sidecar markers, no
+      HEXCELL_VENTANA_DE_RETENCION_DE_EPOCAS. A reverted-away epoch is left on disk untouched and
+      unmarked.
+    - >-
+      NARROW ALLOWANCE that supersedes HEX-056's "do not change promover_epoca" clause, granted because
+      AC-5 IS that change. Inside promocion.rs you may ONLY - (a) replace the canonicalize().unwrap_or()
+      at line 395 with a map_err into ArchivoDeEpocaInaccesible, (b) extract the temp-symlink + atomic
+      rename half into reasignar_enlace_simbolico_vivo, (c) add pub(crate) fn EpocaSuperseida::nueva,
+      (d) extend doc comments. Everything else stays frozen - the six-step order, the public signatures
+      of promover_epoca, reasignar_enlace_de_la_epoca_viva, numero_de_epoca_siguiente and
+      sellar_y_consolidar_staging, MotivoDeAbortoDePromocion, DesenlaceDePromocion, the existing
+      EpocaSuperseida accessors, its Clone and its manual PartialEq. Do NOT give EpocaSuperseida a Drop.
+    - >-
+      Do NOT call verificar_enlace_vivo_resoluble from promover_epoca, and do NOT rebuild the loud
+      canonicalize test around a fresh GestorDePools::abrir. Either move merges the dangling-symlink and
+      loud-canonicalize failure sets into one and makes AC-6 unprovable. The guard belongs in
+      GestorDePools::abrir and revertir_a_epoca only.
+    - >-
+      Do NOT add the guard to abrir_solo_lectura. Measured and re-verified: it opens with
+      SQLITE_OPEN_READ_ONLY, has no CREATE flag, fails cleanly over a dangling link and creates nothing.
+      A guard there is dead code that dilutes the mutation point.
+    - >-
+      Do NOT collapse the STRUCTURAL/SEMANTIC partition into a single rejection branch, and do NOT write
+      es_motivo_semantico with a wildcard match arm. The match must be exhaustive over MotivoDeRechazo so
+      a future variant is a compile error, not a silent default. The two branches are the two separate
+      mutation points AC-1, AC-2 and AC-6 depend on.
+    - >-
+      Every reversion rejection must return BEFORE any pool open and BEFORE any symlink write. Do NOT
+      pre-warm a pool, create a temporary symlink, or touch the ArcSwap on a path that can still reject.
+    - >-
+      Do NOT repoint the live symlink with unlink+symlink, and do NOT duplicate the reassignment idiom in
+      reversion.rs. D-29 discarded the unlink variant for leaving a window where the path resolves to
+      nothing; reuse the extracted helper.
+    - >-
+      Do NOT write to, re-seal, copy or mint a new number for the reversion target. Epoch identity is
+      INTRINSIC - the number lives inside the file because backup and restore destroy identity by
+      filename. Reversion reuses the target's existing file and existing internal number.
+    - >-
+      Do NOT weaken, delete or bypass any existing verify-then-abort guard:
+      CompanieroDeStagingSobreviviente, CompanieroDeEpocaSobreviviente, EpocaDestinoYaExiste, the (0,0,0)
+      wal_checkpoint assertion, or the drain's two-sided predicate. The post-drain companion check errors
+      ONLY on a non-empty -wal; a zero-byte -wal and a -shm of any size are tolerated, documented
+      residue - do not strengthen or weaken that ruling.
+    - >-
+      Do NOT add, remove or change any dependency in any Cargo.toml and do not touch Cargo.lock. rusqlite
+      stays pinned at 0.39 and arc-swap is the only dependency stage A-5 introduced.
+    - >-
+      Do NOT add tokio, async, .await, spawn_blocking or any executor to hexcell-storage. That crate
+      declares itself executor-free; the async wrapper lives only in crates/hexcell/src/promocion.rs and
+      calls the synchronous reversion INLINE, exactly as promover_epoca_de_conocimiento does.
+    - >-
+      Do NOT use rusqlite or write SQL inside crates/hexcell (adr-0010), and do NOT touch
+      crates/hexcell-core, whose dependency table must stay empty (adr-0002).
+    - >-
+      Do NOT edit 00-spec.yaml, adr-0006 or the stage plan document. adr-0026 EXTIENDE -nunca reescribe-
+      adr-0006. ADR numbering is correlative, never reused or reordered: adr-0026 is claimed here and
+      HEX-057-b takes adr-0027. Bitacora numbering likewise: D-31 here, D-32 onward for HEX-057-b.
+    - >-
+      Do NOT write a guard whose only satisfier is a comment or an empty block. HEX-056 shipped an empty
+      if-let purely to satisfy a mention guard; that is a defect, not a pattern. Every grep-style verify
+      command below must be satisfied by real executing code.
+    - >-
+      Do NOT version *.db, *.db-wal, *.db-shm or .env* files, and add no secrets - this repository is
+      public. Tests build their databases under a per-test temporary directory via
+      comun::DirectorioTemporal.
+    - >-
+      Absolute dates only (2026-08-31), never relative. Spanish conventional commit, no Co-Authored-By
+      and no AI attribution line. Log discard D-31 in docs/bitacora-de-descartes.md in the SAME commit
+      that discards it.
+    - >-
+      All identifiers, comments, doc comments and test names in SPANISH, and comments must be DIDACTIC -
+      they explain WHY a decision was made, never WHAT the line does.
+verify:
+  commands:
+    - cargo fmt --check
+    - cargo clippy --workspace -- -D warnings
+    - cargo test --workspace
+    - sh -c 'sed "s|//.*||" crates/hexcell-storage/src/pools.rs | grep -q "EnlaceVivoColgante"'
+    - sh -c 'sed "s|//.*||" crates/hexcell-storage/src/promocion.rs | grep -q "canonicalize" && ! sed "s|//.*||" crates/hexcell-storage/src/promocion.rs | grep -q "unwrap_or"'
+    - sh -c '! sed "s|//.*||" crates/hexcell-storage/src/promocion.rs | grep -q "verificar_enlace_vivo_resoluble"'
+    - sh -c 'sed "s|//.*||" crates/hexcell-storage/src/reversion.rs | grep -q "leer_sonda_semantica" && sed "s|//.*||" crates/hexcell-storage/src/reversion.rs | grep -q "validar_integridad_del_indice"'
+    - sh -c 'sed "s|//.*||" crates/hexcell-storage/src/reversion.rs | grep -q "reasignar_enlace_simbolico_vivo" && sed "s|//.*||" crates/hexcell-storage/src/reversion.rs | grep -q "iniciar_promocion"'
+    - sh -c 'sed "s|//.*||" crates/hexcell-storage/src/reversion.rs | grep -q "es_motivo_semantico"'
+    - sh -c '! sed "s|//.*||" crates/hexcell-storage/src/reversion.rs | grep -qE "remove_file|remove_dir|set_len"'
+    - sh -c '! test -e crates/hexcell-storage/src/retencion.rs'
+    - sh -c '! grep -rqE "epocas_en_uso|ConstanciaDeDrenaje|VENTANA_DE_RETENCION_DE_EPOCA" crates/'
+    - sh -c 'grep -q "D-31" docs/bitacora-de-descartes.md'
+    - sh -c 'test -f docs/adr/adr-0026-reversion-de-epocas-y-guardas-de-fallo-silencioso.md && grep -q "adr-0026" docs/adr/README.md'
+    - sh -c 'grep -q "EXTIENDE" docs/adr/adr-0026-reversion-de-epocas-y-guardas-de-fallo-silencioso.md && grep -q "adr-0006" docs/adr/adr-0026-reversion-de-epocas-y-guardas-de-fallo-silencioso.md'
+    - sh -c 'test -z "$(git diff --name-only -- docs/adr/adr-0006-epocas-y-conmutacion-atomica.md)"'
+    - sh -c 'test "$(cargo tree -p hexcell-core --edges normal | wc -l)" -eq 1'
+    - sh -c 'residuo=$(git status --porcelain | grep -E "\.db($|-wal|-shm)|\.env" || true); test -z "$residuo"'
+acceptance:
+  human_gate: true
+limits:
+  max_files_changed: 14
+  max_diff_lines: 1600
+  per_class:
+    - glob: crates/hexcell-storage/src/**
+      max_diff_lines: 560
+    - glob: crates/hexcell/src/**
+      max_diff_lines: 45
+    - glob: crates/hexcell-storage/tests/**
+      max_diff_lines: 640
+    # Ampliado de 90 a 130 el 2026-08-31 por decision humana, tras el veredicto `revise`.
+    # El 90 fue una estimacion del arquitecto ANTES de ver el codigo; la implementacion real usa
+    # 117. El excedente es la prueba de paridad asincrona, unica cobertura de la precondicion de
+    # HEX-056 sobre `ruta_del_archivo`: recortarla para satisfacer una estimacion habria borrado
+    # cobertura real. Guardrail 7 (un contrato subdimensionado fuerza la violacion que castiga).
+    - glob: crates/hexcell/tests/**
+      max_diff_lines: 130
+    - glob: docs/**
+      max_diff_lines: 220
+execution:
+  mode: worktree_edit
+  branch: ai/HEX-057-a
+retry_policy:
+  max_attempts: 0
+  escalate_after: 0
