@@ -235,6 +235,7 @@ mod tests {
     use hexcell_core::identidad::{IdConversacion, IdDeduplicacion, IdRemitente};
     use hexcell_core::inferencia::RespuestaDeInferencia;
     use hexcell_storage::GestorDePools;
+    use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::SystemTime;
 
     /// Proveedor mínimo de prueba: si llegara a invocarse con saldo insuficiente el test de más
@@ -286,21 +287,35 @@ mod tests {
         }
     }
 
+    /// Contador de directorios temporales de este proceso. Sustituye a la lectura de nanosegundos
+    /// del reloj: su granularidad no garantiza unicidad, así que dos ayudantes construidos a la vez
+    /// en hilos distintos podían leer el mismo instante y compartir directorio. Un contador atómico
+    /// los distingue **por construcción**, sin depender del reloj del sistema.
+    static SECUENCIA_DE_DIRECTORIOS: AtomicU64 = AtomicU64::new(0);
+
     /// Mitad de AC-2 que el test de integración `crates/hexcell/tests/inferencia.rs` no puede
     /// cubrir: `registro::pruebas` es `pub(crate)`, así que solo un test dentro de este crate
     /// puede comprobar que el rechazo de presupuesto deja la entrada `presupuesto_rechazado`,
     /// igual que `motor.rs` comprueba `admision_descartada` y `concurrencia_descartada`.
     #[tokio::test]
     async fn saldo_insuficiente_deja_registro_presupuesto_rechazado() {
-        let id_unico =
-            match std::time::SystemTime::now().duration_since(std::time::SystemTime::UNIX_EPOCH) {
-                Ok(d) => d.as_nanos(),
-                Err(_) => 0,
-            };
+        let id_unico = SECUENCIA_DE_DIRECTORIOS.fetch_add(1, Ordering::Relaxed);
         let dir = std::env::temp_dir().join(format!("hx-proc-{}-{}", std::process::id(), id_unico));
-        let _ = std::fs::create_dir_all(&dir);
-        let Ok(pools) = GestorDePools::abrir(&dir) else {
-            panic!("no se pudo abrir el gestor de pools de prueba")
+        // Antes este error se descartaba con `let _ =` y el fallo aparecía después, disfrazado de
+        // fallo al abrir el pool. Nombrar la ruta y el error de origen es lo único que hace
+        // diagnosticable un fallo intermitente a partir de la salida del test.
+        if let Err(error) = std::fs::create_dir_all(&dir) {
+            panic!(
+                "no se pudo crear el directorio temporal del test «{}»: {error}",
+                dir.display()
+            );
+        }
+        let pools = match GestorDePools::abrir(&dir) {
+            Ok(p) => p,
+            Err(error) => panic!(
+                "no se pudo abrir el gestor de pools sobre «{}»: {error:?}",
+                dir.display()
+            ),
         };
         let repositorio = Arc::new(RepositorioDeSesiones::nuevo(Arc::new(pools)));
         // El saldo inicial es 0 por defecto: cualquier estimación de coste mayor lo rechaza.
@@ -355,16 +370,24 @@ mod tests {
 
     #[tokio::test]
     async fn deficit_no_cubierto_deja_registro_presupuesto_deficit_no_cubierto() {
-        let id_unico =
-            match std::time::SystemTime::now().duration_since(std::time::SystemTime::UNIX_EPOCH) {
-                Ok(d) => d.as_nanos(),
-                Err(_) => 0,
-            };
+        let id_unico = SECUENCIA_DE_DIRECTORIOS.fetch_add(1, Ordering::Relaxed);
         let dir =
             std::env::temp_dir().join(format!("hx-proc-def-{}-{}", std::process::id(), id_unico));
-        let _ = std::fs::create_dir_all(&dir);
-        let Ok(pools) = GestorDePools::abrir(&dir) else {
-            panic!("no se pudo abrir el gestor de pools de prueba")
+        // Antes este error se descartaba con `let _ =` y el fallo aparecía después, disfrazado de
+        // fallo al abrir el pool. Nombrar la ruta y el error de origen es lo único que hace
+        // diagnosticable un fallo intermitente a partir de la salida del test.
+        if let Err(error) = std::fs::create_dir_all(&dir) {
+            panic!(
+                "no se pudo crear el directorio temporal del test «{}»: {error}",
+                dir.display()
+            );
+        }
+        let pools = match GestorDePools::abrir(&dir) {
+            Ok(p) => p,
+            Err(error) => panic!(
+                "no se pudo abrir el gestor de pools sobre «{}»: {error:?}",
+                dir.display()
+            ),
         };
         let repositorio = Arc::new(RepositorioDeSesiones::nuevo(Arc::new(pools)));
         let conversacion = IdConversacion::nuevo("conversacion-deficit");
