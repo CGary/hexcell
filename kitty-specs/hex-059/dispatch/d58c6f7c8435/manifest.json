@@ -1,0 +1,13 @@
+{
+  "task_id": "HEX-059",
+  "bundle_hash": "d58c6f7c843530771d28ed3cc7e606bacd6588ff4c16a40ac0c1d7f8f93fe8cc",
+  "files": [
+    ".ai/tasks/active/HEX-059-new-spec/00-spec.yaml",
+    ".ai/tasks/active/HEX-059-new-spec/01-blueprint.yaml",
+    "crates/hexcell/src/motor.rs",
+    "crates/hexcell/src/procesador.rs",
+    "docs/adr/adr-0028-fuente-de-configuracion-inyectable.md"
+  ],
+  "protocol_version": "fleet-bundle-protocol/v2",
+  "created_at": "2026-09-02T03:56:23Z"
+}

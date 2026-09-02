@@ -1,0 +1,60 @@
+acceptance:
+- given: 'crates/hexcell/src/procesador.rs names its two test temporary directories from
+    std::process::id() plus a SystemTime nanosecond reading (lines 295-300 and 358-364), so two
+    tests that read the clock within the same tick receive the same directory'
+  id: AC-1
+  statement: The temporary-directory names used by the two test helpers in procesador.rs cannot
+    collide between two tests in the same process.
+  then: the names are distinct by construction through a process-wide atomic counter, exactly as
+    HEX-058 did for motor.rs with SECUENCIA_DE_DIRECTORIOS, and no clock reading takes part in the name
+  when: two helpers are constructed concurrently
+- given: 'both helpers currently do let _ = std::fs::create_dir_all(&dir) and then panic with a
+    message that names neither the directory nor the underlying error'
+  id: AC-2
+  statement: 'Neither helper in procesador.rs discards the evidence of its own failure: the
+    directory-creation error is propagated or asserted rather than dropped with let _ =, and the
+    pool-open panic names the path and the underlying error.'
+  then: the panic message states the directory path and the underlying GestorDePools error, so a
+    future intermittent failure is diagnosable from the test output alone
+  when: either helper fails for any reason
+- id: AC-3
+  statement: cargo fmt --check exits 0.
+- id: AC-4
+  statement: cargo clippy --workspace -- -D warnings exits 0.
+- id: AC-5
+  statement: cargo test --workspace exits 0.
+constraints:
+- The fix reuses the shape HEX-058 established in crates/hexcell/src/motor.rs (a module-level
+  static AtomicU64 consumed with fetch_add(1, Ordering::Relaxed)); it does not invent a second
+  mechanism for the same problem.
+- No ADR is expected. If one turns out to be warranted it takes the next correlative number after
+  adr-0028 (HEX-058) and never rewrites or renumbers an earlier one.
+- No new discard is expected in docs/bitacora-de-descartes.md; if one appears it continues after D-34.
+goal: Close the last instance of the temporary-directory naming defect that HEX-058 fixed in
+  motor.rs but deliberately left untouched in procesador.rs by human decision on 2026-09-01, so the
+  "cannot collide by construction" property holds for every test helper in the crate rather than
+  just one, and neither helper destroys the diagnostic evidence of its own failure.
+invariants:
+- 'This is NOT the process-environment data race: that was closed by HEX-058 (commit ff0f34f,
+  adr-0028) and crates/hexcell no longer contains a single std::env::set_var or remove_var. The
+  defect here is narrower - two directory names derived from clock granularity can collide, and two
+  silent-failure patterns hide the evidence when they do.'
+- The grep guard already in the contract of HEX-058 must keep exiting 0; nothing in this task may
+  reintroduce a write to the process environment.
+- crates/hexcell-core keeps an empty dependency table (adr-0002); nothing from this task lands there.
+- No rusqlite usage in crates/hexcell (adr-0010); rusqlite stays pinned at 0.39.
+- No new runtime dependencies.
+- Never version *.db, *.db-wal, *.db-shm, or .env* files. No secrets - this repository is PUBLIC.
+- Conventional commits in Spanish, no AI attribution.
+- 'All repository content in Spanish: identifiers, comments, test names, commit messages. Comments
+  must be didactic - explain WHY, not WHAT.'
+- Absolute dates only (2026-09-01), never relative.
+non_goals:
+- Any change to configuration reading, the FuenteDeConfiguracion port, or anything HEX-058 delivered.
+- Auditing temporary-directory naming in crates other than hexcell.
+- The RAG retrieval engine (plan task 9), the internal admin endpoint (task 10), the switchover
+  stress test (task 11) or the backup interaction (task 12).
+risk: low
+summary: Apply the HEX-058 atomic-counter fix to the two remaining test helpers in procesador.rs and
+  stop them discarding the evidence of their own failure.
+task_id: HEX-059

@@ -1,0 +1,112 @@
+task_id: HEX-059
+summary: >-
+  Replace SystemTime-nanosecond temp-dir naming with an AtomicU64 counter in both procesador.rs
+  test helpers, and stop discarding their create_dir_all/GestorDePools errors, per HEX-058's shape.
+affected_files:
+  - crates/hexcell/src/procesador.rs
+symbols:
+  - hexcell::procesador::tests::saldo_insuficiente_deja_registro_presupuesto_rechazado
+  - hexcell::procesador::tests::deficit_no_cubierto_deja_registro_presupuesto_deficit_no_cubierto
+dependencies:
+  - crates/hexcell/src/motor.rs
+test_scenarios:
+  - statement: >-
+      Neither temp-dir name built in procesador.rs is derived from SystemTime::now().duration_since;
+      both are derived from a process-wide AtomicU64 counter via fetch_add(1, Ordering::Relaxed),
+      confirmed by a grep guard that is red before the change and green after.
+    covers:
+      - AC-1
+  - statement: >-
+      Neither helper contains `let _ = std::fs::create_dir_all(...)`; the create_dir_all error is
+      propagated (matched/asserted) rather than dropped, confirmed by a second grep guard that is
+      red before the change and green after.
+    covers:
+      - AC-2
+  - statement: >-
+      When GestorDePools::abrir fails, the panic message names both the directory path (via
+      dir.display()) and the underlying GestorDePools error (via {error} or {error:?}), mirroring
+      motor.rs's existing panic message shape.
+    covers:
+      - AC-2
+  - statement: >-
+      The two existing tests (saldo_insuficiente_deja_registro_presupuesto_rechazado and
+      deficit_no_cubierto_deja_registro_presupuesto_deficit_no_cubierto) keep passing unchanged in
+      their assertions on registro entries and response content; only their setup preamble changes.
+    covers:
+      - AC-5
+  - statement: cargo fmt --check, cargo clippy --workspace -- -D warnings and cargo test --workspace all exit 0.
+    covers:
+      - AC-3
+      - AC-4
+      - AC-5
+strategy:
+  - step: 1
+    action: >-
+      In procesador.rs's `mod tests` (starts line 231), add `use std::sync::atomic::{AtomicU64,
+      Ordering};` alongside the existing `use std::time::SystemTime;` import, and declare a
+      module-level `static SECUENCIA_DE_DIRECTORIOS: AtomicU64 = AtomicU64::new(0);` with a
+      didactic comment explaining WHY a counter replaces the clock reading (mirrors motor.rs
+      lines 513-516, but this static is scoped to procesador.rs's own tests module — no symbol
+      collision with motor.rs's static of the same name in a different module).
+    files:
+      - crates/hexcell/src/procesador.rs
+  - step: 2
+    action: >-
+      Rewrite the setup preamble of saldo_insuficiente_deja_registro_presupuesto_rechazado (lines
+      294-303): replace the SystemTime::now().duration_since(...) match with
+      SECUENCIA_DE_DIRECTORIOS.fetch_add(1, Ordering::Relaxed); replace
+      `let _ = std::fs::create_dir_all(&dir);` with an `if let Err(error) = ... { panic!(...) }`
+      naming the path and error (same shape as motor.rs's create_dir_all handling); replace the
+      bare `panic!("no se pudo abrir el gestor de pools de prueba")` inside the `let Ok(pools) =
+      ... else` with a message that names dir.display() and the underlying GestorDePools error.
+      Keep the `id_unico` variable name so the format! call site (`hx-proc-{}-{}`) needs no other
+      edit.
+    files:
+      - crates/hexcell/src/procesador.rs
+  - step: 3
+    action: >-
+      Apply the identical rewrite to deficit_no_cubierto_deja_registro_presupuesto_deficit_no_cubierto
+      (lines 357-367): same three replacements (counter instead of SystemTime, propagated
+      create_dir_all error, panic naming path + error), directory name stays
+      `hx-proc-def-{}-{}` unchanged.
+    files:
+      - crates/hexcell/src/procesador.rs
+  - step: 4
+    action: >-
+      Run cargo fmt, cargo clippy --workspace -- -D warnings, cargo build --workspace and cargo
+      test --workspace locally before finishing; verify the two new grep guards (AC-1, AC-2) are
+      green.
+    files:
+      - crates/hexcell/src/procesador.rs
+risks:
+  - >-
+    LINE NUMBERS WILL SHIFT. The spec's given lines (295-300, 358-364) and this blueprint's
+    (294-303, 357-367) are measured against 00-spec.yaml's own line count of the file at
+    2026-09-01; the implementer must locate the two call sites by content
+    (`std::time::SystemTime::now().duration_since`, function names) rather than trusting absolute
+    line numbers, since inserting the static declaration in step 1 shifts every line below it.
+  - >-
+    NO SHARED HELPER TO FACTOR. Both sites differ only in the directory-name literal
+    (`hx-proc-{}-{}` vs `hx-proc-def-{}-{}`); the blueprint does not mandate extracting a shared
+    function because HEX-058's motor.rs precedent did not do so either (it has only one call site)
+    and the spec's constraint says "reuses the shape... does not invent a second mechanism" —
+    factoring two near-identical bodies into a helper is a judgment call left to the implementer,
+    not a contract requirement, to avoid inventing scope beyond the precedent.
+  - >-
+    IMPORTS CONFIRMED MISSING. procesador.rs's tests module currently imports only `SystemTime`
+    (line 238); `AtomicU64` and `Ordering` are NOT yet imported anywhere in the file (grep
+    confirmed 2026-09-01), unlike motor.rs's tests module which already has both. The implementer
+    must add the import in step 1 or the build fails.
+  - >-
+    GestorDePools::abrir returns Result<Self, ErrorDeAlmacen> (crates/hexcell-storage/src/pools.rs
+    line 256), the same error type motor.rs already formats with {error:?} in its panic message;
+    no new error type needs to be introduced.
+  - >-
+    SCOPE CONFIRMED EXHAUSTIVE. Grepped procesador.rs for any other helper sharing this shape
+    (SystemTime::now().duration_since, create_dir_all, hx-proc naming); only the two sites named
+    in 00-spec.yaml exist. No third site was found.
+  - >-
+    ADVISORY. HEX-058 (commit ff0f34f, adr-0028) explicitly forbade touching procesador.rs and
+    listed these same two sites as an acknowledged, deliberately deferred instance of the identical
+    defect shape (see HEX-058's 01-blueprint.yaml risks). This task closes that deferred item; no
+    other file shares the pattern per the same review.

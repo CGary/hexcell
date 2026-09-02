@@ -1,0 +1,100 @@
+task_id: HEX-059
+summary: >-
+  Apply HEX-058's atomic-counter and error-propagation shape to the two remaining SystemTime-named
+  test helpers in procesador.rs, closing the last instance of the temp-dir naming defect.
+goal: >-
+  Make the two test-directory names in procesador.rs collision-proof by construction through a
+  process-wide AtomicU64 counter instead of a SystemTime nanosecond reading, and stop both helpers
+  from discarding the create_dir_all error and the GestorDePools error behind let _ and a bare
+  panic!, exactly mirroring the fix HEX-058 already landed in motor.rs (commit ff0f34f).
+read:
+  - .ai/tasks/active/HEX-059-new-spec/00-spec.yaml
+  - .ai/tasks/active/HEX-059-new-spec/01-blueprint.yaml
+  - crates/hexcell/src/motor.rs
+  - docs/adr/adr-0028-fuente-de-configuracion-inyectable.md
+touch:
+  - crates/hexcell/src/procesador.rs
+forbid:
+  files:
+    - crates/hexcell-core/**
+    - crates/hexcell-storage/**
+    - crates/hexcell-admin/**
+    - crates/hexcell-canal-simulado/**
+    - crates/hexcell-canal-contrato/**
+    - crates/hexcell-canal-whatsmeow/**
+    - crates/hexcell-meta/**
+    - crates/hexcell/src/motor.rs
+    - crates/hexcell/src/configuracion.rs
+    - crates/hexcell/src/main.rs
+    - crates/hexcell/src/emparejar.rs
+    - crates/hexcell/src/promocion.rs
+    - crates/hexcell/src/respaldar.rs
+    - crates/hexcell/tests/**
+    - sidecar/**
+    - Cargo.toml
+    - Cargo.lock
+    - crates/*/Cargo.toml
+    - .github/workflows/**
+    - docs/**
+    - .ai/tasks/**/00-spec.yaml
+    - '**/*.db'
+    - '**/*.db-wal'
+    - '**/*.db-shm'
+    - .env*
+  behaviors:
+    - >-
+      Do NOT introduce a second mechanism for this problem. Reuse exactly HEX-058's shape: a
+      module-level `static ... : AtomicU64` consumed with `fetch_add(1, Ordering::Relaxed)`. Do
+      NOT use SystemTime, a UUID crate, a random-number source, or any new dependency for
+      uniqueness.
+    - >-
+      Do NOT add any dependency, runtime or dev. Cargo.toml and Cargo.lock are forbidden;
+      AtomicU64 and Ordering come from std::sync::atomic and require no new crate.
+    - >-
+      Do NOT leave `let _ =` swallowing the create_dir_all error in either helper, and do NOT
+      leave a bare `panic!("no se pudo abrir el gestor de pools de prueba")` with no path or error
+      in either helper. Every failure must name the directory path (dir.display()) and the
+      underlying error.
+    - >-
+      Do NOT write to the process environment anywhere in this file (std::env::set_var,
+      std::env::remove_var, BLOQUEO_ENTORNO, CERROJO_DE_ENTORNO). This task is unrelated to
+      HEX-058's environment fix and must not reintroduce that defect.
+    - >-
+      Do NOT change the directory-name prefixes (`hx-proc-` and `hx-proc-def-`), the two tests'
+      assertions on registro entries or response content, or any behaviour outside the setup
+      preamble of the two named helpers.
+    - >-
+      Write ALL content in Spanish - identifiers, comments, test names and the commit message.
+      Comments must be didactic and explain WHY, not WHAT (mirror the existing comment on
+      motor.rs's SECUENCIA_DE_DIRECTORIOS).
+    - >-
+      Use conventional commits in Spanish. NEVER add AI attribution, a Co-Authored-By trailer, or
+      any generated-with footer.
+    - >-
+      Use absolute dates only (2026-09-01 or later, as applicable). Never relative dates.
+    - >-
+      No ADR and no bitacora-de-descartes entry is expected for this task per 00-spec.yaml's
+      constraints; docs/** is forbidden above precisely to enforce that unless a human decision
+      later reopens it.
+    - >-
+      Do NOT run `git merge` and do NOT leave the worktree. All work happens on branch ai/HEX-059.
+verify:
+  commands:
+    - cargo fmt --check
+    - cargo clippy --workspace -- -D warnings
+    - cargo build --workspace
+    - cargo test --workspace
+    - bash -c '! grep -n "SystemTime::now().duration_since" crates/hexcell/src/procesador.rs'
+    - bash -c '! grep -n "let _ = std::fs::create_dir_all" crates/hexcell/src/procesador.rs'
+    - bash -c '! grep -rn -e std::env::set_var -e std::env::remove_var -e BLOQUEO_ENTORNO -e CERROJO_DE_ENTORNO --include=*.rs crates/hexcell/'
+acceptance:
+  human_gate: true
+limits:
+  max_files_changed: 1
+  max_diff_lines: 200
+execution:
+  mode: worktree_edit
+  branch: ai/HEX-059
+retry_policy:
+  max_attempts: 2
+  escalate_after: 2

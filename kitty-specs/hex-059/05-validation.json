@@ -1,0 +1,50 @@
+{
+  "commands": [
+    {
+      "command": "cargo fmt --check",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "exit 0"
+    },
+    {
+      "command": "cargo clippy --workspace -- -D warnings",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "exit 0"
+    },
+    {
+      "command": "cargo build --workspace",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "exit 0"
+    },
+    {
+      "command": "cargo test --workspace",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "exit 0"
+    },
+    {
+      "command": "bash -c '! grep -n \"SystemTime::now().duration_since\" crates/hexcell/src/procesador.rs'",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "exit 0"
+    },
+    {
+      "command": "bash -c '! grep -n \"let _ = std::fs::create_dir_all\" crates/hexcell/src/procesador.rs'",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "exit 0"
+    },
+    {
+      "command": "bash -c '! grep -rn -e std::env::set_var -e std::env::remove_var -e BLOQUEO_ENTORNO -e CERROJO_DE_ENTORNO --include=*.rs crates/hexcell/'",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "exit 0"
+    }
+  ],
+  "executed_at": "2026-09-02T01:30:00Z",
+  "overall_result": "passed",
+  "summary": "7/7 exit 0 sobre 6b33529, corridos por el orquestador en worktrees/HEX-059; 70 objetivos en verde.",
+  "task_id": "HEX-059"
+}

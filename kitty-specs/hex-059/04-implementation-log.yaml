@@ -1,0 +1,3 @@
+entries: []
+summary: Apply HEX-058's atomic-counter and error-propagation shape to the two remaining SystemTime-named test helpers in procesador.rs, closing the last instance of the temp-dir naming defect.
+task_id: HEX-059
