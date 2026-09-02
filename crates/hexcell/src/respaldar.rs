@@ -266,7 +266,13 @@ pub async fn ejecutar(
 }
 
 /// Punto de entrada CLI para el subcomando `hexcell respaldar`.
-pub async fn ejecutar_cli(argumentos: &[String]) -> ExitCode {
+///
+/// Recibe la fuente de configuración por parámetro, igual que `Configuracion::desde_fuente`: la
+/// raíz de composición decide de dónde salen los valores y este servicio no consulta ningún global.
+pub async fn ejecutar_cli(
+    argumentos: &[String],
+    fuente: &dyn crate::configuracion::FuenteDeConfiguracion,
+) -> ExitCode {
     let directorio = match analizar_argumentos(argumentos) {
         Ok(d) => d,
         Err(err) => {
@@ -275,8 +281,8 @@ pub async fn ejecutar_cli(argumentos: &[String]) -> ExitCode {
         }
     };
 
-    let id_celula = match std::env::var(HEXCELL_ID_CELULA) {
-        Ok(val) if !val.trim().is_empty() => val,
+    let id_celula = match fuente.leer(HEXCELL_ID_CELULA) {
+        Some(val) if !val.trim().is_empty() => val,
         _ => {
             eprintln!(
                 "hexcell respaldar: falta la variable de entorno obligatoria {HEXCELL_ID_CELULA}"
@@ -285,8 +291,8 @@ pub async fn ejecutar_cli(argumentos: &[String]) -> ExitCode {
         }
     };
 
-    let ruta_datos = match std::env::var(HEXCELL_RUTA_DATOS) {
-        Ok(val) if !val.trim().is_empty() => PathBuf::from(val),
+    let ruta_datos = match fuente.leer(HEXCELL_RUTA_DATOS) {
+        Some(val) if !val.trim().is_empty() => PathBuf::from(val),
         _ => {
             eprintln!(
                 "hexcell respaldar: falta la variable de entorno obligatoria {HEXCELL_RUTA_DATOS}"
@@ -295,12 +301,13 @@ pub async fn ejecutar_cli(argumentos: &[String]) -> ExitCode {
         }
     };
 
-    let ruta_socket_str = std::env::var(HEXCELL_SOCKET_IPC)
-        .unwrap_or_else(|_| RUTA_SOCKET_IPC_POR_DEFECTO.to_string());
+    let ruta_socket_str = fuente
+        .leer(HEXCELL_SOCKET_IPC)
+        .unwrap_or_else(|| RUTA_SOCKET_IPC_POR_DEFECTO.to_string());
     let ruta_socket = PathBuf::from(ruta_socket_str);
 
-    let plazo_segundos = match std::env::var(HEXCELL_RESPALDAR_PLAZO_SEGUNDOS) {
-        Ok(val) => match val.parse::<u64>() {
+    let plazo_segundos = match fuente.leer(HEXCELL_RESPALDAR_PLAZO_SEGUNDOS) {
+        Some(val) => match val.parse::<u64>() {
             Ok(s) if s > 0 => s,
             _ => {
                 eprintln!(
@@ -309,7 +316,7 @@ pub async fn ejecutar_cli(argumentos: &[String]) -> ExitCode {
                 return ExitCode::FAILURE;
             }
         },
-        Err(_) => PLAZO_RESPALDAR_POR_DEFECTO_SEGUNDOS,
+        None => PLAZO_RESPALDAR_POR_DEFECTO_SEGUNDOS,
     };
     let plazo = Duration::from_secs(plazo_segundos);
 

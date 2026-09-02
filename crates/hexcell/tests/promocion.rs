@@ -5,6 +5,7 @@ mod comun;
 use std::time::SystemTime;
 
 use comun::{DirectorioTemporal, abrir_persistencia};
+use hexcell::configuracion::FuenteEnMemoria;
 use hexcell::embeddings::{
     ProveedorDeEmbeddingsDeCelula, ProveedorDeEmbeddingsSimulado, ServicioDeEmbeddings,
 };
@@ -12,7 +13,7 @@ use hexcell::ingesta::ejecutar_ingesta;
 use hexcell::promocion::{
     HEXCELL_VENTANA_DE_RETENCION_DE_EPOCAS, drenar_epoca_superseida_de_conocimiento,
     promover_epoca_de_conocimiento, purgar_epocas_de_conocimiento, revertir_epoca_de_conocimiento,
-    ventana_de_retencion_de_epocas_desde_entorno,
+    ventana_de_retencion_de_epocas_desde_fuente,
 };
 use hexcell_core::fragmentacion::ConfiguracionDeFragmentacion;
 use hexcell_storage::DocumentoDeIngesta;
@@ -142,9 +143,13 @@ async fn verificar_orquestacion_asincrona_de_drenaje_exitoso() {
         }
     };
 
-    let desenlace_drenaje = drenar_epoca_superseida_de_conocimiento(&gestor, epoca_superseida)
-        .await
-        .expect("drenar epoca superseida");
+    let desenlace_drenaje = drenar_epoca_superseida_de_conocimiento(
+        &gestor,
+        epoca_superseida,
+        &FuenteEnMemoria::vacia(),
+    )
+    .await
+    .expect("drenar epoca superseida");
 
     match desenlace_drenaje {
         DesenlaceDeDrenaje::Drenada {
@@ -264,9 +269,13 @@ async fn verificar_orquestacion_asincrona_de_reversion_y_drenaje_exitoso() {
     assert!(gestor.epocas_en_uso().contains_key(&2));
 
     // 4. Drenar la época superseída (época 2)
-    let desenlace_drenaje = drenar_epoca_superseida_de_conocimiento(&gestor, epoca_superseida)
-        .await
-        .expect("drenar epoca superseida tras reversion");
+    let desenlace_drenaje = drenar_epoca_superseida_de_conocimiento(
+        &gestor,
+        epoca_superseida,
+        &FuenteEnMemoria::vacia(),
+    )
+    .await
+    .expect("drenar epoca superseida tras reversion");
 
     match desenlace_drenaje {
         DesenlaceDeDrenaje::Drenada {
@@ -290,44 +299,38 @@ async fn verificar_orquestacion_asincrona_de_reversion_y_drenaje_exitoso() {
     );
 }
 
-/// Único test que toca `HEXCELL_VENTANA_DE_RETENCION_DE_EPOCAS`: se ejercen los tres casos
-/// (válido, no numérico, negativo) en la misma función para no arriesgar una carrera con otro
-/// test que leyera la misma variable de entorno de proceso en paralelo — ninguna otra prueba de
-/// este archivo la toca, así que basta con no repartir los casos en funciones separadas.
+/// Cuatro casos de `HEXCELL_VENTANA_DE_RETENCION_DE_EPOCAS` (válido, no numérico, negativo y
+/// ausente) sobre tablas en memoria independientes. Ya no hace falta agruparlos para evitar una
+/// carrera: ninguna de estas variantes toca el entorno del proceso, así que podrían incluso correr
+/// en hilos distintos sin interferir.
 #[test]
-fn verificar_ventana_de_retencion_desde_entorno_con_valor_valido_no_numerico_y_negativo() {
+fn verificar_ventana_de_retencion_desde_fuente_con_valor_valido_no_numerico_y_negativo() {
+    let por_defecto = hexcell_storage::retencion::VENTANA_DE_RETENCION_DE_EPOCAS_POR_DEFECTO;
+
     // Caso 1: valor numérico válido se respeta tal cual.
-    unsafe {
-        std::env::set_var(HEXCELL_VENTANA_DE_RETENCION_DE_EPOCAS, "5");
-    }
-    assert_eq!(ventana_de_retencion_de_epocas_desde_entorno(), 5);
+    let fuente = FuenteEnMemoria::vacia().con(HEXCELL_VENTANA_DE_RETENCION_DE_EPOCAS, "5");
+    assert_eq!(ventana_de_retencion_de_epocas_desde_fuente(&fuente), 5);
 
     // Caso 2: valor no numérico cae al valor por omisión en vez de entrar en pánico.
-    unsafe {
-        std::env::set_var(HEXCELL_VENTANA_DE_RETENCION_DE_EPOCAS, "no-es-un-numero");
-    }
+    let fuente =
+        FuenteEnMemoria::vacia().con(HEXCELL_VENTANA_DE_RETENCION_DE_EPOCAS, "no-es-un-numero");
     assert_eq!(
-        ventana_de_retencion_de_epocas_desde_entorno(),
-        hexcell_storage::retencion::VENTANA_DE_RETENCION_DE_EPOCAS_POR_DEFECTO
+        ventana_de_retencion_de_epocas_desde_fuente(&fuente),
+        por_defecto
     );
 
     // Caso 3: valor negativo tampoco parsea como usize y cae al mismo valor por omisión.
-    unsafe {
-        std::env::set_var(HEXCELL_VENTANA_DE_RETENCION_DE_EPOCAS, "-1");
-    }
+    let fuente = FuenteEnMemoria::vacia().con(HEXCELL_VENTANA_DE_RETENCION_DE_EPOCAS, "-1");
     assert_eq!(
-        ventana_de_retencion_de_epocas_desde_entorno(),
-        hexcell_storage::retencion::VENTANA_DE_RETENCION_DE_EPOCAS_POR_DEFECTO
+        ventana_de_retencion_de_epocas_desde_fuente(&fuente),
+        por_defecto
     );
 
-    // Caso 4 (variable ausente): mismo valor por omisión, para no dejar la limpieza final como la
-    // única prueba de este caso.
-    unsafe {
-        std::env::remove_var(HEXCELL_VENTANA_DE_RETENCION_DE_EPOCAS);
-    }
+    // Caso 4 (variable ausente): mismo valor por omisión.
+    let fuente = FuenteEnMemoria::vacia();
     assert_eq!(
-        ventana_de_retencion_de_epocas_desde_entorno(),
-        hexcell_storage::retencion::VENTANA_DE_RETENCION_DE_EPOCAS_POR_DEFECTO
+        ventana_de_retencion_de_epocas_desde_fuente(&fuente),
+        por_defecto
     );
 }
 
@@ -425,22 +428,18 @@ async fn verificar_orquestacion_asincrona_de_purga_de_epocas() {
     .await;
 
     // Drenar la época 1 para que quede disponible a purga (ya no protegida por epocas_en_uso).
-    drenar_epoca_superseida_de_conocimiento(&gestor, epoca_1_superseida)
+    drenar_epoca_superseida_de_conocimiento(&gestor, epoca_1_superseida, &FuenteEnMemoria::vacia())
         .await
         .expect("drenar epoca 1 superseida");
     assert!(!gestor.epocas_en_uso().contains_key(&1));
 
-    // Ventana de retención = 1 vía entorno: solo la época 2 (la más reciente no viva) se conserva
-    // por recencia; la época 1, ya drenada, queda fuera de las cuatro invariantes y se purga.
-    unsafe {
-        std::env::set_var(HEXCELL_VENTANA_DE_RETENCION_DE_EPOCAS, "1");
-    }
-    let desenlace_purga = purgar_epocas_de_conocimiento(&gestor, temp.ruta())
+    // Ventana de retención = 1 en la fuente inyectada: solo la época 2 (la más reciente no viva)
+    // se conserva por recencia; la época 1, ya drenada, queda fuera de las cuatro invariantes y se
+    // purga. La fuente es local a este test, así que no queda nada que limpiar después.
+    let fuente = FuenteEnMemoria::vacia().con(HEXCELL_VENTANA_DE_RETENCION_DE_EPOCAS, "1");
+    let desenlace_purga = purgar_epocas_de_conocimiento(&gestor, temp.ruta(), &fuente)
         .await
         .expect("purgar epocas de conocimiento");
-    unsafe {
-        std::env::remove_var(HEXCELL_VENTANA_DE_RETENCION_DE_EPOCAS);
-    }
 
     let numeros_purgados: std::collections::BTreeSet<i64> = desenlace_purga
         .epocas_purgadas

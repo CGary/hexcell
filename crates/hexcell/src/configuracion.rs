@@ -10,7 +10,12 @@
 //! en el binario de producción no deja ningún mensaje utilizable. Por eso este módulo no llama a
 //! `unwrap()` ni a `expect()` en ningún punto, y `main` trata el error devuelto imprimiendo su
 //! forma `Display` antes de terminar con `std::process::ExitCode::FAILURE`.
+//!
+//! De dónde salen esos valores es una decisión de la raíz de composición, no de este módulo: la
+//! lectura pasa por el puerto `FuenteDeConfiguracion`, que en producción resuelve al entorno real
+//! del proceso (`EntornoDelProceso`) y en pruebas a una tabla en memoria (`FuenteEnMemoria`).
 
+use std::collections::BTreeMap;
 use std::fmt;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::PathBuf;
@@ -19,6 +24,80 @@ use std::time::Duration;
 use crate::apagado::LIMITE_DE_DRENAJE_POR_DEFECTO;
 use crate::concurrencia::LIMITE_DE_CONCURRENCIA_POR_DEFECTO;
 use crate::deduplicacion::VENTANA_DE_RETENCION_DEDUPLICACION_POR_DEFECTO;
+
+/// Puerto de lectura de la configuración de arranque.
+///
+/// Existe por corrección, no por estética. En la edición 2024 escribir el entorno del proceso es
+/// `unsafe` porque `setenv` de glibc puede reasignar el array `environ` mientras otro hilo lo lee, y
+/// `cargo test` corre los tests de un binario en hilos del **mismo proceso**: mientras un test
+/// escribiera el entorno para preparar su caso, cualquier otro hilo que leyera una variable
+/// —incluida la que consulta `std::env::temp_dir`— incurría en comportamiento indefinido. Con este
+/// puerto ningún test necesita escribir nada: prepara su caso en una tabla propia y se la entrega al
+/// constructor, así que ya no hay escritor contra el que competir.
+///
+/// Sigue el precedente que el repositorio ya fijó para el tiempo (`RelojDePrueba` frente a
+/// `RelojDelSistema`): el estado ambiental se **inyecta**, no se manipula en sitio.
+pub trait FuenteDeConfiguracion {
+    /// Devuelve el valor asociado a `nombre`, o `None` si no está definido.
+    fn leer(&self, nombre: &str) -> Option<String>;
+}
+
+/// Fuente de producción: el entorno real del proceso.
+///
+/// Es el único punto de todo el crate que llama a `std::env::var`, y **solo lee**.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct EntornoDelProceso;
+
+impl FuenteDeConfiguracion for EntornoDelProceso {
+    fn leer(&self, nombre: &str) -> Option<String> {
+        // `Err` cubre tanto «variable ausente» como «valor que no es UTF-8 válido». Ambos casos se
+        // tratan igual que antes de la inyección —la variable se considera no definida—, para que
+        // el comportamiento de producción sea idéntico al de antes de este cambio.
+        std::env::var(nombre).ok()
+    }
+}
+
+/// Fuente en memoria: tabla de nombre a valor, privada de quien la construye.
+///
+/// **No** está detrás de `#[cfg(test)]` a propósito: los tests de integración de
+/// `crates/hexcell/tests/` compilan como crates externos y no verían un elemento condicionado a la
+/// compilación de pruebas de esta biblioteca. Al ser un valor local, dos tests concurrentes no
+/// comparten absolutamente nada.
+#[derive(Clone, Debug, Default)]
+pub struct FuenteEnMemoria {
+    valores: BTreeMap<String, String>,
+}
+
+impl FuenteEnMemoria {
+    /// Construye una fuente sin ninguna variable definida.
+    #[must_use]
+    pub fn vacia() -> Self {
+        Self::default()
+    }
+
+    /// Define una variable y devuelve la fuente, para encadenar la preparación de un caso.
+    #[must_use]
+    pub fn con(mut self, nombre: &str, valor: impl Into<String>) -> Self {
+        self.fijar(nombre, valor);
+        self
+    }
+
+    /// Define o reemplaza una variable sobre una fuente ya construida.
+    pub fn fijar(&mut self, nombre: &str, valor: impl Into<String>) {
+        self.valores.insert(nombre.to_string(), valor.into());
+    }
+
+    /// Elimina una variable, para ejercer el caso «no definida» sin reconstruir la fuente entera.
+    pub fn quitar(&mut self, nombre: &str) {
+        self.valores.remove(nombre);
+    }
+}
+
+impl FuenteDeConfiguracion for FuenteEnMemoria {
+    fn leer(&self, nombre: &str) -> Option<String> {
+        self.valores.get(nombre).cloned()
+    }
+}
 
 /// Canal seleccionado para esta célula.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -265,13 +344,33 @@ const CAPACIDAD_COLA_POR_DEFECTO: usize = 256;
 impl Configuracion {
     /// Lee y valida la configuración completa a partir de las variables de entorno del proceso.
     ///
+    /// Envoltorio delgado de producción sobre `desde_fuente`: la única razón de que siga
+    /// existiendo es que la raíz de composición (`main`) no tenga que conocer el puerto ni
+    /// construir un adaptador para el caso normal. Toda la lógica vive en `desde_fuente`.
+    pub fn desde_entorno() -> Result<Self, ErrorDeConfiguracion> {
+        Self::desde_fuente(&EntornoDelProceso)
+    }
+
+    /// Lee y valida la configuración completa a partir de la fuente inyectada.
+    ///
+    /// La fuente se recibe como parámetro y se consulta entera aquí dentro; no se guarda en ningún
+    /// campo ni en ningún global, porque retenerla más allá de la construcción conservaría un asa
+    /// viva sobre el entorno del proceso: justo el acoplamiento que este puerto elimina.
+    ///
     /// Devuelve el primer error que encuentra; no acumula varios a la vez porque el proceso
     /// termina en el primero de todos modos y una lista de errores no cambiaría el resultado.
-    pub fn desde_entorno() -> Result<Self, ErrorDeConfiguracion> {
-        let id_celula = leer_obligatoria(HEXCELL_ID_CELULA, "texto no vacío, p. ej. piloto-01")?;
+    pub fn desde_fuente(fuente: &dyn FuenteDeConfiguracion) -> Result<Self, ErrorDeConfiguracion> {
+        let id_celula = leer_obligatoria(
+            fuente,
+            HEXCELL_ID_CELULA,
+            "texto no vacío, p. ej. piloto-01",
+        )?;
 
-        let ruta_datos_str =
-            leer_obligatoria(HEXCELL_RUTA_DATOS, "ruta de directorio existente en disco")?;
+        let ruta_datos_str = leer_obligatoria(
+            fuente,
+            HEXCELL_RUTA_DATOS,
+            "ruta de directorio existente en disco",
+        )?;
         let ruta_datos = PathBuf::from(&ruta_datos_str);
         if !ruta_datos.is_dir() {
             return Err(ErrorDeConfiguracion::RutaDeDatosInexistente {
@@ -281,35 +380,35 @@ impl Configuracion {
         }
 
         let direccion_salud =
-            match std::env::var(HEXCELL_DIRECCION_SALUD) {
-                Ok(valor) => valor.parse::<SocketAddr>().map_err(|_| {
+            match fuente.leer(HEXCELL_DIRECCION_SALUD) {
+                Some(valor) => valor.parse::<SocketAddr>().map_err(|_| {
                     ErrorDeConfiguracion::ValorInvalido {
                         nombre: HEXCELL_DIRECCION_SALUD,
                         valor: valor.clone(),
                         formato_esperado: "dirección socket, p. ej. 127.0.0.1:8081",
                     }
                 })?,
-                Err(_) => DIRECCION_SALUD_POR_DEFECTO,
+                None => DIRECCION_SALUD_POR_DEFECTO,
             };
 
-        let canal = match std::env::var(HEXCELL_CANAL) {
-            Ok(valor) => CanalSeleccionado::desde_str(&valor).ok_or_else(|| {
+        let canal = match fuente.leer(HEXCELL_CANAL) {
+            Some(valor) => CanalSeleccionado::desde_str(&valor).ok_or_else(|| {
                 ErrorDeConfiguracion::ValorInvalido {
                     nombre: HEXCELL_CANAL,
                     valor: valor.clone(),
                     formato_esperado: "uno de: simulado, whatsmeow",
                 }
             })?,
-            Err(_) => CANAL_POR_DEFECTO,
+            None => CANAL_POR_DEFECTO,
         };
 
-        let ruta_socket_ipc = match std::env::var(HEXCELL_SOCKET_IPC) {
-            Ok(valor) => PathBuf::from(valor),
-            Err(_) => PathBuf::from(RUTA_SOCKET_IPC_POR_DEFECTO),
+        let ruta_socket_ipc = match fuente.leer(HEXCELL_SOCKET_IPC) {
+            Some(valor) => PathBuf::from(valor),
+            None => PathBuf::from(RUTA_SOCKET_IPC_POR_DEFECTO),
         };
 
-        let capacidad_cola = match std::env::var(HEXCELL_CAPACIDAD_COLA) {
-            Ok(valor) => {
+        let capacidad_cola = match fuente.leer(HEXCELL_CAPACIDAD_COLA) {
+            Some(valor) => {
                 valor
                     .parse::<usize>()
                     .map_err(|_| ErrorDeConfiguracion::ValorInvalido {
@@ -318,11 +417,11 @@ impl Configuracion {
                         formato_esperado: "entero positivo, p. ej. 256",
                     })?
             }
-            Err(_) => CAPACIDAD_COLA_POR_DEFECTO,
+            None => CAPACIDAD_COLA_POR_DEFECTO,
         };
 
-        let ventana_deduplicacion = match std::env::var(HEXCELL_VENTANA_DEDUPLICACION_SEGUNDOS) {
-            Ok(valor) => {
+        let ventana_deduplicacion = match fuente.leer(HEXCELL_VENTANA_DEDUPLICACION_SEGUNDOS) {
+            Some(valor) => {
                 let segundos =
                     valor
                         .parse::<u64>()
@@ -333,11 +432,11 @@ impl Configuracion {
                         })?;
                 Duration::from_secs(segundos)
             }
-            Err(_) => VENTANA_DE_RETENCION_DEDUPLICACION_POR_DEFECTO,
+            None => VENTANA_DE_RETENCION_DEDUPLICACION_POR_DEFECTO,
         };
 
-        let limite_de_drenaje = match std::env::var(HEXCELL_LIMITE_DE_DRENAJE_SEGUNDOS) {
-            Ok(valor) => {
+        let limite_de_drenaje = match fuente.leer(HEXCELL_LIMITE_DE_DRENAJE_SEGUNDOS) {
+            Some(valor) => {
                 let segundos =
                     valor
                         .parse::<u64>()
@@ -348,12 +447,12 @@ impl Configuracion {
                         })?;
                 Duration::from_secs(segundos)
             }
-            Err(_) => LIMITE_DE_DRENAJE_POR_DEFECTO,
+            None => LIMITE_DE_DRENAJE_POR_DEFECTO,
         };
 
         let latencia_inferencia_simulada =
-            match std::env::var(HEXCELL_LATENCIA_INFERENCIA_SIMULADA_MS) {
-                Ok(valor) => {
+            match fuente.leer(HEXCELL_LATENCIA_INFERENCIA_SIMULADA_MS) {
+                Some(valor) => {
                     let milisegundos =
                         valor
                             .parse::<u64>()
@@ -364,16 +463,16 @@ impl Configuracion {
                             })?;
                     Duration::from_millis(milisegundos)
                 }
-                Err(_) => Duration::ZERO,
+                None => Duration::ZERO,
             };
 
-        let evento_simulado_de_arranque = std::env::var(HEXCELL_EVENTO_SIMULADO_DE_ARRANQUE).ok();
+        let evento_simulado_de_arranque = fuente.leer(HEXCELL_EVENTO_SIMULADO_DE_ARRANQUE);
         let proveedor_de_inferencia_falla =
-            std::env::var(HEXCELL_PROVEEDOR_DE_INFERENCIA_FALLA).is_ok();
+            fuente.leer(HEXCELL_PROVEEDOR_DE_INFERENCIA_FALLA).is_some();
 
         let defecto_gcra = hexcell_core::admision::ConfiguracionGcra::default();
-        let tasa_sostenida = match std::env::var(HEXCELL_ADMISION_TASA_SOSTENIDA_POR_SEGUNDO) {
-            Ok(valor) => {
+        let tasa_sostenida = match fuente.leer(HEXCELL_ADMISION_TASA_SOSTENIDA_POR_SEGUNDO) {
+            Some(valor) => {
                 valor
                     .parse::<f64>()
                     .map_err(|_| ErrorDeConfiguracion::ValorInvalido {
@@ -383,18 +482,20 @@ impl Configuracion {
                             "número flotante positivo de peticiones por segundo, p. ej. 0.5",
                     })?
             }
-            Err(_) => defecto_gcra.tasa_sostenida_por_segundo(),
+            None => defecto_gcra.tasa_sostenida_por_segundo(),
         };
 
-        let tolerancia_rafaga = match std::env::var(HEXCELL_ADMISION_TOLERANCIA_RAFAGA) {
-            Ok(valor) => valor
-                .parse::<u32>()
-                .map_err(|_| ErrorDeConfiguracion::ValorInvalido {
-                    nombre: HEXCELL_ADMISION_TOLERANCIA_RAFAGA,
-                    valor: valor.clone(),
-                    formato_esperado: "entero no negativo de eventos en ráfaga, p. ej. 3",
-                })?,
-            Err(_) => defecto_gcra.tolerancia_rafaga(),
+        let tolerancia_rafaga = match fuente.leer(HEXCELL_ADMISION_TOLERANCIA_RAFAGA) {
+            Some(valor) => {
+                valor
+                    .parse::<u32>()
+                    .map_err(|_| ErrorDeConfiguracion::ValorInvalido {
+                        nombre: HEXCELL_ADMISION_TOLERANCIA_RAFAGA,
+                        valor: valor.clone(),
+                        formato_esperado: "entero no negativo de eventos en ráfaga, p. ej. 3",
+                    })?
+            }
+            None => defecto_gcra.tolerancia_rafaga(),
         };
 
         let configuracion_gcra = hexcell_core::admision::ConfiguracionGcra::nueva(
@@ -407,8 +508,8 @@ impl Configuracion {
             formato_esperado: "número flotante positivo de peticiones por segundo, p. ej. 0.5",
         })?;
 
-        let limite_de_concurrencia = match std::env::var(HEXCELL_CONCURRENCIA_LIMITE) {
-            Ok(valor) => {
+        let limite_de_concurrencia = match fuente.leer(HEXCELL_CONCURRENCIA_LIMITE) {
+            Some(valor) => {
                 let parsed =
                     valor
                         .parse::<usize>()
@@ -426,23 +527,24 @@ impl Configuracion {
                 }
                 parsed
             }
-            Err(_) => LIMITE_DE_CONCURRENCIA_POR_DEFECTO,
+            None => LIMITE_DE_CONCURRENCIA_POR_DEFECTO,
         };
 
-        let presupuesto_inicial_unidades = match std::env::var(HEXCELL_PRESUPUESTO_INICIAL_UNIDADES)
-        {
-            Ok(valor) => valor
-                .parse::<u64>()
-                .map_err(|_| ErrorDeConfiguracion::ValorInvalido {
-                    nombre: HEXCELL_PRESUPUESTO_INICIAL_UNIDADES,
-                    valor: valor.clone(),
-                    formato_esperado: "entero no negativo de unidades, p. ej. 1000",
-                })?,
-            Err(_) => 0,
+        let presupuesto_inicial_unidades = match fuente.leer(HEXCELL_PRESUPUESTO_INICIAL_UNIDADES) {
+            Some(valor) => {
+                valor
+                    .parse::<u64>()
+                    .map_err(|_| ErrorDeConfiguracion::ValorInvalido {
+                        nombre: HEXCELL_PRESUPUESTO_INICIAL_UNIDADES,
+                        valor: valor.clone(),
+                        formato_esperado: "entero no negativo de unidades, p. ej. 1000",
+                    })?
+            }
+            None => 0,
         };
 
-        let inferencia = match std::env::var(HEXCELL_INFERENCIA_URL_BASE) {
-            Ok(url_base) if !url_base.trim().is_empty() => {
+        let inferencia = match fuente.leer(HEXCELL_INFERENCIA_URL_BASE) {
+            Some(url_base) if !url_base.trim().is_empty() => {
                 let url_base = url_base.trim().to_string();
                 if let Ok(uri) = url_base.parse::<hyper::Uri>() {
                     let scheme = uri.scheme_str().unwrap_or("");
@@ -467,17 +569,19 @@ impl Configuracion {
                 }
 
                 let api_key = leer_obligatoria(
+                    fuente,
                     HEXCELL_INFERENCIA_API_KEY,
                     "cadena no vacía con la clave de API",
                 )?;
 
                 let modelo = leer_obligatoria(
+                    fuente,
                     HEXCELL_INFERENCIA_MODELO,
                     "nombre del modelo, p. ej. deepseek-chat",
                 )?;
 
-                let timeout = match std::env::var(HEXCELL_INFERENCIA_TIMEOUT_MS) {
-                    Ok(valor) => {
+                let timeout = match fuente.leer(HEXCELL_INFERENCIA_TIMEOUT_MS) {
+                    Some(valor) => {
                         let ms = valor.parse::<u64>().map_err(|_| {
                             ErrorDeConfiguracion::ValorInvalido {
                                 nombre: HEXCELL_INFERENCIA_TIMEOUT_MS,
@@ -495,11 +599,11 @@ impl Configuracion {
                         }
                         Duration::from_millis(ms)
                     }
-                    Err(_) => TIMEOUT_INFERENCIA_POR_DEFECTO,
+                    None => TIMEOUT_INFERENCIA_POR_DEFECTO,
                 };
 
-                let reintentos = match std::env::var(HEXCELL_INFERENCIA_REINTENTOS) {
-                    Ok(valor) => {
+                let reintentos = match fuente.leer(HEXCELL_INFERENCIA_REINTENTOS) {
+                    Some(valor) => {
                         let r = valor.parse::<u32>().map_err(|_| {
                             ErrorDeConfiguracion::ValorInvalido {
                                 nombre: HEXCELL_INFERENCIA_REINTENTOS,
@@ -516,7 +620,7 @@ impl Configuracion {
                         }
                         r
                     }
-                    Err(_) => REINTENTOS_INFERENCIA_POR_DEFECTO,
+                    None => REINTENTOS_INFERENCIA_POR_DEFECTO,
                 };
 
                 let tiempo_maximo_inferencia = timeout * (1 + reintentos);
@@ -539,8 +643,8 @@ impl Configuracion {
             _ => None,
         };
 
-        let embeddings = match std::env::var(HEXCELL_EMBEDDINGS_URL_BASE) {
-            Ok(url_base) if !url_base.trim().is_empty() => {
+        let embeddings = match fuente.leer(HEXCELL_EMBEDDINGS_URL_BASE) {
+            Some(url_base) if !url_base.trim().is_empty() => {
                 let url_base = url_base.trim().to_string();
                 if let Ok(uri) = url_base.parse::<hyper::Uri>() {
                     let scheme = uri.scheme_str().unwrap_or("");
@@ -565,17 +669,19 @@ impl Configuracion {
                 }
 
                 let api_key = leer_obligatoria(
+                    fuente,
                     HEXCELL_EMBEDDINGS_API_KEY,
                     "cadena no vacía con la clave de API",
                 )?;
 
                 let modelo = leer_obligatoria(
+                    fuente,
                     HEXCELL_EMBEDDINGS_MODELO,
                     "nombre del modelo, p. ej. text-embedding-3-small",
                 )?;
 
-                let timeout = match std::env::var(HEXCELL_EMBEDDINGS_TIMEOUT_MS) {
-                    Ok(valor) => {
+                let timeout = match fuente.leer(HEXCELL_EMBEDDINGS_TIMEOUT_MS) {
+                    Some(valor) => {
                         let ms = valor.parse::<u64>().map_err(|_| {
                             ErrorDeConfiguracion::ValorInvalido {
                                 nombre: HEXCELL_EMBEDDINGS_TIMEOUT_MS,
@@ -593,11 +699,11 @@ impl Configuracion {
                         }
                         Duration::from_millis(ms)
                     }
-                    Err(_) => TIMEOUT_EMBEDDINGS_POR_DEFECTO,
+                    None => TIMEOUT_EMBEDDINGS_POR_DEFECTO,
                 };
 
-                let reintentos = match std::env::var(HEXCELL_EMBEDDINGS_REINTENTOS) {
-                    Ok(valor) => {
+                let reintentos = match fuente.leer(HEXCELL_EMBEDDINGS_REINTENTOS) {
+                    Some(valor) => {
                         let r = valor.parse::<u32>().map_err(|_| {
                             ErrorDeConfiguracion::ValorInvalido {
                                 nombre: HEXCELL_EMBEDDINGS_REINTENTOS,
@@ -614,11 +720,11 @@ impl Configuracion {
                         }
                         r
                     }
-                    Err(_) => REINTENTOS_EMBEDDINGS_POR_DEFECTO,
+                    None => REINTENTOS_EMBEDDINGS_POR_DEFECTO,
                 };
 
-                let tamano_de_lote = match std::env::var(HEXCELL_EMBEDDINGS_TAMANO_DE_LOTE) {
-                    Ok(valor) => {
+                let tamano_de_lote = match fuente.leer(HEXCELL_EMBEDDINGS_TAMANO_DE_LOTE) {
+                    Some(valor) => {
                         let tam = valor.parse::<usize>().map_err(|_| {
                             ErrorDeConfiguracion::ValorInvalido {
                                 nombre: HEXCELL_EMBEDDINGS_TAMANO_DE_LOTE,
@@ -635,7 +741,7 @@ impl Configuracion {
                         }
                         tam
                     }
-                    Err(_) => TAMANO_DE_LOTE_EMBEDDINGS_POR_DEFECTO,
+                    None => TAMANO_DE_LOTE_EMBEDDINGS_POR_DEFECTO,
                 };
 
                 let tiempo_maximo_embeddings =
@@ -648,8 +754,8 @@ impl Configuracion {
                     });
                 }
 
-                let proveedor_str = match std::env::var(HEXCELL_EMBEDDINGS_PROVEEDOR) {
-                    Ok(val) => {
+                let proveedor_str = match fuente.leer(HEXCELL_EMBEDDINGS_PROVEEDOR) {
+                    Some(val) => {
                         let trimmed = val.trim();
                         if trimmed == "openrouter" || trimmed == "gemini" {
                             trimmed.to_string()
@@ -661,7 +767,7 @@ impl Configuracion {
                             });
                         }
                     }
-                    Err(_) => "openrouter".to_string(),
+                    None => "openrouter".to_string(),
                 };
 
                 match proveedor_str.as_str() {
@@ -713,11 +819,12 @@ impl Configuracion {
 }
 
 fn leer_obligatoria(
+    fuente: &dyn FuenteDeConfiguracion,
     nombre: &'static str,
     formato_esperado: &'static str,
 ) -> Result<String, ErrorDeConfiguracion> {
-    match std::env::var(nombre) {
-        Ok(valor) if !valor.trim().is_empty() => Ok(valor),
+    match fuente.leer(nombre) {
+        Some(valor) if !valor.trim().is_empty() => Ok(valor),
         _ => Err(ErrorDeConfiguracion::VariableAusente {
             nombre,
             formato_esperado,
@@ -725,43 +832,42 @@ fn leer_obligatoria(
     }
 }
 
+/// Que `desde_entorno` siga leyendo el entorno real del proceso no se comprueba aquí sino en
+/// `crates/hexcell/tests/configuracion.rs`, lanzando el binario de verdad con un entorno de hijo
+/// controlado: es la única forma de demostrarlo sin escribir el entorno de este proceso.
 #[cfg(test)]
 mod pruebas {
     use super::*;
-    use std::sync::Mutex;
 
-    static BLOQUEO_ENTORNO: Mutex<()> = Mutex::new(());
+    /// Fuente mínima válida: las dos variables obligatorias, con una ruta de datos que existe.
+    fn fuente_valida() -> FuenteEnMemoria {
+        let dir = std::env::temp_dir();
+        FuenteEnMemoria::vacia()
+            .con(HEXCELL_ID_CELULA, "test-celula")
+            .con(HEXCELL_RUTA_DATOS, dir.to_string_lossy())
+    }
 
     #[test]
-    fn configuracion_limite_de_concurrencia_desde_entorno() {
-        let _guard = BLOQUEO_ENTORNO.lock().unwrap();
-
-        let dir = std::env::temp_dir();
-        unsafe {
-            std::env::set_var(HEXCELL_ID_CELULA, "test-celula");
-            std::env::set_var(HEXCELL_RUTA_DATOS, &dir);
-            std::env::remove_var(HEXCELL_CONCURRENCIA_LIMITE);
-        }
+    fn configuracion_limite_de_concurrencia_desde_la_fuente() {
+        // Cada caso trabaja sobre su propia tabla en memoria: ya no hay estado de proceso que
+        // serializar, así que este test no necesita ningún cerrojo ni limpieza posterior.
+        let mut fuente = fuente_valida();
 
         // Caso por defecto: variable ausente -> LIMITE_DE_CONCURRENCIA_POR_DEFECTO (8)
-        let config = Configuracion::desde_entorno().unwrap();
+        let config = Configuracion::desde_fuente(&fuente).unwrap();
         assert_eq!(
             config.limite_de_concurrencia,
             LIMITE_DE_CONCURRENCIA_POR_DEFECTO
         );
 
         // Valor válido
-        unsafe {
-            std::env::set_var(HEXCELL_CONCURRENCIA_LIMITE, "16");
-        }
-        let config = Configuracion::desde_entorno().unwrap();
+        fuente.fijar(HEXCELL_CONCURRENCIA_LIMITE, "16");
+        let config = Configuracion::desde_fuente(&fuente).unwrap();
         assert_eq!(config.limite_de_concurrencia, 16);
 
         // Valor no numérico -> ErrorDeConfiguracion::ValorInvalido
-        unsafe {
-            std::env::set_var(HEXCELL_CONCURRENCIA_LIMITE, "invalido");
-        }
-        let err = Configuracion::desde_entorno().unwrap_err();
+        fuente.fijar(HEXCELL_CONCURRENCIA_LIMITE, "invalido");
+        let err = Configuracion::desde_fuente(&fuente).unwrap_err();
         assert_eq!(
             err,
             ErrorDeConfiguracion::ValorInvalido {
@@ -772,10 +878,8 @@ mod pruebas {
         );
 
         // Valor "0" -> ErrorDeConfiguracion::ValorInvalido
-        unsafe {
-            std::env::set_var(HEXCELL_CONCURRENCIA_LIMITE, "0");
-        }
-        let err = Configuracion::desde_entorno().unwrap_err();
+        fuente.fijar(HEXCELL_CONCURRENCIA_LIMITE, "0");
+        let err = Configuracion::desde_fuente(&fuente).unwrap_err();
         assert_eq!(
             err,
             ErrorDeConfiguracion::ValorInvalido {
@@ -785,11 +889,12 @@ mod pruebas {
             }
         );
 
-        // Limpiar entorno
-        unsafe {
-            std::env::remove_var(HEXCELL_ID_CELULA);
-            std::env::remove_var(HEXCELL_RUTA_DATOS);
-            std::env::remove_var(HEXCELL_CONCURRENCIA_LIMITE);
-        }
+        // Quitar la variable devuelve el valor por omisión sin reconstruir la fuente.
+        fuente.quitar(HEXCELL_CONCURRENCIA_LIMITE);
+        let config = Configuracion::desde_fuente(&fuente).unwrap();
+        assert_eq!(
+            config.limite_de_concurrencia,
+            LIMITE_DE_CONCURRENCIA_POR_DEFECTO
+        );
     }
 }

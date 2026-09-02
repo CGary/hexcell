@@ -1,6 +1,6 @@
 # Bitácora de descartes
 
-> Registro de lo que se consideró y **no** se hizo. Última actualización: 2026-08-31 (D-32).
+> Registro de lo que se consideró y **no** se hizo. Última actualización: 2026-09-01 (D-34).
 
 ## Para qué sirve este documento
 
@@ -66,6 +66,8 @@ se apoya en un principio de diseño, no.
 | [D-30](#d-30) | Alternativas descartadas para el drenaje de la época superseída (notificación por Condvar, cierre forzado, remediación por borrado, sobrecarga de variable de apagado) | Principio de diseño, no reabrir |
 | [D-31](#d-31) | Alternativas descartadas para la reversión de épocas y guardas de fallo silencioso (re-acuñación de épocas, comodín en partición semántica, guarda de enlace colgante en solo lectura, fallback silencioso de ruta canónica) | Principio de diseño, no reabrir |
 | [D-32](#d-32) | Escribir la marca de sospechosa después de reasignar el enlace simbólico | Principio de diseño, no reabrir |
+| [D-33](#d-33) | Serializar el binario de tests con `--test-threads=1` para tapar la carrera del entorno del proceso | Principio de diseño, no reabrir |
+| [D-34](#d-34) | Mover los tests que mutan el entorno a un binario de integración aparte | Principio de diseño, no reabrir |
 
 ---
 
@@ -504,6 +506,22 @@ copiar `sessions.db`, `knowledge_live.db` y el almacén de identidad del adaptad
 * **Por qué se descartó:** Si la marca se escribiera después de la conmutación de `knowledge_live.db`, cualquier caída del proceso o fallo de E/S en la escritura de la marca dejaría la conmutación consolidada pero la época previa sin marcar. Esto permitiría que un ciclo posterior de `numero_de_epoca_siguiente` reutilizara el número de la época descartada por sospecha de defecto, violando irreversiblemente la garantía de no-reutilización de identificadores. Escribir la marca antes de la conmutación invierte el riesgo: un fallo de escritura de la marca aborta limpiamente la reversión dejando la producción intacta sirviendo la época previa; el peor caso es una marca espuria sobre una época todavía activa, lo cual es recuperable y tiene un sesgo seguro a favor de la protección del sistema.
 * **Registro normativo:** `docs/adr/adr-0027-retencion-y-purga-de-epocas.md`, `crates/hexcell-storage/src/reversion.rs`.
 * **Qué tendría que cambiar para reabrirlo:** *Principio de diseño.* **No reabrir.**
+
+### D-33
+**Serializar el binario de tests con `--test-threads=1` (o con el crate `serial_test`, o con cualquier otra forma de serialización de la suite) para hacer desaparecer el fallo intermitente de `cargo test --workspace`.**
+
+* **Descartado:** 2026-09-01 (HEX-058).
+* **Por qué se descartó:** Funciona, y es exactamente por eso que es peligroso. El fallo medido —1 de cada 25 corridas, con pánico en `crates/hexcell/src/motor.rs:518`— no era una aserción frágil sino comportamiento indefinido real: en la edición 2024, escribir el entorno del proceso puede hacer que `setenv` de glibc reasigne el array `environ` mientras otro hilo lo lee. Serializar la suite elimina la concurrencia, no la escritura: el código que muta estado global del proceso sigue ahí, listo para volver a morder en cuanto alguien ejecute los tests de otra manera, y el árbol paga además el coste permanente de una suite secuencial. Peor todavía, la próxima carrera de esta misma familia también quedaría oculta, y no habría ninguna señal de que existe. La decisión fue eliminar al escritor (inyección de `FuenteDeConfiguracion`, `adr-0028`), no callar al detector.
+* **Registro normativo:** `docs/adr/adr-0028-fuente-de-configuracion-inyectable.md`, `crates/hexcell/src/configuracion.rs`.
+* **Qué tendría que cambiar para reabrirlo:** *Principio de diseño.* **No reabrir.** Si en el futuro apareciera un estado global del proceso genuinamente inevitable —impuesto por una biblioteca de terceros y sin puerto posible—, la serialización se discutiría solo para ese caso concreto y acotado, nunca como política de la suite.
+
+### D-34
+**Mover los tests que mutan el entorno a un binario de integración aparte, dejándolos aislados del resto de la suite.**
+
+* **Descartado:** 2026-09-01 (HEX-058).
+* **Por qué se descartó:** Cierra el agujero de hoy y deja abierta la puerta de mañana. El aislamiento funciona solo mientras nadie añada a ese binario un test que **lea** el entorno, y `std::env::temp_dir()` —una lectura del entorno— es el modismo más corriente del árbol para crear un directorio de trabajo en un test: es una trampa que se arma sola. El defecto reaparecería sin ningún aviso, sin cerrojo que revisar y sin señal en la revisión de código, porque el archivo nuevo parecería inocente. La inyección, en cambio, hace la propiedad verificable de forma mecánica: la guarda de grep de CI falla en el momento en que alguien vuelve a escribir el entorno bajo `crates/hexcell/`, esté en el binario que esté.
+* **Registro normativo:** `docs/adr/adr-0028-fuente-de-configuracion-inyectable.md`, `crates/hexcell/tests/configuracion.rs`, `crates/hexcell/tests/promocion.rs`.
+* **Qué tendría que cambiar para reabrirlo:** *Principio de diseño.* **No reabrir** mientras la lectura de configuración siga siendo inyectable. Solo se reconsideraría si apareciera una dependencia que exigiera mutar el entorno del proceso en tiempo de test y no admitiera inyección; en ese caso, el aislamiento por binario iría acompañado de una guarda automática que prohíba toda lectura del entorno dentro de ese binario.
 
 ---
 

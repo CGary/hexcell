@@ -10,6 +10,7 @@
 use std::path::Path;
 use std::time::Duration;
 
+use crate::configuracion::FuenteDeConfiguracion;
 use hexcell_core::fragmentacion::ConfiguracionDeFragmentacion;
 use hexcell_storage::drenaje::{
     DesenlaceDeDrenaje, LIMITE_DE_DRENAJE_DE_EPOCA_POR_DEFECTO, drenar_epoca_superseida,
@@ -26,24 +27,27 @@ pub const HEXCELL_LIMITE_DE_DRENAJE_DE_EPOCA_MS: &str = "HEXCELL_LIMITE_DE_DRENA
 pub const HEXCELL_VENTANA_DE_RETENCION_DE_EPOCAS: &str = "HEXCELL_VENTANA_DE_RETENCION_DE_EPOCAS";
 
 /// Obtiene el límite temporal configurado para el drenaje de época o recurre al valor por omisión.
-pub fn limite_de_drenaje_de_epoca_desde_entorno() -> Duration {
-    match std::env::var(HEXCELL_LIMITE_DE_DRENAJE_DE_EPOCA_MS) {
-        Ok(valor_texto) => match valor_texto.parse::<u64>() {
+///
+/// La fuente llega por parámetro, nunca de un global: es lo que permite ejercer los casos válido,
+/// no numérico y ausente sin escribir el entorno del proceso desde un hilo de pruebas.
+pub fn limite_de_drenaje_de_epoca_desde_fuente(fuente: &dyn FuenteDeConfiguracion) -> Duration {
+    match fuente.leer(HEXCELL_LIMITE_DE_DRENAJE_DE_EPOCA_MS) {
+        Some(valor_texto) => match valor_texto.parse::<u64>() {
             Ok(ms) => Duration::from_millis(ms),
             Err(_) => LIMITE_DE_DRENAJE_DE_EPOCA_POR_DEFECTO,
         },
-        Err(_) => LIMITE_DE_DRENAJE_DE_EPOCA_POR_DEFECTO,
+        None => LIMITE_DE_DRENAJE_DE_EPOCA_POR_DEFECTO,
     }
 }
 
-/// Obtiene la ventana de retención de épocas configurada desde el entorno o recurre al valor por omisión.
-pub fn ventana_de_retencion_de_epocas_desde_entorno() -> usize {
-    match std::env::var(HEXCELL_VENTANA_DE_RETENCION_DE_EPOCAS) {
-        Ok(valor_texto) => match valor_texto.parse::<usize>() {
+/// Obtiene la ventana de retención de épocas configurada en la fuente o recurre al valor por omisión.
+pub fn ventana_de_retencion_de_epocas_desde_fuente(fuente: &dyn FuenteDeConfiguracion) -> usize {
+    match fuente.leer(HEXCELL_VENTANA_DE_RETENCION_DE_EPOCAS) {
+        Some(valor_texto) => match valor_texto.parse::<usize>() {
             Ok(ventana) => ventana,
             Err(_) => hexcell_storage::retencion::VENTANA_DE_RETENCION_DE_EPOCAS_POR_DEFECTO,
         },
-        Err(_) => hexcell_storage::retencion::VENTANA_DE_RETENCION_DE_EPOCAS_POR_DEFECTO,
+        None => hexcell_storage::retencion::VENTANA_DE_RETENCION_DE_EPOCAS_POR_DEFECTO,
     }
 }
 
@@ -81,13 +85,14 @@ pub async fn revertir_epoca_de_conocimiento(
 /// Orquesta de forma asíncrona el drenaje ordenado de una época superseída y retira su registro en uso.
 ///
 /// Invoca la secuencia síncrona en línea en la tarea actual sin `spawn_blocking`, aplicando el límite
-/// temporal configurado desde el entorno o el valor por omisión. Si el drenaje concluye con éxito,
-/// retira la época del registro `epocas_en_uso` presentando la constancia no falsificable obtenida.
+/// temporal configurado en la fuente inyectada o el valor por omisión. Si el drenaje concluye con
+/// éxito, retira la época del registro `epocas_en_uso` presentando la constancia no falsificable.
 pub async fn drenar_epoca_superseida_de_conocimiento(
     gestor: &GestorDePools,
     epoca: EpocaSuperseida,
+    fuente: &dyn FuenteDeConfiguracion,
 ) -> Result<DesenlaceDeDrenaje, ErrorDeAlmacen> {
-    let limite = limite_de_drenaje_de_epoca_desde_entorno();
+    let limite = limite_de_drenaje_de_epoca_desde_fuente(fuente);
     let desenlace = drenar_epoca_superseida(epoca, limite)?;
     if let DesenlaceDeDrenaje::Drenada { ref constancia, .. } = desenlace {
         gestor.retirar_epoca_en_uso(constancia);
@@ -98,11 +103,12 @@ pub async fn drenar_epoca_superseida_de_conocimiento(
 /// Orquesta de forma asíncrona la purga de épocas selladas retiradas fuera de la ventana de retención.
 ///
 /// Invoca la secuencia síncrona en línea en la tarea actual sin intermediación de `spawn_blocking`,
-/// consultando la ventana de retención configurada en el entorno o recurriendo al valor por omisión.
+/// consultando la ventana de retención configurada en la fuente o recurriendo al valor por omisión.
 pub async fn purgar_epocas_de_conocimiento(
     gestor: &GestorDePools,
     ruta_datos: &Path,
+    fuente: &dyn FuenteDeConfiguracion,
 ) -> Result<hexcell_storage::retencion::DesenlaceDePurga, ErrorDeAlmacen> {
-    let ventana = ventana_de_retencion_de_epocas_desde_entorno();
+    let ventana = ventana_de_retencion_de_epocas_desde_fuente(fuente);
     hexcell_storage::retencion::purgar_epocas_retiradas(gestor, ruta_datos, ventana)
 }

@@ -48,7 +48,7 @@ use std::sync::Arc;
 
 use hexcell::apagado::Apagado;
 use hexcell::concurrencia::LimitadorDeConcurrencia;
-use hexcell::configuracion::{CanalSeleccionado, Configuracion};
+use hexcell::configuracion::{CanalSeleccionado, Configuracion, EntornoDelProceso};
 use hexcell::emparejar;
 use hexcell::inferencia::{ProveedorDeCelula, ProveedorSimulado};
 use hexcell::metricas::{
@@ -74,11 +74,14 @@ const CONTACTO_DEL_EVENTO_DE_ARRANQUE: &str = "arranque-simulado";
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> ExitCode {
     let argumentos: Vec<String> = std::env::args().collect();
+    // Raíz de composición: es aquí, y solo aquí, donde se elige que la configuración salga del
+    // entorno real del proceso. Todo lo que hay por debajo recibe la fuente como parámetro.
+    let fuente = EntornoDelProceso;
     if argumentos.get(1).map(String::as_str) == Some("emparejar") {
-        return emparejar::ejecutar_cli(&argumentos[2..]).await;
+        return emparejar::ejecutar_cli(&argumentos[2..], &fuente).await;
     }
     if argumentos.get(1).map(String::as_str) == Some("respaldar") {
-        return hexcell::respaldar::ejecutar_cli(&argumentos[2..]).await;
+        return hexcell::respaldar::ejecutar_cli(&argumentos[2..], &fuente).await;
     }
 
     let configuracion = match Configuracion::desde_entorno() {

@@ -486,7 +486,7 @@ mod tests {
     };
     use hexcell_core::identidad::{IdDeduplicacion, IdRemitente};
     use hexcell_storage::{GestorDePools, RepositorioDeSesiones};
-    use std::sync::atomic::Ordering;
+    use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::SystemTime;
 
     type R = Result<ResultadoEnvio, std::convert::Infallible>;
@@ -506,16 +506,30 @@ mod tests {
         }
     }
 
+    /// Contador de directorios temporales de este proceso. Sustituye a la lectura de nanosegundos
+    /// del reloj: su granularidad no garantiza unicidad, así que dos ayudantes construidos a la vez
+    /// en hilos distintos podían leer el mismo instante y compartir directorio. Un contador atómico
+    /// los distingue **por construcción**, sin depender del reloj del sistema.
+    static SECUENCIA_DE_DIRECTORIOS: AtomicU64 = AtomicU64::new(0);
+
     fn motor(c: ConfiguracionGcra) -> (M, std::path::PathBuf) {
-        let id_unico =
-            match std::time::SystemTime::now().duration_since(std::time::SystemTime::UNIX_EPOCH) {
-                Ok(d) => d.as_nanos(),
-                Err(_) => 0,
-            };
+        let id_unico = SECUENCIA_DE_DIRECTORIOS.fetch_add(1, Ordering::Relaxed);
         let dir = std::env::temp_dir().join(format!("hx-m-{}-{}", std::process::id(), id_unico));
-        let _ = std::fs::create_dir_all(&dir);
-        let Ok(p) = GestorDePools::abrir(&dir) else {
-            panic!()
+        // Antes este error se descartaba con `let _ =` y el fallo aparecía después, disfrazado de
+        // fallo al abrir el pool. Nombrar la ruta y el error de origen es lo único que hace
+        // diagnosticable un fallo intermitente a partir de la salida del test.
+        if let Err(error) = std::fs::create_dir_all(&dir) {
+            panic!(
+                "no se pudo crear el directorio temporal del test «{}»: {error}",
+                dir.display()
+            );
+        }
+        let p = match GestorDePools::abrir(&dir) {
+            Ok(p) => p,
+            Err(error) => panic!(
+                "no se pudo abrir el gestor de pools sobre «{}»: {error:?}",
+                dir.display()
+            ),
         };
         let repo = Arc::new(RepositorioDeSesiones::nuevo(Arc::new(p)));
         let (_, rx) = mpsc::channel(8);
