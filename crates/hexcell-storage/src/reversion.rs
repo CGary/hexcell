@@ -331,7 +331,10 @@ pub fn revertir_a_epoca(
     // 10. El pool se abre y precalienta ANTES de reasignar el enlace para que la ventana de
     // conmutación observable sea solo el rename atómico del paso siguiente; abrir conexiones
     // después dejaría el enlace apuntando momentáneamente a un archivo cuyo pool aún no responde.
-    let nuevo_pool = Arc::new(PoolDeConocimiento::abrir_sobre(&ruta_destino)?);
+    let nuevo_pool = Arc::new(PoolDeConocimiento::abrir_sobre_con_anchura(
+        &ruta_destino,
+        gestor.anchura_de_lecturas_de_conocimiento(),
+    )?);
 
     // 10b. Escribir la marca de época sospechosa para la época saliente ANTES de reasignar el enlace.
     // Razón de diseño (D-32): escribir la marca antes de la conmutación asegura que un fallo de E/S

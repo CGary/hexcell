@@ -184,13 +184,22 @@ impl PoolDeConocimiento {
         operacion(&conexion)
     }
 
-    /// Abre un nuevo pool de conocimiento sobre una ruta explícita.
+    /// Devuelve la anchura del pool (cantidad de conexiones de lectura de solo lectura configuradas).
+    pub fn anchura_de_lecturas(&self) -> usize {
+        self.lecturas.len()
+    }
+
+    /// Abre un nuevo pool de conocimiento sobre una ruta explícita con una anchura especificada.
     ///
-    /// Inicializa las [`CONEXIONES_DE_LECTURA_DE_CONOCIMIENTO`] conexiones en solo lectura
-    /// y configura sus parámetros de SQLite.
-    pub fn abrir_sobre(ruta: &Path) -> Result<Self, ErrorDeAlmacen> {
-        let mut lecturas = Vec::with_capacity(CONEXIONES_DE_LECTURA_DE_CONOCIMIENTO);
-        for _ in 0..CONEXIONES_DE_LECTURA_DE_CONOCIMIENTO {
+    /// Inicializa `anchura` conexiones en solo lectura y configura sus parámetros de SQLite.
+    /// Si `anchura` es 0, retorna `Err(ErrorDeAlmacen::PoolDeConocimientoVacio)` de inmediato
+    /// en la construcción (AC-7).
+    pub fn abrir_sobre_con_anchura(ruta: &Path, anchura: usize) -> Result<Self, ErrorDeAlmacen> {
+        if anchura == 0 {
+            return Err(ErrorDeAlmacen::PoolDeConocimientoVacio);
+        }
+        let mut lecturas = Vec::with_capacity(anchura);
+        for _ in 0..anchura {
             lecturas.push(Mutex::new(abrir_solo_lectura(ruta)?));
         }
         Ok(Self {
@@ -198,6 +207,14 @@ impl PoolDeConocimiento {
             lecturas,
             siguiente: AtomicUsize::new(0),
         })
+    }
+
+    /// Abre un nuevo pool de conocimiento sobre una ruta explícita.
+    ///
+    /// Inicializa las [`CONEXIONES_DE_LECTURA_DE_CONOCIMIENTO`] conexiones en solo lectura
+    /// y configura sus parámetros de SQLite.
+    pub fn abrir_sobre(ruta: &Path) -> Result<Self, ErrorDeAlmacen> {
+        Self::abrir_sobre_con_anchura(ruta, CONEXIONES_DE_LECTURA_DE_CONOCIMIENTO)
     }
 
     /// Comprueba si todas las conexiones de lectura están actualmente libres.
@@ -244,16 +261,24 @@ impl std::fmt::Debug for PoolDeConocimiento {
 pub struct GestorDePools {
     sesiones: PoolDeSesiones,
     conocimiento: ArcSwap<PoolDeConocimiento>,
+    anchura_de_lecturas_de_conocimiento: usize,
     promocion_en_curso: AtomicBool,
     epocas_en_uso: Mutex<BTreeMap<i64, PathBuf>>,
 }
 
 impl GestorDePools {
-    /// Abre y migra las dos bases derivadas de la ruta de datos ya validada de la célula.
-    ///
-    /// Se llama **antes** de vincular el servidor de salud: si la persistencia no arranca, la
-    /// célula no debe llegar a anunciarse como viva.
+    /// Abre y migra las dos bases derivadas de la ruta de datos ya validada de la célula,
+    /// utilizando la anchura de lecturas de conocimiento por omisión (AC-7).
     pub fn abrir(ruta_datos: &Path) -> Result<Self, ErrorDeAlmacen> {
+        Self::abrir_con_anchura_de_conocimiento(ruta_datos, CONEXIONES_DE_LECTURA_DE_CONOCIMIENTO)
+    }
+
+    /// Abre y migra las dos bases derivadas de la ruta de datos especificada, permitiendo
+    /// parametrizar la anchura del pool de conexiones de lectura de conocimiento (AC-7).
+    pub fn abrir_con_anchura_de_conocimiento(
+        ruta_datos: &Path,
+        anchura: usize,
+    ) -> Result<Self, ErrorDeAlmacen> {
         let metadatos = std::fs::metadata(ruta_datos).map_err(|causa| {
             ErrorDeAlmacen::RutaDeDatosInaccesible {
                 ruta: ruta_datos.to_path_buf(),
@@ -286,7 +311,8 @@ impl GestorDePools {
             aplicar_migraciones_de_conocimiento(&inicial)?;
         }
 
-        let pool_conocimiento = PoolDeConocimiento::abrir_sobre(&ruta_conocimiento)?;
+        let pool_conocimiento =
+            PoolDeConocimiento::abrir_sobre_con_anchura(&ruta_conocimiento, anchura)?;
 
         Ok(Self {
             sesiones: PoolDeSesiones {
@@ -295,6 +321,7 @@ impl GestorDePools {
                 lectura: Mutex::new(lectura),
             },
             conocimiento: ArcSwap::from_pointee(pool_conocimiento),
+            anchura_de_lecturas_de_conocimiento: anchura,
             promocion_en_curso: AtomicBool::new(false),
             epocas_en_uso: Mutex::new(BTreeMap::new()),
         })
@@ -342,6 +369,11 @@ impl GestorDePools {
     /// Pool de `knowledge_live.db`.
     pub fn conocimiento(&self) -> Arc<PoolDeConocimiento> {
         self.conocimiento.load_full()
+    }
+
+    /// Devuelve la anchura configurada para el pool de conocimiento.
+    pub fn anchura_de_lecturas_de_conocimiento(&self) -> usize {
+        self.anchura_de_lecturas_de_conocimiento
     }
 
     /// Intercambia el pool de conocimiento atómicamente y devuelve el pool previo.
