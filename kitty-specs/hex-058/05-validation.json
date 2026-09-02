@@ -1,0 +1,38 @@
+{
+  "commands": [
+    {
+      "command": "cargo fmt --check",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "exit 0"
+    },
+    {
+      "command": "cargo clippy --workspace -- -D warnings",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "exit 0"
+    },
+    {
+      "command": "cargo build --workspace",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "exit 0"
+    },
+    {
+      "command": "cargo test --workspace",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "exit 0"
+    },
+    {
+      "command": "bash -c '! grep -rn -e std::env::set_var -e std::env::remove_var -e BLOQUEO_ENTORNO -e CERROJO_DE_ENTORNO --include=*.rs crates/hexcell/'",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "exit 0"
+    }
+  ],
+  "executed_at": "2026-09-01T23:55:00Z",
+  "overall_result": "passed",
+  "summary": "5/5 exit 0 sobre ff0f34f, corridos por el orquestador en worktrees/HEX-058; 70 objetivos en verde y contract-check sin violaciones.",
+  "task_id": "HEX-058"
+}

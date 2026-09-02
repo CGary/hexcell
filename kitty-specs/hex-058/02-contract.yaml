@@ -1,0 +1,124 @@
+task_id: HEX-058
+summary: >-
+  Inject a FuenteDeConfiguracion port into every hexcell configuration reader so no test mutates
+  std::env, closing the process-environment data race in three test binaries.
+goal: >-
+  Remove the undefined-behaviour data race between std::env::set_var in hexcell tests and the 35
+  environment read sites in the same binaries, by making the configuration source an injected
+  constructor parameter (never a static or thread_local), while leaving production behaviour,
+  variable names, defaults and validation semantics byte-identical. Also repair the two silent-failure
+  patterns in the motor test helper that destroyed the diagnostic evidence each time the race fired.
+read:
+  - .ai/tasks/active/HEX-058-new-spec/00-spec.yaml
+  - .ai/tasks/active/HEX-058-new-spec/01-blueprint.yaml
+  - crates/hexcell/src/lib.rs
+  - crates/hexcell-core/src/admision.rs
+  - crates/hexcell-canal-simulado/src/reloj.rs
+  - crates/hexcell/tests/persistencia.rs
+  - docs/adr/README.md
+  - docs/adr/adr-0002-nucleo-sin-dependencias.md
+  - CLAUDE.md
+  - CONTRIBUTING.md
+touch:
+  - crates/hexcell/src/configuracion.rs
+  - crates/hexcell/src/emparejar.rs
+  - crates/hexcell/src/main.rs
+  - crates/hexcell/src/motor.rs
+  - crates/hexcell/src/promocion.rs
+  - crates/hexcell/src/respaldar.rs
+  - crates/hexcell/tests/configuracion.rs
+  - crates/hexcell/tests/promocion.rs
+  - docs/STATUS.md
+  - docs/adr/README.md
+  - docs/adr/adr-0028-fuente-de-configuracion-inyectable.md
+  - docs/bitacora-de-descartes.md
+forbid:
+  files:
+    - crates/hexcell-core/**
+    - crates/hexcell-storage/**
+    - crates/hexcell-admin/**
+    - crates/hexcell-canal-simulado/**
+    - crates/hexcell-canal-contrato/**
+    - crates/hexcell-canal-whatsmeow/**
+    - crates/hexcell-meta/**
+    - crates/hexcell/src/procesador.rs
+    - sidecar/**
+    - Cargo.toml
+    - Cargo.lock
+    - crates/*/Cargo.toml
+    - .github/workflows/**
+    - docs/PRD.md
+    - .ai/tasks/**/00-spec.yaml
+    - '**/*.db'
+    - '**/*.db-wal'
+    - '**/*.db-shm'
+    - .env*
+  behaviors:
+    - >-
+      Do NOT hold the configuration source in a static, a thread_local, a lazy global or an OnceLock.
+      It must be an explicit parameter threaded to the reader; a global reintroduces exactly the
+      coupling this task removes and fails the task even if the tests turn green.
+    - >-
+      Do NOT fix this with --test-threads=1, with the serial_test crate, or with any other test
+      serialization. Rejected by the human on 2026-09-01: it hides the next race instead of removing
+      this one.
+    - >-
+      Do NOT fix this by moving the environment-mutating tests into a new separate integration binary.
+      Rejected by the human on 2026-09-01 in favour of injection.
+    - >-
+      Do NOT gate FuenteEnMemoria (or the trait) behind #[cfg(test)]. Integration tests under
+      crates/hexcell/tests/ compile as external crates and must be able to import it as a normal pub item.
+    - >-
+      Do NOT add any dependency, runtime or dev. Cargo.toml and Cargo.lock are forbidden; rusqlite stays
+      pinned at 0.39 and must not appear in crates/hexcell (adr-0010).
+    - >-
+      Do NOT change which configuration variables exist, their names, their default values, their parsing
+      rules or any ErrorDeConfiguracion variant. Behaviour must be byte-identical for identical inputs.
+    - >-
+      Do NOT leave any `let _ =` swallowing an error or any bare `panic!()` without a message in the test
+      helpers you touch. Every failure must name the path and the underlying error.
+    - >-
+      Write ALL content in Spanish - identifiers, comments, test names, documentation and the commit
+      message. Comments must be didactic and explain WHY, not WHAT.
+    - >-
+      Use conventional commits in Spanish. NEVER add AI attribution, a Co-Authored-By trailer, or any
+      generated-with footer.
+    - >-
+      Use absolute dates only (2026-09-01). Never relative dates such as "today" or "last week".
+    - >-
+      Do NOT renumber, rewrite or delete any existing ADR or bitacora entry. adr-0028 is the next free
+      ADR number and D-33 / D-34 are the next free discard numbers; the two rejected alternatives must be
+      logged in the SAME commit that discards them.
+    - >-
+      Do NOT run `git merge` and do NOT leave the worktree. All work happens on branch ai/HEX-058.
+    - >-
+      Do NOT touch crates/hexcell/src/procesador.rs. Its temp_dir naming has the same shape of defect but
+      no acceptance criterion covers it; widening scope there breaks the contract.
+verify:
+  commands:
+    - cargo fmt --check
+    - cargo clippy --workspace -- -D warnings
+    - cargo build --workspace
+    - cargo test --workspace
+    - bash -c '! grep -rn -e std::env::set_var -e std::env::remove_var -e BLOQUEO_ENTORNO -e CERROJO_DE_ENTORNO --include=*.rs crates/hexcell/'
+acceptance:
+  bdd_suite: >-
+    bash -c 'for i in $(seq 1 25); do echo "=== corrida $i/25 ==="; cargo test --workspace || exit 1;
+    done; echo "AC-5 OK: 25 corridas consecutivas en verde"'
+  human_gate: true
+limits:
+  max_files_changed: 14
+  max_diff_lines: 1500
+  per_class:
+    - glob: crates/hexcell/tests/**
+      max_diff_lines: 950
+    - glob: crates/hexcell/src/**
+      max_diff_lines: 450
+    - glob: docs/**
+      max_diff_lines: 250
+execution:
+  mode: worktree_edit
+  branch: ai/HEX-058
+retry_policy:
+  max_attempts: 2
+  escalate_after: 2

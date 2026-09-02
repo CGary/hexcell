@@ -1,0 +1,43 @@
+task_id: HEX-058
+summary: Injected a FuenteDeConfiguracion port into every hexcell configuration reader, removed all process-environment mutation from the crate, and repaired the motor test helper's silent failures.
+tdd_red_runs:
+  - acceptance_id: AC-1
+    command: bash -c '! grep -rn -e std::env::set_var -e std::env::remove_var -e BLOQUEO_ENTORNO -e CERROJO_DE_ENTORNO --include=*.rs crates/hexcell/'
+    red_exit_code: 1
+entries:
+  - changed_files:
+      - crates/hexcell/src/configuracion.rs
+    notes:
+      - Declared the FuenteDeConfiguracion trait plus EntornoDelProceso (production, sole std::env::var caller in the crate) and FuenteEnMemoria (in-memory test double), both plain pub items so integration tests can import them.
+      - Split Configuracion::desde_entorno into a thin production wrapper delegating to the new Configuracion::desde_fuente(&dyn FuenteDeConfiguracion); rerouted all 22 reader sites and leer_obligatoria through the injected source with identical names, defaults, parsing and ErrorDeConfiguracion variants.
+      - Removed the BLOQUEO_ENTORNO mutex and the five unsafe environment-mutating blocks from the cfg(test) module; the surviving test builds a FuenteEnMemoria instead.
+    verify_pending: true
+  - changed_files:
+      - crates/hexcell/src/respaldar.rs
+      - crates/hexcell/src/emparejar.rs
+      - crates/hexcell/src/promocion.rs
+      - crates/hexcell/src/main.rs
+    notes:
+      - Parameterised the three remaining production reader groups; respaldar::ejecutar_cli and emparejar::ejecutar_cli take the source, and the promocion free functions were renamed to limite_de_drenaje_de_epoca_desde_fuente and ventana_de_retencion_de_epocas_desde_fuente, threaded into drenar_epoca_superseida_de_conocimiento and purgar_epocas_de_conocimiento.
+      - main.rs constructs EntornoDelProceso once as the composition root; Configuracion::desde_entorno() at line 84 is unchanged.
+    verify_pending: true
+  - changed_files:
+      - crates/hexcell/src/motor.rs
+    notes:
+      - Replaced the SystemTime nanosecond directory id with a process-wide AtomicU64 counter so two concurrent helpers differ by construction rather than by clock granularity.
+      - Replaced the discarded create_dir_all error with a panic naming the directory path and the underlying error, and the bare panic!() on GestorDePools::abrir with a message carrying path and error.
+    verify_pending: true
+  - changed_files:
+      - crates/hexcell/tests/configuracion.rs
+      - crates/hexcell/tests/promocion.rs
+    notes:
+      - Migrated all 18 tests of tests/configuracion.rs and the environment-touching tests of tests/promocion.rs to FuenteEnMemoria; deleted CERROJO_DE_ENTORNO, the limpiar_entorno_de_hexcell helper and every unsafe environment write. The process-level tests keep proving production behaviour by spawning the real binary with Command::env.
+    verify_pending: true
+  - changed_files:
+      - docs/adr/adr-0028-fuente-de-configuracion-inyectable.md
+      - docs/adr/README.md
+      - docs/bitacora-de-descartes.md
+      - docs/STATUS.md
+    notes:
+      - Wrote adr-0028 and registered it in the ADR index; logged the two rejected alternatives as D-33 (--test-threads=1) and D-34 (separate integration binary) with reasons and reopening conditions; added a Definido entry to STATUS.md recording that the intermittent workspace test failure is now characterised and closed.
+    verify_pending: true

@@ -1,0 +1,173 @@
+task_id: HEX-058
+summary: >-
+  Introduce a FuenteDeConfiguracion trait read as a constructor parameter, reroute 31 env::var
+  reads, delete both env-mutating test mutexes, and fix the motor helper's silent failures.
+affected_files:
+  - crates/hexcell/src/configuracion.rs
+  - crates/hexcell/src/emparejar.rs
+  - crates/hexcell/src/main.rs
+  - crates/hexcell/src/motor.rs
+  - crates/hexcell/src/promocion.rs
+  - crates/hexcell/src/respaldar.rs
+  - crates/hexcell/tests/configuracion.rs
+  - crates/hexcell/tests/promocion.rs
+  - docs/STATUS.md
+  - docs/adr/README.md
+  - docs/adr/adr-0028-fuente-de-configuracion-inyectable.md
+  - docs/bitacora-de-descartes.md
+symbols:
+  - hexcell::configuracion::FuenteDeConfiguracion
+  - hexcell::configuracion::EntornoDelProceso
+  - hexcell::configuracion::FuenteEnMemoria
+  - hexcell::configuracion::Configuracion::desde_fuente
+  - hexcell::configuracion::Configuracion::desde_entorno
+  - hexcell::configuracion::BLOQUEO_ENTORNO
+  - hexcell::promocion::limite_de_drenaje_de_epoca_desde_fuente
+  - hexcell::promocion::ventana_de_retencion_de_epocas_desde_fuente
+  - hexcell::respaldar::ejecutar_cli
+  - hexcell::emparejar::ejecutar_cli
+  - hexcell::motor::tests::motor
+dependencies:
+  - crates/hexcell/src/lib.rs
+  - crates/hexcell-core/src/admision.rs
+  - crates/hexcell-canal-simulado/src/reloj.rs
+  - Cargo.toml
+  - docs/adr/adr-0002-nucleo-sin-dependencias.md
+test_scenarios:
+  - statement: >-
+      No file under crates/hexcell contains std::env::set_var or std::env::remove_var, and neither
+      BLOQUEO_ENTORNO (src/configuracion.rs) nor CERROJO_DE_ENTORNO (tests/configuracion.rs) exists.
+    covers:
+      - AC-1
+  - statement: >-
+      The 18 tests in tests/configuracion.rs assert the same behaviour as today by building a
+      FuenteEnMemoria and calling Configuracion::desde_fuente, never touching the process environment.
+    covers:
+      - AC-1
+      - AC-2
+  - statement: >-
+      Configuracion::desde_entorno still exists, still reads the real process environment through
+      EntornoDelProceso, and main.rs:84 keeps calling it unchanged.
+    covers:
+      - AC-2
+  - statement: >-
+      Variable names, defaults, parsing and every ErrorDeConfiguracion variant are byte-identical to
+      today for the same inputs, verified through the in-memory source.
+    covers:
+      - AC-2
+  - statement: >-
+      The motor test helper propagates the create_dir_all error instead of dropping it with let _ =,
+      and panics with a message naming the directory path and the underlying GestorDePools error.
+    covers:
+      - AC-3
+  - statement: >-
+      Two motor helpers constructed concurrently receive distinct directory names by construction
+      via a process-wide AtomicU64 counter, not via clock granularity.
+    covers:
+      - AC-4
+  - statement: 25 consecutive cargo test --workspace runs exit 0 (slow acceptance gate, not in verify).
+    covers:
+      - AC-5
+  - statement: cargo fmt --check, cargo clippy --workspace -- -D warnings and cargo test --workspace all exit 0.
+    covers:
+      - AC-6
+      - AC-7
+      - AC-8
+strategy:
+  - step: 1
+    action: >-
+      Declare the port. In configuracion.rs add trait FuenteDeConfiguracion (Value Object accessor,
+      one method leer(&self, nombre: &str) -> Option<String>) plus two implementations mirroring the
+      repository's Reloj precedent - EntornoDelProceso (production, wraps std::env::var) and
+      FuenteEnMemoria (test double over a BTreeMap). Both are plain pub items, NOT behind cfg(test),
+      because integration tests compile as external crates and must import FuenteEnMemoria.
+    files:
+      - crates/hexcell/src/configuracion.rs
+  - step: 2
+    action: >-
+      Reroute the Application Service. Rename the body of Configuracion::desde_entorno to
+      desde_fuente(fuente: &dyn FuenteDeConfiguracion) and replace its 22 std::env::var call sites
+      (lines 284-719) with fuente.leer(...). Keep desde_entorno as a thin wrapper delegating to
+      desde_fuente(&EntornoDelProceso), so production behaviour and main.rs are untouched.
+    files:
+      - crates/hexcell/src/configuracion.rs
+  - step: 3
+    action: >-
+      Reroute the three remaining production readers the same way - respaldar.rs (4 reads, lines
+      278-302), emparejar.rs (3 reads, lines 198-213), promocion.rs (2 reads, lines 30-41). Each
+      gains a &dyn FuenteDeConfiguracion parameter; each CLI entry point passes &EntornoDelProceso.
+    files:
+      - crates/hexcell/src/respaldar.rs
+      - crates/hexcell/src/emparejar.rs
+      - crates/hexcell/src/promocion.rs
+      - crates/hexcell/src/main.rs
+  - step: 4
+    action: >-
+      Delete the writer. Remove the five unsafe blocks and BLOQUEO_ENTORNO from the cfg(test) module
+      of src/configuracion.rs (lines 728-795); those tests now build a FuenteEnMemoria.
+    files:
+      - crates/hexcell/src/configuracion.rs
+  - step: 5
+    action: >-
+      Convert the integration binaries, which host the same defect independently - tests/configuracion.rs
+      (66 writes, 18 tests, CERROJO_DE_ENTORNO at line 22, 15 temp_dir reads in the same binary) and
+      tests/promocion.rs (6 writes, no lock at all). Both build FuenteEnMemoria instead of mutating env;
+      delete the lock and the limpiar_entorno_de_hexcell helper.
+    files:
+      - crates/hexcell/tests/configuracion.rs
+      - crates/hexcell/tests/promocion.rs
+  - step: 6
+    action: >-
+      Repair the test harness that destroyed the evidence. In motor.rs replace the SystemTime-nanos id
+      with a process-wide AtomicU64 counter, replace let _ = create_dir_all with an expect naming the
+      path, and replace the bare panic! with a message carrying the path and the underlying error.
+    files:
+      - crates/hexcell/src/motor.rs
+  - step: 7
+    action: >-
+      Record the decision. Write adr-0028 (injectable configuration source; next free number after
+      adr-0027), add its row to docs/adr/README.md, add a Definido entry to docs/STATUS.md closing the
+      previously uncharacterised intermittent failure, and log the two rejected alternatives as D-33
+      (--test-threads=1) and D-34 (separate integration binary) in docs/bitacora-de-descartes.md.
+    files:
+      - docs/adr/adr-0028-fuente-de-configuracion-inyectable.md
+      - docs/adr/README.md
+      - docs/STATUS.md
+      - docs/bitacora-de-descartes.md
+risks:
+  - >-
+    SPEC MISMATCH (count attribution). The spec states "35 call sites read the environment through
+    std::env::var". Measured 2026-09-01: the total of 35 is CORRECT but splits as 31 std::env::var
+    reads plus 4 std::env::temp_dir reads (also getenv). Only 22 of the 35 sit in configuracion.rs,
+    so the spec constraint "concentrated in configuracion.rs" holds for 63 percent, not all of them.
+  - >-
+    SPEC MISMATCH (scope of AC-1). The spec frames the writers as living in src/configuracion.rs
+    (9 writes). AC-1 as written ("nowhere under crates/hexcell") also captures tests/configuracion.rs
+    (66 writes, 708 lines) and tests/promocion.rs (6 writes, 458 lines). The test-side rewrite is the
+    dominant cost of this task, which is why per_class limits favour tests over src.
+  - >-
+    SECOND AND THIRD RACE INSTANCES. tests/configuracion.rs writes the environment and calls
+    std::env::temp_dir 15 times in the SAME binary; tests/promocion.rs mutates the environment with no
+    lock at all. Fixing only the lib binary would leave two live instances of the same undefined
+    behaviour.
+  - >-
+    SPEC MISMATCH (STATUS.md). The spec constraint says STATUS.md must replace "any text that describes
+    it as unexplained". Measured: docs/STATUS.md contains NO such text (grep for flaky/intermitente/
+    inexplicable returns nothing). The implementer must ADD a new Definido entry, not replace one.
+  - >-
+    MULTIPLE PRODUCTION ENTRY POINTS. AC-2 says "the production entry point" (singular). There are four
+    reader groups - Configuracion::desde_entorno (main.rs:84), respaldar::ejecutar_cli (main.rs:81),
+    emparejar::ejecutar_cli (main.rs:78) and the two promocion free functions. All four must be
+    parameterised or AC-1's grep passes while env coupling survives.
+  - >-
+    OUT OF SCOPE BY DECISION. procesador.rs:300 and :364 build temp directories with the same
+    clock-granularity naming as motor.rs:515, but no acceptance criterion covers them and the spec's
+    non_goals discourage widening. Left for a follow-up task and forbidden in the contract to prevent
+    scope creep; the collision risk is benign once no thread writes the environment.
+  - >-
+    FLAKY BASELINE. cargo test --workspace currently fails about 4 percent of runs because of this very
+    defect. A single green run is not evidence of a fix; only AC-5's 25-run loop is.
+  - >-
+    ADVISORY (HSME memory 1245). The repository already ruled that deterministic testing requires an
+    injected trait rather than mocking ambient state. Memory 1894 records this defect's diagnosis and
+    names HEX-058 as its fix task; both corroborate the chosen shape.

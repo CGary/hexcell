@@ -1,0 +1,59 @@
+acceptance:
+- given: the current test suite mutates HEXCELL_ID_CELULA, HEXCELL_RUTA_DATOS and HEXCELL_CONCURRENCIA_LIMITE inside unsafe blocks in crates/hexcell/src/configuracion.rs
+  id: AC-1
+  statement: 'No test in crates/hexcell mutates the process environment: std::env::set_var and std::env::remove_var appear nowhere under crates/hexcell, and the module-local BLOQUEO_ENTORNO mutex is gone because nothing needs serialising any more.'
+  then: a repository-wide grep for set_var/remove_var under crates/hexcell returns nothing, and the tests that previously mutated the environment assert the same behaviour through the injected source
+  when: the configuration source is injectable and tests supply an in-memory source
+- given: 35 call sites in crates/hexcell/src read the environment through std::env::var
+  id: AC-2
+  statement: 'Production behaviour is unchanged: the binary still reads its configuration from the real process environment, with the same variable names, the same defaults and the same parsing and validation semantics as today.'
+  then: every existing configuration test still passes unmodified in intent, and the production entry point supplies a source backed by the real environment
+  when: they are routed through the injected source
+- given: crates/hexcell/src/motor.rs lines 516-519 currently do let _ = std::fs::create_dir_all(&dir) followed by a bare panic!() when GestorDePools::abrir fails
+  id: AC-3
+  statement: 'The motor test helper no longer discards the evidence of its own failure: the directory-creation error is propagated or asserted rather than dropped with let _ =, and the pool-open failure panics with a message naming the path and the underlying error instead of a bare panic!().'
+  then: the panic message states the directory path and the underlying error, so a future intermittent failure is diagnosable from the test output alone
+  when: the helper fails for any reason
+- given: the helper currently names the directory from the process id plus a SystemTime nanosecond reading, which two concurrent tests can in principle read identically
+  id: AC-4
+  statement: The temporary-directory name used by the motor test helper cannot collide between two tests in the same process.
+  then: the names are distinct by construction (for example a process-wide atomic counter) rather than by relying on clock granularity
+  when: two tests construct a helper concurrently
+- given: the reproduction script used to characterise the defect
+  id: AC-5
+  statement: 'The regression is demonstrated empirically: cargo test --workspace run 25 times consecutively produces zero failures, where the same loop on the current main reproduces the failure (measured 2026-09-01: 1 failure in 25 runs, panicking at crates/hexcell/src/motor.rs:518).'
+  then: 25 consecutive workspace runs exit 0
+  when: it is run against the fix
+- id: AC-6
+  statement: cargo fmt --check exits 0.
+- id: AC-7
+  statement: cargo clippy --workspace -- -D warnings exits 0.
+- id: AC-8
+  statement: 'cargo test --workspace exits 0, with output captured and no automatic retries (reintentos: 0).'
+constraints:
+- The 35 environment read sites are concentrated in crates/hexcell/src/configuracion.rs; the blueprint must confirm the exact count and whether any live outside that module before sizing the contract.
+- 'The injected source must not become a new global: passing it as a parameter or holding it in the configuration struct is acceptable; a static or thread_local reintroduces the coupling this task removes.'
+- If an ADR is warranted for the injectable configuration source, it takes the next correlative number after adr-0027 (HEX-057-b) and never rewrites or renumbers an earlier one.
+- docs/STATUS.md must record that the previously undiagnosed intermittent workspace test failure is now characterised and closed, replacing any text that describes it as unexplained.
+goal: Make hexcell configuration read its values from an INJECTABLE source rather than reading std::env directly at every call site, so tests never mutate the process environment. This eliminates the undefined-behaviour data race that has produced an intermittent, uncharacterised cargo test --workspace failure across several tasks, and removes the two silent-failure patterns in the motor test helper that destroyed the diagnostic evidence each time it fired.
+invariants:
+- 'The root cause is a genuine data race, not a flaky assertion: std::env::set_var is unsafe in edition 2024 (Cargo.toml:19) because glibc setenv can reallocate the environ array while another thread reads it. crates/hexcell/src/configuracion.rs:740 mutates the environment under a module-local mutex that only other configuracion tests take, while crates/hexcell/src/motor.rs:515 calls std::env::temp_dir() (a getenv) on a parallel thread in the SAME test binary without that mutex. Any fix that leaves one thread writing the environment while another reads it has not fixed the defect.'
+- 'Serialising the test binary with --test-threads=1 is NOT an acceptable fix: it hides the next race instead of removing this one, and was explicitly rejected by the human on 2026-09-01.'
+- 'Moving the environment-mutating tests to a separate integration binary is NOT the chosen fix either: it closes the hole today but any future test added to that binary that reads the environment reopens it silently. Rejected by the human on 2026-09-01 in favour of injection.'
+- 'The injection follows the precedent already established in this repository for deterministic testing: domain types take an injectable clock (RelojDePrueba / RelojDelSistema) rather than mocking SystemTime. The configuration source is the same shape of solution applied to the same class of problem.'
+- crates/hexcell-core keeps an empty dependency table (adr-0002); nothing from this task lands there.
+- No rusqlite usage in crates/hexcell (adr-0010); rusqlite stays pinned at 0.39.
+- No new runtime dependencies.
+- Never version *.db, *.db-wal, *.db-shm, or .env* files. No secrets - this repository is PUBLIC.
+- Conventional commits in Spanish, no AI attribution.
+- 'All repository content in Spanish: identifiers, comments, test names, commit messages. Comments must be didactic - explain WHY, not WHAT.'
+- Absolute dates only (2026-09-01), never relative.
+- Any discard is logged in docs/bitacora-de-descartes.md in the same commit that discards it, with correlative numbering continuing after D-32 (HEX-057-b).
+non_goals:
+- Changing which configuration variables exist, their names, their defaults or their validation rules.
+- Refactoring the configuration parsing logic beyond what routing it through the injected source requires.
+- The RAG retrieval engine (plan task 9), the internal admin endpoint (task 10), the switchover stress test (task 11) or the backup interaction (task 12).
+- Auditing environment usage in other crates; their tests run in separate binaries and are not part of this race.
+risk: medium
+summary: Inject the configuration source so tests never mutate std::env, closing the process-environment data race in the hexcell test binary.
+task_id: HEX-058
