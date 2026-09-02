@@ -31,6 +31,18 @@ jobs:
       - name: cargo test --workspace
         run: cargo test --workspace
 
+      # adr-0028 declara que esta prohibicion se verifica mecanicamente en CI. Hasta el 2026-09-02
+      # esa afirmacion era falsa: la guarda vivia solo en los verify.commands de HEX-058 y HEX-059,
+      # que dejaron de ejecutarse en cuanto esas tareas cerraron. Un invariante permanente
+      # custodiado por un chequeo que caduca no es un invariante, es una intencion. Este paso lo
+      # convierte en lo que el ADR ya decia que era.
+      - name: Ningun archivo de crates/hexcell escribe el entorno del proceso
+        run: |
+          ! grep -rn --include='*.rs' \
+              -e 'std::env::set_var' -e 'std::env::remove_var' \
+              -e 'BLOQUEO_ENTORNO' -e 'CERROJO_DE_ENTORNO' \
+              crates/hexcell/
+
   go:
     name: Go — build, vet y test del sidecar
     runs-on: ubuntu-latest
