@@ -6,8 +6,8 @@ mod comun;
 use comun::DirectorioTemporal;
 use hexcell_storage::{
     BUSY_TIMEOUT, CONEXIONES_DE_LECTURA_DE_CONOCIMIENTO, ErrorDeAlmacen, GestorDePools,
-    NOMBRE_DE_ARCHIVO_DE_CONOCIMIENTO, NOMBRE_DE_ARCHIVO_DE_SESIONES, SUFIJO_DE_ARCHIVO_WAL,
-    Vitalidad,
+    NOMBRE_DE_ARCHIVO_DE_CONOCIMIENTO, NOMBRE_DE_ARCHIVO_DE_SESIONES, PoolDeConocimiento,
+    SUFIJO_DE_ARCHIVO_WAL, Vitalidad,
 };
 use rusqlite::Connection;
 
@@ -358,4 +358,106 @@ fn verificar_guarda_3_enlace_vivo_colgante_en_abrir_falla_sin_crear_base_vacia()
         !destino_inexistente.exists(),
         "la apertura en solo lectura no debe crear ningún archivo en el destino"
     );
+}
+
+#[test]
+fn verificar_ac7_anchura_de_pool_parametrizable() {
+    let directorio = DirectorioTemporal::nuevo("pools-anchura-ac7");
+    let gestor_defecto = GestorDePools::abrir(directorio.ruta()).expect("abrir gestor por defecto");
+
+    // La anchura por omisión es 2
+    assert_eq!(gestor_defecto.anchura_de_lecturas_de_conocimiento(), 2);
+    assert_eq!(gestor_defecto.conocimiento().anchura_de_lecturas(), 2);
+
+    let ruta_conocimiento = directorio.ruta().join(NOMBRE_DE_ARCHIVO_DE_CONOCIMIENTO);
+
+    // abrir_sobre conserva la anchura 2 por omisión
+    let pool_defecto = PoolDeConocimiento::abrir_sobre(&ruta_conocimiento).expect("abrir_sobre");
+    assert_eq!(pool_defecto.anchura_de_lecturas(), 2);
+
+    // abrir_sobre_con_anchura(ruta, 5) construye un pool de anchura 5
+    let pool_ancho =
+        PoolDeConocimiento::abrir_sobre_con_anchura(&ruta_conocimiento, 5).expect("abrir 5");
+    assert_eq!(pool_ancho.anchura_de_lecturas(), 5);
+
+    // abrir_sobre_con_anchura(ruta, 0) falla de inmediato con PoolDeConocimientoVacio
+    let res_cero = PoolDeConocimiento::abrir_sobre_con_anchura(&ruta_conocimiento, 0);
+    assert!(matches!(
+        res_cero,
+        Err(ErrorDeAlmacen::PoolDeConocimientoVacio)
+    ));
+
+    // GestorDePools::abrir_con_anchura_de_conocimiento(ruta, 5) configura la anchura 5
+    let dir2 = DirectorioTemporal::nuevo("pools-anchura-gestor-ac7");
+    let gestor_ancho = GestorDePools::abrir_con_anchura_de_conocimiento(dir2.ruta(), 5)
+        .expect("abrir gestor ancho");
+    assert_eq!(gestor_ancho.anchura_de_lecturas_de_conocimiento(), 5);
+    assert_eq!(gestor_ancho.conocimiento().anchura_de_lecturas(), 5);
+}
+
+#[test]
+fn verificar_ac7_anchura_configurada_sobrevive_a_promocion_y_reversion() {
+    use hexcell_core::fragmentacion::ConfiguracionDeFragmentacion;
+    use hexcell_storage::conocimiento::NOMBRE_DE_ARCHIVO_DE_CONOCIMIENTO_EN_SOMBRA;
+    use hexcell_storage::migraciones::aplicar_migraciones_de_conocimiento;
+    use hexcell_storage::promocion::promover_epoca;
+    use hexcell_storage::reversion::revertir_a_epoca;
+
+    let dir = DirectorioTemporal::nuevo("pools-anchura-conmutacion-ac7");
+    let gestor = GestorDePools::abrir_con_anchura_de_conocimiento(dir.ruta(), 5)
+        .expect("abrir gestor con 5");
+    assert_eq!(gestor.conocimiento().anchura_de_lecturas(), 5);
+
+    // Crear base de staging válida
+    let ruta_staging = dir.ruta().join(NOMBRE_DE_ARCHIVO_DE_CONOCIMIENTO_EN_SOMBRA);
+    let conexion = Connection::open(&ruta_staging).unwrap();
+    conexion.execute("PRAGMA foreign_keys = ON;", []).unwrap();
+    aplicar_migraciones_de_conocimiento(&conexion).unwrap();
+    conexion
+        .execute(
+            "UPDATE metadatos_de_epoca SET dimension_de_embedding = 4 WHERE id = 1",
+            [],
+        )
+        .unwrap();
+    conexion
+        .execute(
+            "INSERT INTO documentos VALUES (1, 'ref1', 't', 'c', 1000)",
+            [],
+        )
+        .unwrap();
+    let bytes = vec![1.0f32; 4]
+        .iter()
+        .flat_map(|v| v.to_le_bytes())
+        .collect::<Vec<u8>>();
+    conexion
+        .execute("INSERT INTO fragmentos VALUES (1, 1, 0, 't')", [])
+        .unwrap();
+    conexion
+        .execute(
+            "INSERT INTO vectores_de_fragmento VALUES (1, ?1)",
+            rusqlite::params![bytes],
+        )
+        .unwrap();
+    conexion
+        .execute(
+            "INSERT INTO sonda_semantica VALUES (1, 'c', ?1, 0.5, 1000)",
+            rusqlite::params![bytes],
+        )
+        .unwrap();
+    drop(conexion);
+
+    let config = ConfiguracionDeFragmentacion {
+        tamano_de_fragmento: 1,
+        solapamiento: 0,
+    };
+    promover_epoca(&gestor, dir.ruta(), &config, 10_000).expect("promover época");
+
+    // Tras la promoción, el pool recién instalado debe conservar la anchura 5
+    assert_eq!(gestor.conocimiento().anchura_de_lecturas(), 5);
+
+    // Revertir a la época 1
+    revertir_a_epoca(&gestor, dir.ruta(), &config, 1).expect("revertir a época 1");
+
+    // Tras la reversión, el pool recién instalado también conserva la anchura 5
+    assert_eq!(gestor.conocimiento().anchura_de_lecturas(), 5);
 }

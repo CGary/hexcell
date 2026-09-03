@@ -43,6 +43,7 @@ pub mod pools;
 /// Módulo de contabilidad y presupuesto en dos fases (reservas y movimientos).
 pub mod presupuesto;
 pub mod promocion;
+pub mod recuperacion;
 pub mod respaldo;
 pub mod retencion;
 pub mod reversion;
@@ -78,6 +79,7 @@ pub use promocion::{
     numero_de_epoca_siguiente, promover_epoca, reasignar_enlace_de_la_epoca_viva,
     reasignar_enlace_simbolico_vivo, sellar_y_consolidar_staging,
 };
+pub use recuperacion::recuperar_contexto;
 pub use respaldo::{CopiaVerificada, respaldar_base, verificar_destino_disponible};
 pub use retencion::{
     DesenlaceDePurga, EpocaConservada, EpocaPurgada, MarcaDeEpocaSospechosa, MotivoDeConservacion,

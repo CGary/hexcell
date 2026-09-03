@@ -451,7 +451,10 @@ pub fn promover_epoca(
         reasignar_enlace_de_la_epoca_viva(ruta_datos, &ruta_staging, numero_siguiente)?;
 
     // Paso 5: Precalentar las conexiones del nuevo pool sobre la ruta explícita de la época.
-    let nuevo_pool = Arc::new(PoolDeConocimiento::abrir_sobre(&ruta_epoca)?);
+    let nuevo_pool = Arc::new(PoolDeConocimiento::abrir_sobre_con_anchura(
+        &ruta_epoca,
+        gestor.anchura_de_lecturas_de_conocimiento(),
+    )?);
 
     // Capturar el estado de la época previa antes del intercambio atómico.
     let pool_anterior = gestor.conocimiento();

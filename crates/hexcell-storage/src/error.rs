@@ -141,6 +141,18 @@ pub enum ErrorDeAlmacen {
         /// Motivo del fallo al inspeccionar la época viva.
         motivo: String,
     },
+    /// La dimensión del vector de consulta difiere de la dimensión declarada por la época viva.
+    DimensionDeConsultaDiscrepante {
+        /// Dimensión del vector de consulta presentado por el solicitante.
+        dimension_de_consulta: i64,
+        /// Dimensión de embedding declarada en metadatos_de_epoca.
+        dimension_de_epoca: i64,
+    },
+    /// El vector de un fragmento no se pudo decodificar o no es comparable por similitud coseno.
+    VectorDeFragmentoIncomparable {
+        /// Identificador del fragmento cuyo vector causó la anomalía.
+        id_fragmento: i64,
+    },
 }
 
 impl ErrorDeAlmacen {
@@ -253,6 +265,17 @@ impl fmt::Display for ErrorDeAlmacen {
                 "no se pudo identificar el número intrínseco de la época viva en {}: {motivo}",
                 ruta.display()
             ),
+            Self::DimensionDeConsultaDiscrepante {
+                dimension_de_consulta,
+                dimension_de_epoca,
+            } => write!(
+                f,
+                "dimensión del vector de consulta ({dimension_de_consulta}) discrepa de la dimensión declarada por la época viva ({dimension_de_epoca})"
+            ),
+            Self::VectorDeFragmentoIncomparable { id_fragmento } => write!(
+                f,
+                "el vector del fragmento {id_fragmento} no es comparable contra el vector de consulta"
+            ),
         }
     }
 }
@@ -277,6 +300,8 @@ impl std::error::Error for ErrorDeAlmacen {
             Self::MarcaDeEpocaIlegible { .. } => None,
             Self::NumeroDeMarcaDiscrepante { .. } => None,
             Self::EpocaVivaNoIdentificable { .. } => None,
+            Self::DimensionDeConsultaDiscrepante { .. } => None,
+            Self::VectorDeFragmentoIncomparable { .. } => None,
         }
     }
 }
