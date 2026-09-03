@@ -1,0 +1,71 @@
+acceptance:
+- given: 'the live knowledge epoch is reachable only through GestorDePools::conocimiento(), which reads the ArcSwap pointer, and the stage deliverable requires a module that consumes the live pool without knowing its epoch'
+  id: AC-1
+  statement: 'The retrieval engine resolves the live pool through the ArcSwap on every call and holds that Arc for the whole scan, never caching a pool between calls and never resolving an epoch by file name or by number.'
+  when: 'an epoch promotion swaps the pool between two retrieval calls'
+  then: 'the second call serves results from the new epoch without any restart, and while a scan is in flight the strong count of the pool Arc is above one, so the drain sequence of HEX-056 still observes the reader and waits for it'
+- given: 'two fragments can score the same cosine similarity, and this repository has just spent two tasks (HEX-058, HEX-059) eliminating non-deterministic behaviour from its own tests'
+  id: AC-2
+  statement: 'The engine returns at most the configured number of fragments, ordered by descending cosine similarity, with ties broken by a deterministic and documented rule.'
+  when: 'two or more fragments tie on similarity'
+  then: 'the ordering is fixed by the tie-break rule rather than by row order or by sort instability, so the same epoch and the same query always produce the same result'
+- given: 'an epoch may legitimately contain no fragment relevant to a given query, and an epoch may legitimately hold no fragments at all'
+  id: AC-3
+  statement: 'Fragments scoring below the configured similarity threshold are excluded, and a result carrying zero fragments is an empty context, never an error.'
+  when: 'no fragment reaches the threshold, or the epoch holds no fragments'
+  then: 'the call returns an empty typed context, and the caller distinguishes that outcome from a failure by type rather than by inspecting a message'
+- given: 'similitud_coseno returns None for a length mismatch, for a zero norm and for a NaN or infinite component, while the CHECK on vectores_de_fragmento deliberately does not enforce a uniform dimension (0002-esquema-de-conocimiento.sql, lines 38-43)'
+  id: AC-4
+  statement: 'A stored vector that cannot be compared against the query aborts the retrieval with a named error identifying the offending fragment. It is never skipped silently and never scored as zero.'
+  when: 'the scan reaches a fragment whose vector yields None from similitud_coseno'
+  then: 'the call fails with that error, because a live epoch in this state means validar_integridad_del_indice was bypassed upstream, and dropping the fragment quietly would degrade every future answer with no signal at all'
+- given: 'metadatos_de_epoca.dimension_de_embedding records the number of f32 values per vector for that epoch (0002-esquema-de-conocimiento.sql, line 100)'
+  id: AC-5
+  statement: 'A query vector whose dimension does not match the dimension declared by the live epoch is rejected before any fragment is scanned.'
+  when: 'the caller supplies a vector of the wrong dimension'
+  then: 'the call fails immediately with a named error, instead of scanning every fragment of the epoch only to return an empty result'
+- given: 'the human decided on 2026-09-02 that the engine returns a typed structure rather than a pre-assembled string, so that the customer text and the retrieved knowledge stay separable for observability, for testing and as a prompt-injection boundary'
+  id: AC-6
+  statement: 'The retrieval result is a typed structure declared in crates/hexcell-core carrying, for each selected fragment, its identity, its text and its similarity score.'
+  when: 'cargo tree -p hexcell-core is run'
+  then: 'no external dependency appears, and the assembly of the final prompt string is left to the inference adapter rather than performed inside the engine'
+- given: 'PoolDeConocimiento opens CONEXIONES_DE_LECTURA_DE_CONOCIMIENTO = 2 read connections (pools.rs, line 73) and its own design comment justifies that number by assuming low conversational traffic, while plan task 11 requires a switchover under 20 simultaneous RAG reads'
+  id: AC-7
+  statement: 'The number of knowledge read connections is a parameter whose default remains 2, and the existing constructors keep their current signatures and behaviour so that no current caller changes.'
+  when: 'plan task 11 later needs to measure a wider pool'
+  then: 'it sets the width through the parameter without reopening pools.rs, and every existing test passes unchanged because the default is untouched'
+- id: AC-8
+  statement: 'cargo fmt --check exits 0.'
+- id: AC-9
+  statement: 'cargo clippy --workspace -- -D warnings exits 0.'
+- id: AC-10
+  statement: 'cargo test --workspace exits 0.'
+constraints:
+- 'The engine lives in crates/hexcell-storage, which is executor-free: no tokio, no async, no .await.'
+- 'Similarity uses the existing hexcell_core::similitud::similitud_coseno. No second cosine implementation is written.'
+- 'The scan is brute force over all fragments of the epoch. This is already fixed normatively by 0002-esquema-de-conocimiento.sql line 21 (no SQLite extension, no external vector index) and is not reopened here.'
+- 'The query vector arrives as a parameter (human decision, 2026-09-02). The engine performs no network call and touches no budget accounting.'
+- 'The retrieval configuration type sits beside ConfiguracionDeFragmentacion in crates/hexcell-core/src, for consistency with the existing shape.'
+- 'If an ADR is warranted it takes number 0029, the next correlative after adr-0028. An earlier ADR is never rewritten, renumbered or reordered; a repealed decision is superseded by a new one.'
+- 'Any new discard continues after D-34 in docs/bitacora-de-descartes.md and is logged in the same commit that discards it.'
+invariants:
+- 'crates/hexcell-core keeps an empty dependency table (adr-0002), verifiable with cargo tree -p hexcell-core.'
+- 'No rusqlite in crates/hexcell (adr-0010). rusqlite stays pinned at 0.39.'
+- 'crates/hexcell-storage stays free of any executor.'
+- 'No file under crates/hexcell writes the process environment (adr-0028). The CI grep guard must keep exiting 0.'
+- 'The drain contract of HEX-056 must keep holding: drenar_epoca_superseida observes in-flight readers through lecturas_en_reposo() and Arc::strong_count, so a retrieval in progress has to be visible to both.'
+- 'The ingestion, promotion, reversion, drain and purge sequences are not redesigned by this task.'
+- 'Never version *.db, *.db-wal, *.db-shm or .env* files. No secrets: this repository is PUBLIC.'
+- 'Conventional commits in Spanish, with no AI attribution.'
+- 'All repository content in Spanish: identifiers, comments, test names, commit messages. Comments must be didactic and explain WHY, not WHAT.'
+- 'Absolute dates only (2026-09-02), never relative.'
+non_goals:
+- 'Wiring the retrieval into the inference pipeline. No change to procesador.rs, to PeticionDeInferencia or to the budget flow. This is the human decision of 2026-09-02 and belongs to the next task, not this one.'
+- 'Producing the embedding of the user query, which is the network call and the budget reservation of that next task.'
+- 'Plan task 10 (internal admin update endpoint), task 11 (switchover stress test) and task 12 (backup interaction).'
+- 'Changing the default read-pool width away from 2.'
+- 'Any vector index, SQLite extension or approximate-nearest-neighbour structure.'
+risk: medium
+summary: 'Add the RAG retrieval engine that scans the live knowledge epoch by cosine, returns a typed context, and turns the read-pool width into a parameter.'
+goal: 'Deliver task 9 of stage A-5. A synchronous retrieval engine in hexcell-storage scans the live knowledge epoch with the cosine already available in hexcell-core, selects the most relevant fragments and returns them as a typed context. The query vector is a parameter, so the engine performs no network call and no budget accounting. The knowledge read-pool width becomes a parameter so that task 11 can measure concurrency instead of assuming it.'
+task_id: HEX-060

@@ -1,0 +1,316 @@
+task_id: HEX-060
+summary: >-
+  Add a synchronous RAG retrieval engine in hexcell-storage that scans the live epoch by cosine and
+  returns a typed context declared in hexcell-core, plus an additive read-pool width parameter.
+affected_files:
+  - crates/hexcell-core/src/recuperacion.rs
+  - crates/hexcell-core/src/lib.rs
+  - crates/hexcell-storage/src/recuperacion.rs
+  - crates/hexcell-storage/src/error.rs
+  - crates/hexcell-storage/src/pools.rs
+  - crates/hexcell-storage/src/promocion.rs
+  - crates/hexcell-storage/src/reversion.rs
+  - crates/hexcell-storage/src/lib.rs
+  - crates/hexcell-storage/tests/recuperacion.rs
+  - crates/hexcell-storage/tests/pools.rs
+symbols:
+  - hexcell_core::recuperacion::ConfiguracionDeRecuperacion
+  - hexcell_core::recuperacion::FragmentoRecuperado
+  - hexcell_core::recuperacion::ContextoRecuperado
+  - hexcell_core::recuperacion::ordenar_por_relevancia
+  - hexcell_storage::recuperacion::recuperar_contexto
+  - hexcell_storage::error::ErrorDeAlmacen::DimensionDeConsultaDiscrepante
+  - hexcell_storage::error::ErrorDeAlmacen::VectorDeFragmentoIncomparable
+  - hexcell_storage::pools::PoolDeConocimiento::abrir_sobre_con_anchura
+  - hexcell_storage::pools::PoolDeConocimiento::anchura_de_lecturas
+  - hexcell_storage::pools::GestorDePools::abrir_con_anchura_de_conocimiento
+  - hexcell_storage::pools::GestorDePools::anchura_de_lecturas_de_conocimiento
+dependencies:
+  - crates/hexcell-core/src/similitud.rs
+  - crates/hexcell-core/src/embeddings.rs
+  - crates/hexcell-core/src/fragmentacion.rs
+  - crates/hexcell-storage/src/validacion.rs
+  - crates/hexcell-storage/src/drenaje.rs
+  - crates/hexcell-storage/src/conocimiento.rs
+  - crates/hexcell-storage/migraciones/conocimiento/0002-esquema-de-conocimiento.sql
+  - crates/hexcell-storage/tests/comun/mod.rs
+  - crates/hexcell-storage/tests/drenaje.rs
+  - crates/hexcell-storage/tests/validacion.rs
+test_scenarios:
+  - statement: >-
+      EPOCH SWAP ACROSS CALLS (AC-1 guard, mutation-disjoint). Build a GestorDePools, run a
+      retrieval, then swap the knowledge pool through intercambiar_pool_de_conocimiento to an epoch
+      whose fragments carry different text, then run the retrieval again with the same query. The
+      second call must return the NEW epoch's text. This test fails if and only if the engine caches
+      the Arc between calls instead of calling gestor.conocimiento() every time; it cannot be made
+      green by the AC-4 or AC-5 guards. No file name and no epoch number is ever passed to the engine.
+    covers:
+      - AC-1
+  - statement: >-
+      SINGLE HELD ARC ACROSS THE WHOLE SCAN (AC-1, deterministic, no racing observer). Obtain the pool
+      the same way the engine does (let pool = gestor.conocimiento()) and assert
+      Arc::strong_count(&pool) == 2 while it is held, mirroring tests/drenaje.rs line 183; then, from
+      inside a pool.con_lectura(...) closure, assert that pool.lecturas_en_reposo() is false. Together
+      these prove, without threads or sleeps, that a scan performed as one con_lectura call under a
+      held Arc is visible to BOTH sides of the HEX-056 drain predicate. Determinism is deliberate:
+      HEX-058 and HEX-059 removed clock- and scheduler-dependent tests from this repository.
+    covers:
+      - AC-1
+  - statement: >-
+      DRAIN STILL WAITS FOR A READER (AC-1). With a superseded epoch descriptor and an Arc clone held
+      exactly as the engine holds it, drenar_epoca_superseida must NOT declare the epoch drained;
+      after the clone is dropped it must drain. This is the existing tests/drenaje.rs shape applied to
+      the retrieval-shaped holder, and it fails if the engine's Arc-holding discipline is dropped.
+    covers:
+      - AC-1
+  - statement: >-
+      TIE-BREAK IS DETERMINISTIC AND PURE (AC-2, unit test in hexcell-core). Two fragments carrying the
+      identical vector tie on cosine; ordenar_por_relevancia must place the lower id_fragmento first,
+      and repeating the call on the same input must yield byte-identical ordering. Include a case whose
+      input is already in the wrong order so the test fails if the sort is removed, and a case with a
+      non-finite score to prove the comparator is a total order (f32::total_cmp) that never panics
+      rather than a partial_cmp().unwrap().
+    covers:
+      - AC-2
+  - statement: >-
+      LIMIT AND ORDER OVER A REAL EPOCH (AC-2). With five fragments of distinct similarity and
+      maximo_de_fragmentos = 3, the engine returns exactly three fragments in strictly descending
+      similarity, and the same query on the same epoch returns the identical sequence on a second call.
+    covers:
+      - AC-2
+  - statement: >-
+      EMPTY IS A CONTEXT, NOT A FAILURE (AC-3). Two cases, both asserting Ok with an empty
+      ContextoRecuperado and never an Err: (a) an epoch whose fragments all score below
+      umbral_de_similitud, and (b) an epoch with metadatos_de_epoca present but zero rows in
+      fragmentos. The caller must distinguish the outcome by the returned type, so the assertion is on
+      the typed value, never on an error message string.
+    covers:
+      - AC-3
+  - statement: >-
+      INCOMPARABLE VECTOR ABORTS AND NAMES THE FRAGMENT (AC-4 guard, mutation-disjoint). Two sub-cases
+      built so that the AC-5 pre-scan check passes (query dimension equals the epoch dimension):
+      (a) a stored vector whose byte length is a multiple of 4 but not 4 * dimension_de_embedding, which
+      the schema CHECK deliberately permits (0002-esquema-de-conocimiento.sql lines 38-43), and (b) a
+      stored vector of the correct length whose components are all zero, which yields a zero norm. Both
+      must return Err(VectorDeFragmentoIncomparable { id_fragmento }) carrying the offending row id.
+      Neutralizing this guard turns both cases into Ok with a silently shorter context, which the test
+      detects; neither case can be made green by the AC-5 guard, because the query dimension is correct.
+    covers:
+      - AC-4
+  - statement: >-
+      WRONG QUERY DIMENSION IS REJECTED BEFORE ANY SCAN (AC-5 guard, mutation-disjoint). Against an
+      epoch declaring dimension_de_embedding = 768 and holding well-formed fragments, a query vector of
+      a different length must return Err(DimensionDeConsultaDiscrepante) naming both dimensions. The
+      epoch used here contains only comparable vectors, so the AC-4 guard cannot produce this error; and
+      because the check is pre-scan, an epoch holding ONE incomparable fragment plus a wrong-dimension
+      query must still surface DimensionDeConsultaDiscrepante, never VectorDeFragmentoIncomparable.
+      That ordering assertion is what fails if the check is moved inside the loop.
+    covers:
+      - AC-5
+  - statement: >-
+      TYPED RESULT, ZERO CORE DEPENDENCIES, NO PROMPT ASSEMBLY (AC-6). The returned ContextoRecuperado
+      exposes, per selected fragment, its id_fragmento, its texto and its similitud as separate typed
+      fields; there is no method and no field on any of the new hexcell-core types that concatenates
+      them into a prompt string. cargo tree -p hexcell-core must still print exactly one line
+      (the crate itself) with no dependency underneath it.
+    covers:
+      - AC-6
+  - statement: >-
+      READ-POOL WIDTH IS A PARAMETER WITH AN UNCHANGED DEFAULT (AC-7). PoolDeConocimiento::abrir_sobre
+      keeps its current signature and yields anchura_de_lecturas() == CONEXIONES_DE_LECTURA_DE_CONOCIMIENTO
+      == 2; abrir_sobre_con_anchura(ruta, 5) yields 5; abrir_sobre_con_anchura(ruta, 0) returns
+      Err(ErrorDeAlmacen::PoolDeConocimientoVacio) at construction rather than deferring the failure to
+      the first read. GestorDePools::abrir keeps its signature and its default width, and
+      abrir_con_anchura_de_conocimiento(ruta, 5) reports 5 through
+      anchura_de_lecturas_de_conocimiento(). Every pre-existing test in tests/pools.rs,
+      tests/promocion.rs, tests/reversion.rs and tests/drenaje.rs passes unchanged.
+    covers:
+      - AC-7
+  - statement: >-
+      THE CONFIGURED WIDTH SURVIVES A SWITCHOVER (AC-7). After opening a GestorDePools with width 5 and
+      promoting an epoch (promover_epoca) and then reverting one (revertir_a_epoca), the pool installed
+      by each sequence still reports anchura_de_lecturas() == 5. Without this, plan task 11 would have to
+      reopen promocion.rs and reversion.rs, which AC-7 explicitly forbids.
+    covers:
+      - AC-7
+  - statement: >-
+      cargo fmt --check, cargo clippy --workspace -- -D warnings and cargo test --workspace all exit 0,
+      and cargo tree -p hexcell-core prints no dependency.
+    covers:
+      - AC-6
+      - AC-8
+      - AC-9
+      - AC-10
+strategy:
+  - step: 1
+    action: >-
+      VALUE OBJECTS IN THE DOMAIN. Create crates/hexcell-core/src/recuperacion.rs beside
+      fragmentacion.rs and declare it in lib.rs. It holds three value objects and one pure function,
+      all on std only (adr-0002): ConfiguracionDeRecuperacion { maximo_de_fragmentos: usize,
+      umbral_de_similitud: f32 } shaped exactly like ConfiguracionDeFragmentacion;
+      FragmentoRecuperado { id_fragmento: i64, texto: String, similitud: f32 }; ContextoRecuperado
+      wrapping Vec<FragmentoRecuperado> with an esta_vacio()/fragmentos() pair so an empty context is
+      an ordinary typed value (AC-3, AC-6). No Eq derive on the float-carrying types, following the
+      documented reason already written on MotivoDeRechazo in validacion.rs.
+    files:
+      - crates/hexcell-core/src/recuperacion.rs
+      - crates/hexcell-core/src/lib.rs
+  - step: 2
+    action: >-
+      THE TIE-BREAK AS A PURE, TESTABLE FUNCTION, NOT A COMMENT. In the same module add
+      ordenar_por_relevancia(&mut Vec<FragmentoRecuperado>), which sorts by descending similitud using
+      f32::total_cmp and breaks ties by ascending id_fragmento. total_cmp is chosen over
+      partial_cmp().unwrap() because it is a total order that cannot panic on a value that should not
+      exist, which is the same doctrine validacion.rs already applies when it refuses to lean its
+      gravest decision on another module's promise. Keeping the rule in hexcell-core makes AC-2
+      provable with no database at all. Document WHY ascending id breaks the tie: the row id is the
+      only intrinsic, stable and total key the epoch offers, so the ordering does not depend on SQLite
+      row order or on sort stability (AC-2).
+    files:
+      - crates/hexcell-core/src/recuperacion.rs
+  - step: 3
+    action: >-
+      TWO NAMED ERRORS IN THE EXISTING STORAGE ERROR TYPE. Add to ErrorDeAlmacen the variants
+      DimensionDeConsultaDiscrepante { dimension_de_consulta: i64, dimension_de_epoca: i64 } (AC-5) and
+      VectorDeFragmentoIncomparable { id_fragmento: i64 } (AC-4), each with its Display arm in Spanish
+      naming the offending numbers. They join the crate's single error type rather than a new enum
+      because con_lectura's closure already returns Result<T, ErrorDeAlmacen> and a second error type
+      would force a conversion layer that buys nothing. Re-export nothing new from lib.rs for these:
+      ErrorDeAlmacen is already exported.
+    files:
+      - crates/hexcell-storage/src/error.rs
+  - step: 4
+    action: >-
+      THE APPLICATION SERVICE. Create crates/hexcell-storage/src/recuperacion.rs with
+      recuperar_contexto(gestor: &GestorDePools, vector_de_consulta: &[f32], configuracion:
+      &ConfiguracionDeRecuperacion) -> Result<ContextoRecuperado, ErrorDeAlmacen>. Order of operations
+      is load-bearing and must be written in this exact sequence: (1) let pool = gestor.conocimiento()
+      resolves the ArcSwap on THIS call and the Arc is held for everything that follows (AC-1);
+      (2) one single pool.con_lectura(...) call performs the whole scan, so the read Mutex is held for
+      its entire duration and lecturas_en_reposo() reports false to the drain (AC-1); (3) inside the
+      closure, read dimension_de_embedding from metadatos_de_epoca and compare it against
+      vector_de_consulta.len() BEFORE preparing any fragment query, returning
+      DimensionDeConsultaDiscrepante on mismatch (AC-5); (4) then stream
+      "SELECT f.id, f.texto, v.vector FROM fragmentos f JOIN vectores_de_fragmento v ON v.id_fragmento
+      = f.id" row by row exactly as validacion.rs streams its vectors, keeping memory flat for NFR-01;
+      (5) for each row, VectorDeEmbedding::desde_bytes_le followed by
+      hexcell_core::similitud::similitud_coseno, and a None from EITHER step returns
+      VectorDeFragmentoIncomparable { id_fragmento } immediately (AC-4) instead of skipping or scoring
+      zero; (6) keep only scores >= umbral_de_similitud (AC-3); (7) call ordenar_por_relevancia and
+      truncate to maximo_de_fragmentos (AC-2). Note the divergence from validacion.rs on purpose:
+      the validator COUNTS incomparable rows because it is auditing a candidate file, whereas this
+      engine ABORTS because a live epoch in that state means the validator was bypassed upstream.
+      Never open a path, never read a file name, never take an epoch number.
+    files:
+      - crates/hexcell-storage/src/recuperacion.rs
+  - step: 5
+    action: >-
+      ADDITIVE POOL WIDTH. In pools.rs add PoolDeConocimiento::abrir_sobre_con_anchura(ruta, anchura)
+      which returns ErrorDeAlmacen::PoolDeConocimientoVacio when anchura is 0 (failing at construction
+      instead of at the first read) and an anchura_de_lecturas() accessor; rewrite abrir_sobre as a thin
+      delegation passing CONEXIONES_DE_LECTURA_DE_CONOCIMIENTO so its signature, its behaviour and the
+      constant's meaning are untouched. Add the field anchura_de_lecturas_de_conocimiento to
+      GestorDePools plus abrir_con_anchura_de_conocimiento(ruta_datos, anchura) and the getter
+      anchura_de_lecturas_de_conocimiento(); abrir() delegates with the default. The default stays 2:
+      changing it is an explicit non-goal (AC-7).
+    files:
+      - crates/hexcell-storage/src/pools.rs
+  - step: 6
+    action: >-
+      PROPAGATE THE WIDTH THROUGH THE TWO SWITCHOVER SITES. In promocion.rs (the
+      PoolDeConocimiento::abrir_sobre call that warms the new epoch) and reversion.rs (the equivalent
+      call), read the width from the gestor already in scope and use abrir_sobre_con_anchura. This is a
+      one-line substitution at each site with identical behaviour at the default, NOT a redesign of the
+      promotion or reversion sequences, which the spec's invariants protect. Without it a switchover
+      silently narrows the pool back to 2 and plan task 11 would have to reopen these files, which AC-7
+      forbids.
+    files:
+      - crates/hexcell-storage/src/promocion.rs
+      - crates/hexcell-storage/src/reversion.rs
+  - step: 7
+    action: >-
+      EXPORTS. Add pub mod recuperacion and re-export recuperar_contexto from
+      crates/hexcell-storage/src/lib.rs, in the alphabetical position the existing list already uses.
+      Do not re-export the hexcell-core types through hexcell-storage: consumers depend on the domain
+      crate directly, which is the dependency direction lib.rs already documents.
+    files:
+      - crates/hexcell-storage/src/lib.rs
+  - step: 8
+    action: >-
+      TESTS. Write crates/hexcell-storage/tests/recuperacion.rs with a file-private fixture builder
+      that composes ConstructorDeConocimientoEnSombra, DocumentoDeIngesta and VectorDeEmbedding into a
+      live epoch, using comun::DirectorioTemporal::nuevo for isolation. Do NOT add the fixture to
+      tests/comun/mod.rs: no other test binary needs it today, tests/conocimiento.rs and
+      tests/validacion.rs already build their own inline, and comun/mod.rs is compiled into every test
+      binary in this crate. Cover every scenario listed above; add the AC-7 width cases to
+      tests/pools.rs beside the existing abrir_sobre test. Every test name and every comment in Spanish;
+      comments explain WHY the case exists, not what the lines do.
+    files:
+      - crates/hexcell-storage/tests/recuperacion.rs
+      - crates/hexcell-storage/tests/pools.rs
+  - step: 9
+    action: >-
+      DOCUMENTATION OF RECORD. Write docs/adr/adr-0029 for the two decisions that outlive this diff
+      (abort rather than skip an incomparable vector in a live epoch; a typed context rather than a
+      pre-assembled prompt string as a prompt-injection and observability boundary), register it in
+      docs/adr/README.md at the next correlative number without touching any earlier row, and add the
+      A-5 task 9 entry to docs/STATUS.md with the absolute date 2026-09-02. If, and only if, an
+      alternative is actually discarded during implementation, log it in docs/bitacora-de-descartes.md
+      as D-35 in the same commit that discards it; do not invent a discard to fill the slot.
+    files:
+      - docs/adr/adr-0029-motor-de-recuperacion-de-contexto.md
+      - docs/adr/README.md
+      - docs/STATUS.md
+      - docs/bitacora-de-descartes.md
+risks:
+  - >-
+    RISK-1 CONCURRENCY CEILING FOR PLAN TASK 11. With the default width of 2, a stress test that
+    launches 20 simultaneous RAG reads exercises a real concurrency of 2, not 20: con_lectura hands out
+    round-robin over two Mutex-guarded connections, so eighteen callers queue. AC-7 is therefore the
+    prerequisite for task 11 to measure anything, not the measurement itself. This task deliberately
+    does NOT change the default (explicit non-goal); task 11 must open the pool with a width matching
+    its intended concurrency or its numbers describe queueing, not switchover.
+  - >-
+    RISK-2 CPU-BOUND SYNCHRONOUS SCAN IN AN EXECUTOR-FREE CRATE. recuperar_contexto is a brute-force
+    cosine over every fragment of the epoch and blocks its thread for the whole scan while holding one
+    of the two read connections. hexcell-storage is executor-free by invariant, so the future async
+    caller (the wiring task, an explicit non-goal here) must place this call behind spawn_blocking or an
+    equivalent or it will stall a runtime worker of the cell. Nothing in this task can enforce that; it
+    is recorded so the wiring task inherits it rather than rediscovers it in production.
+  - >-
+    RISK-3 SPEC/CI MISMATCH ON THE ENVIRONMENT-WRITE GUARD. 00-spec.yaml's invariants and docs/STATUS.md
+    line 24 both state that the prohibition on writing the process environment under crates/hexcell is
+    "verificada mecanicamente en CI por una guarda de grep". Verified on 2026-09-02:
+    .github/workflows/ci.yml contains no such step (its only grep counts sidecar PASS lines), and no
+    other workflow, script or Makefile carries it. The guard exists solely as a verify.commands line in
+    the HEX-058 and HEX-059 contracts, which do not run in CI. This contract keeps running it so the
+    property stays protected for this task, but the claim of CI enforcement is currently false and
+    belongs to a separate maintenance task. The spec is not rewritten here (Guardrail 6).
+  - >-
+    RISK-4 THE IN-FLIGHT ARC COUNT IS GUARANTEED BY CONSTRUCTION, NOT BY A RACING OBSERVER. AC-1's
+    "strong count above one while a scan is in flight" cannot be asserted deterministically from outside
+    without a thread and a sleep, exactly the shape HEX-058 and HEX-059 spent two tasks removing from
+    this repository. The blueprint therefore proves it structurally (one held Arc, one single
+    con_lectura call for the whole scan) plus a deterministic assertion of both drain predicates on a
+    holder obtained the same way. A reviewer must read step 4's ordering as the guard; if a future
+    refactor splits the scan across several con_lectura calls the structural proof silently lapses.
+  - >-
+    RISK-5 NO EXPLICIT UNIFORM-DIMENSION GUARANTEE INSIDE A LIVE EPOCH. The CHECK on
+    vectores_de_fragmento only enforces length % 4 == 0, by documented design; uniformity is
+    validar_integridad_del_indice's job at promotion time. The engine therefore treats a
+    non-conforming vector as a hard error (AC-4) rather than as an expected shape. Consequence to
+    accept: a single corrupt row makes the whole epoch unanswerable until it is reverted or
+    re-promoted. That is the spec's decision and the reason it is stated as an abort rather than a skip.
+  - >-
+    RISK-6 WIDTH PROPAGATION TOUCHES TWO SWITCHOVER FILES. Step 6 edits promocion.rs and reversion.rs,
+    which the spec's invariants protect from redesign. The change is a one-line substitution per file
+    with byte-identical behaviour at the default width, made because AC-7's "then" clause promises task
+    11 will not have to reopen pools.rs; without propagation it would have to reopen these two files
+    instead. If the human considers even this out of bounds, remove both files from touch before
+    implementation and accept that a promoted or reverted epoch reverts to width 2.
+  - >-
+    ADVISORY, NOT A FINDING. The HSME read hook returned six low-similarity matches (top score 0.016,
+    memory_id 1205 and neighbours) about the plan-wide hardening against "it compiles, therefore it is
+    correct". No prior failed task overlaps these files (quorum analyze failure-lookup returned null).
+    The only transferable lesson is already encoded above as the mutation-disjointness requirement on
+    the AC-1, AC-4 and AC-5 test scenarios.

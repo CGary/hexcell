@@ -1,0 +1,80 @@
+{
+  "task_id": "HEX-060",
+  "executed_at": "2026-09-02T18:45:00Z",
+  "overall_result": "passed",
+  "summary": "12/12 exit 0 sobre d9b1960 en worktrees/HEX-060-new-spec; 71 objetivos en verde. Matriz de mutacion: 5 guardas demostradas.",
+  "commands": [
+    {
+      "command": "cargo fmt --check",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "exit 0"
+    },
+    {
+      "command": "cargo clippy --workspace -- -D warnings",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "exit 0"
+    },
+    {
+      "command": "cargo test -p hexcell-core recuperacion",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "exit 0"
+    },
+    {
+      "command": "cargo test -p hexcell-storage --test recuperacion",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "exit 0"
+    },
+    {
+      "command": "cargo test -p hexcell-storage --test pools",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "exit 0"
+    },
+    {
+      "command": "cargo test -p hexcell-storage",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "exit 0"
+    },
+    {
+      "command": "cargo test --workspace",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "exit 0"
+    },
+    {
+      "command": "bash -c 'test \"$(cargo tree -p hexcell-core | wc -l)\" -eq 1'",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "exit 0"
+    },
+    {
+      "command": "bash -c '! grep -rn -e \"std::env::set_var\" -e \"std::env::remove_var\" -e BLOQUEO_ENTORNO -e CERROJO_DE_ENTORNO --include=*.rs crates/hexcell/ crates/hexcell-core/ crates/hexcell-storage/'",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "exit 0"
+    },
+    {
+      "command": "bash -c '! grep -rn -e \"async\" -e \"\\.await\" crates/hexcell-storage/src/recuperacion.rs'",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "exit 0"
+    },
+    {
+      "command": "bash -c '! grep -rn \"tokio\" --include=*.rs crates/hexcell-storage/'",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "exit 0"
+    },
+    {
+      "command": "bash -c '! grep -rn \"partial_cmp\" --include=*.rs crates/hexcell-core/src/recuperacion.rs crates/hexcell-storage/src/recuperacion.rs'",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "exit 0"
+    }
+  ]
+}

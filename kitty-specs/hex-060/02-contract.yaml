@@ -1,0 +1,213 @@
+task_id: HEX-060
+summary: >-
+  Add a synchronous RAG retrieval engine in hexcell-storage that scans the live epoch by cosine and
+  returns a typed context declared in hexcell-core, plus an additive read-pool width parameter.
+goal: >-
+  Deliver task 9 of stage A-5. recuperar_contexto resolves the live knowledge pool through the
+  ArcSwap on every call, holds that Arc for a single con_lectura scan, rejects a wrong-dimension
+  query before scanning, aborts on any vector similitud_coseno cannot compare, filters by threshold
+  and returns the top fragments as a typed ContextoRecuperado declared in hexcell-core with an empty
+  dependency table. The knowledge read-pool width becomes an additive parameter defaulting to 2 so
+  plan task 11 can measure concurrency without reopening pools.rs, promocion.rs or reversion.rs.
+read:
+  - .ai/tasks/active/HEX-060-new-spec/00-spec.yaml
+  - .ai/tasks/active/HEX-060-new-spec/01-blueprint.yaml
+  - crates/hexcell-core/src/similitud.rs
+  - crates/hexcell-core/src/embeddings.rs
+  - crates/hexcell-core/src/fragmentacion.rs
+  - crates/hexcell-storage/src/validacion.rs
+  - crates/hexcell-storage/src/drenaje.rs
+  - crates/hexcell-storage/src/conocimiento.rs
+  - crates/hexcell-storage/migraciones/conocimiento/0002-esquema-de-conocimiento.sql
+  - crates/hexcell-storage/tests/comun/mod.rs
+  - crates/hexcell-storage/tests/conocimiento.rs
+  - crates/hexcell-storage/tests/validacion.rs
+  - crates/hexcell-storage/tests/drenaje.rs
+  - docs/plan/fase-a-5-conocimiento-shadow-db.md
+  - docs/adr/adr-0002-estructura-workspace.md
+  - docs/adr/adr-0006-epocas-y-conmutacion-atomica.md
+touch:
+  - crates/hexcell-core/src/recuperacion.rs
+  - crates/hexcell-core/src/lib.rs
+  - crates/hexcell-storage/src/recuperacion.rs
+  - crates/hexcell-storage/src/error.rs
+  - crates/hexcell-storage/src/pools.rs
+  - crates/hexcell-storage/src/promocion.rs
+  - crates/hexcell-storage/src/reversion.rs
+  - crates/hexcell-storage/src/lib.rs
+  - crates/hexcell-storage/tests/recuperacion.rs
+  - crates/hexcell-storage/tests/pools.rs
+  - docs/adr/adr-0029-motor-de-recuperacion-de-contexto.md
+  - docs/adr/README.md
+  - docs/STATUS.md
+  - docs/bitacora-de-descartes.md
+forbid:
+  files:
+    - crates/hexcell/**
+    - crates/hexcell-admin/**
+    - crates/hexcell-canal-simulado/**
+    - crates/hexcell-canal-contrato/**
+    - crates/hexcell-canal-whatsmeow/**
+    - crates/hexcell-meta/**
+    - crates/hexcell-storage/migraciones/**
+    - crates/hexcell-storage/src/retencion.rs
+    - crates/hexcell-storage/src/respaldo.rs
+    - crates/hexcell-storage/src/sesiones.rs
+    - crates/hexcell-storage/src/presupuesto.rs
+    - crates/hexcell-storage/src/almacen_de_identidad.rs
+    - crates/hexcell-storage/src/migraciones.rs
+    - crates/hexcell-storage/src/validacion.rs
+    - crates/hexcell-storage/src/drenaje.rs
+    - crates/hexcell-storage/src/conocimiento.rs
+    - crates/hexcell-storage/src/tiempo.rs
+    - crates/hexcell-storage/tests/comun/mod.rs
+    - crates/hexcell-core/src/similitud.rs
+    - crates/hexcell-core/src/embeddings.rs
+    - crates/hexcell-core/src/fragmentacion.rs
+    - sidecar/**
+    - Cargo.toml
+    - Cargo.lock
+    - crates/*/Cargo.toml
+    - .github/workflows/**
+    - docs/PRD.md
+    - docs/plan/**
+    - .ai/tasks/**/00-spec.yaml
+    - '**/*.db'
+    - '**/*.db-wal'
+    - '**/*.db-shm'
+    - .env*
+  behaviors:
+    - >-
+      Do NOT write a second cosine. Similarity comes exclusively from
+      hexcell_core::similitud::similitud_coseno, and decoding comes exclusively from
+      hexcell_core::embeddings::VectorDeEmbedding::desde_bytes_le. Both files are in forbid.files
+      precisely so the temptation to "fix" one instead of respecting its contract is unavailable.
+    - >-
+      Do NOT add any dependency, runtime or dev, to any crate. Cargo.toml, Cargo.lock and every
+      crate manifest are forbidden. crates/hexcell-core must keep an EMPTY dependency table
+      (adr-0002): the new module uses std only, and `cargo tree -p hexcell-core` must keep printing
+      exactly one line.
+    - >-
+      Do NOT introduce any SQLite extension, virtual table, vector index or approximate-nearest-
+      neighbour structure. The brute-force scan is fixed normatively by
+      0002-esquema-de-conocimiento.sql line 21 and the migrations directory is forbidden.
+    - >-
+      Do NOT make crates/hexcell-storage asynchronous. No tokio, no `async fn`, no `.await`, no
+      thread pool, no spawned worker anywhere in the new engine. The crate is executor-free by
+      invariant; the caller schedules blocking work.
+    - >-
+      Do NOT resolve the epoch by file name, by path or by epoch number inside the engine. The only
+      way in is `gestor.conocimiento()`, called on every invocation, and the returned Arc is held for
+      the whole scan. Do NOT cache the pool in a static, a field, a OnceLock or a lazy value, and do
+      NOT split the scan across more than one `con_lectura` call: both break the HEX-056 drain
+      contract that `drenar_epoca_superseida` relies on.
+    - >-
+      Do NOT skip, ignore, default to zero or otherwise absorb a fragment whose vector yields None
+      from desde_bytes_le or from similitud_coseno. The call aborts with
+      ErrorDeAlmacen::VectorDeFragmentoIncomparable naming the fragment id. A silent skip is exactly
+      the degradation AC-4 exists to prevent.
+    - >-
+      Do NOT perform the query-dimension check inside the scan loop or after it. It happens before any
+      fragment row is prepared, and a wrong-dimension query on an epoch that also holds a corrupt
+      fragment must surface DimensionDeConsultaDiscrepante, never VectorDeFragmentoIncomparable.
+    - >-
+      Do NOT turn an empty result into an error. Zero fragments above the threshold, and an epoch with
+      zero fragments, both return Ok with an empty ContextoRecuperado. Callers must distinguish by
+      type, so do NOT encode the outcome in a message string.
+    - >-
+      Do NOT order results with `partial_cmp(...).unwrap()`, with `sort_unstable` alone, or by relying
+      on SQLite row order. Use f32::total_cmp for descending similarity with ascending id_fragmento as
+      the documented tie-break. A comment describing the intended order is NOT a guard; the comparator
+      is.
+    - >-
+      Do NOT assemble a prompt string, concatenate fragment texts, or add any helper that does so, in
+      either crate. The typed structure is the deliverable and the prompt-injection boundary; assembly
+      belongs to the inference adapter in a later task.
+    - >-
+      Do NOT change CONEXIONES_DE_LECTURA_DE_CONOCIMIENTO from 2, and do NOT change the signature or
+      the observable behaviour of PoolDeConocimiento::abrir_sobre or GestorDePools::abrir. The width
+      is added as new constructors plus accessors. Every pre-existing test must pass with no edit.
+    - >-
+      Do NOT redesign the promotion, reversion, drain, ingestion or purge sequences. The only
+      permitted edit in promocion.rs and reversion.rs is substituting the single
+      `PoolDeConocimiento::abrir_sobre` call for `abrir_sobre_con_anchura` with the width read from
+      the gestor already in scope. Any other change to those two files is out of contract.
+    - >-
+      Do NOT wire the engine into the inference pipeline, PeticionDeInferencia, procesador.rs or the
+      budget flow, and do NOT generate a query embedding. crates/hexcell/** is forbidden. The query
+      vector is a parameter; the engine makes no network call and touches no budget accounting.
+    - >-
+      Do NOT add or modify anything in crates/hexcell-storage/tests/comun/mod.rs. The epoch fixture is
+      file-private inside tests/recuperacion.rs, matching how tests/conocimiento.rs and
+      tests/validacion.rs already build theirs. Any temporary directory must come from
+      DirectorioTemporal::nuevo, whose uniqueness is a process-wide AtomicUsize by construction; never
+      derive a directory name from a clock reading (adr-0028, HEX-058, HEX-059).
+    - >-
+      Do NOT write the process environment anywhere (std::env::set_var, std::env::remove_var,
+      BLOQUEO_ENTORNO, CERROJO_DE_ENTORNO), in source or in tests.
+    - >-
+      Write ALL content in Spanish: module names, identifiers, doc comments, inline comments, test
+      names, ADR text and the commit message. Comments must be DIDACTIC and explain WHY a decision was
+      taken, not WHAT the line does. Calibrate against the doc comment on similitud_coseno and the
+      design-reason comments in validacion.rs and pools.rs.
+    - >-
+      ADR numbering is correlative and never reused or reordered: the new ADR is 0029 and no earlier
+      ADR file or README row is rewritten. A discard, if one actually occurs, is D-35 and is logged in
+      docs/bitacora-de-descartes.md in the SAME commit that discards it; do NOT invent a discard to
+      fill the slot, and never edit or delete an existing entry.
+    - >-
+      Use absolute dates only (2026-09-02). Never relative dates. Conventional commits in Spanish, and
+      NEVER add a Co-Authored-By trailer, an AI attribution or a generated-with footer.
+    - >-
+      Do NOT run `git merge` and do NOT leave the worktree. All work happens on the task branch.
+verify:
+  commands:
+    - cargo fmt --check
+    - cargo clippy --workspace -- -D warnings
+    - cargo test -p hexcell-core recuperacion
+    - cargo test -p hexcell-storage --test recuperacion
+    - cargo test -p hexcell-storage --test pools
+    - cargo test -p hexcell-storage
+    - cargo test --workspace
+    - bash -c 'test "$(cargo tree -p hexcell-core | wc -l)" -eq 1'
+    - bash -c '! grep -rn -e "std::env::set_var" -e "std::env::remove_var" -e BLOQUEO_ENTORNO -e CERROJO_DE_ENTORNO --include=*.rs crates/hexcell/ crates/hexcell-core/ crates/hexcell-storage/'
+    # Scoped to the new module on purpose: a crate-wide `.await` grep is already red at baseline
+    # because pools.rs line 114 mentions `.await` inside a didactic doc comment. The crate-wide half
+    # of the executor-free invariant is covered by the tokio guard below, which is green at baseline.
+    - bash -c '! grep -rn -e "async" -e "\.await" crates/hexcell-storage/src/recuperacion.rs'
+    - bash -c '! grep -rn "tokio" --include=*.rs crates/hexcell-storage/'
+    - bash -c '! grep -rn "partial_cmp" --include=*.rs crates/hexcell-core/src/recuperacion.rs crates/hexcell-storage/src/recuperacion.rs'
+acceptance:
+  human_gate: true
+limits:
+  max_files_changed: 14
+  # Realistic estimate is ~1580 lines. Set to the exact sum of the per_class caps below so the
+  # per_class shape limits are always the binding constraint and no class can be starved by the
+  # global total: HEX-057-b was sized under its own test glob and had to be widened mid-flight.
+  max_diff_lines: 2020
+  per_class:
+    # Two new value-object types plus a pure comparator and its unit tests. Sized against
+    # fragmentacion.rs, the module this one is asked to mirror in shape.
+    - glob: crates/hexcell-core/src/**
+      max_diff_lines: 300
+    # New engine module plus two error variants, the additive pool constructors and two one-line
+    # substitutions. Sized against validacion.rs (403 lines), the skeleton this engine imitates.
+    - glob: crates/hexcell-storage/src/**
+      max_diff_lines: 460
+    # Deliberately generous: one new integration file carrying its own epoch fixture and twelve
+    # scenarios, three of which must be mutation-disjoint guards, plus the AC-7 cases appended to
+    # tests/pools.rs. Neighbouring suites are 480 (conocimiento) and 800 (validacion) lines. HEX-057-b
+    # under-sized this glob at 850 and the review's fix loop then needed 900, forcing a mid-flight
+    # widening; 1000 is set so the review can demand more coverage without breaching the contract.
+    - glob: crates/hexcell-storage/tests/**
+      max_diff_lines: 1000
+    # adr-0029 plus its README row and the STATUS.md entry; the bitacora line only if a discard
+    # actually happens.
+    - glob: docs/**
+      max_diff_lines: 260
+execution:
+  mode: worktree_edit
+  branch: ai/HEX-060-new-spec
+retry_policy:
+  max_attempts: 2
+  escalate_after: 2

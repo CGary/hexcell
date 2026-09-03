@@ -1,0 +1,24 @@
+{
+  "task_id": "HEX-060",
+  "summary": "recuperar_contexto satisfies AC-1..AC-10; all 22 forbid.behaviors checked, none violated; AC-7 width propagation is the exact authorised substitution. One non-blocking doc citation nit.",
+  "verdict": "approve",
+  "contract_compliance": true,
+  "forbidden_files_touched": [],
+  "unrequested_refactor": false,
+  "missing_tests": [],
+  "functional_risk": "low",
+  "notes": [
+    "contract-check ok=true; not_checked: forbid.behaviors (all 22 entries individually verified by hand in this review, see summary)",
+    "acceptance-coverage: pass, AC-1..AC-10 all covered, zero gaps",
+    "05-validation.json overall_result=passed, 12/12 verify.commands exit 0, 71 test targets green",
+    "Minor documentation precision nit (non-blocking): adr-0029 line 15 and hexcell-storage/src/recuperacion.rs line 5 both cite '(adr-0003)' for the hexcell-storage executor-free invariant; adr-0003 is titled/scoped around dual persistence, though it does contain the sqlx-rejection rationale that grounds the executor-free decision, so this is an imprecise cross-reference rather than a fabricated claim",
+    "Verified the AC-1 architectural invariant directly in pools.rs: PoolDeConocimiento::con_lectura(&self, ...) and lecturas_en_reposo() are pre-existing, untouched code; recuperar_contexto calls gestor.conocimiento() once and pool.con_lectura(...) exactly once around the whole scan, so the held-Arc/single-lock discipline required by the HEX-056 drain contract genuinely holds",
+    "Verified promocion.rs and reversion.rs diffs are each exactly the single authorised line substitution (abrir_sobre -> abrir_sobre_con_anchura with the width read from gestor already in scope); no other line in either file changed",
+    "Grepped for swallowed-error patterns (.ok(), unwrap_or_default, let _ =, if let Ok without else) across all touched/new source files per the HEX-057-b lesson; only pre-existing hits outside this diff's hunks in promocion.rs/reversion.rs, nothing introduced by this task",
+    "docs/bitacora-de-descartes.md is untouched, correctly, since no discard actually occurred during implementation",
+    "AC coverage detail: AC-1 held-Arc single con_lectura scan confirmed structurally in pools.rs (con_lectura/lecturas_en_reposo untouched); AC-2 f32::total_cmp + ascending id_fragmento tie-break; AC-3 empty context is Ok never Err; AC-4 aborts naming id_fragmento, never skips/scores zero; AC-5 dimension check strictly pre-scan; AC-6 typed ContextoRecuperado, no prompt assembly, cargo tree -p hexcell-core one line; AC-7 default width 2 preserved, promocion.rs/reversion.rs each touch only the single authorised abrir_sobre->abrir_sobre_con_anchura line.",
+    "Tests assert typed values (matches! on named error variants, struct field equality), not message strings; the only Duration-based test reuses the existing deterministic held-Arc pattern from tests/drenaje.rs, not a sleep-based race (HEX-058/HEX-059 doctrine respected).",
+    "Doc nit (non-blocking): adr-0029 (line 15) and hexcell-storage/src/recuperacion.rs module doc (line 5) both cite '(adr-0003)' for the executor-free invariant; adr-0003 is titled/scoped around dual persistence but does contain the sqlx-rejection rationale that grounds the claim, so this is an imprecise cross-reference, not a fabrication -- unlike the separate adr-0028/STATUS.md false CI-guard claim this task does not repeat."
+  ],
+  "fix_tasks": []
+}

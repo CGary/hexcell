@@ -1,0 +1,45 @@
+NOTES:
+- Created domain value objects (`ConfiguracionDeRecuperacion`, `FragmentoRecuperado`, `ContextoRecuperado`) and pure comparator `ordenar_por_relevancia` in `crates/hexcell-core/src/recuperacion.rs` using `f32::total_cmp` with ascending `id_fragmento` tie-breaking (AC-2, AC-6). Zero external dependencies preserved for `hexcell-core`.
+- Added `DimensionDeConsultaDiscrepante` (AC-5) and `VectorDeFragmentoIncomparable` (AC-4) error variants to `ErrorDeAlmacen` in `crates/hexcell-storage/src/error.rs`.
+- Created application service `recuperar_contexto` in `crates/hexcell-storage/src/recuperacion.rs` executing a single `pool.con_lectura` scan under a held `Arc` from `gestor.conocimiento()`, checking dimensions before querying fragment rows, and aborting strictly on incomparable vectors (AC-1, AC-3, AC-4, AC-5).
+- Added `abrir_sobre_con_anchura` and `abrir_con_anchura_de_conocimiento` to `PoolDeConocimiento` and `GestorDePools` in `crates/hexcell-storage/src/pools.rs` defaulting to 2 read connections, and propagated the configured width through switchovers in `promocion.rs` and `reversion.rs` (AC-7).
+- Added integration test suite `crates/hexcell-storage/tests/recuperacion.rs` and AC-7 pool width tests in `crates/hexcell-storage/tests/pools.rs`.
+- Created [ADR 0029](file:///home/gary/dev/hexcell/worktrees/HEX-060-new-spec/docs/adr/adr-0029-motor-de-recuperacion-de-contexto.md), updated [docs/adr/README.md](file:///home/gary/dev/hexcell/worktrees/HEX-060-new-spec/docs/adr/README.md), and logged task 9 entry in [docs/STATUS.md](file:///home/gary/dev/hexcell/worktrees/HEX-060-new-spec/docs/STATUS.md).
+- Verified all contract commands (`cargo fmt --check`, `cargo clippy --workspace -- -D warnings`, `cargo test --workspace`, dependency count, env guard, and executor guards).
+END NOTES
+
+---
+
+### Resumen de Trabajo Realizado (HEX-060)
+
+He completado la implementación del **motor de recuperación de contexto RAG** y la parametrización de la anchura del pool de conocimiento para la tarea 9 de la etapa A-5:
+
+1. **Objetos de Valor del Dominio (`crates/hexcell-core/src/recuperacion.rs`)**:
+   - Declarados [`ConfiguracionDeRecuperacion`](file:///home/gary/dev/hexcell/worktrees/HEX-060-new-spec/crates/hexcell-core/src/recuperacion.rs#L14), [`FragmentoRecuperado`](file:///home/gary/dev/hexcell/worktrees/HEX-060-new-spec/crates/hexcell-core/src/recuperacion.rs#L24) y [`ContextoRecuperado`](file:///home/gary/dev/hexcell/worktrees/HEX-060-new-spec/crates/hexcell-core/src/recuperacion.rs#L34) usando únicamente la biblioteca estándar (`std`).
+   - Implementada la función pura [`ordenar_por_relevancia`](file:///home/gary/dev/hexcell/worktrees/HEX-060-new-spec/crates/hexcell-core/src/recuperacion.rs#L76), ordenando por similitud descendente con `f32::total_cmp` y desempate determinista por `id_fragmento` ascendente (AC-2).
+   - Verificado que `cargo tree -p hexcell-core` mantiene exactamente 1 línea (tabla de dependencias vacía, `adr-0002`).
+
+2. **Variantes de Error (`crates/hexcell-storage/src/error.rs`)**:
+   - Añadidas las variantes [`DimensionDeConsultaDiscrepante`](file:///home/gary/dev/hexcell/worktrees/HEX-060-new-spec/crates/hexcell-storage/src/error.rs#L145) (AC-5) y [`VectorDeFragmentoIncomparable`](file:///home/gary/dev/hexcell/worktrees/HEX-060-new-spec/crates/hexcell-storage/src/error.rs#L152) (AC-4) a `ErrorDeAlmacen`.
+
+3. **Servicio de Recuperación (`crates/hexcell-storage/src/recuperacion.rs`)**:
+   - Implementado [`recuperar_contexto`](file:///home/gary/dev/hexcell/worktrees/HEX-060-new-spec/crates/hexcell-storage/src/recuperacion.rs#L50):
+     - Resuelve el `Arc` del pool mediante `gestor.conocimiento()` en cada llamada y lo sostiene durante todo el barrido (AC-1).
+     - Ejecuta una única llamada a `pool.con_lectura` garantizando que el cerrojo permanece activo (haciendo que `lecturas_en_reposo()` notifique `false` al drenaje).
+     - Valida `dimension_de_embedding` contra el vector de consulta **antes** de preparar la consulta de fragmentos (O(1), AC-5).
+     - Recorre en flujo los vectores, deserializando con `desde_bytes_le` y evaluando la similitud coseno. Ante cualquier vector no comparable (norma cero, longitud incorrecta o NaN), aborta inmediatamente con `VectorDeFragmentoIncomparable { id_fragmento }` (AC-4).
+     - Filtra por umbral, ordena deterministamente y trunca al límite configurado (AC-2, AC-3).
+
+4. **Anchura Parametrizable del Pool (`crates/hexcell-storage/src/pools.rs`, `promocion.rs`, `reversion.rs`)**:
+   - Implementados los constructores aditivos `PoolDeConocimiento::abrir_sobre_con_anchura` y `GestorDePools::abrir_con_anchura_de_conocimiento` con valor por omisión 2 (AC-7).
+   - Propagada la anchura configurada durante conmutaciones en `promocion.rs` y `reversion.rs`.
+
+5. **Pruebas de Integración y Documentación**:
+   - Escritos 8 escenarios en [`crates/hexcell-storage/tests/recuperacion.rs`](file:///home/gary/dev/hexcell/worktrees/HEX-060-new-spec/crates/hexcell-storage/tests/recuperacion.rs) y casos de anchura en [`crates/hexcell-storage/tests/pools.rs`](file:///home/gary/dev/hexcell/worktrees/HEX-060-new-spec/crates/hexcell-storage/tests/pools.rs).
+   - Registrado [ADR 0029](file:///home/gary/dev/hexcell/worktrees/HEX-060-new-spec/docs/adr/adr-0029-motor-de-recuperacion-de-contexto.md), actualizado [docs/adr/README.md](file:///home/gary/dev/hexcell/worktrees/HEX-060-new-spec/docs/adr/README.md) y actualizado [docs/STATUS.md](file:///home/gary/dev/hexcell/worktrees/HEX-060-new-spec/docs/STATUS.md).
+
+6. **Verificación de Contrato Exitoso**:
+   - `cargo fmt --check` (exit 0)
+   - `cargo clippy --workspace -- -D warnings` (exit 0)
+   - `cargo test --workspace` (exit 0)
+   - Guardas de CI y ausencia de ejecutores asíncronos en `hexcell-storage` verificadas.

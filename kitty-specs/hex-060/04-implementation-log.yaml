@@ -1,0 +1,3 @@
+entries: []
+summary: Add a synchronous RAG retrieval engine in hexcell-storage that scans the live epoch by cosine and returns a typed context, plus an additive read-pool width parameter.
+task_id: HEX-060
