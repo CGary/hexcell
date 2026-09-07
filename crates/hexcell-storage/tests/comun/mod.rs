@@ -59,7 +59,10 @@ impl Drop for DirectorioTemporal {
 /// fragmento es genérica en español para que ningún test dependa de su contenido concreto: la
 /// validación semántica solo necesita que el vector del fragmento coincida con el vector de la
 /// sonda (similitud coseno = 1.0), no que el texto diga algo específico.
-pub fn preparar_staging_valido(ruta_datos: &Path, dimension: usize) -> ConfiguracionDeFragmentacion {
+pub fn preparar_staging_valido(
+    ruta_datos: &Path,
+    dimension: usize,
+) -> ConfiguracionDeFragmentacion {
     let ruta_staging = ruta_datos.join(NOMBRE_DE_ARCHIVO_DE_CONOCIMIENTO_EN_SOMBRA);
     let conexion = Connection::open(&ruta_staging).expect("abrir base de staging");
     conexion.execute("PRAGMA foreign_keys = ON;", []).unwrap();

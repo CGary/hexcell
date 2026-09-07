@@ -15,76 +15,20 @@ use std::time::Duration;
 
 use comun::DirectorioTemporal;
 use hexcell_core::fragmentacion::ConfiguracionDeFragmentacion;
-use hexcell_storage::conocimiento::{
-    NOMBRE_DE_ARCHIVO_DE_CONOCIMIENTO_EN_SOMBRA, SUFIJO_DE_ARCHIVO_SHM,
-};
+use hexcell_storage::conocimiento::SUFIJO_DE_ARCHIVO_SHM;
 use hexcell_storage::drenaje::{
     DesenlaceDeDrenaje, INTERVALO_DE_SONDEO_DE_DRENAJE, LIMITE_DE_DRENAJE_DE_EPOCA_POR_DEFECTO,
     drenar_epoca_superseida,
 };
 use hexcell_storage::error::ErrorDeAlmacen;
-use hexcell_storage::migraciones::aplicar_migraciones_de_conocimiento;
 use hexcell_storage::pools::{GestorDePools, SUFIJO_DE_ARCHIVO_WAL};
 use hexcell_storage::promocion::{DesenlaceDePromocion, EpocaSuperseida, promover_epoca};
-use rusqlite::Connection;
 
-/// Prepara un archivo de base de datos en staging válido para ejecutar conmutaciones.
+/// Fabrica un archivo de staging consistente que supera todas las compuertas de integridad.
+///
+/// Delegado en `comun::preparar_staging_valido` tras la promoción del fixture compartido (AC-8).
 fn preparar_staging_valido(ruta_datos: &Path, dimension: usize) -> ConfiguracionDeFragmentacion {
-    let ruta_staging = ruta_datos.join(NOMBRE_DE_ARCHIVO_DE_CONOCIMIENTO_EN_SOMBRA);
-    let conexion = Connection::open(&ruta_staging).expect("abrir base de staging");
-    conexion.execute("PRAGMA foreign_keys = ON;", []).unwrap();
-    conexion
-        .query_row("PRAGMA journal_mode = WAL", [], |fila| {
-            fila.get::<_, String>(0)
-        })
-        .unwrap();
-    aplicar_migraciones_de_conocimiento(&conexion).expect("migrar staging");
-
-    conexion
-        .execute(
-            "UPDATE metadatos_de_epoca SET dimension_de_embedding = ?1 WHERE id = 1",
-            rusqlite::params![dimension as i64],
-        )
-        .unwrap();
-
-    let texto = "Contenido de prueba para drenaje de epocas.";
-    conexion
-        .execute(
-            "INSERT INTO documentos (id, referencia_externa, titulo, contenido, actualizado_ms) VALUES (1, 'ref_1', 'Titulo 1', ?1, 1000)",
-            rusqlite::params![texto],
-        )
-        .unwrap();
-
-    let vector = vec![1.0f32; dimension];
-    let vector_bytes: Vec<u8> = vector.iter().flat_map(|v| v.to_le_bytes()).collect();
-
-    conexion
-        .execute(
-            "INSERT INTO fragmentos (id, id_documento, ordinal, texto) VALUES (1, 1, 0, ?1)",
-            rusqlite::params![texto],
-        )
-        .unwrap();
-
-    conexion
-        .execute(
-            "INSERT INTO vectores_de_fragmento (id_fragmento, vector) VALUES (1, ?1)",
-            rusqlite::params![vector_bytes],
-        )
-        .unwrap();
-
-    conexion
-        .execute(
-            "INSERT INTO sonda_semantica (id, texto_de_la_sonda, vector, umbral_de_aceptacion, registrada_ms) VALUES (1, 'consulta', ?1, 0.5, 1000)",
-            rusqlite::params![vector_bytes],
-        )
-        .unwrap();
-
-    drop(conexion);
-
-    ConfiguracionDeFragmentacion {
-        tamano_de_fragmento: texto.chars().count(),
-        solapamiento: 0,
-    }
+    comun::preparar_staging_valido(ruta_datos, dimension)
 }
 
 /// Ejecuta una promoción válida y extrae la época superseída viva resultante.

@@ -31,6 +31,16 @@ jobs:
       - name: cargo test --workspace
         run: cargo test --workspace
 
+      # Un `#[ignore]` NO lo ejecuta `cargo test --workspace`: sin este paso, la «Prueba de
+      # Consistencia en Modo WAL» que el PRD exige como criterio de QA de la etapa A-5 quedaria
+      # escrita en el arbol y nunca ejecutada, que es indistinguible de no tenerla. El
+      # `#[ignore]` es deliberado (la prueba mide /proc/self/fd, que es del proceso entero, y en
+      # la bateria por defecto competiria con los demas binarios), asi que la unica forma de que
+      # el criterio se verifique de verdad es invocarla por nombre en su propio paso. Ver
+      # adr-0030.
+      - name: Prueba de estres de conmutacion de epoca bajo lecturas concurrentes
+        run: cargo test --workspace -- --ignored estres_conmutacion_veinte_lecturas_concurrentes --nocapture
+
       # adr-0028 declara que esta prohibicion se verifica mecanicamente en CI. Hasta el 2026-09-02
       # esa afirmacion era falsa: la guarda vivia solo en los verify.commands de HEX-058 y HEX-059,
       # que dejaron de ejecutarse en cuanto esas tareas cerraron. Un invariante permanente
