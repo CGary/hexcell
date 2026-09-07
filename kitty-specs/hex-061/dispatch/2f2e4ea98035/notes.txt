@@ -1,0 +1,16 @@
+Let me read the full dispatch prompt file. It's large (186KB), so I need to read the remaining context files systematically.
+This is a very large file. Let me load the key source files directly to understand the APIs, and look at the existing test files to understand the patterns, rather than reading the entire dispatch prompt.
+Now I have a thorough understanding of the codebase. Let me also look at the existing `promocion.rs` test file and the `retencion.rs` test file:
+Now I have enough understanding. Let me also check the existing `docs/adr/README.md` and `docs/STATUS.md` and `docs/bitacora-de-descartes.md` quickly:
+Now I have all the context I need. Let me look at what `conocimiento.rs` exports to understand the staging function:
+Now I have everything I need. Let me now implement the task in stages. I'll start with all the file changes:
+
+**Step 1**: Promote `preparar_staging_valido` to `tests/comun/mod.rs` and update `promocion.rs` and `drenaje.rs`.
+
+**Step 2**: Write `tests/estres_conmutacion.rs` - the new stress test file.
+
+**Step 3**: Update `.github/workflows/ci.yml`.
+
+**Step 4**: Write ADR-0030, update `docs/adr/README.md`, `docs/STATUS.md`, and `docs/bitacora-de-descartes.md`.
+Now I have everything I need. Let me implement all the changes. I'll start with the most important files:
+Now update `tests/promocion.rs` to remove the private `preparar_staging_valido` and use the shared one:

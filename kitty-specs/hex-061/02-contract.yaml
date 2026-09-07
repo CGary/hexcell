@@ -1,0 +1,168 @@
+task_id: HEX-061
+summary: >-
+  Add an ignored CI stress test: epoch switchover under 20 concurrent RAG reads on a width>=20
+  pool, no SQLITE_BUSY/orphaned WAL, plus promote the shared staging fixture.
+goal: >-
+  Deliver plan task 11 of stage A-5 and make the PRD's "Prueba de Consistencia en Modo WAL" (docs/PRD.md:188)
+  actually verified in CI rather than only declared: run promover_epoca while 20 threads call
+  recuperar_contexto concurrently on a width>=20 knowledge pool, proving zero SQLITE_BUSY, zero
+  orphaned .db-wal/.db-shm after drenar_epoca_superseida and purgar_epocas_retiradas complete, both
+  NFR-03 durations measured and asserted on the correct field, the FD count returning to baseline,
+  and every single read belonging to exactly one epoch by content marker, never a mix.
+read:
+  - .ai/tasks/active/HEX-061-new-spec/00-spec.yaml
+  - .ai/tasks/active/HEX-061-new-spec/01-blueprint.yaml
+  - crates/hexcell-storage/src/pools.rs
+  - crates/hexcell-storage/src/promocion.rs
+  - crates/hexcell-storage/src/reversion.rs
+  - crates/hexcell-storage/src/drenaje.rs
+  - crates/hexcell-storage/src/retencion.rs
+  - crates/hexcell-storage/src/recuperacion.rs
+  - crates/hexcell-core/src/recuperacion.rs
+  - crates/hexcell-storage/tests/retencion.rs
+  - crates/hexcell/tests/rss_linea_base.rs
+  - docs/PRD.md
+  - docs/plan/fase-a-5-conocimiento-shadow-db.md
+  - docs/adr/README.md
+  - docs/bitacora-de-descartes.md
+touch:
+  - crates/hexcell-storage/tests/estres_conmutacion.rs
+  - crates/hexcell-storage/tests/comun/mod.rs
+  - crates/hexcell-storage/tests/promocion.rs
+  - crates/hexcell-storage/tests/drenaje.rs
+  - .github/workflows/ci.yml
+  - docs/adr/adr-0030-prueba-de-estres-de-conmutacion-de-epoca-bajo-lecturas-concurrentes.md
+  - docs/adr/README.md
+  - docs/STATUS.md
+  - docs/bitacora-de-descartes.md
+forbid:
+  files:
+    - crates/hexcell/**
+    - crates/hexcell-admin/**
+    - crates/hexcell-canal-simulado/**
+    - crates/hexcell-canal-contrato/**
+    - crates/hexcell-canal-whatsmeow/**
+    - crates/hexcell-meta/**
+    - crates/hexcell-storage/migraciones/**
+    - crates/hexcell-storage/src/**
+    - crates/hexcell-core/src/**
+    - crates/hexcell-storage/tests/recuperacion.rs
+    - crates/hexcell-storage/tests/pools.rs
+    - crates/hexcell-storage/tests/retencion.rs
+    - crates/hexcell-storage/tests/validacion.rs
+    - crates/hexcell-storage/tests/conocimiento.rs
+    - sidecar/**
+    - Cargo.toml
+    - Cargo.lock
+    - crates/*/Cargo.toml
+    - docs/PRD.md
+    - docs/plan/**
+    - .ai/tasks/**/00-spec.yaml
+    - '**/*.db'
+    - '**/*.db-wal'
+    - '**/*.db-shm'
+    - .env*
+  behaviors:
+    - >-
+      Do NOT add any dependency, runtime or dev, to any crate manifest. Cargo.toml, Cargo.lock and
+      every crate manifest are forbidden. crates/hexcell-storage stays executor-free: no tokio, no
+      `async fn`, no `.await`, no tempfile, no serial_test. Use only std::thread, std::sync::Arc,
+      std::sync::Barrier, std::sync::atomic and std::time::Instant, matching tests/drenaje.rs.
+    - >-
+      Do NOT change the public signature or observable behavior of promover_epoca, recuperar_contexto,
+      drenar_epoca_superseida, or purgar_epocas_retiradas. This task consumes those four functions; it
+      does not touch crates/hexcell-storage/src/** at all (see forbid.files above), because HEX-060
+      already propagated the pool width into promocion.rs and reversion.rs and no further source change
+      is needed for AC-1 to hold.
+    - >-
+      Do NOT serialize the test suite with `--test-threads=1`, `serial_test`, or any other suite-wide
+      serialization to make the FD count or any other measurement deterministic. This is D-33, a
+      standing discard (docs/bitacora-de-descartes.md) explicitly marked "no reabrir"; if a genuine
+      case to reopen it appears, that is a human decision, not something to route around silently in
+      this task.
+    - >-
+      Do NOT add a third copy of preparar_staging_valido. Promote the existing one (identical in
+      tests/promocion.rs:25 and tests/drenaje.rs:32 except an unasserted text literal) into
+      tests/comun/mod.rs and make both files import it. The new stress test's own multi-fragment,
+      marker-carrying fixture is a distinct helper for a distinct purpose (measurable scan time and
+      content-based epoch provenance) and stays file-private to the new test file; do not also push
+      that one into tests/comun/mod.rs.
+    - >-
+      Do NOT use any temp-directory idiom other than DirectorioTemporal::nuevo from tests/comun/mod.rs.
+      Do NOT derive any directory name, retry backoff, or test identifier from a clock reading
+      (adr-0028, D-33, HEX-058, HEX-059); the existing process-wide AtomicUsize sequence is the only
+      uniqueness source.
+    - >-
+      Do NOT write the process environment anywhere (std::env::set_var, std::env::remove_var,
+      BLOQUEO_ENTORNO, CERROJO_DE_ENTORNO), in source or in tests, and do not disturb the existing
+      adr-0028 CI grep guard step in .github/workflows/ci.yml when adding the new step.
+    - >-
+      Do NOT call purgar_epocas_retiradas with a retention window that leaves the superseded epoch
+      inside the window when the test needs to assert its files are actually gone; use window 0 as
+      tests/retencion.rs already does, and do not invent a different window value without a reason
+      recorded in a code comment.
+    - >-
+      Write ALL content in Spanish: module names, identifiers, doc comments, inline comments, test
+      names, ADR text, STATUS.md prose and the commit message. Comments must be DIDACTIC and explain
+      WHY, not WHAT, calibrated against tests/drenaje.rs and crates/hexcell/tests/rss_linea_base.rs.
+    - >-
+      ADR numbering is correlative and never reused or reordered: the new ADR is 0030 and no earlier
+      ADR file or README row is rewritten. A discard, if one genuinely occurs, is D-35, logged in
+      docs/bitacora-de-descartes.md in the SAME commit that discards it; do not invent a discard to
+      fill the slot, and never edit or delete an existing entry.
+    - >-
+      Use absolute dates only (2026-09-07 or the actual completion date). Never relative dates.
+      Conventional commits in Spanish, and NEVER add a Co-Authored-By trailer, an AI attribution, or a
+      generated-with footer to the task's own commit.
+    - >-
+      Do NOT run `git merge` and do NOT leave the worktree. All work happens on the task branch.
+verify:
+  commands:
+    - bash -c 'test -f crates/hexcell-storage/tests/estres_conmutacion.rs'
+    - bash -c 'grep -q "fn estres_conmutacion_veinte_lecturas_concurrentes" crates/hexcell-storage/tests/estres_conmutacion.rs'
+    - bash -c 'grep -q "estres_conmutacion_veinte_lecturas_concurrentes" .github/workflows/ci.yml'
+    - bash -c 'test -f docs/adr/adr-0030-prueba-de-estres-de-conmutacion-de-epoca-bajo-lecturas-concurrentes.md'
+    - cargo fmt --check
+    - cargo clippy --workspace -- -D warnings
+    - cargo test --workspace
+    - bash -c 'salida=$(cargo test --workspace -- --ignored estres_conmutacion_veinte_lecturas_concurrentes --nocapture 2>&1); estado=$?; echo "$salida"; test $estado -eq 0 && echo "$salida" | grep -q "1 passed"'
+    - cargo test -p hexcell-storage --test promocion
+    - cargo test -p hexcell-storage --test drenaje
+    - bash -c 'test "$(cargo tree -p hexcell-core | wc -l)" -eq 1'
+    - bash -c '! grep -rn "tokio" --include=*.rs crates/hexcell-storage/'
+    - bash -c '! grep -rn -e "async" -e "\.await" crates/hexcell-storage/tests/estres_conmutacion.rs'
+    - bash -c '! grep -rn -e "test-threads=1" -e "serial_test" .github/workflows/ci.yml crates/hexcell-storage/tests/estres_conmutacion.rs'
+    - bash -c '! grep -rn -e "std::env::set_var" -e "std::env::remove_var" -e BLOQUEO_ENTORNO -e CERROJO_DE_ENTORNO --include=*.rs crates/hexcell/'
+acceptance:
+  human_gate: true
+limits:
+  max_files_changed: 9
+  # Sum of the per_class caps below, matching the HEX-060 contract's sizing discipline so the
+  # per_class shape limits stay the binding constraint.
+  # Re-dimensionado por el orquestador el 2026-09-07. El presupuesto original (720) midio la clase
+  # de tests contra tests/drenaje.rs sin sumar la promocion del fixture que AC-8 exige: esa
+  # promocion aporta 116 lineas de BORRADO del duplicado que el propio criterio manda eliminar, y
+  # git las cuenta como diff. Un contrato que penaliza cumplir un criterio de aceptacion esta mal
+  # dimensionado, no incumplido.
+  max_diff_lines: 1120
+  per_class:
+    # New stress test file (fixture + 20-thread barrier orchestration + drain/purge/FD tail) plus
+    # the comun/mod.rs promotion and the two existing files' fixture removal/import-swap. Sized
+    # generously against tests/drenaje.rs (roughly 500 lines) since this file also carries its own
+    # marker-based multi-fragment seeding helper on top of the stress test itself.
+    - glob: crates/hexcell-storage/tests/**
+      max_diff_lines: 900
+    # One new step, no restructuring of the existing job.
+    - glob: .github/workflows/ci.yml
+      max_diff_lines: 20
+    # New ADR file (~371-line adr-0029 is the closest precedent but this decision is narrower),
+    # its README row, one STATUS.md bullet, and a conditional bitacora entry only if a discard
+    # actually happens.
+    - glob: docs/**
+      max_diff_lines: 200
+execution:
+  mode: worktree_edit
+  branch: ai/HEX-061-new-spec
+retry_policy:
+  max_attempts: 2
+  escalate_after: 2

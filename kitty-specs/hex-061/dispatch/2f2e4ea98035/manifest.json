@@ -1,0 +1,62 @@
+{
+  "task_id": "HEX-061-new-spec",
+  "bundle_hash": "2f2e4ea9803530c385addbe7e7bdd4f8926767e413993dae98c5f31eb95b0aeb",
+  "files": [
+    ".ai/tasks/active/HEX-061-new-spec/00-spec.yaml",
+    ".ai/tasks/active/HEX-061-new-spec/01-blueprint.yaml",
+    ".github/workflows/ci.yml",
+    "crates/hexcell-core/src/recuperacion.rs",
+    "crates/hexcell-storage/src/drenaje.rs",
+    "crates/hexcell-storage/src/pools.rs",
+    "crates/hexcell-storage/src/promocion.rs",
+    "crates/hexcell-storage/src/recuperacion.rs",
+    "crates/hexcell-storage/src/retencion.rs",
+    "crates/hexcell-storage/src/reversion.rs",
+    "crates/hexcell-storage/tests/comun/mod.rs",
+    "crates/hexcell-storage/tests/drenaje.rs"
+  ],
+  "protocol_version": "fleet-bundle-protocol/v2",
+  "created_at": "2026-09-07T16:14:55Z",
+  "dropped": [
+    {
+      "component": "code_slice",
+      "path": "docs/plan/fase-a-5-conocimiento-shadow-db.md",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "docs/bitacora-de-descartes.md",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "docs/adr/README.md",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "docs/STATUS.md",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "docs/PRD.md",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "crates/hexcell/tests/rss_linea_base.rs",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "crates/hexcell-storage/tests/retencion.rs",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "crates/hexcell-storage/tests/promocion.rs",
+      "reason": "bundle exceeded max_bytes budget"
+    }
+  ]
+}

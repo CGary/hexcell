@@ -1,0 +1,176 @@
+task_id: HEX-061
+summary: >-
+  Add an ignored CI stress test: epoch switchover under 20 concurrent RAG reads on a width>=20
+  pool, no SQLITE_BUSY/orphaned WAL, plus promote the shared staging fixture.
+affected_files:
+  - crates/hexcell-storage/tests/estres_conmutacion.rs
+  - crates/hexcell-storage/tests/comun/mod.rs
+  - crates/hexcell-storage/tests/promocion.rs
+  - crates/hexcell-storage/tests/drenaje.rs
+  - .github/workflows/ci.yml
+  - docs/adr/README.md
+  - docs/adr/adr-0030-prueba-de-estres-de-conmutacion-de-epoca-bajo-lecturas-concurrentes.md
+  - docs/STATUS.md
+  - docs/bitacora-de-descartes.md
+symbols:
+  - hexcell_storage::pools::GestorDePools::abrir_con_anchura_de_conocimiento
+  - hexcell_storage::promocion::promover_epoca
+  - hexcell_storage::recuperacion::recuperar_contexto
+  - hexcell_storage::drenaje::drenar_epoca_superseida
+  - hexcell_storage::retencion::purgar_epocas_retiradas
+  - hexcell_storage::promocion::DesenlaceDePromocion::Promovida::duracion_de_conmutacion_ms
+  - tests::comun::preparar_staging_valido
+  - tests::estres_conmutacion::estres_conmutacion_veinte_lecturas_concurrentes
+dependencies:
+  - crates/hexcell-storage/src/pools.rs
+  - crates/hexcell-storage/src/promocion.rs
+  - crates/hexcell-storage/src/reversion.rs
+  - crates/hexcell-storage/src/drenaje.rs
+  - crates/hexcell-storage/src/retencion.rs
+  - crates/hexcell-storage/src/recuperacion.rs
+  - crates/hexcell-core/src/recuperacion.rs
+  - crates/hexcell-storage/tests/retencion.rs
+  - crates/hexcell/tests/rss_linea_base.rs
+  - docs/PRD.md
+  - docs/plan/fase-a-5-conocimiento-shadow-db.md
+  - docs/bitacora-de-descartes.md
+test_scenarios:
+  - statement: >-
+      WIDTH>=20 POOL, GENUINE CONCURRENCY (AC-1). Open GestorDePools via
+      abrir_con_anchura_de_conocimiento with width 20 and spawn 20 reader threads calling
+      recuperar_contexto concurrently. Verified precondition: con_lectura round-robins via
+      fetch_add % len over Vec<Mutex<Connection>>, so width 20 lets up to 20 callers each land on a
+      distinct connection instead of queuing on 2 mutexes as the default width would force.
+    covers:
+      - AC-1
+  - statement: >-
+      MARKED-EPOCH OVERLAP AND PER-READ EPOCH PURITY (AC-2 plus the stage-wide coverage gap the
+      orchestrator flagged: no existing AC asserts a read never returns a mixed or partially-built
+      epoch). Seed the pre-switch epoch with enough fragments carrying an "EPOCA-UNO" text marker to
+      make the cosine scan measurably slow, and the second staging epoch with an "EPOCA-DOS" marker.
+      Park 20 reader threads on a Barrier, release them into a bounded recuperar_contexto loop, and
+      invoke promover_epoca concurrently with that loop. Assert both markers were observed (proving
+      genuine overlap) AND that every single ContextoRecuperado returned during the run carries
+      fragments from exactly one marker, never a mix of EPOCA-UNO and EPOCA-DOS in the same call.
+      This is detectable specifically because the markers are distinguishable content, not because
+      partial results happen to be silently absent.
+    covers:
+      - AC-2
+  - statement: >-
+      ZERO SQLITE_BUSY ACROSS ALL READERS (AC-3). Collect any SQLITE_BUSY occurrence from all 20
+      reader threads' loop iterations via a shared counter and assert it is zero after every thread
+      joins.
+    covers:
+      - AC-3
+  - statement: >-
+      NO ORPHANED WAL/SHM AFTER DRAIN AND PURGE (AC-4). Call purgar_epocas_retiradas with
+      ventana_de_retencion=0 (the precedent already used by tests/retencion.rs to force actual
+      deletion of an eligible superseded epoch, rather than leaving it inside a non-zero retention
+      window), then inspect the filesystem directly: no `.db-wal` or `.db-shm` sidecar exists for the
+      superseded epoch's `.db` path.
+    covers:
+      - AC-4
+  - statement: >-
+      TWO DISTINCT DURATIONS MEASURED AND ASSERTED SEPARATELY (AC-5). Read
+      DesenlaceDePromocion::Promovida.duracion_de_conmutacion_ms (the ArcSwap store only) and,
+      independently, wrap promover_epoca's invocation and the first successful post-switch
+      recuperar_contexto call in the test's own std::time::Instant. Assert both are reported and that
+      the NFR-03 < 10 ms bound from docs/PRD.md is checked only against duracion_de_conmutacion_ms,
+      never against the broader first-read-served span.
+    covers:
+      - AC-5
+  - statement: >-
+      FILE DESCRIPTOR COUNT RETURNS TO BASELINE (AC-6). Record std::fs::read_dir("/proc/self/fd").count()
+      before promover_epoca is invoked (the pre-switchover baseline), then re-read it once
+      drenar_epoca_superseida and purgar_epocas_retiradas have both completed, asserting equality.
+      Verified precondition: cargo test binaries run sequentially (empirically timed: two 3s-sleep
+      integration tests took ~6.7s total, not ~3s), and `cargo test --workspace -- --ignored <name>`
+      does start every workspace test binary's process, but each is a separate OS process from the
+      one actually running this ignored test, so /proc/self/fd inside that one process is unaffected
+      by siblings starting or exiting before or after it.
+    covers:
+      - AC-6
+  - statement: >-
+      IGNORED TEST WIRED INTO CI BY NAME (AC-7). The test function carries #[ignore] and
+      .github/workflows/ci.yml gains a dedicated step running
+      `cargo test --workspace -- --ignored estres_conmutacion_veinte_lecturas_concurrentes --nocapture`,
+      the exact invocation form already documented in CLAUDE.md for rss_linea_base.
+    covers:
+      - AC-7
+  - statement: >-
+      SHARED FIXTURE PROMOTED, BOTH EXISTING SUITES STAY GREEN (AC-8). preparar_staging_valido moves
+      out of tests/promocion.rs:25 and tests/drenaje.rs:32 (identical except for an unasserted text
+      literal) into tests/comun/mod.rs; both files import it instead of defining their own copy, and
+      cargo test -p hexcell-storage --test promocion and --test drenaje both keep passing unmodified
+      in behavior.
+    covers:
+      - AC-8
+strategy:
+  - step: 1
+    action: >-
+      Promote preparar_staging_valido (single fragment, dimension-parametrized, WAL-mode staging
+      fixture) from tests/promocion.rs and tests/drenaje.rs into tests/comun/mod.rs as a public
+      function, reconciling the two copies' only difference (an unasserted text literal) into one
+      generic Spanish string; update both files' `mod comun` imports and delete their private copies.
+    files:
+      - crates/hexcell-storage/tests/comun/mod.rs
+      - crates/hexcell-storage/tests/promocion.rs
+      - crates/hexcell-storage/tests/drenaje.rs
+  - step: 2
+    action: >-
+      Add a new file-private fixture in the new test file that seeds a staging epoch with N
+      documents/fragments (N large enough that a full cosine scan is measurably slow, e.g. low
+      thousands) sharing one dimension and each carrying a marker prefix in its fragment text
+      ("EPOCA-UNO-..." or "EPOCA-DOS-..." depending on which staging call it is), so a returned
+      ContextoRecuperado's provenance is verifiable by content, not by epoch number (recuperar_contexto
+      never exposes one). This fixture stays local to the new file; it is not a third duplicate of
+      preparar_staging_valido and is not promoted to tests/comun/mod.rs, since AC-8 only requires
+      deduplicating the single-fragment fixture the other two files already share.
+    files:
+      - crates/hexcell-storage/tests/estres_conmutacion.rs
+  - step: 3
+    action: >-
+      Write the #[ignore]-marked stress test: open GestorDePools::abrir_con_anchura_de_conocimiento
+      with width 20; promote the EPOCA-UNO staging to make it live; record the /proc/self/fd baseline;
+      prepare the EPOCA-DOS staging; spawn 20 reader threads parked on a Barrier(21) each looping
+      recuperar_contexto a bounded number of iterations while recording any SQLITE_BUSY occurrence and
+      each result's marker purity; release the barrier and, overlapping the readers' loop, call
+      promover_epoca from the main thread wrapped in its own Instant; immediately issue one
+      post-switch recuperar_contexto call timed by a second Instant to get the first-read-served span
+      distinct from duracion_de_conmutacion_ms; join all reader threads and assert zero SQLITE_BUSY,
+      both markers observed, and no mixed-marker result.
+    files:
+      - crates/hexcell-storage/tests/estres_conmutacion.rs
+  - step: 4
+    action: >-
+      Complete the drain/purge/verify tail: call drenar_epoca_superseida on the returned
+      EpocaSuperseida and assert DesenlaceDeDrenaje::Completado (all reader threads already joined, so
+      the two-sided predicate should already hold without a retry loop); call
+      purgar_epocas_retiradas(&gestor, ruta_datos, 0) (window 0 forces the superseded epoch to be
+      purge-eligible, the same precedent tests/retencion.rs already uses); assert via std::fs that no
+      `.db-wal`/`.db-shm` sidecar remains for the superseded epoch's sealed `.db` path; re-read
+      /proc/self/fd and assert it matches the recorded baseline.
+    files:
+      - crates/hexcell-storage/tests/estres_conmutacion.rs
+  - step: 5
+    action: >-
+      Add a dedicated CI step in the `rust` job of .github/workflows/ci.yml running
+      `cargo test --workspace -- --ignored estres_conmutacion_veinte_lecturas_concurrentes --nocapture`,
+      placed after the existing `cargo test --workspace` step and without disturbing the adr-0028 env-write
+      grep guard already present in that job.
+    files:
+      - .github/workflows/ci.yml
+  - step: 6
+    action: >-
+      Write adr-0030 recording this decision (the PRD's WAL-consistency QA criterion becomes an
+      actual CI-enforced ignored test, with the width>=20, marker-based epoch-purity, and FD-baseline
+      mechanisms this blueprint fixes), add its row to docs/adr/README.md, and append one bullet to
+      docs/STATUS.md closing stage A-5 plan task 11. Only if the implementation genuinely rejects an
+      alternative approach along the way (not merely restating the already-standing D-33 discard
+      against suite serialization, which requires no new entry), log it as D-35 in
+      docs/bitacora-de-descartes.md in the same commit.
+    files:
+      - docs/adr/adr-0030-prueba-de-estres-de-conmutacion-de-epoca-bajo-lecturas-concurrentes.md
+      - docs/adr/README.md
+      - docs/STATUS.md
+      - docs/bitacora-de-descartes.md

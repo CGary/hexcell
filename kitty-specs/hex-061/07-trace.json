@@ -1,0 +1,241 @@
+{
+  "attempts": [
+    {
+      "duration_s": 388.961728121,
+      "model": "anthropic/claude-sonnet-4-6",
+      "notes": "Let me read the full dispatch prompt file. It's large (186KB), so I need to read the remaining context files systematically. This is a very large file. Let me load the key source files directly to understand the APIs, and look at the existing test files to understand the patterns, rather than reading the entire dispatch prompt. Now I have a thorough understanding of the codebase. Let me also look at the existing `promocion.rs` test file and the `retencion.rs` test file: Now I have enough understanding. Let me also check the existing `docs/adr/README.md` and `docs/STATUS.md` and `docs/bitacora-de-descartes.md` quickly: Now I have all the context I need. Let me look at what `conocimiento.rs` exports to understand the staging function: Now I have everything I need. Let me now implement the task in stages. I'll start with all the file changes:  **Step 1**: Promote `preparar_staging_valido` to `tests/comun/mod.rs` and update `promocion.rs` and `drenaje.rs`.  **Step 2**: Write `tests/estres_conmutacion.rs` - the new stress test file.  **Step 3**: Update `.github/workflows/ci.yml`.  **Step 4**: Write ADR-0030, update `docs/adr/README.md`, `docs/STATUS.md`, and `docs/bitacora-de-descartes.md`. Now I have everything I need. Let me implement all the changes. I'll start with the most important files: Now update `tests/promocion.rs` to remove the private `preparar_staging_valido` and use the shared one:",
+      "phase": "execute",
+      "result": "passed"
+    },
+    {
+      "duration_s": 7.517858891,
+      "model": "anthropic/claude-opus-4-6",
+      "notes": "Error: Individual quota reached. Please upgrade your subscription to increase your limits. Resets in 166h36m8s.",
+      "phase": "execute",
+      "result": "failed"
+    }
+  ],
+  "context_overflows": [],
+  "events": [
+    {
+      "event": "risk_level_calculated",
+      "level": "medium",
+      "reasons": [
+        "file_count_high: 9"
+      ],
+      "signals": {
+        "files_count": 9,
+        "sensitive_matches": [],
+        "symbols_count": 0
+      }
+    },
+    {
+      "blocked": "",
+      "candidate": {
+        "agent": "agy_edit",
+        "level": 1,
+        "model": "anthropic/claude-sonnet-4-6"
+      },
+      "dispatch_id": "",
+      "inputs_snapshot": {
+        "complexity_band": "M",
+        "control": {
+          "disabled": null,
+          "updated_at": ""
+        },
+        "exclusions": [],
+        "hashes": {
+          "agents_yaml": "8aef9ffaf7a6930049006ef05f0cbbf9799dab5ee835e3f6c0a49eefa052f572",
+          "config_yaml": "f6d456a8a600c246a083a4454dc413f515693be4c84dd487e0149e660e9b8b84",
+          "routing_yaml": "c661109fa2d3bf143fab0751c5001b997d5365322197cb84c9661d688d0ac0ec"
+        },
+        "incumbent_family": "",
+        "level": 1,
+        "phase": "implement",
+        "risk": "medium",
+        "router_version": "fleet-route/v1"
+      },
+      "reasons": null,
+      "reroute_budget": 2,
+      "review_family_degraded": false,
+      "ts": "2026-09-07T16:14:50Z",
+      "type": "routing_decision"
+    },
+    {
+      "bundle_hash": "2f2e4ea9803530c385addbe7e7bdd4f8926767e413993dae98c5f31eb95b0aeb",
+      "dispatch_id": "2f2e4ea98035",
+      "ts": "2026-09-07T16:16:18Z",
+      "type": "dispatch_started"
+    },
+    {
+      "applied": true,
+      "cause": null,
+      "diff_stat": {
+        "deletions": 59,
+        "empty": false,
+        "files_changed": 2,
+        "indeterminate": false,
+        "insertions": 77
+      },
+      "dispatch_id": "2f2e4ea98035",
+      "forensic_ref": "refs/fleet/HEX-061-new-spec/attempt-1-anthropic-claude-sonnet-4-6",
+      "noop": false,
+      "outcome_class": "attempt",
+      "ts": "2026-09-07T16:22:47Z",
+      "type": "dispatch_finished",
+      "usage_source": "none"
+    },
+    {
+      "blocked": "",
+      "candidate": {
+        "agent": "agy_edit",
+        "level": 1,
+        "model": "anthropic/claude-opus-4-6"
+      },
+      "dispatch_id": "",
+      "inputs_snapshot": {
+        "complexity_band": "M",
+        "control": {
+          "disabled": null,
+          "updated_at": ""
+        },
+        "exclusions": [
+          {
+            "agent": "agy_edit",
+            "level": 1,
+            "model": "anthropic/claude-sonnet-4-6"
+          }
+        ],
+        "hashes": {
+          "agents_yaml": "8aef9ffaf7a6930049006ef05f0cbbf9799dab5ee835e3f6c0a49eefa052f572",
+          "config_yaml": "f6d456a8a600c246a083a4454dc413f515693be4c84dd487e0149e660e9b8b84",
+          "routing_yaml": "c661109fa2d3bf143fab0751c5001b997d5365322197cb84c9661d688d0ac0ec"
+        },
+        "incumbent_family": "",
+        "level": 1,
+        "phase": "implement",
+        "risk": "medium",
+        "router_version": "fleet-route/v1"
+      },
+      "reasons": null,
+      "reroute_budget": 2,
+      "review_family_degraded": false,
+      "ts": "2026-09-07T16:26:07Z",
+      "type": "routing_decision"
+    },
+    {
+      "bundle_hash": "0a21c2ac13467d8b584365ae6d65e273cb10bcf4a9c66bacb8fe5fd5fefe4bd8",
+      "dispatch_id": "0a21c2ac1346",
+      "ts": "2026-09-07T16:27:55Z",
+      "type": "dispatch_started"
+    },
+    {
+      "applied": false,
+      "cause": null,
+      "diff_stat": {
+        "deletions": 0,
+        "empty": true,
+        "files_changed": 0,
+        "indeterminate": false,
+        "insertions": 0
+      },
+      "dispatch_id": "0a21c2ac1346",
+      "forensic_ref": null,
+      "noop": false,
+      "outcome_class": "attempt",
+      "ts": "2026-09-07T16:28:03Z",
+      "type": "dispatch_finished",
+      "usage_source": "none"
+    },
+    {
+      "blocked": "no_viable_candidate",
+      "candidate": null,
+      "dispatch_id": "",
+      "inputs_snapshot": {
+        "complexity_band": "M",
+        "control": {
+          "disabled": null,
+          "updated_at": ""
+        },
+        "exclusions": [
+          {
+            "agent": "agy_edit",
+            "level": 1,
+            "model": "anthropic/claude-sonnet-4-6"
+          },
+          {
+            "agent": "agy_edit",
+            "level": 1,
+            "model": "anthropic/claude-opus-4-6"
+          }
+        ],
+        "hashes": {
+          "agents_yaml": "8aef9ffaf7a6930049006ef05f0cbbf9799dab5ee835e3f6c0a49eefa052f572",
+          "config_yaml": "f6d456a8a600c246a083a4454dc413f515693be4c84dd487e0149e660e9b8b84",
+          "routing_yaml": "c661109fa2d3bf143fab0751c5001b997d5365322197cb84c9661d688d0ac0ec"
+        },
+        "incumbent_family": "",
+        "level": 1,
+        "phase": "implement",
+        "risk": "medium",
+        "router_version": "fleet-route/v1"
+      },
+      "reasons": [
+        "excluded: agy_edit/anthropic/claude-sonnet-4-6",
+        "excluded: agy_edit/anthropic/claude-opus-4-6"
+      ],
+      "reroute_budget": 0,
+      "review_family_degraded": false,
+      "ts": "2026-09-07T16:28:26Z",
+      "type": "routing_decision"
+    },
+    {
+      "blocked": "no_viable_candidate",
+      "candidate": null,
+      "dispatch_id": "",
+      "inputs_snapshot": {
+        "complexity_band": "M",
+        "control": {
+          "disabled": null,
+          "updated_at": ""
+        },
+        "exclusions": [
+          {
+            "agent": "agy_edit",
+            "level": 1,
+            "model": "anthropic/claude-sonnet-4-6"
+          },
+          {
+            "agent": "agy_edit",
+            "level": 1,
+            "model": "anthropic/claude-opus-4-6"
+          }
+        ],
+        "hashes": {
+          "agents_yaml": "8aef9ffaf7a6930049006ef05f0cbbf9799dab5ee835e3f6c0a49eefa052f572",
+          "config_yaml": "f6d456a8a600c246a083a4454dc413f515693be4c84dd487e0149e660e9b8b84",
+          "routing_yaml": "c661109fa2d3bf143fab0751c5001b997d5365322197cb84c9661d688d0ac0ec"
+        },
+        "incumbent_family": "",
+        "level": 1,
+        "phase": "implement",
+        "risk": "medium",
+        "router_version": "fleet-route/v1"
+      },
+      "reasons": [
+        "excluded: agy_edit/anthropic/claude-sonnet-4-6",
+        "excluded: agy_edit/anthropic/claude-opus-4-6"
+      ],
+      "reroute_budget": 0,
+      "review_family_degraded": false,
+      "ts": "2026-09-07T16:28:30Z",
+      "type": "routing_decision"
+    }
+  ],
+  "execution_mode": "worktree_edit",
+  "started_at": "2026-09-07T16:12:23Z",
+  "summary": "Add an ignored CI stress test: epoch switchover under 20 concurrent RAG reads on a width\u003e=20 pool, no SQLITE_BUSY/orphaned WAL, plus promote the shared staging fixture.",
+  "task_id": "HEX-061",
+  "total_cost_usd": 0,
+  "violations": []
+}

@@ -1,0 +1,47 @@
+task_id: HEX-061
+summary: Added ignored epoch-switchover stress test with dedicated CI step, plus shared staging fixture promotion and ADR/STATUS/bitacora records.
+entries:
+  - changed_files:
+      - crates/hexcell-storage/tests/estres_conmutacion.rs
+    notes:
+      - New ignored test estres_conmutacion_veinte_lecturas_concurrentes covering AC-1..AC-6.
+      - Pool opened at read width 20 via abrir_con_anchura_de_conocimiento so twenty readers hold distinct SQLite connections instead of queueing on two mutexes.
+      - Epochs seeded with 1500 marker-bearing fragments (EPOCA-UNO / EPOCA-DOS); every ContextoRecuperado is asserted to be marker-pure and both markers must be observed.
+      - Twenty reader threads released from a std::sync::Barrier; coordination uses mpsc channels rather than spin loops so a panicking reader fails instead of hanging.
+      - Zero SQLITE_BUSY and zero read failures asserted; NFR-03 (< 10 ms) checked only against duracion_de_conmutacion_ms, with the wider promote-to-first-post-switch-read span measured separately by its own Instant and reported.
+      - Drain, epoch retirement by constancia and purge with retention window 0 followed by filesystem checks for orphaned -wal/-shm.
+      - File descriptor baseline taken after a no-op purge so SQLite's per-inode deferred-close cache is equally warm at both measurement points; assertion stays strict equality.
+      - "Follow-up (commit 13c5a31, coordinator finding): the width>=20 decision was configured by a constant and never asserted, so the test stayed green at width 2 and the criterion went vacuous. Added two independent guards: effective width read back from the manager must be >= HILOS_LECTORES and strictly greater than CONEXIONES_DE_LECTURA_DE_CONOCIMIENTO, and the count of /proc/self/fd entries resolving to the live epoch file (the live SQLite connections) must be >= HILOS_LECTORES. Proven by mutation on 2026-09-07: at width 2 each guard fails on its own (effective width 2; 3 live connections vs 21 at width 20), and the test passes again once width 20 is restored."
+      - "Rejected a peak-concurrency gauge around recuperar_contexto and logged it as D-36: con_lectura takes a blocking Mutex, so a queued thread is inside the call exactly like a reading one and the peak would reach twenty even at width 2. It would assert thread count while appearing to assert connection concurrency, which is the same defect being closed. The descriptor count measures live connections instead."
+      - "Follow-up (commit ae0ccd6, human decision 2026-09-07): relaxed the NFR-03 ceiling in the stress test only. duracion_de_conmutacion_ms spans the ArcSwap store PLUS a blocking pool-mutex acquisition PLUS the vitality read, i.e. exactly the pointer-reassignment-to-first-served-read span NFR-03 defines; that makes it the right field for the requirement and the wrong thing to bound under deliberate contention, since the vitality read must win a mutex against twenty saturating threads and one scheduler preemption on a 2-core 20:2 runner breaks a 10 ms wall. tests/promocion.rs:377 already asserts < 10.0 with zero spawned threads and is left untouched, so NFR-03 stays certified uncontended."
+      - "PRESUPUESTO_DE_CONMUTACION_MS renamed to TECHO_DE_REGRESION_CATASTROFICA_MS = 1000.0, stated purpose catching a switchover that began waiting on I/O or a lock convoy, not certifying NFR-03. Basis: 44 measured runs on 2026-09-07 (20 unconstrained 0.018-0.047 ms, 12 pinned to 2 cores 0.033-0.040 ms, 12 pinned to 2 cores against 6 external load processes 0.034-0.043 ms); worst case 0.047 ms gives ~21000x headroom while staying an order of magnitude above the whole promotion sequence (88-140 ms), so a real regression still trips it. Guard proven live by mutation: lowering the ceiling to 0.000001 makes the test fail on that assertion."
+      - "D-37 records the discard of the strict 10 ms bound inside the stress test, with its reopening condition; adr-0030 decision 4 and the STATUS entry were corrected to say the field spans store plus first served read."
+      - "Follow-up (commit 3d0e798, reviewer finding): adr-0030 decision 4 stated the detection half backwards - the 1000 ms ceiling was said to sit an order of magnitude BELOW the whole promotion sequence (88-140 ms). Rewritten with an explicit subject on each comparison and both sides pointing the same way: the ceiling sits far above the observed worst case (0.047 ms, ~21000x, so scheduler noise cannot reach it) AND far above the entire promotion sequence, so exceeding it would mean the pointer swap took more than seven times what the whole promotion takes - a change of class, not of latency. The code comment was already correct and was not touched."
+      - "D-37 also received a compressed copy of that detection argument. It previously explained only why the strict wall was discarded, never why its replacement still detects anything, so that reasoning lived in a single document. Both records are immutable once merged and therefore cannot drift; the real risk was the single copy. No new discard number was opened - this is a correction."
+
+    verify_pending: false
+  - changed_files:
+      - crates/hexcell-storage/tests/drenaje.rs
+      - crates/hexcell-storage/tests/comun/mod.rs
+    notes:
+      - Removed the last private copy of preparar_staging_valido; drenaje.rs now delegates to comun::preparar_staging_valido, completing AC-8 (promocion.rs was already adapted in commit f4d3ad9).
+      - Dropped the imports only that private copy used; applied rustfmt to comun/mod.rs, which had been committed unformatted and was breaking cargo fmt --check on the branch.
+    verify_pending: false
+  - changed_files:
+      - .github/workflows/ci.yml
+    notes:
+      - New step in the rust job invoking the ignored test by name; the existing adr-0028 env-write grep guard is untouched.
+    verify_pending: false
+  - changed_files:
+      - docs/adr/adr-0030-prueba-de-estres-de-conmutacion-de-epoca-bajo-lecturas-concurrentes.md
+      - docs/adr/README.md
+      - docs/STATUS.md
+      - docs/bitacora-de-descartes.md
+    notes:
+      - adr-0030 records the six design decisions; README row appended correlatively without reordering.
+      - STATUS.md entry dated 2026-09-07 under Definido; last-updated header moved to 2026-09-07.
+      - D-35 logs four genuinely rejected alternatives (default pool width, running inside the default suite, asserting NFR-03 against the wide span, relaxing the descriptor assertion to a tolerance); D-33 is referenced, never restated or edited.
+      - "FINDING limits: contract limits exceeded. Diff against main is 9 files (max_files_changed 9, at the cap), 851 insertions and 121 deletions. Per class: docs 127 (cap 200, OK), ci.yml 10 (cap 20, OK), crates/hexcell-storage/tests 835 insertions+deletions (cap 500, EXCEEDED); max_diff_lines 720 total also exceeded. The stress test file alone is 630 lines. The sizing note budgeted the test class against tests/drenaje.rs (~500 lines) but the class also absorbs AC-8's fixture promotion across three files (~200 diff lines, 116 of them deletions of the duplicated fixture the criterion asks to remove). A redundancy pass was made first (module doc and constant docs condensed against adr-0030); cutting further would mean removing the didactic comments the same contract mandates, so the overrun is reported rather than absorbed by degrading the deliverable."
+      - "FINDING tdd-red: no tdd_red_runs recorded. The only covering command for AC-1..AC-6 is 'cargo test --workspace -- --ignored estres_conmutacion_veinte_lecturas_concurrentes', which exits 0 when no test matches that name, so a pre-implementation run would have been vacuously green rather than valid RED evidence. No evidence was invented."
+      - "FINDING sqlite-fd: measured 2026-09-07, SQLite's unix VFS parks one descriptor per inode when a transient connection closes while another connection in the same process holds POSIX locks, and reuses it afterwards. This produced a deterministic +1 descriptor after the first purge. Handled inside the test by warming that cache with a no-op purge before the baseline; no source change was needed and crates/hexcell-storage/src/** was never touched."
+    verify_pending: false

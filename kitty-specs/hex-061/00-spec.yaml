@@ -1,0 +1,73 @@
+task_id: HEX-061
+summary: Build the epoch switchover stress test (20 concurrent RAG reads, width>=20 pool, ignored+CI step, promoted fixture). Risk medium.
+goal: >
+  Implement the WAL consistency stress test mandated by the stage-wide QA
+  criterion in docs/PRD.md (Prueba de Consistencia en Modo WAL): run a
+  knowledge epoch switchover while 20 simultaneous RAG reads are in flight,
+  proving no SQLITE_BUSY exceptions occur and no .db-wal/.db-shm files are
+  left orphaned after the switch. The test must open the knowledge pool at a
+  read-connection width of at least 20 (via the HEX-060
+  abrir_sobre_con_anchura / abrir_con_anchura_de_conocimiento API) so the 20
+  reads are genuinely concurrent rather than serialized on a narrower pool of
+  mutexes, and must measure both the ArcSwap switchover duration and the
+  separate "until first read served by the new epoch" duration.
+invariants:
+  - No SQLITE_BUSY error is raised by any of the 20 concurrent RAG reads during the epoch switchover.
+  - No .db-wal or .db-shm file remains on disk once the switchover and drain sequence completes.
+  - The knowledge pool's read-connection width survives switchover and reversion; the new epoch's pool reopens at the same width as before the switch (width >= 20 in this test).
+  - File descriptor count returns to its pre-switchover value once the superseded epoch is drained.
+  - No in-flight read fails and no read observes a partially-built epoch (all results come entirely from one epoch or the other, never a mix).
+acceptance:
+  - id: AC-1
+    statement: The stress test opens the knowledge pool with a read-connection width of at least 20 using the existing width-aware pool API added by HEX-060.
+    given: a knowledge pool opened via abrir_con_anchura_de_conocimiento (or abrir_sobre_con_anchura) with width >= 20
+    when: 20 reader threads call recuperar_contexto concurrently
+    then: up to 20 distinct SQLite connections are live simultaneously, not serialized on a narrower mutex pool
+  - id: AC-2
+    statement: The test populates enough knowledge fragments that a cosine similarity scan takes measurable time, and loops reader threads behind a std::sync::Barrier so all 20 reads are demonstrably in flight at the instant of the epoch swap.
+    given: a staging database seeded with enough fragments to make retrieval non-instantaneous, and 20 reader threads parked on a shared Barrier
+    when: the Barrier releases the readers and, overlapping their read loop, promover_epoca is invoked to switch the live epoch
+    then: at least one read from each of the pre-switch and post-switch epochs is observed to complete successfully, proving genuine overlap
+  - id: AC-3
+    statement: The test asserts zero SQLITE_BUSY failures across all 20 concurrent readers during the switchover.
+    given: 20 reader threads looping recuperar_contexto while promover_epoca runs concurrently
+    when: the full stress run completes
+    then: none of the reader threads observed an SQLITE_BUSY error
+  - id: AC-4
+    statement: The test verifies the filesystem after the switchover and drain complete, confirming no orphaned .db-wal or .db-shm files remain for the superseded epoch's database file.
+    given: promover_epoca has succeeded and drenar_epoca_superseida has completed its drain of the prior epoch
+    when: the test inspects the epoch directory on disk
+    then: no .db-wal or .db-shm sidecar file exists for the superseded epoch's .db file
+  - id: AC-5
+    statement: 'The stress test reports both the switchover duration field and its own first-read-served timing, but does NOT assert the strict 10 ms NFR-03 bound under deliberate contention; it asserts a generous ceiling whose purpose is catching a catastrophic regression.'
+    given: 'tests/promocion.rs already asserts duracion_de_conmutacion_ms < 10.0 with zero spawned threads, which is the uncontended production-like condition NFR-03 actually describes, and this task leaves that assertion untouched'
+    when: 'the stress test measures the same field while 20 reader threads deliberately saturate the machine, a condition NFR-03 never described'
+    then: 'both durations are reported distinctly and the stress test asserts only a generous ceiling; duplicating the strict bound under artificial contention would make a CI step flaky on a 2-core runner without certifying anything promocion.rs does not already certify (human decision, 2026-09-07)'
+  - id: AC-6
+    statement: The test asserts the process-wide file descriptor count (via /proc/self/fd) returns to its pre-switchover count after drenar_epoca_superseida and purgar_epocas_retiradas complete, following the /proc/<pid>/status pattern already used by rss_linea_base.rs.
+    given: a recorded file descriptor count taken before promover_epoca is invoked
+    when: drenar_epoca_superseida and purgar_epocas_retiradas have both completed
+    then: the file descriptor count returns to the pre-switchover baseline
+  - id: AC-7
+    statement: The test function is marked #[ignore], and .github/workflows/ci.yml gains an explicit CI step that runs it by name using the existing invocation form (cargo test --workspace -- --ignored <name> --nocapture).
+    given: the stress test is added as an #[ignore]-marked test in crates/hexcell-storage/tests/
+    when: CI runs
+    then: a dedicated CI step invokes the ignored test by name, so the stage-wide PRD QA criterion is actually verified in CI rather than only declared
+  - id: AC-8
+    statement: The duplicated preparar_staging_valido fixture is promoted out of crates/hexcell-storage/tests/promocion.rs and crates/hexcell-storage/tests/drenaje.rs into crates/hexcell-storage/tests/comun/mod.rs, and both existing test files are adapted to use the shared version.
+    given: preparar_staging_valido exists as a private fn duplicated in tests/promocion.rs:25 and tests/drenaje.rs:32
+    when: the new stress test needs a third copy of the same fixture
+    then: the fixture is moved into tests/comun/mod.rs once, and promocion.rs and drenaje.rs are both updated to import it instead of defining their own copies
+  - Existing tests in crates/hexcell-storage/tests/promocion.rs and crates/hexcell-storage/tests/drenaje.rs continue to pass unmodified in behavior after the fixture is promoted to tests/comun/mod.rs.
+  - cargo test --workspace, cargo fmt --check, and cargo clippy --workspace -- -D warnings all pass.
+risk: medium
+non_goals:
+  - Do not change the public signatures of promover_epoca, recuperar_contexto, drenar_epoca_superseida, or purgar_epocas_retiradas.
+  - Do not add new external dev-dependencies (no tokio, no tempfile); crates/hexcell-storage stays executor-free per adr-0003.
+  - Do not serialize the whole test suite with --test-threads=1; per docs/bitacora-de-descartes.md D-33 this is a rejected approach for file-descriptor measurement noise.
+  - Do not implement or modify the Fase B official-channel adapter or any channel port code; this task is confined to the storage crate's knowledge switchover test.
+constraints:
+  - The test lives in crates/hexcell-storage/tests/ (not crates/hexcell/tests/), using std::thread::spawn, Arc<GestorDePools>, and std::sync::Barrier, matching the concurrency idiom already used in tests/drenaje.rs.
+  - File descriptor counting uses std::fs::read_dir("/proc/self/fd").count(), Linux-only, matching the existing pattern in crates/hexcell/tests/rss_linea_base.rs.
+  - All new identifiers, comments, and test names are in Spanish; comments must be didactic (explain why, not what).
+  - The test must not introduce rusqlite into crates/hexcell (adr-0010) and must not use std::env::set_var/remove_var under crates/hexcell/ (adr-0028).

@@ -1,0 +1,98 @@
+{
+  "commands": [
+    {
+      "command": "bash -c 'test -f crates/hexcell-storage/tests/estres_conmutacion.rs'",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "exit 0"
+    },
+    {
+      "command": "bash -c 'grep -q \"fn estres_conmutacion_veinte_lecturas_concurrentes\" crates/hexcell-storage/tests/estres_conmutacion.rs'",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "exit 0"
+    },
+    {
+      "command": "bash -c 'grep -q \"estres_conmutacion_veinte_lecturas_concurrentes\" .github/workflows/ci.yml'",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "exit 0"
+    },
+    {
+      "command": "bash -c 'test -f docs/adr/adr-0030-prueba-de-estres-de-conmutacion-de-epoca-bajo-lecturas-concurrentes.md'",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "exit 0"
+    },
+    {
+      "command": "cargo fmt --check",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "exit 0"
+    },
+    {
+      "command": "cargo clippy --workspace -- -D warnings",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "exit 0"
+    },
+    {
+      "command": "cargo test --workspace",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "exit 0"
+    },
+    {
+      "command": "bash -c 'salida=$(cargo test --workspace -- --ignored estres_conmutacion_veinte_lecturas_concurrentes --nocapture 2\u003e\u00261); estado=$?; echo \"$salida\"; test $estado -eq 0 \u0026\u0026 echo \"$salida\" | grep -q \"1 passed\"'",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "exit 0"
+    },
+    {
+      "command": "cargo test -p hexcell-storage --test promocion",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "exit 0"
+    },
+    {
+      "command": "cargo test -p hexcell-storage --test drenaje",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "exit 0"
+    },
+    {
+      "command": "bash -c 'test \"$(cargo tree -p hexcell-core | wc -l)\" -eq 1'",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "exit 0"
+    },
+    {
+      "command": "bash -c '! grep -rn \"tokio\" --include=*.rs crates/hexcell-storage/'",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "exit 0"
+    },
+    {
+      "command": "bash -c '! grep -rn -e \"async\" -e \"\\.await\" crates/hexcell-storage/tests/estres_conmutacion.rs'",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "exit 0"
+    },
+    {
+      "command": "bash -c '! grep -rn -e \"test-threads=1\" -e \"serial_test\" .github/workflows/ci.yml crates/hexcell-storage/tests/estres_conmutacion.rs'",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "exit 0"
+    },
+    {
+      "command": "bash -c '! grep -rn -e \"std::env::set_var\" -e \"std::env::remove_var\" -e BLOQUEO_ENTORNO -e CERROJO_DE_ENTORNO --include=*.rs crates/hexcell/'",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "exit 0"
+    }
+  ],
+  "executed_at": "2026-09-07T17:30:00Z",
+  "overall_result": "passed",
+  "summary": "15/15 exit 0 sobre ae0ccd6 en worktrees/HEX-061-new-spec, ejecutados por el orquestador. Mutacion: 3 guardas demostradas disjuntas.",
+  "task_id": "HEX-061"
+}
