@@ -39,10 +39,18 @@ Tres hechos del árbol condicionaban cómo escribirla:
 ## Decisión
 
 1. **La prueba abre el pool de conocimiento con anchura 20** (`abrir_con_anchura_de_conocimiento`),
-   igual al número de hilos lectores.
+   igual al número de hilos lectores, **y lo afirma dos veces**: la anchura efectiva leída del
+   gestor debe ser `>= 20` y estrictamente mayor que `CONEXIONES_DE_LECTURA_DE_CONOCIMIENTO`, y el
+   número de descriptores del proceso que apuntan al archivo de la época viva —las conexiones
+   SQLite realmente abiertas sobre ella— debe ser `>= 20`.
    *Justificación*: es la única configuración bajo la que hay hasta veinte conexiones SQLite vivas
    a la vez. Con la anchura por omisión, `SQLITE_BUSY` sería imposible **por construcción** en vez
-   de por corrección, y la prueba pasaría sin demostrar nada.
+   de por corrección, y la prueba pasaría sin demostrar nada. Configurarla no basta: una anchura
+   fijada por constante y nunca comprobada se puede estrechar sin que ninguna aserción se entere,
+   y CI seguiría certificando en verde un criterio que ya no se ejercita. Comprobado por mutación
+   el 2026-09-07: con la anchura en 2, ambas aserciones fallan por separado (anchura efectiva 2 y
+   3 conexiones vivas frente a las 21 de la configuración correcta). La segunda aserción mide el
+   **hecho** y no la **intención**: la primera dice lo que se pidió, la segunda lo que hay.
 
 2. **La prueba se marca `#[ignore]` y se invoca por nombre en un paso dedicado de
    `.github/workflows/ci.yml`.** Las dos mitades son obligatorias.
@@ -108,4 +116,4 @@ Tres hechos del árbol condicionaban cómo escribirla:
 * Si un día el aislamiento por binario dejara de bastar —por ejemplo, si `cargo` pasara a ejecutar
   binarios de test en paralelo—, la aserción de descriptores fallaría de forma visible en vez de
   degradarse en silencio; ese es el modo de fallo elegido.
-* Alternativas evaluadas y descartadas: **D-35** en `docs/bitacora-de-descartes.md`.
+* Alternativas evaluadas y descartadas: **D-35** y **D-36** en `docs/bitacora-de-descartes.md`.

@@ -39,7 +39,9 @@ use hexcell_storage::conocimiento::{
 use hexcell_storage::drenaje::{DesenlaceDeDrenaje, drenar_epoca_superseida};
 use hexcell_storage::error::ErrorDeAlmacen;
 use hexcell_storage::migraciones::aplicar_migraciones_de_conocimiento;
-use hexcell_storage::pools::{GestorDePools, SUFIJO_DE_ARCHIVO_WAL};
+use hexcell_storage::pools::{
+    CONEXIONES_DE_LECTURA_DE_CONOCIMIENTO, GestorDePools, SUFIJO_DE_ARCHIVO_WAL,
+};
 use hexcell_storage::promocion::{DesenlaceDePromocion, EpocaSuperseida, promover_epoca};
 use hexcell_storage::recuperacion::recuperar_contexto;
 use hexcell_storage::retencion::purgar_epocas_retiradas;
@@ -165,6 +167,23 @@ fn es_contencion_de_sqlite(error: &ErrorDeAlmacen) -> bool {
 fn descriptores_abiertos() -> usize {
     std::fs::read_dir("/proc/self/fd")
         .expect("leer /proc/self/fd: esta prueba solo corre en Linux")
+        .count()
+}
+
+/// Cuenta cuántos descriptores de **este** proceso apuntan al archivo indicado.
+///
+/// Es la única señal de simultaneidad real disponible sin tocar `crates/hexcell-storage/src/**`:
+/// cada conexión de lectura del pool abre el archivo de la época al construirse, así que este
+/// número es la cantidad de conexiones SQLite **vivas** sobre esa época. Se descartó medir la
+/// simultaneidad con un medidor de pico de hilos alrededor de `recuperar_contexto`: `con_lectura`
+/// toma un `Mutex` bloqueante, de modo que un hilo en cola cuenta igual que uno leyendo y el pico
+/// llegaría a veinte incluso con dos conexiones. Sería una guarda que aparenta comprobar algo que
+/// no comprueba, que es justo el defecto que estas aserciones existen para cerrar.
+fn conexiones_vivas_sobre(ruta: &Path) -> usize {
+    std::fs::read_dir("/proc/self/fd")
+        .expect("leer /proc/self/fd: esta prueba solo corre en Linux")
+        .filter_map(|entrada| entrada.ok())
+        .filter(|entrada| std::fs::read_link(entrada.path()).is_ok_and(|destino| destino == ruta))
         .count()
 }
 
@@ -303,10 +322,23 @@ fn estres_conmutacion_veinte_lecturas_concurrentes() {
         GestorDePools::abrir_con_anchura_de_conocimiento(temp.ruta(), ANCHURA_DE_LECTURAS)
             .expect("abrir el gestor con anchura de lecturas ampliada"),
     );
-    assert_eq!(
-        gestor.anchura_de_lecturas_de_conocimiento(),
-        ANCHURA_DE_LECTURAS,
-        "el gestor debe conservar la anchura solicitada"
+    // La anchura no basta con configurarla: hay que afirmarla, y contra el criterio, no contra la
+    // constante que la fija. `assert_eq!(anchura_efectiva, ANCHURA_DE_LECTURAS)` compararía la
+    // constante consigo misma y seguiría en verde con anchura 2, dejando la prueba vacía: los
+    // veinte lectores harían cola sobre dos cerrojos, `SQLITE_BUSY` sería imposible por
+    // construcción y el criterio del PRD quedaría certificado por CI sin haberse ejercitado.
+    let anchura_efectiva = gestor.anchura_de_lecturas_de_conocimiento();
+    assert!(
+        anchura_efectiva >= HILOS_LECTORES,
+        "el criterio de QA exige una conexión de lectura viva por cada uno de los {HILOS_LECTORES} \
+         lectores concurrentes; con anchura efectiva {anchura_efectiva} los lectores se serializan \
+         sobre los cerrojos del pool y la prueba dejaría de demostrar nada"
+    );
+    assert!(
+        anchura_efectiva > CONEXIONES_DE_LECTURA_DE_CONOCIMIENTO,
+        "la anchura efectiva {anchura_efectiva} no supera la de omisión \
+         ({CONEXIONES_DE_LECTURA_DE_CONOCIMIENTO}): esta prueba solo es significativa sobre un pool \
+         deliberadamente más ancho que el de producción"
     );
 
     // Época 1: la que estará viva cuando empiecen las lecturas.
@@ -457,6 +489,19 @@ fn estres_conmutacion_veinte_lecturas_concurrentes() {
             break;
         }
     }
+
+    // AC-1, comprobación de hecho y no de intención: contar los descriptores que apuntan al
+    // archivo de la época viva mide las conexiones SQLite realmente abiertas sobre ella. La
+    // anchura afirmada arriba dice lo que se pidió; esto dice lo que hay.
+    let ruta_epoca_uno_canonica =
+        std::fs::canonicalize(&ruta_epoca_uno).expect("resolver la ruta física de la época viva");
+    let conexiones_vivas = conexiones_vivas_sobre(&ruta_epoca_uno_canonica);
+    assert!(
+        conexiones_vivas >= HILOS_LECTORES,
+        "solo hay {conexiones_vivas} conexiones SQLite vivas sobre la época viva y el criterio \
+         exige al menos {HILOS_LECTORES}: con menos, los veinte lectores no leen a la vez, hacen \
+         cola"
+    );
 
     // AC-6: línea base de descriptores tomada con las veinte conexiones de la época viva ya
     // ejercitadas y justo antes de conmutar.
@@ -625,6 +670,8 @@ fn estres_conmutacion_veinte_lecturas_concurrentes() {
     println!(
         "estres_conmutacion_hasta_primera_lectura_servida_ms={ms_hasta_primera_lectura_servida:.3}"
     );
+    println!("estres_conmutacion_anchura_efectiva={anchura_efectiva}");
+    println!("estres_conmutacion_conexiones_vivas_sobre_la_epoca={conexiones_vivas}");
     println!("estres_conmutacion_descriptores_linea_base={descriptores_linea_base}");
     println!("estres_conmutacion_descriptores_finales={descriptores_finales}");
 }

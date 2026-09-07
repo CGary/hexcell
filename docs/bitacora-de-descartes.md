@@ -535,6 +535,14 @@ copiar `sessions.db`, `knowledge_live.db` y el almacén de identidad del adaptad
 * **Registro normativo:** `docs/adr/adr-0030-prueba-de-estres-de-conmutacion-de-epoca-bajo-lecturas-concurrentes.md`, `crates/hexcell-storage/tests/estres_conmutacion.rs`, `.github/workflows/ci.yml`.
 * **Qué tendría que cambiar para reabrirlo:** *Principio de diseño para los tres primeros:* **no reabrir**. El cuarto se reconsideraría solo si el aislamiento por binario dejara de garantizar un proceso limpio (por ejemplo, si `cargo` pasara a ejecutar binarios de test en paralelo); en ese caso la respuesta no sería una tolerancia sino medir los descriptores por inodo de la ruta de datos de la célula, no por proceso.
 
+### D-36
+**Medir la simultaneidad de las lecturas con un medidor de pico de hilos alrededor de `recuperar_contexto`.**
+
+* **Descartado:** 2026-09-07 (HEX-061).
+* **Por qué se descartó:** La idea era llevar un `AtomicUsize` incrementado antes y decrementado después de cada llamada, con `fetch_max` sobre un pico, y afirmar que el pico supera la anchura por omisión. Mide lo que no se quiere medir: `PoolDeConocimiento::con_lectura` toma un `Mutex` **bloqueante**, así que un hilo esperando en cola está dentro de la llamada exactamente igual que uno leyendo, y el pico llegaría a veinte incluso con dos conexiones vivas. Sería una guarda que aparenta comprobar la simultaneidad sin comprobarla —el mismo defecto que la anchura configurada y nunca afirmada— y una guarda falsa es peor que ninguna, porque la ausencia se nota y la falsa tranquiliza. En su lugar se cuentan los descriptores del proceso que apuntan al archivo de la época viva: cada conexión de lectura abre ese archivo al construirse, de modo que ese número **son** las conexiones SQLite vivas, no los hilos que las esperan.
+* **Registro normativo:** `docs/adr/adr-0030-prueba-de-estres-de-conmutacion-de-epoca-bajo-lecturas-concurrentes.md`, `crates/hexcell-storage/tests/estres_conmutacion.rs`.
+* **Qué tendría que cambiar para reabrirlo:** Que `PoolDeConocimiento` expusiera el número de conexiones de lectura efectivamente ocupadas en un instante dado. Con esa cifra, un medidor de pico mediría conexiones y no hilos, y sería una señal legítima; hoy esa cifra no existe y añadirla queda fuera del alcance de una tarea de pruebas.
+
 ---
 
 ## Deuda de esta bitácora
