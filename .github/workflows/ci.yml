@@ -53,6 +53,18 @@ jobs:
               -e 'BLOQUEO_ENTORNO' -e 'CERROJO_DE_ENTORNO' \
               crates/hexcell/
 
+      # D-37 relajo el techo de conmutacion DENTRO de la prueba de estres, y lo hizo apoyandose en
+      # que NFR-03 sigue certificado estricto y sin hilos en tests/promocion.rs. Esa entrada nombra
+      # el borrado de esa asercion como su condicion de reapertura, pero una condicion que nadie
+      # vigila no reabre nada: si alguien la quita, la bitacora sigue diciendo que la cobertura
+      # esta intacta y nadie se entera. Es la misma forma que adr-0028 tuvo hasta el 2026-09-02,
+      # y se cierra igual. Los espacios se normalizan para que un reformateo de rustfmt no rompa
+      # la guarda por un salto de linea, que seria un fallo molesto en vez de uno informativo.
+      - name: NFR-03 conserva su asercion estricta y sin contencion
+        run: |
+          tr -d '[:space:]' < crates/hexcell-storage/tests/promocion.rs \
+            | grep -q 'duracion_de_conmutacion_ms<10.0'
+
   go:
     name: Go — build, vet y test del sidecar
     runs-on: ubuntu-latest
