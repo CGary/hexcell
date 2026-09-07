@@ -91,11 +91,19 @@ Tres hechos del árbol condicionaban cómo escribirla:
    en `tests/promocion.rs:377`, que no lanza ningún hilo: esa es la condición no contendida y
    parecida a producción que el requisito describe, y esta tarea no la toca. Duplicar el muro bajo
    una contención que el requisito nunca contempló no compraba certeza adicional y pagaba
-   fragilidad por ella. El techo de 1000 ms se fija sobre datos: 44 corridas medidas el 2026-09-07
-   (20 sin restricción, 12 fijadas a dos núcleos, 12 fijadas a dos núcleos con carga externa) dan un
-   peor caso de 0,047 ms, un margen de unas 21.000 veces, y quedan un orden de magnitud por debajo
-   de la secuencia de promoción entera (88–140 ms). Decisión humana del 2026-09-07; el descarte del
-   muro estricto queda en D-37.
+   fragilidad por ella. El techo de 1000 ms se fija sobre datos, y su justificación tiene dos lados
+   que apuntan en la misma dirección: **el techo queda muy por encima del peor caso observado**
+   —44 corridas medidas el 2026-09-07 (20 sin restricción, 12 fijadas a dos núcleos, 12 fijadas a
+   dos núcleos con carga externa) dan un peor caso de 0,047 ms, así que el techo lo supera unas
+   21.000 veces y ninguna expropiación del planificador lo alcanza—, y **el techo queda además muy
+   por encima de la secuencia de promoción entera**, que en esta máquina tarda entre 88 y 140 ms con
+   la revalidación de índice incluida. Ese segundo lado es el que conserva la capacidad de
+   detección: superar el techo significaría que el intercambio del puntero, una parte diminuta de la
+   promoción, tardó más de siete veces lo que tarda la promoción completa. Eso no es una latencia
+   peor, es un **cambio de clase**: la conmutación dejó de calcular y pasó a esperar (E/S, convoy de
+   cerrojos, espera de red). Un techo generoso no es un techo ciego mientras la magnitud que vigila
+   y la magnitud que toleraría el ruido estén separadas por cuatro órdenes de magnitud, como aquí.
+   Decisión humana del 2026-09-07; el descarte del muro estricto queda en D-37.
 
 5. **El fixture `preparar_staging_valido` se promueve a `tests/comun/mod.rs`** y `tests/promocion.rs`
    y `tests/drenaje.rs` lo consumen desde allí. El fixture multi-fragmento con marcadores de la
