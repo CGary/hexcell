@@ -71,15 +71,31 @@ Tres hechos del árbol condicionaban cómo escribirla:
    correcta, y la invariante «ninguna lectura observa una época parcial» quedaría comprobada por
    suerte. El marcador la hace **detectable**.
 
-4. **Las dos duraciones se miden por separado y el presupuesto de NFR-03 se contrasta contra la
-   estrecha.** `DesenlaceDePromocion::Promovida.duracion_de_conmutacion_ms` mide el intercambio del
-   `ArcSwap` y su lectura de vitalidad, y solo ese campo se compara con los 10 ms de NFR-03. La
-   prueba mide además, con su propio `Instant`, el intervalo desde la invocación de `promover_epoca`
-   hasta que devuelve la primera lectura servida por la época nueva, y lo reporta aparte.
-   *Justificación*: la medición ancha incluye el sellado, el punto de control, el renombrado y la
-   apertura del pool nuevo. Contrastar NFR-03 contra ella acusaría de incumplimiento a un requisito
-   que no cubre ese trabajo; contrastarlo solo contra ella y llamarlo «conmutación» sería medir una
-   cosa y afirmar otra.
+4. **Las dos duraciones se miden y se reportan por separado, y NFR-03 NO se re-certifica aquí.**
+   `DesenlaceDePromocion::Promovida.duracion_de_conmutacion_ms` abarca el intercambio del `ArcSwap`
+   **más** la toma de un cerrojo de lectura del pool nuevo y la consulta de vitalidad que sirve la
+   primera lectura de la época nueva (`promocion.rs`, pasos 5 y siguientes). Ese tramo —de la
+   reasignación del puntero a la primera lectura servida— es exactamente el que NFR-03 define, así
+   que es el campo correcto para el requisito. La prueba mide además, con su propio `Instant`, el
+   intervalo desde la invocación de `promover_epoca` hasta esa primera lectura, que incluye
+   revalidación, sellado, punto de control, renombrado y apertura del pool nuevo, y lo reporta
+   aparte. La prueba de estrés afirma sobre la medición estrecha únicamente un **techo de regresión
+   catastrófica** de 1000 ms, cuyo propósito declarado es detectar que la conmutación empezó a
+   *esperar* por algo (E/S, convoy de cerrojos), no certificar NFR-03.
+   *Justificación*: ser el campo correcto para NFR-03 es justo lo que lo vuelve el objeto
+   equivocado para acotarlo **bajo contención deliberada**. La consulta de vitalidad tiene que
+   ganarle un cerrojo del pool a veinte hilos que lo están saturando a propósito; en un runner de
+   dos núcleos con sobresuscripción 20:2, una sola expropiación del planificador rompe un muro de
+   10 ms, y la latencia de cola no es proporcional a la media. Sería una intermitencia cableada en
+   CI que estallaría semanas después sobre trabajo ajeno. NFR-03 ya está certificado, y estricto,
+   en `tests/promocion.rs:377`, que no lanza ningún hilo: esa es la condición no contendida y
+   parecida a producción que el requisito describe, y esta tarea no la toca. Duplicar el muro bajo
+   una contención que el requisito nunca contempló no compraba certeza adicional y pagaba
+   fragilidad por ella. El techo de 1000 ms se fija sobre datos: 44 corridas medidas el 2026-09-07
+   (20 sin restricción, 12 fijadas a dos núcleos, 12 fijadas a dos núcleos con carga externa) dan un
+   peor caso de 0,047 ms, un margen de unas 21.000 veces, y quedan un orden de magnitud por debajo
+   de la secuencia de promoción entera (88–140 ms). Decisión humana del 2026-09-07; el descarte del
+   muro estricto queda en D-37.
 
 5. **El fixture `preparar_staging_valido` se promueve a `tests/comun/mod.rs`** y `tests/promocion.rs`
    y `tests/drenaje.rs` lo consumen desde allí. El fixture multi-fragmento con marcadores de la
@@ -116,4 +132,4 @@ Tres hechos del árbol condicionaban cómo escribirla:
 * Si un día el aislamiento por binario dejara de bastar —por ejemplo, si `cargo` pasara a ejecutar
   binarios de test en paralelo—, la aserción de descriptores fallaría de forma visible en vez de
   degradarse en silencio; ese es el modo de fallo elegido.
-* Alternativas evaluadas y descartadas: **D-35** y **D-36** en `docs/bitacora-de-descartes.md`.
+* Alternativas evaluadas y descartadas: **D-35**, **D-36** y **D-37** en `docs/bitacora-de-descartes.md`.

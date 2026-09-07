@@ -94,8 +94,18 @@ const MARCADOR_EPOCA_DOS: &str = "EPOCA-DOS";
 /// este techo solo evita que un fallo de coordinación cuelgue la batería en vez de fallar.
 const MAXIMO_DE_ITERACIONES_POR_HILO: usize = 400;
 
-/// Presupuesto de latencia de NFR-03 para la conmutación interna, en milisegundos.
-const PRESUPUESTO_DE_CONMUTACION_MS: f64 = 10.0;
+/// Techo de regresión catastrófica para la conmutación, en milisegundos. **No es NFR-03**, que se
+/// certifica estricto y sin hilos en `tests/promocion.rs`; aquí no se re-certifica (D-37 y
+/// `adr-0030`), porque un muro de reloj de pared dentro de una prueba que mata de hambre a la CPU
+/// a propósito mide el runner, no el sistema. Lo que este techo vigila es que la conmutación no
+/// haya empezado a **esperar** por algo: E/S, un convoy de cerrojos, una espera de red. El número
+/// sale de 44 corridas medidas el 2026-09-07 (sin restricción, fijadas a dos núcleos, y fijadas a
+/// dos núcleos con carga externa) cuyo peor caso fue 0,047 ms: un segundo deja un margen de unas
+/// 21.000 veces, fuera del alcance de cualquier expropiación del planificador, y sigue detectando,
+/// porque queda un orden de magnitud por encima de la secuencia de promoción **entera** (88–140 ms
+/// en esta máquina). Si el intercambio del puntero tarda más que la operación completa de la que es
+/// una parte diminuta, no es ruido, es un defecto.
+const TECHO_DE_REGRESION_CATASTROFICA_MS: f64 = 1_000.0;
 
 /// Plazo de drenaje de la época superseída.
 ///
@@ -174,11 +184,10 @@ fn descriptores_abiertos() -> usize {
 ///
 /// Es la única señal de simultaneidad real disponible sin tocar `crates/hexcell-storage/src/**`:
 /// cada conexión de lectura del pool abre el archivo de la época al construirse, así que este
-/// número es la cantidad de conexiones SQLite **vivas** sobre esa época. Se descartó medir la
-/// simultaneidad con un medidor de pico de hilos alrededor de `recuperar_contexto`: `con_lectura`
-/// toma un `Mutex` bloqueante, de modo que un hilo en cola cuenta igual que uno leyendo y el pico
-/// llegaría a veinte incluso con dos conexiones. Sería una guarda que aparenta comprobar algo que
-/// no comprueba, que es justo el defecto que estas aserciones existen para cerrar.
+/// número **son** las conexiones SQLite vivas sobre esa época. Se descartó el medidor de pico de
+/// hilos alrededor de `recuperar_contexto` (D-36): `con_lectura` toma un `Mutex` bloqueante, un
+/// hilo en cola cuenta igual que uno leyendo, y el pico llegaría a veinte incluso con dos
+/// conexiones; sería una guarda que aparenta comprobar lo que no comprueba.
 fn conexiones_vivas_sobre(ruta: &Path) -> usize {
     std::fs::read_dir("/proc/self/fd")
         .expect("leer /proc/self/fd: esta prueba solo corre en Linux")
@@ -584,17 +593,26 @@ fn estres_conmutacion_veinte_lecturas_concurrentes() {
         "se observaron {observados_fallos} lecturas fallidas durante la conmutación"
     );
 
-    // AC-5, medición estrecha: `duracion_de_conmutacion_ms` mide el intercambio del `ArcSwap` y su
-    // lectura de vitalidad. El presupuesto de NFR-03 se contrasta contra ESTE campo y nunca contra
-    // la medición ancha de arriba, que incluye sellado y apertura de pool y no es lo que el
-    // requisito acota.
+    // AC-5, medición estrecha. `duracion_de_conmutacion_ms` abarca el intercambio del `ArcSwap`
+    // **más** la toma de un cerrojo del pool nuevo y la consulta de vitalidad que sirve la primera
+    // lectura de la época nueva: justo el tramo que NFR-03 define, y por eso el campo correcto para
+    // el requisito y a la vez el equivocado para acotarlo **aquí**, donde esa consulta tiene que
+    // ganarle un cerrojo a veinte hilos que saturan el pool a propósito. Un muro de 10 ms en esta
+    // prueba mediría la suerte del planificador, no la latencia del sistema: una intermitencia
+    // cableada en CI que estallaría semanas después sobre trabajo ajeno. NFR-03 ya está certificado,
+    // estricto y sin hilos, en `tests/promocion.rs`, que esta tarea no toca; duplicarlo bajo
+    // contención artificial no añadiría certeza y pagaría fragilidad por ella (decisión humana del
+    // 2026-09-07, D-37). Aquí ambas duraciones se **reportan** y solo se afirma el techo de
+    // catástrofe.
     assert!(
         ms_de_conmutacion.is_finite() && ms_de_conmutacion >= 0.0,
         "la duración de conmutación no es un número utilizable: {ms_de_conmutacion}"
     );
     assert!(
-        ms_de_conmutacion < PRESUPUESTO_DE_CONMUTACION_MS,
-        "la conmutación tardó {ms_de_conmutacion} ms y NFR-03 acota en {PRESUPUESTO_DE_CONMUTACION_MS} ms"
+        ms_de_conmutacion < TECHO_DE_REGRESION_CATASTROFICA_MS,
+        "la conmutación tardó {ms_de_conmutacion} ms y supera el techo de regresión catastrófica de \
+         {TECHO_DE_REGRESION_CATASTROFICA_MS} ms: a esa escala no es ruido del planificador, la \
+         conmutación espera por algo (E/S, convoy). NFR-03 no se evalúa aquí, vive en promocion.rs"
     );
     assert!(
         ms_hasta_primera_lectura_servida.is_finite() && ms_hasta_primera_lectura_servida >= 0.0,
