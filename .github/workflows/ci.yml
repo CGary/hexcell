@@ -41,6 +41,20 @@ jobs:
       - name: Prueba de estres de conmutacion de epoca bajo lecturas concurrentes
         run: cargo test --workspace -- --ignored estres_conmutacion_veinte_lecturas_concurrentes --nocapture
 
+      # HEX-062 cierra el criterio de la etapa A-5 «un respaldo ejecutado durante una conmutacion
+      # produce una copia consistente y restorable»: cada prueba ejercita una proposicion distinta
+      # (H1+2 la consistencia y el registro del numero de epoca, H3 el bloqueo del drenaje por
+      # una lectura sostenida) y ambas estan marcadas `#[ignore]` por la misma razon que la
+      # anterior: miden interacciones entre dos hilos del mismo proceso y la bateria por defecto
+      # competiria con los demas binarios por la CPU. Sin estos dos pasos especificos, el
+      # `#[ignore]` dejaria el criterio declarado y nunca verificado, indistinguible de no
+      # tenerlo. Ver adr-0031.
+      - name: El respaldo concurrente con una conmutacion copia una sola epoca y la registra
+        run: cargo test -p hexcell-storage --test respaldo_durante_conmutacion -- --ignored --exact el_respaldo_concurrente_con_una_conmutacion_copia_una_sola_epoca_y_la_registra --nocapture
+
+      - name: Un respaldo que supera el limite de drenaje deja la epoca superseida sin drenar y protegida
+        run: cargo test -p hexcell-storage --test respaldo_durante_conmutacion -- --ignored --exact un_respaldo_que_supera_el_limite_de_drenaje_deja_la_epoca_superseida_sin_drenar_y_protegida --nocapture
+
       # adr-0028 declara que esta prohibicion se verifica mecanicamente en CI. Hasta el 2026-09-02
       # esa afirmacion era falsa: la guarda vivia solo en los verify.commands de HEX-058 y HEX-059,
       # que dejaron de ejecutarse en cuanto esas tareas cerraron. Un invariante permanente

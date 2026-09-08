@@ -174,6 +174,9 @@ pub async fn ordenar_respaldo_sqlstore(
                     nombre_logico: "sqlstore.db",
                     ruta: std::path::PathBuf::from(acuse.ruta_de_la_copia),
                     bytes: acuse.bytes as u64,
+                    // `sqlstore` no modela épocas: la identidad de las sesiones de whatsmeow vive
+                    // dentro del archivo, no como un ordinal comparable a `knowledge_epoch_N`.
+                    numero_de_epoca: None,
                 }))
             } else if acuse.resultado == "fallido" {
                 registro::emitir(
@@ -255,6 +258,10 @@ pub async fn ordenar_respaldo_identidad(
             nombre_logico: "identidad.db",
             ruta: std::path::PathBuf::from(acuse.ruta_de_la_copia),
             bytes: acuse.bytes as u64,
+            // `identidad.db` tampoco modela épocas: vive en el sidecar y contiene la lista STOP,
+            // el mapeo de conversación y los cortacircuitos. La identidad de canal no tiene un
+            // ordinal comparable a `knowledge_epoch_N` y se queda en `None`.
+            numero_de_epoca: None,
         }));
     }
 

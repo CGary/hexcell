@@ -55,6 +55,32 @@ fn el_respaldo_produce_las_dos_copias_de_pools_intactas_y_verificadas() {
             .expect("ejecutar integrity_check sobre la copia");
         assert_eq!(integridad, "ok");
     }
+
+    // `numero_de_epoca` se reporta en cada copia por su nombre lógico: `sessions.db` no modela
+    // épocas y devuelve `None`; `knowledge_live.db` devuelve el número de la época que el pool
+    // servía al copiar — `None` aquí porque la base recién abierta y nunca promovida tiene la fila
+    // singleton con `numero_de_epoca = NULL` (migración 0002 línea 108). Una promoción previa del
+    // propio test haría cambiar ese valor, así que se ancla al caso por omisión que los demás
+    // tests de este archivo también ejercitan.
+    for copia in &resumen.copias {
+        match copia.nombre_logico.as_ref() {
+            NOMBRE_DE_ARCHIVO_DE_SESIONES => {
+                assert!(
+                    copia.numero_de_epoca.is_none(),
+                    "sessions.db no modela épocas: {:?}",
+                    copia.numero_de_epoca
+                );
+            }
+            NOMBRE_DE_ARCHIVO_DE_CONOCIMIENTO => {
+                assert!(
+                    copia.numero_de_epoca.is_none(),
+                    "knowledge_live.db sin promoción previa debe reportar None: {:?}",
+                    copia.numero_de_epoca
+                );
+            }
+            otro => panic!("copia con nombre lógico no esperado: {otro}"),
+        }
+    }
 }
 
 #[test]

@@ -412,6 +412,19 @@ impl GestorDePools {
     ///
     /// Las dos rutas de destino se comprueban **antes** de la primera copia, para que un destino
     /// ya ocupado o inalcanzable falle sin dejar la otra copia a medias.
+    ///
+    /// # Procedencia de la copia de `knowledge_live.db`
+    ///
+    /// La copia de `knowledge_live.db` registra, en [`CopiaVerificada::numero_de_epoca`], el
+    /// número de la época que físicamente contiene. Esa cifra **se lee de la copia producida**
+    /// por [`crate::respaldo::leer_numero_de_epoca_de_la_copia`], no del pool vivo: la ruta de
+    /// `PoolDeConocimiento` para el pool vivo es el symlink `<datos>/knowledge_live.db`
+    /// (fijada en este módulo al construir el pool), y `reasignar_enlace_de_la_epoca_viva`
+    /// repunta ese mismo symlink en el instante de la conmutación. Una etiqueta derivada de la
+    /// ruta mentiría sobre el contenido físico de una copia tomada **durante** una conmutación,
+    /// que es exactamente el caso que el `#[ignore]` de `tests/respaldo_durante_conmutacion.rs`
+    /// ejercita. `sessions.db` y las dos bases ordenadas por IPC no modelan épocas y producen
+    /// `numero_de_epoca == None`.
     pub fn respaldar_en(
         &self,
         directorio: &Path,

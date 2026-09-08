@@ -53,6 +53,14 @@ pub struct CopiaVerificada {
     pub ruta: PathBuf,
     /// Tamaño en bytes de la copia.
     pub bytes: u64,
+    /// Número ordinal de la época copiada para las bases de conocimiento, `None` cuando la base
+    /// no modela épocas (`sessions.db`, `adapter_identity.db`) o cuando la base de conocimiento
+    /// nunca fue promovida (`metadatos_de_epoca.numero_de_epoca` es NULL, situación documentada
+    /// en `conocimiento.rs:313`). El número se lee de la copia producida, **no** del pool vivo:
+    /// para `knowledge_live.db` la ruta del pool es el symlink `<datos>/knowledge_live.db`, que
+    /// repunta a la época nueva en el instante de la conmutación y haría mentir a cualquier
+    /// etiqueta derivada de la ruta.
+    pub numero_de_epoca: Option<i64>,
 }
 
 /// Comprueba que un destino de respaldo está disponible **antes** de ejecutar ningún `VACUUM
@@ -102,6 +110,63 @@ pub fn respaldar_base(
     verificar_copia(destino, version_esperada, nombre_logico)
 }
 
+/// Lee el número ordinal de la época desde la fila singleton `metadatos_de_epoca`.
+///
+/// Devuelve `Ok(None)` en los dos casos legítimos en los que no hay número que reportar y que
+/// distinguen las bases sin épocas (`sessions.db`, `adapter_identity.db`: la tabla no existe)
+/// de una base de conocimiento que aún no fue promovida (`metadatos_de_epoca.numero_de_epoca`
+/// es NULL, situación documentada en `conocimiento.rs:313`). Cualquier otro fallo de SQLite se
+/// propaga como error: copiar una base cuyo metadato de época existe pero es ilegible no es
+/// un caso normal y debe parar el respaldo.
+fn leer_numero_de_epoca_de_la_copia(destino: &Path) -> Result<Option<i64>, ErrorDeAlmacen> {
+    let conexion = Connection::open_with_flags(
+        destino,
+        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )
+    .map_err(ErrorDeAlmacen::en(
+        "abrir la copia de respaldo para leer su número de época",
+    ))?;
+
+    // `prepare` falla con `SqliteFailure(SQLITE_ERROR, "no such table ...")` cuando la tabla
+    // no existe; `query_row` con `QueryReturnedNoRows` cuando la fila no está. Ambos se traducen
+    // a `Ok(None)` y son los dos casos documentados arriba: bases sin épocas y bases nunca
+    // promovidas, respectivamente. `SQLITE_ERROR` se compara por código extendido porque es el
+    // código que SQLite emite para «no such table», y `ErrorCode` en `rusqlite` 0.39 lo modela
+    // como entero extendido sin variante con nombre para ese caso.
+    let mut sentencia =
+        match conexion.prepare("SELECT numero_de_epoca FROM metadatos_de_epoca WHERE id = 1") {
+            Ok(s) => s,
+            Err(rusqlite::Error::SqliteFailure(causa, mensaje)) => {
+                if causa.extended_code == rusqlite::ffi::SQLITE_ERROR {
+                    return Ok(None);
+                }
+                let mensaje = mensaje.as_deref().unwrap_or("");
+                if mensaje.to_lowercase().contains("no such table") {
+                    return Ok(None);
+                }
+                return Err(ErrorDeAlmacen::en(
+                    "preparar la lectura del número de época de la copia",
+                )(rusqlite::Error::SqliteFailure(
+                    causa,
+                    Some(mensaje.to_string()),
+                )));
+            }
+            Err(causa) => {
+                return Err(ErrorDeAlmacen::en(
+                    "preparar la lectura del número de época de la copia",
+                )(causa));
+            }
+        };
+
+    let resultado = sentencia
+        .query_row([], |fila| fila.get::<_, Option<i64>>(0))
+        .map_err(ErrorDeAlmacen::en(
+            "leer el número de época de la copia de respaldo",
+        ))?;
+
+    Ok(resultado)
+}
+
 /// Abre la copia ya escrita en solo lectura y comprueba su integridad y su versión de esquema.
 fn verificar_copia(
     destino: &Path,
@@ -149,9 +214,16 @@ fn verificar_copia(
         })?
         .len();
 
+    // El número de época se lee **de la copia producida** y no del pool vivo. Para el pool vivo
+    // la ruta es `<datos>/knowledge_live.db`, un symlink que `reasignar_enlace_de_la_epoca_viva`
+    // repunta a la época nueva en el instante de la conmutación; una etiqueta derivada de la
+    // ruta mentiría sobre el contenido físico que esta misma copia acaba de escribir.
+    let numero_de_epoca = leer_numero_de_epoca_de_la_copia(destino)?;
+
     Ok(CopiaVerificada {
         nombre_logico,
         ruta: destino.to_path_buf(),
         bytes,
+        numero_de_epoca,
     })
 }

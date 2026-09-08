@@ -128,6 +128,32 @@ de la restauración, no un éxito parcial**: es exactamente lo que
 `crates/hexcell/tests/respaldo_y_restauracion.rs` prueba de forma negativa, con el mismo entorno
 restaurado y el motor deliberadamente sin consumir el puerto.
 
+### 3.1. Procedencia de la copia de conocimiento (HEX-062, `adr-0031`)
+
+Desde el 2026-09-08 la copia de `knowledge_live.db` producida por `hexcell respaldar` lleva
+en `CopiaVerificada::numero_de_epoca` el ordinal de la época que **físicamente** contiene,
+leído de la copia producida (de su fila `metadatos_de_epoca`) y nunca derivado de la ruta
+del pool vivo. Antes de restaurar:
+
+* Abrir la copia en solo lectura con `sqlite3 <ruta_copia>` (o el equivalente en el sidecar)
+  y confirmar que `SELECT numero_de_epoca FROM metadatos_de_epoca WHERE id = 1` devuelve el
+  mismo ordinal que el campo del resumen del respaldo. **Si difieren, descartar la copia**:
+  lo que la copia dice de sí misma es lo que se va a restaurar, y la divergencia indica
+  una copia tomada entre dos instantes de promoción o un archivo manipulado fuera del flujo
+  normal.
+* Si el ordinal es `NULL`, la copia corresponde a una base de conocimiento **nunca
+  promovida**: contiene el contenido de staging, no una época sellada. La restauración
+  sigue siendo válida —es la base inicial—, pero no debe confundirse con una época numerada.
+* `sessions.db`, `adapter_identity.db`, `sqlstore.db` e `identidad.db` reportan `None` y
+  ninguna verificación adicional aplica: esas bases no modelan épocas.
+
+La disciplina se sostiene desde la **copia**, no desde el estado de la célula que la
+produjo, así que sirve igual para respaldos tomados durante una conmutación (donde el
+riesgo de confundir dos épocas era estructural antes de esta fecha). El comportamiento
+durante una conmutación está verificado por
+`crates/hexcell-storage/tests/respaldo_durante_conmutacion.rs` con dos pruebas `#[ignore]`
+ejecutadas en CI.
+
 ## Referencias
 
 * `docs/adr/adr-0010-puerto-de-canal.md`, punto 6 (por qué el mapeo de identidad sobrevive al
