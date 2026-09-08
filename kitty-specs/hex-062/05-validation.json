@@ -1,0 +1,194 @@
+{
+  "commands": [
+    {
+      "command": "bash -c 'test -f crates/hexcell-storage/tests/respaldo_durante_conmutacion.rs'",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "exit 0"
+    },
+    {
+      "command": "bash -c 'test -f docs/adr/adr-0031-respaldo-concurrente-con-conmutacion-de-epoca.md'",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "exit 0"
+    },
+    {
+      "command": "bash -c 'grep -q \"fn el_respaldo_concurrente_con_una_conmutacion_copia_una_sola_epoca_y_la_registra\" crates/hexcell-storage/tests/respaldo_durante_conmutacion.rs'",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "exit 0"
+    },
+    {
+      "command": "bash -c 'grep -q \"fn un_respaldo_que_supera_el_limite_de_drenaje_deja_la_epoca_superseida_sin_drenar_y_protegida\" crates/hexcell-storage/tests/respaldo_durante_conmutacion.rs'",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "exit 0"
+    },
+    {
+      "command": "bash -c 'grep -q \"el_respaldo_concurrente_con_una_conmutacion_copia_una_sola_epoca_y_la_registra\" .github/workflows/ci.yml'",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "exit 0"
+    },
+    {
+      "command": "bash -c 'grep -q \"un_respaldo_que_supera_el_limite_de_drenaje_deja_la_epoca_superseida_sin_drenar_y_protegida\" .github/workflows/ci.yml'",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "exit 0"
+    },
+    {
+      "command": "bash -c 'grep -q \"fn la_copia_conserva_la_epoca_fijada_aunque_el_enlace_vivo_ya_apunte_a_la_siguiente\" crates/hexcell-storage/tests/respaldo_durante_conmutacion.rs'",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "exit 0"
+    },
+    {
+      "command": "bash -c 'grep -q \"la_copia_conserva_la_epoca_fijada_aunque_el_enlace_vivo_ya_apunte_a_la_siguiente\" .github/workflows/ci.yml'",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "exit 0"
+    },
+    {
+      "command": "bash -c 'salida=$(cargo test -p hexcell-storage --test respaldo_durante_conmutacion -- --ignored --exact la_copia_conserva_la_epoca_fijada_aunque_el_enlace_vivo_ya_apunte_a_la_siguiente --nocapture 2\u003e\u00261); estado=$?; echo \"$salida\"; test $estado -eq 0 \u0026\u0026 echo \"$salida\" | grep -q \"ok. 1 passed\"'",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "exit 0"
+    },
+    {
+      "command": "bash -c \"tr -d '[:space:]' \u003c crates/hexcell-storage/src/respaldo.rs | grep -q 'pubnumero_de_epoca:Option\u003ci64\u003e'\"",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "exit 0"
+    },
+    {
+      "command": "bash -c 'grep -q \"metadatos_de_epoca\" crates/hexcell-storage/src/respaldo.rs'",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "exit 0"
+    },
+    {
+      "command": "bash -c 'grep -q \"numero_de_epoca\" crates/hexcell-storage/tests/respaldo.rs'",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "exit 0"
+    },
+    {
+      "command": "bash -c 'grep -c \"numero_de_epoca:\" crates/hexcell/src/respaldo.rs | grep -q \"^2$\"'",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "exit 0"
+    },
+    {
+      "command": "bash -c 'grep -q \"adr-0031-respaldo-concurrente-con-conmutacion-de-epoca.md\" docs/adr/README.md'",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "exit 0"
+    },
+    {
+      "command": "bash -c 'grep -q \"^### D-38$\" docs/bitacora-de-descartes.md'",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "exit 0"
+    },
+    {
+      "command": "bash -c 'grep -q \"numero_de_epoca\" docs/runbook-restauracion-de-celula.md'",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "exit 0"
+    },
+    {
+      "command": "bash -c 'grep -q \"HEX-062\" docs/STATUS.md'",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "exit 0"
+    },
+    {
+      "command": "cargo fmt --check",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "exit 0"
+    },
+    {
+      "command": "cargo clippy --workspace -- -D warnings",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "exit 0"
+    },
+    {
+      "command": "cargo test --workspace",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "exit 0"
+    },
+    {
+      "command": "cargo test -p hexcell-storage --test respaldo",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "exit 0"
+    },
+    {
+      "command": "bash -c 'salida=$(cargo test -p hexcell-storage --test respaldo_durante_conmutacion -- --ignored --exact el_respaldo_concurrente_con_una_conmutacion_copia_una_sola_epoca_y_la_registra --nocapture 2\u003e\u00261); estado=$?; echo \"$salida\"; test $estado -eq 0 \u0026\u0026 echo \"$salida\" | grep -q \"ok. 1 passed\"'",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "exit 0"
+    },
+    {
+      "command": "bash -c 'salida=$(cargo test -p hexcell-storage --test respaldo_durante_conmutacion -- --ignored --exact un_respaldo_que_supera_el_limite_de_drenaje_deja_la_epoca_superseida_sin_drenar_y_protegida --nocapture 2\u003e\u00261); estado=$?; echo \"$salida\"; test $estado -eq 0 \u0026\u0026 echo \"$salida\" | grep -q \"ok. 1 passed\"'",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "exit 0"
+    },
+    {
+      "command": "bash -c 'test \"$(cargo tree -p hexcell-core | wc -l)\" -eq 1'",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "exit 0"
+    },
+    {
+      "command": "bash -c '! grep -rn \"tokio\" --include=*.rs crates/hexcell-storage/'",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "exit 0"
+    },
+    {
+      "command": "bash -c '! grep -rn -e \"async\" -e \"\\.await\" crates/hexcell-storage/tests/respaldo_durante_conmutacion.rs'",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "exit 0"
+    },
+    {
+      "command": "bash -c '! grep -rn \"HEXCELL_LIMITE_DE_DRENAJE_DE_EPOCA_MS\" --include=*.rs crates/hexcell-storage/'",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "exit 0"
+    },
+    {
+      "command": "bash -c '! grep -rn -e \"std::env::set_var\" -e \"std::env::remove_var\" --include=*.rs crates/hexcell/ crates/hexcell-storage/'",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "exit 0"
+    },
+    {
+      "command": "bash -c '! grep -rn -e \"test-threads=1\" -e \"serial_test\" .github/workflows/ci.yml crates/hexcell-storage/tests/respaldo_durante_conmutacion.rs'",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "exit 0"
+    },
+    {
+      "command": "bash -c 'grep -q \"estres_conmutacion_veinte_lecturas_concurrentes\" .github/workflows/ci.yml'",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "exit 0"
+    },
+    {
+      "command": "bash -c 'grep -q \"duracion_de_conmutacion_ms\" .github/workflows/ci.yml'",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "exit 0"
+    }
+  ],
+  "executed_at": "2026-09-08T15:00:00Z",
+  "overall_result": "passed",
+  "summary": "31/31 exit 0 sobre 9b15b58 en worktrees/HEX-062-new-spec. Mutacion: 5 guardas demostradas disjuntas.",
+  "task_id": "HEX-062"
+}

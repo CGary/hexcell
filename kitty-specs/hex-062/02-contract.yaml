@@ -1,0 +1,256 @@
+task_id: HEX-062
+summary: >-
+  Two ignored CI tests proving backup/switchover independence, plus an additive numero_de_epoca on
+  CopiaVerificada read back from the produced copy, adr-0031 and D-38.
+goal: >-
+  Deliver plan task 12 of stage A-5 (docs/plan/fase-a-5-conocimiento-shadow-db.md:120-122): prove that
+  an epoch switchover concurrent with an in-flight backup produces neither an inconsistent copy nor a
+  silently deleted orphan epoch, make the copied epoch number visible in the backup output so a
+  restore's provenance is checkable, execute both proofs in CI as named steps, and record both the
+  finding (adr-0031) and the explicitly deferred mutual-exclusion alternative (D-38). Adding real
+  mutual exclusion between respaldar_en and iniciar_promocion is OUT OF SCOPE by human decision of
+  2026-09-08.
+read:
+  - .ai/tasks/active/HEX-062-new-spec/00-spec.yaml
+  - .ai/tasks/active/HEX-062-new-spec/01-blueprint.yaml
+  - crates/hexcell-storage/src/drenaje.rs
+  - crates/hexcell-storage/src/promocion.rs
+  - crates/hexcell-storage/src/retencion.rs
+  - crates/hexcell-storage/src/reversion.rs
+  - crates/hexcell-storage/src/conocimiento.rs
+  - crates/hexcell-storage/src/migraciones.rs
+  - crates/hexcell-storage/tests/comun/mod.rs
+  - crates/hexcell-storage/tests/estres_conmutacion.rs
+  - crates/hexcell-storage/tests/drenaje.rs
+  - crates/hexcell-storage/tests/retencion.rs
+  - crates/hexcell/src/respaldar.rs
+  - docs/plan/fase-a-5-conocimiento-shadow-db.md
+  - docs/plan/fase-a-2-nucleo-persistencia.md
+  - docs/adr/adr-0030-prueba-de-estres-de-conmutacion-de-epoca-bajo-lecturas-concurrentes.md
+  - docs/adr/README.md
+  - docs/bitacora-de-descartes.md
+  - docs/PRD.md
+touch:
+  - crates/hexcell-storage/tests/respaldo_durante_conmutacion.rs
+  - crates/hexcell-storage/tests/respaldo.rs
+  - crates/hexcell-storage/src/respaldo.rs
+  - crates/hexcell-storage/src/pools.rs
+  - crates/hexcell/src/respaldo.rs
+  - .github/workflows/ci.yml
+  - docs/adr/adr-0031-respaldo-concurrente-con-conmutacion-de-epoca.md
+  - docs/adr/README.md
+  - docs/STATUS.md
+  - docs/bitacora-de-descartes.md
+  - docs/runbook-restauracion-de-celula.md
+forbid:
+  files:
+    - crates/hexcell-core/**
+    - crates/hexcell-admin/**
+    - crates/hexcell-canal-simulado/**
+    - crates/hexcell-canal-contrato/**
+    - crates/hexcell-canal-whatsmeow/**
+    - crates/hexcell-meta/**
+    - crates/hexcell-storage/migraciones/**
+    - crates/hexcell-storage/src/drenaje.rs
+    - crates/hexcell-storage/src/promocion.rs
+    - crates/hexcell-storage/src/retencion.rs
+    - crates/hexcell-storage/src/reversion.rs
+    - crates/hexcell-storage/src/conocimiento.rs
+    - crates/hexcell-storage/src/migraciones.rs
+    - crates/hexcell-storage/tests/comun/mod.rs
+    - crates/hexcell-storage/tests/estres_conmutacion.rs
+    - crates/hexcell-storage/tests/drenaje.rs
+    - crates/hexcell-storage/tests/retencion.rs
+    - crates/hexcell-storage/tests/promocion.rs
+    - crates/hexcell-storage/tests/reversion.rs
+    - crates/hexcell/src/respaldar.rs
+    - sidecar/**
+    - Cargo.toml
+    - Cargo.lock
+    - crates/*/Cargo.toml
+    - docs/PRD.md
+    # Enmienda del orquestador (2026-09-08): se retira el glob `README.md`. El emparejador de
+    # `quorum analyze contract-check` resuelve los patrones sin barra por NOMBRE DE ARCHIVO, asi
+    # que capturaba `docs/adr/README.md`, que AC-5 exige editar y que ya figura en `touch`. El
+    # README raiz sigue protegido porque `touch` opera como lista blanca: comprobado el 2026-09-08,
+    # un archivo ausente de `touch` se reporta como violacion de tipo `touch`.
+    - docs/plan/**
+    - .ai/tasks/**/00-spec.yaml
+    - '**/*.db'
+    - '**/*.db-wal'
+    - '**/*.db-shm'
+    - .env*
+  behaviors:
+    - >-
+      Do NOT add mutual exclusion between respaldar_en and iniciar_promocion/promover_epoca: no guard
+      parameter, no shared lock, no promotion flag consulted from the backup path. This is a human
+      decision of 2026-09-08 recorded in 00-spec.yaml non_goals and logged as D-38. It inverts the
+      current fail-open design and would let a long VACUUM INTO block a promotion. If it looks
+      tempting while writing the test, that is the finding, not a licence to fix it.
+    - >-
+      Do NOT change drenar_epoca_superseida's algorithm, its 5 ms INTERVALO_DE_SONDEO_DE_DRENAJE, its
+      LIMITE_DE_DRENAJE_DE_EPOCA_POR_DEFECTO of 10 s, or retencion's purge protection rules.
+      crates/hexcell-storage/src/drenaje.rs and retencion.rs are forbidden files: this task CONSUMES
+      those functions and proves their current behavior, it does not adjust them.
+    - >-
+      The new field on CopiaVerificada must be strictly additive: Option<i64>, defaulting to None
+      wherever no epoch exists. Every existing reader of nombre_logico, ruta and bytes keeps compiling
+      unchanged. Do NOT remove, rename or reorder the three existing fields, and do NOT make the field
+      non-optional, which would break the sessions.db and adapter_identity.db copies.
+    - >-
+      The recorded epoch MUST be read out of the produced copy's own metadatos_de_epoca row, not
+      derived from PoolDeConocimiento::ruta(). For the live pool that path is the symlink
+      <ruta_datos>/knowledge_live.db and it resolves to the NEW epoch immediately after
+      reasignar_enlace_de_la_epoca_viva, so a path-derived number would mis-label exactly the copy
+      this task exists to characterise.
+    - >-
+      A missing metadatos_de_epoca table (sessions.db, adapter_identity.db) and a present row with a
+      NULL numero_de_epoca (a knowledge base never promoted, conocimiento.rs:313) must BOTH yield
+      Ok(None), never an error. Any other outcome breaks the four existing tests in tests/respaldo.rs.
+    - >-
+      Do NOT add any dependency, runtime or dev, to any crate manifest. Cargo.toml, Cargo.lock and
+      every crate manifest are forbidden. crates/hexcell-storage stays executor-free: no tokio, no
+      `async fn`, no `.await`, no tempfile, no serial_test. The new test uses only std::thread,
+      std::sync::Arc, std::sync::Barrier, std::sync::atomic, std::time::Duration and std::time::Instant.
+      rusqlite stays pinned at 0.39.
+    - >-
+      The drain limit is passed to drenar_epoca_superseida as a direct Duration argument. Do NOT read
+      or write HEXCELL_LIMITE_DE_DRENAJE_DE_EPOCA_MS or any other process environment variable from
+      hexcell-storage: that variable is read only by the async wrapper in crates/hexcell (adr-0028).
+      Do NOT call std::env::set_var or std::env::remove_var anywhere, and do not disturb the existing
+      adr-0028 grep guard step at .github/workflows/ci.yml:49-54 or the NFR-03 guard at :63-66.
+    - >-
+      Determinism of the drain-expiry test must come from the held read-cell mutex, never from timing.
+      A thread holds one connection of the SUPERSEDED pool open across the whole drain window with a
+      std::sync::Barrier, so lecturas_en_reposo() is false at every poll and Expirada is the only
+      reachable outcome. Do NOT make the proof depend on VACUUM INTO outlasting a wall clock, and do
+      NOT add sleeps to "make it work".
+    - >-
+      Do NOT serialize the test suite with --test-threads=1, serial_test, or any suite-wide
+      serialization. That is D-33, a standing discard marked "no reabrir"; reopening it is a human
+      decision, not something to route around silently here.
+    - >-
+      Do NOT add a fourth copy of preparar_staging_valido or extend tests/comun/mod.rs, which is a
+      forbidden file. HEX-061 already promoted that fixture; reuse it as-is. Any helper specific to
+      this task stays file-private inside tests/respaldo_durante_conmutacion.rs. Use
+      DirectorioTemporal::nuevo as the only temp-directory idiom, and never derive a directory name,
+      a backoff or a test identifier from a clock reading.
+    - >-
+      Both new tests are #[ignore]d AND each gets its own named step in .github/workflows/ci.yml,
+      mirroring the HEX-061 step at ci.yml:41-42, each preceded by a `#` comment block explaining why
+      it is ignored. Each step names exactly one test function. An ignored test with no CI step is not
+      a delivered test: `cargo test -- --ignored <nonexistent-name>` exits 0 and proves nothing.
+    - >-
+      The stage A-2 procedure adjustment goes in docs/runbook-restauracion-de-celula.md, NOT in
+      docs/plan/fase-a-2-nucleo-persistencia.md, which is a forbidden file. The plan document states
+      what A-2 had to BUILD and is closed; the runbook is the live operator PROCEDURE and already owns
+      the sections a restorer reads. This is a deliberate divergence from AC-6's parenthetical,
+      recorded in 01-blueprint.yaml risks.
+    - >-
+      Write ALL content in Spanish: identifiers, doc comments, inline comments, test names, ADR text,
+      runbook and STATUS.md prose, and the commit message. Comments must be DIDACTIC and explain WHY,
+      not WHAT, calibrated against crates/hexcell-storage/src/respaldo.rs and tests/drenaje.rs. Commit
+      subjects avoid accents. Quorum artifact field values stay in English.
+    - >-
+      ADR numbering is correlative and never reused or reordered: this task consumes adr-0031 and no
+      earlier ADR file or README row is rewritten. The discard is D-38, appended after D-37 in
+      docs/bitacora-de-descartes.md in the SAME commit that defers mutual exclusion; never edit or
+      delete an existing entry. Refresh only the file's own stale header stamp on line 3.
+    - >-
+      Use absolute dates only (2026-09-08 or the actual completion date), never relative ones.
+      Conventional commits in Spanish, and NEVER add a Co-Authored-By trailer, an AI attribution, or a
+      generated-with footer to this task's commit. The repository is public: no secrets, ever.
+    - >-
+      Do NOT run `git merge` and do NOT leave the worktree. All work happens on the task branch.
+verify:
+  commands:
+    - bash -c 'test -f crates/hexcell-storage/tests/respaldo_durante_conmutacion.rs'
+    - bash -c 'test -f docs/adr/adr-0031-respaldo-concurrente-con-conmutacion-de-epoca.md'
+    - bash -c 'grep -q "fn el_respaldo_concurrente_con_una_conmutacion_copia_una_sola_epoca_y_la_registra" crates/hexcell-storage/tests/respaldo_durante_conmutacion.rs'
+    - bash -c 'grep -q "fn un_respaldo_que_supera_el_limite_de_drenaje_deja_la_epoca_superseida_sin_drenar_y_protegida" crates/hexcell-storage/tests/respaldo_durante_conmutacion.rs'
+    - bash -c 'grep -q "el_respaldo_concurrente_con_una_conmutacion_copia_una_sola_epoca_y_la_registra" .github/workflows/ci.yml'
+    - bash -c 'grep -q "un_respaldo_que_supera_el_limite_de_drenaje_deja_la_epoca_superseida_sin_drenar_y_protegida" .github/workflows/ci.yml'
+    - bash -c 'grep -q "fn la_copia_conserva_la_epoca_fijada_aunque_el_enlace_vivo_ya_apunte_a_la_siguiente" crates/hexcell-storage/tests/respaldo_durante_conmutacion.rs'
+    - bash -c 'grep -q "la_copia_conserva_la_epoca_fijada_aunque_el_enlace_vivo_ya_apunte_a_la_siguiente" .github/workflows/ci.yml'
+    - bash -c 'salida=$(cargo test -p hexcell-storage --test respaldo_durante_conmutacion -- --ignored --exact la_copia_conserva_la_epoca_fijada_aunque_el_enlace_vivo_ya_apunte_a_la_siguiente --nocapture 2>&1); estado=$?; echo "$salida"; test $estado -eq 0 && echo "$salida" | grep -q "ok. 1 passed"'
+    - bash -c "tr -d '[:space:]' < crates/hexcell-storage/src/respaldo.rs | grep -q 'pubnumero_de_epoca:Option<i64>'"
+    - bash -c 'grep -q "metadatos_de_epoca" crates/hexcell-storage/src/respaldo.rs'
+    - bash -c 'grep -q "numero_de_epoca" crates/hexcell-storage/tests/respaldo.rs'
+    - bash -c 'grep -c "numero_de_epoca:" crates/hexcell/src/respaldo.rs | grep -q "^2$"'
+    - bash -c 'grep -q "adr-0031-respaldo-concurrente-con-conmutacion-de-epoca.md" docs/adr/README.md'
+    - bash -c 'grep -q "^### D-38$" docs/bitacora-de-descartes.md'
+    - bash -c 'grep -q "numero_de_epoca" docs/runbook-restauracion-de-celula.md'
+    - bash -c 'grep -q "HEX-062" docs/STATUS.md'
+    - cargo fmt --check
+    - cargo clippy --workspace -- -D warnings
+    - cargo test --workspace
+    - cargo test -p hexcell-storage --test respaldo
+    - bash -c 'salida=$(cargo test -p hexcell-storage --test respaldo_durante_conmutacion -- --ignored --exact el_respaldo_concurrente_con_una_conmutacion_copia_una_sola_epoca_y_la_registra --nocapture 2>&1); estado=$?; echo "$salida"; test $estado -eq 0 && echo "$salida" | grep -q "ok. 1 passed"'
+    - bash -c 'salida=$(cargo test -p hexcell-storage --test respaldo_durante_conmutacion -- --ignored --exact un_respaldo_que_supera_el_limite_de_drenaje_deja_la_epoca_superseida_sin_drenar_y_protegida --nocapture 2>&1); estado=$?; echo "$salida"; test $estado -eq 0 && echo "$salida" | grep -q "ok. 1 passed"'
+    - bash -c 'test "$(cargo tree -p hexcell-core | wc -l)" -eq 1'
+    - bash -c '! grep -rn "tokio" --include=*.rs crates/hexcell-storage/'
+    - bash -c '! grep -rn -e "async" -e "\.await" crates/hexcell-storage/tests/respaldo_durante_conmutacion.rs'
+    - bash -c '! grep -rn "HEXCELL_LIMITE_DE_DRENAJE_DE_EPOCA_MS" --include=*.rs crates/hexcell-storage/'
+    - bash -c '! grep -rn -e "std::env::set_var" -e "std::env::remove_var" --include=*.rs crates/hexcell/ crates/hexcell-storage/'
+    - bash -c '! grep -rn -e "test-threads=1" -e "serial_test" .github/workflows/ci.yml crates/hexcell-storage/tests/respaldo_durante_conmutacion.rs'
+    - bash -c 'grep -q "estres_conmutacion_veinte_lecturas_concurrentes" .github/workflows/ci.yml'
+    - bash -c 'grep -q "duracion_de_conmutacion_ms" .github/workflows/ci.yml'
+acceptance:
+  human_gate: true
+limits:
+  max_files_changed: 11
+  # Sizing reason (2026-09-08), calibrated against the measured HEX-061 diff, which needed 1120 lines
+  # across 9 files for one new stress test plus docs. This task is smaller in test volume (one new
+  # file with two tests reusing the existing preparar_staging_valido fixture, no fixture promotion and
+  # no deletion of duplicated helpers, which is where HEX-061's budget actually went) but wider in
+  # surface: it is the first task in this stage that edits PRODUCTION source in two crates
+  # (hexcell-storage respaldo.rs/pools.rs and hexcell respaldo.rs) and writes FIVE documentation
+  # files instead of four. The global cap is the exact sum of the per_class caps below, matching the
+  # HEX-060/HEX-061 discipline that the shape limits stay the binding constraint.
+  max_diff_lines: 1260
+  per_class:
+    # New test file with two concurrency tests, their file-private helpers and the heavy didactic
+    # Spanish doc comments this crate's tests carry (tests/drenaje.rs is 422 lines, estres_conmutacion.rs
+    # 695), plus one added assertion in the existing tests/respaldo.rs.
+    # Enmienda del orquestador (2026-09-08): 480 -> 720. El blueprint dimensiono esta clase
+    # descontando la promocion del fixture de HEX-061, pero dos pruebas de concurrencia con
+    # comentario didactico pesan como la de estres (`estres_conmutacion.rs`, ~660 lineas). La
+    # entrega ya suma 596 y las correcciones de la revision (marcadores de contenido por epoca
+    # y asercion de solapamiento) agregan mas. Un contrato subdimensionado obliga a violarlo o
+    # a recortar justo la prosa que explica el porque.
+    # Segunda enmienda del orquestador (2026-09-08): 720 -> 820. La primera ronda aterrizo en
+    # 720/720 exactos, o sea que el tope describia la entrega en vez de acotarla. La revision
+    # profunda encontro que la prueba no ejercita la ventana que justifica la decision central
+    # de diseno (leer el ordinal de la copia y no del symlink), y propuso una costura de
+    # OBSERVACION —girar sobre `lecturas_en_reposo()` del pool vivo— en vez de un freno. Sin
+    # holgura, la correccion obligaria a recortar la prosa didactica que este repositorio exige.
+    # Tercera enmienda del orquestador (2026-09-08): 820 -> 920. La revision exigio una TERCERA
+    # prueba de concurrencia conservando la prosa didactica, y eso costo ~175 lineas contra las
+    # 100 que libero la segunda enmienda. Se deja constancia de la causa raiz en vez de
+    # disimularla: el blueprint dimensiono esta clase en 480 cuando la entrega real ronda 895,
+    # casi el doble, por modelar mal la densidad de comentario de una prueba de concurrencia.
+    - glob: crates/hexcell-storage/tests/**
+      max_diff_lines: 920
+    # The additive field, the metadatos_de_epoca read-back inside verificar_copia with its
+    # missing-table/NULL handling, and the doc-comment updates on respaldar_base and respaldar_en
+    # explaining why ruta() is deliberately not the source of the number.
+    - glob: crates/hexcell-storage/src/**
+      max_diff_lines: 120
+    # Two struct literals gaining `numero_de_epoca: None` with a short explanatory comment each.
+    - glob: crates/hexcell/src/**
+      max_diff_lines: 40
+    # Two named steps plus their `#` comment blocks, mirroring ci.yml:34-42. No restructuring.
+    - glob: .github/workflows/ci.yml
+      max_diff_lines: 40
+    # New ADR (adr-0030 is 143 lines and is the closest precedent; this decision carries three
+    # findings plus a deferral section, so it may run longer), its README row, a D-38 entry in the
+    # bitacora with the stale header stamp refreshed, one STATUS.md bullet with its date bump, and
+    # the runbook provenance note.
+    - glob: docs/**
+      max_diff_lines: 280
+execution:
+  mode: worktree_edit
+  branch: ai/HEX-062-new-spec
+retry_policy:
+  max_attempts: 2
+  escalate_after: 2

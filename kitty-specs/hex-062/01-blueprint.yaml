@@ -1,0 +1,261 @@
+task_id: HEX-062
+summary: >-
+  Prove backup/switchover independence in hexcell-storage with two ignored CI tests, and record the
+  copied epoch number additively on CopiaVerificada by reading it back from the produced copy.
+affected_files:
+  - crates/hexcell-storage/tests/respaldo_durante_conmutacion.rs
+  - crates/hexcell-storage/tests/respaldo.rs
+  - crates/hexcell-storage/src/respaldo.rs
+  - crates/hexcell-storage/src/pools.rs
+  - crates/hexcell/src/respaldo.rs
+  - .github/workflows/ci.yml
+  - docs/adr/adr-0031-respaldo-concurrente-con-conmutacion-de-epoca.md
+  - docs/adr/README.md
+  - docs/STATUS.md
+  - docs/bitacora-de-descartes.md
+  - docs/runbook-restauracion-de-celula.md
+symbols:
+  - "hexcell_storage::respaldo::CopiaVerificada (Value Object; gains numero_de_epoca: Option<i64>)"
+  - hexcell_storage::respaldo::respaldar_base
+  - hexcell_storage::respaldo::verificar_copia
+  - hexcell_storage::pools::GestorDePools::respaldar_en
+  - hexcell_storage::pools::GestorDePools::conocimiento
+  - hexcell_storage::pools::GestorDePools::intercambiar_pool_de_conocimiento
+  - hexcell_storage::pools::PoolDeConocimiento::con_lectura
+  - hexcell_storage::pools::PoolDeConocimiento::lecturas_en_reposo
+  - hexcell_storage::drenaje::drenar_epoca_superseida
+  - hexcell_storage::drenaje::DesenlaceDeDrenaje::Expirada
+  - hexcell_storage::promocion::promover_epoca
+  - hexcell_storage::promocion::EpocaSuperseida
+  - hexcell_storage::retencion::purgar_epocas_retiradas
+  - hexcell_storage::retencion::MotivoDeConservacion::SuperseidaSinDrenar
+  - hexcell::respaldo::ResultadoRespaldoSqlstore::Completado
+  - hexcell::respaldo::ResultadoRespaldoIdentidad::Completado
+  - el_respaldo_concurrente_con_una_conmutacion_copia_una_sola_epoca_y_la_registra
+  - un_respaldo_que_supera_el_limite_de_drenaje_deja_la_epoca_superseida_sin_drenar_y_protegida
+dependencies:
+  - crates/hexcell-storage/tests/comun/mod.rs
+  - crates/hexcell-storage/tests/estres_conmutacion.rs
+  - crates/hexcell-storage/tests/drenaje.rs
+  - crates/hexcell-storage/tests/retencion.rs
+  - crates/hexcell-storage/src/drenaje.rs
+  - crates/hexcell-storage/src/promocion.rs
+  - crates/hexcell-storage/src/retencion.rs
+  - crates/hexcell-storage/src/conocimiento.rs
+  - crates/hexcell-storage/src/migraciones.rs
+  - crates/hexcell/src/respaldar.rs
+  - docs/plan/fase-a-5-conocimiento-shadow-db.md
+  - docs/plan/fase-a-2-nucleo-persistencia.md
+  - docs/adr/adr-0030-prueba-de-estres-de-conmutacion-de-epoca-bajo-lecturas-concurrentes.md
+test_scenarios:
+  - statement: >-
+      Concurrency test: a backup thread runs GestorDePools::respaldar_en while a promotion thread runs
+      promover_epoca to epoch N+1, synchronized with std::sync::Barrier. The produced
+      knowledge_live.db copy opens cleanly, passes PRAGMA integrity_check, carries the expected
+      user_version, and its recorded numero_de_epoca is a single well-defined epoch, never a torn mix.
+    covers:
+      - AC-1
+  - statement: >-
+      The recorded epoch number is read back from the copy's own metadatos_de_epoca row, so the
+      assertion compares the copy's physical content against the epoch the pool was serving, rather
+      than trusting an out-of-band label.
+    covers:
+      - AC-1
+      - AC-2
+  - statement: >-
+      CopiaVerificada carries numero_de_epoca as Option<i64>; the sessions.db copy records None
+      (no metadatos_de_epoca table) and the knowledge_live.db copy records the live epoch, or None
+      before any promotion has sealed one. Existing tests in tests/respaldo.rs keep passing and one
+      of them gains an assertion on the new field.
+    covers:
+      - AC-2
+  - statement: >-
+      Drain-expiry test: a thread holds one read connection of the superseded pool open across the
+      whole drain window via PoolDeConocimiento::con_lectura and a Barrier, so lecturas_en_reposo()
+      is false at every 5 ms poll. drenar_epoca_superseida called with a deliberately low limit
+      passed as a direct parameter returns DesenlaceDeDrenaje::Expirada, reporting
+      lecturas_en_reposo == false and titulares >= 2.
+    covers:
+      - AC-3
+  - statement: >-
+      After the observed expiry, the test asserts the superseded epoch's file is still present on
+      disk (nothing deleted, fail-closed) and that purgar_epocas_retiradas classifies it as
+      MotivoDeConservacion::SuperseidaSinDrenar, observed rather than assumed.
+    covers:
+      - AC-3
+  - statement: >-
+      Both tests are #[ignore]d and each is executed by its own named step in
+      .github/workflows/ci.yml, mirroring the HEX-061 stress step at ci.yml:41-42, so each step
+      names its test function explicitly and is greppable.
+    covers:
+      - AC-4
+  - statement: >-
+      docs/adr/adr-0031-respaldo-concurrente-con-conmutacion-de-epoca.md exists, is listed as the
+      next sequential row in docs/adr/README.md with no existing row rewritten, and contains a
+      section naming the deferred mutual-exclusion decision as out of scope.
+    covers:
+      - AC-5
+  - statement: >-
+      docs/runbook-restauracion-de-celula.md gains the provenance note: an operator restoring a copy
+      can now read which knowledge epoch that copy contains from the recorded epoch number.
+    covers:
+      - AC-6
+  - statement: >-
+      cargo fmt --check, cargo clippy --workspace -- -D warnings and cargo test --workspace all pass,
+      hexcell-storage stays executor-free, and a new D-38 entry lands in
+      docs/bitacora-de-descartes.md in the same commit that defers mutual exclusion.
+strategy:
+  - step: 1
+    action: >-
+      Value Object change. Add `pub numero_de_epoca: Option<i64>` to CopiaVerificada and populate it
+      inside verificar_copia, which already opens the finished copy read-only. Query
+      `SELECT numero_de_epoca FROM metadatos_de_epoca WHERE id = 1` and map both a missing table
+      (sessions.db, adapter_identity.db) and a NULL column (a knowledge base never promoted, see
+      conocimiento.rs:313) to None; only a genuine SQLite failure other than "no such table"
+      propagates. Reading the number back OUT OF THE COPY is the whole point: the recorded epoch is
+      then provably what the copy physically holds, with no window between the ArcSwap load and the
+      VACUUM INTO in which a label could go stale.
+    files:
+      - crates/hexcell-storage/src/respaldo.rs
+  - step: 2
+    action: >-
+      Application Service pass-through. respaldar_en needs no logic change (both copies already flow
+      through respaldar_base), but its doc comment must state that the knowledge copy's recorded
+      epoch comes from the copy itself and that the pool's ruta() is deliberately NOT used, because
+      for the live pool that path is the symlink <datos>/knowledge_live.db and it resolves to the NEW
+      epoch immediately after reasignar_enlace_de_la_epoca_viva.
+    files:
+      - crates/hexcell-storage/src/pools.rs
+  - step: 3
+    action: >-
+      Fix the two struct literals outside the crate. crates/hexcell/src/respaldo.rs:173 (sqlstore.db)
+      and :254 (identidad.db) build CopiaVerificada by hand from sidecar IPC acknowledgements; both
+      gain `numero_de_epoca: None` with a short comment explaining that the sidecar's bases carry no
+      knowledge epoch. crates/hexcell/src/respaldar.rs only reads fields and must stay untouched.
+    files:
+      - crates/hexcell/src/respaldo.rs
+  - step: 4
+    action: >-
+      New test file crates/hexcell-storage/tests/respaldo_durante_conmutacion.rs, `mod comun;`, using
+      DirectorioTemporal and preparar_staging_valido. Test 1
+      (el_respaldo_concurrente_con_una_conmutacion_copia_una_sola_epoca_y_la_registra): open with
+      abrir_con_anchura_de_conocimiento, seed staging, spawn a backup thread on respaldar_en and a
+      promotion thread on promover_epoca, rendezvous on a Barrier, then assert the knowledge copy
+      opens, passes integrity_check, and its recorded epoch is a single coherent value consistent
+      with the copy's own fragment contents.
+    files:
+      - crates/hexcell-storage/tests/respaldo_durante_conmutacion.rs
+  - step: 5
+    action: >-
+      Test 2 (un_respaldo_que_supera_el_limite_de_drenaje_deja_la_epoca_superseida_sin_drenar_y_protegida)
+      in the same file. Promote to N+1, take the returned EpocaSuperseida, then have a thread hold one
+      read cell of the SUPERSEDED pool via con_lectura and a Barrier for the whole drain window.
+      Determinism comes from the held mutex, not from timing: lecturas_en_reposo() is false at every
+      5 ms poll, so Expirada is the only reachable outcome. Call drenar_epoca_superseida with a low
+      limit passed as a direct Duration argument, never via HEXCELL_LIMITE_DE_DRENAJE_DE_EPOCA_MS,
+      then assert the epoch file still exists and purgar_epocas_retiradas reports SuperseidaSinDrenar.
+    files:
+      - crates/hexcell-storage/tests/respaldo_durante_conmutacion.rs
+  - step: 6
+    action: >-
+      Extend one existing test in tests/respaldo.rs to assert the new field's value on both copies
+      (sessions.db None, knowledge_live.db the live epoch). Do not restructure the other four tests.
+    files:
+      - crates/hexcell-storage/tests/respaldo.rs
+  - step: 7
+    action: >-
+      Add two named CI steps to the rust job in .github/workflows/ci.yml, each preceded by a `#`
+      comment block explaining why the test is ignored, mirroring the HEX-061 step at ci.yml:41-42
+      byte for byte in shape. Each step names exactly one test function so the step is greppable.
+      Do not disturb the adr-0028 environment guard (ci.yml:49-54) or the NFR-03 guard (ci.yml:63-66).
+    files:
+      - .github/workflows/ci.yml
+  - step: 8
+    action: >-
+      Write docs/adr/adr-0031-respaldo-concurrente-con-conmutacion-de-epoca.md recording H1/H2/H3,
+      the additive epoch recording, and an explicit section stating that mutual exclusion between
+      respaldar_en and iniciar_promocion is DEFERRED, not solved. Calibrate length against adr-0030
+      (143 lines). Append its row to docs/adr/README.md without touching any earlier row.
+    files:
+      - docs/adr/adr-0031-respaldo-concurrente-con-conmutacion-de-epoca.md
+      - docs/adr/README.md
+  - step: 9
+    action: >-
+      Add entry D-38 to docs/bitacora-de-descartes.md right after D-37 (line 543), reusing the exact
+      four-bullet shape of D-37 (Descartado / Por que se descarto / Registro normativo / Que tendria
+      que cambiar para reabrirlo), recording the deferral of backup-promotion mutual exclusion: it
+      would invert the current fail-open design and let a long VACUUM INTO block promotion. Refresh
+      the file's stale header stamp on line 3, which still reads 2026-09-01 (D-34).
+    files:
+      - docs/bitacora-de-descartes.md
+  - step: 10
+    action: >-
+      Record the A-2 procedure adjustment in docs/runbook-restauracion-de-celula.md, not in
+      docs/plan/fase-a-2-nucleo-persistencia.md. Rationale: the plan file states what A-2 had to
+      BUILD and is closed; the runbook is the live operator PROCEDURE and already owns sections
+      "Producción de un respaldo de célula" (L32) and "Criterio de aceptación de la restauración"
+      (L116), which is exactly where a restorer needs to learn that a copy now names its knowledge
+      epoch. Then add one STATUS.md bullet at the top of "## Definido" for HEX-062 / etapa A-5 /
+      tarea 12 and bump the file's date stamp.
+    files:
+      - docs/runbook-restauracion-de-celula.md
+      - docs/STATUS.md
+risks:
+  - >-
+    CORRECTION to the briefing hint (b). PoolDeConocimiento::ruta() for the LIVE pool is
+    <ruta_datos>/knowledge_live.db, the symlink, set at pools.rs:304 by ruta_datos.join(...), not the
+    epoch file. reasignar_enlace_de_la_epoca_viva repoints that symlink, so the same path resolves to
+    epoch N+1 the instant promotion lands. Deriving the recorded epoch from ruta() would mis-label a
+    copy taken across a switchover. The design therefore reads metadatos_de_epoca out of the produced
+    copy inside verificar_copia.
+  - >-
+    RESOLVED, and it strengthens the case. Briefing open question (a): arc-swap 1.9.2's own load_cnt
+    test (src/lib.rs:1274-1306) documents that a load() Guard holds NO refcount initially, but that on
+    a store/swap "each guard got a full Arc inside it" and Arc::strong_count rises. So while
+    respaldar_en holds its guard across intercambiar_pool_de_conocimiento, strong_count of the old
+    pool is >= 2. BOTH halves of the drain predicate are false during a backup, not only the
+    lecturas_en_reposo() half the briefing had confirmed.
+  - >-
+    GestorDePools exposes no way for a test to obtain an ArcSwap Guard: conocimiento() is load_full()
+    and yields an owned Arc. Test 2 therefore reproduces respaldar_en's hold with conocimiento() plus
+    a con_lectura closure, which over-approximates strong_count by one relative to the real guard. The
+    conclusion is unchanged (the predicate is false either way) but the test proves the mechanism, not
+    literally respaldar_en's refcount. The test's doc comment must say so.
+  - >-
+    Making the drain expiry depend on VACUUM INTO's duration would NOT be deterministic on a small
+    fixture: a copy of preparar_staging_valido's one-fragment base finishes in single-digit
+    milliseconds. Determinism is pinned to the held read-cell mutex, which makes lecturas_en_reposo()
+    false at every 5 ms poll of INTERVALO_DE_SONDEO_DE_DRENAJE, so Expirada is the only reachable
+    outcome and the test cannot pass by timing luck.
+  - >-
+    CopiaVerificada is built as a struct literal at three sites, two of them OUTSIDE hexcell-storage:
+    crates/hexcell/src/respaldo.rs:173 (sqlstore.db) and :254 (identidad.db), fed from sidecar IPC
+    acknowledgements. Even an Option field breaks both; both must gain numero_de_epoca: None or the
+    workspace will not compile. crates/hexcell/src/respaldar.rs only reads fields and is forbidden.
+  - >-
+    Deliberate divergence from AC-6's parenthetical. AC-6 names "docs/plan/fase-a-2-*.md or
+    equivalent"; this blueprint routes the adjustment to docs/runbook-restauracion-de-celula.md and
+    forbids docs/plan/** entirely, matching the HEX-061 contract. Compounding the point,
+    docs/plan/fase-a-2-nucleo-persistencia.md:148-152 declares a deliverable docs/runbook-respaldo.md
+    that does not exist on disk. A q-analyze reader may flag this as a spec/contract mismatch; it is
+    intentional and recorded here rather than by editing the human-owned spec.
+  - >-
+    sessions.db and adapter_identity.db have no metadatos_de_epoca table, and a knowledge base that
+    has never been promoted has the row present with numero_de_epoca NULL (documented as a legitimate
+    None at conocimiento.rs:313). Both cases must yield Ok(None), never an error, or respaldar_en
+    starts failing on the sessions copy and four existing tests in tests/respaldo.rs break.
+  - >-
+    docs/bitacora-de-descartes.md line 3 still stamps "Última actualización: 2026-09-01 (D-34)",
+    already stale by D-35, D-36 and D-37. Adding D-38 should refresh it; leaving it is a silent
+    regression the reviewer should catch.
+  - >-
+    No prior-failure context available. quorum analyze failure-lookup returned null (no overlapping
+    failed task), and the HSME advisory read hook is unavailable: hsme-cli reports "failed to open
+    database ... no such file or directory". [ADVISOR] No disponible — se procede sin contexto
+    semántico. Phase 1b external summarization was also skipped (external fleet without quota until
+    approximately 2026-09-14); Phase 1a discovery was completed by targeted direct reads instead,
+    which the skill explicitly permits when Phase 1b degrades.
+  - >-
+    verify.commands runs the full workspace test suite plus two ignored tests, so wall time far
+    exceeds the schema's optional target_s ceiling of 60 seconds. target_s is deliberately omitted
+    rather than set to a value the command list cannot honour.

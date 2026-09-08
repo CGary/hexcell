@@ -1,0 +1,3 @@
+entries: []
+summary: Two ignored CI tests proving backup/switchover independence, plus an additive numero_de_epoca on CopiaVerificada read back from the produced copy, adr-0031 and D-38.
+task_id: HEX-062

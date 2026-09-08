@@ -1,0 +1,168 @@
+task_id: HEX-062
+summary: Verify backup/switchover interaction in hexcell-storage; record copied epoch number in backup output; ADR for deferred mutual exclusion.
+goal: >
+  Close the stage A-5 acceptance criterion "a backup executed during a switchover
+  produces a consistent and restorable copy". Add a regression test in
+  hexcell-storage that runs a knowledge-epoch switchover concurrently with a
+  backup (VACUUM INTO) and settles three propositions: (H1) the backup output
+  is a consistent snapshot of whichever epoch was live when the backup began,
+  (H2) the backup currently has no way to record which epoch it copied, and
+  (H3) a backup that outlasts the drain limit deterministically forces
+  DesenlaceDeDrenaje::Expirada, leaving an orphaned undrained epoch that is then
+  purge-protected. Additively change the backup output to record the copied
+  epoch number, without altering switchover, drain, or purge behavior. Record a
+  new ADR documenting the finding and the explicitly deferred decision to add
+  real mutual exclusion between backup and promotion. Adjust the stage A-2
+  backup procedure documentation if the finding requires it.
+invariants:
+  - respaldar_en (crates/hexcell-storage/src/pools.rs) continues to take no
+    promotion guard; backup and promotion remain independent subsystems with no
+    shared mutual-exclusion state (explicitly deferred, not solved by this task).
+  - A backup started while epoch N is live and not superseded before the backup
+    finishes produces a copy whose recorded epoch is N, and the physical
+    contents are a valid, restorable snapshot of epoch N (not a torn mix of N
+    and N-1).
+  - drenar_epoca_superseida's fail-closed behavior on drain-limit expiry
+    (DesenlaceDeDrenaje::Expirada, nothing deleted) is unchanged by this task.
+  - The retention/purge protection for a superseded, undrained epoch
+    (SuperseidaSinDrenar) is unchanged by this task.
+  - The new epoch-number field on backup output is additive; existing callers
+    of GestorDePools::respaldar_en and crates/hexcell/src/respaldo.rs that only
+    read nombre_logico, ruta, and bytes keep compiling and behaving as before.
+  - No std::env::set_var / remove_var is introduced anywhere under
+    crates/hexcell (adr-0028); the new test passes the drain limit as a direct
+    function parameter, never via HEXCELL_LIMITE_DE_DRENAJE_DE_EPOCA_MS or the
+    process environment.
+  - hexcell-storage remains executor-free, using std::thread and
+    std::sync::Barrier for the new test's concurrency, no tokio, no async, no
+    .await, and no new dev-dependencies entry beyond what the crate already
+    declares.
+acceptance:
+  - id: AC-1
+    statement: >
+      A new #[ignore]d integration test in crates/hexcell-storage proves H1: a
+      backup started while epoch N is live, concurrent with a promotion to
+      epoch N+1, produces a copy whose contents are a consistent, restorable
+      snapshot (schema-valid, VACUUM-checkpointed, openable) and whose recorded
+      epoch matches the epoch that was actually live when VACUUM INTO began -
+      not a torn mix of N and N+1.
+    given: >
+      a GestorDePools opened via abrir_con_anchura_de_conocimiento with a valid
+      staging epoch seeded via sembrar_staging_marcado, currently serving
+      epoch N
+    when: >
+      a backup thread calls respaldar_en concurrently with a promotion thread
+      that calls iniciar_promocion/promover_epoca to switch to epoch N+1,
+      synchronized with std::sync::Barrier so the promotion is in flight during
+      the VACUUM INTO
+    then: >
+      the test asserts the backup output file is a valid, openable SQLite
+      database consistent with a single epoch's contents (no interleaving),
+      and the recorded epoch number in the backup output equals the epoch that
+      was live at the moment the backup connection was acquired.
+  - id: AC-2
+    statement: >
+      CopiaVerificada (or an additive sibling type) gains a field recording the
+      copied epoch number for the knowledge database copy, wired through
+      GestorDePools::respaldar_en and consumed at crates/hexcell/src/respaldo.rs;
+      existing tests in crates/hexcell-storage/tests/respaldo.rs continue to
+      pass unmodified except where they must assert the new field's value.
+    given: a successful respaldar_en call against an opened GestorDePools
+    when: the returned copies for sessions.db and knowledge_live.db are inspected
+    then: >
+      the knowledge_live.db copy's record carries the epoch number that was
+      live in the pool at copy time; cargo test -p hexcell-storage --test
+      respaldo passes.
+  - id: AC-3
+    statement: >
+      A new #[ignore]d integration test in crates/hexcell-storage proves H3: a
+      backup whose VACUUM INTO is held open longer than a deliberately low
+      drain limit (passed directly as a parameter, never via
+      HEXCELL_LIMITE_DE_DRENAJE_DE_EPOCA_MS) forces
+      drenar_epoca_superseida to return DesenlaceDeDrenaje::Expirada for the
+      superseded epoch, and the test observes the orphaned epoch's descriptor
+      still present (undrained, purge-protected as SuperseidaSinDrenar)
+      immediately after the expiry, rather than assuming it.
+    given: >
+      a GestorDePools with epoch N live, a low drain limit configured for the
+      test (e.g. well under the default LIMITE_DE_DRENAJE_DE_EPOCA_POR_DEFECTO
+      of 10s), and a backup thread holding a read connection on epoch N past
+      that limit
+    when: >
+      a promotion to epoch N+1 completes while the backup still holds its
+      connection, and drenar_epoca_superseida is invoked with the low limit
+    then: >
+      the test asserts the returned DesenlaceDeDrenaje is Expirada with the
+      live descriptor for epoch N, that epoch N's files are not deleted, and
+      that retencion's purge path would classify it as SuperseidaSinDrenar.
+  - id: AC-4
+    statement: >
+      Both new tests are marked #[ignore] and each gets its own named CI step
+      in .github/workflows/ci.yml, mirroring the HEX-061 stress test pattern at
+      ci.yml:41-42, so the criterion is executed in CI and not merely written.
+    given: the modified .github/workflows/ci.yml
+    when: the workflow file is inspected
+    then: >
+      a named step runs cargo test -p hexcell-storage --test <new_test_file>
+      -- --ignored for each new test (or both together if colocated in one
+      file), distinct from the default (non-ignored) test step.
+  - id: AC-5
+    statement: >
+      A new ADR (adr-0031) documents the H1/H2/H3 findings, the additive
+      epoch-recording fix, and explicitly records the deferred decision NOT to
+      add mutual exclusion between backup and promotion (respaldar_en taking
+      iniciar_promocion) as a separate, future task with its own ADR.
+    given: docs/adr/README.md and the adr-0031 file
+    when: the ADR table and file are inspected
+    then: >
+      docs/adr/README.md lists adr-0031 as the next sequential entry (never
+      reordering existing entries) and adr-0031-*.md exists with a section
+      naming the deferred mutual-exclusion decision as out of scope for this
+      task.
+  - id: AC-6
+    statement: >
+      The stage A-2 backup procedure documentation is reviewed and, if the
+      findings require it, updated to mention that a restore's provenance can
+      now be verified via the recorded epoch number; if no change is needed,
+      this is stated explicitly rather than silently skipped.
+    given: the stage A-2 backup procedure doc (docs/plan/fase-a-2-*.md or
+      equivalent) and this task's final diff
+    when: the doc is compared against the AC-2 change
+    then: >
+      either the doc is updated to reference the epoch-number field in backup
+      output, or the task's closing note explicitly states no update was
+      required and why.
+  - cargo test --workspace, cargo fmt --check, and cargo clippy --workspace --
+    -D warnings all pass with the new code included.
+  - A new entry D-38 is added to docs/bitacora-de-descartes.md in the same
+    commit that defers the mutual-exclusion alternative, recording the reason
+    (would invert the current fail-open design and could let a long VACUUM
+    INTO block promotion) and its reopening condition.
+risk: medium
+non_goals:
+  - Do not add real mutual exclusion between respaldar_en and
+    iniciar_promocion/promover_epoca (no guard, no shared lock). That is an
+    explicitly deferred decision with its own future task and ADR.
+  - Do not change drenar_epoca_superseida's drain algorithm, polling interval,
+    or default limit constant.
+  - Do not change retencion's purge protection rules for undrained superseded
+    epochs.
+  - Do not add proactive orphan-epoch cleanup, alerting, or operator tooling
+    beyond making the epoch number visible in backup output.
+constraints:
+  - Test concurrency uses std::thread and std::sync::Barrier only; no tokio,
+    no async runtime, no [dev-dependencies] addition in hexcell-storage.
+  - The new tests must never set or read the
+    HEXCELL_LIMITE_DE_DRENAJE_DE_EPOCA_MS environment variable; the drain limit
+    is passed as a direct parameter to drenar_epoca_superseida.
+  - No std::env::set_var / remove_var anywhere under crates/hexcell (adr-0028
+    CI grep guard).
+  - rusqlite stays pinned at 0.39; hexcell-storage remains executor-free
+    (no tokio, no async, no .await).
+  - ADR numbering is correlative. This task consumes adr-0031, the next free
+    slot; docs/bitacora-de-descartes.md entry consumes D-38, the next free
+    slot. Neither is reused or reordered.
+  - All repository content (code, comments, test names, docs, commit
+    messages) is in Spanish; comments explain WHY, not WHAT. This spec's
+    field values are in English per Quorum convention.
+  - Never version *.db, *.db-wal, *.db-shm, or .env* files.
