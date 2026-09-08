@@ -13,26 +13,40 @@
 //! secuencialmente, de modo que cada `tests/*.rs` corre solo dentro de su proceso cuando se
 //! invoca por nombre.
 //!
+//! # Por qué el solapamiento se fuerza con un cerrojo y no se espera del reloj
+//!
+//! Un `Barrier` solo iguala el ARRANQUE de dos hilos. Deducir de ahí que la conmutación cayó
+//! dentro del respaldo sería un argumento de velocidad relativa —«la promoción tarda más que un
+//! `VACUUM INTO`»— y una prueba apoyada en él pasaría idéntica con solapamiento cero. Aquí el
+//! solapamiento es una propiedad del estado y no del cronómetro: un hilo auxiliar sostiene la
+//! celda de lectura de `sessions.db`, que es la PRIMERA copia que `GestorDePools::respaldar_en`
+//! toma, de modo que el respaldo queda detenido dentro de su propia llamada y no puede terminar.
+//! La conmutación se ejecuta con esa certeza, y lo que la afirma —«el respaldo no había
+//! terminado cuando la promoción devolvió»— es la lectura de un `AtomicBool`, no una duración.
+//!
+//! # Por qué el freno se pone en `sessions.db` y no en el pool de conocimiento
+//!
+//! Retener la celda de lectura del pool de conocimiento sería más directo, pero `promover_epoca`
+//! lee el número de la época previa con `pool_anterior.con_lectura` justo antes del intercambio:
+//! retener todas las celdas de ese pool detendría también a la promoción, y retener solo una no
+//! garantiza nada, porque el reparto por turno rotatorio de `PoolDeConocimiento::con_lectura`
+//! entrega al respaldo una celda distinta de la retenida. La conexión de lectura única de
+//! `sessions.db` es el único punto que detiene al respaldo sin detener a la promoción.
+//!
+//! # Por qué las dos épocas se siembran con marcadores distintos
+//!
+//! Si ambas épocas salen del mismo fixture su contenido es idéntico, y una copia rota —mezcla de
+//! la época N y la N+1— resulta indistinguible de una correcta: la afirmación de pureza no podría
+//! fallar nunca. Se adopta la disciplina que HEX-061 ya fijó en este crate
+//! (`tests/estres_conmutacion.rs`, `adr-0030`): cada época marca el texto de sus fragmentos, y la
+//! copia se juzga por el conjunto de marcadores que de verdad contiene, no por su tamaño.
+//!
 //! # Por qué los descriptores de `arc-swap` no se prueban aquí
 //!
-//! La opción tentadora era simular exactamente la tenencia de `respaldar_en` reutilizando un
-//! `arc_swap::Guard` de `GestorDeConocimiento.conocimiento.load()`. El API de `arc-swap` 1.9.2 lo
-//! permite, pero `GestorDePools::conocimiento()` ya devuelve un `Arc<PoolDeConocimiento>`
-//! propietario (`load_full`), no un guard; el guard se construye a mano y nunca se ve desde el
-//! exterior. Se opta por reproducir la tenencia con `conocimiento()` + una lectura sostenida
-//! bajo `con_lectura`, que sobreestima el `Arc::strong_count` en uno respecto al respaldo real
-//! pero deja el predicado del drenaje (`lecturas_en_reposo() == false`) exactamente igual de
-//! inalcanzable. El comentario del segundo test lo dice abiertamente y la conclusión no cambia.
-//!
-//! # Por qué la copia física del `VacuumInto` se asume atómica
-//!
-//! `VACUUM INTO` es una sola sentencia SQL: SQLite la serializa dentro de su motor y produce un
-//! archivo cuyo contenido es el de **una** época, no un interleaving. La conmutación del pool
-//! con `ArcSwap` es atómica por construcción (intercambio de un puntero). Que la copia salga de
-//! **una** época y no de dos mezcladas es entonces consecuencia de estas dos garantías sumadas,
-//! y la prueba lo verifica leyendo `metadatos_de_epoca.numero_de_epoca` de la copia y
-//! comprobando que su valor es uno de los dos ordinales observados durante la ventana de solapamiento,
-//! nunca un número inventado ni un NULL espurio.
+//! `GestorDePools::conocimiento()` devuelve un `Arc` propietario (`load_full`), no el
+//! `arc_swap::Guard` que `respaldar_en` usa internamente, así que la tenencia del respaldo no es
+//! reproducible tal cual desde un test. El segundo test explica en su comentario con qué se
+//! sustituye y por qué la conclusión no cambia.
 
 mod comun;
 
@@ -47,6 +61,7 @@ use comun::DirectorioTemporal;
 use hexcell_core::fragmentacion::ConfiguracionDeFragmentacion;
 use hexcell_storage::conocimiento::NOMBRE_DE_ARCHIVO_DE_CONOCIMIENTO_EN_SOMBRA;
 use hexcell_storage::drenaje::{DesenlaceDeDrenaje, drenar_epoca_superseida};
+use hexcell_storage::migraciones::aplicar_migraciones_de_conocimiento;
 use hexcell_storage::pools::{GestorDePools, NOMBRE_DE_ARCHIVO_DE_CONOCIMIENTO};
 use hexcell_storage::promocion::{DesenlaceDePromocion, promover_epoca};
 use hexcell_storage::retencion::{MotivoDeConservacion, purgar_epocas_retiradas};
@@ -57,42 +72,129 @@ use rusqlite::{Connection, OpenFlags};
 /// `VectorDeEmbedding` que `validar_integridad_del_indice` materializa en cada promoción.
 const DIMENSION_DE_EMBEDDING: usize = 768;
 
+/// Fragmentos por época marcada. Basta un puñado: la señal es **cuáles** marcadores trae la copia,
+/// no cuánto tarda un barrido sobre ellos —eso era el objeto de HEX-061, que siembra 1.500—.
+const FRAGMENTOS_POR_EPOCA: usize = 8;
+
+/// Tamaño de fragmento, en caracteres exactos de [`UNIDAD_DE_CONTENIDO`]. La compuerta de
+/// integridad re-fragmenta el `contenido` del documento y exige que el número de trozos coincida
+/// con el de filas de `fragmentos`; repetir una unidad de este tamaño con solapamiento cero hace
+/// esa igualdad aritmética en vez de una casualidad del texto elegido.
+const TAMANO_DE_FRAGMENTO: usize = 16;
+
+/// Unidad repetida para construir el contenido del documento: exactamente
+/// [`TAMANO_DE_FRAGMENTO`] caracteres ASCII.
+const UNIDAD_DE_CONTENIDO: &str = "0123456789abcdef";
+
+/// Marcador textual de la época previa a la conmutación. Hace la procedencia verificable por
+/// contenido, y no solo por la fila `metadatos_de_epoca` que es lo que la prueba juzga.
+const MARCADOR_EPOCA_UNO: &str = "EPOCA-UNO";
+
+/// Marcador textual de la época posterior a la conmutación.
+const MARCADOR_EPOCA_DOS: &str = "EPOCA-DOS";
+
 /// Límite deliberadamente bajo del drenaje para la prueba de expiración. La meta es que un solo
 /// poll de `INTERVALO_DE_SONDEO_DE_DRENAJE` (5 ms) ya supere este plazo: cualquier determinismo
 /// por timing sería frágil y el de la prueba no lo es. 1 ms basta y se mantiene holgadamente
 /// por encima del coste de una iteración del bucle de drenaje.
 const LIMITE_BAJO_DE_DRENAJE_DE_EPOCA: Duration = Duration::from_millis(1);
 
-/// Límite del drenaje del primer test: holgado, para que si el respaldo termina antes que el
-/// drenaje (el caso normal), el descriptor superseido cierre limpiamente sin influir en el
-/// resultado de la prueba. El primer test no es una prueba de drenaje y el límite bajo lo haría
-/// espurio.
+/// Límite holgado para los drenajes de higiene, que no son objeto de ninguna aserción: uno bajo
+/// los volvería espurios sin añadir señal.
 const LIMITE_HOLGADO_DE_DRENAJE_DE_EPOCA: Duration = Duration::from_secs(10);
 
-/// Siembra un archivo de staging válido reutilizando el helper compartido del módulo `comun`.
-///
-/// Se mantiene local a propósito: `comun::preparar_staging_valido` ya es el fixture compartido
-/// (HEX-061, `adr-0030` decisión 5). Esta función añade el wrapping del retorno a `PathBuf`
-/// para que la llamada quede legible cuando la siembra aparece dentro de la función que también
-/// dispara la promoción.
+/// Siembra un staging válido con el fixture compartido que HEX-061 promovió a `tests/comun`
+/// (`adr-0030`, decisión 5). Lo usa la prueba de drenaje, a la que el contenido le da igual.
 fn sembrar_staging(ruta_datos: &Path) -> ConfiguracionDeFragmentacion {
     comun::preparar_staging_valido(ruta_datos, DIMENSION_DE_EMBEDDING)
 }
 
-/// Siembra, promueve y drena la primera época de un directorio recién creado.
+/// Siembra un staging válido cuyos fragmentos llevan todos `marcador` en su texto.
 ///
-/// La primera promoción del árbol **no** registra entrada en `epocas_en_uso` para la base
-/// inicial: `numero_anterior` es `None` porque la fila sembrada por la migración 0002 tiene
-/// `metadatos_de_epoca.numero_de_epoca = NULL` (base virgen, antes de cualquier sellado), y
-/// `registrar_epoca_en_uso` solo se invoca cuando `numero_anterior` es `Some(_)`. El helper
-/// no llama a `retirar_epoca_en_uso` precisamente por eso, y termina con una purga en vacío
-/// que cierra cualquier `-wal`/`-shm` residual y deja el directorio en el mismo estado de
-/// archivos que tendría si el proceso nunca hubiera arrancado. Sin esa limpieza, la copia de
-/// `knowledge_live.db` se realizaría sobre la base inicial sin sellar y el campo
-/// `numero_de_epoca` saldría `None`, indistinguible del de una base nunca promovida.
-fn sembrar_y_drenar_epoca_inicial(gestor: &GestorDePools, directorio: &Path) {
-    let configuracion = sembrar_staging(directorio);
-    let desenlace = promover_epoca(gestor, directorio, &configuracion, 10_000)
+/// No es una cuarta copia de `comun::preparar_staging_valido`, sino un fixture con otro fin —dar
+/// a cada época una identidad legible dentro de la copia— que ninguna otra prueba de este binario
+/// necesita, y por eso vive aquí en vez de en `tests/comun/mod.rs`. El vector es uniforme y
+/// coincide con el de la sonda, así que la compuerta semántica ve similitud coseno 1,0 y el
+/// marcador no altera ninguna de las comprobaciones que la promoción aplica.
+fn sembrar_staging_marcado(ruta_datos: &Path, marcador: &str) -> ConfiguracionDeFragmentacion {
+    let ruta_staging = ruta_datos.join(NOMBRE_DE_ARCHIVO_DE_CONOCIMIENTO_EN_SOMBRA);
+    let conexion = Connection::open(&ruta_staging).expect("abrir base de staging marcada");
+    conexion.execute("PRAGMA foreign_keys = ON;", []).unwrap();
+    // La ingesta real abre staging en lectura y escritura, que fija WAL desde la primera
+    // conexión. Replicarlo evita que un cambio de modo de diario (delete -> wal), que sí exige
+    // exclusividad, se confunda con lo que la prueba quiere ejercitar.
+    conexion
+        .query_row("PRAGMA journal_mode = WAL", [], |fila| {
+            fila.get::<_, String>(0)
+        })
+        .unwrap();
+    aplicar_migraciones_de_conocimiento(&conexion).expect("migrar staging marcado");
+    conexion
+        .execute(
+            "UPDATE metadatos_de_epoca SET dimension_de_embedding = ?1 WHERE id = 1",
+            rusqlite::params![DIMENSION_DE_EMBEDDING as i64],
+        )
+        .unwrap();
+
+    let contenido = UNIDAD_DE_CONTENIDO.repeat(FRAGMENTOS_POR_EPOCA);
+    let vector_bytes: Vec<u8> = vec![1.0f32; DIMENSION_DE_EMBEDDING]
+        .iter()
+        .flat_map(|v| v.to_le_bytes())
+        .collect();
+
+    // Un solo documento con ordinales 0..N-1 contiguos: la compuerta comprueba la contigüidad
+    // sobre el conjunto GLOBAL de ordinales, así que repartirlos entre varios documentos la
+    // rompería por una razón ajena a lo que aquí se mide.
+    conexion
+        .execute(
+            "INSERT INTO documentos (id, referencia_externa, titulo, contenido, actualizado_ms) VALUES (1, 'ref_1', 'Documento marcado', ?1, 1000)",
+            rusqlite::params![contenido],
+        )
+        .unwrap();
+    for indice in 0..FRAGMENTOS_POR_EPOCA {
+        let id = (indice + 1) as i64;
+        conexion
+            .execute(
+                "INSERT INTO fragmentos (id, id_documento, ordinal, texto) VALUES (?1, 1, ?2, ?3)",
+                rusqlite::params![id, indice as i64, format!("{marcador}-fragmento-{indice}")],
+            )
+            .unwrap();
+        conexion
+            .execute(
+                "INSERT INTO vectores_de_fragmento (id_fragmento, vector) VALUES (?1, ?2)",
+                rusqlite::params![id, &vector_bytes],
+            )
+            .unwrap();
+    }
+    conexion
+        .execute(
+            "INSERT INTO sonda_semantica (id, texto_de_la_sonda, vector, umbral_de_aceptacion, registrada_ms) VALUES (1, 'consulta', ?1, 0.5, 1000)",
+            rusqlite::params![vector_bytes],
+        )
+        .unwrap();
+    drop(conexion);
+
+    ConfiguracionDeFragmentacion {
+        tamano_de_fragmento: TAMANO_DE_FRAGMENTO,
+        solapamiento: 0,
+    }
+}
+
+/// Promueve y drena la primera época de un directorio recién creado a partir de un staging ya
+/// sembrado.
+///
+/// La primera promoción del árbol **no** registra entrada en `epocas_en_uso`: `numero_anterior`
+/// es `None` porque la fila sembrada por la migración 0002 trae `numero_de_epoca = NULL` (base
+/// virgen, antes de cualquier sellado) y `registrar_epoca_en_uso` solo corre con `Some(_)`; por
+/// eso el helper tampoco llama a `retirar_epoca_en_uso`. Termina con una purga en vacío que cierra
+/// los `-wal`/`-shm` residuales: sin ella la copia saldría de la base inicial sin sellar y su
+/// `numero_de_epoca` sería `None`, indistinguible del de una base nunca promovida.
+fn promover_y_drenar_epoca_inicial(
+    gestor: &GestorDePools,
+    directorio: &Path,
+    configuracion: &ConfiguracionDeFragmentacion,
+) {
+    let desenlace = promover_epoca(gestor, directorio, configuracion, 10_000)
         .expect("promoción inicial válida");
     let epoca_superseida = match desenlace {
         DesenlaceDePromocion::Promovida {
@@ -112,11 +214,9 @@ fn sembrar_y_drenar_epoca_inicial(gestor: &GestorDePools, directorio: &Path) {
         .expect("purga en vacío tras la promoción inicial");
 }
 
-/// Lee `metadatos_de_epoca.numero_de_epoca` directamente de la copia, como una **observación**
-/// independiente del campo que `CopiaVerificada::numero_de_epoca` reporta. Es la materia de la
-/// aserción: lo que la copia **dice** sobre sí misma tiene que coincidir con lo que el respaldo
-/// afirma haber copiado, y un defecto que falsease el campo del `Value Object` mientras deja la
-/// fila intacta se detectaría aquí.
+/// Lee `metadatos_de_epoca.numero_de_epoca` de un archivo de base como observación **independiente**
+/// del campo que `CopiaVerificada` reporta: un defecto que falsease el `Value Object` dejando la
+/// fila intacta se delataría aquí.
 fn leer_numero_de_epoca_de_la_copia(ruta: &Path) -> Option<i64> {
     let conexion = Connection::open_with_flags(ruta, OpenFlags::SQLITE_OPEN_READ_ONLY)
         .expect("abrir la copia en solo lectura para leer su número de época");
@@ -128,26 +228,43 @@ fn leer_numero_de_epoca_de_la_copia(ruta: &Path) -> Option<i64> {
         .expect("consultar el número de época de la copia")
 }
 
-/// Cuenta los fragmentos presentes en una copia de `knowledge_live.db` por ordinal. Se usa para
-/// distinguir una copia con cero fragmentos (defecto imaginable: promoción abortada silenciada
-/// por `respaldar_en`) de una copia con un único fragmento (época completa).
-fn contar_ordinales_en_la_copia(ruta: &Path) -> i64 {
+/// Reparto de marcadores en los fragmentos de un archivo de conocimiento: `(con EPOCA-UNO, con
+/// EPOCA-DOS, total)`.
+///
+/// Devuelve las tres cifras y no un veredicto a propósito: cero fragmentos, una mezcla y la época
+/// equivocada entera apuntan a defectos distintos, y el mensaje del fallo debe distinguirlos.
+fn repartir_marcadores(ruta: &Path) -> (i64, i64, i64) {
     let conexion = Connection::open_with_flags(ruta, OpenFlags::SQLITE_OPEN_READ_ONLY)
-        .expect("abrir la copia en solo lectura para contar fragmentos");
-    conexion
+        .expect("abrir la base en solo lectura para clasificar sus marcadores");
+    let contar = |patron: &str| -> i64 {
+        conexion
+            .query_row(
+                "SELECT COUNT(*) FROM fragmentos WHERE texto LIKE ?1",
+                rusqlite::params![format!("%{patron}%")],
+                |fila| fila.get(0),
+            )
+            .expect("contar fragmentos por marcador")
+    };
+    let total: i64 = conexion
         .query_row("SELECT COUNT(*) FROM fragmentos", [], |fila| fila.get(0))
-        .expect("contar los fragmentos de la copia")
+        .expect("contar los fragmentos");
+    (
+        contar(MARCADOR_EPOCA_UNO),
+        contar(MARCADOR_EPOCA_DOS),
+        total,
+    )
 }
 
-/// Cuenta los fragmentos leídos por el `valor_logico` que el descriptor `CopiaVerificada`
-/// reporta. Se usa para confirmar que la copia no quedó en un estado que el motor no podría
-/// servir (cero fragmentos), pero sin contar dos veces lo ya contado: la prueba verifica el
-/// valor a través de dos caminos (el campo del `Value Object` y la lectura del archivo físico).
+/// H1: un respaldo en vuelo cuando ocurre una conmutación copia **una sola** época, entera y sin
+/// mezclar, y la etiqueta con el ordinal que esa copia contiene de verdad.
+/// H2: ese ordinal viaja en la salida del respaldo (`CopiaVerificada::numero_de_epoca`), leído de
+/// la copia producida y no de la ruta del pool vivo.
 ///
-/// H1: un respaldo concurrente con una conmutación copia una sola época y la registra.
-/// H2: el respaldo expone la marca de número de época en su salida, leída de la copia.
-/// H3: un respaldo que sobrevive al límite de drenaje expira el drenaje y deja la época
-///     superseída huérfana y protegida.
+/// El solapamiento no se espera del reloj: se fuerza reteniendo la celda de lectura de
+/// `sessions.db` —la primera copia de la ronda— para que el respaldo no pueda terminar, y se
+/// afirma leyendo un `AtomicBool` en el instante en que la promoción devuelve. La pureza no se
+/// da por supuesta: cada época lleva su marcador, así que una copia mezclada o la copia de la
+/// época equivocada fallan con un mensaje que dice cuál de las dos cosas pasó.
 #[test]
 #[ignore]
 fn el_respaldo_concurrente_con_una_conmutacion_copia_una_sola_epoca_y_la_registra() {
@@ -159,104 +276,102 @@ fn el_respaldo_concurrente_con_una_conmutacion_copia_una_sola_epoca_y_la_registr
             .expect("abrir el gestor con la anchura por omisión"),
     );
 
-    // Época 1: sembrar, promover y drenar para que el pool vivo sirva la época 1 al iniciar
-    // la prueba y el directorio quede sin `-wal`/`-shm` ni épocas conservadas que
-    // contaminen la copia posterior. El helper documenta por qué la promoción desde la base
-    // virgen no registra entrada en `epocas_en_uso`.
-    sembrar_y_drenar_epoca_inicial(&gestor, directorio.ruta());
+    // Época 1, marcada EPOCA-UNO: es la que sirve el pool vivo cuando el respaldo arranca.
+    let configuracion_uno = sembrar_staging_marcado(directorio.ruta(), MARCADOR_EPOCA_UNO);
+    promover_y_drenar_epoca_inicial(&gestor, directorio.ruta(), &configuracion_uno);
 
-    // Sembrar el staging de la época que va a estar viva cuando el respaldo arranque. Se hace
-    // aquí, antes del `Barrier`, para que `promover_epoca` (la fase que más tarda de la
-    // promoción, junto con el sellado) corra con el respaldo ya en `Barrier.wait()`, no antes;
-    // de lo contrario el solapamiento quedaría dominado por el coste de la siembra, no por la
-    // conmutación.
-    let configuracion_dos = sembrar_staging(directorio.ruta());
-    let ruta_staging_dos = directorio
-        .ruta()
-        .join(NOMBRE_DE_ARCHIVO_DE_CONOCIMIENTO_EN_SOMBRA);
-    assert!(
-        ruta_staging_dos.exists(),
-        "el staging de la época dos debe existir antes del rendezvous"
-    );
-    // La variable solo se usa como aserción de precondición; el respaldo trabaja sobre el pool
-    // vivo, no sobre el staging. Se suelta explícitamente para no contaminar el closure del
-    // hilo de respaldo con una variable sin usar.
-    drop(ruta_staging_dos);
+    // Época 2, marcada EPOCA-DOS: se siembra antes de arrancar los hilos para que el coste de la
+    // siembra no forme parte de la ventana que la prueba observa.
+    let configuracion_dos = sembrar_staging_marcado(directorio.ruta(), MARCADOR_EPOCA_DOS);
 
-    // Rendezvous de dos hilos en el mismo instante. El hilo de respaldo llama a
-    // `respaldar_en`; el hilo de promoción llama a `promover_epoca` para conmutar a N+1. La
-    // barrera fija el inicio simultáneo, no el final: las dos operaciones se solapan por
-    // construcción, porque la promoción tarda mucho más que un `VACUUM INTO` sobre la base de
-    // un solo fragmento sembrada por el fixture compartido.
-    let barrera = Arc::new(Barrier::new(2));
+    // Freno estructural: un hilo auxiliar toma la ÚNICA conexión de lectura de `sessions.db` y no
+    // la suelta hasta que se le indique. `respaldar_en` copia `sessions.db` antes que
+    // `knowledge_live.db`, así que el respaldo quedará detenido dentro de su propia llamada.
+    let liberar_freno = Arc::new(AtomicBool::new(false));
+    let freno_tomado = Arc::new(Barrier::new(2));
+    let gestor_freno = Arc::clone(&gestor);
+    let liberar_freno_hilo = Arc::clone(&liberar_freno);
+    let freno_tomado_hilo = Arc::clone(&freno_tomado);
+    let hilo_freno = thread::spawn(move || {
+        let _ = gestor_freno.sesiones().con_lectura(|_conexion| {
+            freno_tomado_hilo.wait();
+            while !liberar_freno_hilo.load(Ordering::Acquire) {
+                thread::yield_now();
+            }
+            Ok(())
+        });
+    });
+    // Al volver de esta barrera la celda de lectura de `sessions.db` está tomada de verdad: el
+    // hilo la señala desde DENTRO de `con_lectura`, no antes de llamarla.
+    freno_tomado.wait();
+
+    let respaldo_invocado = Arc::new(AtomicBool::new(false));
+    let respaldo_terminado = Arc::new(AtomicBool::new(false));
+    let respaldo_invocado_hilo = Arc::clone(&respaldo_invocado);
+    let respaldo_terminado_hilo = Arc::clone(&respaldo_terminado);
     let gestor_respaldo = Arc::clone(&gestor);
-    let gestor_promocion = Arc::clone(&gestor);
-    let barrera_respaldo = Arc::clone(&barrera);
-    let barrera_promocion = Arc::clone(&barrera);
-    let directorio_promocion = directorio.ruta().to_path_buf();
     let destino_respaldo = destino.ruta().to_path_buf();
-    let ruta_destino_copia_conocimiento = destino.ruta().join(NOMBRE_DE_ARCHIVO_DE_CONOCIMIENTO);
-
-    let (tx_resultado_respaldo, rx_resultado_respaldo) = mpsc::channel();
-    let (tx_resultado_promocion, rx_resultado_promocion) = mpsc::channel();
-
+    let (tx_respaldo, rx_respaldo) = mpsc::channel();
     let hilo_respaldo = thread::spawn(move || {
-        barrera_respaldo.wait();
+        respaldo_invocado_hilo.store(true, Ordering::Release);
         let resultado = gestor_respaldo.respaldar_en(&destino_respaldo);
-        let _ = tx_resultado_respaldo.send(resultado);
+        respaldo_terminado_hilo.store(true, Ordering::Release);
+        let _ = tx_respaldo.send(resultado);
     });
 
-    let hilo_promocion = thread::spawn(move || {
-        barrera_promocion.wait();
-        // `promover_epoca` consume la configuración por referencia; se clona el `Path` antes de
-        // moverlo al closure para que `configuracion_dos` no se mueva dos veces.
-        let resultado = promover_epoca(
-            &gestor_promocion,
-            &directorio_promocion,
-            &configuracion_dos,
-            20_000,
-        );
-        let _ = tx_resultado_promocion.send(resultado);
-    });
+    // Esperar a que el hilo haya entrado en `respaldar_en`. A partir de aquí el freno garantiza
+    // que no puede salir: la ronda de respaldo está abierta y seguirá abierta.
+    while !respaldo_invocado.load(Ordering::Acquire) {
+        thread::yield_now();
+    }
 
-    let resumen_respaldo = rx_resultado_respaldo
-        .recv()
-        .expect("el hilo de respaldo debe emitir su resultado")
-        .expect("el respaldo debe completarse sin error");
+    let desenlace_promocion =
+        promover_epoca(&gestor, directorio.ruta(), &configuracion_dos, 20_000)
+            .expect("la promoción durante el respaldo debe completarse sin error");
 
-    let desenlace_promocion = rx_resultado_promocion
-        .recv()
-        .expect("el hilo de promoción debe emitir su resultado")
-        .expect("la promoción debe completarse sin error");
+    // ASERCIÓN DE SOLAPAMIENTO. Es la que convierte «las dos operaciones se solapan» de argumento
+    // de velocidad en hecho observado: la conmutación ya devolvió y la ronda de respaldo sigue
+    // abierta, porque el freno se lo impide. Si alguien quitase el freno, esta lectura podría ser
+    // `true` y la prueba fallaría en vez de seguir certificando un solapamiento que no ocurrió.
+    assert!(
+        !respaldo_terminado.load(Ordering::Acquire),
+        "la conmutación debió completarse con la ronda de respaldo todavía abierta"
+    );
 
-    hilo_respaldo
-        .join()
-        .expect("el hilo de respaldo no debe entrar en pánico");
-    hilo_promocion
-        .join()
-        .expect("el hilo de promoción no debe entrar en pánico");
-
-    let numero_promovido = match &desenlace_promocion {
+    let (numero_promovido, epoca_superseida) = match desenlace_promocion {
         DesenlaceDePromocion::Promovida {
-            numero_de_epoca, ..
-        } => *numero_de_epoca,
+            numero_de_epoca,
+            epoca_superseida,
+            ..
+        } => (numero_de_epoca, epoca_superseida),
         DesenlaceDePromocion::Abortada { motivo } => {
             panic!("la promoción durante el respaldo no debió abortar: {motivo:?}")
         }
     };
+    assert_eq!(
+        numero_promovido, 2,
+        "la conmutación de esta prueba lleva la época viva de 1 a 2"
+    );
+    assert_eq!(
+        epoca_superseida.numero_de_epoca(),
+        Some(1),
+        "la época superseída por la conmutación debe ser la época 1"
+    );
+    let ruta_epoca_superseida: PathBuf = epoca_superseida.ruta_del_archivo().to_path_buf();
 
-    // El primer test no busca H3; su epoca_superseida podría drenar limpiamente o expirar según
-    // cuándo termine el respaldo respecto al plazo de drenaje. Se drena aquí mismo, con un
-    // plazo holgado, para no dejar `epocas_en_uso` contaminando el estado de archivos.
-    let _epoca_superseida = match desenlace_promocion {
-        DesenlaceDePromocion::Promovida {
-            epoca_superseida, ..
-        } => epoca_superseida,
-        DesenlaceDePromocion::Abortada { .. } => unreachable!("filtrada arriba"),
-    };
+    // Soltar el freno: el respaldo continúa ya con la época 2 viva y termina su ronda.
+    liberar_freno.store(true, Ordering::Release);
+    hilo_freno
+        .join()
+        .expect("el hilo del freno no debe entrar en pánico");
+    let resumen_respaldo = rx_respaldo
+        .recv()
+        .expect("el hilo de respaldo debe emitir su resultado")
+        .expect("el respaldo debe completarse sin error");
+    hilo_respaldo
+        .join()
+        .expect("el hilo de respaldo no debe entrar en pánico");
 
-    // Identificar la copia de conocimiento y la copia de sesiones en el resumen. El orden de
-    // `respaldar_en` es fijo: primero `sessions.db`, después `knowledge_live.db`.
     let copia_conocimiento = resumen_respaldo
         .copias
         .iter()
@@ -268,78 +383,86 @@ fn el_respaldo_concurrente_con_una_conmutacion_copia_una_sola_epoca_y_la_registr
         .find(|c| c.nombre_logico == "sessions.db")
         .expect("la copia de sessions.db debe estar presente");
 
-    // H2: el campo `numero_de_epoca` se reporta en la salida del respaldo. Es lo que el operador
-    // puede leer sin volver a abrir la copia; si está mal, lo siguiente falla con claridad.
-    assert!(
-        copia_conocimiento.numero_de_epoca.is_some(),
-        "la copia de knowledge_live.db debe registrar el número de época que copió"
-    );
-    let numero_reportado = copia_conocimiento
-        .numero_de_epoca
-        .expect("verificado arriba");
-
     // `sessions.db` no modela épocas: nunca debe llevar número, esté o no promovida la base de
-    // conocimiento. Esta aserción cubre también el caso regresivo de que alguien cambie la copia
-    // por error para siempre devolver un número.
+    // conocimiento. Cubre también la regresión de que alguien haga que la copia devuelva siempre
+    // un número.
     assert!(
         copia_sesiones.numero_de_epoca.is_none(),
         "sessions.db no modela épocas y debe reportar None: {:?}",
         copia_sesiones.numero_de_epoca
     );
 
-    // La copia física existe, abre y pasa las dos lecturas baratas.
+    let ruta_copia = destino.ruta().join(NOMBRE_DE_ARCHIVO_DE_CONOCIMIENTO);
     assert!(
-        ruta_destino_copia_conocimiento.exists(),
+        ruta_copia.exists(),
         "la copia de knowledge_live.db debe existir en disco"
     );
-    let integridad: String = Connection::open_with_flags(
-        &ruta_destino_copia_conocimiento,
-        OpenFlags::SQLITE_OPEN_READ_ONLY,
-    )
-    .expect("abrir la copia para integridad")
-    .query_row("PRAGMA integrity_check", [], |fila| fila.get(0))
-    .expect("ejecutar integrity_check sobre la copia");
+    let integridad: String =
+        Connection::open_with_flags(&ruta_copia, OpenFlags::SQLITE_OPEN_READ_ONLY)
+            .expect("abrir la copia para integridad")
+            .query_row("PRAGMA integrity_check", [], |fila| fila.get(0))
+            .expect("ejecutar integrity_check sobre la copia");
     assert_eq!(integridad, "ok", "integrity_check de la copia");
 
-    // H1, lado contenido: la copia es de **una** sola época, no un interleaving de N y N+1.
-    // Lo prueba el hecho de que su `metadatos_de_epoca.numero_de_epoca` es un ordinal
-    // **definido**, igual al reportado, y de que el número de fragmentos es coherente con el
-    // sembrado (1 fragmento, exactamente lo que `comun::preparar_staging_valido` inserta). Una
-    // copia mezclada exhibiría un número NULL o un valor raro, o un conteo inconsistente.
-    let numero_fisico = leer_numero_de_epoca_de_la_copia(&ruta_destino_copia_conocimiento);
+    // Las dos épocas son distinguibles de verdad: la superseída conserva en disco sus marcadores
+    // EPOCA-UNO y ninguno de la época dos. Sin esta comprobación, «la copia no trae EPOCA-UNO»
+    // pasaría en verde incluso si el marcador nunca se hubiera sembrado.
+    let (uno_en_superseida, dos_en_superseida, total_en_superseida) =
+        repartir_marcadores(&ruta_epoca_superseida);
     assert_eq!(
-        numero_fisico,
-        Some(numero_reportado),
-        "el número físico de la copia ({:?}) debe coincidir con el reportado ({:?})",
-        numero_fisico,
-        numero_reportado
+        (uno_en_superseida, dos_en_superseida),
+        (FRAGMENTOS_POR_EPOCA as i64, 0),
+        "la época superseída debe conservar en disco solo sus marcadores EPOCA-UNO ({total_en_superseida} fragmentos)"
     );
 
-    let ordinales = contar_ordinales_en_la_copia(&ruta_destino_copia_conocimiento);
+    // H1: la copia contiene UNA sola época, entera. Todos sus fragmentos llevan el marcador de la
+    // época dos y NINGUNO el de la época uno; una copia rota a caballo entre ambas mezclaría los
+    // marcadores y esta aserción la delataría en vez de aceptarla por indistinguible.
+    let (uno_en_copia, dos_en_copia, total_en_copia) = repartir_marcadores(&ruta_copia);
     assert_eq!(
-        ordinales, 1,
-        "el sembrado de HEX-061 inserta un único fragmento; la copia debe contenerlo intacto"
+        total_en_copia, FRAGMENTOS_POR_EPOCA as i64,
+        "la copia debe traer la época entera, no un prefijo: {total_en_copia} fragmentos"
+    );
+    assert_eq!(
+        (uno_en_copia, dos_en_copia),
+        (0, FRAGMENTOS_POR_EPOCA as i64),
+        "la copia debe ser de una sola época: {uno_en_copia} fragmentos EPOCA-UNO y {dos_en_copia} EPOCA-DOS"
     );
 
-    // H1, lado lógico: el ordinal registrado por la copia es uno de los que estuvieron vivos
-    // durante el solapamiento. El pool partió sirviendo la época 1, y la promoción apuntó a la
-    // época `numero_promovido`. Si el ordinal registrado está entre {1, numero_promovido} —con la
-    // particularidad de que `numero_promovido` puede ser 2 o más alto según el estado previo
-    // del directorio, pero siempre ≥ 1—, la copia es coherente con el solapamiento. Si la copia
-    // registra un ordinal ajeno (por ejemplo, una época futura que el respaldo copió por error),
-    // esta aserción falla con un mensaje claro.
-    assert!(
-        (1..=numero_promovido).contains(&numero_reportado),
-        "el ordinal reportado ({numero_reportado}) debe estar en el rango vivo durante el \
-         solapamiento (1..={numero_promovido})"
+    // H2: el ordinal que el respaldo reporta es el de la época que la copia contiene de verdad.
+    // La aserción cruza tres caminos independientes —el campo del `Value Object`, la fila leída
+    // de la copia y el conjunto de marcadores— así que una etiqueta fijada a mano (a `1`, a `2` o
+    // a cualquier constante) se separa de al menos uno de ellos y falla.
+    let numero_fisico = leer_numero_de_epoca_de_la_copia(&ruta_copia);
+    assert_eq!(
+        copia_conocimiento.numero_de_epoca,
+        Some(numero_promovido),
+        "el respaldo debe etiquetar la copia con la época que sus marcadores acreditan"
+    );
+    assert_eq!(
+        numero_fisico, copia_conocimiento.numero_de_epoca,
+        "el ordinal grabado en la copia ({numero_fisico:?}) debe ser el mismo que el reportado"
     );
 
-    // Anunciar las magnitudes medidas bajo `--nocapture`, para que el log de CI muestre el
-    // resultado sin necesidad de abrir el binario de tests.
-    println!("el_respaldo_concurrente_con_una_conmutacion_numero_reportado={numero_reportado}");
-    println!("el_respaldo_concurrente_con_una_conmutacion_numero_fisico={numero_fisico:?}");
-    println!("el_respaldo_concurrente_con_una_conmutacion_numero_promovido={numero_promovido}");
-    println!("el_respaldo_concurrente_con_una_conmutacion_ordinales_en_la_copia={ordinales}");
+    // Higiene: con el respaldo cerrado el pool superseído queda en reposo y drena limpiamente,
+    // de modo que el directorio no arrastra una época huérfana a la siguiente prueba.
+    let drenaje = drenar_epoca_superseida(epoca_superseida, LIMITE_HOLGADO_DE_DRENAJE_DE_EPOCA)
+        .expect("el drenaje de cierre debe completarse sin error fatal");
+    match drenaje {
+        DesenlaceDeDrenaje::Drenada { constancia, .. } => {
+            gestor
+                .retirar_epoca_en_uso(&constancia)
+                .expect("retirar del inventario la constancia legítima del cierre");
+        }
+        otro => panic!("con el respaldo ya cerrado el drenaje debió completarse: {otro:?}"),
+    }
+
+    println!(
+        "el_respaldo_concurrente_con_una_conmutacion_numero_promovido={numero_promovido} \
+         numero_reportado={:?} numero_fisico={numero_fisico:?} \
+         marcadores_en_la_copia=uno:{uno_en_copia},dos:{dos_en_copia}",
+        copia_conocimiento.numero_de_epoca
+    );
 }
 
 /// H3: un respaldo que supera el límite de drenaje deja la época superseída huérfana y
@@ -364,7 +487,8 @@ fn un_respaldo_que_supera_el_limite_de_drenaje_deja_la_epoca_superseida_sin_dren
 
     // Sembrar la época 1 y promoverla para que viva al iniciar la prueba. El helper documenta
     // por qué la promoción desde la base virgen no registra entrada en `epocas_en_uso`.
-    sembrar_y_drenar_epoca_inicial(&gestor, directorio.ruta());
+    let configuracion_uno = sembrar_staging(directorio.ruta());
+    promover_y_drenar_epoca_inicial(&gestor, directorio.ruta(), &configuracion_uno);
 
     // Sembrar la época 2 y promoverla. La `EpocaSuperseida` resultante es la que el lector
     // sostendrá durante toda la ventana de drenaje del segundo intento; el primer intento de

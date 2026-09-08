@@ -135,15 +135,23 @@ en `CopiaVerificada::numero_de_epoca` el ordinal de la época que **físicamente
 leído de la copia producida (de su fila `metadatos_de_epoca`) y nunca derivado de la ruta
 del pool vivo. Antes de restaurar:
 
-* Abrir la copia en solo lectura con `sqlite3 <ruta_copia>` (o el equivalente en el sidecar)
-  y confirmar que `SELECT numero_de_epoca FROM metadatos_de_epoca WHERE id = 1` devuelve el
-  mismo ordinal que el campo del resumen del respaldo. **Si difieren, descartar la copia**:
-  lo que la copia dice de sí misma es lo que se va a restaurar, y la divergencia indica
-  una copia tomada entre dos instantes de promoción o un archivo manipulado fuera del flujo
-  normal.
+* Leer el ordinal en el resumen del respaldo. Eso es todo lo que hace falta para saber qué
+  época se va a restaurar: la copia **se autodeclara**, y el operador que la restaura sabe de
+  antemano si está reponiendo la época N o la N+1 sin abrir el pool vivo ni consultar el
+  estado de la célula que produjo el respaldo. Si esa ronda de respaldo coincidió con una
+  promoción, ese ordinal es el que permite correlacionar la copia con la conmutación
+  registrada en la bitácora de la célula.
+* Volver a leer el ordinal dentro de la copia —`sqlite3 <ruta_copia>` y `SELECT
+  numero_de_epoca FROM metadatos_de_epoca WHERE id = 1`— es opcional y tiene **un solo**
+  significado: ambos valores son la misma lectura de la misma fila del mismo archivo, así que
+  solo pueden divergir si la copia fue alterada después del respaldo. Detecta manipulación o
+  corrupción posterior al flujo normal, **nunca** una copia «tomada entre dos instantes de
+  promoción»: esa divergencia no existe, porque el respaldo lee el número de la copia que
+  acaba de escribir y no del pool vivo, cuyo enlace ya puede apuntar a otra época.
 * Si el ordinal es `NULL`, la copia corresponde a una base de conocimiento **nunca
-  promovida**: contiene el contenido de staging, no una época sellada. La restauración
-  sigue siendo válida —es la base inicial—, pero no debe confundirse con una época numerada.
+  promovida**: es la base inicial que crean las migraciones, sin ninguna época sellada. La
+  restauración sigue siendo válida, pero no debe confundirse con una época numerada ni
+  presentarse como si trajera conocimiento ya publicado.
 * `sessions.db`, `adapter_identity.db`, `sqlstore.db` e `identidad.db` reportan `None` y
   ninguna verificación adicional aplica: esas bases no modelan épocas.
 

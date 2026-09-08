@@ -127,28 +127,32 @@ fn leer_numero_de_epoca_de_la_copia(destino: &Path) -> Result<Option<i64>, Error
         "abrir la copia de respaldo para leer su número de época",
     ))?;
 
-    // `prepare` falla con `SqliteFailure(SQLITE_ERROR, "no such table ...")` cuando la tabla
-    // no existe; `query_row` con `QueryReturnedNoRows` cuando la fila no está. Ambos se traducen
-    // a `Ok(None)` y son los dos casos documentados arriba: bases sin épocas y bases nunca
-    // promovidas, respectivamente. `SQLITE_ERROR` se compara por código extendido porque es el
-    // código que SQLite emite para «no such table», y `ErrorCode` en `rusqlite` 0.39 lo modela
-    // como entero extendido sin variante con nombre para ese caso.
+    // `prepare` falla con `SqliteFailure(SQLITE_ERROR, "no such table ...")` cuando la tabla no
+    // existe; `query_row` con `QueryReturnedNoRows` cuando la fila no está. Ambos se traducen a
+    // `Ok(None)` y son los dos casos documentados arriba: bases sin épocas y bases nunca
+    // promovidas, respectivamente.
+    //
+    // El código extendido NO basta como criterio: `rusqlite` 0.39 modela «no such table» como
+    // `SQLITE_ERROR` sin variante con nombre, pero ese mismo código cubre toda la familia de
+    // errores de sentencia —«no such column», entre otros—. Aceptar el código a secas convertiría
+    // en `Ok(None)` una copia cuya tabla existe con el esquema equivocado, que es exactamente el
+    // fallo que esta función promete propagar. Por eso se exigen las dos condiciones a la vez, y
+    // el mensaje se compara en minúsculas porque su mayúscula inicial no está garantizada.
     let mut sentencia =
         match conexion.prepare("SELECT numero_de_epoca FROM metadatos_de_epoca WHERE id = 1") {
             Ok(s) => s,
             Err(rusqlite::Error::SqliteFailure(causa, mensaje)) => {
-                if causa.extended_code == rusqlite::ffi::SQLITE_ERROR {
-                    return Ok(None);
-                }
-                let mensaje = mensaje.as_deref().unwrap_or("");
-                if mensaje.to_lowercase().contains("no such table") {
+                let texto = mensaje.unwrap_or_default();
+                if causa.extended_code == rusqlite::ffi::SQLITE_ERROR
+                    && texto.to_lowercase().contains("no such table")
+                {
                     return Ok(None);
                 }
                 return Err(ErrorDeAlmacen::en(
                     "preparar la lectura del número de época de la copia",
                 )(rusqlite::Error::SqliteFailure(
                     causa,
-                    Some(mensaje.to_string()),
+                    Some(texto),
                 )));
             }
             Err(causa) => {
