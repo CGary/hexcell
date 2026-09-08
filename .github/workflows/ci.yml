@@ -43,10 +43,12 @@ jobs:
 
       # HEX-062 cierra el criterio de la etapa A-5 «un respaldo ejecutado durante una conmutacion
       # produce una copia consistente y restorable»: cada prueba ejercita una proposicion distinta
-      # (H1+2 la consistencia y el registro del numero de epoca, H3 el bloqueo del drenaje por
-      # una lectura sostenida) y ambas estan marcadas `#[ignore]` por la misma razon que la
+      # (H1+2 la consistencia y el registro del numero de epoca, la tercera que la copia conserva
+      # la epoca fijada aunque el enlace vivo ya apunte a la siguiente, y H3 el bloqueo del
+      # drenaje por una lectura sostenida) y las tres estan marcadas `#[ignore]` por la misma
+      # razon que la
       # anterior: miden interacciones entre dos hilos del mismo proceso y la bateria por defecto
-      # competiria con los demas binarios por la CPU. Sin estos dos pasos especificos, el
+      # competiria con los demas binarios por la CPU. Sin estos tres pasos especificos, el
       # `#[ignore]` dejaria el criterio declarado y nunca verificado, indistinguible de no
       # tenerlo. Ver adr-0031.
       - name: El respaldo concurrente con una conmutacion copia una sola epoca y la registra
