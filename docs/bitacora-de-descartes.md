@@ -1,6 +1,6 @@
 # Bitácora de descartes
 
-> Registro de lo que se consideró y **no** se hizo. Última actualización: 2026-09-08 (D-38).
+> Registro de lo que se consideró y **no** se hizo. Última actualización: 2026-09-08 (D-38; el índice recupera además las filas de D-35, D-36 y D-37, que HEX-061 dejó sin registrar).
 
 ## Para qué sirve este documento
 
@@ -68,6 +68,9 @@ se apoya en un principio de diseño, no.
 | [D-32](#d-32) | Escribir la marca de sospechosa después de reasignar el enlace simbólico | Principio de diseño, no reabrir |
 | [D-33](#d-33) | Serializar el binario de tests con `--test-threads=1` para tapar la carrera del entorno del proceso | Principio de diseño, no reabrir |
 | [D-34](#d-34) | Mover los tests que mutan el entorno a un binario de integración aparte | Principio de diseño, no reabrir |
+| [D-35](#d-35) | Alternativas descartadas al escribir la prueba de estrés de conmutación de época (anchura de pool por omisión, correr dentro de la batería por defecto, contrastar NFR-03 contra el intervalo ancho, tolerancia en la aserción de descriptores) | Principio de diseño, no reabrir |
+| [D-36](#d-36) | Medir la simultaneidad de las lecturas con un medidor de pico de hilos alrededor de `recuperar_contexto` | Reabrible si cambia un hecho del árbol |
+| [D-37](#d-37) | Afirmar el muro estricto de NFR-03 (< 10 ms) sobre `duracion_de_conmutacion_ms` dentro de la prueba de estrés | Reabrible si cambia un hecho del árbol |
 | [D-38](#d-38) | Añadir exclusión mutua real entre `respaldar_en` y `iniciar_promocion`/`promover_epoca` (cerrojo o bandera compartida de promoción consultada desde el respaldo) | Principio de diseño, no reabrir |
 
 ---

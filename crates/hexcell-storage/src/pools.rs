@@ -421,10 +421,15 @@ impl GestorDePools {
     /// `PoolDeConocimiento` para el pool vivo es el symlink `<datos>/knowledge_live.db`
     /// (fijada en este módulo al construir el pool), y `reasignar_enlace_de_la_epoca_viva`
     /// repunta ese mismo symlink en el instante de la conmutación. Una etiqueta derivada de la
-    /// ruta mentiría sobre el contenido físico de una copia tomada **durante** una conmutación,
-    /// que es exactamente el caso que el `#[ignore]` de `tests/respaldo_durante_conmutacion.rs`
-    /// ejercita. `sessions.db` y las dos bases ordenadas por IPC no modelan épocas y producen
-    /// `numero_de_epoca == None`.
+    /// ruta mentiría sobre el contenido físico de una copia tomada **durante** una conmutación, y
+    /// ese caso no es hipotético: lo ejercita
+    /// `la_copia_conserva_la_epoca_fijada_aunque_el_enlace_vivo_ya_apunte_a_la_siguiente`
+    /// (`tests/respaldo_durante_conmutacion.rs`), donde la conmutación cae **dentro** del
+    /// `VACUUM INTO` de conocimiento: el enlace ya resuelve a la época N+1 mientras la copia
+    /// contiene la N. Con el número leído de la copia esa prueba pasa; con uno derivado de
+    /// `ruta()` falla —comprobado por mutación el 2026-09-08—, que es la única razón por la que
+    /// esta simplificación aparente no se puede hacer. `sessions.db` y las dos bases ordenadas por
+    /// IPC no modelan épocas y producen `numero_de_epoca == None`.
     pub fn respaldar_en(
         &self,
         directorio: &Path,

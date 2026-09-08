@@ -2,36 +2,42 @@
 //!
 //! Cierra el criterio de aceptación declarado en el plan: un respaldo ejecutado durante una
 //! conmutación produce una copia consistente y restorable; el número de época copiado se registra
-//! en la salida del respaldo para que la procedencia sea verificable; y un respaldo que sobrevive
-//! al límite de drenaje fuerza un `DesenlaceDeDrenaje::Expirada` que deja la época superseída
-//! huérfana y protegida por retención como `SuperseidaSinDrenar`.
+//! en la salida del respaldo, leído de la copia y no de la ruta del pool vivo, para que la
+//! procedencia sea verificable; y un respaldo que sobrevive al límite de drenaje fuerza un
+//! `DesenlaceDeDrenaje::Expirada` que deja la época superseída huérfana y protegida por retención
+//! como `SuperseidaSinDrenar`.
 //!
-//! Las dos pruebas se marcan `#[ignore]` y se invocan por nombre desde un paso dedicado de CI en
+//! Las tres pruebas se marcan `#[ignore]` y se invocan por nombre desde un paso dedicado de CI en
 //! `.github/workflows/ci.yml` por la misma razón que `crates/hexcell-storage/tests/estres_conmutacion.rs`
 //! (HEX-061, `adr-0030`): medir una interacción de ordenamiento entre hilos exige que ninguna otra
 //! prueba compita por el proceso, y `cargo` ejecuta los binarios de test de integración
 //! secuencialmente, de modo que cada `tests/*.rs` corre solo dentro de su proceso cuando se
 //! invoca por nombre.
 //!
-//! # Por qué el solapamiento se fuerza con un cerrojo y no se espera del reloj
+//! # El solapamiento se fuerza con estado, nunca con el reloj: freno donde se puede, observación
+//! donde no
 //!
-//! Un `Barrier` solo iguala el ARRANQUE de dos hilos. Deducir de ahí que la conmutación cayó
-//! dentro del respaldo sería un argumento de velocidad relativa —«la promoción tarda más que un
-//! `VACUUM INTO`»— y una prueba apoyada en él pasaría idéntica con solapamiento cero. Aquí el
-//! solapamiento es una propiedad del estado y no del cronómetro: un hilo auxiliar sostiene la
-//! celda de lectura de `sessions.db`, que es la PRIMERA copia que `GestorDePools::respaldar_en`
-//! toma, de modo que el respaldo queda detenido dentro de su propia llamada y no puede terminar.
-//! La conmutación se ejecuta con esa certeza, y lo que la afirma —«el respaldo no había
-//! terminado cuando la promoción devolvió»— es la lectura de un `AtomicBool`, no una duración.
+//! Un `Barrier` solo iguala el ARRANQUE de dos hilos; deducir de ahí que la conmutación cayó
+//! dentro del respaldo sería un argumento de velocidad relativa que pasaría idéntico con
+//! solapamiento cero. En las dos pruebas concurrentes de este archivo el solapamiento es una
+//! propiedad del estado, y en ambas lo AFIRMA la lectura de un `AtomicBool` en el instante en que
+//! `promover_epoca` devuelve, no una duración.
 //!
-//! # Por qué el freno se pone en `sessions.db` y no en el pool de conocimiento
+//! Lo que cambia es cómo se llega a él. **Frenar** el pool de conocimiento es inalcanzable:
+//! `promover_epoca` lee el número de la época previa con `pool_anterior.con_lectura` **antes** del
+//! intercambio, así que retener todas sus celdas detendría también a la promoción; retener una
+//! sola no detiene a nadie, porque el reparto de `PoolDeConocimiento::con_lectura` es un
+//! `fetch_add` por turno **determinista** que entrega al siguiente llamante la otra celda; y abrir
+//! el pool con anchura 1 —legal— dejaría a `promover_epoca` esperando para siempre con el enlace
+//! vivo **ya** repuntado. Por eso la primera prueba frena la conexión única de `sessions.db`, el
+//! único punto que detiene al respaldo sin detener a la promoción.
 //!
-//! Retener la celda de lectura del pool de conocimiento sería más directo, pero `promover_epoca`
-//! lee el número de la época previa con `pool_anterior.con_lectura` justo antes del intercambio:
-//! retener todas las celdas de ese pool detendría también a la promoción, y retener solo una no
-//! garantiza nada, porque el reparto por turno rotatorio de `PoolDeConocimiento::con_lectura`
-//! entrega al respaldo una celda distinta de la retenida. La conexión de lectura única de
-//! `sessions.db` es el único punto que detiene al respaldo sin detener a la promoción.
+//! **Observar** ese pool sin retenerlo sí es alcanzable, y es lo que hace la tercera prueba:
+//! `lecturas_en_reposo()` pasa a `false` en cuanto alguien toma una celda, y si la prueba no
+//! retiene ninguna, ese `false` solo puede deberse al respaldo, es decir a que ya fijó su `Guard`
+//! sobre la época viva. Conmutar a partir de ahí cae **dentro** de la copia de conocimiento, que
+//! es la única ventana en la que derivar el ordinal de la ruta del pool daría un número que la
+//! copia desmiente.
 //!
 //! # Por qué las dos épocas se siembran con marcadores distintos
 //!
@@ -44,9 +50,8 @@
 //! # Por qué los descriptores de `arc-swap` no se prueban aquí
 //!
 //! `GestorDePools::conocimiento()` devuelve un `Arc` propietario (`load_full`), no el
-//! `arc_swap::Guard` que `respaldar_en` usa internamente, así que la tenencia del respaldo no es
-//! reproducible tal cual desde un test. El segundo test explica en su comentario con qué se
-//! sustituye y por qué la conclusión no cambia.
+//! `arc_swap::Guard` que `respaldar_en` usa internamente: la tenencia del respaldo no es
+//! reproducible tal cual desde un test. La prueba H3 dice con qué la sustituye.
 
 mod comun;
 
@@ -76,6 +81,19 @@ const DIMENSION_DE_EMBEDDING: usize = 768;
 /// no cuánto tarda un barrido sobre ellos —eso era el objeto de HEX-061, que siembra 1.500—.
 const FRAGMENTOS_POR_EPOCA: usize = 8;
 
+/// Fragmentos de la época que la tercera prueba deja viva antes de conmutar. `VACUUM INTO` y el
+/// `integrity_check` que `verificar_copia` corre después son lineales en el tamaño de la base, y
+/// esa duración **es** la ventana dentro de la cual debe caer la conmutación. Medido el 2026-09-08:
+/// con este volumen la copia aún tiene ~28 ms por delante cuando la promoción entera lleva ~2 ms,
+/// un margen de unas 15 veces. La cifra no PRUEBA nada —eso lo hace la aserción de solapamiento—:
+/// solo hace el caso alcanzable con holgura frente al ruido del planificador de un runner.
+const FRAGMENTOS_DE_EPOCA_ANCHA: usize = 6_000;
+
+/// Tope de vueltas de la espera activa sobre `lecturas_en_reposo()`. Es una guarda de vivacidad,
+/// no la prueba de nada: si se agota, el respaldo terminó su copia de conocimiento sin que la
+/// prueba llegase a verla y el caso no quedó ejercitado, que es justo lo que el mensaje dice.
+const VUELTAS_MAXIMAS_DE_ESPERA: u64 = 50_000_000;
+
 /// Tamaño de fragmento, en caracteres exactos de [`UNIDAD_DE_CONTENIDO`]. La compuerta de
 /// integridad re-fragmenta el `contenido` del documento y exige que el número de trozos coincida
 /// con el de filas de `fragmentos`; repetir una unidad de este tamaño con solapamiento cero hace
@@ -93,10 +111,11 @@ const MARCADOR_EPOCA_UNO: &str = "EPOCA-UNO";
 /// Marcador textual de la época posterior a la conmutación.
 const MARCADOR_EPOCA_DOS: &str = "EPOCA-DOS";
 
-/// Límite deliberadamente bajo del drenaje para la prueba de expiración. La meta es que un solo
-/// poll de `INTERVALO_DE_SONDEO_DE_DRENAJE` (5 ms) ya supere este plazo: cualquier determinismo
-/// por timing sería frágil y el de la prueba no lo es. 1 ms basta y se mantiene holgadamente
-/// por encima del coste de una iteración del bucle de drenaje.
+/// Límite deliberadamente bajo del drenaje para la prueba de expiración. El plazo se cuenta desde
+/// el **instante del reemplazo** del pool, no desde la llamada al drenaje, así que con 1 ms la
+/// primera evaluación del bucle ya lo encuentra vencido y `Expirada` sale sin llegar a dormir ni
+/// una vez el `INTERVALO_DE_SONDEO_DE_DRENAJE` de 5 ms. Ese es el punto: lo que hace determinista
+/// a la prueba es el cerrojo sostenido, no el reloj; el límite bajo solo evita la espera inútil.
 const LIMITE_BAJO_DE_DRENAJE_DE_EPOCA: Duration = Duration::from_millis(1);
 
 /// Límite holgado para los drenajes de higiene, que no son objeto de ninguna aserción: uno bajo
@@ -116,7 +135,11 @@ fn sembrar_staging(ruta_datos: &Path) -> ConfiguracionDeFragmentacion {
 /// necesita, y por eso vive aquí en vez de en `tests/comun/mod.rs`. El vector es uniforme y
 /// coincide con el de la sonda, así que la compuerta semántica ve similitud coseno 1,0 y el
 /// marcador no altera ninguna de las comprobaciones que la promoción aplica.
-fn sembrar_staging_marcado(ruta_datos: &Path, marcador: &str) -> ConfiguracionDeFragmentacion {
+fn sembrar_staging_marcado(
+    ruta_datos: &Path,
+    marcador: &str,
+    fragmentos: usize,
+) -> ConfiguracionDeFragmentacion {
     let ruta_staging = ruta_datos.join(NOMBRE_DE_ARCHIVO_DE_CONOCIMIENTO_EN_SOMBRA);
     let conexion = Connection::open(&ruta_staging).expect("abrir base de staging marcada");
     conexion.execute("PRAGMA foreign_keys = ON;", []).unwrap();
@@ -136,7 +159,7 @@ fn sembrar_staging_marcado(ruta_datos: &Path, marcador: &str) -> ConfiguracionDe
         )
         .unwrap();
 
-    let contenido = UNIDAD_DE_CONTENIDO.repeat(FRAGMENTOS_POR_EPOCA);
+    let contenido = UNIDAD_DE_CONTENIDO.repeat(fragmentos);
     let vector_bytes: Vec<u8> = vec![1.0f32; DIMENSION_DE_EMBEDDING]
         .iter()
         .flat_map(|v| v.to_le_bytes())
@@ -151,7 +174,10 @@ fn sembrar_staging_marcado(ruta_datos: &Path, marcador: &str) -> ConfiguracionDe
             rusqlite::params![contenido],
         )
         .unwrap();
-    for indice in 0..FRAGMENTOS_POR_EPOCA {
+    // Una sola transacción para las miles de filas de la época ancha: sin ella cada `INSERT`
+    // paga su propia consolidación de WAL y el sembrado domina el coste de la prueba.
+    conexion.execute_batch("BEGIN;").unwrap();
+    for indice in 0..fragmentos {
         let id = (indice + 1) as i64;
         conexion
             .execute(
@@ -172,6 +198,7 @@ fn sembrar_staging_marcado(ruta_datos: &Path, marcador: &str) -> ConfiguracionDe
             rusqlite::params![vector_bytes],
         )
         .unwrap();
+    conexion.execute_batch("COMMIT;").unwrap();
     drop(conexion);
 
     ConfiguracionDeFragmentacion {
@@ -277,12 +304,14 @@ fn el_respaldo_concurrente_con_una_conmutacion_copia_una_sola_epoca_y_la_registr
     );
 
     // Época 1, marcada EPOCA-UNO: es la que sirve el pool vivo cuando el respaldo arranca.
-    let configuracion_uno = sembrar_staging_marcado(directorio.ruta(), MARCADOR_EPOCA_UNO);
+    let configuracion_uno =
+        sembrar_staging_marcado(directorio.ruta(), MARCADOR_EPOCA_UNO, FRAGMENTOS_POR_EPOCA);
     promover_y_drenar_epoca_inicial(&gestor, directorio.ruta(), &configuracion_uno);
 
     // Época 2, marcada EPOCA-DOS: se siembra antes de arrancar los hilos para que el coste de la
     // siembra no forme parte de la ventana que la prueba observa.
-    let configuracion_dos = sembrar_staging_marcado(directorio.ruta(), MARCADOR_EPOCA_DOS);
+    let configuracion_dos =
+        sembrar_staging_marcado(directorio.ruta(), MARCADOR_EPOCA_DOS, FRAGMENTOS_POR_EPOCA);
 
     // Freno estructural: un hilo auxiliar toma la ÚNICA conexión de lectura de `sessions.db` y no
     // la suelta hasta que se le indique. `respaldar_en` copia `sessions.db` antes que
@@ -471,7 +500,7 @@ fn el_respaldo_concurrente_con_una_conmutacion_copia_una_sola_epoca_y_la_registr
 /// El determinismo NO viene del reloj: un `VACUUM INTO` sobre el sembrado de un fragmento
 /// termina en milisegundos. Viene del hecho de que un hilo sostiene una lectura del pool
 /// superseído durante toda la ventana del drenaje, de modo que `lecturas_en_reposo()` es falso
-/// en cada poll de 5 ms, y `Arc::strong_count` del pool es al menos 2. Esas dos condiciones
+/// en toda evaluación del bucle, y `Arc::strong_count` del pool es al menos 2. Esas dos condiciones
 /// son las que el predicado del drenaje exige; ambas son inalcanzables mientras el lector
 /// sostiene el cerrojo, así que `Expirada` es el único desenlace posible.
 #[test]
@@ -690,5 +719,151 @@ fn un_respaldo_que_supera_el_limite_de_drenaje_deja_la_epoca_superseida_sin_dren
     println!(
         "un_respaldo_que_supera_el_limite_de_drenaje_limite_usado={:?}",
         LIMITE_BAJO_DE_DRENAJE_DE_EPOCA
+    );
+}
+
+/// Espera activa y **acotada** a que el respaldo tome una celda de lectura del pool vivo.
+///
+/// Costura de OBSERVACIÓN, no freno: la prueba no retiene ninguna celda —sería inalcanzable, ver
+/// el encabezado del módulo—, así que un `lecturas_en_reposo()` en `false` solo puede deberse al
+/// respaldo, y eso implica que `respaldar_en` ya ejecutó `self.conocimiento.load()`: su `Guard`
+/// quedó fijado a la época viva **actual** y ninguna conmutación posterior cambia de qué archivo
+/// sale la copia. Ni duerme ni consulta el reloj —dormir metería una duración en un argumento que
+/// es de estado—; el tope solo evita que un fallo aparezca como un test colgado.
+fn esperar_a_que_el_respaldo_tome_una_celda_de_conocimiento(gestor: &GestorDePools) {
+    for _ in 0..VUELTAS_MAXIMAS_DE_ESPERA {
+        if !gestor.conocimiento().lecturas_en_reposo() {
+            return;
+        }
+        thread::yield_now();
+    }
+    panic!(
+        "el respaldo nunca fue visto sosteniendo una celda del pool de conocimiento: o no llegó a \
+         esa fase, o su copia terminó antes de que la prueba pudiera observarla. En ambos casos la \
+         conmutación caería FUERA de la copia y la prueba no ejercitaría lo que dice ejercitar"
+    );
+}
+
+/// H2-bis: la copia conserva la época que el respaldo tenía **fijada** aunque el enlace vivo ya
+/// apunte a la siguiente.
+///
+/// Es la prueba que hace NECESARIA la decisión central del diseño —leer el ordinal de la copia
+/// producida y no derivarlo de `PoolDeConocimiento::ruta()`—, y no solo elegante: aquí la ruta del
+/// pool vivo resuelve a `knowledge_epoch_2.db` mientras la copia contiene, entera, la época 1. Una
+/// etiqueta derivada de la ruta diría 2 sobre un archivo que dice 1 de sí mismo, que es el error
+/// que el operador vería al restaurar. La primera prueba de este archivo no puede demostrarlo: su
+/// freno vive en `sessions.db`, que `respaldar_en` copia **antes** de resolver el puntero de
+/// conocimiento, así que allí la conmutación termina entera antes de que la copia de conocimiento
+/// empiece y las dos fuentes coinciden.
+///
+/// El orden lo da la costura de observación: el respaldo arranca primero, la prueba espera a verlo
+/// sosteniendo una celda de conocimiento y solo entonces conmuta; que la conmutación cayera DENTRO
+/// de esa copia se afirma leyendo un `AtomicBool`, no se supone.
+#[test]
+#[ignore]
+fn la_copia_conserva_la_epoca_fijada_aunque_el_enlace_vivo_ya_apunte_a_la_siguiente() {
+    let directorio = DirectorioTemporal::nuevo("respaldo-durante-conmutacion-h2bis");
+    let destino = DirectorioTemporal::nuevo("respaldo-durante-conmutacion-h2bis-destino");
+
+    let gestor = Arc::new(
+        GestorDePools::abrir_con_anchura_de_conocimiento(directorio.ruta(), 2)
+            .expect("abrir el gestor con la anchura por omisión"),
+    );
+
+    // Época 1 ancha y época 2 mínima: la copia de la primera es la ventana, la promoción de la
+    // segunda es lo que tiene que caber dentro. Las dos cifras hacen el caso ALCANZABLE; quien lo
+    // da por ocurrido es la aserción de solapamiento, no el tamaño de las bases.
+    let configuracion_uno = sembrar_staging_marcado(
+        directorio.ruta(),
+        MARCADOR_EPOCA_UNO,
+        FRAGMENTOS_DE_EPOCA_ANCHA,
+    );
+    promover_y_drenar_epoca_inicial(&gestor, directorio.ruta(), &configuracion_uno);
+    let configuracion_dos =
+        sembrar_staging_marcado(directorio.ruta(), MARCADOR_EPOCA_DOS, FRAGMENTOS_POR_EPOCA);
+
+    let respaldo_terminado = Arc::new(AtomicBool::new(false));
+    let respaldo_terminado_hilo = Arc::clone(&respaldo_terminado);
+    let gestor_respaldo = Arc::clone(&gestor);
+    let destino_respaldo = destino.ruta().to_path_buf();
+    let (tx_respaldo, rx_respaldo) = mpsc::channel();
+    let hilo_respaldo = thread::spawn(move || {
+        let resultado = gestor_respaldo.respaldar_en(&destino_respaldo);
+        respaldo_terminado_hilo.store(true, Ordering::Release);
+        let _ = tx_respaldo.send(resultado);
+    });
+
+    esperar_a_que_el_respaldo_tome_una_celda_de_conocimiento(&gestor);
+
+    let desenlace_promocion =
+        promover_epoca(&gestor, directorio.ruta(), &configuracion_dos, 20_000)
+            .expect("la promoción durante el respaldo debe completarse sin error");
+
+    // ASERCIÓN DE SOLAPAMIENTO. Sin ella la prueba certificaría una ventana que quizá no ocurrió:
+    // si el respaldo hubiese cerrado su copia antes de que la promoción repuntara el enlace, la
+    // etiqueta derivada de la ruta también habría acertado y el caso no discriminaría nada.
+    assert!(
+        !respaldo_terminado.load(Ordering::Acquire),
+        "la conmutación debió completarse con la copia de conocimiento todavía en vuelo; de otro \
+         modo el enlace vivo se repuntó fuera de la ventana y la prueba no separa leer el ordinal \
+         de la copia de derivarlo de la ruta del pool"
+    );
+
+    // `promover_epoca` devuelve `Ok(Abortada)` cuando la compuerta rechaza el staging, así que el
+    // `expect` de arriba no basta: hay que mirar el desenlace. La época superseída no se drena
+    // aquí —eso es lo que H3 mide— y el directorio temporal muere con la prueba.
+    assert!(
+        matches!(
+            desenlace_promocion,
+            DesenlaceDePromocion::Promovida {
+                numero_de_epoca: 2,
+                ..
+            }
+        ),
+        "la conmutación debió promover la época 2: {desenlace_promocion:?}"
+    );
+
+    // El contrafáctico, hecho observación: la ruta con la que se abrió el pool —el enlace
+    // `knowledge_live.db`— resuelve YA a la época 2. Cualquier etiqueta derivada de ella daría 2.
+    let enlace_resuelto =
+        std::fs::canonicalize(directorio.ruta().join(NOMBRE_DE_ARCHIVO_DE_CONOCIMIENTO))
+            .expect("resolver el enlace de la época viva tras la conmutación");
+    assert!(
+        enlace_resuelto.ends_with("knowledge_epoch_2.db"),
+        "tras la conmutación el enlace vivo debe resolver a la época 2: {enlace_resuelto:?}"
+    );
+
+    let resumen_respaldo = rx_respaldo
+        .recv()
+        .expect("el hilo de respaldo debe emitir su resultado")
+        .expect("el respaldo debe completarse sin error");
+    hilo_respaldo
+        .join()
+        .expect("el hilo de respaldo no debe entrar en pánico");
+    let copia_conocimiento = resumen_respaldo
+        .copias
+        .iter()
+        .find(|c| c.nombre_logico == NOMBRE_DE_ARCHIVO_DE_CONOCIMIENTO)
+        .expect("la copia de knowledge_live.db debe estar presente");
+
+    // Y el hecho que el contrafáctico contradice: la copia es la época 1, entera y sin mezclar,
+    // y las tres fuentes independientes —marcadores, fila grabada y campo reportado— coinciden
+    // en 1. Una etiqueta derivada de la ruta se habría separado de las tres a la vez.
+    let ruta_copia = destino.ruta().join(NOMBRE_DE_ARCHIVO_DE_CONOCIMIENTO);
+    let (uno_en_copia, dos_en_copia, total_en_copia) = repartir_marcadores(&ruta_copia);
+    assert_eq!(
+        (uno_en_copia, dos_en_copia),
+        (FRAGMENTOS_DE_EPOCA_ANCHA as i64, 0),
+        "la copia debe traer la época 1 entera y ningún marcador de la 2 ({total_en_copia} fragmentos)"
+    );
+    assert_eq!(
+        copia_conocimiento.numero_de_epoca,
+        Some(1),
+        "el respaldo debe reportar la época que la copia contiene, no la que el enlace ya sirve"
+    );
+    assert_eq!(
+        leer_numero_de_epoca_de_la_copia(&ruta_copia),
+        Some(1),
+        "el ordinal grabado dentro de la copia debe ser el mismo que el reportado"
     );
 }

@@ -55,6 +55,15 @@ jobs:
       - name: Un respaldo que supera el limite de drenaje deja la epoca superseida sin drenar y protegida
         run: cargo test -p hexcell-storage --test respaldo_durante_conmutacion -- --ignored --exact un_respaldo_que_supera_el_limite_de_drenaje_deja_la_epoca_superseida_sin_drenar_y_protegida --nocapture
 
+      # Esta tercera es la que hace NECESARIA la decision central de HEX-062 —leer el numero de
+      # epoca de la copia producida y no derivarlo de `PoolDeConocimiento::ruta()`—: conmuta DENTRO
+      # del `VACUUM INTO` de conocimiento, de modo que el enlace vivo ya resuelve a la epoca N+1
+      # mientras la copia contiene la N. Sin este paso el `#[ignore]` la dejaria escrita y nunca
+      # ejecutada, y quien simplificase `verificar_copia` para usar `ruta()` veria la bateria en
+      # verde mientras rompe el campo. Ver adr-0031, decision 5-ter.
+      - name: La copia conserva la epoca fijada aunque el enlace vivo ya apunte a la siguiente
+        run: cargo test -p hexcell-storage --test respaldo_durante_conmutacion -- --ignored --exact la_copia_conserva_la_epoca_fijada_aunque_el_enlace_vivo_ya_apunte_a_la_siguiente --nocapture
+
       # adr-0028 declara que esta prohibicion se verifica mecanicamente en CI. Hasta el 2026-09-02
       # esa afirmacion era falsa: la guarda vivia solo en los verify.commands de HEX-058 y HEX-059,
       # que dejaron de ejecutarse en cuanto esas tareas cerraron. Un invariante permanente
