@@ -206,6 +206,9 @@ async fn main() -> ExitCode {
         Arc::clone(&repositorio),
     ));
 
+    // Un solo futuro para las dos superficies HTTP: cada `tokio::select!` de más abajo enumera sus
+    // ramas a mano, una por canal, y dos futuros independientes se podrían enumerar en uno y
+    // olvidar en el otro, dejando el endpoint inexistente en ese canal sin que nada fallara.
     let ((direccion_salud, direccion_admin), servidores_http) = match servir_servicios_http(
         configuracion.direccion_salud,
         estado_de_salud,
@@ -220,7 +223,7 @@ async fn main() -> ExitCode {
     {
         Ok(vinculados) => vinculados,
         Err(error) => {
-            eprintln!("hexcell: no se pudieron vincular los servidores HTTP: {error}");
+            eprintln!("hexcell: no se pudo vincular el {error}");
             return ExitCode::FAILURE;
         }
     };

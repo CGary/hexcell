@@ -73,7 +73,7 @@ se apoya en un principio de diseño, no.
 | [D-37](#d-37) | Afirmar el muro estricto de NFR-03 (< 10 ms) sobre `duracion_de_conmutacion_ms` dentro de la prueba de estrés | Reabrible si cambia un hecho del árbol |
 | [D-38](#d-38) | Añadir exclusión mutua real entre `respaldar_en` y `iniciar_promocion`/`promover_epoca` (cerrojo o bandera compartida de promoción consultada desde el respaldo) | Principio de diseño, no reabrir |
 | [D-39](#d-39) | Serde / Serialize / Deserialize en `hexcell_storage::DocumentoDeIngesta` | Principio de diseño, no reabrir |
-| [D-40](#d-40) | `spawn_blocking` para ejecutar `ejecutar_ingesta` desde el listener administrativo | Principio de diseño, no reabrir |
+| [D-40](#d-40) | `spawn_blocking` para ejecutar `ejecutar_ingesta` desde el listener administrativo | Reabrible si cambia un hecho del árbol |
 | [D-41](#d-41) | `ArcSwap` o `tokio::sync::Mutex` para la compuerta del estado administrativo de ingesta (`EstadoDeAdmin`) | Principio de diseño, no reabrir |
 | [D-42](#d-42) | Variables de entorno adicionales para el texto de la sonda semántica y parámetros de fragmentación de ingesta | Reabrible si cambia un hecho del proyecto |
 
@@ -581,7 +581,7 @@ copiar `sessions.db`, `knowledge_live.db` y el almacén de identidad del adaptad
 * **Descartado:** 2026-09-09 (HEX-063).
 * **Por qué se descartó:** `ejecutar_ingesta` es una función asíncrona cuya latencia dominante es la llamada de embeddings que requiere `.await`. Mover una función asíncrona entera a `spawn_blocking` exigiría restructurar la ingesta. Las escrituras síncronas a la base en sombra están acotadas por lotes (`tamano_de_lote`) vía `escribir_lote_de_fragmentos`, cediendo el control al ejecutor en cada lote. Se ejecuta inline mediante `tokio::task::spawn` en el runtime `current_thread`, extendiendo el precedente sentado en `promocion.rs`.
 * **Registro normativo:** `crates/hexcell/src/admin.rs`, `crates/hexcell/src/promocion.rs`.
-* **Qué tendría que cambiar para reabrirlo:** Si pruebas de estrés (como la tarea 11 del plan) muestran degradación inaceptable de la latencia de mensajería durante escrituras síncronas de lote sobre `current_thread`.
+* **Qué tendría que cambiar para reabrirlo:** Que se mida degradación inaceptable de la latencia de mensajería mientras una ingesta escribe sus lotes sobre el runtime `current_thread`. Esa medición **no existe todavía**: la prueba de estrés de la tarea 11 del plan (HEX-061, cerrada el 2026-09-07) midió la conmutación de época bajo lecturas RAG concurrentes, no una ingesta larga compitiendo con el motor de mensajería, así que no acredita ni desmiente este descarte. Hace falta una medición nueva, con el motor procesando eventos mientras corre una ingesta de muchos lotes.
 
 ### D-41
 **Usar `ArcSwap` o `tokio::sync::Mutex` para la compuerta del estado administrativo de ingesta en `EstadoDeAdmin`.**
@@ -595,7 +595,7 @@ copiar `sessions.db`, `knowledge_live.db` y el almacén de identidad del adaptad
 **Añadir variables de entorno adicionales (`HEXCELL_TEXTO_SONDA`, `HEXCELL_FRAGMENTACION_*`) para configurar el texto de la sonda y los parámetros de troceado.**
 
 * **Descartado:** 2026-09-09 (HEX-063).
-* **Por qué se descartó:** El contrato autoriza exactamente dos nuevas puertas de configuración (`HEXCELL_DIRECCION_ADMIN` y `HEXCELL_LIMITE_DE_CUERPO_ADMIN_BYTES`) para acotar el tamaño del diff. Se utilizan constantes con nombre (`TEXTO_DE_LA_SONDA_POR_DEFECTO`, `UMBRAL_DE_ACEPTACION_POR_DEFECTO`, `CONFIGURACION_DE_FRAGMENTACION_DE_INGESTA`) en `admin.rs`.
+* **Por qué se descartó:** No son parámetros de despliegue, son parámetros del **contenido** de una época de conocimiento. El texto de la sonda, su umbral de aceptación y el troceado determinan qué se escribió dentro de `knowledge_staging.db` y cómo se comparan después los vectores; una época solo es comparable consigo misma si esos valores fueron los mismos cuando se construyó. Puestos en el entorno pasan a ser mutables entre dos arranques del mismo proceso, sin dejar rastro en el árbol ni en la época, y dos ingestas de la misma célula podrían producir épocas incomparables sin que ningún archivo lo delate. Como constantes con nombre (`TEXTO_DE_LA_SONDA_POR_DEFECTO`, `UMBRAL_DE_ACEPTACION_POR_DEFECTO`, `CONFIGURACION_DE_FRAGMENTACION_DE_INGESTA` en `admin.rs`) el valor vigente está versionado y cambiarlo deja un commit. Las dos puertas que sí se abren —dirección del listener y límite de cuerpo— son lo contrario: propiedades del despliegue, que no tocan nada de lo que la época contiene.
 * **Registro normativo:** `crates/hexcell/src/admin.rs`.
 * **Qué tendría que cambiar para reabrirlo:** Si el primer piloto de producción en la etapa A-7 requiere personalizar el texto de la sonda o el solapamiento de fragmentación para un catálogo específico de cliente.
 

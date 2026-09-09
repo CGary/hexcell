@@ -88,6 +88,12 @@ impl SenalDeApagado {
     }
 
     /// Devuelve una copia del receptor del canal `watch` para observar la señal de forma síncrona.
+    ///
+    /// La ingesta de conocimiento necesita consultar el apagado en la frontera de cada lote, donde
+    /// no puede esperar a nada: si lo hiciera con un `.await` sobre la señal, abandonaría el lote a
+    /// medias y dejaría viva la reserva de presupuesto que ya había tomado. Una lectura síncrona
+    /// del último valor publicado es lo único que permite salir entre lotes, con la contabilidad
+    /// del anterior ya conciliada.
     pub fn observador(&self) -> watch::Receiver<bool> {
         self.receptor.clone()
     }

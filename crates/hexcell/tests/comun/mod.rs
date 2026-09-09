@@ -320,11 +320,20 @@ pub fn peticion_http_post_cruda(direccion: &str, ruta: &str, cuerpo: &str) -> St
         direccion,
         ruta,
         cuerpo,
-        &[("Content-Type", "application/json")],
+        &[
+            ("Content-Type", "application/json"),
+            ("Content-Length", &cuerpo.len().to_string()),
+        ],
     )
 }
 
-/// Hace una petición HTTP/1.1 POST cruda personalizando las cabeceras HTTP.
+/// Hace una petición HTTP/1.1 POST cruda escribiendo exactamente las cabeceras dadas y el cuerpo
+/// tal cual, sin añadir ninguna por su cuenta.
+///
+/// Que `Content-Length` no se escriba aquí es lo que vuelve alcanzable desde un test el camino
+/// `Transfer-Encoding: chunked` del servidor: declarar a la vez una longitud y un troceado sería
+/// contradictorio, y con la longitud presente el servidor decide el 413 por adelantado y nunca
+/// llega a acotar el flujo mientras lo lee. Quien trocea el cuerpo lo enmarca él mismo.
 pub fn peticion_http_post_cruda_con_cabeceras(
     direccion: &str,
     ruta: &str,
@@ -343,10 +352,7 @@ pub fn peticion_http_post_cruda_con_cabeceras(
         }
     };
 
-    let mut peticion = format!(
-        "POST {ruta} HTTP/1.1\r\nHost: localhost\r\nContent-Length: {}\r\n",
-        cuerpo.len()
-    );
+    let mut peticion = format!("POST {ruta} HTTP/1.1\r\nHost: localhost\r\n");
     for (nombre, valor) in cabeceras {
         peticion.push_str(&format!("{nombre}: {valor}\r\n"));
     }

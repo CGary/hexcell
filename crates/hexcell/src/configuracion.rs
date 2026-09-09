@@ -138,7 +138,11 @@ pub struct Configuracion {
     /// Dirección donde escucha el servidor HTTP interno de salud. Por defecto, loopback: esta
     /// ruta no es de cara al público, la sondea la CLI de administración.
     pub direccion_salud: SocketAddr,
-    /// Dirección donde escucha el servidor HTTP interno de administración. Por defecto, loopback (127.0.0.1:8082).
+    /// Dirección donde escucha el servidor HTTP interno de administración. Por defecto, loopback
+    /// (127.0.0.1:8082). Es una puerta propia y no la de salud porque las dos superficies no se
+    /// exponen igual: la de salud la sondea un contenedor hermano en cada arranque, mientras que
+    /// esta dispara trabajo real sobre la base en sombra, y compartir puerto obligaría a abrir
+    /// ambas a la vez el día que el empaquetado (etapa A-6) tenga que publicar la primera.
     pub direccion_admin: SocketAddr,
     /// Límite en bytes del cuerpo de las peticiones administrativas (opcional, por defecto 1 MiB).
     pub limite_de_cuerpo_admin: usize,
@@ -415,21 +419,21 @@ impl Configuracion {
 
         let limite_de_cuerpo_admin = match fuente.leer(HEXCELL_LIMITE_DE_CUERPO_ADMIN_BYTES) {
             Some(valor) => {
-                let parsed = valor.parse::<usize>().map_err(|_| {
+                let limite = valor.parse::<usize>().map_err(|_| {
                     ErrorDeConfiguracion::ValorInvalido {
                         nombre: HEXCELL_LIMITE_DE_CUERPO_ADMIN_BYTES,
                         valor: valor.clone(),
                         formato_esperado: "entero estrictamente positivo de bytes, p. ej. 1048576",
                     }
                 })?;
-                if parsed == 0 {
+                if limite == 0 {
                     return Err(ErrorDeConfiguracion::ValorInvalido {
                         nombre: HEXCELL_LIMITE_DE_CUERPO_ADMIN_BYTES,
                         valor: valor.clone(),
                         formato_esperado: "entero estrictamente positivo de bytes, p. ej. 1048576",
                     });
                 }
-                parsed
+                limite
             }
             None => crate::admin::LIMITE_DE_CUERPO_ADMIN_POR_DEFECTO,
         };

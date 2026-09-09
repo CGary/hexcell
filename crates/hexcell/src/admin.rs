@@ -43,6 +43,15 @@ pub const CONFIGURACION_DE_FRAGMENTACION_DE_INGESTA: ConfiguracionDeFragmentacio
         solapamiento: 50,
     };
 
+/// Prefijo del motivo registrado cuando la tarea de ingesta muere sin devolver un resultado propio.
+///
+/// Un operador necesita distinguir un fallo *de la ingesta* (que `ejecutar_ingesta` describe con su
+/// propio error de dominio) de la muerte anormal del hilo que la corría: el primero es un problema
+/// del documento o del proveedor de incrustaciones; el segundo es un defecto del programa que hay
+/// que reportar. Por eso el motivo lleva marca propia en vez de mimetizarse con un error de ingesta.
+pub const MOTIVO_DE_TERMINACION_ANORMAL: &str =
+    "terminación anormal de la tarea de ingesta (pánico)";
+
 /// Texto de la sonda semántica utilizada para validar la calidad del modelo de incrustación.
 pub const TEXTO_DE_LA_SONDA_POR_DEFECTO: &str = "sonda de prueba de conocimiento";
 
@@ -110,10 +119,35 @@ impl EstadoDeAdmin {
         };
     }
 
-    /// Devuelve un snapshot clonado de la fase actual.
+    /// Devuelve una instantánea clonada de la fase actual.
     pub fn fase_actual(&self) -> FaseDeIngesta {
         let guard = self.fase.lock().unwrap_or_else(|e| e.into_inner());
         guard.clone()
+    }
+}
+
+/// Vigila la tarea de ingesta y garantiza que su muerte anormal deje una fase **terminal**.
+///
+/// El diseño de un solo trabajo por célula falla cerrado: mientras la fase siga en `EnCurso`, todo
+/// POST posterior recibe 409 y el GET describe un trabajo que ya no existe. Si la tarea entra en
+/// pánico, el bloque asíncrono se desenrolla y nunca llega a registrar su desenlace, con lo que ese
+/// cierre sería permanente hasta reiniciar el proceso. Awaitar el `JoinHandle` desde una tarea
+/// aparte cubre ese hueco sin `catch_unwind`: `tokio` ya convierte el pánico en `Err(JoinError)`.
+///
+/// La cancelación se ignora a propósito. La única forma en que esta tarea se cancela es que el
+/// proceso esté bajando y el runtime suelte sus tareas; registrar «fallida» ahí sería inventar un
+/// fallo que no ocurrió. Además, al bajar el proceso el propio vigilante se suelta con la tarea
+/// vigilada, así que el apagado sigue sin esperar a nadie.
+pub async fn supervisar_ingesta(
+    estado: Arc<EstadoDeAdmin>,
+    tarea: tokio::task::JoinHandle<Result<ResumenDeIngesta, String>>,
+) {
+    match tarea.await {
+        Ok(resultado) => estado.registrar_desenlace(resultado),
+        Err(error) if error.is_cancelled() => {}
+        Err(error) => {
+            estado.registrar_desenlace(Err(format!("{MOTIVO_DE_TERMINACION_ANORMAL}: {error}")));
+        }
     }
 }
 
@@ -163,13 +197,13 @@ impl DocumentoEntrante {
     }
 }
 
-/// Construye una respuesta HTTP con el payload JSON representativo de la fase.
+/// Construye una respuesta HTTP con el cuerpo JSON representativo de la fase.
 pub fn respuesta_de_fase(fase: &FaseDeIngesta) -> Response<CuerpoDeAdmin> {
-    let json_val = match fase {
+    let documento = match fase {
         FaseDeIngesta::Inactiva => serde_json::json!({ "estado": "inactiva" }),
         FaseDeIngesta::EnCurso => serde_json::json!({ "estado": "en_curso" }),
         FaseDeIngesta::Finalizada { resumen } => {
-            let desenlace_str = match resumen.desenlace {
+            let desenlace_reportado = match resumen.desenlace {
                 DesenlaceDeIngesta::Completa => "completa",
                 DesenlaceDeIngesta::Parcial => "parcial",
                 DesenlaceDeIngesta::DetenidaPorApagado => "detenida_por_apagado",
@@ -183,7 +217,7 @@ pub fn respuesta_de_fase(fase: &FaseDeIngesta) -> Response<CuerpoDeAdmin> {
                     "lotes_emitidos": resumen.lotes_emitidos,
                     "dimension_observada": resumen.dimension_observada,
                     "dimension_de_la_sonda": resumen.dimension_de_la_sonda,
-                    "desenlace": desenlace_str,
+                    "desenlace": desenlace_reportado,
                 }
             })
         }
@@ -193,7 +227,7 @@ pub fn respuesta_de_fase(fase: &FaseDeIngesta) -> Response<CuerpoDeAdmin> {
         }),
     };
 
-    let mut respuesta = Response::new(Full::new(Bytes::from(json_val.to_string())));
+    let mut respuesta = Response::new(Full::new(Bytes::from(documento.to_string())));
     *respuesta.status_mut() = StatusCode::OK;
     respuesta.headers_mut().insert(
         hyper::header::CONTENT_TYPE,
@@ -208,10 +242,12 @@ fn respuesta_texto(codigo: StatusCode, mensaje: &'static str) -> Response<Cuerpo
     respuesta
 }
 
-/// Acumula el cuerpo de la petición streaming respetando el límite de bytes configurado.
+/// Acumula el cuerpo de la petición en flujo respetando el límite de bytes configurado.
 ///
-/// Rechaza con `StatusCode::PAYLOAD_TOO_LARGE` (413) antes de leer si el `size_hint().upper()`
-/// declara un tamaño superior al límite, o durante el streaming si los bytes acumulados lo superan.
+/// Son dos guardas porque un cliente puede llegar por dos caminos distintos: si declara su
+/// longitud, se le rechaza **antes** de reservar o leer un solo byte; si no la declara —cuerpo
+/// troceado— no hay nada que comprobar por adelantado y la única defensa posible es acotar la
+/// lectura mientras ocurre. Quitar cualquiera de las dos deja abierto uno de los dos caminos.
 pub async fn acumular_cuerpo_acotado(
     peticion: Request<Incoming>,
     limite_bytes: usize,
@@ -225,9 +261,9 @@ pub async fn acumular_cuerpo_acotado(
         return Err(StatusCode::PAYLOAD_TOO_LARGE);
     }
 
-    let limited = http_body_util::Limited::new(peticion.into_body(), limite_bytes);
-    match limited.collect().await {
-        Ok(collected) => Ok(collected.to_bytes()),
+    let acotado = http_body_util::Limited::new(peticion.into_body(), limite_bytes);
+    match acotado.collect().await {
+        Ok(recolectado) => Ok(recolectado.to_bytes()),
         Err(_) => Err(StatusCode::PAYLOAD_TOO_LARGE),
     }
 }
@@ -266,25 +302,26 @@ where
             }
 
             let documento = documento_entrante.en_documento_de_ingesta();
-            let estado_task = Arc::clone(estado);
-            let servicio_task = Arc::clone(servicio_embeddings);
-            let ruta_datos_task = ruta_datos.to_path_buf();
-            let debe_apagar_task = debe_apagar.clone();
+            let estado_de_la_tarea = Arc::clone(estado);
+            let servicio_de_la_tarea = Arc::clone(servicio_embeddings);
+            let ruta_datos_de_la_tarea = ruta_datos.to_path_buf();
+            let debe_apagar_de_la_tarea = debe_apagar.clone();
 
-            tokio::task::spawn(async move {
-                let resultado = ejecutar_ingesta(
+            let tarea = tokio::task::spawn(async move {
+                ejecutar_ingesta(
                     documento,
                     CONFIGURACION_DE_FRAGMENTACION_DE_INGESTA,
-                    &servicio_task,
-                    &ruta_datos_task,
+                    &servicio_de_la_tarea,
+                    &ruta_datos_de_la_tarea,
                     TEXTO_DE_LA_SONDA_POR_DEFECTO,
                     UMBRAL_DE_ACEPTACION_POR_DEFECTO,
-                    debe_apagar_task,
+                    debe_apagar_de_la_tarea,
                 )
-                .await;
-
-                estado_task.registrar_desenlace(resultado.map_err(|e| e.to_string()));
+                .await
+                .map_err(|e| e.to_string())
             });
+
+            tokio::task::spawn(supervisar_ingesta(estado_de_la_tarea, tarea));
 
             let mut resp = respuesta_de_fase(&FaseDeIngesta::EnCurso);
             *resp.status_mut() = StatusCode::ACCEPTED;
@@ -358,9 +395,13 @@ where
 
 /// Vincula de forma unificada ambos servidores HTTP (salud y administración).
 ///
-/// Reúne en un único parámetro cada dependencia que ya exigía `servir_admin` por separado
-/// (contrato de la tarea): agruparlas en una estructura sería un cambio de diseño ajeno a este
-/// arreglo, así que se admite explícitamente el conteo de argumentos.
+/// Se construyen juntos para que ninguna rama de `CanalSeleccionado` pueda quedarse sin uno de
+/// los dos: una lista de futuros enumerada a mano en cada `tokio::select!` se puede omitir a
+/// medias sin que nada falle, y el endpoint desaparecería en silencio de un canal.
+///
+/// El conteo de argumentos se admite a propósito: son las dependencias que cada listener ya
+/// exigía por separado, y agruparlas en una estructura sería un cambio de diseño de la raíz de
+/// composición, no de esta función.
 #[allow(clippy::too_many_arguments)]
 pub async fn servir_servicios_http<F>(
     direccion_salud: SocketAddr,
@@ -375,7 +416,17 @@ pub async fn servir_servicios_http<F>(
 where
     F: Fn() -> bool + Send + Sync + Clone + 'static,
 {
-    let (dir_salud_real, servidor_salud) = servir_salud(direccion_salud, estado_salud).await?;
+    // Vincular los dos listeners tras un único `?` haría indistinguibles sus fallos, y ambos
+    // pueden chocar con un puerto ajeno: quien opera necesita saber cuál de los dos se quedó sin
+    // dirección y en qué dirección, que es justo lo que un `io::Error` desnudo no dice.
+    let (dir_salud_real, servidor_salud) = servir_salud(direccion_salud, estado_salud)
+        .await
+        .map_err(|error| {
+            std::io::Error::new(
+                error.kind(),
+                format!("servidor de salud en {direccion_salud}: {error}"),
+            )
+        })?;
     let (dir_admin_real, servidor_admin) = servir_admin(
         direccion_admin,
         limite_cuerpo_admin_bytes,
@@ -384,7 +435,13 @@ where
         ruta_datos,
         debe_apagar,
     )
-    .await?;
+    .await
+    .map_err(|error| {
+        std::io::Error::new(
+            error.kind(),
+            format!("servidor de administración en {direccion_admin}: {error}"),
+        )
+    })?;
 
     let futuro_combinado = async move {
         tokio::select! {
