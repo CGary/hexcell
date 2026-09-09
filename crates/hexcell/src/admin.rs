@@ -129,10 +129,19 @@ impl EstadoDeAdmin {
 /// Vigila la tarea de ingesta y garantiza que su muerte anormal deje una fase **terminal**.
 ///
 /// El diseño de un solo trabajo por célula falla cerrado: mientras la fase siga en `EnCurso`, todo
-/// POST posterior recibe 409 y el GET describe un trabajo que ya no existe. Si la tarea entra en
-/// pánico, el bloque asíncrono se desenrolla y nunca llega a registrar su desenlace, con lo que ese
-/// cierre sería permanente hasta reiniciar el proceso. Awaitar el `JoinHandle` desde una tarea
-/// aparte cubre ese hueco sin `catch_unwind`: `tokio` ya convierte el pánico en `Err(JoinError)`.
+/// POST posterior recibe 409 y el GET describe un trabajo que ya no existe. Si la tarea muere sin
+/// registrar su desenlace, ese cierre es permanente hasta reiniciar el proceso. Awaitar el
+/// `JoinHandle` desde una tarea aparte cubre ese hueco sin `catch_unwind`, porque `tokio` ya
+/// entrega la muerte anormal como `Err(JoinError)`.
+///
+/// **El alcance depende del perfil de compilación, y conviene no exagerarlo.** El perfil de
+/// release de este workspace fija `panic = "abort"` (raíz `Cargo.toml`), así que allí un pánico
+/// mata el proceso entero en el sitio: no hay desenrollado, `tokio` nunca produce `Err(JoinError)`
+/// por pánico y la fase clavada no llega a existir, porque tampoco existe el proceso. La rama de
+/// pánico de este vigilante es alcanzable bajo `panic = "unwind"`, que es el perfil de desarrollo
+/// y de pruebas. Se conserva de todos modos por dos razones: cubre el aborto de la tarea que no
+/// viene del apagado, y evita que el hueco reaparezca en silencio si algún día el perfil de
+/// release vuelve a desenrollar.
 ///
 /// La cancelación se ignora a propósito. La única forma en que esta tarea se cancela es que el
 /// proceso esté bajando y el runtime suelte sus tareas; registrar «fallida» ahí sería inventar un

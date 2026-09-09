@@ -395,6 +395,8 @@ fn unidades_enrutar_admin_puro() {
 /// entregaría si la ingesta reventara. Lo que se afirma es la consecuencia que le importa al
 /// operador: la fase deja de ser `EnCurso` y el siguiente POST vuelve a ser admitido en lugar de
 /// chocar para siempre contra el 409.
+/// El perfil de release fija `panic = "abort"`, donde un pánico mata el proceso y esta rama no se
+/// alcanza; la prueba corre bajo `panic = "unwind"`, que es el perfil en que la guarda existe.
 #[tokio::test]
 async fn tarea_en_panico_deja_fase_terminal_y_readmite_un_nuevo_trabajo() {
     let estado = std::sync::Arc::new(EstadoDeAdmin::nuevo());
