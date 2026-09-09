@@ -138,6 +138,10 @@ pub struct Configuracion {
     /// Dirección donde escucha el servidor HTTP interno de salud. Por defecto, loopback: esta
     /// ruta no es de cara al público, la sondea la CLI de administración.
     pub direccion_salud: SocketAddr,
+    /// Dirección donde escucha el servidor HTTP interno de administración. Por defecto, loopback (127.0.0.1:8082).
+    pub direccion_admin: SocketAddr,
+    /// Límite en bytes del cuerpo de las peticiones administrativas (opcional, por defecto 1 MiB).
+    pub limite_de_cuerpo_admin: usize,
     /// Canal configurado para esta célula.
     pub canal: CanalSeleccionado,
     /// Ruta del socket Unix de comunicación IPC con el sidecar whatsmeow.
@@ -257,6 +261,10 @@ pub const HEXCELL_ID_CELULA: &str = "HEXCELL_ID_CELULA";
 pub const HEXCELL_RUTA_DATOS: &str = "HEXCELL_RUTA_DATOS";
 /// Nombre de la variable de entorno con la dirección del servidor de salud (opcional).
 pub const HEXCELL_DIRECCION_SALUD: &str = "HEXCELL_DIRECCION_SALUD";
+/// Nombre de la variable de entorno con la dirección del servidor de administración (opcional).
+pub const HEXCELL_DIRECCION_ADMIN: &str = "HEXCELL_DIRECCION_ADMIN";
+/// Nombre de la variable de entorno con el límite de cuerpo de peticiones administrativas en bytes (opcional).
+pub const HEXCELL_LIMITE_DE_CUERPO_ADMIN_BYTES: &str = "HEXCELL_LIMITE_DE_CUERPO_ADMIN_BYTES";
 /// Nombre de la variable de entorno con la ruta del socket IPC (opcional).
 pub const HEXCELL_SOCKET_IPC: &str = "HEXCELL_SOCKET_IPC";
 /// Nombre de la variable de entorno con el canal configurado (opcional).
@@ -334,6 +342,8 @@ pub const TAMANO_DE_LOTE_EMBEDDINGS_POR_DEFECTO: usize = 32;
 /// necesita `expect()` para tratar un caso que en realidad nunca ocurre.
 const DIRECCION_SALUD_POR_DEFECTO: SocketAddr =
     SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 8081);
+const DIRECCION_ADMIN_POR_DEFECTO: SocketAddr =
+    SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 8082);
 /// Canal por defecto cuando no se configura ninguno: el único que existe hoy en el árbol.
 const CANAL_POR_DEFECTO: CanalSeleccionado = CanalSeleccionado::Simulado;
 /// Ruta por omisión del socket IPC documentada en el protocolo.
@@ -390,6 +400,39 @@ impl Configuracion {
                 })?,
                 None => DIRECCION_SALUD_POR_DEFECTO,
             };
+
+        let direccion_admin =
+            match fuente.leer(HEXCELL_DIRECCION_ADMIN) {
+                Some(valor) => valor.parse::<SocketAddr>().map_err(|_| {
+                    ErrorDeConfiguracion::ValorInvalido {
+                        nombre: HEXCELL_DIRECCION_ADMIN,
+                        valor: valor.clone(),
+                        formato_esperado: "dirección socket, p. ej. 127.0.0.1:8082",
+                    }
+                })?,
+                None => DIRECCION_ADMIN_POR_DEFECTO,
+            };
+
+        let limite_de_cuerpo_admin = match fuente.leer(HEXCELL_LIMITE_DE_CUERPO_ADMIN_BYTES) {
+            Some(valor) => {
+                let parsed = valor.parse::<usize>().map_err(|_| {
+                    ErrorDeConfiguracion::ValorInvalido {
+                        nombre: HEXCELL_LIMITE_DE_CUERPO_ADMIN_BYTES,
+                        valor: valor.clone(),
+                        formato_esperado: "entero estrictamente positivo de bytes, p. ej. 1048576",
+                    }
+                })?;
+                if parsed == 0 {
+                    return Err(ErrorDeConfiguracion::ValorInvalido {
+                        nombre: HEXCELL_LIMITE_DE_CUERPO_ADMIN_BYTES,
+                        valor: valor.clone(),
+                        formato_esperado: "entero estrictamente positivo de bytes, p. ej. 1048576",
+                    });
+                }
+                parsed
+            }
+            None => crate::admin::LIMITE_DE_CUERPO_ADMIN_POR_DEFECTO,
+        };
 
         let canal = match fuente.leer(HEXCELL_CANAL) {
             Some(valor) => CanalSeleccionado::desde_str(&valor).ok_or_else(|| {
@@ -801,6 +844,8 @@ impl Configuracion {
             id_celula,
             ruta_datos,
             direccion_salud,
+            direccion_admin,
+            limite_de_cuerpo_admin,
             canal,
             ruta_socket_ipc,
             capacidad_cola,

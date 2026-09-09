@@ -86,6 +86,11 @@ impl SenalDeApagado {
     pub fn limite_de_drenaje(&self) -> Duration {
         self.limite_de_drenaje
     }
+
+    /// Devuelve una copia del receptor del canal `watch` para observar la señal de forma síncrona.
+    pub fn observador(&self) -> watch::Receiver<bool> {
+        self.receptor.clone()
+    }
 }
 
 /// Marcador devuelto por [`Apagado::instalar`].

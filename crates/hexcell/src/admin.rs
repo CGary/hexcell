@@ -1,0 +1,397 @@
+//! Servidor HTTP interno de administración: `POST /admin/ingesta` y `GET /admin/ingesta`.
+//!
+//! Expone una interfaz interna, accesible únicamente desde la red local o loopback, para desencadenar
+//! la ingesta de conocimiento en segundo plano en la base en sombra (`knowledge_staging.db`) y
+//! permitir a una CLI de administración consultar el estado del trabajo mediante sondeos (polling).
+//!
+//! Se ejecuta sobre su propio puerto (`HEXCELL_DIRECCION_ADMIN`), independiente del servidor de salud
+//! (`HEXCELL_DIRECCION_SALUD`), para permitir separar la exposición de ambas superficies en etapas
+//! futuras de empaquetado y seguridad.
+//!
+//! Ninguna clave de cerrojo cruza un `.await`: el estado del proceso de ingesta se gestiona en memoria
+//! de forma síncrona en una única sección crítica (`std::sync::Mutex`), garantizando que como máximo
+//! un trabajo de ingesta corra a la vez por célula.
+
+use std::convert::Infallible;
+use std::net::SocketAddr;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
+
+use bytes::Bytes;
+use http_body_util::{BodyExt, Full};
+use hyper::body::{Body, Incoming};
+use hyper::server::conn::http1;
+use hyper::service::service_fn;
+use hyper::{Method, Request, Response, StatusCode};
+use hyper_util::rt::TokioIo;
+use tokio::net::TcpListener;
+
+use hexcell_core::fragmentacion::ConfiguracionDeFragmentacion;
+use hexcell_storage::DocumentoDeIngesta;
+
+use crate::embeddings::{ProveedorDeEmbeddingsDeCelula, ServicioDeEmbeddings};
+use crate::ingesta::{DesenlaceDeIngesta, ResumenDeIngesta, ejecutar_ingesta};
+use crate::salud::{EstadoDeSalud, servir_salud};
+
+/// Tamaño por omisión del límite del cuerpo de las peticiones administrativas (1 MiB).
+pub const LIMITE_DE_CUERPO_ADMIN_POR_DEFECTO: usize = 1024 * 1024;
+
+/// Configuración de fragmentación por omisión para la ingesta desencadenada desde el endpoint administrativo.
+pub const CONFIGURACION_DE_FRAGMENTACION_DE_INGESTA: ConfiguracionDeFragmentacion =
+    ConfiguracionDeFragmentacion {
+        tamano_de_fragmento: 500,
+        solapamiento: 50,
+    };
+
+/// Texto de la sonda semántica utilizada para validar la calidad del modelo de incrustación.
+pub const TEXTO_DE_LA_SONDA_POR_DEFECTO: &str = "sonda de prueba de conocimiento";
+
+/// Umbral mínimo de aceptación de similitud para la sonda semántica.
+pub const UMBRAL_DE_ACEPTACION_POR_DEFECTO: f32 = 0.5;
+
+/// Cuerpo de respuesta HTTP devuelto por el servidor administrativo.
+pub type CuerpoDeAdmin = Full<Bytes>;
+
+/// Estado del proceso de ingesta administrativa en memoria.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum FaseDeIngesta {
+    /// No hay ningún proceso de ingesta activo ni previo registrado en esta sesión del proceso.
+    Inactiva,
+    /// Se está ejecutando una ingesta en segundo plano.
+    EnCurso,
+    /// El último proceso de ingesta concluyó con éxito reportando un resumen contable.
+    Finalizada { resumen: ResumenDeIngesta },
+    /// El último proceso de ingesta falló con un motivo estructural.
+    Fallida { motivo: String },
+}
+
+/// Servicio de aplicación que gestiona el estado en proceso de la ingesta de conocimiento.
+///
+/// Posee el único estado de trabajo de ingesta (compare-and-set atómico vía `Mutex`), garantizando
+/// que como máximo un trabajo de ingesta se ejecute a la vez por célula.
+pub struct EstadoDeAdmin {
+    fase: Mutex<FaseDeIngesta>,
+}
+
+impl Default for EstadoDeAdmin {
+    fn default() -> Self {
+        Self {
+            fase: Mutex::new(FaseDeIngesta::Inactiva),
+        }
+    }
+}
+
+impl EstadoDeAdmin {
+    /// Construye un nuevo contenedor de estado administrativo.
+    pub fn nuevo() -> Self {
+        Self::default()
+    }
+
+    /// Compara y conmuta el estado a `EnCurso` en una única sección crítica.
+    ///
+    /// Devuelve `true` si el trabajo fue iniciado con éxito, o `false` si ya había una ingesta
+    /// `EnCurso` (lo que da origen a la decisión 409 Conflict).
+    pub fn intentar_iniciar(&self) -> bool {
+        let mut guard = self.fase.lock().unwrap_or_else(|e| e.into_inner());
+        if matches!(*guard, FaseDeIngesta::EnCurso) {
+            false
+        } else {
+            *guard = FaseDeIngesta::EnCurso;
+            true
+        }
+    }
+
+    /// Transición terminal desde `EnCurso` hacia `Finalizada` o `Fallida`.
+    pub fn registrar_desenlace(&self, resultado: Result<ResumenDeIngesta, String>) {
+        let mut guard = self.fase.lock().unwrap_or_else(|e| e.into_inner());
+        *guard = match resultado {
+            Ok(resumen) => FaseDeIngesta::Finalizada { resumen },
+            Err(motivo) => FaseDeIngesta::Fallida { motivo },
+        };
+    }
+
+    /// Devuelve un snapshot clonado de la fase actual.
+    pub fn fase_actual(&self) -> FaseDeIngesta {
+        let guard = self.fase.lock().unwrap_or_else(|e| e.into_inner());
+        guard.clone()
+    }
+}
+
+/// Rutas soportadas por el endpoint de administración.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RutaAdmin {
+    /// Petición `POST /admin/ingesta` para iniciar ingesta en segundo plano.
+    DispararIngesta,
+    /// Petición `GET /admin/ingesta` para consultar la fase actual del trabajo.
+    ConsultarEstado,
+    /// Ruta o método no reconocido.
+    NoEncontrada,
+}
+
+/// Enruta puramente una petición a partir del método HTTP y la ruta de la URI.
+pub fn enrutar_admin(metodo: &Method, ruta: &str) -> RutaAdmin {
+    match (metodo, ruta) {
+        (&Method::POST, "/admin/ingesta") => RutaAdmin::DispararIngesta,
+        (&Method::GET, "/admin/ingesta") => RutaAdmin::ConsultarEstado,
+        _ => RutaAdmin::NoEncontrada,
+    }
+}
+
+/// DTO de entrada para deserializar el cuerpo JSON del POST de ingesta.
+///
+/// Aísla el modelo de persistencia `DocumentoDeIngesta` de decoraciones de transporte.
+#[derive(Clone, Debug, serde::Deserialize)]
+pub struct DocumentoEntrante {
+    pub referencia_externa: String,
+    pub titulo: String,
+    pub contenido: String,
+    pub actualizado_ms: Option<i64>,
+}
+
+impl DocumentoEntrante {
+    /// Convierte el DTO de transporte a la entidad de persistencia.
+    pub fn en_documento_de_ingesta(self) -> DocumentoDeIngesta {
+        let actualizado_ms = self
+            .actualizado_ms
+            .unwrap_or_else(|| hexcell_storage::a_milisegundos(std::time::SystemTime::now()));
+        DocumentoDeIngesta {
+            referencia_externa: self.referencia_externa,
+            titulo: self.titulo,
+            contenido: self.contenido,
+            actualizado_ms,
+        }
+    }
+}
+
+/// Construye una respuesta HTTP con el payload JSON representativo de la fase.
+pub fn respuesta_de_fase(fase: &FaseDeIngesta) -> Response<CuerpoDeAdmin> {
+    let json_val = match fase {
+        FaseDeIngesta::Inactiva => serde_json::json!({ "estado": "inactiva" }),
+        FaseDeIngesta::EnCurso => serde_json::json!({ "estado": "en_curso" }),
+        FaseDeIngesta::Finalizada { resumen } => {
+            let desenlace_str = match resumen.desenlace {
+                DesenlaceDeIngesta::Completa => "completa",
+                DesenlaceDeIngesta::Parcial => "parcial",
+                DesenlaceDeIngesta::DetenidaPorApagado => "detenida_por_apagado",
+                DesenlaceDeIngesta::SinIncrustaciones => "sin_incrustaciones",
+            };
+            serde_json::json!({
+                "estado": "finalizada",
+                "resumen": {
+                    "fragmentos_solicitados": resumen.fragmentos_solicitados,
+                    "fragmentos_escritos": resumen.fragmentos_escritos,
+                    "lotes_emitidos": resumen.lotes_emitidos,
+                    "dimension_observada": resumen.dimension_observada,
+                    "dimension_de_la_sonda": resumen.dimension_de_la_sonda,
+                    "desenlace": desenlace_str,
+                }
+            })
+        }
+        FaseDeIngesta::Fallida { motivo } => serde_json::json!({
+            "estado": "fallida",
+            "motivo": motivo,
+        }),
+    };
+
+    let mut respuesta = Response::new(Full::new(Bytes::from(json_val.to_string())));
+    *respuesta.status_mut() = StatusCode::OK;
+    respuesta.headers_mut().insert(
+        hyper::header::CONTENT_TYPE,
+        hyper::header::HeaderValue::from_static("application/json"),
+    );
+    respuesta
+}
+
+fn respuesta_texto(codigo: StatusCode, mensaje: &'static str) -> Response<CuerpoDeAdmin> {
+    let mut respuesta = Response::new(Full::new(Bytes::from_static(mensaje.as_bytes())));
+    *respuesta.status_mut() = codigo;
+    respuesta
+}
+
+/// Acumula el cuerpo de la petición streaming respetando el límite de bytes configurado.
+///
+/// Rechaza con `StatusCode::PAYLOAD_TOO_LARGE` (413) antes de leer si el `size_hint().upper()`
+/// declara un tamaño superior al límite, o durante el streaming si los bytes acumulados lo superan.
+pub async fn acumular_cuerpo_acotado(
+    peticion: Request<Incoming>,
+    limite_bytes: usize,
+) -> Result<Bytes, StatusCode> {
+    if peticion
+        .body()
+        .size_hint()
+        .upper()
+        .is_some_and(|upper| upper > limite_bytes as u64)
+    {
+        return Err(StatusCode::PAYLOAD_TOO_LARGE);
+    }
+
+    let limited = http_body_util::Limited::new(peticion.into_body(), limite_bytes);
+    match limited.collect().await {
+        Ok(collected) => Ok(collected.to_bytes()),
+        Err(_) => Err(StatusCode::PAYLOAD_TOO_LARGE),
+    }
+}
+
+/// Procesa una petición HTTP entrante sobre la interfaz de administración.
+pub async fn atender_peticion_de_admin<F>(
+    peticion: Request<Incoming>,
+    estado: &Arc<EstadoDeAdmin>,
+    servicio_embeddings: &Arc<ServicioDeEmbeddings<ProveedorDeEmbeddingsDeCelula>>,
+    ruta_datos: &Path,
+    limite_cuerpo_bytes: usize,
+    debe_apagar: F,
+) -> Response<CuerpoDeAdmin>
+where
+    F: Fn() -> bool + Send + Sync + Clone + 'static,
+{
+    let ruta = enrutar_admin(peticion.method(), peticion.uri().path());
+    match ruta {
+        RutaAdmin::ConsultarEstado => respuesta_de_fase(&estado.fase_actual()),
+        RutaAdmin::DispararIngesta => {
+            let bytes = match acumular_cuerpo_acotado(peticion, limite_cuerpo_bytes).await {
+                Ok(b) => b,
+                Err(codigo) => return respuesta_texto(codigo, "cuerpo demasiado grande"),
+            };
+
+            let documento_entrante: DocumentoEntrante = match serde_json::from_slice(&bytes) {
+                Ok(doc) => doc,
+                Err(_) => return respuesta_texto(StatusCode::BAD_REQUEST, "cuerpo JSON inválido"),
+            };
+
+            if !estado.intentar_iniciar() {
+                return respuesta_texto(
+                    StatusCode::CONFLICT,
+                    "ya hay un trabajo de ingesta en curso",
+                );
+            }
+
+            let documento = documento_entrante.en_documento_de_ingesta();
+            let estado_task = Arc::clone(estado);
+            let servicio_task = Arc::clone(servicio_embeddings);
+            let ruta_datos_task = ruta_datos.to_path_buf();
+            let debe_apagar_task = debe_apagar.clone();
+
+            tokio::task::spawn(async move {
+                let resultado = ejecutar_ingesta(
+                    documento,
+                    CONFIGURACION_DE_FRAGMENTACION_DE_INGESTA,
+                    &servicio_task,
+                    &ruta_datos_task,
+                    TEXTO_DE_LA_SONDA_POR_DEFECTO,
+                    UMBRAL_DE_ACEPTACION_POR_DEFECTO,
+                    debe_apagar_task,
+                )
+                .await;
+
+                estado_task.registrar_desenlace(resultado.map_err(|e| e.to_string()));
+            });
+
+            let mut resp = respuesta_de_fase(&FaseDeIngesta::EnCurso);
+            *resp.status_mut() = StatusCode::ACCEPTED;
+            resp
+        }
+        RutaAdmin::NoEncontrada => respuesta_texto(StatusCode::NOT_FOUND, ""),
+    }
+}
+
+/// Vincula el listener administrativo y sirve peticiones HTTP.
+pub async fn servir_admin<F>(
+    direccion: SocketAddr,
+    limite_cuerpo_bytes: usize,
+    estado: Arc<EstadoDeAdmin>,
+    servicio_embeddings: Arc<ServicioDeEmbeddings<ProveedorDeEmbeddingsDeCelula>>,
+    ruta_datos: PathBuf,
+    debe_apagar: F,
+) -> std::io::Result<(SocketAddr, impl Future<Output = ()>)>
+where
+    F: Fn() -> bool + Send + Sync + Clone + 'static,
+{
+    let listener = TcpListener::bind(direccion).await?;
+    let direccion_real = listener.local_addr()?;
+
+    let futuro = async move {
+        loop {
+            let (flujo, _) = match listener.accept().await {
+                Ok(aceptado) => aceptado,
+                Err(_) => continue,
+            };
+            let io = TokioIo::new(flujo);
+            let estado_conexion = Arc::clone(&estado);
+            let servicio_conexion = Arc::clone(&servicio_embeddings);
+            let ruta_conexion = ruta_datos.clone();
+            let debe_apagar_conexion = debe_apagar.clone();
+
+            tokio::task::spawn(async move {
+                let atendido = http1::Builder::new()
+                    .serve_connection(
+                        io,
+                        service_fn(move |peticion: Request<Incoming>| {
+                            let estado = Arc::clone(&estado_conexion);
+                            let servicio = Arc::clone(&servicio_conexion);
+                            let ruta = ruta_conexion.clone();
+                            let debe_apagar_fn = debe_apagar_conexion.clone();
+                            async move {
+                                Ok::<_, Infallible>(
+                                    atender_peticion_de_admin(
+                                        peticion,
+                                        &estado,
+                                        &servicio,
+                                        &ruta,
+                                        limite_cuerpo_bytes,
+                                        debe_apagar_fn,
+                                    )
+                                    .await,
+                                )
+                            }
+                        }),
+                    )
+                    .await;
+                if let Err(error) = atendido {
+                    eprintln!("admin: error sirviendo una conexión: {error}");
+                }
+            });
+        }
+    };
+
+    Ok((direccion_real, futuro))
+}
+
+/// Vincula de forma unificada ambos servidores HTTP (salud y administración).
+///
+/// Reúne en un único parámetro cada dependencia que ya exigía `servir_admin` por separado
+/// (contrato de la tarea): agruparlas en una estructura sería un cambio de diseño ajeno a este
+/// arreglo, así que se admite explícitamente el conteo de argumentos.
+#[allow(clippy::too_many_arguments)]
+pub async fn servir_servicios_http<F>(
+    direccion_salud: SocketAddr,
+    estado_salud: Arc<EstadoDeSalud>,
+    direccion_admin: SocketAddr,
+    limite_cuerpo_admin_bytes: usize,
+    estado_admin: Arc<EstadoDeAdmin>,
+    servicio_embeddings: Arc<ServicioDeEmbeddings<ProveedorDeEmbeddingsDeCelula>>,
+    ruta_datos: PathBuf,
+    debe_apagar: F,
+) -> std::io::Result<((SocketAddr, SocketAddr), impl Future<Output = ()>)>
+where
+    F: Fn() -> bool + Send + Sync + Clone + 'static,
+{
+    let (dir_salud_real, servidor_salud) = servir_salud(direccion_salud, estado_salud).await?;
+    let (dir_admin_real, servidor_admin) = servir_admin(
+        direccion_admin,
+        limite_cuerpo_admin_bytes,
+        estado_admin,
+        servicio_embeddings,
+        ruta_datos,
+        debe_apagar,
+    )
+    .await?;
+
+    let futuro_combinado = async move {
+        tokio::select! {
+            () = servidor_salud => {}
+            () = servidor_admin => {}
+        }
+    };
+
+    Ok(((dir_salud_real, dir_admin_real), futuro_combinado))
+}

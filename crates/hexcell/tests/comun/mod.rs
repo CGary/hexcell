@@ -119,6 +119,8 @@ pub struct BinarioDePrueba {
     buffer: Arc<Mutex<String>>,
     /// Dirección real que el binario imprimió al vincular su servidor de salud.
     pub direccion: String,
+    /// Dirección real que el binario imprimió al vincular su servidor administrativo.
+    pub direccion_admin: String,
 }
 
 impl Drop for BinarioDePrueba {
@@ -213,6 +215,7 @@ pub fn lanzar_binario_con_variables(
         .env("HEXCELL_ID_CELULA", "piloto-01")
         .env("HEXCELL_RUTA_DATOS", ruta_datos)
         .env("HEXCELL_DIRECCION_SALUD", "127.0.0.1:0")
+        .env("HEXCELL_DIRECCION_ADMIN", "127.0.0.1:0")
         .env("HEXCELL_PRESUPUESTO_INICIAL_UNIDADES", "1000")
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -245,17 +248,29 @@ pub fn lanzar_binario_con_variables(
         proceso,
         buffer,
         direccion: String::new(),
+        direccion_admin: String::new(),
     };
 
-    let linea = binario
+    let linea_salud = binario
         .esperar_linea("salud_vinculada", Duration::from_secs(5))
         .unwrap_or_else(|| {
             let capturada = binario.salida_capturada();
             let _ = binario.proceso.kill();
             panic!("no se encontró la línea salud_vinculada en la salida del binario: {capturada}")
         });
-    binario.direccion = extraer_campo(&linea, "detalle")
-        .unwrap_or_else(|| panic!("la línea salud_vinculada no lleva campo detalle: {linea}"))
+    binario.direccion = extraer_campo(&linea_salud, "detalle")
+        .unwrap_or_else(|| panic!("la línea salud_vinculada no lleva campo detalle: {linea_salud}"))
+        .to_string();
+
+    let linea_admin = binario
+        .esperar_linea("admin_vinculada", Duration::from_secs(5))
+        .unwrap_or_else(|| {
+            let capturada = binario.salida_capturada();
+            let _ = binario.proceso.kill();
+            panic!("no se encontró la línea admin_vinculada en la salida del binario: {capturada}")
+        });
+    binario.direccion_admin = extraer_campo(&linea_admin, "detalle")
+        .unwrap_or_else(|| panic!("la línea admin_vinculada no lleva campo detalle: {linea_admin}"))
         .to_string();
 
     binario
@@ -288,6 +303,56 @@ pub fn peticion_http_cruda(direccion: &str, ruta: &str) -> String {
     };
 
     let peticion = format!("GET {ruta} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n");
+    flujo
+        .write_all(peticion.as_bytes())
+        .expect("escribir la petición cruda no debe fallar");
+
+    let mut respuesta = String::new();
+    flujo
+        .read_to_string(&mut respuesta)
+        .expect("leer la respuesta cruda no debe fallar");
+    respuesta
+}
+
+/// Hace una petición HTTP/1.1 POST cruda con un cuerpo dado y devuelve la respuesta completa.
+pub fn peticion_http_post_cruda(direccion: &str, ruta: &str, cuerpo: &str) -> String {
+    peticion_http_post_cruda_con_cabeceras(
+        direccion,
+        ruta,
+        cuerpo,
+        &[("Content-Type", "application/json")],
+    )
+}
+
+/// Hace una petición HTTP/1.1 POST cruda personalizando las cabeceras HTTP.
+pub fn peticion_http_post_cruda_con_cabeceras(
+    direccion: &str,
+    ruta: &str,
+    cuerpo: &str,
+    cabeceras: &[(&str, &str)],
+) -> String {
+    let mut intentos_restantes = 20;
+    let mut flujo = loop {
+        match TcpStream::connect(direccion) {
+            Ok(flujo) => break flujo,
+            Err(_) if intentos_restantes > 0 => {
+                intentos_restantes -= 1;
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            Err(error) => panic!("no se pudo conectar a {direccion}: {error}"),
+        }
+    };
+
+    let mut peticion = format!(
+        "POST {ruta} HTTP/1.1\r\nHost: localhost\r\nContent-Length: {}\r\n",
+        cuerpo.len()
+    );
+    for (nombre, valor) in cabeceras {
+        peticion.push_str(&format!("{nombre}: {valor}\r\n"));
+    }
+    peticion.push_str("Connection: close\r\n\r\n");
+    peticion.push_str(cuerpo);
+
     flujo
         .write_all(peticion.as_bytes())
         .expect("escribir la petición cruda no debe fallar");

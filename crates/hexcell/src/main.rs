@@ -46,9 +46,15 @@
 use std::process::ExitCode;
 use std::sync::Arc;
 
+use hexcell::admin::{EstadoDeAdmin, servir_servicios_http};
 use hexcell::apagado::Apagado;
 use hexcell::concurrencia::LimitadorDeConcurrencia;
-use hexcell::configuracion::{CanalSeleccionado, Configuracion, EntornoDelProceso};
+use hexcell::configuracion::{
+    CanalSeleccionado, Configuracion, ConfiguracionDeEmbeddingsSegunProveedor, EntornoDelProceso,
+};
+use hexcell::embeddings::{
+    ProveedorDeEmbeddingsDeCelula, ProveedorDeEmbeddingsSimulado, ServicioDeEmbeddings,
+};
 use hexcell::emparejar;
 use hexcell::inferencia::{ProveedorDeCelula, ProveedorSimulado};
 use hexcell::metricas::{
@@ -57,9 +63,11 @@ use hexcell::metricas::{
 use hexcell::motor::Motor;
 use hexcell::preparacion::SesionDelCanal;
 use hexcell::procesador::ProcesadorDeInferencia;
+use hexcell::proveedor_embeddings::ProveedorDeEmbeddingsOpenRouter;
+use hexcell::proveedor_embeddings_gemini::ProveedorDeEmbeddingsGemini;
 use hexcell::proveedor_openai::ProveedorOpenAi;
 use hexcell::registro::{self, EntradaDeRegistro, NivelDeRegistro};
-use hexcell::salud::{EstadoDeSalud, servir_salud};
+use hexcell::salud::EstadoDeSalud;
 use hexcell_canal_simulado::{AdaptadorSimulado, RelojDelSistema};
 use hexcell_canal_whatsmeow::{AdaptadorWhatsmeow, Retroceso};
 use hexcell_core::identidad::IdDeduplicacion;
@@ -173,26 +181,58 @@ async fn main() -> ExitCode {
         }
     }
 
+    let receptor_apagado = senal_de_apagado.observador();
+    let debe_apagar = move || *receptor_apagado.borrow();
+
     let estado_de_salud = Arc::new(EstadoDeSalud::nuevo(
         Arc::clone(&pools),
         SesionDelCanal::siempre_activa(),
     ));
+    let estado_de_admin = Arc::new(EstadoDeAdmin::nuevo());
 
-    let (direccion_salud, servidor_salud) =
-        match servir_salud(configuracion.direccion_salud, estado_de_salud).await {
-            Ok(vinculado) => vinculado,
-            Err(error) => {
-                eprintln!(
-                    "hexcell: no se pudo vincular el servidor de salud en {}: {error}",
-                    configuracion.direccion_salud
-                );
-                return ExitCode::FAILURE;
-            }
-        };
+    let proveedor_embeddings = match &configuracion.embeddings {
+        Some(ConfiguracionDeEmbeddingsSegunProveedor::OpenRouter(cfg)) => {
+            let p = ProveedorDeEmbeddingsOpenRouter::nuevo(cfg.clone());
+            ProveedorDeEmbeddingsDeCelula::OpenRouter(Box::new(p))
+        }
+        Some(ConfiguracionDeEmbeddingsSegunProveedor::Gemini(cfg)) => {
+            let p = ProveedorDeEmbeddingsGemini::nuevo(cfg.clone());
+            ProveedorDeEmbeddingsDeCelula::Gemini(Box::new(p))
+        }
+        None => ProveedorDeEmbeddingsDeCelula::Simulado(ProveedorDeEmbeddingsSimulado::nuevo()),
+    };
+    let servicio_embeddings = Arc::new(ServicioDeEmbeddings::nuevo(
+        proveedor_embeddings,
+        Arc::clone(&repositorio),
+    ));
+
+    let ((direccion_salud, direccion_admin), servidores_http) = match servir_servicios_http(
+        configuracion.direccion_salud,
+        estado_de_salud,
+        configuracion.direccion_admin,
+        configuracion.limite_de_cuerpo_admin,
+        estado_de_admin,
+        servicio_embeddings,
+        configuracion.ruta_datos.clone(),
+        debe_apagar,
+    )
+    .await
+    {
+        Ok(vinculados) => vinculados,
+        Err(error) => {
+            eprintln!("hexcell: no se pudieron vincular los servidores HTTP: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
     println!("hexcell: servidor de salud escuchando en {direccion_salud}");
     registro::emitir(
         EntradaDeRegistro::nueva(NivelDeRegistro::Info, "salud_vinculada")
             .con_detalle(direccion_salud.to_string()),
+    );
+    println!("hexcell: servidor de administración escuchando en {direccion_admin}");
+    registro::emitir(
+        EntradaDeRegistro::nueva(NivelDeRegistro::Info, "admin_vinculada")
+            .con_detalle(direccion_admin.to_string()),
     );
 
     let proveedor = match &configuracion.inferencia {
@@ -254,7 +294,7 @@ async fn main() -> ExitCode {
             .con_metricas(metricas.clone());
 
             tokio::select! {
-                () = servidor_salud => {}
+                () = servidores_http => {}
                 () = motor.ejecutar(senal_de_apagado) => {}
             }
         }
@@ -281,7 +321,7 @@ async fn main() -> ExitCode {
             .con_metricas(metricas.clone());
 
             tokio::select! {
-                () = servidor_salud => {}
+                () = servidores_http => {}
                 () = motor.ejecutar(senal_de_apagado) => {}
             }
         }

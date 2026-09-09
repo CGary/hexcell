@@ -600,3 +600,44 @@ fn configuracion_embeddings_desde_la_fuente_y_validaciones() {
 
     let _ = std::fs::remove_dir_all(&directorio_temporal);
 }
+
+#[test]
+fn configuracion_direccion_admin_y_limite_cuerpo_desde_la_fuente() {
+    let directorio_temporal =
+        std::env::temp_dir().join(format!("hexcell-test-config-admin-{}", std::process::id()));
+    std::fs::create_dir_all(&directorio_temporal).expect("crear el directorio temporal");
+
+    let mut fuente = FuenteEnMemoria::vacia()
+        .con("HEXCELL_ID_CELULA", "piloto-01")
+        .con("HEXCELL_RUTA_DATOS", directorio_temporal.to_string_lossy());
+
+    // Valores por defecto
+    let config = Configuracion::desde_fuente(&fuente).expect("configuración por defecto válida");
+    assert_eq!(
+        config.direccion_admin,
+        "127.0.0.1:8082".parse::<std::net::SocketAddr>().unwrap()
+    );
+    assert_eq!(config.limite_de_cuerpo_admin, 1024 * 1024);
+
+    // Valores personalizados válidos
+    fuente.fijar("HEXCELL_DIRECCION_ADMIN", "127.0.0.1:9090");
+    fuente.fijar("HEXCELL_LIMITE_DE_CUERPO_ADMIN_BYTES", "2048");
+    let config = Configuracion::desde_fuente(&fuente).expect("configuración personalizada válida");
+    assert_eq!(
+        config.direccion_admin,
+        "127.0.0.1:9090".parse::<std::net::SocketAddr>().unwrap()
+    );
+    assert_eq!(config.limite_de_cuerpo_admin, 2048);
+
+    // Límite de cuerpo 0 -> falla
+    fuente.fijar("HEXCELL_LIMITE_DE_CUERPO_ADMIN_BYTES", "0");
+    let err = Configuracion::desde_fuente(&fuente).expect_err("debe fallar con límite 0");
+    match err {
+        ErrorDeConfiguracion::ValorInvalido { nombre, .. } => {
+            assert_eq!(nombre, "HEXCELL_LIMITE_DE_CUERPO_ADMIN_BYTES");
+        }
+        otro => panic!("se esperaba ValorInvalido, se obtuvo {otro:?}"),
+    }
+
+    let _ = std::fs::remove_dir_all(&directorio_temporal);
+}

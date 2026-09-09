@@ -1,6 +1,6 @@
 # Bitácora de descartes
 
-> Registro de lo que se consideró y **no** se hizo. Última actualización: 2026-09-08 (D-38; el índice recupera además las filas de D-35, D-36 y D-37, que HEX-061 dejó sin registrar).
+> Registro de lo que se consideró y **no** se hizo. Última actualización: 2026-09-09 (D-42).
 
 ## Para qué sirve este documento
 
@@ -72,6 +72,10 @@ se apoya en un principio de diseño, no.
 | [D-36](#d-36) | Medir la simultaneidad de las lecturas con un medidor de pico de hilos alrededor de `recuperar_contexto` | Reabrible si cambia un hecho del árbol |
 | [D-37](#d-37) | Afirmar el muro estricto de NFR-03 (< 10 ms) sobre `duracion_de_conmutacion_ms` dentro de la prueba de estrés | Reabrible si cambia un hecho del árbol |
 | [D-38](#d-38) | Añadir exclusión mutua real entre `respaldar_en` y `iniciar_promocion`/`promover_epoca` (cerrojo o bandera compartida de promoción consultada desde el respaldo) | Principio de diseño, no reabrir |
+| [D-39](#d-39) | Serde / Serialize / Deserialize en `hexcell_storage::DocumentoDeIngesta` | Principio de diseño, no reabrir |
+| [D-40](#d-40) | `spawn_blocking` para ejecutar `ejecutar_ingesta` desde el listener administrativo | Principio de diseño, no reabrir |
+| [D-41](#d-41) | `ArcSwap` o `tokio::sync::Mutex` para la compuerta del estado administrativo de ingesta (`EstadoDeAdmin`) | Principio de diseño, no reabrir |
+| [D-42](#d-42) | Variables de entorno adicionales para el texto de la sonda semántica y parámetros de fragmentación de ingesta | Reabrible si cambia un hecho del proyecto |
 
 ---
 
@@ -562,6 +566,38 @@ copiar `sessions.db`, `knowledge_live.db` y el almacén de identidad del adaptad
 * **Por qué se descartó:** Invierte el diseño fail-open del árbol. `GestorDePools::respaldar_en` ya toma `&self`, no toma promoción guard, y la razón está en la propia tarea que esta entrada cierra: un `VACUUM INTO` sobre la base de conocimiento **sí** puede durar lo bastante como para que una promoción posterior tenga que esperarlo, y bajo un cerrojo compartido esa espera pagaría sobre el camino caliente de la ingesta. El comportamiento actual —el respaldo se ejecuta cuando puede, y si sobrevive a la conmutación el drenaje falla cerrado con `DesenlaceDeDrenaje::Expirada` y la purga posterior conserva la época huérfana como `SuperseidaSinDrenar`— está verificado por la prueba `un_respaldo_que_supera_el_limite_de_drenaje_deja_la_epoca_superseida_sin_drenar_y_protegida` (`crates/hexcell-storage/tests/respaldo_durante_conmutacion.rs`), así que cerrar la ventana por encima del problema es legítimo: el invariante de no-pérdida se sostiene desde la **retención**, no desde la promoción. La otra cara del descarte es que añadir el cerrojo traería un modo de fallo nuevo —un respaldo colgado bloquearía la promoción indefinidamente— que hoy no existe, sin un cambio en la disciplina operacional que lo justifique.
 * **Registro normativo:** `docs/adr/adr-0031-respaldo-concurrente-con-conmutacion-de-epoca.md`, `crates/hexcell-storage/src/pools.rs` (doc comment de `respaldar_en` con la justificación explícita), `crates/hexcell-storage/tests/respaldo_durante_conmutacion.rs` (prueba H3 que demuestra el comportamiento que se conserva).
 * **Qué tendría que cambiar para reabrirlo:** O bien que el tiempo de `VACUUM INTO` sobre `knowledge_live.db` se acotara por construcción a una fracción demostrablemente pequeña del presupuesto de promoción (por ejemplo, si la base se compactara a una métrica de tiempo de copia subsegundo y se midiera en CI), en cuyo caso un cerrojo compartido sería un coste despreciable y un seguro útil; o bien que la promoción adoptara una cola acotada con descarte de notificaciones de inmediatez —justificación económica que no se ha registrado—. Lo que **no** justifica reabrirlo es la observación aislada de que «un respaldo puede coincidir con una conmutación»: esa coincidencia es exactamente lo que la prueba H1+H2 verifica, y el resultado es una copia etiquetada con la época que físicamente contiene, no una condición de fallo.
+
+### D-39
+**Derivar `Serialize`/`Deserialize` sobre `hexcell_storage::DocumentoDeIngesta` o añadir `serde` a `crates/hexcell-storage`.**
+
+* **Descartado:** 2026-09-09 (HEX-063).
+* **Por qué se descartó:** `conocimiento.rs:26-28` documenta explícitamente que `DocumentoDeIngesta` se mantiene libre de decoraciones JSON o serializadores externos, asegurando que el modelo de datos de almacenamiento no quede condicionado por el formato de transporte de red. Derivar `Deserialize` sobre este tipo violaría la frontera de diseño de `hexcell-storage` y añadiría una dependencia no deseada a una capa deliberadamente delgada. Se implementa en su lugar el DTO local `DocumentoEntrante` en `crates/hexcell/src/admin.rs` que convierte limpiamente a `DocumentoDeIngesta`.
+* **Registro normativo:** `crates/hexcell/src/admin.rs`, `crates/hexcell-storage/src/conocimiento.rs`.
+* **Qué tendría que cambiar para reabrirlo:** *Principio de diseño.* **No reabrir.**
+
+### D-40
+**Ejecutar `ejecutar_ingesta` mediante `tokio::task::spawn_blocking` desde el servidor administrativo.**
+
+* **Descartado:** 2026-09-09 (HEX-063).
+* **Por qué se descartó:** `ejecutar_ingesta` es una función asíncrona cuya latencia dominante es la llamada de embeddings que requiere `.await`. Mover una función asíncrona entera a `spawn_blocking` exigiría restructurar la ingesta. Las escrituras síncronas a la base en sombra están acotadas por lotes (`tamano_de_lote`) vía `escribir_lote_de_fragmentos`, cediendo el control al ejecutor en cada lote. Se ejecuta inline mediante `tokio::task::spawn` en el runtime `current_thread`, extendiendo el precedente sentado en `promocion.rs`.
+* **Registro normativo:** `crates/hexcell/src/admin.rs`, `crates/hexcell/src/promocion.rs`.
+* **Qué tendría que cambiar para reabrirlo:** Si pruebas de estrés (como la tarea 11 del plan) muestran degradación inaceptable de la latencia de mensajería durante escrituras síncronas de lote sobre `current_thread`.
+
+### D-41
+**Usar `ArcSwap` o `tokio::sync::Mutex` para la compuerta del estado administrativo de ingesta en `EstadoDeAdmin`.**
+
+* **Descartado:** 2026-09-09 (HEX-063).
+* **Por qué se descartó:** `arc-swap` no es dependencia de `crates/hexcell` (es de workspace y se usa en storage), y una rutina compare-and-set con `ArcSwap` es más compleja que un cerrojo síncrono estándar. `tokio::sync::Mutex` no es necesario porque ningún guardián de cerrojo cruza un `.await`, respetando la regla del módulo `salud.rs`. Un `std::sync::Mutex<FaseDeIngesta>` resuelve el compare-and-set atómico en una única sección crítica síncrona sin sobrecarga.
+* **Registro normativo:** `crates/hexcell/src/admin.rs`, `crates/hexcell/src/salud.rs`.
+* **Qué tendría que cambiar para reabrirlo:** *Principio de diseño.* **No reabrir.**
+
+### D-42
+**Añadir variables de entorno adicionales (`HEXCELL_TEXTO_SONDA`, `HEXCELL_FRAGMENTACION_*`) para configurar el texto de la sonda y los parámetros de troceado.**
+
+* **Descartado:** 2026-09-09 (HEX-063).
+* **Por qué se descartó:** El contrato autoriza exactamente dos nuevas puertas de configuración (`HEXCELL_DIRECCION_ADMIN` y `HEXCELL_LIMITE_DE_CUERPO_ADMIN_BYTES`) para acotar el tamaño del diff. Se utilizan constantes con nombre (`TEXTO_DE_LA_SONDA_POR_DEFECTO`, `UMBRAL_DE_ACEPTACION_POR_DEFECTO`, `CONFIGURACION_DE_FRAGMENTACION_DE_INGESTA`) en `admin.rs`.
+* **Registro normativo:** `crates/hexcell/src/admin.rs`.
+* **Qué tendría que cambiar para reabrirlo:** Si el primer piloto de producción en la etapa A-7 requiere personalizar el texto de la sonda o el solapamiento de fragmentación para un catálogo específico de cliente.
 
 ---
 
