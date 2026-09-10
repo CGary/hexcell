@@ -1,0 +1,117 @@
+# ============================================================================
+# Plantilla de composición de una célula sobre canal propio (whatsmeow).
+#
+# Esta plantilla convierte el arranque de una célula (núcleo Rust + sidecar Go)
+# en un artefacto reutilizable: desplegar una célula nueva es proveer los
+# valores per-célula, nunca editar esta plantilla.
+#
+# FORMA: dos servicios bajo un mismo proyecto de compose — `nucleo` y `sidecar`
+# — que comparten UNA red local de célula y UN volumen. El volumen lleva las
+# bases SQLite de los dos procesos, las credenciales de sesión del sidecar y el
+# socket IPC (docs/protocolo-ipc-nucleo-sidecar.md, sección 2). El socket vive
+# en /var/lib/hexcell/ipc/, dentro del volumen, para que ambos contenedores lo
+# alcancen; el sidecar crea el directorio al escuchar
+# (sidecar/internal/servidor/servidor.go). Compose crea la red y el volumen
+# antes de levantar ningún contenedor, así que no hay `depends_on` que declare.
+#
+# QUÉ ES VARIABLE Y QUÉ NO: todo valor que distinga una célula de otra es una
+# referencia ${VARIABLE}: identificador (HEXCELL_ID_CELULA), nombres de red y
+# volumen, secretos (claves de API) y límites de recursos. Las rutas INTERNAS
+# al contenedor (/var/lib/hexcell/...) son las mismas en todas las células y no
+# son variables: lo per-célula es el NOMBRE del volumen, no la ruta de montaje.
+# El referente de variables es deploy/celula.env.ejemplo.
+#
+# LOS SECRETOS no tienen valor literal aquí: se inyectan como variables de
+# entorno (${HEXCELL_INFERENCIA_API_KEY}, ${HEXCELL_EMBEDDINGS_API_KEY}) desde
+# el entorno del operador. Ningún archivo versionado lleva una credencial real.
+#
+# HEXCELL_DIRECCION_SALUD se fija explícitamente a 0.0.0.0:8081 (NO loopback):
+# el valor por omisión del binario es loopback
+# (crates/hexcell/src/configuracion.rs:347-348) y un contenedor hermano dentro
+# de la red de la célula no podría sondear /health/ready contra 127.0.0.1 del
+# otro. La dirección de escucha no es una dimensión per-célula —es el MISMO
+# bind en todas las células; lo que aísla es la red de célula—, por eso no se
+# parametriza.
+# ============================================================================
+
+services:
+  # --- Núcleo (binario hexcell, crates/hexcell) ----------------------------
+  nucleo:
+    container_name: ${HEXCELL_ID_CELULA}-nucleo
+    # Compose resuelve `build.context` relativo al directorio de ESTE archivo
+    # (deploy/), no a la raíz del repositorio: por eso el contexto es `..`
+    # (la raíz, donde vive Dockerfile) y no `.`. El .dockerignore de la raíz
+    # se aplica igual, porque sigue al contexto de build.
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    image: ${HEXCELL_IMAGEN_NUCLEO}
+    environment:
+      # Identificador de la célula (obligatoria en el núcleo).
+      HEXCELL_ID_CELULA: ${HEXCELL_ID_CELULA}
+      # Ruta de datos: el punto de montaje del volumen compartido. Docker lo
+      # crea como directorio al montar el volumen, así que satisface la
+      # validación is_dir() del arranque.
+      HEXCELL_RUTA_DATOS: /var/lib/hexcell
+      # Bind NO loopback para que un contenedor hermano sondee /health/ready.
+      HEXCELL_DIRECCION_SALUD: 0.0.0.0:8081
+      # Canal propio: no se confía en el valor por omisión del binario
+      # (`simulado`); whatsmeow es el canal por defecto y permanente (CLAUDE.md).
+      HEXCELL_CANAL: whatsmeow
+      # Misma ruta de socket que el sidecar: dentro del volumen compartido.
+      HEXCELL_SOCKET_IPC: /var/lib/hexcell/ipc/sidecar.sock
+      # Secretos: solo por variable de entorno, nunca con valor literal aquí.
+      HEXCELL_INFERENCIA_API_KEY: ${HEXCELL_INFERENCIA_API_KEY}
+      HEXCELL_EMBEDDINGS_API_KEY: ${HEXCELL_EMBEDDINGS_API_KEY}
+    # Límites de recursos: parametrizados, no elegidos aquí (la tarea 6 de la
+    # etapa A-6 decide los valores a partir de NFR-01).
+    mem_limit: ${HEXCELL_NUCLEO_LIMITE_MEMORIA}
+    cpus: ${HEXCELL_NUCLEO_LIMITE_CPUS}
+    volumes:
+      - datos:/var/lib/hexcell
+    networks:
+      - red
+
+  # --- Sidecar (binario hexcell-sidecar, sidecar/) -------------------------
+  sidecar:
+    container_name: ${HEXCELL_ID_CELULA}-sidecar
+    # Mismo razonamiento que en `nucleo`: el contexto es relativo a deploy/,
+    # así que `../sidecar` apunta a sidecar/ desde la raíz, donde vive su
+    # Dockerfile.
+    build:
+      context: ../sidecar
+      dockerfile: Dockerfile
+    image: ${HEXCELL_IMAGEN_SIDECAR}
+    environment:
+      # Identificador de la célula, estampado en cada línea de registro.
+      HEXCELL_ID_CELULA: ${HEXCELL_ID_CELULA}
+      # Misma ruta de socket que el núcleo: el sidecar escucha aquí (servidor).
+      HEXCELL_SOCKET_IPC: /var/lib/hexcell/ipc/sidecar.sock
+      # Única variable estrictamente requerida por el sidecar (HEX-033): zona
+      # horaria IANA de la ventana de atención, por célula.
+      HEXCELL_VENTANA_ZONA: ${HEXCELL_VENTANA_ZONA}
+      # Número de teléfono de la célula (sin prefijo +), para el emparejamiento
+      # por código de vinculación. Nunca viaja en el cable IPC.
+      HEXCELL_TELEFONO_CELULA: ${HEXCELL_TELEFONO_CELULA}
+      # Bases del sidecar, dentro del MISMO volumen compartido. Subrutas
+      # distintas de la ruta de datos del núcleo: son almacenes de whatsmeow y
+      # de la cola de salida, no las bases del núcleo.
+      HEXCELL_RUTA_SQLSTORE: /var/lib/hexcell/sqlstore.db
+      HEXCELL_RUTA_IDENTIDAD: /var/lib/hexcell/identidad.db
+      HEXCELL_RUTA_OUTBOX: /var/lib/hexcell/outbox.db
+    mem_limit: ${HEXCELL_SIDECAR_LIMITE_MEMORIA}
+    cpus: ${HEXCELL_SIDECAR_LIMITE_CPUS}
+    volumes:
+      - datos:/var/lib/hexcell
+    networks:
+      - red
+
+volumes:
+  # Volumen compartido de la célula: nombre per-célula, nunca un literal.
+  datos:
+    name: ${HEXCELL_VOLUMEN_CELULA}
+
+networks:
+  # Red local de la célula: nombre per-célula, nunca un literal.
+  red:
+    name: ${HEXCELL_RED_CELULA}
