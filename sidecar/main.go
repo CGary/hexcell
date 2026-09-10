@@ -18,7 +18,6 @@ import (
 
 	"github.com/CGary/hexcell/sidecar/internal/canal"
 	"github.com/CGary/hexcell/sidecar/internal/configuracion"
-	"github.com/CGary/hexcell/sidecar/internal/identidad"
 	"github.com/CGary/hexcell/sidecar/internal/ipc"
 	"github.com/CGary/hexcell/sidecar/internal/outbox"
 	"github.com/CGary/hexcell/sidecar/internal/registro"
@@ -51,86 +50,54 @@ func main() {
 
 	ctx := context.Background()
 
-	contenedor, err := canal.AbrirAlmacenDeDispositivo(ctx, cfg.RutaSqlstore, reg)
+	// Apertura de los seis recursos fríos (sqlstore, sesión, respaldo de sqlstore, identidad,
+	// respaldo de identidad, outbox) extraída a abrirRecursosDeArranque para poder probarla
+	// contra un directorio temporal. El orden interno garantiza que identidad.db se crea antes
+	// que su conexión de respaldo de solo lectura; ver arranque.go y bitácora D-43.
+	recursos, err := abrirRecursosDeArranque(ctx, cfg, reg)
 	if err != nil {
 		reg.Error(eventoParada, registro.Campos{Detalle: err.Error()})
 		os.Exit(1)
 	}
-	defer contenedor.Close()
-
-	sesion, err := canal.NuevaSesion(ctx, contenedor, reg)
-	if err != nil {
-		reg.Error(eventoParada, registro.Campos{Detalle: err.Error()})
-		os.Exit(1)
-	}
-
-	dbRespaldo, err := canal.AbrirConexionDeRespaldo(cfg.RutaSqlstore)
-	if err != nil {
-		reg.Error(eventoParada, registro.Campos{Detalle: err.Error()})
-		os.Exit(1)
-	}
-	defer canal.CerrarDB(dbRespaldo)
-
-	// Segunda conexión dedicada de solo lectura, esta al almacén de identidad del sidecar
-	// (`identidad.db`), para que el propio sidecar produzca su copia VACUUM INTO por IPC. El
-	// núcleo nunca abre este archivo (adr-0022): la copia sale de una conexión del proceso dueño.
-	dbRespaldoIdentidad, err := canal.AbrirConexionDeRespaldo(cfg.RutaIdentidad)
-	if err != nil {
-		reg.Error(eventoParada, registro.Campos{Detalle: err.Error()})
-		os.Exit(1)
-	}
-	defer canal.CerrarDB(dbRespaldoIdentidad)
-
-	almacenIdentidad, err := identidad.Abrir(identidad.Opciones{
-		Ruta:     cfg.RutaIdentidad,
-		Registro: reg,
-	})
-	if err != nil {
-		reg.Error(eventoParada, registro.Campos{Detalle: err.Error()})
-		os.Exit(1)
-	}
-	defer almacenIdentidad.Cerrar()
-
-	buzon, err := outbox.Abrir(outbox.Opciones{Ruta: cfg.RutaOutbox, Registro: reg})
-	if err != nil {
-		reg.Error(eventoParada, registro.Campos{Detalle: err.Error()})
-		os.Exit(1)
-	}
-	defer buzon.Cerrar()
+	defer recursos.Contenedor.Close()
+	defer canal.CerrarDB(recursos.DBRespaldo)
+	defer canal.CerrarDB(recursos.DBRespaldoIdentidad)
+	defer recursos.AlmacenIdentidad.Cerrar()
+	defer recursos.Buzon.Cerrar()
 
 	// La ColaDeSalida comparte el archivo y la conexión con el outbox.
-	transmisor := outbox.NuevoTransmisorWhatsmeow(sesion.Cliente(), almacenIdentidad)
+	transmisor := outbox.NuevoTransmisorWhatsmeow(recursos.Sesion.Cliente(), recursos.AlmacenIdentidad)
 	disciplina := outbox.NuevaDisciplinaDeSalida(cfg.Disciplina)
-	emisorPresencia := outbox.NuevoEmisorDePresenciaWhatsmeow(sesion.Cliente(), almacenIdentidad, reg)
-	colaSalida := outbox.NuevaColaDeSalida(buzon.DB(), cfg.TtlSalidaMs, cfg.IntentosMaximosSalida, reg, transmisor, almacenIdentidad).
+	emisorPresencia := outbox.NuevoEmisorDePresenciaWhatsmeow(recursos.Sesion.Cliente(), recursos.AlmacenIdentidad, reg)
+	colaSalida := outbox.NuevaColaDeSalida(recursos.Buzon.DB(), cfg.TtlSalidaMs, cfg.IntentosMaximosSalida, reg, transmisor, recursos.AlmacenIdentidad).
 		ConDisciplina(disciplina, emisorPresencia).
-		ConCortacircuitos(almacenIdentidad)
-	portero := outbox.NuevoPorteroDeSalida(colaSalida, almacenIdentidad, almacenIdentidad, almacenIdentidad, reg)
+		ConCortacircuitos(recursos.AlmacenIdentidad)
+	portero := outbox.NuevoPorteroDeSalida(colaSalida, recursos.AlmacenIdentidad, recursos.AlmacenIdentidad, recursos.AlmacenIdentidad, reg)
 
 	srv := servidor.NuevoServidor(servidor.Dependencias{
 		RutaSocket:          cfg.RutaSocket,
 		IdCelula:            cfg.IdCelula,
 		Registro:            reg,
-		Buzon:               buzon,
+		Buzon:               recursos.Buzon,
 		Portero:             portero,
-		DBRespaldo:          dbRespaldo,
-		DBRespaldoIdentidad: dbRespaldoIdentidad,
-		Sesion:              sesion,
+		DBRespaldo:          recursos.DBRespaldo,
+		DBRespaldoIdentidad: recursos.DBRespaldoIdentidad,
+		Sesion:              recursos.Sesion,
 		TelefonoCelula:      cfg.TelefonoCelula,
 	})
 
 	colaSalida.ConSumideroDeAcuse(srv.EnviarAcuseEnvio)
 
-	supervisor := canal.NuevoSupervisor(reg, cfg.Retroceso, sesion.Conectar, srv.EnviarEstadoSesion)
-	sesion.RegistrarManejador(supervisor)
-	go supervisor.Arrancar(ctx, sesion.EstaEmparejada())
+	supervisor := canal.NuevoSupervisor(reg, cfg.Retroceso, recursos.Sesion.Conectar, srv.EnviarEstadoSesion)
+	recursos.Sesion.RegistrarManejador(supervisor)
+	go supervisor.Arrancar(ctx, recursos.Sesion.EstaEmparejada())
 
-	detectorBaja := canal.NuevoDetectorDeBaja(cfg.PalabrasDeBaja, cfg.TextoConfirmacionDeBaja, almacenIdentidad, portero)
+	detectorBaja := canal.NuevoDetectorDeBaja(cfg.PalabrasDeBaja, cfg.TextoConfirmacionDeBaja, recursos.AlmacenIdentidad, portero)
 	detectorCortacircuitos := canal.NuevoDetectorDeCortacircuitos(
 		cfg.Cortacircuitos.UmbralRepeticion,
 		cfg.Cortacircuitos.PalabrasFrustracion,
 		cfg.Cortacircuitos.TextoTraspaso,
-		almacenIdentidad,
+		recursos.AlmacenIdentidad,
 		portero,
 	)
 	generadorPresentacion := canal.NuevoGeneradorDePresentacion(
@@ -150,8 +117,8 @@ func main() {
 		})
 		srv.NotificarTrabajo()
 	}
-	traductor := canal.NuevoTraductor(almacenIdentidad, buzon, sumideroEvento, nil, reg, detectorBaja, detectorCortacircuitos, generadorPresentacion)
-	sesion.RegistrarTraductor(traductor)
+	traductor := canal.NuevoTraductor(recursos.AlmacenIdentidad, recursos.Buzon, sumideroEvento, nil, reg, detectorBaja, detectorCortacircuitos, generadorPresentacion)
+	recursos.Sesion.RegistrarTraductor(traductor)
 
 	if err := srv.Escuchar(ctx); err != nil {
 		reg.Error(eventoParada, registro.Campos{Detalle: err.Error()})
@@ -166,7 +133,7 @@ func main() {
 	senal := <-senales
 
 	srv.Cerrar()
-	sesion.Cerrar()
+	recursos.Sesion.Cerrar()
 	reg.Info(eventoParada, registro.Campos{Detalle: senal.String()})
 }
 

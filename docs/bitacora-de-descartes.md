@@ -1,6 +1,6 @@
 # Bitácora de descartes
 
-> Registro de lo que se consideró y **no** se hizo. Última actualización: 2026-09-09 (D-42).
+> Registro de lo que se consideró y **no** se hizo. Última actualización: 2026-09-10 (D-44).
 
 ## Para qué sirve este documento
 
@@ -76,6 +76,8 @@ se apoya en un principio de diseño, no.
 | [D-40](#d-40) | `spawn_blocking` para ejecutar `ejecutar_ingesta` desde el listener administrativo | Reabrible si cambia un hecho del árbol |
 | [D-41](#d-41) | `ArcSwap` o `tokio::sync::Mutex` para la compuerta del estado administrativo de ingesta (`EstadoDeAdmin`) | Principio de diseño, no reabrir |
 | [D-42](#d-42) | Variables de entorno adicionales para el texto de la sonda semántica y parámetros de fragmentación de ingesta | Reabrible si cambia un hecho del proyecto |
+| [D-43](#d-43) | Extraer a `abrirRecursosDeArranque` el cableado de `main()` posterior al buzón | Reabrible si cambia un hecho del árbol |
+| [D-44](#d-44) | Liberar los recursos ya abiertos cuando el arranque falla a mitad de camino | Reabrible si cambia un hecho del proyecto |
 
 ---
 
@@ -598,6 +600,22 @@ copiar `sessions.db`, `knowledge_live.db` y el almacén de identidad del adaptad
 * **Por qué se descartó:** No son parámetros de despliegue, son parámetros del **contenido** de una época de conocimiento. El texto de la sonda, su umbral de aceptación y el troceado determinan qué se escribió dentro de `knowledge_staging.db` y cómo se comparan después los vectores; una época solo es comparable consigo misma si esos valores fueron los mismos cuando se construyó. Puestos en el entorno pasan a ser mutables entre dos arranques del mismo proceso, sin dejar rastro en el árbol ni en la época, y dos ingestas de la misma célula podrían producir épocas incomparables sin que ningún archivo lo delate. Como constantes con nombre (`TEXTO_DE_LA_SONDA_POR_DEFECTO`, `UMBRAL_DE_ACEPTACION_POR_DEFECTO`, `CONFIGURACION_DE_FRAGMENTACION_DE_INGESTA` en `admin.rs`) el valor vigente está versionado y cambiarlo deja un commit. Las dos puertas que sí se abren —dirección del listener y límite de cuerpo— son lo contrario: propiedades del despliegue, que no tocan nada de lo que la época contiene.
 * **Registro normativo:** `crates/hexcell/src/admin.rs`.
 * **Qué tendría que cambiar para reabrirlo:** Si el primer piloto de producción en la etapa A-7 requiere personalizar el texto de la sonda o el solapamiento de fragmentación para un catálogo específico de cliente.
+
+### D-43
+**Extraer también a `abrirRecursosDeArranque` el cableado de `main()` posterior al buzón (`colaSalida`, `srv`, `supervisor`, `traductor`).**
+
+* **Descartado:** 2026-09-10 (HEX-066).
+* **Por qué se descartó:** La extracción de esta tarea existe por una razón concreta y acotada: `main.go` era la única parte del sidecar sin ninguna prueba, y ese hueco es lo que dejó vivir durante meses el defecto de orden que HEX-066 cierra. Para taparlo alcanza con hacer probable la **secuencia de apertura**, que es lineal —cada recurso se abre y el siguiente lo consume— y por lo tanto se puede ejercitar contra un directorio vacío. Lo que viene después del buzón no es lineal: `colaSalida`, `srv`, `supervisor` y `traductor` se referencian entre sí, así que extraerlos exige decidir un orden de construcción y una forma de romper esa circularidad. Eso es rediseñar la raíz de composición del sidecar, no hacerla probable, y es una decisión que merece su propia tarea con su propio contrato en vez de entrar de prestado en el arreglo de un defecto de arranque.
+* **Registro normativo:** `sidecar/arranque.go`, `sidecar/main.go`.
+* **Qué tendría que cambiar para reabrirlo:** Si aparece un segundo defecto en el cableado circular posterior al buzón, o si la etapa A-6 tarea 5 (componer la célula) necesita construir esas piezas en un orden distinto al actual.
+
+### D-44
+**Liberar explícitamente los recursos ya abiertos cuando el arranque falla en un paso posterior.**
+
+* **Descartado:** 2026-09-10 (HEX-066).
+* **Por qué se descartó:** Es un hallazgo **real** de la auditoría de arranque en frío de esta tarea, no un falso positivo: si `abrirRecursosDeArranque` falla en un paso intermedio, los recursos abiertos en los pasos anteriores no se cierran en esa ruta. Hoy eso no filtra nada observable porque el único consumidor es `main()`, que responde al error con `os.Exit(1)`, y el sistema operativo reclama los descriptores del proceso al terminar. Se descarta arreglarlo **acá** por una razón de disciplina, no porque no importe: HEX-066 existe para cerrar un defecto de ORDEN, y su prueba por mutación acredita exactamente eso. Meter en el mismo diff un cambio de gestión de recursos —que necesita su propia prueba, la de que el fallo intermedio efectivamente cierra lo ya abierto— mezclaría dos defectos de naturaleza distinta bajo una sola guarda, y la segunda quedaría sin acreditar. Se deja escrito para que exista, en vez de arreglarse a medias.
+* **Registro normativo:** `sidecar/arranque.go`.
+* **Qué tendría que cambiar para reabrirlo:** Si `abrirRecursosDeArranque` gana un segundo consumidor que no sea `main()` —una prueba que la invoque en bucle, o un modo de reintento de arranque—, el momento en que el proceso deja de terminar tras el fallo es el momento en que la fuga pasa a ser observable y este descarte se reabre.
 
 ---
 
