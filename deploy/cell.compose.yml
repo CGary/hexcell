@@ -38,9 +38,13 @@ services:
   # --- Núcleo (binario hexcell, crates/hexcell) ----------------------------
   nucleo:
     container_name: ${HEXCELL_ID_CELULA}-nucleo
+    # Compose resuelve `build.context` relativo al directorio de ESTE archivo
+    # (deploy/), no a la raíz del repositorio: por eso el contexto es `..`
+    # (la raíz, donde vive Dockerfile) y no `.`. El .dockerignore de la raíz
+    # se aplica igual, porque sigue al contexto de build.
     build:
-      context: .
-      dockerfile: ./Dockerfile
+      context: ..
+      dockerfile: Dockerfile
     image: ${HEXCELL_IMAGEN_NUCLEO}
     environment:
       # Identificador de la célula (obligatoria en el núcleo).
@@ -71,9 +75,12 @@ services:
   # --- Sidecar (binario hexcell-sidecar, sidecar/) -------------------------
   sidecar:
     container_name: ${HEXCELL_ID_CELULA}-sidecar
+    # Mismo razonamiento que en `nucleo`: el contexto es relativo a deploy/,
+    # así que `../sidecar` apunta a sidecar/ desde la raíz, donde vive su
+    # Dockerfile.
     build:
-      context: ./sidecar
-      dockerfile: ./sidecar/Dockerfile
+      context: ../sidecar
+      dockerfile: Dockerfile
     image: ${HEXCELL_IMAGEN_SIDECAR}
     environment:
       # Identificador de la célula, estampado en cada línea de registro.
