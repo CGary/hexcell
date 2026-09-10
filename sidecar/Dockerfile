@@ -260,8 +260,12 @@ ENV TMPDIR=/var/lib/hexcell \
 # ningún applet se invoca jamás—, pero un escáner de imágenes puede señalarlos.
 # La limpieza `find -lname '*busybox'` sugerida no es viable aquí: el find de
 # BusyBox no implementa `-lname`, y tras borrar /bin/busybox no queda find que
-# ejecutar. No se retiran apk-tools ni /lib/apk/db: los escáneres de CVE leen
-# esa base y la tarea 16 de la etapa A-6 audita la imagen contra ella.
+# ejecutar. No se retiran apk-tools ni /lib/apk/db: es el catálogo de paquetes
+# instalados que un escáner de CVE (Trivy, Grype, ...) necesita leer para
+# enumerar el software de la imagen. Ninguna tarea de la etapa A-6 programa
+# hoy ese escaneo; conservar la base no es una promesa de auditoría futura,
+# es simplemente no cegar a un escáner que el plan todavía no agenda, a
+# cambio de un costo de imagen despreciable.
 RUN apk del --no-network busybox-binsh \
     && rm -f /bin/sh /bin/busybox
 
