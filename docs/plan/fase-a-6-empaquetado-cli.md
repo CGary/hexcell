@@ -168,6 +168,20 @@ confirmación, con orden fijo y con registro.
 
 ---
 
+## Orden de ejecución (revisado 2026-09-10)
+
+Las entradas conservan su numeración; esta sección es la autoridad sobre el orden.
+
+`8 → 4 → 5 → 7 → 17 → 6 → 16 → 9 → 10 → 11 → 22 → 24 → 12 → 13 → 14 → 15 → 18 → 20 → 23 → 21 → 19`
+
+* **8 primero:** la plantilla fija `HEXCELL_DIRECCION_SALUD` antes de que ningún contenedor hermano sondee la salud (el valor por omisión es loopback, `crates/hexcell/src/configuracion.rs:340-348`).
+* **17 junto a 5:** la prueba de aislamiento es el criterio de aceptación de la composición.
+* **6 antes de 16, con ajuste posterior:** 6 fija límites provisionales desde NFR-01, 16 mide bajo esos límites y 6 se ajusta con el dato.
+* **14 después de 13:** `cell status` incluye el historial de sustituciones, que solo existe tras `rebind`.
+* **12 y 13 tras la tarea 24:** no se implementa un `terminate` que borre volúmenes con la sesión viva.
+
+---
+
 ## Tareas
 
 1. **Escribir el `Dockerfile` del núcleo** (1 día). Etapa de compilación con la cadena de
@@ -196,9 +210,20 @@ confirmación, con orden fijo y con registro.
 11. **Implementar `cell pause` y `cell unpause`** (1,5 días). Orden explícito en la pausa —primero el
     sidecar, después el núcleo— y sondeo de disponibilidad cada 100 ms con límite temporal y mensaje
     de error claro si nunca llega a estar lista.
+
+    **Criterio de aceptación (revisado 2026-09-10):** Sondeo de `/health/ready` desde un
+    contenedor hermano dentro de la red de la célula, nunca desde el anfitrión, con
+    `HEXCELL_DIRECCION_SALUD` fijado en la plantilla de la tarea 8. Se acepta cuando `cell unpause`
+    devuelve 0 solo tras un 200 y devuelve un código distinto de 0 con mensaje explícito al agotar el
+    límite de tiempo.
 12. **Implementar `cell terminate`** (1 día). Cierre de sesión del canal desvinculando el dispositivo,
     drenaje de ambos contenedores, borrado físico de volúmenes incluidas las credenciales, y
     confirmación explícita requerida por tratarse de una operación destructiva.
+
+    **Criterio de aceptación (revisado 2026-09-10):** Se acepta cuando `cell terminate` desvincula el
+    dispositivo mediante el tipo IPC de cierre de sesión (tarea 24) y el estado transita a
+    `desvinculada_sesion_cerrada`. Bloqueada hasta que la tarea 24 cierre: no se implementa un
+    `terminate` que borre volúmenes con la sesión viva.
 13. **Implementar `cell rebind`** (1 día). Re-emparejamiento de una célula existente con un número
     distinto, que es la salida técnica de un baneo permanente y no un alta nueva. Secuencia fija:
     confirmación explícita del operador —es una operación destructiva sobre la identidad de canal,
@@ -207,20 +232,39 @@ confirmación, con orden fijo y con registro.
     **descarte del `sqlstore`** del sidecar, que corresponde a un dispositivo muerto y no se
     restaura nunca desde respaldo en este escenario; **conservación intacta de `sessions.db`, de
     `knowledge_live.db` y del almacén de identidad del adaptador**, donde viven la identidad de
-    conversación y la lista de exclusión (STOP); emparejamiento con el número nuevo por QR o por
-    `PairPhone()`; y **anotación auditable de la sustitución** con el número anterior, la fecha
-    absoluta y el motivo. El comando pertenece a la **Fase A** y no toca Caddy ni nada de la Fase B.
-14. **Implementar `cell list` y `cell status`** (0,5 días). Estado consolidado cruzando el plano de
-    control con la realidad de Docker y con la salud del canal, señalando discrepancias, e
-    incluyendo el historial de sustituciones de número de la célula.
+    conversación y la lista de exclusión (STOP), y destino declarado explícitamente (conservar o
+    regenerar) de `identidad.db` y `outbox.db` del sidecar; emparejamiento con el número nuevo por
+    `orden_emparejar` en modo `qr` o `codigo_de_vinculacion`; y **anotación auditable de la
+    sustitución** con el número anterior, la fecha absoluta y el motivo. El comando pertenece a la
+    **Fase A** y no toca Caddy ni nada de la Fase B.
+
+    **Criterio de aceptación (revisado 2026-09-10):** Emparejamiento por `orden_emparejar` en modo `qr` o
+    `codigo_de_vinculacion` (no existe `PairPhone()` en el adaptador). Pausa de envío ejercida por la
+    orden IPC de la tarea 24. Conservación verificada por checksum de `sessions.db`,
+    `knowledge_live.db` y `adapter_identity.db`; el destino de `identidad.db` y `outbox.db` del
+    sidecar queda declarado explícitamente en la tarea (conservar o regenerar).
+14. **Implementar `cell list` y `cell status`** (0,5 días). Se acepta cuando `cell status` cruza el
+    almacén de plano de control, `docker inspect` y `/health/ready`, marca cada discrepancia con un
+    código estable e incluye el historial de sustituciones. No reporta ratio de acuses ni ventana de
+    silencio: eso es la tarea 20.
 15. **Dotar de idempotencia y recuperación a los comandos** (1 día). Reejecución segura tras un fallo
     parcial, con detección del punto en que quedó la secuencia.
 16. **Medir memoria y tamaño de imágenes** (0,5 días). Consumo de la célula completa en reposo y bajo
     carga, y peso de ambas imágenes, registrados como valores de referencia.
+    No se reutiliza `rss_linea_base` (mide solo el núcleo con adaptador simulado).
+
+    **Criterio de aceptación (revisado 2026-09-10):** Medir sobre la célula compuesta de la tarea 5
+    con adaptador whatsmeow y bajo los límites de cgroup de la tarea 6: RSS agregado de ambos
+    contenedores leído de cgroup v2, no de `/proc` del anfitrión, en reposo y bajo la carga de
+    `crates/hexcell/tests/carga.rs`, más el peso de ambas imágenes. `rss_linea_base` no se reutiliza
+    (mide solo el núcleo con adaptador simulado). No se añade compuerta de tamaño en CI (decisión de
+    HEX-067).
 17. **Escribir la prueba de aislamiento** (1 día). Levantar dos células y demostrar que ninguna puede
     leer ni escribir el volumen de la otra ni alcanzar su red, ni siquiera conociendo la ruta.
 18. **Integrar la construcción de las imágenes en la CI** (1 día). Construcción reproducible,
     etiquetado por versión y por commit, y publicación en el registro elegido.
+    * Guarda en CI que falla si la imagen corre como root o sin rootfs de solo lectura (criterio ya
+      enunciado en esta etapa, hoy sin comprobación mecánica).
 19. **Montar el canary de biblioteca y el despliegue escalonado** (1 día). Alta de una **célula
     centinela** propia, con número propio de HexCell y sin ningún cliente encima, que corre la
     versión candidata de whatsmeow durante **72 horas** antes de que la actualización toque a nadie
@@ -269,12 +313,34 @@ confirmación, con orden fijo y con registro.
     > se adelanta a conciencia porque hay **usuarios reales desde la primera célula**: sin él, la
     > forma de enterarse de que el bot lleva dos días mudo es que el cliente lo mencione. Se adelanta
     > lo imprescindible, no el panel de métricas.
+
+    **Criterio de aceptación (revisado 2026-09-10):** Cada una de
+    las ocho condiciones se provoca en prueba con un sumidero de notificación falso y produce
+    exactamente una notificación con su código. Las métricas se entregan por registro estructurado o
+    copias `VACUUM INTO`, nunca por endpoint HTTP ni consulta en vivo de `hexcell-admin` (adr-0024).
+    Umbrales como parámetros sin valor normativo. Depende de la tarea 25. Trazabilidad: sin FR/NFR
+    que cubra las alertas; registrada como decisión pendiente en STATUS.md (2026-09-10).
 21. **Escribir el runbook de operación** (0,5 días). Qué comando usar en cada situación, qué efecto
     tiene y cómo verificar que salió bien. Incluye `cell rebind` con su remisión explícita al
     runbook de baneo de la etapa A-7, que es donde se decide **si procede** sustituir el número;
     aquí solo se documenta **cómo** se ejecuta.
-22. **Configuración por célula como archivos** (1 día). Implementar la gestión de configuración basada en archivos (valores por defecto compartidos y superposiciones o overlays por célula) con validación de fallo cerrado al arrancar (concretando la tarea 8 sin editarla), gestionada de forma centralizada por `hexcell-admin` y versionable en git (FR-02, FR-11).
-23. **Comando de reporte de consumo de tokens por cliente** (0,5 días). Implementar un comando en `hexcell-admin` para generar el reporte de consumo de tokens por cliente apoyado en la persistencia consultable de A-4, contemplando la alternativa documentada de agregar los logs estructurados o leer las copias de respaldo (VACUUM INTO) para evitar leer de la base caliente bajo contención (FR-11, FR-10).
+22. **Configuración por célula como archivos** (1 día). Implementar la gestión de configuración basada en archivos (valores por defecto compartidos y superposiciones o overlays por célula) con validación de fallo cerrado al arrancar (concretando la tarea 8 sin editarla), gestionada de forma centralizada por `hexcell-admin` y versionable en git.
+
+    **Criterio de aceptación (revisado 2026-09-10):** Los archivos contienen solo parámetros no
+    secretos; todo secreto sigue viajando por variable de entorno (HEX-064/HEX-065). `hexcell-admin`
+    renderiza los archivos al entorno de la plantilla de la tarea 8: el binario de la célula no gana
+    un segundo lector de configuración. Un overlay con clave desconocida o valor inválido aborta el
+    arranque. Trazabilidad: sin FR/NFR que la cubra; registrada como decisión pendiente en STATUS.md
+    (2026-09-10).
+23. **Comando de reporte de consumo de tokens por cliente** (0,5 días). Implementar un comando en `hexcell-admin` para generar el reporte de consumo de tokens por cliente apoyado en la persistencia consultable de A-4, contemplando la alternativa documentada de agregar los logs estructurados o leer las copias de respaldo (VACUUM INTO) para evitar leer de la base caliente bajo contención (FR-10).
+
+    **Criterio de aceptación (revisado 2026-09-10):** El comando lee solo una copia
+    `VACUUM INTO` o los registros estructurados, nunca `sessions.db` en caliente (STATUS.md,
+    adr-0024). Agrega `consumo_por_conversacion` a total por célula y periodo; se acepta cuando el
+    total coincide con la suma de conciliaciones sembradas. Trazabilidad: FR-10 cubre los datos; el
+    reporte por cliente no está en el PRD; registrada como pendiente en STATUS.md (2026-09-10).
+24. **Extensión del protocolo IPC: tipo de cierre de sesión y orden de pausa de envío**. `cerrar_sesion` es un stub que devuelve `SinConexion` (`crates/hexcell-canal-whatsmeow/src/adaptador.rs:744-747`, `TODO(A-3)`) y el protocolo no tiene tipo de logout ni orden de pausa (solo existe el estado `pausada`). Pendiente de aceptación de A-3 ejecutado en A-6. Traza a FR-12. Criterio: nuevo tipo de mensaje documentado en `docs/protocolo-ipc-nucleo-sidecar.md` con subida de versión de cable, implementado en `sidecar/internal/ipc/mensajes.go` y `crates/hexcell-canal-whatsmeow/src/mensajes.rs`, con prueba de contrato que desvincula y otra que pausa y reanuda el envío.
+25. **Productor de métricas del sidecar prometido en A-3**. `docs/plan/fase-a-3-adaptador-whatsmeow.md:105-109` promete ratio de acuses por contacto, reconexiones por hora y ventana de silencio; no existe productor en `sidecar/`. Trazabilidad: la promesa de A-3 no cita FR; registrada como pendiente en STATUS.md. Criterio: el sidecar emite las tres series por el canal aprobado en adr-0024 (registro estructurado), con prueba que las provoca en simulación.
 
 ---
 

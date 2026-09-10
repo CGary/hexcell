@@ -79,8 +79,8 @@ Los dos primeros campos de **toda** línea son siempre los mismos y en este orde
 
 | Campo | Tipo | Descripción |
 | :--- | :--- | :--- |
-| `version` | entero | Versión de cable del protocolo. En esta especificación, `3`. |
-| `tipo` | cadena | Uno de los nueve tipos cerrados de la sección 6. |
+| `version` | entero | Versión de cable del protocolo. En esta especificación, `5`. |
+| `tipo` | cadena | Uno de los trece tipos cerrados de la sección 6. |
 
 ### Por qué JSON y no un formato binario, y qué se difiere a `adr-0011`
 

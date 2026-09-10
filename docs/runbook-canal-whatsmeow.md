@@ -59,6 +59,10 @@ Cuando WhatsApp modifica el protocolo Web o eleva la versión mínima admitida, 
    * Reiniciar y redesplegar los contenedores del sidecar con la nueva imagen.
    * Verificar en los registros estructurados que el websocket saliente reconecta satisfactoriamente, que no se emite error `405` y que el estado de sesión reportado transiciona a activo.
 
+> **Aviso:** Nunca redesplegar todos los sidecars a la vez: la actualización pasa primero por el
+> centinela y luego por lotes (criterio de la tarea 19 de A-6). Este procedimiento describe una sola
+> célula.
+
 ---
 
 ## 4. Criterio de aceptación de la recuperación
