@@ -1,0 +1,32 @@
+{
+  "task_id": "HEX-066-new-spec",
+  "bundle_hash": "ee3603465acfd89503f3f36ed5a414ec193ed21f05abc42c81aae87c10579b2c",
+  "files": [
+    "docs/bitacora-de-descartes.md",
+    "sidecar/internal/canal/canal.go",
+    "sidecar/internal/canal/respaldo.go",
+    "sidecar/internal/configuracion/configuracion.go",
+    "sidecar/internal/configuracion/configuracion_test.go",
+    "sidecar/internal/identidad/identidad.go",
+    "sidecar/internal/identidad/identidad_test.go"
+  ],
+  "protocol_version": "fleet-bundle-protocol/v2",
+  "created_at": "2026-09-10T14:16:29Z",
+  "dropped": [
+    {
+      "component": "code_slice",
+      "path": "sidecar/main.go",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "sidecar/internal/servidor/servidor.go",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "sidecar/internal/outbox/outbox.go",
+      "reason": "bundle exceeded max_bytes budget"
+    }
+  ]
+}

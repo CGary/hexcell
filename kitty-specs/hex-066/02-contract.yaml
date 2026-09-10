@@ -1,0 +1,144 @@
+task_id: HEX-066
+summary: >
+  Reorder sidecar cold start so identidad.db is created before its read-only backup opens;
+  extract the sequence into abrirRecursosDeArranque; audit main.go for the same defect.
+goal: >
+  On main branch today, sidecar/main.go:77 opens a read-only backup connection to
+  cfg.RutaIdentidad before main.go:84 creates that file with identidad.Abrir, so every real
+  cell's first boot against an empty data directory fails with "unable to open database
+  file (14)". Fix by reordering identidad.Abrir before the read-only connection. Extract
+  the open/wire sequence (sqlstore container, session, sqlstore backup connection,
+  identidad store, identidad backup connection, outbox) out of main() into
+  abrirRecursosDeArranque in a new file sidecar/arranque.go, returning a recursosDeArranque
+  struct plus an error, so main() becomes load-config / call-function / handle-error for
+  that part, with its existing defer chain preserved unchanged. Add a Go regression test
+  proven by mutation: it must go red if the fix is reverted. Audit the rest of main.go's
+  cold-start sequence for the same read-before-create hazard class; this contract's touch
+  list assumes the audit finds nothing else to fix (per 01-blueprint.yaml step 1's mapping)
+  and records that result in docs/bitacora-de-descartes.md's D-43 entry alongside the two
+  scope discards from 01-blueprint.yaml step 6.
+read:
+  - sidecar/main.go
+  - sidecar/internal/canal/respaldo.go
+  - sidecar/internal/canal/canal.go
+  - sidecar/internal/identidad/identidad.go
+  - sidecar/internal/identidad/identidad_test.go
+  - sidecar/internal/outbox/outbox.go
+  - sidecar/internal/servidor/servidor.go
+  - sidecar/internal/configuracion/configuracion.go
+  - sidecar/internal/configuracion/configuracion_test.go
+  - docs/bitacora-de-descartes.md
+touch:
+  - sidecar/main.go
+  - sidecar/arranque.go
+  - sidecar/arranque_test.go
+  - docs/bitacora-de-descartes.md
+forbid:
+  files:
+    - sidecar/go.mod
+    - sidecar/go.sum
+    - sidecar/Dockerfile
+    - sidecar/.dockerignore
+    - "sidecar/internal/**"
+    - "crates/**"
+    - Cargo.toml
+    - Cargo.lock
+    - "docs/adr/**"
+    - docs/STATUS.md
+    - docs/PRD.md
+    - "docs/plan/**"
+    - docs/protocolo-ipc-nucleo-sidecar.md
+    - "docker-compose*.yml"
+    - "compose*.yml"
+    - ".github/**"
+  behaviors:
+    - "Do not add, remove, or change any Go module dependency; sidecar/go.mod and sidecar/go.sum are read-only context, not touchable output."
+    - "Do not change WhatsApp protocol behaviour, the IPC protocol (docs/protocolo-ipc-nucleo-sidecar.md), or reconnection/backoff logic (canal.NuevoSupervisor, cfg.Retroceso)."
+    - "Do not delete, weaken, or bypass the read-only backup connection to identidad.db (canal.AbrirConexionDeRespaldo(cfg.RutaIdentidad)); adr-0022 requires the sidecar's own process to own this connection because the core never opens identidad.db directly."
+    - "Do not touch the sqlstore backup connection's existing correct ordering (contenedor opened before dbRespaldo); it must remain created-before-consumed exactly as today, unchanged beyond being addressed via the new recursosDeArranque struct fields."
+    - "Do not write or amend any file under docs/adr/, including adr-0007-imagen-y-aislamiento.md; that ADR number is reserved for the whole of stage A-6 until task 6 closes, and this task needs no ADR."
+    - "Do not add a task-completion entry to docs/STATUS.md; it records decisions, not task progress."
+    - "Do not extend the extracted function past outbox.Abrir (buzon): colaSalida/portero/srv/supervisor/detectorBaja/detectorCortacircuitos/generadorPresentacion/traductor/srv.Escuchar/signal-handling stay inline in main() exactly as today, since srv and colaSalida wire into each other circularly (Dependencias.Portero vs. ConSumideroDeAcuse(srv.EnviarAcuseEnvio))."
+    - "Do not add new intra-function cleanup of partially-opened resources on abrirRecursosDeArranque's error paths; preserve today's characteristic that main() relies on os.Exit(1) to reclaim file descriptors on that path (record it as a discard in D-43, not a fix in this task)."
+    - "Do not change the LIFO order or presence of main()'s five existing defers (contenedor, dbRespaldo, dbRespaldoIdentidad, almacenIdentidad, buzon); only their access path changes to recursos.<Campo>."
+    - "Do not remove or weaken any existing test in sidecar/internal/canal, sidecar/internal/identidad, sidecar/internal/outbox, sidecar/internal/servidor, or sidecar/internal/configuracion."
+    - "Do not add a docs/bitacora-de-descartes.md entry under any number other than D-43, and do not edit or delete any prior entry in that file."
+    - "The mutation verify step must leave sidecar/arranque.go byte-identical to its pre-mutation content once verify finishes, whether the mutation assertion passes or fails."
+verify:
+  commands:
+    - "cd sidecar && go build ./... && go vet ./... && go test ./... -count=1"
+    - "cd sidecar && go test ./... -run '^TestAbrirRecursosDeArranque' -v -count=1"
+    - |
+      # Guarda por mutacion (AC-2): invierte a mano el orden de creacion/consumo de
+      # identidad.db dentro de arranque.go, exige que el test se vea FALLAR con ese orden
+      # invertido, y restaura el archivo pase lo que pase. Un test que nunca se vio fallar
+      # no es todavia una guarda.
+      set -u
+      cd sidecar
+      ARCHIVO=arranque.go
+      RESPALDO=$(mktemp)
+      cp "$ARCHIVO" "$RESPALDO"
+      trap 'cp "$RESPALDO" "$ARCHIVO"; rm -f "$RESPALDO"' EXIT
+
+      LINEA_IDENTIDAD=$(grep -n 'identidad\.Abrir(' "$ARCHIVO" | head -1 | cut -d: -f1)
+      LINEA_RESPALDO=$(grep -n 'AbrirConexionDeRespaldo(cfg\.RutaIdentidad\|AbrirConexionDeRespaldo(rutaIdentidad' "$ARCHIVO" | head -1 | cut -d: -f1)
+
+      if [ -z "$LINEA_IDENTIDAD" ] || [ -z "$LINEA_RESPALDO" ]; then
+        echo "mutacion abortada: no se encontraron los marcadores de orden esperados en $ARCHIVO"
+        exit 1
+      fi
+      if [ "$LINEA_IDENTIDAD" -ge "$LINEA_RESPALDO" ]; then
+        echo "mutacion abortada: el orden esperado (identidad.Abrir antes del respaldo) ya no se cumple; revisar el contrato"
+        exit 1
+      fi
+
+      # INTERCAMBIO de las dos llamadas: la de respaldo pasa a la posicion de identidad.Abrir
+      # y viceversa, reproduciendo exactamente el defecto original de main.go:77/84.
+      #
+      # POR QUE dos pasadas sobre el mismo archivo (NR==FNR): hay que conocer AMBAS lineas antes
+      # de escribir la primera de las dos. Una sola pasada solo puede recordar hacia atras, y la
+      # version anterior de este paso hacia justo eso: sacaba identidad.Abrir y la reinsertaba
+      # INMEDIATAMENTE ANTES de la llamada de respaldo, con lo cual el orden quedaba igual al
+      # original. El test seguia verde no porque fuera debil, sino porque no habia defecto que
+      # detectar: la mutacion nunca mutaba nada. Verificado el 2026-09-10 haciendo el
+      # intercambio real, con el que el test falla con el mismo mensaje del defecto original
+      # ("unable to open database file (14)").
+      awk -v li="$LINEA_IDENTIDAD" -v lr="$LINEA_RESPALDO" '
+        NR==FNR { if (FNR==li) linea_identidad=$0; if (FNR==lr) linea_respaldo=$0; next }
+        FNR==li { print linea_respaldo; next }
+        FNR==lr { print linea_identidad; next }
+        { print }
+      ' "$ARCHIVO" "$ARCHIVO" > "$ARCHIVO.mutado"
+      mv "$ARCHIVO.mutado" "$ARCHIVO"
+
+      if go test ./... -run '^TestAbrirRecursosDeArranque' -count=1 >/tmp/hex-066-mutacion.log 2>&1; then
+        echo "guarda no confirmada: el test siguio en verde con el orden invertido"
+        cat /tmp/hex-066-mutacion.log
+        exit 1
+      fi
+      echo "guarda confirmada: el test fallo con el orden invertido, como se esperaba"
+      exit 0
+limits:
+  max_files_changed: 4
+  # HEX-065 hereda de HEX-064 y desborda por una linea: no se copia ese numero. Este contrato
+  # se dimensiona sobre su propia superficie: main.go pierde ~35 lineas de apertura inline y
+  # gana ~15 de llamada+defers (~50 de diff), arranque.go es codigo nuevo (~90-120 lineas con
+  # comentarios didacticos), arranque_test.go es un test de arranque en frio con su propio
+  # fixture (~50-70 lineas), y la entrada D-43 en la bitacora agrega ~10-15 lineas. Total
+  # estimado ~220-260; el margen hasta 320 cubre la prueba por mutacion si requiere ajustes
+  # menores de nombres de variables para quedar grep-matchable.
+  # Recalibrado de 320 a 400 el 2026-09-10, tras medir 351 (290 inserciones + 61 borrados).
+  # El motivo es especifico de esta tarea y vale la pena dejarlo escrito: contract-check mide
+  # inserciones MAS borrados, y una EXTRACCION mueve codigo, asi que cada linea que se muda
+  # cuenta dos veces —una como borrada de main.go y otra como insertada en arranque.go— sin
+  # que exista una sola linea nueva de logica. El tope penalizaba la forma del cambio, no su
+  # tamano. La estimacion original razonaba sobre lineas netas y por eso quedo corta.
+  # Se recalibra en vez de recortar: recortar aqui significaria borrar comentario didactico o
+  # aserciones de la prueba para satisfacer una metrica que mide mal los refactors.
+  max_diff_lines: 400
+execution:
+  mode: worktree_edit
+  branch: ai/HEX-066
+retry_policy:
+  max_attempts: 2
+  escalate_after: 1

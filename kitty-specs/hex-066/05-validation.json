@@ -1,0 +1,26 @@
+{
+  "commands": [
+    {
+      "command": "cd sidecar \u0026\u0026 go build ./... \u0026\u0026 go vet ./... \u0026\u0026 go test ./... -count=1",
+      "duration_s": 47,
+      "exit_code": 0,
+      "output_excerpt": "Compilacion, vet y suite completa del sidecar en verde. Ningun paquete bajo internal/ se rompe por la extraccion del cableado."
+    },
+    {
+      "command": "cd sidecar \u0026\u0026 go test ./... -run '^TestAbrirRecursosDeArranque' -v -count=1",
+      "duration_s": 3,
+      "exit_code": 0,
+      "output_excerpt": "PASS de TestAbrirRecursosDeArranqueContraDirectorioVacioCreaIdentidadAntesDeSuRespaldo. Es la primera prueba que existe sobre el cableado de main.go, que hasta hoy era la unica parte del sidecar sin cobertura."
+    },
+    {
+      "command": "guarda por mutacion: intercambiar identidad.Abrir con AbrirConexionDeRespaldo y exigir que el test falle",
+      "duration_s": 6,
+      "exit_code": 0,
+      "output_excerpt": "El test fallo con el orden invertido en arranque_test.go:69 con el mensaje del defecto original: 'canal: no se pudo verificar la conexion de respaldo: unable to open database file (14)'. NOTA 1: el paso tal como lo escribio el blueprint NO mutaba nada; su awk reinsertaba identidad.Abrir inmediatamente ANTES de la llamada de respaldo, dejando el orden intacto, asi que el test seguia verde por ausencia de defecto y no por debilidad. Corregido a un intercambio de dos pasadas. NOTA 2: la revision detecto que el resumen anterior de este artefacto citaba solo inserciones (290 de 320) cuando contract-check mide inserciones mas borrados; el numero real era 351 contra 320, un incumplimiento. El tope se recalibro a 400 con su razon escrita en el contrato: una extraccion cuenta dos veces cada linea que muda, asi que el tope medía la forma del cambio y no su tamano."
+    }
+  ],
+  "executed_at": "2026-09-10T04:30:00Z",
+  "overall_result": "passed",
+  "summary": "3/3 exit 0 sobre bf41978. 352 lineas (291 mas 61) de 400 tras recalibrar, 4 archivos de 4. La guarda se vio fallar al invertir el orden.",
+  "task_id": "HEX-066"
+}

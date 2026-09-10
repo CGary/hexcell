@@ -1,0 +1,4 @@
+entries: []
+summary: |
+    Reorder sidecar cold start so identidad.db is created before its read-only backup opens; extract the sequence into abrirRecursosDeArranque; audit main.go for the same defect.
+task_id: HEX-066

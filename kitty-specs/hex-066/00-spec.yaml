@@ -1,0 +1,68 @@
+task_id: HEX-066
+summary: Fix sidecar cold start so identidad.db is created before its read-only backup connection opens; extract wiring for testing; audit rest of sequence.
+goal: >
+  On a fresh data directory the sidecar's read-only backup connection to the
+  identity store (main.go:77, AbrirConexionDeRespaldo) opens before the call
+  that creates identidad.db (main.go:84, identidad.Abrir), so every real
+  cell's first boot fails with "unable to open database file (14)". Reorder
+  the cold-start sequence so the creating call always runs before the
+  read-only consumer. Extract the open/wire sequence out of main() into a
+  function that takes the loaded configuration (or paths) as parameters and
+  returns its opened resources plus an error, so main() becomes thin (load
+  config, call the function, handle the error) and the sequence becomes unit
+  testable — main.go is currently the only part of the sidecar with zero test
+  coverage. Add a Go regression test that drives the extracted function
+  against a fresh t.TempDir() and asserts cold start completes without error
+  and the identity store file exists afterwards; the test must fail (turn
+  red) if the creating call is reordered back after the read-only connection,
+  proving the guard by mutation. Additionally audit the whole cold-start
+  sequence in main.go for any other place where a read-only connection, or
+  any consumer, touches a resource before the call that creates it; fix
+  whatever the audit finds in this same task, and record in the spec both
+  what was audited and what was found, including an explicit "nothing else
+  found" if that is the outcome. The sqlstore backup connection at main.go:67
+  is already correctly ordered (created at main.go:54) and must not be
+  touched beyond what the audit requires.
+invariants:
+  - The sidecar completes cold start from a completely empty data directory without error.
+  - The read-only backup connection to identidad.db (AbrirConexionDeRespaldo) never opens before the call that creates identidad.db (identidad.Abrir).
+  - The existing correct ordering of the sqlstore backup connection (main.go:67, created by main.go:54) is preserved unchanged.
+  - main() remains a thin entry point — load configuration, call the extracted wiring function, handle its error — with no open/wire logic left inline.
+  - The core process never opens identidad.db directly (adr-0022); this fix touches only the sidecar's own backup connection, which must remain read-only.
+  - No change alters WhatsApp protocol behaviour, the IPC protocol, or reconnection/backoff logic.
+acceptance:
+  - id: AC-1
+    statement: Cold start from an empty data directory succeeds and creates the identity store.
+    given: a fresh, empty t.TempDir() with no pre-existing files
+    when: the extracted wiring function runs against paths under that directory
+    then: it returns no error and identidad.db exists on disk afterwards
+  - id: AC-2
+    statement: The regression test proves the guard by mutation — reverting the fixed ordering (read-only connection before creation) must turn the new test red.
+  - id: AC-3
+    statement: The open/wire sequence previously inline in main() is extracted into a separate function taking configuration/paths as parameters and returning opened resources plus an error, with main() reduced to load-config / call-function / handle-error.
+  - id: AC-4
+    statement: A full audit of main.go's cold-start sequence for other read-before-create hazards is performed and its findings (fixed issues, or explicitly "nothing else found") are recorded in the task artifacts.
+  - "cd sidecar && go build ./... && go vet ./... && go test ./... -count=1 all pass, and the sidecar test suite remains non-empty."
+  - "The sqlstore backup connection ordering (main.go:54 before main.go:67) is unchanged and still passes existing coverage."
+risk: medium
+non_goals:
+  - Any change to the WhatsApp protocol behaviour, the IPC protocol, or reconnection/backoff logic.
+  - Any change to sidecar/Dockerfile or sidecar/.dockerignore (landed correct in HEX-065).
+  - Strengthening HEX-065's archived verify commands (that task is closed and archived).
+  - Container hardening (non-root, read-only rootfs, shell removal) — stage A-6 plan task 4.
+  - Binary size/link tuning (plan task 3) and two-container composition (plan task 5).
+  - Any dependency change in sidecar/go.mod or sidecar/go.sum.
+  - Writing adr-0007 — it is reserved for the whole of stage A-6 (tasks 1-6) until task 6 closes; this task most likely needs no ADR at all.
+  - Adding a task-completion entry to docs/STATUS.md (it records decisions, not progress).
+constraints:
+  - Repository is public — no keys, no secrets; credentials only via environment variables.
+  - Never version *.db, *.db-wal, *.db-shm, or .env*.
+  - All repository content (docs, identifiers, comments, test names, commit messages) is in Spanish; comments must be didactic (why, not what).
+  - Conventional commits in Spanish, subjects without accents, never any AI attribution.
+  - Absolute dates always (e.g. 2026-09-10), never relative.
+  - "Go checks are: cd sidecar && go build ./... && go vet ./... && go test ./... -count=1; CI blocks on all three and requires the sidecar test suite to be non-empty."
+  - HEXCELL_VENTANA_ZONA is the only environment variable with no default; every other HEXCELL_* falls back, with default paths under the data directory.
+  - "adr-0014: the sidecar is a permanent cost of the own channel."
+  - "adr-0022: the core never opens identidad.db; the sidecar produces its own VACUUM INTO copy from a connection owned by its own process — this is why the read-only backup connection exists; do not propose removing it."
+  - Any discard from this task goes into docs/bitacora-de-descartes.md in the same commit that makes it; the next free entry is D-43.
+  - The next free new ADR number is adr-0032, reserved only if the wiring extraction proves to be a real structural decision beyond scope.

@@ -1,0 +1,158 @@
+task_id: HEX-066
+summary: >
+  Reorder sidecar cold start so identidad.db is created before its read-only backup opens;
+  extract the sequence into a testable function; audit main.go for the same defect class.
+affected_files:
+  - sidecar/main.go
+  - sidecar/arranque.go
+  - sidecar/arranque_test.go
+  - docs/bitacora-de-descartes.md
+symbols:
+  - main.main
+  - main.recursosDeArranque
+  - main.abrirRecursosDeArranque
+dependencies:
+  - sidecar/internal/canal/respaldo.go
+  - sidecar/internal/canal/canal.go
+  - sidecar/internal/identidad/identidad.go
+  - sidecar/internal/outbox/outbox.go
+  - sidecar/internal/servidor/servidor.go
+  - sidecar/internal/configuracion/configuracion.go
+  - sidecar/internal/configuracion/configuracion_test.go
+  - sidecar/internal/identidad/identidad_test.go
+test_scenarios:
+  - statement: >
+      Cold start against a fresh t.TempDir() (no pre-existing files) returns no error from
+      abrirRecursosDeArranque and identidad.db exists on disk afterwards.
+    covers: ["AC-1"]
+  - statement: >
+      Reverting the fixed ordering inside arranque.go (opening the read-only identidad
+      backup connection before identidad.Abrir creates the file) makes the same test fail;
+      this is exercised by a verify-phase mutation script, not by a second Go test.
+    covers: ["AC-2"]
+  - statement: >
+      main() contains no inline open/wire logic between loading configuracion.Configuracion
+      and calling abrirRecursosDeArranque; every defer for the five returned resources
+      (Contenedor, DBRespaldo, DBRespaldoIdentidad, AlmacenIdentidad, Buzon) is declared in
+      main() immediately after a successful call, in the same order as today.
+    covers: ["AC-3"]
+  - statement: >
+      The full cold-start sequence of main.go is mapped call-by-call (creator vs. consumer)
+      in this blueprint's strategy; the only read-before-create hazard found is the known
+      identidad.db one, and this is recorded explicitly as "nothing else found" beyond it.
+    covers: ["AC-4"]
+strategy:
+  - step: 1
+    action: >
+      Map main.go's full cold-start sequence end to end (this IS the audit; see risks/notes
+      below for the recorded result). Order today: (1) configuracion.Cargar — reads env,
+      creates nothing; (2) registro.Nuevo — writes to stdout, no file resource; (3)
+      canal.AbrirAlmacenDeDispositivo(cfg.RutaSqlstore) at main.go:54 — CREATES sqlstore.db
+      (sqlstore.New opens with rwc-implicit DSN, no mode=ro); (4) canal.NuevaSesion — consumes
+      the already-open contenedor, opens no new file; (5) canal.AbrirConexionDeRespaldo
+      (cfg.RutaSqlstore) at main.go:67 — read-only CONSUMER of sqlstore.db, correctly ordered
+      after step 3; (6) canal.AbrirConexionDeRespaldo(cfg.RutaIdentidad) at main.go:77 — read-only
+      CONSUMER of identidad.db, but identidad.db has not been created yet (BUG, confirmed by
+      reading respaldo.go: mode=ro fails "unable to open database file (14)" against an empty
+      directory); (7) identidad.Abrir(cfg.RutaIdentidad) at main.go:84 — CREATES identidad.db,
+      currently running AFTER step 6 consumes it; (8) outbox.Abrir(cfg.RutaOutbox) — CREATES
+      the outbox db (construirDSN has no mode=ro), no earlier consumer of that path exists
+      anywhere in main.go; (9) colaSalida/portero/srv/supervisor/detectorBaja/
+      detectorCortacircuitos/generadorPresentacion/traductor — pure wiring over already-open
+      resources, no new file-backed resource opened; (10) srv.Escuchar(ctx) — CREATES/binds the
+      IPC socket itself (probes first, unlinks an orphan, then net.ListenUnix), no earlier
+      consumer of that socket path exists. AUDIT RESULT: the only read-before-create hazard in
+      main.go's cold-start sequence is steps 6-7 (identidad.db). Steps 3/5 (sqlstore) and 8, 10
+      are each self-contained creator-before-consumer or creator-only; nothing else found.
+  - step: 2
+    action: >
+      Create sidecar/arranque.go (package main). Define type recursosDeArranque struct holding
+      the five resources that main() currently defers: Contenedor *sqlstore.Container, Sesion
+      *canal.Sesion, DBRespaldo *sql.DB, DBRespaldoIdentidad *sql.DB, AlmacenIdentidad
+      *identidad.Almacen, Buzon *outbox.Outbox. Define func abrirRecursosDeArranque(ctx
+      context.Context, cfg configuracion.Configuracion, reg *registro.Registro)
+      (*recursosDeArranque, error) reproducing steps 3-8 above IN THIS FIXED ORDER: contenedor,
+      sesion, dbRespaldo, THEN almacenIdentidad (identidad.Abrir) BEFORE dbRespaldoIdentidad
+      (AbrirConexionDeRespaldo), THEN buzon. This is the one behavior change: swapping steps 6
+      and 7. Keep the two call sites for the identidad pair on their own distinguishable
+      single-statement lines (not merged into one composite expression) so a later mutation
+      script can locate and swap them by content match. On any error, return (nil, err)
+      immediately, exactly mirroring today's per-step error propagation — do not add any new
+      intra-function cleanup of previously-opened resources on this path (see risks: this
+      preserves, not fixes, main()'s existing no-cleanup-before-os.Exit behavior). Boundary
+      decision: stop the extraction at buzon; colaSalida/portero/srv/supervisor/detectors/
+      traductor/srv.Escuchar/signal-handling stay inline in main() because srv needs colaSalida
+      to already exist (Dependencias.Portero) while colaSalida.ConSumideroDeAcuse needs srv
+      already built (srv.EnviarAcuseEnvio) — untangling that circular wiring is a bigger
+      structural move than this task bought (see non_goals in 00-spec.yaml).
+  - step: 3
+    action: >
+      Thin sidecar/main.go: after configuracion.Cargar and registro.Nuevo, call
+      recursos, err := abrirRecursosDeArranque(ctx, cfg, reg); on error, keep the existing
+      reg.Error(eventoParada, ...) + os.Exit(1) pattern; on success, declare the five defers
+      (defer recursos.Contenedor.Close(), defer canal.CerrarDB(recursos.DBRespaldo), defer
+      canal.CerrarDB(recursos.DBRespaldoIdentidad), defer recursos.AlmacenIdentidad.Cerrar(),
+      defer recursos.Buzon.Cerrar()) in main() in the SAME order as today, immediately after the
+      call, so the LIFO shutdown order is byte-for-byte unchanged. Every remaining reference to
+      contenedor/sesion/dbRespaldo/dbRespaldoIdentidad/almacenIdentidad/buzon further down in
+      main() becomes recursos.Contenedor/recursos.Sesion/etc. No other line in main() changes.
+  - step: 4
+    action: >
+      Add sidecar/arranque_test.go (package main). Build a valid configuracion.Configuracion via
+      configuracion.Cargar against a local entornoFalso(map[string]string) fixture (same pattern
+      as sidecar/internal/configuracion/configuracion_test.go), setting HEXCELL_RUTA_SQLSTORE,
+      HEXCELL_RUTA_IDENTIDAD and HEXCELL_RUTA_OUTBOX to distinct paths under t.TempDir(), and
+      HEXCELL_VENTANA_ZONA to a valid IANA zone (confirmed the only env var with no fallback —
+      see step 5); every other HEXCELL_* is left absent to exercise its real default. Call
+      abrirRecursosDeArranque against a fresh t.TempDir(); assert err is nil and
+      os.Stat(rutaIdentidad) succeeds afterwards (AC-1). Register t.Cleanup to close whatever the
+      function returned so the test leaves no open handle. Name:
+      TestAbrirRecursosDeArranqueContraDirectorioVacioCreaIdentidadAntesDeSuRespaldo (mirrors the
+      TestX_Y / TestXDescripcionCompuesta convention already used across
+      sidecar/internal/*/*_test.go).
+  - step: 5
+    action: >
+      Verify (read sidecar/internal/configuracion/configuracion.go and
+      configuracion_test.go's entornoFalso helper) that HEXCELL_VENTANA_ZONA is the only
+      variable with no fallback: entornoFalso's own fixture special-cases exactly that one key
+      with a hardcoded "America/La_Paz" fallback for every other test in the package, which is
+      only needed because Cargar has none built in for that key; every other HEXCELL_* falls
+      back to a default under RutaSocketPorOmision/IdCelulaPorOmision-style constants. Reuse this
+      confirmed fact in step 4's fixture instead of re-deriving it.
+  - step: 6
+    action: >
+      Add one entry D-43 to docs/bitacora-de-descartes.md, in the same commit as the code
+      change, recording two discards made in this task: (a) not extracting main()'s wiring past
+      buzon into the same function, for the circular-dependency reason in step 2; (b) not adding
+      new intra-function cleanup for resources opened before a later step's error, since main()
+      today relies on os.Exit(1) to reclaim file descriptors on that path and this task preserves
+      that characteristic rather than hardening it (a real finding, but a separate one from the
+      ordering defect this task closes).
+risks:
+  - >
+    HSME advisory search (project "quorum", query = this task's summary/goal) returned only
+    low-similarity (<=0.016) hits about the Quorum tool's own meta-development (acceptance
+    coverage, transition tables, fleet stats) — none about Go sidecar startup ordering. No
+    relevant prior-task context found; proceeding without it per ADR 0008's graceful
+    degradation (an empty/irrelevant corpus hit is a normal outcome, not an error).
+  - >
+    The mutation verify step (02-contract.yaml) locates the identidad.Abrir and
+    AbrirConexionDeRespaldo(rutaIdentidad) call sites by grep-matchable content to swap them
+    back and assert the test goes red. If arranque.go's implementation merges these two calls
+    onto one line or restructures them beyond simple sequential statements, the mutation
+    script's swap could silently no-op, turning the guard into a false green. Mitigation: step 2
+    above pins that both calls stay on their own distinguishable single-statement lines; the
+    mutation script must fail loudly (non-zero exit) if it cannot find both markers, rather than
+    passing by no-op.
+  - >
+    sqlstore.New and outbox.Abrir both use WAL journal mode; running the new test under a
+    filesystem with degraded SQLite locking (network mounts, some CI sandboxes) could make
+    abrirRecursosDeArranque flaky for reasons unrelated to the ordering defect. Scope is
+    contained: the test only asserts on identidad.db per AC-1, not on sqlstore.db/outbox.db, so
+    this risk affects test reliability, not test intent.
+  - >
+    00-spec.yaml risk is declared "medium"; this touches sidecar/main.go's composition root plus
+    the whole of a permanent-cost process's cold start (adr-0014), across every real cell's
+    first boot. No divergence with 07-trace.json's calculated risk_level is anticipated (no
+    schema/migration/auth/payment path touched, single-package Go change with a bounded new
+    file), but the risk-score step below is authoritative for that comparison.
