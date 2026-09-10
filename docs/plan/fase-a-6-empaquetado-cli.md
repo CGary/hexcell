@@ -195,6 +195,17 @@ Las entradas conservan su numeración; esta sección es la autoridad sobre el or
 5. **Componer la célula** (1 día). Red local propia por célula, volumen compartido entre núcleo y
    sidecar con los permisos correctos, y socket IPC dentro del volumen. Verificar que ninguna célula
    alcanza la red de otra.
+
+   **Alcance añadido (decidido 2026-09-10):** esta tarea es además la **dueña de las banderas de
+   ejecución** del endurecimiento —`read_only`, `cap_drop: [ALL]`, `no-new-privileges` y el `tmpfs`
+   de la ruta de escritura temporal— y del **modelo de propiedad del volumen**. La tarea 4 endurece
+   las dos imágenes en tiempo de construcción (usuario numérico `10001:10001`, `/var/lib/hexcell` en
+   modo `0700`, sin shell) y deja esas banderas **nombradas en un bloque de comentario pero no
+   impuestas**; la tarea 8 las excluye explícitamente de su alcance. Sin este anclaje el
+   endurecimiento entraría en las imágenes y nunca se encendería en ejecución. Dato medido el
+   2026-09-10 que condiciona la plantilla: un volumen **nombrado** vacío hereda dueño y modo del
+   directorio de la imagen, mientras que un **bind mount** no lo hace y falla con `Permission
+   denied`.
 6. **Fijar los límites de recursos** (0,5 días). Memoria, CPU y descriptores por contenedor, con el
    reparto entre núcleo y sidecar coherente con el techo de 80 MB por célula.
 7. **Verificar la propagación de señales** (0,5 días). Comprobar que `docker stop` con margen de 30
