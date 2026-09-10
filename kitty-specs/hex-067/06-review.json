@@ -1,0 +1,24 @@
+{
+  "task_id": "HEX-067",
+  "summary": "Both prior revise findings verified fixed on disk: scope extension now explicitly declared, stale baseline echo corrected. Approve.",
+  "verdict": "approve",
+  "contract_compliance": true,
+  "forbidden_files_touched": [],
+  "unrequested_refactor": false,
+  "missing_tests": [
+    "No CI step builds the sidecar Docker image (carried forward, unchanged since prior review): go build/vet/test cannot see the Docker COPY context, so a recurrence of the COPY-by-name defect class would again be invisible to CI and caught only by manual verify commands."
+  ],
+  "functional_risk": "low",
+  "notes": [
+    "Re-verified independently (not taken on trust): commit d1ca76d is byte-for-byte the same commit the prior review judged (same SHA, same stat 41 insertions/7 deletions, same sidecar/Dockerfile-only diff) -- git status --porcelain in the worktree is clean, confirming no code was slipped in alongside the artifact amendments.",
+    "Finding 1 (scope extension) verified RESOLVED on disk: 00-spec.yaml gained a dated 'constraints' entry naming the human decision, the HEX-066/bf41978 root cause, and the reason for a glob over enumeration. 01-blueprint.yaml was amended in the three declared places (test_scenario covering AC-1, step 1's cross-reference, and step 4's full rationale) -- this openly declares and justifies the exception rather than quietly deleting the original 'byte-identical COPY' restriction; the restriction text itself is left intact with an explicit, dated carve-out layered on top.",
+    "Finding 2 (stale baseline echo) verified RESOLVED in 02-contract.yaml: verify command 3's echo now reads 'linea base 2026-09-10, mismo arbol sin flags (bytes): 39959335' with an inline comment explaining why the older 39960738 figure was invalid to compare against.",
+    "NEW, non-blocking finding: 05-validation.json was NOT re-run after the 02-contract.yaml fix -- file mtimes show 05-validation.json (15:55) predates the contract edit (16:00) by ~5 minutes, and diffing all 5 command texts shows only command 3 differs (05-validation.json still stores the OLD 'bytes): 39960738' echo literal). The prompt's claim that 'all 5 contract commands were re-run after the amendments' is not supported by the evidence on disk. This is assessed as non-blocking because: (a) commands 0,1,3,4 are textually identical between the validation snapshot and the current contract, so their recorded exit codes remain valid evidence; (b) command 2's only change is a printed echo with no assertion or exit-code effect, so re-running it cannot change pass/fail; (c) 05-validation.json's own output_excerpt for that command already shows the corrected number (39959335), consistent with the fix's intent even if the stored 'command' field text is stale. Recommend a fresh /q-verify pass before /q-accept purely for artifact-trail hygiene, not as a merge gate.",
+    "Mutation-tested verify command 2's guard myself (per project lesson 'a guard never seen to fail is not a guard'): manually stripped -trimpath/-ldflags from a copy of the build line and re-ran the grep checks -- the check correctly fails closed (exits 1) when the flags are absent. Confirmed a real guard, not cosmetic.",
+    "quorum analyze contract-check returned ok=false (sidecar/Dockerfile matches forbidden base-name pattern 'Dockerfile'). This is the anticipated false positive both 00-spec.yaml's constraints and 02-contract.yaml's inline NOTA document in advance (base-name vs full-path matching bug meant to forbid the root Rust Dockerfile). Deterministically refuted by verify command 4 (git diff main...HEAD -- Dockerfile Cargo.toml, zero lines), which passed in 05-validation.json and remains textually unchanged in the current contract. Treated as compliant.",
+    "quorum analyze acceptance-coverage returned status=pass: AC-1..AC-4 all covered by 01-blueprint.yaml test_scenarios, no gaps. One legacy_untracked item (00-spec.yaml's fifth, unlabeled acceptance bullet about the stripped-panic cost) is pre-existing, not introduced by the amendments, and is substantively covered by AC-4's test scenario text.",
+    "Commit d1ca76d re-confirmed: Spanish subject and body, conventional type 'fix(sidecar)', no accented characters in the subject line, no Co-Authored-By or AI-attribution trailer of any kind.",
+    "No docs/adr/* changes, adr-0007 untouched, no secrets introduced, Cargo.toml and root Dockerfile confirmed untouched both via verify command 4 and a direct git diff --name-only (sidecar/Dockerfile is the only changed file)."
+  ],
+  "fix_tasks": []
+}

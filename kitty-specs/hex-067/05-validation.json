@@ -1,0 +1,38 @@
+{
+  "commands": [
+    {
+      "command": "cd sidecar \u0026\u0026 go build ./... \u0026\u0026 go vet ./... \u0026\u0026 go test ./... -count=1",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "ok  \tgithub.com/CGary/hexcell/sidecar/internal/outbox\t0.039s / ok  \tgithub.com/CGary/hexcell/sidecar/internal/registro\t0.003s / ok  \tgithub.com/CGary/hexcell/sidecar/internal/servidor\t0.008s"
+    },
+    {
+      "command": "# Chequeo textual barato: confirma que ambas flags de tamano llegaron\n# a la MISMA linea de build antes de gastar tiempo en un docker build.\nset -u\n# Corregido el 2026-09-10: el patron original era\n# 'go build -o /usr/local/bin/hexcell-sidecar', que es la linea de ANTES\n# del cambio. Al insertar las flags, `go build` y `-o` dejan de ser\n# contiguos y ese literal no existe mas, asi que el chequeo solo podia\n# pasar si la tarea NO se habia hecho: verificaba lo contrario de lo que\n# pretendia. Se ancla en la ruta del binario, que si es estable.\nLINEA=$(grep -n 'go build .*-o /usr/local/bin/hexcell-sidecar' sidecar/Dockerfile || true)\nif [ -z \"$LINEA\" ]; then\n  echo \"verificacion fallida: no se encontro la linea de go build esperada\"\n  exit 1\nfi\necho \"$LINEA\" | grep -q -- '-trimpath' || { echo \"falta -trimpath en la linea de build\"; exit 1; }\necho \"$LINEA\" | grep -q -- '-ldflags=\"-s -w\"' || { echo \"falta -ldflags=\\\"-s -w\\\" en la linea de build\"; exit 1; }\necho \"confirmado: -trimpath y -ldflags=\\\"-s -w\\\" presentes en la linea de build\"\n",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "confirmado: -trimpath y -ldflags=\"-s -w\" presentes en la linea de build"
+    },
+    {
+      "command": "# Build real de la imagen del sidecar con las flags nuevas y medicion\n# de su tamano en bytes: esta es la evidencia de aceptacion de AC-4,\n# no un doc ni un script aparte.\nset -u\ndocker build --pull -f sidecar/Dockerfile -t hexcell-sidecar:hex-067-smoke sidecar/\nSIZE=$(docker image inspect --format '{{.Size}}' hexcell-sidecar:hex-067-smoke)\necho \"tamano medido de la imagen sidecar (bytes): $SIZE\"\n# Corregido el 2026-09-10: antes se imprimia 39960738, la medicion de\n# HEX-065, tomada sobre un arbol que aun no tenia `arranque.go`. Restarle\n# el tamanio de hoy mezclaria el efecto de las flags con el de un fuente\n# distinto. La linea base valida se remidio reconstruyendo ESTE mismo\n# arbol sin las flags.\necho \"linea base 2026-09-10, mismo arbol sin flags (bytes): 39959335\"\ndocker rmi hexcell-sidecar:hex-067-smoke \u003e/dev/null 2\u003e\u00261 || true\n",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "#17 DONE 0.0s / tamano medido de la imagen sidecar (bytes): 30374876 / linea base 2026-09-10, mismo arbol sin flags (bytes): 39959335"
+    },
+    {
+      "command": "# Prueba que la compuerta ARG_VERSION_WHATSMEOW sigue viva tras el\n# cambio: un ARG deliberadamente divergente del pin de go.mod debe\n# seguir deteniendo el build ANTES de compilar (mismo patron de HEX-065).\nset -u\nWHATSMEOW_PIN=$(grep -E '^\\s*go\\.mau\\.fi/whatsmeow ' sidecar/go.mod | awk '{print $2}')\ndocker build --pull -f sidecar/Dockerfile \\\n  --build-arg ARG_VERSION_WHATSMEOW=\"${WHATSMEOW_PIN}-deliberadamente-invalida\" \\\n  -t hexcell-sidecar:hex-067-mismatch sidecar/ \u003e/tmp/hex-067-mismatch.log 2\u003e\u00261\nSTATUS_MISMATCH=$?\ndocker rmi hexcell-sidecar:hex-067-mismatch \u003e/dev/null 2\u003e\u00261 || true\nif [ \"$STATUS_MISMATCH\" -eq 0 ]; then\n  echo \"verificacion fallida: el build con ARG divergente debia fallar y no fallo\"\n  cat /tmp/hex-067-mismatch.log\n  exit 1\nfi\necho \"compuerta ARG_VERSION_WHATSMEOW sigue activa (status $STATUS_MISMATCH)\"\n",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "compuerta ARG_VERSION_WHATSMEOW sigue activa (status 1)"
+    },
+    {
+      "command": "# Refutacion deterministica del footgun de contract-check (nombre base\n# vs. ruta completa): prueba que el nucleo Rust no fue tocado, sin\n# depender de una relectura manual en la fase de revision.\nset -u\nLINEAS=$(git diff main...HEAD -- Dockerfile Cargo.toml | wc -l)\nif [ \"$LINEAS\" -ne 0 ]; then\n  echo \"verificacion fallida: el diff toca Dockerfile o Cargo.toml de la raiz (nucleo Rust), fuera de alcance\"\n  exit 1\nfi\necho \"confirmado: ni el Dockerfile raiz ni Cargo.toml cambiaron\"\n",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "confirmado: ni el Dockerfile raiz ni Cargo.toml cambiaron"
+    }
+  ],
+  "executed_at": "2026-09-10T00:00:00Z",
+  "overall_result": "passed",
+  "summary": "5/5 en verde, regenerado tras enmendar el contrato. Imagen 39.959.335 -\u003e 30.374.876 bytes (-24,0%). Extractos tomados de la corrida posterior a la enmienda, no de la anterior.",
+  "task_id": "HEX-067"
+}

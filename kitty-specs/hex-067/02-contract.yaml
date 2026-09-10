@@ -1,0 +1,150 @@
+task_id: HEX-067
+summary: >-
+  Add -trimpath and -ldflags="-s -w" to sidecar/Dockerfile's go build line;
+  rewrite its deferral comment as a before/after size note; verify with a
+  docker build.
+goal: >-
+  Stage A-6 plan task 3 ("Resolver el enlazado y minimizar los binarios"),
+  Go-sidecar half only (the Rust core half is already done: Cargo.toml's
+  release profile is opt-level="z", lto=true, codegen-units=1, strip=true,
+  panic="abort", out of scope here). sidecar/Dockerfile currently builds with
+  a bare `go build -o /usr/local/bin/hexcell-sidecar .` and a comment that
+  explicitly defers size tuning to this task. Add -trimpath (strips local
+  filesystem paths from the binary) and -ldflags="-s -w" (drops the symbol
+  table and DWARF debug info) to that single invocation, replace the
+  deferral comment with a didactic before/after size note (baseline
+  39.960.738 bytes / 39,9 MB medido el 2026-09-10; Rust core 11,8 MB cited
+  only for comparison, never as a target), and record the accepted cost that
+  a stripped panic loses symbols until the pinned commit is rebuilt. No
+  measurement doc or script is created anywhere else; the comment inside
+  sidecar/Dockerfile is the acceptance evidence.
+read:
+  - sidecar/go.mod
+  - Dockerfile
+  - Cargo.toml
+  - docs/plan/fase-a-6-empaquetado-y-operacion-de-celdas.md
+touch:
+  - sidecar/Dockerfile
+# NOTA PARA LA FASE DE ANALISIS (footgun conocido, no relitigar):
+# `quorum analyze contract-check` empareja rutas prohibidas por NOMBRE BASE,
+# ignorando el directorio. Prohibir el `Dockerfile` raiz (nucleo Rust) por
+# nombre mientras esta tarea toca `sidecar/Dockerfile` puede arrojar un
+# `ok=false` falso sobre un diff perfectamente conforme. La refutacion
+# deterministica es `git diff main...HEAD -- Dockerfile Cargo.toml` sin
+# lineas de salida; ese mismo chequeo esta cableado como el ultimo paso de
+# verify.commands, asi que no depende de una relectura manual en la fase de
+# revision.
+forbid:
+  files:
+    - Dockerfile
+    - Cargo.toml
+    - Cargo.lock
+    - "crates/**"
+    - sidecar/go.mod
+    - sidecar/go.sum
+    - sidecar/main.go
+    - "sidecar/internal/**"
+    - sidecar/.dockerignore
+    - "docs/**"
+    - "docker-compose*.yml"
+    - "compose*.yml"
+    - ".github/**"
+    - "*.db"
+    - "*.db-wal"
+    - "*.db-shm"
+    - ".env*"
+  behaviors:
+    - "Do not touch Cargo.toml or the root Dockerfile (Rust core); its release profile is already tuned in a prior task and is out of scope here."
+    - "Do not change any Go module dependency; sidecar/go.mod and sidecar/go.sum are read-only context, not touchable output."
+    - "Do not add a hard maximum-size CI gate anywhere; the plan fixes no numeric ceiling, and measuring must stay an observation, not a pass/fail threshold."
+    - "Do not create a size-measurement doc or script under docs/ or scripts/; the before/after figure is recorded only as a comment inside sidecar/Dockerfile itself. Plan task 16 (\"Medir memoria y tamano de imagenes\") owns the eventual measurement registry; creating one here would be superseded."
+    - "Do not change the ARG_VERSION_WHATSMEOW pin-verification gate's logic (the grep+awk RUN step against go.mod), its ARG declarations, or the OCI org.opencontainers.image.version LABEL; the gate must survive unchanged and still fail closed on a mismatched ARG."
+    - "Do not remove ca-certificates from the final stage; it is the TLS trust store for WhatsApp, never a size-saving candidate."
+    - "Do not add a C toolchain or re-enable cgo; CGO_ENABLED=0 stays exactly as it is, with no gcc/musl-dev introduced."
+    - "Do not add UPX, distroless, a non-root USER, a read-only rootfs, capability drops, or shell removal; those are separate stage A-6 plan tasks (4), not this one."
+    - "Do not add a docs/bitacora-de-descartes.md entry; this task discards no studied alternative of its own (UPX/distroless were already scoped out in HEX-065's contract, not re-opened here)."
+verify:
+  commands:
+    - "cd sidecar && go build ./... && go vet ./... && go test ./... -count=1"
+    - |
+      # Chequeo textual barato: confirma que ambas flags de tamano llegaron
+      # a la MISMA linea de build antes de gastar tiempo en un docker build.
+      set -u
+      # Corregido el 2026-09-10: el patron original era
+      # 'go build -o /usr/local/bin/hexcell-sidecar', que es la linea de ANTES
+      # del cambio. Al insertar las flags, `go build` y `-o` dejan de ser
+      # contiguos y ese literal no existe mas, asi que el chequeo solo podia
+      # pasar si la tarea NO se habia hecho: verificaba lo contrario de lo que
+      # pretendia. Se ancla en la ruta del binario, que si es estable.
+      LINEA=$(grep -n 'go build .*-o /usr/local/bin/hexcell-sidecar' sidecar/Dockerfile || true)
+      if [ -z "$LINEA" ]; then
+        echo "verificacion fallida: no se encontro la linea de go build esperada"
+        exit 1
+      fi
+      echo "$LINEA" | grep -q -- '-trimpath' || { echo "falta -trimpath en la linea de build"; exit 1; }
+      echo "$LINEA" | grep -q -- '-ldflags="-s -w"' || { echo "falta -ldflags=\"-s -w\" en la linea de build"; exit 1; }
+      echo "confirmado: -trimpath y -ldflags=\"-s -w\" presentes en la linea de build"
+    - |
+      # Build real de la imagen del sidecar con las flags nuevas y medicion
+      # de su tamano en bytes: esta es la evidencia de aceptacion de AC-4,
+      # no un doc ni un script aparte.
+      set -u
+      docker build --pull -f sidecar/Dockerfile -t hexcell-sidecar:hex-067-smoke sidecar/
+      SIZE=$(docker image inspect --format '{{.Size}}' hexcell-sidecar:hex-067-smoke)
+      echo "tamano medido de la imagen sidecar (bytes): $SIZE"
+      # Corregido el 2026-09-10: antes se imprimia 39960738, la medicion de
+      # HEX-065, tomada sobre un arbol que aun no tenia `arranque.go`. Restarle
+      # el tamanio de hoy mezclaria el efecto de las flags con el de un fuente
+      # distinto. La linea base valida se remidio reconstruyendo ESTE mismo
+      # arbol sin las flags.
+      echo "linea base 2026-09-10, mismo arbol sin flags (bytes): 39959335"
+      docker rmi hexcell-sidecar:hex-067-smoke >/dev/null 2>&1 || true
+    - |
+      # Prueba que la compuerta ARG_VERSION_WHATSMEOW sigue viva tras el
+      # cambio: un ARG deliberadamente divergente del pin de go.mod debe
+      # seguir deteniendo el build ANTES de compilar (mismo patron de HEX-065).
+      set -u
+      WHATSMEOW_PIN=$(grep -E '^\s*go\.mau\.fi/whatsmeow ' sidecar/go.mod | awk '{print $2}')
+      docker build --pull -f sidecar/Dockerfile \
+        --build-arg ARG_VERSION_WHATSMEOW="${WHATSMEOW_PIN}-deliberadamente-invalida" \
+        -t hexcell-sidecar:hex-067-mismatch sidecar/ >/tmp/hex-067-mismatch.log 2>&1
+      STATUS_MISMATCH=$?
+      docker rmi hexcell-sidecar:hex-067-mismatch >/dev/null 2>&1 || true
+      if [ "$STATUS_MISMATCH" -eq 0 ]; then
+        echo "verificacion fallida: el build con ARG divergente debia fallar y no fallo"
+        cat /tmp/hex-067-mismatch.log
+        exit 1
+      fi
+      echo "compuerta ARG_VERSION_WHATSMEOW sigue activa (status $STATUS_MISMATCH)"
+    - |
+      # Refutacion deterministica del footgun de contract-check (nombre base
+      # vs. ruta completa): prueba que el nucleo Rust no fue tocado, sin
+      # depender de una relectura manual en la fase de revision.
+      set -u
+      LINEAS=$(git diff main...HEAD -- Dockerfile Cargo.toml | wc -l)
+      if [ "$LINEAS" -ne 0 ]; then
+        echo "verificacion fallida: el diff toca Dockerfile o Cargo.toml de la raiz (nucleo Rust), fuera de alcance"
+        exit 1
+      fi
+      echo "confirmado: ni el Dockerfile raiz ni Cargo.toml cambiaron"
+acceptance:
+  human_gate: true
+limits:
+  max_files_changed: 1
+  # Un solo archivo cambia (sidecar/Dockerfile) y contract-check cuenta
+  # inserciones MAS borrados, no lineas netas. El bloque de comentario que se
+  # reemplaza mide hoy 6 lineas (94-98 mas la linea 99 del build); el
+  # comentario didactico de reemplazo, siguiendo el estilo verboso ya
+  # establecido en el resto del archivo (bloques de 10-25 lineas explicando
+  # el PORQUE), mas la linea de build mas larga con las dos flags nuevas,
+  # se estima en 20-30 lineas insertadas. Con 6 borradas mas ~30 insertadas
+  # el total ronda 35-40; se fija el tope en 60 para dejar margen a que el
+  # comentario documente ademas el costo de simbolos perdidos (AC-4, riesgo
+  # aceptado) sin quedar ajustado al limite exacto de la primera estimacion.
+  max_diff_lines: 60
+execution:
+  mode: worktree_edit
+  branch: ai/HEX-067
+retry_policy:
+  max_attempts: 2
+  escalate_after: 1

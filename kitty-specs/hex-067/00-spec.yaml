@@ -1,0 +1,55 @@
+task_id: HEX-067
+summary: Add -trimpath and -ldflags="-s -w" to the Go sidecar build to strip symbols and shrink the image; record before/after size. Risk low.
+goal: >-
+  Resolve linking and minimize the binary for the Go sidecar only, per stage
+  A-6 plan task 3 ("Resolver el enlazado y minimizar los binarios"). The
+  sidecar Dockerfile's build stage currently compiles with plain `go build`
+  and explicitly defers size tuning to this task. Add -trimpath (removes
+  local filesystem paths from the compiled binary) and -ldflags="-s -w"
+  (strips the symbol table and DWARF debug info) to that go build invocation,
+  then measure and record the resulting image size next to the existing
+  baseline. The Rust core side of stage A-6 task 3 is already done: its
+  release profile (opt-level="z", lto=true, codegen-units=1, strip=true,
+  panic="abort") is already tuned and out of scope here.
+invariants:
+  - The sidecar binary keeps working identically at runtime; -trimpath and -s -w change only compiled metadata, never behavior.
+  - CGO_ENABLED=0 remains set; no C toolchain is introduced into the builder stage.
+  - ca-certificates remains installed in the final sidecar image; it is not a size saving candidate.
+  - The ARG_VERSION_WHATSMEOW build-time gate (grep+awk check against go.mod, sidecar/Dockerfile) is preserved unchanged and still fails closed on mismatch.
+  - No new numeric max-size gate is added to CI; the plan fixes no size ceiling and none is invented here.
+  - Cargo.toml and the root Dockerfile (Rust core) are not modified; the core's release profile is already tuned and out of scope.
+acceptance:
+  - id: AC-1
+    statement: The sidecar Dockerfile's go build line adds -trimpath and -ldflags="-s -w".
+    given: sidecar/Dockerfile's builder stage currently runs `go build -o /usr/local/bin/hexcell-sidecar .` with no size flags
+    when: stage A-6 task 3 is implemented
+    then: the same build line runs with -trimpath and -ldflags="-s -w" added, with no other change to the build stage's logic
+  - id: AC-2
+    statement: The full sidecar validation suite still passes after the flag change.
+    given: the modified sidecar/Dockerfile and unchanged sidecar Go source
+    when: 'go build ./... && go vet ./... && go test ./... -count=1 is run from sidecar/'
+    then: all three commands succeed with no failures
+  - id: AC-3
+    statement: The sidecar Docker image still builds successfully with the new flags.
+    given: the modified sidecar/Dockerfile
+    when: the sidecar image is built (docker build)
+    then: the build completes and the ARG_VERSION_WHATSMEOW gate step still passes
+  - id: AC-4
+    statement: Before/after sidecar image size is measured and recorded in the repo, without a hard size gate.
+    given: the baseline sidecar image size measured 2026-09-10 (39,960,738 bytes / 39.9 MB, versus 11.8 MB for the Rust core image, for comparison only)
+    when: the new sidecar image is built with -trimpath and -ldflags="-s -w"
+    then: the new measured size is written to the repo (docs or the existing size-measurement script/output) alongside the baseline, described as an observed reduction, not a pass/fail ceiling
+  - A production panic in the stripped sidecar binary arrives without function names or line numbers until someone rebuilds the same pinned commit; this cost is recorded as a documented risk, not silently accepted.
+risk: low
+non_goals:
+  - Do not touch Cargo.toml or the root (Rust core) Dockerfile; the core's release profile is already tuned in a prior task.
+  - Do not introduce a hard maximum-size CI gate; the plan fixes no numeric ceiling.
+  - Do not add a C toolchain or change CGO_ENABLED.
+  - Do not remove ca-certificates from the final sidecar image.
+  - Do not change the ARG_VERSION_WHATSMEOW pin-verification gate's logic.
+constraints:
+  - 'AMPLIACION DE ALCANCE declarada el 2026-09-10 por decision humana, tras el veredicto revise de la revision: ademas de las dos flags, sidecar/Dockerfile cambia `COPY main.go ./` por `COPY *.go ./`. HEX-066 (bf41978) agrego sidecar/arranque.go sin tocar ese COPY, asi que la imagen no compilaba desde main y AC-3 —medir el tamanio— era inalcanzable. El arreglo es precondicion de la aceptacion de esta tarea, no un extra.'
+  - Both new flags (-trimpath and -ldflags="-s -w") are added together to the single go build invocation in sidecar/Dockerfile's builder stage.
+  - 'Reproducibility is preserved: whatsmeow''s pseudo-version stays pinned via ARG_VERSION_WHATSMEOW, asserted against go.mod by the existing build-time gate, and published as an OCI label, so a stripped panic can be re-symbolized by rebuilding the same commit.'
+  - All new prose (docs, comments, commit message) is written in Spanish per repo convention; the risk of losing symbol info on panics must be stated explicitly, not implied.
+  - A `quorum analyze contract-check` run against this task's contract may report ok=false as a false positive if it forbids the root Dockerfile by base name while sidecar/Dockerfile is touched (base-name matching bug) or if it double-counts insertions+deletions; this is a known tool limitation to anticipate at analyze time, not a real scope violation.

@@ -1,0 +1,145 @@
+task_id: HEX-067
+summary: >-
+  Add -trimpath and -ldflags="-s -w" to sidecar/Dockerfile's go build line,
+  rewrite the deferral comment as a before/after size note, and measure the
+  new image size via a real docker build.
+affected_files:
+  - sidecar/Dockerfile
+symbols:
+  - "RUN go build -o /usr/local/bin/hexcell-sidecar . (sidecar/Dockerfile:99, builder stage 'constructor')"
+dependencies:
+  - sidecar/go.mod
+  - sidecar/go.sum
+  - sidecar/main.go
+  - "sidecar/internal/**"
+  - Dockerfile
+  - Cargo.toml
+test_scenarios:
+  - statement: >-
+      The go build line in sidecar/Dockerfile's builder stage carries both
+      -trimpath and -ldflags="-s -w", with no other change to that stage's
+      logic (ARG redeclaration, CGO_ENABLED=0, module download, ARG-vs-go.mod
+      gate all stay exactly as they are today). AMPLIADO el 2026-09-10: la
+      linea `COPY main.go ./` SI cambia, a `COPY *.go ./` — ver el paso 4.
+    covers: ["AC-1"]
+  - statement: >-
+      `cd sidecar && go build ./... && go vet ./... && go test ./... -count=1`
+      passes unchanged after the flag change (source is untouched; only the
+      build invocation gains flags).
+    covers: ["AC-2"]
+  - statement: >-
+      A real `docker build` of the sidecar image succeeds with the new flags,
+      and the ARG_VERSION_WHATSMEOW pin-verification gate (grep+awk check
+      against go.mod, RUN step before `go mod download`) still fires: it
+      passes on a matching ARG and still fails closed on a deliberately
+      mismatched one.
+    covers: ["AC-3"]
+  - statement: >-
+      The built image's byte size is measured with `docker image inspect
+      --format '{{.Size}}'` (a verify command, not prose) and the new figure
+      is written into a didactic Spanish comment inside sidecar/Dockerfile
+      next to the flags, alongside the existing baseline (39.960.738 bytes /
+      39,9 MB medido el 2026-09-10; nucleo Rust 11,8 MB solo de referencia),
+      described as an observed reduction with no pass/fail ceiling.
+    covers: ["AC-4"]
+  - statement: >-
+      The comment documents, as an accepted and explicit cost (not a silent
+      one), that a stripped production panic in the sidecar arrives with no
+      function names or line numbers until someone rebuilds the exact pinned
+      commit — the OCI org.opencontainers.image.version label plus the
+      ARG_VERSION_WHATSMEOW gate are what make that rebuild possible.
+    covers: ["AC-4"]
+strategy:
+  - step: 1
+    action: >-
+      Edit sidecar/Dockerfile's builder stage: change the line
+      `RUN go build -o /usr/local/bin/hexcell-sidecar .` (currently line 99)
+      to add `-trimpath` and `-ldflags="-s -w"` to the same invocation. Do not
+      touch any other RUN, ARG, ENV, FROM, or LABEL line in the file. La
+      excepcion, AMPLIADA el 2026-09-10, es la linea `COPY main.go ./` — ver
+      el paso 4.
+    files:
+      - sidecar/Dockerfile
+  - step: 2
+    action: >-
+      Rewrite the deferral comment immediately above that line (currently
+      lines 94-98, which says the tuning is "tarea 3 de la etapa A-6" and
+      pending) so it no longer claims the work is pending. Replace it with a
+      didactic Spanish comment explaining what -trimpath does (strips local
+      filesystem build paths from the binary) and what -ldflags="-s -w" does
+      (drops the symbol table and DWARF debug info), stating the measured
+      baseline (39.960.738 bytes / 39,9 MB, medido el 2026-09-10) next to the
+      new measured size obtained from this task's own verify step, and the
+      Rust core figure (11,8 MB) strictly as an unrelated comparison point,
+      never as a target. This is the task's only acceptance-evidence
+      recording surface per the orchestrator's closed decision — no doc or
+      script is created elsewhere (plan task 16 owns that registry).
+    files:
+      - sidecar/Dockerfile
+  - step: 3
+    action: >-
+      In the same rewritten comment (or an adjacent short one, still inside
+      sidecar/Dockerfile), state explicitly that a stripped panic loses
+      function names and line numbers until the exact pinned commit is
+      rebuilt, and that this is precisely why ARG_VERSION_WHATSMEOW and its
+      OCI label exist unchanged: they are the coordinate that makes that
+      rebuild possible. This documents the accepted cost rather than leaving
+      it implicit.
+    files:
+      - sidecar/Dockerfile
+  - step: 4
+    action: >-
+      Do not touch the ARG_VERSION_WHATSMEOW ARG declarations (pre-FROM and
+      both per-stage redeclarations), the grep+awk pin-verification RUN step,
+      the CGO_ENABLED=0 ENV, the `go mod download` step, the final-stage
+      ca-certificates install, the COPY --from=constructor line, the OCI
+      LABEL, or the ENTRYPOINT. Every one of these must be byte-identical
+      before and after this task.
+
+      AMPLIACION DE ALCANCE, declarada el 2026-09-10 por decision humana tras
+      el veredicto `revise` de la revision. La restriccion original decia que
+      NINGUNA otra linea COPY podia tocarse. Se levanta para una sola: la
+      enumeracion por nombre `COPY main.go ./` pasa a ser el comodin
+      `COPY *.go ./`.
+
+      POR QUE se amplia en vez de desdoblarse en otra tarea: HEX-066 (commit
+      bf41978, mergeado el mismo dia) agrego `sidecar/arranque.go` al paquete
+      `main` sin tocar este COPY, asi que el archivo nunca entraba al contexto
+      de construccion y `docker build` moria con `undefined:
+      abrirRecursosDeArranque`. La imagen del sidecar NO SE PODIA CONSTRUIR
+      desde main. Sin ese arreglo, AC-3 —medir el tamanio de la imagen— es
+      literalmente inalcanzable: no se puede medir lo que no compila. El
+      arreglo no es un extra oportunista sino una precondicion de la propia
+      aceptacion de esta tarea.
+
+      POR QUE el comodin y no agregar `arranque.go` a la lista: enumerar es el
+      defecto de fondo. Cada archivo nuevo en la raiz del modulo Go vuelve a
+      romper la imagen en silencio, y solo se nota al construirla, porque
+      `go build`, `go vet` y `go test` ven el arbol completo y no el contexto
+      de Docker. El comodin elimina la clase entera en vez de este caso. Los
+      `*_test.go` que arrastra se quedan en la etapa constructora, que se
+      descarta, y no llegan al binario ni a la imagen final.
+    files:
+      - sidecar/Dockerfile
+risks:
+  - >-
+    A stripped production panic in the sidecar binary carries no function
+    names or line numbers until someone rebuilds the exact pinned commit
+    (identified via the unchanged ARG_VERSION_WHATSMEOW/OCI label pair); this
+    is an accepted, documented cost of -s -w, not a regression to fix here.
+  - >-
+    `quorum analyze contract-check` matches forbidden paths by base name, not
+    full path: forbidding the root Dockerfile (Rust core) by name while this
+    task touches sidecar/Dockerfile can raise a false `ok=false` even on a
+    conforming diff. Deterministic refutation, also wired into this
+    contract's own verify.commands: `git diff main...HEAD -- Dockerfile
+    Cargo.toml` must return zero lines.
+  - >-
+    contract-check counts insertions plus deletions, not net lines; limits
+    below are sized on that basis, not on the small net change the edit
+    actually represents.
+  - >-
+    Neither the ≤80 MB/cell nor the <50 MB/cell budgets from CLAUDE.md are
+    validated under sustained load; this task only measures static image
+    size, not runtime RSS, so a size reduction here says nothing about the
+    unvalidated runtime budget.

@@ -1,0 +1,12 @@
+{
+  "task_id": "HEX-067-new-spec",
+  "bundle_hash": "4c0d81c02abc423fc7d160fb9c32c4947693b6f6aa53b3c51cd1168a5ef551b2",
+  "files": [
+    "Cargo.toml",
+    "Dockerfile",
+    "sidecar/Dockerfile",
+    "sidecar/go.mod"
+  ],
+  "protocol_version": "fleet-bundle-protocol/v2",
+  "created_at": "2026-09-10T17:13:56Z"
+}

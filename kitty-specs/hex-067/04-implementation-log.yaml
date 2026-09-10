@@ -1,0 +1,3 @@
+entries: []
+summary: Add -trimpath and -ldflags="-s -w" to sidecar/Dockerfile's go build line; rewrite its deferral comment as a before/after size note; verify with a docker build.
+task_id: HEX-067
