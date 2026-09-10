@@ -1,0 +1,64 @@
+# ============================================================================
+# .dockerignore para la imagen del sidecar Go (sidecar/Dockerfile).
+# ============================================================================
+
+# Lista negra, no lista blanca: excluir lo que no se necesita es más seguro que
+# permitir solo lo que sí, porque `go build` necesita PRESENTES go.mod y go.sum
+# para resolver y verificar el grafo de módulos aunque solo se compile el
+# paquete raíz. Una lista blanca que omitiera go.sum dejaría el build roto por
+# una ausencia, no por un sobrante. El contexto del build es el directorio
+# sidecar/, así que cada ruta está anclada a ese raíz.
+
+# Caché de compilación local de Go: una carpeta vendor/ arrastrada por `go mod
+# vendor` o un volcado accidental de GOCACHE no participa en el build y solo
+# inflaría el contexto. Su presencia es desconocida pero su exclusión es
+# defensiva y barata.
+/vendor
+
+# Metadatos de repositorio: nada de esto participa en el build ni debe
+# viajar al contexto.
+/.git
+/.github
+
+# Herramientas de colaboración y agencias de este repositorio: contexto
+# muerto para una compilación de Go.
+/.claude
+/.agents
+/.ai
+/worktrees
+/kitty-specs
+/scripts
+
+# Fuera del módulo Go: el workspace Rust y la documentación. Una compilación
+# del sidecar no los necesita para nada y empaquetarlos inflaría el contexto
+# sin ganancia. Se mantienen los anclajes explícitos aunque ningún archivo
+# del workspace Rust viva dentro del contexto sidecar/, porque un .dockerignore
+# cuya intención sea inequívoca se lee solo y no necesita que el lector
+# recuerde dónde termina el contexto de build.
+/crates
+/Cargo.toml
+/Cargo.lock
+/rust-toolchain.toml
+/target
+/docs
+
+# Documentación de nivel superior (*.md): aunque sidecar/ no contiene
+# actualmente ningún archivo .md, se excluyen por convención del repositorio
+# (mismo criterio que el .dockerignore raíz) para que un README que aparezca
+# aquí en el futuro no se filtre por accidente.
+*.md
+
+# Datos de inquilinos y secretos: nunca deben entrar en el contexto ni en
+# ninguna capa de la imagen (invariante 6 de HEX-065). Las credenciales y la
+# configuración llegan solo por variables de entorno en tiempo de ejecución.
+*.db
+*.db-wal
+*.db-shm
+.env
+.env.*
+.aider*
+
+# Binario de una build local previa del sidecar: si existe en el árbol, no
+# aporta a un build limpio desde código fuente y contaminaría el contexto
+# con un ejecutable de plataforma probablemente incompatible con el builder.
+/hexcell-sidecar
