@@ -1,0 +1,34 @@
+# Lista negra, no lista blanca: excluir lo que no se necesita es más seguro que
+# permitir solo lo que sí, porque cargo necesita PRESENTE el manifiesto de los ocho
+# crates del workspace (crates/*/Cargo.toml, el Cargo.toml raíz y Cargo.lock) para
+# resolver el grafo aunque solo se compile -p hexcell. Una lista blanca que olvidara
+# un manifiesto dejaría el build roto por una ausencia, no por un sobrante.
+
+# Caché de compilación (~6-9 GB local) y metadatos de repositorio: nada de esto
+# participa en el build ni debe viajar al contexto.
+/target
+/.git
+/.github
+
+# Herramientas de colaboración y agencias de este repositorio: contexto muerto.
+/.claude
+/.agents
+/.ai
+/worktrees
+/kitty-specs
+
+# Fuera del workspace Rust: documentación, operación y el sidecar Go, que se empaqueta
+# en su propia imagen (tarea 2 de la etapa A-6), nunca en esta.
+/docs
+/sidecar
+/scripts
+*.md
+
+# Datos de inquilinos y secretos: nunca deben entrar en el contexto ni en ninguna capa
+# de la imagen (invariante 5). Las credenciales llegan solo por variables de entorno.
+*.db
+*.db-wal
+*.db-shm
+.env
+.env.*
+.aider*
