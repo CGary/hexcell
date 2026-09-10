@@ -41,3 +41,4 @@ go.work.sum
 !.ai/tasks/failed/.gitkeep
 !.ai/tasks/inbox/.gitkeep
 .ai/reports/
+.ai/fleet-control.json
