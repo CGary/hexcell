@@ -1,0 +1,113 @@
+task_id: HEX-064
+summary: >
+  Multi-stage core Dockerfile: rust:1.92-alpine build stage (musl, compiles -p hexcell with the
+  existing release profile), alpine:3.x final stage with only the binary, plus .dockerignore.
+affected_files:
+  - Dockerfile
+  - .dockerignore
+symbols:
+  - "etapa constructor: FROM rust:1.92-alpine AS constructor"
+  - "etapa final: FROM alpine:3.x AS final"
+  - "ENTRYPOINT [\"/usr/local/bin/hexcell\"]"
+dependencies:
+  - Cargo.toml
+  - rust-toolchain.toml
+  - crates/hexcell/Cargo.toml
+  - crates/hexcell-storage/Cargo.toml
+  - crates/hexcell/src/configuracion.rs
+  - crates/hexcell-storage/src/migraciones.rs
+  - .gitignore
+test_scenarios:
+  - statement: A `docker build` against the new Dockerfile completes without error on Docker
+      29.7.2, using an Alpine/musl build stage and an alpine:3.x final stage.
+    covers: ["AC-1"]
+  - statement: A container started from the built image executes the hexcell entrypoint on the
+      musl base with no missing dynamic library or interpreter error; the container stays running
+      past a short grace period and its stdout log shows the persistence-opened line, proving the
+      musl-compiled binary (including bundled SQLite via rusqlite and ring via rustls) actually runs,
+      not just that the Dockerfile lints clean.
+    covers: ["AC-2"]
+  - statement: The build context (filtered by .dockerignore) and the final image never contain
+      *.db, *.db-wal, *.db-shm, or .env* files, and the context excludes target/ and .git/.
+    covers: ["AC-3"]
+strategy:
+  - step: 1
+    action: >
+      Design .dockerignore as a blocklist (not an allowlist, to avoid accidentally starving
+      `cargo build` of a workspace member manifest): exclude /target (build cache, ~6-9 GB
+      locally), .git, .github, .claude, .agents, .ai, /worktrees, docs, kitty-specs, sidecar,
+      scripts, *.md, *.db, *.db-wal, *.db-shm, .env, .env.*, .aider*. Keep every crates/*/Cargo.toml,
+      root Cargo.toml/Cargo.lock, and rust-toolchain.toml in the context: cargo needs every
+      workspace member's manifest present to resolve the graph even when only -p hexcell is built.
+    files:
+      - .dockerignore
+  - step: 2
+    action: >
+      Write the Dockerfile build stage named "constructor": FROM rust:1.92-alpine (matches
+      rust-toolchain.toml's pinned channel exactly, avoiding a second toolchain resolution inside
+      the container); apk add --no-cache musl-dev (musl-gcc itself is already on this image per
+      the orchestrator's verified fact, but the C headers rusqlite's bundled feature and ring both
+      need at compile time are not guaranteed present); COPY the filtered context; RUN cargo build
+      --release -p hexcell, which compiles only hexcell and its path-dependency graph
+      (hexcell-core, hexcell-storage, hexcell-canal-simulado, hexcell-canal-whatsmeow), never
+      hexcell-admin, hexcell-canal-contrato, or hexcell-meta. Uses the workspace's
+      [profile.release] exactly as committed; this task does not add cargo flags that retune it.
+    files:
+      - Dockerfile
+  - step: 3
+    action: >
+      Write the Dockerfile final stage named "final": FROM alpine:3.x; COPY --from=constructor the
+      compiled /usr/local/bin/hexcell binary only, nothing else from the build stage (no cargo
+      registry, no target/ intermediate objects, no toolchain). Do not apk add ca-certificates —
+      TLS trust roots are already compiled in via rustls + webpki-tokio (invariant 3), so adding the
+      package would be dead weight against NFR-01's per-image budget. ENTRYPOINT
+      ["/usr/local/bin/hexcell"]; no CMD default args, since the binary reads all its configuration
+      from environment variables at process start (HEXCELL_ID_CELULA and HEXCELL_RUTA_DATOS are
+      mandatory, the rest optional with safe loopback defaults).
+    files:
+      - Dockerfile
+  - step: 4
+    action: >
+      Add didactic Spanish comments (WHY, never WHAT) at each non-obvious decision point: why
+      alpine+musl over glibc/distroless, why ca-certificates is deliberately absent, why the
+      release profile is inherited unchanged and not retuned here, and why no secret or config
+      value is ever baked into a layer (credentials arrive only via environment variables at
+      runtime, per this task's invariant 4 and the project-wide adr-0028 discipline).
+    files:
+      - Dockerfile
+      - .dockerignore
+  - step: 5
+    action: >
+      Verify by real mutation only: an actual `docker build` (no static Dockerfile lint substitutes
+      for it), followed by starting a container against a throwaway host data directory and the two
+      mandatory environment variables, confirming the container is still running past a short grace
+      window and that its log contains the exact persistence-opened line main.rs prints after
+      GestorDePools::abrir succeeds. This is the strongest test reachable without the sidecar or a
+      real WhatsApp channel, both of which stage A-6 task 1 explicitly does not need.
+risks:
+  - "musl build risk (assignment-flagged, genuinely open): rusqlite 0.39's bundled feature and
+    ring (pulled in via hyper-rustls/rustls) both compile C code inside the build stage. No
+    build.rs exists anywhere in the eight-crate workspace (verified with a repo-wide search), which
+    rules out the classic glibc-assuming-build-script failure mode, but whether musl-dev alone is
+    sufficient (vs. also needing build-base/make/perl) is unconfirmed until the real `docker build`
+    in verify.commands actually runs — this is exactly why verification is by mutation, not lint."
+  - "The hexcell binary has no --version/--help fast path and reads exactly two mandatory
+    environment variables (HEXCELL_ID_CELULA; HEXCELL_RUTA_DATOS, which must already be an
+    existing directory) with no defaults; running the image without both causes an immediate,
+    controlled exit via ExitCode::FAILURE on stderr, which is expected behavior, not a musl/runtime
+    defect. The smoke verify command supplies both plus a mounted temporary directory."
+  - "Default health (8081) and admin (8082) listeners bind to 127.0.0.1 only by design (loopback,
+    documented in configuracion.rs); this task does not change that default (composition and
+    inter-container reachability are stage A-6 tasks 5-6), so the smoke verify checks process
+    liveness via container state plus a log line, never an HTTP probe from outside the container."
+  - "Final image size against the <=80 MB per-cell NFR-01 budget is intentionally NOT asserted by
+    this task's verification; AC-1..AC-3 require correctness and runnability, not a size bound, and
+    linking/size tuning is explicitly stage A-6 task 3."
+  - "rust-toolchain.toml (channel 1.92.0) stays inside the build context by design; if the chosen
+    rust:*-alpine tag's default toolchain ever drifts from 1.92.0, rustup will try to reconcile it
+    during `docker build`, which needs registry reachability — an accepted cost, since pulling both
+    base images already requires network access."
+  - "Prior-failure lookup and HSME semantic search both returned no relevant matches for this task:
+    .ai/tasks/failed/ is empty, and hsme-cli search-fuzzy against the quorum-scoped project surfaced
+    only unrelated Quorum-tool-internal FLEET/MAINT entries, not any HexCell Docker-packaging
+    precedent. Advisory-only, does not block."

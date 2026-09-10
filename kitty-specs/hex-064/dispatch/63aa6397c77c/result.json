@@ -1,0 +1,42 @@
+{
+  "schema_version": "fleet-dispatch-result/v1",
+  "dispatch_id": "63aa6397c77c",
+  "task_id": "HEX-064-new-spec",
+  "agent": "opencode_go",
+  "model": "opencode-go/deepseek-v4-flash",
+  "phase": "execute",
+  "started_at": "2026-09-10T02:41:21Z",
+  "ended_at": "2026-09-10T02:46:24Z",
+  "duration_s": 303.207071758,
+  "exit_code": 0,
+  "timed_out": false,
+  "killed": false,
+  "outcome": {
+    "class": "attempt",
+    "noop": false,
+    "cause": null,
+    "blocked": null
+  },
+  "diff": {
+    "empty": false,
+    "indeterminate": false,
+    "files_changed": 2,
+    "insertions": 91,
+    "deletions": 0
+  },
+  "forensic_ref": "refs/fleet/HEX-064-new-spec/attempt-1-opencode-go-deepseek-v4-flash",
+  "baseline_commit": "c487bf7682fbfd1b2be2018937064e3cee322f35",
+  "applied": true,
+  "usage": {
+    "source": "none",
+    "tokens_in": null,
+    "tokens_out": null,
+    "requests": null
+  },
+  "notes_path": "dispatch/63aa6397c77c/notes.txt",
+  "trace_events": [
+    "dispatch_started",
+    "dispatch_finished"
+  ],
+  "reset_error": null
+}

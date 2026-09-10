@@ -1,0 +1,26 @@
+{
+  "commands": [
+    {
+      "command": "test -f Dockerfile \u0026\u0026 test -f .dockerignore",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "exit 0"
+    },
+    {
+      "command": "docker build --pull -f Dockerfile -t hexcell-core:hex-064-smoke .",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "imagen b82f1142428b construida; etapas constructor(rust:1.92-alpine)+final(alpine:3)"
+    },
+    {
+      "command": "docker run + comprobacion de proceso vivo y linea de persistencia en el log",
+      "duration_s": 3,
+      "exit_code": 0,
+      "output_excerpt": "RUNNING=true; log: 'persistencia dual abierta y migrada', 'almacen de identidad del adaptador abierto y migrado', salud en 127.0.0.1:8081"
+    }
+  ],
+  "executed_at": "2026-09-09T19:30:00Z",
+  "overall_result": "passed",
+  "summary": "3/3 exit 0 sobre b8932f2. 91 lineas de 220, 2 archivos de 2. Mutacion real: la imagen construye y el binario arranca sobre musl.",
+  "task_id": "HEX-064"
+}

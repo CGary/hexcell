@@ -1,0 +1,60 @@
+task_id: HEX-064
+summary: Write the multi-stage core Dockerfile (Alpine/musl build stage, minimal alpine final stage with only the binary and data).
+goal: >
+  Add a multi-stage Dockerfile for the hexcell core binary crate (crates/hexcell). The build stage
+  uses a rust:*-alpine image, which provides musl-gcc needed because rusqlite's bundled feature
+  compiles SQLite in C and ring also needs a C compiler. The final stage runs on alpine:3.x and
+  contains only the compiled hexcell binary and its runtime data, not the toolchain or build
+  dependencies. The build uses the workspace's existing size-oriented [profile.release] as-is.
+invariants:
+  - The final image contains only the hexcell binary and its required runtime data, never the Rust
+    toolchain, cargo registry, or intermediate build artifacts.
+  - The build stage uses the existing [profile.release] settings in the root Cargo.toml unchanged
+    (opt-level="z", lto=true, codegen-units=1, strip=true, panic="abort"); this task does not retune
+    linking or size flags, that belongs to a later task.
+  - "The final image does not install ca-certificates: TLS trust roots are compiled in via rustls +
+    hyper-rustls with the webpki-tokio feature."
+  - No secrets, keys, or credentials are baked into any image layer; the process receives
+    credentials only via environment variables at runtime.
+  - No *.db, *.db-wal, *.db-shm, or .env* file is ever copied into the build context or the image.
+acceptance:
+  - id: AC-1
+    statement: The core Dockerfile builds successfully with Docker 29.7.2 using an Alpine/musl build
+      stage and an alpine:3.x final stage.
+    given: the repository root containing the new Dockerfile for crates/hexcell
+    when: a `docker build` is run against it targeting the hexcell binary
+    then: the build completes without error and produces a runnable image
+  - id: AC-2
+    statement: The binary produced by the final image actually executes on the musl-based final
+      stage, proving runtime compatibility rather than just a clean lint of the Dockerfile.
+    given: the image built in AC-1
+    when: a container is started from that image and the hexcell binary's entrypoint runs
+    then: the process starts on the musl base with no missing dynamic library or interpreter errors
+  - id: AC-3
+    statement: The build context and final image exclude repository artifacts that must never be
+      shipped or bloat the image.
+    given: the new Dockerfile together with an accompanying .dockerignore
+    when: the image is built
+    then: the resulting image contains no *.db, *.db-wal, *.db-shm, or .env* files, and the build
+      context excludes target/ and .git/
+risk: low
+non_goals:
+  - Go sidecar Dockerfile (stage A-6 task 2).
+  - Linker/size tuning beyond using the existing release profile as-is (task 3).
+  - "Container hardening: non-root user, read-only rootfs, dropped capabilities, shell removal (task 4)."
+  - "Cell composition: shared network and shared volume between core and sidecar (tasks 5-6)."
+  - Signal propagation verification (task 7).
+  - CI image build and publish (task 18).
+  - Writing or amending docs/adr/adr-0007-imagen-y-aislamiento.md, reserved for the whole stage
+    (tasks 1-6), not for this task alone.
+constraints:
+  - Build stage base image is rust:*-alpine (musl-gcc present, needed for rusqlite's bundled C
+    compilation and for ring).
+  - Final stage base image is alpine:3.x.
+  - The Docker build must compile only what the hexcell binary needs from the eight-crate workspace,
+    not build unrelated crates unnecessarily.
+  - No new runtime dependencies beyond what the workspace already declares.
+  - Never version *.db, *.db-wal, *.db-shm, or .env* files; credentials reach the process only via
+    environment variables.
+  - Repository content (comments in the Dockerfile, if any, and any accompanying doc text) must be
+    in Spanish per project convention; comments must explain why, not what.

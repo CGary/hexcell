@@ -1,0 +1,93 @@
+task_id: HEX-064
+summary: >
+  Write the multi-stage core Dockerfile (Alpine/musl build, minimal Alpine final stage) and its
+  .dockerignore; verify by a real docker build plus executing the produced binary on musl.
+goal: >
+  Add crates/hexcell's Dockerfile: a rust:1.92-alpine build stage that compiles only -p hexcell
+  with the workspace's existing [profile.release] unchanged, and an alpine:3.x final stage that
+  ships only the compiled binary, no toolchain, no ca-certificates (TLS roots are compiled in).
+  Add the matching .dockerignore so the build context never carries target/, .git, *.db*, or
+  .env*. No other file changes.
+read:
+  - Cargo.toml
+  - rust-toolchain.toml
+  - .gitignore
+  - crates/hexcell/Cargo.toml
+  - crates/hexcell-storage/Cargo.toml
+  - crates/hexcell/src/configuracion.rs
+  - crates/hexcell-storage/src/migraciones.rs
+  - docs/PRD.md
+  - docs/STATUS.md
+touch:
+  - Dockerfile
+  - .dockerignore
+forbid:
+  files:
+    - Cargo.toml
+    - Cargo.lock
+    - rust-toolchain.toml
+    - "crates/**"
+    - "sidecar/**"
+    - "docs/**"
+    - "docs/adr/adr-0007-imagen-y-aislamiento.md"
+    - "docker-compose*.yml"
+    - "compose*.yml"
+    - ".github/**"
+  behaviors:
+    - "Do not install ca-certificates or any CA bundle package in the final stage: TLS trust
+      roots are compiled in via rustls + hyper-rustls with the webpki-tokio feature (invariant 3)."
+    - "Do not modify [profile.release] in Cargo.toml or add cargo flags that retune
+      linking/size (opt-level, lto, codegen-units, strip, panic) beyond what already exists;
+      that is stage A-6 task 3."
+    - "Do not add a non-root USER, a read-only rootfs, dropped capabilities, or shell removal in
+      the final stage; that is stage A-6 task 4."
+    - "Do not add a Go build stage, or COPY anything from sidecar/, into this Dockerfile; the
+      sidecar Dockerfile is stage A-6 task 2."
+    - "Do not add a docker-compose file, a shared network, or a shared volume definition between
+      the core and sidecar containers; that is stage A-6 tasks 5-6."
+    - "Do not add a signal-handling wrapper, STOPSIGNAL tuning, or any entrypoint script beyond a
+      plain ENTRYPOINT; ordered-shutdown verification is stage A-6 task 7."
+    - "Do not add any new runtime dependency to any crate's Cargo.toml."
+    - "Do not let any *.db, *.db-wal, *.db-shm, or .env* file enter the build context or any
+      image layer."
+    - "Do not write or amend docs/adr/adr-0007-imagen-y-aislamiento.md; it is reserved for the
+      whole stage (tasks 1-6), not this task alone."
+    - "Do not bake HEXCELL_ID_CELULA, HEXCELL_RUTA_DATOS, or any other configuration/credential
+      value into the image as a default; every value is supplied at container run time only."
+verify:
+  commands:
+    - "test -f Dockerfile && test -f .dockerignore"
+    - "docker build --pull -f Dockerfile -t hexcell-core:hex-064-smoke ."
+    - |
+      set -u
+      DATA_DIR=$(mktemp -d)
+      CONTAINER="hexcell-core-hex-064-smoke-$$"
+      docker run -d --name "$CONTAINER" \
+        -e HEXCELL_ID_CELULA=verificacion-hex-064 \
+        -e HEXCELL_RUTA_DATOS=/datos \
+        -v "$DATA_DIR":/datos \
+        hexcell-core:hex-064-smoke >/dev/null
+      sleep 3
+      RUNNING=$(docker inspect -f "{{.State.Running}}" "$CONTAINER" 2>/dev/null || echo false)
+      STATUS=1
+      if [ "$RUNNING" = "true" ] && docker logs "$CONTAINER" 2>&1 | grep -q "persistencia dual abierta y migrada"; then
+        STATUS=0
+      else
+        echo "verificacion fallida: el contenedor no sigue vivo o falta la linea de persistencia"
+        docker logs "$CONTAINER" 2>&1 || true
+      fi
+      docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
+      docker rmi hexcell-core:hex-064-smoke >/dev/null 2>&1 || true
+      rm -rf "$DATA_DIR"
+      exit "$STATUS"
+acceptance:
+  human_gate: true
+limits:
+  max_files_changed: 2
+  max_diff_lines: 220
+execution:
+  mode: worktree_edit
+  branch: ai/HEX-064
+retry_policy:
+  max_attempts: 2
+  escalate_after: 1

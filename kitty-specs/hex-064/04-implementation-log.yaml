@@ -1,0 +1,4 @@
+entries: []
+summary: |
+    Write the multi-stage core Dockerfile (Alpine/musl build, minimal Alpine final stage) and its .dockerignore; verify by a real docker build plus executing the produced binary on musl.
+task_id: HEX-064
