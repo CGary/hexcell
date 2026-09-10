@@ -8,7 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **Language rule**: ALL repository content is in **Spanish** — docs, code identifiers, comments, and commit messages (conventional commits: `docs:`, `feat:`, etc., never with AI attribution). This file is the single deliberate exception, kept in English for instruction-following efficiency.
 
-**Current state**: do not trust any hardcoded stage claim — check `docs/STATUS.md` and `git log` first. As of 2026-08-27, stages A-1 through A-4 are closed and A-5 (knowledge engine, Shadow DB) is in progress. Task artifacts are archived under `kitty-specs/hex-NNN/`; work branches follow `ai/<ID>` (Quorum tasks) and `feature/<short-description>` (see `CONTRIBUTING.md`).
+**Current state**: do not trust any hardcoded stage claim — check `docs/STATUS.md` and `git log` first. As of 2026-09-09, stages A-1 through A-5 are closed (A-5, the knowledge engine with Shadow DB and epochs, closed with HEX-063) and A-6 (cell packaging and operations CLI) is in progress. Task artifacts are archived under `kitty-specs/hex-NNN/`; work branches follow `ai/<ID>` (Quorum tasks) and `feature/<short-description>` (see `CONTRIBUTING.md`).
 
 ## Commands
 
