@@ -1,0 +1,127 @@
+task_id: HEX-063
+summary: "Add an admin listener module to the hexcell binary that triggers ejecutar_ingesta in a background task and reports its phase via a single in-process state value."
+
+affected_files:
+  - crates/hexcell/src/admin.rs
+  - crates/hexcell/src/configuracion.rs
+  - crates/hexcell/src/apagado.rs
+  - crates/hexcell/src/lib.rs
+  - crates/hexcell/src/main.rs
+  - crates/hexcell/tests/admin_http.rs
+  - crates/hexcell/tests/comun/mod.rs
+  - crates/hexcell/tests/configuracion.rs
+  - docs/STATUS.md
+  - docs/bitacora-de-descartes.md
+  - docs/plan/fase-a-5-conocimiento-shadow-db.md
+
+symbols:
+  - "admin::FaseDeIngesta (new enum: Inactiva | EnCurso | Finalizada{resumen} | Fallida{motivo})"
+  - "admin::EstadoDeAdmin (Application Service: owns the single job state)"
+  - "admin::EstadoDeAdmin::intentar_iniciar (compare-and-set; SOLE source of the 409 decision)"
+  - "admin::EstadoDeAdmin::registrar_desenlace (terminal transition out of EnCurso)"
+  - "admin::EstadoDeAdmin::fase_actual (cloned snapshot read)"
+  - "admin::RutaAdmin (Value Object: DispararIngesta | ConsultarEstado | NoEncontrada)"
+  - "admin::enrutar_admin (pure sync fn of (&Method, &str); preserves the salud.rs testability property)"
+  - "admin::DocumentoEntrante (Deserialize DTO; converts into hexcell_storage::DocumentoDeIngesta)"
+  - "admin::respuesta_de_fase (pure sync fn FaseDeIngesta -> Response)"
+  - "admin::acumular_cuerpo_acotado (size_hint pre-check + Limited streaming; yields 413)"
+  - "admin::atender_peticion_de_admin (async glue: route, body, spawn)"
+  - "admin::servir_admin (listener; mirrors salud::servir_salud)"
+  - "admin::LIMITE_DE_CUERPO_ADMIN_POR_DEFECTO"
+  - "admin::CONFIGURACION_DE_FRAGMENTACION_DE_INGESTA (named constant, not env var)"
+  - "admin::TEXTO_DE_LA_SONDA_POR_DEFECTO / UMBRAL_DE_ACEPTACION_POR_DEFECTO"
+  - "configuracion::HEXCELL_DIRECCION_ADMIN + Configuracion::direccion_admin"
+  - "configuracion::HEXCELL_LIMITE_DE_CUERPO_ADMIN_BYTES + Configuracion::limite_de_cuerpo_admin"
+  - "apagado::SenalDeApagado::observador (clones the watch receiver for debe_apagar)"
+
+dependencies:
+  - crates/hexcell/src/ingesta.rs
+  - crates/hexcell/src/embeddings.rs
+  - crates/hexcell/src/salud.rs
+  - crates/hexcell/src/promocion.rs
+  - crates/hexcell/src/registro.rs
+  - crates/hexcell-storage/src/conocimiento.rs
+  - crates/hexcell-core/src/fragmentacion.rs
+  - crates/hexcell/tests/ingesta.rs
+  - crates/hexcell/tests/salud_http.rs
+  - crates/hexcell/Cargo.toml
+
+test_scenarios:
+  - statement: "POST with a valid DocumentoEntrante JSON body on an idle cell returns 202 and a body naming the initial phase, and the background ingestion actually starts."
+    covers: ["AC-1"]
+  - statement: "A second POST while the phase is EnCurso returns 409 and does not spawn a second job; the 409 is produced by intentar_iniciar's compare-and-set, not by a separate flag."
+    covers: ["AC-2"]
+  - statement: "GET before any POST reports the never-run phase; GET during a run reports EnCurso; GET after completion reports the terminal phase carrying the ResumenDeIngesta counters."
+    covers: ["AC-3"]
+  - statement: "A POST whose Content-Length exceeds the configured cap is answered 413 before any body byte is buffered, and no job starts."
+    covers: ["AC-4"]
+  - statement: "A chunked POST without Content-Length that exceeds the cap is answered 413 once the running total crosses it, never buffering more than cap plus one frame."
+    covers: ["AC-4"]
+  - statement: "With HEXCELL_DIRECCION_ADMIN and HEXCELL_DIRECCION_SALUD bound to distinct loopback ports, the admin routes answer only on the admin port and /health/* only on the health port."
+    covers: ["AC-5"]
+  - statement: "A malformed HEXCELL_DIRECCION_ADMIN is rejected by Configuracion::desde_fuente with ValorInvalido naming that variable, exactly as HEXCELL_DIRECCION_SALUD is; an absent one yields the loopback default."
+    covers: ["AC-5"]
+  - statement: "Each of Completa, Parcial, DetenidaPorApagado and SinIncrustaciones maps to a distinct reported phase payload, asserted as a pure unit test over registrar_desenlace and respuesta_de_fase without opening a socket."
+    covers: ["AC-6"]
+  - statement: "enrutar_admin is exercised as a pure function over (Method, path) for both routes, a wrong method and an unknown path, with no socket and no body."
+    covers: ["AC-5"]
+  - statement: "Existing salud_http.rs, configuracion.rs and ingesta.rs suites keep passing unchanged under cargo test --workspace."
+
+strategy:
+  - step: 1
+    action: "Add the two configuration entries as Value Objects: HEXCELL_DIRECCION_ADMIN (SocketAddr, loopback 127.0.0.1:8082 default, parsed and validated by literally the same shape as the direccion_salud block at configuracion.rs:382-391) and HEXCELL_LIMITE_DE_CUERPO_ADMIN_BYTES (usize, 1 MiB default). Both are read inside desde_fuente and stored on Configuracion; no process environment is touched, per adr-0028."
+    files:
+      - crates/hexcell/src/configuracion.rs
+  - step: 2
+    action: "Define the job lifecycle Entity in a new admin module: FaseDeIngesta with exactly four variants (Inactiva, EnCurso, Finalizada{resumen: ResumenDeIngesta}, Fallida{motivo: String}). Finalizada carries the whole ResumenDeIngesta so AC-6's four DesenlaceDeIngesta outcomes are reported through resumen.desenlace instead of being duplicated as extra phase variants. Fallida stores ErrorDeIngesta's Display string because ErrorDeIngesta is not Clone."
+    files:
+      - crates/hexcell/src/admin.rs
+  - step: 3
+    action: "Wrap that phase in EstadoDeAdmin { fase: std::sync::Mutex<FaseDeIngesta> } shared as Arc. Chosen over tokio::sync::Mutex (the guard never crosses an .await, matching the salud.rs module rule) and over ArcSwap (arc-swap is a workspace dependency but NOT a dependency of crates/hexcell, and a compare-and-set loop is clumsier than one critical section). intentar_iniciar performs the check-and-transition in a SINGLE critical section so the 409 and the entry into EnCurso cannot disagree; registrar_desenlace is the only exit."
+    files:
+      - crates/hexcell/src/admin.rs
+  - step: 4
+    action: "Keep the routing decision testable without a socket: split the handler into pure sync seams enrutar_admin(&Method, &str) -> RutaAdmin and respuesta_de_fase(&FaseDeIngesta) -> Response, plus the pure EstadoDeAdmin methods. Only the thin async glue that awaits the body and spawns is socket-bound. This preserves, rather than drops, the property salud.rs:78-79 established."
+    files:
+      - crates/hexcell/src/admin.rs
+  - step: 5
+    action: "Implement the bounded body as an Application Service: first reject on peticion.body().size_hint().upper() exceeding the cap, so a declared-length overrun is a 413 decided before reading a byte; otherwise stream through http_body_util::Limited and 413 as soon as the running total crosses the cap. Deserialize into the local DocumentoEntrante DTO and convert into DocumentoDeIngesta, stamping actualizado_ms from SystemTime::now() when the client omits it."
+    files:
+      - crates/hexcell/src/admin.rs
+  - step: 6
+    action: "Expose SenalDeApagado::observador returning a clone of the inner watch::Receiver<bool>, taken in main BEFORE senal_de_apagado is moved into motor.ejecutar. The background task's debe_apagar closure is a synchronous borrow of that receiver, which is exactly the Fn() -> bool that ejecutar_ingesta expects."
+    files:
+      - crates/hexcell/src/apagado.rs
+  - step: 7
+    action: "Run ejecutar_ingesta inline inside a tokio::task::spawn on the same current_thread runtime, WITHOUT spawn_blocking, extending the precedent documented at promocion.rs:1-8. Justification to record in the module doc: the synchronous storage writes are per-batch escribir_lote_de_fragmentos calls bounded by tamano_de_lote, not one monolithic write, and the dominant latency is the awaited embeddings round-trip, so the engine regains the thread at every batch boundary. On completion the task calls registrar_desenlace."
+    files:
+      - crates/hexcell/src/admin.rs
+  - step: 8
+    action: "Wire the composition root: build ProveedorDeEmbeddingsDeCelula from configuracion.embeddings with a three-way match mirroring the existing inference provider match, construct ServicioDeEmbeddings::nuevo(proveedor, Arc::clone(&repositorio)) BEFORE repositorio is moved into Motor::nuevo, build EstadoDeAdmin, bind servir_admin with the same failure discipline and log line as servir_salud (admin_vinculada), and add the admin future as a third arm to BOTH tokio::select! blocks (simulado and whatsmeow). Shutdown deliberately does NOT wait for the ingestion task."
+    files:
+      - crates/hexcell/src/main.rs
+      - crates/hexcell/src/lib.rs
+  - step: 9
+    action: "Extend the shared test helpers with a raw POST over TcpStream (no HTTP client crate, per the comun/mod.rs rule) and with capture of the admin_vinculada address alongside salud_vinculada, then write tests/admin_http.rs for AC-1..AC-5 and the pure unit tests for AC-6 and the routing seam; extend tests/configuracion.rs for the two new entries via FuenteEnMemoria."
+    files:
+      - crates/hexcell/tests/comun/mod.rs
+      - crates/hexcell/tests/admin_http.rs
+      - crates/hexcell/tests/configuracion.rs
+  - step: 10
+    action: "Record the documentary consequences: mark plan task 10 done, update STATUS.md, and log the discards from step 3, step 5 and step 7 as D-39 onward in the bitacora in the same commit that makes them, each with its reason and reopening condition."
+    files:
+      - docs/STATUS.md
+      - docs/bitacora-de-descartes.md
+      - docs/plan/fase-a-5-conocimiento-shadow-db.md
+
+risks:
+  - "SPEC-VS-REALITY: 00-spec.yaml says DocumentoDeIngesta travels in the POST body, but hexcell-storage has NO serde dependency and conocimiento.rs:26-28 documents on purpose that this type stays 'libre de decoraciones JSON o serializadores externos, asegurando que el modelo de datos de almacenamiento no quede condicionado por el formato de transporte de red'. Deriving Deserialize on it would contradict that written intent and add serde to a crate kept deliberately thin. Resolution: a local DocumentoEntrante DTO in crates/hexcell converts into DocumentoDeIngesta. The spec is NOT edited."
+  - "SPEC-VS-REALITY: the dispatch brief calls this the LAST task of stage A-5, but docs/plan/fase-a-5-conocimiento-shadow-db.md lists tasks 11 (switchover stress test) and 12 (backup interaction) after it. Closing A-5 in STATUS.md on the strength of this task alone would be wrong."
+  - "SCOPE DISCOVERY, the main sizing driver: main.rs today mentions neither embeddings nor ingesta, and grep confirms ServicioDeEmbeddings::nuevo and ejecutar_ingesta are constructed ONLY from crates/hexcell/tests/. This task is therefore the first production wiring of the entire knowledge pipeline into the running cell, not merely an HTTP route. The contract limits are sized from that, not from the endpoint alone."
+  - "ejecutar_ingesta also requires ConfiguracionDeFragmentacion, texto_de_la_sonda and umbral_de_aceptacion, for which NO configuration entry and NO Default impl exist anywhere in the tree; today's tests hardcode them. This blueprint makes them named constants in the admin module rather than four more environment variables, to keep the diff bounded and because the spec authorized exactly two new configuration doors. Reopening condition: the first pilot that needs a domain-specific probe text turns them into HEXCELL_* entries."
+  - "current_thread runtime: the spawned ingestion shares one thread with the message engine, the health listener and the admin listener. Each escribir_lote_de_fragmentos call blocks all of them for the duration of one batch write. Bounded by tamano_de_lote and by the endpoint being an operator-triggered manual action, but NOT measured. Reopening condition: if the switchover stress test of plan task 11 shows message latency regressing, revisit with spawn_blocking (available today: crates/hexcell enables tokio's rt feature, though NOT rt-multi-thread) which would first require restructuring ejecutar_ingesta, since an async fn cannot be moved into spawn_blocking wholesale."
+  - "Shutdown abandons the ingestion task on purpose: main's tokio::select! returns when motor.ejecutar completes and the runtime is torn down at the end of main. Waiting would blow the 20 s HEXCELL_LIMITE_DE_DRENAJE_SEGUNDOS budget, since an ingestion runs for minutes. This is safe for the two-phase budget accounting because debe_apagar is polled at the batch boundary, which ingesta.rs:150-154 documents as precisely the point where no reservation is outstanding. RESIDUAL HAZARD: if teardown lands mid-batch, between reservar_presupuesto_de_ingesta and conciliar_presupuesto, that single batch's reservation is neither reconciled nor released, leaking one batch's worth of budget. Bounded to one batch, and it must be named in the module doc rather than left implicit."
+  - "The phase is in-process only, so a restart reports Inactiva while a shadow DB from an abandoned run may exist on disk. This is accepted by the spec, and it is not corrupting: ConstructorDeConocimientoEnSombra::crear destroys any previous shadow file, and knowledge_live.db is never touched by this path."
+  - "main.rs holds TWO separate tokio::select! blocks, one per channel arm; the admin future must be added to both or the endpoint silently does not serve on the whatsmeow channel. Easy omission, and no existing test would catch it."
+  - "No prior failed task overlaps these files: .ai/tasks/failed/ is empty, so there is no recorded failure context to carry forward."
+  - "adr-0028 forbids std::env::set_var/remove_var anywhere under crates/hexcell and CI greps for it (.github/workflows/ci.yml:76-77); the new configuration tests must drive FuenteEnMemoria, and the integration tests must pass variables through Command::env as comun/mod.rs already does."

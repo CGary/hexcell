@@ -1,0 +1,19 @@
+DONE: Implemented internal admin HTTP endpoint on its own listener with background ingestion triggering and phase polling.
+
+=== Fin de fase: Implementación ===
+
+Resultado: DONE
+Resumen técnico: Se implementó el listener administrativo HTTP interno (`POST /admin/ingesta` y `GET /admin/ingesta`) en `crates/hexcell/src/admin.rs`, con compuerta atómica de exclusión mutua 409 Conflict, límite streaming de cuerpo 413 Payload Too Large, ejecución asíncrona de `ejecutar_ingesta` en segundo plano con `SenalDeApagado::observador`, integración de futures HTTP combinados en `main.rs`, y registro de descartes D-39 a D-42.
+
+Artefactos producidos:
+- Diff committeado en la rama `ai/HEX-063-new-spec` (`worktrees/HEX-063-new-spec/`)
+- `.ai/tasks/active/HEX-063-new-spec/04-implementation-log.yaml`
+
+No hay transición de estado: el worktree y la rama siguen iguales.
+
+Pasos siguientes (los despacha el orquestador, NO yo):
+1. [Obligatorio] `/q-verify HEX-063-new-spec` — corre `verify.commands` del contrato dentro del worktree y escribe `05-validation.json`.
+
+Si querés volver atrás:
+- [WORKTREE:HEX-063-new-spec] `git -C worktrees/HEX-063-new-spec reset --hard HEAD~1` — descarta el último commit del worktree.
+- [ROOT] `quorum task back HEX-063-new-spec` — borra worktree y rama (perdés todos los commits no mergeados).

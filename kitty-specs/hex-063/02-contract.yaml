@@ -1,0 +1,128 @@
+task_id: HEX-063
+summary: "Add crates/hexcell/src/admin.rs with its own listener, two config entries, a four-variant phase enum and the first production wiring of ejecutar_ingesta into main."
+goal: >
+  Expose an internal administrative HTTP route on its own loopback listener that starts
+  ejecutar_ingesta in a background task and reports the phase of the current-or-last run.
+  Exactly one job per cell: a POST while one runs answers 409, decided by the same single
+  in-process state value that the GET reads. The JSON body is capped in bytes and answered
+  413 before it is buffered. The chain stops at ingestion: no promotion, validation, drain
+  or purge. All new code lives as a module of the hexcell binary crate.
+
+read:
+  - crates/hexcell/src/salud.rs
+  - crates/hexcell/src/ingesta.rs
+  - crates/hexcell/src/promocion.rs
+  - crates/hexcell/src/embeddings.rs
+  - crates/hexcell/src/registro.rs
+  - crates/hexcell/Cargo.toml
+  - crates/hexcell-storage/src/conocimiento.rs
+  - crates/hexcell-core/src/fragmentacion.rs
+  - crates/hexcell/tests/salud_http.rs
+  - crates/hexcell/tests/ingesta.rs
+  - docs/plan/fase-a-5-conocimiento-shadow-db.md
+  - docs/bitacora-de-descartes.md
+  - CLAUDE.md
+
+touch:
+  - crates/hexcell/src/admin.rs
+  - crates/hexcell/src/configuracion.rs
+  - crates/hexcell/src/apagado.rs
+  - crates/hexcell/src/lib.rs
+  - crates/hexcell/src/main.rs
+  - crates/hexcell/tests/admin_http.rs
+  - crates/hexcell/tests/comun/mod.rs
+  - crates/hexcell/tests/configuracion.rs
+  - docs/STATUS.md
+  - docs/bitacora-de-descartes.md
+  - docs/plan/fase-a-5-conocimiento-shadow-db.md
+
+forbid:
+  files:
+    - crates/hexcell-core/**
+    - crates/hexcell-storage/**
+    - crates/hexcell-admin/**
+    - crates/hexcell-meta/**
+    - crates/hexcell-canal-simulado/**
+    - crates/hexcell-canal-whatsmeow/**
+    - crates/hexcell-canal-contrato/**
+    - sidecar/**
+    - crates/hexcell/src/ingesta.rs
+    - crates/hexcell/src/promocion.rs
+    - crates/hexcell/src/salud.rs
+    - crates/hexcell/Cargo.toml
+    - Cargo.toml
+    - docs/adr/**
+    - .github/workflows/ci.yml
+
+  behaviors:
+    - "Do NOT add any dependency to crates/hexcell/Cargo.toml. serde, serde_json, hyper, hyper-util, http-body-util, bytes and tokio (features rt, macros, net, sync, io-util, time, signal) are already present and are sufficient. arc-swap is a WORKSPACE dependency but is NOT a dependency of crates/hexcell; do not add it."
+    - "Do NOT derive Serialize/Deserialize on hexcell_storage::DocumentoDeIngesta and do not add serde to hexcell-storage. conocimiento.rs:26-28 documents on purpose that this type stays free of transport-format decoration. Use a local DocumentoEntrante DTO in crates/hexcell and convert."
+    - "Do NOT modify ejecutar_ingesta, DesenlaceDeIngesta or ResumenDeIngesta. They are fully implemented and consumed as-is."
+    - "Do NOT introduce an HTTP framework. axum and tiny-http are already discarded for this tree (see crates/hexcell/Cargo.toml and D-17). Follow the hyper 1.x + TokioIo + tokio::task::spawn pattern of servir_salud."
+    - "Do NOT serve the admin route on the health listener, and do NOT reuse direccion_salud. The admin listener has its own SocketAddr entry, defaulting to loopback, never 0.0.0.0."
+    - "Do NOT introduce a job registry, job ids, a queue, or any persistence of job state. Exactly one in-process state value."
+    - "Do NOT chain promotion, integrity validation, drain or purge behind this endpoint."
+    - "Do NOT hold a lock guard across an .await, and do NOT let the 409 be decided anywhere other than the single compare-and-set on the phase value."
+    - "Do NOT buffer the whole body before deciding 413 when Content-Length declares the overrun."
+    - "Do NOT call std::env::set_var or std::env::remove_var anywhere under crates/hexcell (adr-0028, enforced by a permanent CI grep). Configuration tests drive FuenteEnMemoria; integration tests pass variables via Command::env."
+    - "Do NOT add rusqlite to crates/hexcell (adr-0010), and do NOT add any dependency to hexcell-core (adr-0002)."
+    - "Do NOT block process shutdown waiting for the ingestion task; it self-terminates at its next batch boundary via debe_apagar."
+    - "Do NOT create a new workspace crate. What only the binary consumes lives as a module of hexcell."
+    # Enmienda del orquestador (2026-09-09, fase analyze): la regla se conserva, su motivo era falso.
+    # Las tareas 11 y 12 del plan YA estan hechas (HEX-061 y HEX-062), asi que esta es en efecto la
+    # ultima tarea pendiente de A-5, como dice el 00-spec. Cerrar la etapa sigue siendo una decision
+    # aparte de esta tarea: quedan pendientes declarados propios (valor definitivo de la ventana de
+    # retencion de epocas, barrido de reservas huerfanas de presupuesto) que STATUS.md ya registra.
+    - "Do NOT mark stage A-5 complete in docs/STATUS.md. Closing the stage is a separate decision from this task: STATUS.md still records open A-5/A-6 items (the definitive epoch retention window, the orphan budget-reservation sweep). Record this task as done, not the stage."
+    # Enmienda del orquestador (2026-09-09, fase analyze): el blueprint registro como RIESGO que el
+    # futuro del listener admin puede omitirse de una de las dos ramas de CanalSeleccionado, y el
+    # contrato no lo mitigaba en ninguna parte. main.rs tiene DOS bloques tokio::select! (Simulado y
+    # Whatsmeow), cada uno enumerando sus futuros a mano. Omitirlo de uno deja el endpoint inexistente
+    # en ese canal sin que nada falle. La mitigacion correcta es eliminar la duplicacion, no vigilarla.
+    - "The admin listener MUST be wired so that it CANNOT be present in one CanalSeleccionado branch and absent in the other. main.rs today builds servidor_salud once and moves it into an arm of each of the two tokio::select! blocks; adding a second, independent servidor_admin arm reproduces by hand a list that one branch can silently miss. Instead, combine BOTH HTTP surfaces into a SINGLE future built once (a helper that owns both listeners and resolves when either ends), and let each select! arm await only that combined future. After this change main.rs must not call servir_salud directly."
+    # Enmienda del orquestador (2026-09-09, fase analyze): AC-1, tal como esta redactado en el spec,
+    # se satisface afirmando 202 + fase, lo cual pasaria en verde aunque la ingesta jamas se lanzara.
+    # El escenario del blueprint ya exige que arranque de verdad; esto lo vuelve vinculante.
+    - "The test verifying AC-1 MUST prove the background ingestion actually ran, by an observable effect of the run itself (the phase leaving EnCurso and reaching a terminal variant carrying a real ResumenDeIngesta, or an artifact the run writes). Asserting only the 202 status and the initial phase is explicitly insufficient: that assertion passes with the spawn removed."
+    - "All identifiers, comments, test names, doc comments and commit messages in Spanish; comments didactic (WHY, never WHAT). Commit subjects without accented characters, conventional commits, and NEVER any AI attribution or Co-Authored-By line."
+    - "Every discard made in this task (serde on the storage type, spawn_blocking, ArcSwap/tokio::sync::Mutex, extra env vars for probe/fragmentation) is logged in docs/bitacora-de-descartes.md from D-39 onward, in the SAME commit that makes it, each with reason and reopening condition."
+    - "Do NOT commit *.db, *.db-wal, *.db-shm or .env* files, and put no secrets in the tree."
+
+verify:
+  commands:
+    - "cargo fmt --check"
+    - "cargo clippy --workspace -- -D warnings"
+    - "cargo test -p hexcell --test admin_http"
+    - "cargo test -p hexcell --test configuracion"
+    - "cargo test -p hexcell --test salud_http"
+    - "cargo test --workspace"
+    - "! grep -rn --include='*.rs' -e 'std::env::set_var' -e 'std::env::remove_var' crates/hexcell/"
+    # Enmienda del orquestador (2026-09-09, fase analyze): respaldo determinista de la regla de
+    # superficie combinada. Si main.rs sigue llamando a servir_salud por su cuenta, es que las dos
+    # superficies NO se combinaron y la omision silenciosa en una rama de canal sigue siendo posible.
+    # No sustituye a ninguna prueba de comportamiento: acota una forma, que es lo unico que aqui se
+    # puede comprobar sin levantar el sidecar del canal whatsmeow.
+    - "! grep -n 'servir_salud(' crates/hexcell/src/main.rs"
+  target_s: 60
+
+acceptance:
+  human_gate: true
+
+limits:
+  max_files_changed: 14
+  max_diff_lines: 1500
+  per_class:
+    - glob: "crates/hexcell/src/**"
+      max_diff_lines: 800
+    - glob: "crates/hexcell/tests/**"
+      max_diff_lines: 700
+    - glob: "docs/**"
+      max_diff_lines: 120
+
+execution:
+  mode: worktree_edit
+  branch: ai/HEX-063-new-spec
+
+retry_policy:
+  max_attempts: 2
+  escalate_after: 2

@@ -1,0 +1,56 @@
+{
+  "commands": [
+    {
+      "command": "cargo fmt --check",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "exit 0"
+    },
+    {
+      "command": "cargo clippy --workspace -- -D warnings",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "exit 0"
+    },
+    {
+      "command": "cargo test -p hexcell --test admin_http",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "admin_http: 11 passed; 0 failed"
+    },
+    {
+      "command": "cargo test -p hexcell --test configuracion",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "configuracion: 19 passed; 0 failed"
+    },
+    {
+      "command": "cargo test -p hexcell --test salud_http",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "salud_http: 4 passed; 0 failed"
+    },
+    {
+      "command": "cargo test --workspace",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "workspace completo verde; 3 ignoradas a proposito (HEX-062)"
+    },
+    {
+      "command": "! grep -rn --include='*.rs' -e 'std::env::set_var' -e 'std::env::remove_var' crates/hexcell/",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "sin coincidencias (adr-0028)"
+    },
+    {
+      "command": "! grep -n 'servir_salud(' crates/hexcell/src/main.rs",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "sin coincidencias: main.rs ya no llama a servir_salud"
+    }
+  ],
+  "executed_at": "2026-09-09T18:05:00Z",
+  "overall_result": "passed",
+  "summary": "8/8 exit 0 sobre 1dde430, corridos por el orquestador. Diff 1180 lineas de 1500, sin enmiendas al tope. Mutacion: cada guarda hace fallar solo su prueba.",
+  "task_id": "HEX-063"
+}

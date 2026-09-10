@@ -1,0 +1,57 @@
+task_id: HEX-063
+summary: Expose an internal admin HTTP endpoint on its own listener that triggers cell knowledge ingestion in the background and reports current phase via polling. Risk medium.
+goal: >
+  Implement the last task of stage A-5: an administrative route, reachable only from the
+  internal network, that triggers `ejecutar_ingesta` for the cell's Shadow DB and lets a
+  caller poll the phase of the current or last ingestion run. The route runs on its own
+  listener, separate from the health listener, so a future stage can expose one without
+  exposing the other.
+invariants:
+  - At most one ingestion job runs per cell at any time; a POST while one is in flight is rejected, never queued or silently dropped.
+  - The admin listener is a distinct configuration entry with its own SocketAddr, independent of HEXCELL_DIRECCION_SALUD, defaulting to loopback.
+  - The endpoint chain stops after ejecutar_ingesta completes; it never triggers promotion, validation, drain, or purge as a side effect.
+  - A request body larger than the configured byte cap is rejected before being fully buffered into memory, protecting the per-cell RAM budget.
+  - Job status is a single in-process state value with no persistence, no job registry, and no job ids; a process restart loses in-flight status, which is acceptable because the ingestion itself is not resumed either.
+  - knowledge_live.db is never touched by this endpoint; ejecutar_ingesta writes only to the shadow store, so a failed or partial ingestion leaves the currently served epoch unaffected.
+acceptance:
+  - id: AC-1
+    statement: POSTing a DocumentoDeIngesta JSON body to the admin route starts a background ingestion and returns 202 with the initial phase, verified by an integration test asserting response status 202 and a phase field indicating the job started.
+    given: no ingestion job is currently running for the cell
+    when: a client sends POST with a valid DocumentoDeIngesta JSON body to the admin endpoint
+    then: the server returns 202 Accepted with a body reporting the initial ingestion phase, and ejecutar_ingesta begins running in the background
+  - id: AC-2
+    statement: POSTing while a job is already running is rejected with 409, verified by an integration test that starts one ingestion and immediately issues a second POST, asserting response status 409.
+    given: an ingestion job is currently in flight for the cell
+    when: a client sends a second POST to the admin endpoint
+    then: the server returns 409 Conflict without starting a second background job
+  - id: AC-3
+    statement: GET on the admin route returns the phase of the current-or-last ingestion, verified by an integration test that polls GET before any POST (idle/never-run phase), during a run, and after completion, asserting the reported phase changes accordingly.
+    given: an ingestion job has been started (or none has ever run)
+    when: a client sends GET to the admin endpoint
+    then: the server returns 200 with the current in-process phase, distinguishing idle/never-run, running, and each finished DesenlaceDeIngesta outcome
+  - id: AC-4
+    statement: A POST body exceeding the configured byte cap is rejected with 413, verified by an integration test sending a body larger than the configured limit and asserting response status 413 and that no ingestion job is started.
+    given: a configured maximum request body size
+    when: a client sends a POST body larger than that size
+    then: the server returns 413 Payload Too Large before accumulating the full body in memory, and no ingestion job starts
+  - id: AC-5
+    statement: The admin listener binds to its own configurable address, independent of the health listener, verified by a unit or integration test that starts both listeners with distinct configured addresses and confirms each accepts only its own route set.
+    given: HEXCELL_DIRECCION_ADMIN (or the chosen name) is configured to a loopback address distinct from HEXCELL_DIRECCION_SALUD
+    when: the cell binary starts both listeners
+    then: the admin route answers only on the admin address and the health route only on the health address, and configuration parsing/validation rejects a malformed admin address the same way HEXCELL_DIRECCION_SALUD is validated today
+  - id: AC-6
+    statement: A finished ingestion's phase reflects ejecutar_ingesta's actual DesenlaceDeIngesta outcome, verified by cargo test -p hexcell unit tests mapping each of Completa, Parcial, DetenidaPorApagado, and SinIncrustaciones to a distinct reported phase.
+  - Existing health-endpoint tests and configuration validation tests continue to pass unchanged, verified by cargo test --workspace.
+  - cargo clippy --workspace -- -D warnings and cargo fmt --check pass with the new module in place.
+risk: medium
+non_goals:
+  - Any client-facing catalog-loading surface (web panel, file upload, integration) is out of scope; it is deferred pending the blocked "flujos de usuario finales" product decision, and pilot catalogs are loaded manually against this endpoint.
+  - Chaining promotion, validation, drain, or purge behind this endpoint is out of scope; those remain separate explicit operations per the existing implementation.
+  - A job registry, job ids, a queue, or persisted job state are out of scope; only a single in-process current-job state value is in scope.
+  - Authentication/authorization tokens on the admin route are out of scope; isolation is bind-address-only, matching the existing health-endpoint precedent.
+constraints:
+  - No new external HTTP framework dependency; the new listener follows the existing hyper 1.x + TokioIo + tokio::task::spawn pattern used by servir_salud.
+  - The new configuration entry follows Spanish naming convention (e.g. HEXCELL_DIRECCION_ADMIN) and is validated exactly like HEXCELL_DIRECCION_SALUD (SocketAddr parse, loopback-friendly default).
+  - The DocumentoDeIngesta payload travels as a JSON body accumulated up to a configurable byte limit, not as a file path on the volume.
+  - Must respect the crates/hexcell current_thread tokio runtime; the background ingestion task must not assume a multi-threaded executor.
+  - Must not introduce rusqlite into crates/hexcell (adr-0010) or add dependencies to hexcell-core (adr-0002); all new code lives as a module of the hexcell binary crate.

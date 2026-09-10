@@ -1,0 +1,3 @@
+entries: []
+summary: Add crates/hexcell/src/admin.rs with its own listener, two config entries, a four-variant phase enum and the first production wiring of ejecutar_ingesta into main.
+task_id: HEX-063
