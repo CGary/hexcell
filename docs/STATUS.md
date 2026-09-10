@@ -3,12 +3,20 @@
 > Registro vivo del avance. Última actualización: 2026-09-09.
 
 ## Fase actual
-**Canal propio en producción — etapa A-5, motor de conocimiento (Shadow DB y épocas), en marcha.**
+**Canal propio en producción — etapa A-5 (motor de conocimiento, Shadow DB y épocas) cerrada el 2026-09-09; etapa A-6, empaquetado de la célula y CLI de operación, por comenzar.**
 Las etapas A-1 a A-4 están cerradas (cierre de A-4 auditado el 2026-08-27, HEX-037..HEX-048): el
 workspace Rust tiene ocho crates con el motor de mensajería sobre el puerto de canal, la
 persistencia dual SQLite con respaldo en caliente, el adaptador whatsmeow con su sidecar Go
 conectado por IPC, y el control de admisión GCRA con la contabilidad de presupuesto en dos fases.
-La etapa A-5 arrancó con HEX-049 (esquema real de la base de conocimiento en `hexcell-storage`).
+La etapa A-5 arrancó con HEX-049 (esquema real de la base de conocimiento en `hexcell-storage`) y
+cerró con HEX-063 (endpoint interno de administración de ingesta), completando sus doce tareas de
+plan: esquema, fragmentación, cliente de embeddings por lotes, ingesta en sombra, validación de
+integridad, promoción atómica por épocas, drenaje acotado, retención y reversión, recuperación RAG,
+endpoint interno de actualización, prueba de estrés de conmutación y verificación de la interacción
+con el respaldo. Lo que la etapa **no** entrega sigue bloqueado por decisión de producto: la
+superficie de cara al cliente para cargar su catálogo depende de los **flujos de usuario finales**,
+y hasta que exista, la carga de las dos células piloto de la etapa A-7 se hace manualmente contra
+ese endpoint interno. La etapa A-6 empieza por el `Dockerfile` del núcleo.
 
 El proyecto opera sobre **dos canales que conviven**, no sobre dos fases que se suceden. El **canal
 propio** (whatsmeow, sidecar Go) es el canal por defecto y permanente, con clientes de pago reales.
