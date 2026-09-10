@@ -35,7 +35,7 @@ CI (`.github/workflows/ci.yml`) blocks on all of the above; the sidecar test sui
 
 On contradiction, this order rules:
 
-1. **`docs/PRD.md`** — normative source: requirements FR-01..FR-12, NFR-01..NFR-05, QA criteria.
+1. **`docs/PRD.md`** — normative source: requirements FR-01..FR-14, NFR-01..NFR-05, QA criteria.
 2. **`README.md`** — operational/architecture detail the PRD doesn't cover (CLI, Phase B onboarding).
 3. **`docs/plan/README.md`** — implementation plan index; one file per stage (`fase-a-N-*.md`, `fase-b-N-*.md`). Each stage declares which FR/NFR it covers.
 4. **`docs/STATUS.md`** — record of DECISIONS (Definido / Pendiente), not a progress tracker. **Update it when a decision changes state** — something moves from Pendiente to Definido, or a new blocker is declared. Closing a plan task decides nothing and does NOT belong here: task-level progress comes from `git log` and `docs/plan/`. This file going weeks untouched is normal, not stale.

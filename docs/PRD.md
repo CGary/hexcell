@@ -97,6 +97,7 @@ La **entrada pública queda pendiente de ADR**, entre dos opciones con implicaci
   7. **Ciclo de vida de sesión (sub-trait opcional):** emparejamiento por QR o por código y persistencia de credenciales. Solo lo implementan los adaptadores no oficiales; la Cloud API no lo necesita y no lo implementa.
 
   El núcleo define y documenta su **política ante `FueraDeVentana`** —encolar la respuesta hasta que el cliente vuelva a escribir, o escalar a un humano— antes de que exista ninguna célula sobre canal oficial, aunque sobre canal propio el caso no se dispare nunca. Una política escrita cuando el fallo no ocurre se diseña con calma; escrita el día que ocurre, se improvisa.
+* **FR-14: Operación observable de la célula.** La célula emite **alertas activas** ante condiciones de riesgo del canal, del saldo y del invariante de solo-responder; mantiene un **dead-man's switch externo** que notifica desde fuera del servidor cuando el ping deja de llegar; y permite **reportar el consumo de tokens por cliente y periodo** a partir de copias o registros, **nunca de la base caliente** (`adr-0024`). Su implementación son las tareas 20 y 23 de la etapa A-6.
 
 #### B. Requisitos No Funcionales (NFR)
 | ID | Categoría | Requisito Técnico |

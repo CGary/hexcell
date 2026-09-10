@@ -127,3 +127,9 @@ Re-empareja una célula existente con un número distinto conservando su histori
 *Mecanismo Interno (Fase A):* exige **confirmación explícita** por tratarse de una operación destructiva sobre la identidad de canal de la célula, con la misma exigencia que `cell terminate`. Deja la célula en **pausa de envío** hasta que el emparejamiento con el número nuevo queda confirmado, de modo que no pueda intentar responder sin sesión. Descarta el `sqlstore` del sidecar —corresponde a un dispositivo que ya no existe en el servidor de WhatsApp, y restaurarlo desde respaldo es inútil— y **conserva intactos** `sessions.db`, `knowledge_live.db` y el almacén de identidad del adaptador, que es donde viven la identidad de conversación y la lista de exclusión (STOP): por eso el mismo contacto sigue cayendo en el mismo hilo tras la sustitución. Cierra anotando la sustitución de forma auditable, con el número anterior, la fecha absoluta y el motivo.
 
 Este comando no existe en la Fase B: nace de la operación del canal propio y no interviene Caddy ni la API Graph de Meta. Cuándo **procede** sustituir el número —y cuándo no— lo decide el runbook de baneo, no la CLI.
+
+### 5. Configuración por célula como archivos
+
+Estado (2026-09-10): planificado en la etapa A-6, tarea 22.
+
+La configuración de cada célula vive en **archivos versionables en git**: valores por defecto compartidos más *overlays* por célula que los superponen. Los archivos contienen **solo parámetros no secretos**; todo secreto sigue viajando por variables de entorno. `hexcell-admin` los renderiza al entorno de la plantilla de arranque de la célula: el binario de la célula **no gana un segundo lector de configuración**. Una clave desconocida o un valor inválido **aborta el arranque**.

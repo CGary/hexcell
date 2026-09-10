@@ -318,8 +318,8 @@ Las entradas conservan su numeración; esta sección es la autoridad sobre el or
     las ocho condiciones se provoca en prueba con un sumidero de notificación falso y produce
     exactamente una notificación con su código. Las métricas se entregan por registro estructurado o
     copias `VACUUM INTO`, nunca por endpoint HTTP ni consulta en vivo de `hexcell-admin` (adr-0024).
-    Umbrales como parámetros sin valor normativo. Depende de la tarea 25. Trazabilidad: sin FR/NFR
-    que cubra las alertas; registrada como decisión pendiente en STATUS.md (2026-09-10).
+    Umbrales como parámetros sin valor normativo. Depende de la tarea 25. Trazabilidad: FR-14
+    (decisión de 2026-09-10).
 21. **Escribir el runbook de operación** (0,5 días). Qué comando usar en cada situación, qué efecto
     tiene y cómo verificar que salió bien. Incluye `cell rebind` con su remisión explícita al
     runbook de baneo de la etapa A-7, que es donde se decide **si procede** sustituir el número;
@@ -330,15 +330,15 @@ Las entradas conservan su numeración; esta sección es la autoridad sobre el or
     secretos; todo secreto sigue viajando por variable de entorno (HEX-064/HEX-065). `hexcell-admin`
     renderiza los archivos al entorno de la plantilla de la tarea 8: el binario de la célula no gana
     un segundo lector de configuración. Un overlay con clave desconocida o valor inválido aborta el
-    arranque. Trazabilidad: sin FR/NFR que la cubra; registrada como decisión pendiente en STATUS.md
-    (2026-09-10).
+    arranque. Trazabilidad: detalle operativo documentado en README, sección «Configuración por
+    célula como archivos» (decisión de 2026-09-10); sin FR propia por decisión de producto.
 23. **Comando de reporte de consumo de tokens por cliente** (0,5 días). Implementar un comando en `hexcell-admin` para generar el reporte de consumo de tokens por cliente apoyado en la persistencia consultable de A-4, contemplando la alternativa documentada de agregar los logs estructurados o leer las copias de respaldo (VACUUM INTO) para evitar leer de la base caliente bajo contención (FR-10).
 
     **Criterio de aceptación (revisado 2026-09-10):** El comando lee solo una copia
     `VACUUM INTO` o los registros estructurados, nunca `sessions.db` en caliente (STATUS.md,
     adr-0024). Agrega `consumo_por_conversacion` a total por célula y periodo; se acepta cuando el
-    total coincide con la suma de conciliaciones sembradas. Trazabilidad: FR-10 cubre los datos; el
-    reporte por cliente no está en el PRD; registrada como pendiente en STATUS.md (2026-09-10).
+    total coincide con la suma de conciliaciones sembradas. Trazabilidad: FR-14 (decisión de
+    2026-09-10).
 24. **Extensión del protocolo IPC: tipo de cierre de sesión y orden de pausa de envío**. `cerrar_sesion` es un stub que devuelve `SinConexion` (`crates/hexcell-canal-whatsmeow/src/adaptador.rs:744-747`, `TODO(A-3)`) y el protocolo no tiene tipo de logout ni orden de pausa (solo existe el estado `pausada`). Pendiente de aceptación de A-3 ejecutado en A-6. Traza a FR-12. Criterio: nuevo tipo de mensaje documentado en `docs/protocolo-ipc-nucleo-sidecar.md` con subida de versión de cable, implementado en `sidecar/internal/ipc/mensajes.go` y `crates/hexcell-canal-whatsmeow/src/mensajes.rs`, con prueba de contrato que desvincula y otra que pausa y reanuda el envío.
 25. **Productor de métricas del sidecar prometido en A-3**. `docs/plan/fase-a-3-adaptador-whatsmeow.md:105-109` promete ratio de acuses por contacto, reconexiones por hora y ventana de silencio; no existe productor en `sidecar/`. Trazabilidad: la promesa de A-3 no cita FR; registrada como pendiente en STATUS.md. Criterio: el sidecar emite las tres series por el canal aprobado en adr-0024 (registro estructurado), con prueba que las provoca en simulación.
 
