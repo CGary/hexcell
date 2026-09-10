@@ -1,0 +1,167 @@
+task_id: HEX-065
+summary: >
+  Multi-stage sidecar Dockerfile: golang:1.26.5-alpine build (CGO_ENABLED=0, ARG-vs-go.mod
+  whatsmeow gate), alpine:3 final with ca-certificates and an OCI label, plus its .dockerignore.
+affected_files:
+  - sidecar/Dockerfile
+  - sidecar/.dockerignore
+symbols:
+  - "build stage: FROM golang:1.26.5-alpine AS constructor"
+  - "ARG ARG_VERSION_WHATSMEOW"
+  - "RUN gate comparing ARG_VERSION_WHATSMEOW against go.mau.fi/whatsmeow's pin in go.mod (exit
+    non-zero on mismatch)"
+  - "final stage: FROM alpine:3 AS final"
+  - "LABEL org.opencontainers.image.version=\"${ARG_VERSION_WHATSMEOW}\""
+  - "ENTRYPOINT [\"/usr/local/bin/hexcell-sidecar\"]"
+dependencies:
+  - sidecar/go.mod
+  - sidecar/main.go
+  - sidecar/internal/configuracion/configuracion.go
+  - Dockerfile
+  - .dockerignore
+  - docs/runbook-canal-whatsmeow.md
+test_scenarios:
+  - statement: A real `docker build` of sidecar/Dockerfile (context sidecar/) succeeds when the
+      WHATSMEOW ARG's value equals go.mod's pinned go.mau.fi/whatsmeow pseudo-version, and
+      `docker inspect` on the resulting image shows an org.opencontainers.image.version label equal
+      to that same pseudo-version.
+    covers: ["AC-1"]
+  - statement: The same build, invoked with the ARG set to a value that does not match go.mod's
+      pin, fails with a non-zero exit before producing an image.
+    covers: ["AC-2"]
+  - statement: A container started from the built image, with a mounted temp directory covering the
+      sqlstore/identity/outbox/socket default paths under /var/lib/hexcell, logs the
+      "sidecar.arrancado" structured event and is still running (State.Running=true) several seconds
+      later, proving the CGO_ENABLED=0 static link actually executes on musl.
+    covers: ["AC-3"]
+  - statement: A shell run inside the final image's still-present busybox shell (no non-root/no-shell
+      hardening in this task) shows the apk-installed ca-certificates package's bundle file present
+      under /etc/ssl/certs, usable for outbound TLS to WhatsApp's servers.
+    covers: ["AC-4"]
+strategy:
+  - step: 1
+    action: >
+      Write sidecar/.dockerignore as a blocklist mirroring the root .dockerignore's rationale
+      (excluding beats a whitelist that could starve module resolution by omission): exclude the
+      Rust workspace (crates, Cargo.toml, Cargo.lock, rust-toolchain.toml, target), docs/, .git,
+      .github, .claude, .agents, .ai, worktrees, kitty-specs, scripts, *.md, the local Go build
+      cache (a stray vendor/ or $GOCACHE dump is not expected inside sidecar/ but is blocked in case
+      one is ever created there), *.db, *.db-wal, *.db-shm, .env, .env.*. Keep go.mod and go.sum
+      present: `go build` needs both to resolve and verify the module graph even though only the
+      root package is compiled.
+    files:
+      - sidecar/.dockerignore
+  - step: 2
+    action: >
+      Write the Dockerfile build stage named "constructor": FROM golang:1.26.5-alpine, matching
+      sidecar/go.mod's `go 1.26.5` directive exactly, for the same reason the core image pins
+      rust:1.92-alpine to rust-toolchain.toml -- an exact match means the Go toolchain never has to
+      reconcile or download a different patch version inside the container, so the build depends on
+      network only for the module proxy and apk repos. COPY the filtered context (go.mod, go.sum,
+      main.go, internal/). Set ENV CGO_ENABLED=0 before the build step: modernc.org/sqlite and its
+      pure-Go transitive deps (modernc.org/libc, modernc.org/mathutil, modernc.org/memory) need no C
+      toolchain, so no gcc/musl-dev package is installed in this stage at all -- its absence is
+      itself evidence the binary is genuinely static, not just declared so.
+    files:
+      - sidecar/Dockerfile
+  - step: 3
+    action: >
+      Add the ARG-vs-go.mod verification gate as a deterministic shell RUN step inside the
+      constructor stage, after go.mod is present in the context and before the build runs: declare
+      `ARG ARG_VERSION_WHATSMEOW` defaulted to the exact pseudo-version currently pinned
+      (v0.0.0-20260722203353-e9a033b24933), then extract go.mod's own pinned line for
+      go.mau.fi/whatsmeow with grep+awk (a targeted, single-purpose parse of one known line format,
+      not a general go.mod parser) and `exit 1` with a clear stderr message if it does not equal
+      the ARG's value. This makes AC-2 a build-time gate, not a documentation promise, and keeps the
+      check simple enough to audit by reading the RUN line itself.
+    files:
+      - sidecar/Dockerfile
+  - step: 4
+    action: >
+      Finish the constructor stage: `go build -o /usr/local/bin/hexcell-sidecar .` (single main
+      package at the module root, per docs/protocolo-ipc-nucleo-sidecar.md's binary name), no
+      -ldflags/size tuning (that is stage A-6 task 3). Write the final stage: FROM alpine:3 (same
+      minor-version rolling tag as the core image, deliberate symmetry per the human's decision, not
+      a size optimization); `apk add --no-cache ca-certificates`, because unlike the Rust core
+      (rustls + webpki-tokio, roots compiled in), the Go sidecar's TLS stack to WhatsApp's servers
+      relies on the operating system trust store -- omitting the package would be a silent runtime
+      TLS failure at first handshake, not a size saving. COPY --from=constructor only the compiled
+      binary. Re-declare `ARG ARG_VERSION_WHATSMEOW` in the final stage (build args do not cross
+      stages implicitly) and emit `LABEL org.opencontainers.image.version="${ARG_VERSION_WHATSMEOW}"`
+      so `docker inspect` can audit the running whatsmeow build without opening any layer -- this is
+      what stage A-3's 72-hour sentinel-cell canary needs. ENTRYPOINT
+      ["/usr/local/bin/hexcell-sidecar"], no CMD: every one of the sidecar's ~30 HEXCELL_* variables
+      has a safe default per configuracion.go's Cargar, so nothing is baked in, but nothing is
+      mandatory either.
+    files:
+      - sidecar/Dockerfile
+  - step: 5
+    action: >
+      Add didactic Spanish comments (WHY, never WHAT) matching the root Dockerfile's density: why
+      golang:1.26.5-alpine exactly, why CGO_ENABLED=0 and no C toolchain package at all, why the ARG
+      gate exists and what it protects against (a stale or mistyped whatsmeow tag shipping
+      undetected), why ca-certificates IS installed here (opposite of the core image, and worth
+      explaining precisely because it is the opposite), and why ENTRYPOINT has no CMD.
+    files:
+      - sidecar/Dockerfile
+      - sidecar/.dockerignore
+  - step: 6
+    action: >
+      Verify by real mutation only, mirroring HEX-064's shape: (1) both files exist; (2) a real
+      `docker build` from the sidecar/ context, first with the default (matching) ARG to prove AC-1,
+      then a second build with a deliberately wrong ARG value to prove AC-2 fails non-zero; (3)
+      `docker run -d` against a `mktemp -d` volume bind-mounted at /var/lib/hexcell (covering the
+      sqlstore/identity/outbox/socket defaults with zero required env vars, since every HEXCELL_*
+      variable defaults per configuracion.go), then assert `sidecar.arrancado` in `docker logs` and
+      `State.Running=true` a few seconds later, then remove the container, both images, and the
+      temp dir, propagating the captured exit status.
+  - step: 7
+    action: >
+      Confirm no ADR is written: adr-0007 stays reserved for stage A-6 tasks 1-6 as a whole and this
+      task's design questions (base image, static link, ARG gate, ca-certificates) are all already
+      closed by the human or self-evident from configuracion.go, leaving nothing that needs its own
+      architectural record yet.
+risks:
+  - "MISMATCH vs 00-spec.yaml: the orchestrator's brief states risk: medium for this task, but
+    00-spec.yaml's own `risk:` field reads low. Per this skill's Phase 4 authority rule, the human's
+    declared value in 00-spec.yaml wins and is not rewritten here; the divergence (and the
+    calculated risk-scorer output) is recorded as a risk_level_divergence event in 07-trace.json,
+    not resolved by this blueprint. A human should confirm which value is intended before dispatch."
+  - "The golang:1.26.5-alpine builder tag is chosen to exactly match go.mod's `go 1.26.5` directive,
+    by the same reasoning as the core image's rust:1.92-alpine pin, but its existence on Docker Hub
+    was NOT verified here (this blueprint phase has no network egress to the registry). If that
+    exact tag does not exist when the implementer runs the real docker build in step 6, the fallback
+    is the closest published golang:1.26.x-alpine patch and a one-line comment recording the
+    deviation and its reason -- not silently rounding to a rolling `golang:1.26-alpine` tag, which
+    would reintroduce the toolchain-reconciliation risk this exact-match choice exists to avoid."
+  - "Root .dockerignore currently excludes /sidecar entirely, but that file only applies to a build
+    context rooted at the repository root (the core image's own build). A build invoked as
+    `docker build -f sidecar/Dockerfile sidecar/` uses sidecar/.dockerignore as its context filter
+    and never reads the root .dockerignore at all, so the two files do not interact and nothing
+    needs to change in the root .dockerignore for this task. This is a design conclusion, not an
+    open question, but it is recorded here because the orchestrator's brief asked it to be validated
+    explicitly."
+  - "The ARG-vs-go.mod gate is a targeted grep+awk match against the single known go.mod line format
+    for the go.mau.fi/whatsmeow require directive, not a general go.mod/SemVer parser. If a future
+    go.mod reformatting (e.g. gofmt realigning the require block, or moving whatsmeow into its own
+    require() block) changes that line's shape, the gate could false-negative (never fire) rather
+    than false-positive; this is an accepted, narrow scope match to HEX-065's stated goal, not a
+    general dependency-pin auditor."
+  - "AC-4's shell-based ca-certificates check depends on alpine:3 still shipping a shell in this
+    task's timeframe; stage A-6 task 4 will remove it as part of hardening, at which point AC-4's
+    verification mechanism (not the invariant that ca-certificates is present) will need to change to
+    an image-layer inspection instead of a shell exec -- out of scope for this task, noted for the
+    task-4 blueprint."
+  - "Prior-failure lookup (.ai/tasks/failed/) and blueprint-context enrichment returned no
+    overlapping prior task and only neighbor Go files (outbox/disciplina.go, outbox/salida.go,
+    canal/traduccion_test.go, configuracion_test.go) already covered by configuracion.go's own read;
+    none of them constrain a Dockerfile-only change. HSME's advisory fuzzy search returned exactly
+    one match at score 0.016 (a Quorum-tool-internal FAIL-001 entry about error classification,
+    unrelated to Docker/Go packaging) -- treated as noise, not signal, per the advisory-only rule."
+  - "The external Phase 1b summarization cell (opencode-go/deepseek-v4-flash) attributed go.mod's
+    commit-pin comment to 'adr-0015' (política de convivencia con el baneo). Cross-checked directly
+    against docs/adr/README.md: adr-0015 is real but is about ban-risk coexistence, not pin
+    reproducibility; go.mod's own comment cites only docs/runbook-canal-whatsmeow.md, no ADR number.
+    The external claim was discarded and is not reflected anywhere in this blueprint or its
+    strategy -- flagged here only as evidence that the guardrail (external summary is evidence, not
+    truth) caught a real fabrication on this run."

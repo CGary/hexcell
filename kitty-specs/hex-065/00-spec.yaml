@@ -1,0 +1,123 @@
+task_id: HEX-065
+summary: Write a multi-stage Dockerfile for the Go sidecar on alpine:3, static CGO_ENABLED=0 build, whatsmeow version pinned visibly via build ARG plus OCI label matching go.mod.
+goal: >
+  Deliver crates/sidecar's operational counterpart to the core image (HEX-064): a
+  multi-stage Dockerfile under sidecar/ (plus its own .dockerignore) that compiles the
+  Go sidecar statically against musl/Alpine and ships it on a minimal alpine:3 final
+  image, imitating the didactic comment style of the root Dockerfile. The whatsmeow
+  pseudo-version pinned in sidecar/go.mod must be visible and audit-checked at build
+  time, not only documented in prose, because stage A-3's 72-hour sentinel-cell canary
+  needs to know which whatsmeow build a running image carries.
+invariants:
+  - The final image is built FROM alpine:3, matching the core image's base for one
+    shared mental model across both images; this is a deliberate symmetry choice, not
+    a size optimization (alpine over scratch, even though the sidecar is pure Go and
+    scratch would work).
+  - The sidecar binary is compiled with CGO_ENABLED=0, producing a genuinely static
+    binary; sidecar/go.mod pulls in no cgo-requiring dependency (modernc.org/sqlite is
+    pure Go, confirmed by reading go.mod - its transitive deps modernc.org/libc,
+    modernc.org/mathutil, modernc.org/memory are all pure Go).
+  - A build ARG carries the whatsmeow pseudo-version and the build FAILS if that ARG's
+    value does not match the version pinned in sidecar/go.mod (go.mau.fi/whatsmeow,
+    pinned by commit per the comment in go.mod and docs/runbook-canal-whatsmeow.md).
+  - The whatsmeow version carried by the ARG is exposed as an OCI image label (e.g.
+    org.opencontainers.image.version or an equally explicit, clearly-named label) so it
+    is auditable via `docker inspect` without opening the image's layers.
+  - The final image installs ca-certificates, because the sidecar dials WhatsApp's
+    servers over TLS using the operating system's trust store (unlike the Rust core,
+    whose TLS roots are compiled in via rustls/hyper-rustls webpki-tokio); omitting it
+    is a runtime TLS failure, not a size saving.
+  - No secret, credential, or tenant data is baked into any image layer; the sidecar
+    reads all configuration exclusively from environment variables at runtime (see
+    sidecar/internal/configuracion), consistent with the repository being public.
+  - "*.db, *.db-wal, *.db-shm, and .env* files are never added to the Docker build
+    context nor committed to the repository."
+  - All new repository content (Dockerfile comments, .dockerignore comments, commit
+    message) is written in Spanish, with didactic (WHY, not WHAT) comments matching the
+    density of the existing root Dockerfile.
+acceptance:
+  - id: AC-1
+    statement: A real `docker build` of sidecar/Dockerfile succeeds and produces a
+      runnable image whose OCI version label matches the whatsmeow pseudo-version
+      pinned in sidecar/go.mod.
+    given: sidecar/Dockerfile and sidecar/.dockerignore exist in the repository, and
+      the whatsmeow ARG default (or the value passed at build time) equals the
+      pseudo-version string pinned in sidecar/go.mod
+    when: "`docker build` is run against the sidecar/ context using this Dockerfile"
+    then: the build completes successfully and `docker inspect` on the resulting image
+      shows an OCI label whose value equals that same whatsmeow pseudo-version
+  - id: AC-2
+    statement: The build FAILS instead of silently succeeding when the whatsmeow ARG
+      does not match the version pinned in sidecar/go.mod, so a stale or mistyped tag
+      cannot ship undetected.
+    given: sidecar/Dockerfile as built for AC-1
+    when: "`docker build` is invoked with the whatsmeow version ARG set to a value that
+      does not match sidecar/go.mod's pin"
+    then: the build stops with a non-zero exit status before producing an image
+  - id: AC-3
+    statement: The built image actually starts and stays alive, proving the
+      CGO_ENABLED=0/musl link is sound and not just compile-clean.
+    given: the image built in AC-1, and a mounted temporary directory available for
+      the sidecar's sqlstore, identity store, outbox, and IPC socket paths (via bind
+      mount at /var/lib/hexcell or equivalent env vars pointing into the mounted
+      tmpdir, since none of the sidecar's environment variables are strictly
+      mandatory — every one of them, including HEXCELL_ID_CELULA, has a default per
+      sidecar/internal/configuracion.go's Cargar function)
+    when: the image is run with that mounted directory and the minimal environment
+      needed to point the sidecar's writable paths at it
+    then: a structured startup log event confirming the sidecar came up is observed,
+      and the container process is still running a few seconds later (not exited or
+      crash-looped)
+  - id: AC-4
+    statement: ca-certificates is present and usable in the final image.
+    given: the image built in AC-1
+    when: the final image layer is inspected (e.g. running a shell/command inside it,
+      to the extent the base image still carries one — full non-root/no-shell hardening
+      is explicitly out of scope for this task)
+    then: the system CA bundle used for TLS verification is present in the image
+  - "cargo fmt --check, cargo clippy --workspace -- -D warnings, and the sidecar's own
+    `go build ./... && go vet ./... && go test ./... -count=1` remain green; this task
+    touches no Rust or Go source, only sidecar/Dockerfile and sidecar/.dockerignore."
+risk: low
+non_goals:
+  - Non-root user, read-only rootfs, capability dropping, or removing the shell from
+    the final image — reserved for stage A-6 plan task 4, which will apply the
+    hardening uniformly to both the core and sidecar images.
+  - Link/size tuning beyond a normal Go release build (e.g. -ldflags trimming,
+    upx, distroless experiments) — stage A-6 plan task 3.
+  - Two-container composition, shared Docker network, shared volume permission
+    scheme, or IPC socket wiring between core and sidecar containers — stage A-6
+    plan task 5.
+  - Resource limits (memory/CPU) on the sidecar container — stage A-6 plan task 6.
+  - Verifying signal propagation (SIGTERM/SIGINT handling) into the containerized
+    process — stage A-6 plan task 7.
+  - A CI job that builds and publishes both images — a separate stage A-6 deliverable,
+    not part of writing the Dockerfile itself.
+  - Formal RSS or image-size measurement against NFR-01's <= 80 MB per-cell budget —
+    stage A-6 plan task 16; this task only avoids obviously wasteful choices (e.g. not
+    installing an unnecessary CA package would be wrong, but no measurement is due here).
+  - Writing adr-0007 — that ADR number is reserved for the whole of stage A-6 (plan
+    tasks 1 through 6) and must not be written until task 6 closes. This task is
+    expected to need no ADR of its own.
+constraints:
+  - Base image is alpine:3, tracking the minor-version rolling tag (not a pinned patch
+    tag), mirroring the same choice already made for the root Dockerfile.
+  - Build stage compiles with CGO_ENABLED=0; no cgo toolchain package is installed in
+    the builder stage.
+  - A build ARG (clearly named, e.g. WHATSMEOW_VERSION or ARG_VERSION_WHATSMEOW) must
+    be compared against the version string pinned in sidecar/go.mod during the build,
+    and the build must fail on mismatch; the same value is emitted as an OCI image
+    label (org.opencontainers.image.version or an equivalently explicit label name).
+  - ca-certificates is installed via apk in the final alpine:3 stage.
+  - Credentials and per-tenant configuration reach the sidecar process only through
+    environment variables at container runtime; nothing is baked into any image layer.
+  - sidecar/.dockerignore excludes at least the Rust workspace, docs/, .git, .github,
+    .claude, .agents, .ai, worktrees, kitty-specs, *.db*, .env*, and any local Go build
+    cache, mirroring the root .dockerignore's blacklist-not-whitelist rationale so the
+    sidecar's own go.mod/go.sum stay present for module resolution.
+  - All Dockerfile and .dockerignore comments are in Spanish and didactic (explain WHY,
+    not WHAT), matching the density and style of the existing root Dockerfile.
+  - The commit that lands this task uses a Spanish conventional-commit subject without
+    accented characters, and carries no AI co-authorship or attribution of any kind.
+  - No ADR is written by this task; adr-0007 stays reserved until stage A-6 plan task 6
+    closes.

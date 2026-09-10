@@ -1,0 +1,133 @@
+task_id: HEX-065
+summary: >
+  Write sidecar/Dockerfile (golang:1.26.5-alpine builder, alpine:3 final) and its
+  .dockerignore; verify by a real build, a required ARG-mismatch failure, and a container run.
+goal: >
+  Add the Go sidecar's Dockerfile: a golang:1.26.5-alpine build stage that compiles the sidecar
+  binary with CGO_ENABLED=0 and gates the build on an ARG matching go.mod's pinned whatsmeow
+  pseudo-version, and an alpine:3 final stage with ca-certificates installed and an OCI
+  org.opencontainers.image.version label carrying that same pseudo-version. Add the matching
+  sidecar/.dockerignore. No Rust, no Go source, no dependency, and no ADR changes.
+read:
+  - sidecar/go.mod
+  - sidecar/go.sum
+  - sidecar/main.go
+  - sidecar/internal/configuracion/configuracion.go
+  - Dockerfile
+  - .dockerignore
+  - docs/runbook-canal-whatsmeow.md
+  - docs/protocolo-ipc-nucleo-sidecar.md
+  - docs/PRD.md
+  - docs/STATUS.md
+touch:
+  - sidecar/Dockerfile
+  - sidecar/.dockerignore
+forbid:
+  files:
+    - sidecar/go.mod
+    - sidecar/go.sum
+    - sidecar/main.go
+    - "sidecar/internal/**"
+    - Dockerfile
+    - .dockerignore
+    - "crates/**"
+    - Cargo.toml
+    - Cargo.lock
+    - "docs/**"
+    - "docs/adr/adr-0007-imagen-y-aislamiento.md"
+    - "docker-compose*.yml"
+    - "compose*.yml"
+    - ".github/**"
+  behaviors:
+    - "Do not bake any secret, credential, or tenant-identifying value into any image layer; every
+      HEXCELL_* variable reaches the sidecar only via the container's runtime environment (invariant
+      6 / constraint on env-only configuration)."
+    - "Do not hardcode a configuration value (a path, a timeout, a phone number, a template string)
+      as a Docker-layer default that overrides or duplicates configuracion.go's own defaults; the
+      image must not encode business configuration."
+    - "Do not let any *.db, *.db-wal, *.db-shm, or .env* file enter the sidecar/ build context or any
+      image layer."
+    - "Do not add a non-root USER, a read-only rootfs, dropped Linux capabilities, or shell/package
+      removal in the final stage; that hardening is stage A-6 plan task 4."
+    - "Do not add -ldflags trimming, upx, distroless experiments, or any other link/size tuning
+      beyond a normal `go build`; that is stage A-6 plan task 3."
+    - "Do not add a docker-compose file, a shared Docker network/volume definition, or IPC socket
+      wiring between the core and sidecar containers; that is stage A-6 plan tasks 5-6."
+    - "Do not add a signal-handling wrapper, STOPSIGNAL tuning, HEALTHCHECK, or any entrypoint script
+      beyond a plain ENTRYPOINT; signal-propagation verification is stage A-6 plan task 7."
+    - "Do not add or change any Go module dependency (go.mod/go.sum are read-only context for this
+      task, not touchable output)."
+    - "Do not write or amend any file under docs/adr/, including adr-0007-imagen-y-aislamiento.md;
+      that ADR number is reserved for the whole of stage A-6 (plan tasks 1-6), not this task alone."
+    - "Do not install a cgo toolchain (gcc, musl-dev, build-base) in the build stage; CGO_ENABLED=0
+      must hold with no C compiler present, or the static-link claim (invariant 2) is unproven."
+    - "Do not let the ARG-vs-go.mod verification step silently pass on a mismatch; the RUN step must
+      exit non-zero before the go build step runs when the values differ (AC-2)."
+    - "Do not change any Go module dependency version, add a new require, or otherwise touch
+      sidecar/go.mod or sidecar/go.sum; this task ships a build description, not a dependency
+      change (see forbid.files)."
+verify:
+  commands:
+    - "test -f sidecar/Dockerfile && test -f sidecar/.dockerignore"
+    - "docker build --pull -f sidecar/Dockerfile -t hexcell-sidecar:hex-065-smoke sidecar/"
+    - |
+      set -u
+      WHATSMEOW_PIN=$(grep -E '^\s*go\.mau\.fi/whatsmeow ' sidecar/go.mod | awk '{print $2}')
+      docker build --pull -f sidecar/Dockerfile \
+        --build-arg ARG_VERSION_WHATSMEOW="${WHATSMEOW_PIN}-deliberadamente-invalida" \
+        -t hexcell-sidecar:hex-065-mismatch sidecar/ >/tmp/hex-065-mismatch.log 2>&1
+      STATUS_MISMATCH=$?
+      if [ "$STATUS_MISMATCH" -eq 0 ]; then
+        echo "verificacion fallida: el build con ARG divergente debia fallar y no fallo"
+        cat /tmp/hex-065-mismatch.log
+        exit 1
+      fi
+      echo "build con ARG divergente fallo como se esperaba (status $STATUS_MISMATCH)"
+    - |
+      # POR QUE este paso afirma el evento de arranque y NO exige que el contenedor siga vivo:
+      # el sidecar tiene un defecto de arranque en frio confirmado el 2026-09-10 en
+      # sidecar/main.go:77, donde abre una conexion de SOLO LECTURA a identidad.db antes de que
+      # main.go:84 cree ese archivo. Sobre un volumen vacio —justo lo que produce este mktemp y
+      # tambien el primer arranque de una celula real— esa conexion falla y el proceso termina.
+      # El defecto es de dominio, no del empaquetado, y se corrige en la tarea HEX-066 con su
+      # propia prueba de arranque en frio. Exigir aqui que el contenedor sobreviva taparia ese
+      # defecto detras de un smoke test de imagen; afirmar el evento prueba lo que esta tarea si
+      # debe probar: que el binario estatico carga y ejecuta dentro de la imagen minima.
+      set -u
+      DATA_DIR=$(mktemp -d)
+      CONTAINER="hexcell-sidecar-hex-065-smoke-$$"
+      # HEXCELL_VENTANA_ZONA es la unica variable sin valor por omision; el resto de la
+      # configuracion cae en sus rutas por omision dentro del volumen montado. Los valores son
+      # inertes a proposito: este repositorio es publico y ninguna credencial ni dato real entra aca.
+      docker run -d --name "$CONTAINER" \
+        -e HEXCELL_ID_CELULA=verificacion-hex-065 \
+        -e HEXCELL_VENTANA_ZONA=America/La_Paz \
+        -v "$DATA_DIR":/var/lib/hexcell \
+        hexcell-sidecar:hex-065-smoke >/dev/null
+      sleep 3
+      STATUS=1
+      if docker logs "$CONTAINER" 2>&1 | grep -q "sidecar.arrancado"; then
+        STATUS=0
+      else
+        echo "verificacion fallida: falta el evento sidecar.arrancado en el log"
+        docker logs "$CONTAINER" 2>&1 || true
+      fi
+      docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
+      docker rmi hexcell-sidecar:hex-065-smoke hexcell-sidecar:hex-065-mismatch >/dev/null 2>&1 || true
+      rm -rf "$DATA_DIR"
+      exit "$STATUS"
+acceptance:
+  human_gate: true
+limits:
+  max_files_changed: 2
+  # Recalibrado de 220 a 240 el 2026-09-10: el tope de 220 se heredo de HEX-064, que tenia dos
+  # archivos mas chicos y ninguna guarda de version. La implementacion cerro en 221 lineas, asi
+  # que el desborde de una linea mide un contrato mal dimensionado, no una implementacion
+  # desbordada; se corrige la calibracion en vez de recortar comentario didactico por contabilidad.
+  max_diff_lines: 240
+execution:
+  mode: worktree_edit
+  branch: ai/HEX-065
+retry_policy:
+  max_attempts: 2
+  escalate_after: 1

@@ -1,0 +1,32 @@
+{
+  "commands": [
+    {
+      "command": "test -f sidecar/Dockerfile \u0026\u0026 test -f sidecar/.dockerignore",
+      "duration_s": 1,
+      "exit_code": 0,
+      "output_excerpt": "Ambos archivos existen en el worktree; coinciden exactamente con la lista touch del contrato."
+    },
+    {
+      "command": "docker build --pull -f sidecar/Dockerfile -t hexcell-sidecar:hex-065-smoke sidecar/",
+      "duration_s": 214,
+      "exit_code": 0,
+      "output_excerpt": "Build completo de las dos etapas. El builder golang:1.26.5-alpine existe realmente en el registro (verificado aparte con docker manifest inspect), la compuerta de version imprimio 'verificado: whatsmeow pinneado en go.mod = v0.0.0-20260722203353-e9a033b24933' y la etapa final instalo ca-certificates. Imagen resultante: 39960738 bytes (39,9 MB), etiqueta org.opencontainers.image.version = v0.0.0-20260722203353-e9a033b24933."
+    },
+    {
+      "command": "docker build con --build-arg ARG_VERSION_WHATSMEOW divergente (debe fallar)",
+      "duration_s": 63,
+      "exit_code": 0,
+      "output_excerpt": "La guarda se vio FALLAR por su propia razon, que es lo unico que la convierte en guarda: el build termino con status 1 en el paso RUN de la compuerta, emitiendo ERROR_HEX065 con el pin de go.mod y el ARG divergente enfrentados. Sin esta mutacion la compuerta seria una linea que nadie probo."
+    },
+    {
+      "command": "docker run -d con HEXCELL_ID_CELULA y HEXCELL_VENTANA_ZONA sobre un volumen mktemp, afirmando sidecar.arrancado",
+      "duration_s": 9,
+      "exit_code": 0,
+      "output_excerpt": "El contenedor emitio sidecar.arrancado (protocolo IPC version 5, socket en /var/lib/hexcell/ipc/sidecar.sock), despues canal.almacen_abierto, canal.dispositivo_nuevo y canal.sesion_construida: el binario estatico compilado con CGO_ENABLED=0 carga y ejecuta dentro de alpine:3, abre el sqlstore de modernc.org/sqlite y construye el cliente de whatsmeow. El paso afirma el evento y NO exige que el contenedor sobreviva, porque sidecar/main.go:77 abre en solo lectura un identidad.db que main.go:84 todavia no creo: defecto de arranque en frio del sidecar, ajeno al empaquetado, derivado a la tarea HEX-066 por decision humana del 2026-09-10."
+    }
+  ],
+  "executed_at": "2026-09-10T01:30:00Z",
+  "overall_result": "passed",
+  "summary": "4/4 exit 0 sobre 4b1cfde. 221 lineas de 240, 2 archivos de 2. Mutacion real: la imagen construye, la guarda de version falla al divergir y el binario estatico arranca.",
+  "task_id": "HEX-065"
+}

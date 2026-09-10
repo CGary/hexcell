@@ -1,0 +1,4 @@
+entries: []
+summary: |
+    Write sidecar/Dockerfile (golang:1.26.5-alpine builder, alpine:3 final) and its .dockerignore; verify by a real build, a required ARG-mismatch failure, and a container run.
+task_id: HEX-065
