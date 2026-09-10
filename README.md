@@ -4,7 +4,7 @@ HexCell es un motor orquestador multi-célula (*multi-tenant*) de ultra alta efi
 
 La unidad desplegable por cliente se denomina **célula**. En la CLI y en el código el sustantivo es `cell`.
 
-> **Estado del proyecto:** fase de diseño. Ver [docs/PRD.md](docs/PRD.md) (requisitos) y [docs/STATUS.md](docs/STATUS.md) (avance).
+> **Estado del proyecto:** fase de diseño. Ver [docs/PRD.md](docs/PRD.md) (requisitos) y [docs/STATUS.md](docs/STATUS.md) (decisiones definidas y pendientes).
 
 ---
 

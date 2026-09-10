@@ -1,7 +1,7 @@
 # Plan de Implementación por Fases — HexCell Orchestrator
 
 > Documento índice. Última actualización: 2026-07-28.
-> Fuentes normativas: [PRD.md](../PRD.md) (requisitos FR/NFR y criterios de QA), [README.md](../../README.md) (arquitectura y CLI), [STATUS.md](../STATUS.md) (avance).
+> Fuentes normativas: [PRD.md](../PRD.md) (requisitos FR/NFR y criterios de QA), [README.md](../../README.md) (arquitectura y CLI), [STATUS.md](../STATUS.md) (decisiones definidas y pendientes).
 
 ---
 

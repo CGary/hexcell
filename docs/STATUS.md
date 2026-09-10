@@ -1,9 +1,22 @@
 # Estado del Proyecto
 
-> Registro vivo del avance. Última actualización: 2026-09-09.
+> **Registro de decisiones, no de avance.** Última actualización: 2026-09-10.
+>
+> Este archivo responde una sola pregunta: **qué está decidido y qué sigue pendiente de decidir**.
+> No lleva la cuenta de las tareas hechas. Para saber en qué anda el trabajo, la fuente es `git log`
+> y el plan por etapas en [plan/README.md](plan/README.md), que es donde vive la lista de tareas;
+> duplicar ese avance acá solo crea una tercera copia que se desincroniza.
+>
+> Se actualiza cuando **una decisión cambia de estado** —algo pasa de Pendiente a Definido, o se
+> declara un bloqueador nuevo—, no cuando se cierra una tarea. Cerrar una tarea del plan no decide
+> nada: ejecuta algo que ya estaba decidido. Por eso este archivo puede pasar semanas quieto sin
+> estar desactualizado, y eso es una propiedad, no un descuido.
 
 ## Fase actual
-**Canal propio en producción — etapa A-5 (motor de conocimiento, Shadow DB y épocas) cerrada el 2026-09-09; etapa A-6, empaquetado de la célula y CLI de operación, por comenzar.**
+**Canal propio en producción — etapa vigente: A-6 (empaquetado de la célula y CLI de operación).**
+Esta sección nombra la ETAPA en curso y se toca dos veces por etapa: cuando arranca y cuando cierra.
+Qué tareas de la etapa están hechas no se registra acá; sale de `git log` y de
+[plan/fase-a-6-empaquetado-cli.md](plan/fase-a-6-empaquetado-cli.md).
 Las etapas A-1 a A-4 están cerradas (cierre de A-4 auditado el 2026-08-27, HEX-037..HEX-048): el
 workspace Rust tiene ocho crates con el motor de mensajería sobre el puerto de canal, la
 persistencia dual SQLite con respaldo en caliente, el adaptador whatsmeow con su sidecar Go
@@ -16,7 +29,7 @@ endpoint interno de actualización, prueba de estrés de conmutación y verifica
 con el respaldo. Lo que la etapa **no** entrega sigue bloqueado por decisión de producto: la
 superficie de cara al cliente para cargar su catálogo depende de los **flujos de usuario finales**,
 y hasta que exista, la carga de las dos células piloto de la etapa A-7 se hace manualmente contra
-ese endpoint interno. La etapa A-6 empieza por el `Dockerfile` del núcleo.
+ese endpoint interno.
 
 El proyecto opera sobre **dos canales que conviven**, no sobre dos fases que se suceden. El **canal
 propio** (whatsmeow, sidecar Go) es el canal por defecto y permanente, con clientes de pago reales.

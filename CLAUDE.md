@@ -8,7 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **Language rule**: ALL repository content is in **Spanish** — docs, code identifiers, comments, and commit messages (conventional commits: `docs:`, `feat:`, etc., never with AI attribution). This file is the single deliberate exception, kept in English for instruction-following efficiency.
 
-**Current state**: do not trust any hardcoded stage claim — check `docs/STATUS.md` and `git log` first. As of 2026-09-09, stages A-1 through A-5 are closed (A-5, the knowledge engine with Shadow DB and epochs, closed with HEX-063) and A-6 (cell packaging and operations CLI) is in progress. Task artifacts are archived under `kitty-specs/hex-NNN/`; work branches follow `ai/<ID>` (Quorum tasks) and `feature/<short-description>` (see `CONTRIBUTING.md`).
+**Current state**: do not trust any hardcoded stage claim — check `git log` and `docs/plan/` first (that is where task-level progress lives; `docs/STATUS.md` records decisions, not progress). As of 2026-09-09, stages A-1 through A-5 are closed (A-5, the knowledge engine with Shadow DB and epochs, closed with HEX-063) and A-6 (cell packaging and operations CLI) is in progress. Task artifacts are archived under `kitty-specs/hex-NNN/`; work branches follow `ai/<ID>` (Quorum tasks) and `feature/<short-description>` (see `CONTRIBUTING.md`).
 
 ## Commands
 
@@ -38,7 +38,7 @@ On contradiction, this order rules:
 1. **`docs/PRD.md`** — normative source: requirements FR-01..FR-12, NFR-01..NFR-05, QA criteria.
 2. **`README.md`** — operational/architecture detail the PRD doesn't cover (CLI, Phase B onboarding).
 3. **`docs/plan/README.md`** — implementation plan index; one file per stage (`fase-a-N-*.md`, `fase-b-N-*.md`). Each stage declares which FR/NFR it covers.
-4. **`docs/STATUS.md`** — living progress record (Definido / Pendiente). **Update it when a decision changes state.**
+4. **`docs/STATUS.md`** — record of DECISIONS (Definido / Pendiente), not a progress tracker. **Update it when a decision changes state** — something moves from Pendiente to Definido, or a new blocker is declared. Closing a plan task decides nothing and does NOT belong here: task-level progress comes from `git log` and `docs/plan/`. This file going weeks untouched is normal, not stale.
 5. **`docs/adr/README.md`** — ADR table; its numbering is the source of truth, sequential, never reused or reordered. File format: `adr-NNNN-titulo.md`.
 6. **`docs/bitacora-de-descartes.md`** — record of what was studied and **not** done, with the reason and reopening conditions. Not normative: it decides nothing, it leaves a trail. Numbering `D-NN`, sequential, never reused; entries are never edited or deleted, only marked `REABIERTO`.
 
