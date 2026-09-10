@@ -88,15 +88,49 @@ RUN go mod download
 # Ahora sí, el resto del código. El .dockerignore ya excluyó caches,
 # documentación, secretos y datos de inquilino, así que este COPY entra
 # limpio.
-COPY main.go ./
+# POR QUE un comodín y no la lista de archivos: hasta el 2026-09-10 esta línea
+# decía `COPY main.go ./`, enumerando los fuentes de la raíz por nombre. HEX-066
+# agregó `arranque.go` al paquete `main` y nadie tocó este COPY, así que el
+# archivo no entraba al contexto y la imagen dejó de compilar con `undefined:
+# abrirRecursosDeArranque`. El defecto sobrevivió a `go build`, a `go vet` y a
+# `go test` —los tres ven el árbol completo, no el contexto de Docker— y solo
+# aparece al construir la imagen. Enumerar rompe la imagen en silencio cada vez
+# que nace un archivo en la raíz del módulo; el comodín elimina esa clase entera.
+# Los `*_test.go` que arrastra no llegan al binario ni a la imagen final: se
+# quedan en la etapa constructora, que se descarta.
+COPY *.go ./
 COPY internal/ ./internal/
 
-# Compilación del único paquete compilable del módulo (el `main` raíz,
-# cuyo binario se llama hexcell-sidecar por el contrato IPC). Sin
-# `-ldflags`, `-trimpath`, `-s -w` ni otras tunelizaciones de tamaño: ese
-# retoque es tarea 3 de la etapa A-6 y se aplica por igual a las dos
-# imágenes; aquí el objetivo es que el binario arranque y se pueda medir.
-RUN go build -o /usr/local/bin/hexcell-sidecar .
+# Compilación del único paquete compilable del módulo (el `main` raíz, cuyo
+# binario se llama hexcell-sidecar por el contrato IPC).
+#
+# POR QUE se quitan los símbolos (`-s -w`) pese a que encarece diagnosticar un
+# pánico en producción: la construcción es reproducible. La pseudoversión de
+# whatsmeow está fijada en `ARG_VERSION_WHATSMEOW`, afirmada contra `go.mod` por
+# la guarda de más arriba y publicada en la etiqueta OCI de la imagen, así que un
+# pánico sin símbolos se resimboliza reconstruyendo el mismo commit. Sin esa
+# reproducibilidad, quitar símbolos sería una pérdida neta y no se haría.
+# El costo queda escrito, no aceptado en silencio: hasta que alguien reconstruya,
+# un pánico de campo llega sin nombres de función ni números de línea.
+#
+# POR QUE `-trimpath`: borra del binario las rutas absolutas de la máquina de
+# compilación. Sirve a la reproducibilidad y evita filtrar la ruta del build en
+# una imagen que se publica.
+#
+# Tamaños medidos el 2026-09-10, ambos con `docker image inspect --format
+# '{{.Size}}'`:
+#   antes (mismo fuente, sin las dos flags): 39.959.335 bytes
+#   despues (con ambas flags):                30.374.876 bytes
+#   reduccion:                                 9.584.459 bytes (24,0 %)
+# Ambas medidas se tomaron sobre EL MISMO arbol de fuentes, reconstruyendo la
+# linea de arriba sin flags, en vez de comparar contra los 39.960.738 bytes que
+# midio HEX-065: aquella imagen no contenia `arranque.go`, asi que restarle el
+# tamanio de hoy mezclaria el efecto de las flags con el de un fuente distinto.
+# Son medidas observadas, no un techo: NO existe ninguna compuerta que falle si
+# la imagen crece. El plan de la etapa A-6 no fija un tope y no se inventa uno
+# aquí, porque una actualización legítima de whatsmeow rompería la CI sin que
+# exista defecto alguno. El registro formal de tamaños es la tarea 16.
+RUN go build -trimpath -ldflags="-s -w" -o /usr/local/bin/hexcell-sidecar .
 
 # --- Etapa final mínima ------------------------------------------------------
 #
