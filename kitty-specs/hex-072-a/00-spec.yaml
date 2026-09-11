@@ -1,0 +1,57 @@
+task_id: HEX-072-a
+summary: 'Wire whatsmeow events.Receipt into an in-process delivery/read sink producing entregado/leido; no IPC message, no protocol change.'
+goal: >
+  Close the first half of the decomposed HEX-072 (task 25 of stage A-6): the
+  whatsmeow sidecar receives events.Receipt notifications today but has no
+  production path that classifies them. Add sidecar/internal/canal/acuses.go,
+  a delivery/read evidence filter that classifies incoming receipts to the
+  entregado/leido constants already declared at
+  sidecar/internal/ipc/mensajes.go:82-83 (EstadoEnvioEntregado,
+  EstadoEnvioLeido) and exposes the classification through an in-process sink
+  only. The receipt never becomes an acuse_envio IPC message; that boundary is
+  what keeps docs/protocolo-ipc-nucleo-sidecar.md, its version, and every Rust
+  crate untouched. This task produces the raw evidence signal that
+  HEX-072-b's periodic metrics producer will later consume; it does not
+  compute or emit any metric itself.
+invariants:
+  - The receipt classification is never sent as an acuse_envio IPC message or any other IPC message; it is exposed only through an in-process sink internal to the sidecar.
+  - No change touches docs/protocolo-ipc-nucleo-sidecar.md, its cable version, or any Rust crate; the entire change is contained in sidecar/.
+  - Classification produces only the existing entregado/leido constants declared at sidecar/internal/ipc/mensajes.go:82-83 (EstadoEnvioEntregado, EstadoEnvioLeido); no new status vocabulary is invented.
+  - Nothing inside sidecar/internal/ipc/** is written or modified; the dependency direction is preserved (canal imports ipc, ipc never imports canal).
+  - No bulk-sender folklore (jitter, warm-up protocols), proxies, VPNs, or IP rotation is introduced by this change.
+acceptance:
+  - id: AC-1
+    statement: A delivered events.Receipt is classified to the EstadoEnvioEntregado constant and exposed on the in-process sink.
+    given: a simulated whatsmeow events.Receipt of the delivered kind for a tracked outbound message
+    when: the receipt reaches the sidecar's evidence filter in sidecar/internal/canal/acuses.go
+    then: the in-process sink observes a classification equal to ipc.EstadoEnvioEntregado, and no IPC message is emitted as a side effect
+  - id: AC-2
+    statement: A read events.Receipt is classified to the EstadoEnvioLeido constant and exposed on the in-process sink.
+    given: a simulated whatsmeow events.Receipt of the read kind for a tracked outbound message
+    when: the receipt reaches the sidecar's evidence filter in sidecar/internal/canal/acuses.go
+    then: the in-process sink observes a classification equal to ipc.EstadoEnvioLeido, and no IPC message is emitted as a side effect
+  - id: AC-3
+    statement: A Go test proves the filter does not silently accept whatsmeow's delivered receipt type when it is the empty string, guarding against a false-positive classification.
+    given: whatsmeow's types.ReceiptTypeDelivered constant, which is itself the empty string
+    when: a mutation scenario simulates a receipt event whose type field is unset (zero value) rather than deliberately set to the delivered kind
+    then: the test distinguishes an intentional delivered receipt from an unset/zero-value type field and fails if the filter collapses that distinction, provable by mutation
+  - id: AC-4
+    statement: 'cd sidecar && go build ./... && go vet ./... && go test ./... -count=1 passes, and the sidecar test suite remains non-empty per CI requirements.'
+  - id: AC-5
+    statement: docs/bitacora-de-descartes.md gains entry D-45, recording the discard of turning the receipt into an IPC message, in the same commit that makes this change.
+non_goals:
+  - Do not emit any periodic structured log line or metric series (per-contact ack ratio, reconnections-per-hour, incoming-silence-window); that is HEX-072-b's scope entirely.
+  - Do not touch docs/STATUS.md; the Pendiente -> Definido transition for the A-3 metrics promise belongs to HEX-072-b only.
+  - Do not create, reference, or reserve adr-0032; that ADR number belongs to HEX-072-b only, and ADR numbering is never duplicated or reordered.
+  - Do not implement cardinality bounds, deterministic eviction, or contactos_omitidos for per-contact tracking; that bookkeeping belongs to HEX-072-b only.
+  - Do not add any IPC message type, do not version docs/protocolo-ipc-nucleo-sidecar.md, and do not touch any Rust crate (crates/hexcell-canal-whatsmeow or otherwise).
+  - Do not write or modify anything inside sidecar/internal/ipc/**.
+constraints:
+  - The only new production file is sidecar/internal/canal/acuses.go.
+  - Tests live in sidecar/internal/canal/acuses_test.go (or an internal-test counterpart consistent with the package's existing test conventions).
+  - No new runtime dependencies in the sidecar Go module.
+  - Verification must be a Go test in simulation (no real WhatsApp channel, no network I/O).
+  - The bitácora entry D-45 must be added in the same commit as the code change, per the repository's discard-logging rule; numbering is sequential and never reused.
+depends_on: []
+parent_task: HEX-072
+risk: high

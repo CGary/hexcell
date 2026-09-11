@@ -1,0 +1,3 @@
+entries: []
+summary: 'Add canal/acuses.go: classify whatsmeow events.Receipt to ipc.EstadoEnvioEntregado/Leido via an in-process sink only; log D-45.'
+task_id: HEX-072-a

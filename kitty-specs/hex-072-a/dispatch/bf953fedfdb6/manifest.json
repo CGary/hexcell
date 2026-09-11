@@ -1,0 +1,32 @@
+{
+  "task_id": "HEX-072-a",
+  "bundle_hash": "bf953fedfdb64921b26eef79c32c9c5a4d93da6c73aaa1fa296355d950cdffec",
+  "files": [
+    "CLAUDE.md",
+    "docs/bitacora-de-descartes.md",
+    "docs/protocolo-ipc-nucleo-sidecar.md",
+    "sidecar/internal/canal/canal.go",
+    "sidecar/internal/canal/reconexion.go",
+    "sidecar/internal/canal/reconexion_interno_test.go",
+    "sidecar/internal/canal/taxonomia_interno_test.go"
+  ],
+  "protocol_version": "fleet-bundle-protocol/v2",
+  "created_at": "2026-09-11T17:50:31Z",
+  "dropped": [
+    {
+      "component": "code_slice",
+      "path": "sidecar/internal/outbox/salida.go",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "sidecar/internal/ipc/mensajes.go",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "sidecar/internal/canal/traduccion.go",
+      "reason": "bundle exceeded max_bytes budget"
+    }
+  ]
+}

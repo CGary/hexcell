@@ -1,0 +1,32 @@
+{
+  "commands": [
+    {
+      "command": "cd sidecar \u0026\u0026 go build ./...",
+      "duration_s": 1,
+      "exit_code": 0,
+      "output_excerpt": "sin salida"
+    },
+    {
+      "command": "cd sidecar \u0026\u0026 go vet ./...",
+      "duration_s": 1,
+      "exit_code": 0,
+      "output_excerpt": "sin salida"
+    },
+    {
+      "command": "cd sidecar \u0026\u0026 go test ./... -count=1",
+      "duration_s": 2,
+      "exit_code": 0,
+      "output_excerpt": "ok todos los paquetes"
+    },
+    {
+      "command": "grep -q '^### D-45' docs/bitacora-de-descartes.md",
+      "duration_s": 0.1,
+      "exit_code": 0,
+      "output_excerpt": "entrada D-45 presente"
+    }
+  ],
+  "executed_at": "2026-09-11T17:58:00Z",
+  "overall_result": "passed",
+  "summary": "Los cuatro comandos de verify.commands salen 0 en worktrees/HEX-072-a sobre el diff del delegado externo.",
+  "task_id": "HEX-072-a"
+}

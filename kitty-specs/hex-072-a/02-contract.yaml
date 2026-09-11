@@ -1,0 +1,114 @@
+task_id: HEX-072-a
+summary: "Add canal/acuses.go: classify whatsmeow events.Receipt to ipc.EstadoEnvioEntregado/Leido via an in-process sink only; log D-45."
+goal: >
+  Close the wiring half of decomposed HEX-072 (task 25 of stage A-6): the sidecar
+  receives events.Receipt today with no production path that classifies it, so
+  EstadoEnvioEntregado and EstadoEnvioLeido (already declared at
+  sidecar/internal/ipc/mensajes.go:82-83) are never produced. Add a single new file,
+  sidecar/internal/canal/acuses.go, that filters incoming Receipt events and exposes
+  the classification through an in-process sink only. This is the raw evidence
+  signal HEX-072-b's periodic metrics producer will later consume; this task computes
+  and emits no metric itself, and the classification never becomes an acuse_envio
+  IPC message or any other IPC message, which is what keeps
+  docs/protocolo-ipc-nucleo-sidecar.md, its cable version, and every Rust crate
+  untouched.
+
+read:
+  - sidecar/internal/ipc/mensajes.go
+  - sidecar/internal/canal/canal.go
+  - sidecar/internal/canal/reconexion.go
+  - sidecar/internal/canal/traduccion.go
+  - sidecar/internal/outbox/salida.go
+  - sidecar/internal/canal/reconexion_interno_test.go
+  - sidecar/internal/canal/taxonomia_interno_test.go
+  - docs/bitacora-de-descartes.md
+  - docs/protocolo-ipc-nucleo-sidecar.md
+  - CLAUDE.md
+
+touch:
+  - sidecar/internal/canal/acuses.go
+  - sidecar/internal/canal/acuses_test.go
+  - docs/bitacora-de-descartes.md
+
+forbid:
+  files:
+    - "crates/**"
+    - "sidecar/go.mod"
+    - "sidecar/go.sum"
+    - "docs/protocolo-ipc-nucleo-sidecar.md"
+    - "docs/contrato-ipc-respaldo-del-sqlstore.md"
+    - "sidecar/internal/ipc/**"
+    - "sidecar/internal/servidor/**"
+    - "sidecar/internal/identidad/**"
+    - "sidecar/internal/configuracion/**"
+    - "sidecar/internal/metricas/**"
+    - "sidecar/internal/outbox/**"
+    - "sidecar/internal/canal/canal.go"
+    - "sidecar/internal/canal/canal_test.go"
+    - "sidecar/internal/canal/reconexion.go"
+    - "sidecar/internal/canal/reconexion_interno_test.go"
+    - "sidecar/internal/canal/traduccion.go"
+    - "sidecar/internal/canal/traduccion_test.go"
+    - "sidecar/internal/canal/traduccion_interno_test.go"
+    - "sidecar/internal/canal/taxonomia.go"
+    - "sidecar/internal/canal/taxonomia_interno_test.go"
+    - "sidecar/internal/canal/emparejamiento.go"
+    - "sidecar/internal/canal/emparejamiento_test.go"
+    - "sidecar/internal/canal/respaldo.go"
+    - "sidecar/internal/canal/respaldo_test.go"
+    - "sidecar/internal/canal/almacen_interno_test.go"
+    - "sidecar/main.go"
+    - "sidecar/arranque.go"
+    - "docs/adr/**"
+    - "docs/STATUS.md"
+    - "docs/PRD.md"
+    - "docs/plan/**"
+    - ".github/**"
+    - "**/*.db"
+    - "**/*.db-wal"
+    - "**/*.db-shm"
+    - ".env*"
+  behaviors:
+    - "Do NOT turn the classification into an acuse_envio IPC message, or any IPC message of any kind. Do NOT touch docs/protocolo-ipc-nucleo-sidecar.md or bump the cable version. The classification is exposed ONLY through the in-process sink defined in acuses.go."
+    - "Do NOT touch any Rust crate. crates/hexcell-core must keep zero external dependencies, and this task must not put that at risk by touching the workspace at all."
+    - "Do NOT write or modify anything inside sidecar/internal/ipc/**. canal already imports ipc; ipc must never import canal, and this task changes nothing about that direction."
+    - "Do NOT invent new status vocabulary. The only two classification outcomes are ipc.EstadoEnvioEntregado and ipc.EstadoEnvioLeido, reusing the constants already declared at sidecar/internal/ipc/mensajes.go:82-83; every other events.Receipt Type classifies as ok=false, nothing else."
+    - "Do NOT compute or emit any metric, ratio, or periodic structured-log snapshot (per-contact ack ratio, reconnections-per-hour, incoming-silence-window). Do NOT create sidecar/internal/metricas/**. That entire surface belongs to sibling task HEX-072-b."
+    - "Do NOT create, reference, or reserve adr-0032, and do NOT add or edit any file under docs/adr/**. Do NOT touch docs/STATUS.md. Both belong to HEX-072-b only."
+    - "Do NOT implement cardinality bounds, deterministic eviction, or a contactos_omitidos counter. There is no per-contact tracking in this task at all."
+    - "Do NOT add a new runtime dependency; sidecar/go.mod and sidecar/go.sum stay untouched."
+    - "Do NOT introduce bulk-sender folklore (jitter, warm-up ramps), proxies, VPNs, or IP rotation. The own channel's ban risk is structural (protocol fingerprint), not behavioural."
+    - "Do NOT add slow, networked or live-resource commands to the verification path. No real WhatsApp channel, no sockets: construct events.Receipt values directly in acuses_test.go."
+    - "Do NOT add a mechanical check that has never been seen to fail. The AC-3 guard (the ReceiptTypeDelivered empty-string trap) must be provable by mutation under the same `go test` profile the suite actually runs in; state in the implementation log which mutation was run."
+    - "Do NOT modify any other file inside sidecar/internal/canal/ (canal.go, reconexion.go, traduccion.go, taxonomia.go, emparejamiento.go, respaldo.go, or their existing tests). RegistrarManejadorDeAcuses is a new, separate handler registration; it must not alter RegistrarManejador or any existing supervisor/translator wiring."
+    - "Do NOT rewrite, amend, renumber or delete any existing bitácora entry (D-01 through D-44). D-45 is a NEW sequential entry, added in the SAME commit as the code change, never reused if this task is retried."
+    - "Write every identifier, comment, doc-comment, test name and bitácora entry in Spanish, and use absolute dates (2026-09-11), never relative ones. The commit message is a conventional commit in Spanish with no AI attribution."
+    - "The 'no IPC message is emitted' clause of AC-1/AC-2 is guaranteed structurally by this contract's touch/forbid boundary, not by verify.commands: internal/ipc/**, internal/servidor/**, sidecar/main.go and sidecar/arranque.go are all in forbid.files, so no file capable of reaching the IPC socket can change under this contract. Do not weaken forbid.files on any of those four paths, and do not treat the absence of a runtime IPC-recorder check in verify.commands as a gap to fill with a live socket or transport test — that would violate the no-network verification rule instead."
+
+verify:
+  commands:
+    - "cd sidecar && go build ./..."
+    - "cd sidecar && go vet ./..."
+    - "cd sidecar && go test ./... -count=1"
+    - "grep -q '^### D-45' docs/bitacora-de-descartes.md"
+  target_s: 20
+
+acceptance:
+  human_gate: true
+
+limits:
+  max_files_changed: 3
+  max_diff_lines: 630
+  per_class:
+    - glob: "sidecar/**/*_test.go"
+      max_diff_lines: 280
+    - glob: "docs/**/*.md"
+      max_diff_lines: 50
+
+execution:
+  mode: worktree_edit
+  branch: ai/HEX-072-a
+
+retry_policy:
+  max_attempts: 2
+  escalate_after: 1

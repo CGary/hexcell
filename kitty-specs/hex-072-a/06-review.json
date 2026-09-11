@@ -1,0 +1,26 @@
+{
+  "task_id": "HEX-072-a",
+  "summary": "Empty-string trap (ReceiptTypeDelivered=='') correctly resolved via len(MessageIDs)>0 discriminator; mutation-provable tests; contract, field naming, bitacora all clean.",
+  "verdict": "approve",
+  "contract_compliance": true,
+  "forbidden_files_touched": [],
+  "unrequested_refactor": false,
+  "missing_tests": [],
+  "functional_risk": "low",
+  "notes": [
+    "contract-check ok=true; violations=[]; not_checked=[forbid.behaviors] (verified by hand instead: no ipc/** or main.go/arranque.go/canal.go touched, no acuse_envio IPC message introduced, docs/protocolo-ipc-nucleo-sidecar.md untouched, zero Rust files touched)",
+    "acceptance-coverage: status=pass, AC-1..AC-5 all state=covered, gaps=[]",
+    "Verified clasificarAcuse checks len(r.MessageIDs)==0 before switching on r.Type, so a zero-value events.Receipt{} (Type=='', MessageIDs==nil) returns ok=false even though ReceiptTypeDelivered is itself the empty string; cross-checked against the vendored go.mau.fi/whatsmeow@v0.0.0-20260722203353-e9a033b24933/types/presence.go:39 (ReceiptTypeDelivered ReceiptType = \"\") and events.go:438-447 (Receipt struct)",
+    "Mentally mutated three guards and confirmed each has a test that goes red: (1) deleting/weakening len(r.MessageIDs)>0 is caught by TestClasificarAcuseRechazaElValorCeroFrenteAEntregado (asserts ok=false on zero-value); (2) inverting the Delivered/Read branch is caught by TestClasificarAcuseEntregadoMapeaAEntregado + TestClasificarAcuseLeidoMapeaALeido; (3) removing the type-assertion guard in manejarEventoDeAcuse (unconditional pass-through) is caught by TestManejarEventoDeAcuseIgnoraEventosQueNoSonReceipt (would panic on *events.Connected{}). No assertion found that survives mutation.",
+    "TestClasificarAcuseRechazaTodoTipoQueNoSeaEntregadoNiLeido proves the Type check is not subsumed by the MessageIDs check (9 excluded ReceiptType values with non-empty MessageIDs all reject)",
+    "Field naming confirmed correct: Acuse.IdCorrelacion (not IdMensaje), matching outbox/salida.go:315-380's id_correlacion returned by c.transmisor.Transmitir and recorded by MarcarEnviado; the internal id_mensaje is never referenced",
+    "Diff is exactly the 3 touch-listed files (docs/bitacora-de-descartes.md, sidecar/internal/canal/acuses.go, sidecar/internal/canal/acuses_test.go); numstat 10/119/204 insertions, 1 deletion in bitacora only -- within max_files_changed:3, max_diff_lines:630, per_class test<=280 and docs<=50",
+    "D-45 verified sequential after D-44, added as a new table row plus a new section; diff shows no edits to any existing D-01..D-44 entry, only the 'ultima actualizacion' header line changed as expected housekeeping",
+    "ipc.EstadoEnvioEntregado/EstadoEnvioLeido confirmed at mensajes.go:82-83 exactly as the blueprint states; confirmed sidecar/internal/ipc contains no import of internal/canal, preserving the canal->ipc dependency direction",
+    "AddEventHandler confirmed to return uint32 and append independently to a handler slice (client.go:769-782), so RegistrarManejadorDeAcuses is a genuinely separate registration that cannot alter RegistrarManejador's existing wiring",
+    "All identifiers, comments, doc-comments and the bitacora entry are in Spanish; no English leakage found in the diff",
+    "04-implementation-log.yaml is entries:[] (no explicit mutation log entry), but this matches every sibling task's implementation-log in this repo (HEX-070/071/072/072-b/073 all show entries:[]), so it is a workflow-wide pattern, not a defect specific to this diff; the mutation reasoning is instead documented inline in the test file's Spanish comments, which this review verified by hand",
+    "Diff is staged but not committed in worktrees/HEX-072-a, per the delegate's known behavior -- not treated as a defect"
+  ],
+  "fix_tasks": []
+}
