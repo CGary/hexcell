@@ -6,4 +6,15 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 
+# Dependencias del cliente del socket Unix de Docker (tarea 9 de la etapa A-6):
+#
+# serde y serde_json: análisis del JSON del motor Docker (el campo `Id` del cuerpo de
+# `/containers/create` y el cuerpo de `/containers/{id}/json` para la inspección). La
+# justificación de reconciliación con adr-0019 vive en la tabla [workspace.dependencies] del
+# Cargo.toml raíz. A diferencia de crates/hexcell-canal-whatsmeow —el binario residente por célula
+# que adr-0019 y el presupuesto de NFR-01 gobernaron—, hexcell-admin es un proceso de línea de
+# comandos de vida corta: el operador lo invoca una vez y sale, así que traer serde_json aquí no
+# reabre aquel descarte. Aquí se PARSEA entrada del demonio, no se emite registro.
 [dependencies]
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
