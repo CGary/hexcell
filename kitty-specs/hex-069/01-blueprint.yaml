@@ -1,0 +1,261 @@
+task_id: HEX-069
+summary: >-
+  Harden both alpine:3 final stages: fixed non-root UID/GID 10001, owned data
+  mount point, shell removal, and a deferred-runtime-flags comment block.
+affected_files:
+  - Dockerfile
+  - sidecar/Dockerfile
+symbols:
+  - "Dockerfile: final stage RUN addgroup/adduser (UID/GID 10001)"
+  - "Dockerfile: final stage RUN mkdir -p /var/lib/hexcell + chown 10001:10001 + chmod 0700"
+  - "Dockerfile: final stage ENV TMPDIR / SQLITE_TMPDIR"
+  - "Dockerfile: final stage RUN apk del busybox-binsh + rm -f /bin/busybox"
+  - "Dockerfile: final stage USER 10001:10001"
+  - "Dockerfile: deferred runtime-flags comment block (AC-5)"
+  - "sidecar/Dockerfile: final stage RUN addgroup/adduser (UID/GID 10001)"
+  - "sidecar/Dockerfile: final stage RUN mkdir -p /var/lib/hexcell + chown 10001:10001 + chmod 0700"
+  - "sidecar/Dockerfile: final stage ENV TMPDIR / SQLITE_TMPDIR"
+  - "sidecar/Dockerfile: final stage RUN apk del busybox-binsh + rm -f /bin/busybox (AFTER apk add ca-certificates)"
+  - "sidecar/Dockerfile: final stage USER 10001:10001"
+  - "sidecar/Dockerfile: deferred runtime-flags comment block (AC-5)"
+  - "sidecar/Dockerfile: reconcile the stale alpine-choice comment that promised in-container diagnostic tools"
+dependencies:
+  - docs/plan/fase-a-6-empaquetado-cli.md
+  - docs/PRD.md
+  - crates/hexcell/src/configuracion.rs
+  - sidecar/internal/configuracion/configuracion.go
+  - sidecar/internal/servidor/servidor.go
+  - .ai/tasks/active/HEX-068-new-spec/00-spec.yaml
+test_scenarios:
+  - statement: "Both images build to completion from their existing multi-stage Dockerfiles with hardening applied (docker build exit 0), or the step is skipped with an explicit stated reason when the docker daemon is unreachable."
+    covers:
+      - AC-1
+  - statement: "docker inspect --format '{{.Config.User}}' returns exactly 10001:10001 for BOTH images and the two values are string-identical, proving the declared USER directive is a fixed non-zero numeric UID/GID shared across the two containers that write the same per-cell volume."
+    covers:
+      - AC-2
+  - statement: "The effective runtime UID is proven without a shell inside the image: start each container and read the Uid line of /proc/<host pid>/status for the container's main process; both must report 10001."
+    covers:
+      - AC-2
+  - statement: "Each image starts under --read-only --cap-drop ALL --security-opt no-new-privileges with ONLY a FRESH, EMPTY named volume mounted at /var/lib/hexcell, and its logs contain no EROFS / 'Read-only file system' / permission-denied filesystem error. The volume is docker volume rm'd first, so a stale volume with pre-existing correct ownership cannot make the check pass."
+    covers:
+      - AC-3
+  - statement: "docker run --entrypoint /bin/sh <image> fails with a stat/no-such-file error for BOTH images, proving no interactive shell survives in either final stage."
+    covers:
+      - AC-4
+  - statement: "The sidecar image still exposes a usable TLS trust store after shell removal: /etc/ssl/certs/ca-certificates.crt is present in the exported image filesystem."
+    covers:
+      - AC-4
+  - statement: "Both Dockerfiles contain a clearly marked comment block naming the exact deferred runtime flags (read_only, cap_drop ALL, no-new-privileges, the writable named volume at /var/lib/hexcell, optional tmpfs) and stating which stage A-6 task consumes them."
+    covers:
+      - AC-5
+  - statement: "git diff main...HEAD touches exactly two files, both named Dockerfile (root and sidecar/), and no path under deploy/, no compose file, no .env*, no crates/**, no sidecar/**/*.go and no .github/** appears in the diff."
+strategy:
+  - step: 1
+    action: >-
+      Value-Object decision, fix the identity: UID and GID are both the literal
+      10001, written numerically in both files. Evidence for the number, gathered
+      on alpine:3 = 3.24.1: the highest system UID actually in /etc/passwd below
+      1000 is 405 (guest), and 65534 is nobody, so 10001 collides with nothing
+      now and leaves headroom if a base-image bump adds a system user. It is
+      deliberately NOT 1000, which is exactly what `adduser` allocates by default
+      when -u is omitted: with 10001 an accidentally dropped -u yields a visibly
+      different UID and the AC-2 check fails loudly, so the invariant is
+      falsifiable by mutation rather than accidentally self-fulfilling. 10001
+      also avoids the host's first human user (uid 1000), so a mis-specified bind
+      mount cannot silently hand a cell the host operator's identity. Both files
+      must carry the same numeric literal and a Spanish comment stating the
+      reason, per the spec's constraint.
+    files:
+      - Dockerfile
+      - sidecar/Dockerfile
+  - step: 2
+    action: >-
+      In each final stage, create the account and own the data mount point in one
+      RUN layer, in Spanish-commented didactic style: `addgroup -g 10001 -S
+      hexcell && adduser -u 10001 -S -G hexcell -H -D -s /sbin/nologin hexcell &&
+      mkdir -p /var/lib/hexcell && chown 10001:10001 /var/lib/hexcell && chmod
+      0700 /var/lib/hexcell`. /var/lib/hexcell is the real mount point, not an
+      invented one: it is the parent of every sidecar default path
+      (RutaSqlstorePorOmision, RutaIdentidadPorOmision, RutaOutboxPorOmision in
+      sidecar/internal/configuracion/configuracion.go:109-113) and of
+      RUTA_SOCKET_IPC_POR_DEFECTO (crates/hexcell/src/configuracion.rs:354). The
+      mkdir+chown is the load-bearing piece for cold start and was proven by
+      experiment on 2026-09-10, not assumed, see risks.
+    files:
+      - Dockerfile
+      - sidecar/Dockerfile
+  - step: 3
+    action: >-
+      Application-service defence for read-only root, no code change: add `ENV
+      TMPDIR=/var/lib/hexcell` and `ENV SQLITE_TMPDIR=/var/lib/hexcell` to both
+      final stages. Neither codebase pins PRAGMA temp_store=MEMORY nor
+      SQLITE_TMPDIR, so a hypothetical SQLite disk spill would fall back to
+      /var/tmp, /usr/tmp, /tmp or CWD, all of which are read-only under the
+      deferred runtime flags. Redirecting the fallback into the writable volume
+      is an image-level default that costs nothing and needs no source edit; the
+      comment must say plainly that this is defensive, that no current query path
+      is known to trigger a spill, and that pinning temp_store in code is a
+      separate task, not this one.
+    files:
+      - Dockerfile
+      - sidecar/Dockerfile
+  - step: 4
+    action: >-
+      Remove the shell in each final stage, ordered correctly. Package-manager
+      removal of busybox is impossible on alpine:3 and must not be attempted:
+      `apk del busybox` is refused with "not removed due to: busybox:
+      alpine-baselayout" (measured 2026-09-10). The achievable sequence is `apk
+      del --no-network busybox-binsh` (drops the /bin/sh symlink; that package's
+      only reverse dependency is busybox itself) followed by `rm -f /bin/busybox`
+      (drops every applet, since all applets are symlinks to that one binary),
+      then optionally `find / -xdev -lname '*busybox' -delete` to clear the
+      resulting dangling symlinks so an image scanner does not flag them. IN THE
+      SIDECAR THIS RUN MUST COME AFTER `apk add --no-cache ca-certificates`,
+      because that package's post-install trigger (update-ca-certificates) is
+      itself a shell script. Do NOT remove apk-tools or the /lib/apk/db metadata:
+      CVE scanners read that database and stage A-6 task 16 audits the image.
+    files:
+      - Dockerfile
+      - sidecar/Dockerfile
+  - step: 5
+    action: >-
+      Add `USER 10001:10001` immediately before each ENTRYPOINT, numeric on both
+      sides of the colon so no /etc/passwd lookup is needed at runtime and the
+      value cannot drift with a name. Leave both ENTRYPOINTs in exec form exactly
+      as they are: no shell wrapper, no entrypoint script, no HEALTHCHECK, no
+      STOPSIGNAL. Signal propagation is stage A-6 task 7 and HEX-065's contract
+      already forbade wrapping the entrypoint; shell removal makes any shell-form
+      ENTRYPOINT an immediate hard failure.
+    files:
+      - Dockerfile
+      - sidecar/Dockerfile
+  - step: 6
+    action: >-
+      Add the AC-5 deferred-runtime comment block to both files, clearly marked
+      and in Spanish. It must name the exact flags the image assumes but does not
+      enforce: `read_only: true`, `cap_drop: [ALL]`, `security_opt:
+      [no-new-privileges:true]`, a writable per-cell volume mounted at
+      /var/lib/hexcell, and tmpfs only if an operator wants a writable /tmp
+      (the entrypoint path does not need one). It must state, as a warning to the
+      template author, that the volume MUST be a Docker NAMED volume: a fresh
+      named volume inherits owner and mode from this image's mount-point
+      directory, whereas a bind mount does not and will fail with EACCES unless
+      the host directory is pre-chowned to 10001:10001. It must also record that
+      `hexcell respaldar --directorio <ruta>` writes outside the data root and so
+      needs its own writable mount under a read-only rootfs. Name the consuming
+      task honestly: the compose template is stage A-6 task 8 (HEX-068), the
+      volume permission model is task 5, and the CI guard that fails a root or
+      non-read-only image is task 18 (see the HEX-068 scope risk below).
+    files:
+      - Dockerfile
+      - sidecar/Dockerfile
+  - step: 7
+    action: >-
+      Reconcile, do not leave contradicting, the existing sidecar/Dockerfile
+      comment (currently around lines 137-147) that justifies alpine:3 over
+      scratch partly by "mismas herramientas de diagnostico disponibles en la
+      etapa A-6 cuando se endurezca el shell". That sentence anticipated this
+      task and is now false: after step 4 there are no in-container diagnostic
+      tools. Rewrite it to state the surviving reasons for alpine:3 (shared
+      mental model, ca-certificates via apk, identical layer rules) and to record
+      the accepted cost that `docker exec <celula> sh` no longer works. Verified
+      safe: neither image declares a HEALTHCHECK, readiness is probed over HTTP
+      from a sibling container (stage A-6 task 11's revised criterion), and the
+      CLI drives Docker over its socket plus the IPC protocol, never via exec.
+    files:
+      - sidecar/Dockerfile
+risks:
+  - >-
+    SPEC INTERNAL CONFLICT, AC-2 versus AC-4, must not be read as an implementer
+    error: AC-2 prescribes `docker run --rm --entrypoint id <image>`, but AC-4
+    requires removing the shell, and `id` is a busybox applet that step 4
+    deletes. The two checks cannot both run as literally written. The spec is
+    human-owned and is NOT rewritten here. Equivalent shell-free substitute,
+    adopted in verify: `docker inspect --format '{{.Config.User}}'` proves the
+    declared USER directive on both images (which is what the spec's invariant 2
+    actually demands), and reading the Uid line of /proc/<host pid>/status for
+    the running container's main process proves the effective runtime UID. A
+    human should confirm this substitution is acceptable rather than have
+    q-analyze flag AC-2 as uncovered.
+  - >-
+    CROSS-TASK SCOPE GAP, needs a human decision: this task defers the runtime
+    flags to "the compose template task", but HEX-068's 00-spec.yaml lists under
+    non_goals "No container hardening or resource-limit value tuning as its own
+    deliverable (reserved for other A-6 tasks); limits are only made
+    parametrized, not chosen." As specified, HEX-068 will therefore NOT add
+    read_only, cap_drop, no-new-privileges or the volume ownership model, and no
+    task currently owns them: plan task 5 owns the volume permission model, task
+    18 owns the CI guard that fails a root or writable-rootfs image, and neither
+    is scheduled here. The hardening would land in the images and never be
+    switched on at runtime. The Dockerfile comment block mitigates this by
+    recording the flags where the next author must read them, but a human should
+    decide which task actually consumes them.
+  - >-
+    MEASURED, NOT ASSUMED (2026-09-10, alpine:3 = 3.24.1, docker available on
+    this host): a FRESH, EMPTY Docker NAMED volume inherits owner and mode from
+    the image's mount-point directory. An image doing `mkdir -p /datos && chown
+    10001:10001 /datos && chmod 0700 /datos` yielded `drwx------ 10001 10001` on
+    first mount and the process wrote successfully as uid 10001. A BIND mount did
+    NOT: the host directory's ownership won and the same write failed with
+    "Permission denied". HEX-068's template must therefore use a named volume, or
+    pre-chown the host path to 10001:10001. This is the exact failure mode the
+    spec's high risk declaration is about, and it is invisible on a reused volume
+    that already happens to have the right owner, so the AC-3 check must delete
+    the volume first.
+  - >-
+    NFR-05 IS NOT ENFORCED BY THIS UID. Because a single image serves every cell,
+    all cells necessarily run as the same 10001, so DAC ownership cannot separate
+    cell A from cell B; `chmod 0700` protects the volume against other UIDs on
+    the host, not against another cell that runs as 10001 and has the volume
+    mounted. Strict per-cell isolation continues to rest on mount topology and
+    the per-cell network (plan task 5) and is proven only by plan task 17's
+    isolation test. Per-cell UIDs would require a per-cell image build and are
+    not proposed. This must be stated in the Dockerfile comment so a later reader
+    does not mistake 0700 for the isolation guarantee.
+  - >-
+    Read-only root is safe for both ENTRYPOINT server modes, verified against the
+    real source, not inferred: every production write lands under the data root.
+    The core's std::env::temp_dir() uses are all inside #[cfg(test)] blocks
+    (crates/hexcell/src/procesador.rs:230 vs 303/375, motor.rs:479 vs 517,
+    configuracion.rs:887 vs 893); the sidecar has no os.TempDir/os.CreateTemp/
+    os.WriteFile in non-test code and logs to os.Stdout only (sidecar/main.go:43).
+    The socket's parent directory is created by the sidecar itself with
+    os.MkdirAll(dir, 0755) (sidecar/internal/servidor/servidor.go:78-79), inside
+    the volume, so cold start on an empty volume works. Residual, unquantified:
+    neither side pins PRAGMA temp_store, so a SQLite disk spill is a latent
+    write outside the root; step 3's TMPDIR/SQLITE_TMPDIR env vars are a
+    defensive redirect, NOT a proof, and pinning temp_store in code is out of
+    scope here.
+  - >-
+    DOCUMENTED EXCEPTION, not a blocker: `hexcell respaldar --directorio <ruta>`
+    is a separate manual subcommand of the same binary, never the ENTRYPOINT, and
+    it writes the five backup files into an operator-supplied absolute directory
+    outside the data root (crates/hexcell/src/respaldar.rs:294 and following).
+    Under a read-only rootfs that destination must itself be a writable mount, or
+    the A-2 backup procedure fails only in production. Recorded in the Dockerfile
+    comment; the backup design and runbook are not touched by this task.
+  - >-
+    BUILD-CONTEXT FOOTGUN, measured in HEX-066/067 and applicable verbatim here:
+    the Docker build context and the working tree diverge silently, so no claim
+    about either image may be accepted from reading the Dockerfile. Every
+    acceptance check in this task must be proven by BUILDING the image and RUNNING
+    it. Measured on this host on 2026-09-10: a clean `docker build --pull` of the
+    root image (cargo layer uncached, LTO release profile) completed in 90 s with
+    exit 0, producing an 11.826.091 byte image whose Config.User is empty, i.e.
+    root today. Both builds fit the verify loop, following the HEX-067 precedent
+    of running real docker builds in
+    verify.commands, but each docker step is guarded so an environment without a
+    reachable daemon skips with the explicit stated reason the ACs require.
+  - >-
+    contract-check matches forbidden paths by BASE NAME, ignoring the directory
+    (recorded lesson). This task touches two files whose base name is identically
+    "Dockerfile", so neither may appear in forbid.files, and the scope proof must
+    be the deterministic `git diff main...HEAD -- <forbidden paths>` step wired
+    into verify.commands rather than a manual re-read at review time.
+  - >-
+    Removing /bin/busybox leaves several hundred dangling symlinks across /bin,
+    /sbin and /usr/bin. Harmless at runtime (both ENTRYPOINTs are static binaries
+    in exec form and were proven to start with the shell gone) but noisy for
+    image scanners; the optional `find / -xdev -lname '*busybox' -delete` in step
+    4 clears them. Do not let this cleanup widen into deleting anything the musl
+    loader or the CA bundle needs.

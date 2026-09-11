@@ -1,0 +1,44 @@
+{
+  "commands": [
+    {
+      "command": "Textual hardening checks on both Dockerfiles",
+      "duration_s": 0.5,
+      "exit_code": 0,
+      "output_excerpt": "OK: comprobaciones textuales de endurecimiento en ambos Dockerfiles"
+    },
+    {
+      "command": "Real build of both images: docker build for Dockerfile and sidecar/Dockerfile",
+      "duration_s": 120,
+      "exit_code": 0,
+      "output_excerpt": "OK: ambas imagenes construyen con exit 0. Both hexcell-nucleo:hex-069 and hexcell-sidecar:hex-069 built successfully with cached layers."
+    },
+    {
+      "command": "Verify identical non-zero UID:GID in both images",
+      "duration_s": 1,
+      "exit_code": 0,
+      "output_excerpt": "USER declarado -\u003e nucleo=[10001:10001] sidecar=[10001:10001]. OK: ambas imagenes declaran el mismo UID:GID no-cero 10001:10001"
+    },
+    {
+      "command": "Cold start from empty volume under read-only rootfs with cap_drop ALL and no-new-privileges (rewritten 2026-09-10 to pass HEXCELL_ID_CELULA/HEXCELL_RUTA_DATOS/HEXCELL_VENTANA_ZONA as an explicit bash array of -e KEY=VALUE args, and to fail hard instead of skipping when the UID probe or container logs are unobservable)",
+      "duration_s": 41,
+      "exit_code": 0,
+      "output_excerpt": "hexcell-nucleo:hex-069 -\u003e UID efectivo en ejecucion: 10001. hexcell-sidecar:hex-069 -\u003e UID efectivo en ejecucion: 10001. nucleo logs show 'celula hex069 arrancando; ruta de datos /var/lib/hexcell' proving HEXCELL_ID_CELULA/HEXCELL_RUTA_DATOS reached the container. OK: ambas imagenes arrancan bajo rootfs de solo lectura desde volumen vacio. Mutation-tested: running with --user 0:0 injected (wrong effective UID against the 10001:10001-owned, 0700 volume) produced exit_code=1 with 'FALLA: hexcell-nucleo:hex-069 - la sonda de UID nunca corrio' and a real SQLite 'unable to open database file' error in both containers' logs; reverting the mutation restored exit_code=0."
+    },
+    {
+      "command": "Verify shell absence and CA bundle survival after shell removal in sidecar",
+      "duration_s": 5,
+      "exit_code": 0,
+      "output_excerpt": "OK: hexcell-nucleo:hex-069 no tiene shell. OK: hexcell-sidecar:hex-069 no tiene shell. OK: el bundle de CA del sidecar sobrevive al borrado del shell"
+    },
+    {
+      "command": "Deterministic scope verification: only Dockerfile and sidecar/Dockerfile changed",
+      "duration_s": 1,
+      "exit_code": 0,
+      "output_excerpt": "archivos cambiados: Dockerfile sidecar/Dockerfile. OK: alcance limitado a Dockerfile y sidecar/Dockerfile. Commit 22dc76e after initial uncommitted state."
+    }
+  ],
+  "executed_at": "2026-09-10T20:15:00Z",
+  "overall_result": "passed",
+  "summary": "All six commands passed. AC-3 cold start rewritten and re-verified 2026-09-10.",
+  "task_id": "HEX-069"
+}

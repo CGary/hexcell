@@ -1,0 +1,57 @@
+task_id: HEX-069
+summary: Harden the core and sidecar container images with a fixed non-root UID/GID, correct volume ownership, and shell/capability reduction, deferring runtime flags to task HEX-068.
+goal: >
+  Apply build-time hardening to the two per-cell container image definitions
+  (root Dockerfile for the Rust core, sidecar/Dockerfile for the Go sidecar)
+  per plan task 4 of fase-a-6-empaquetado-cli.md: run both processes as a
+  dedicated non-root user, own the binary and the shared data mount point
+  correctly, and remove the shell/superfluous applets and setuid binaries
+  where the alpine:3 base allows it. Runtime-side hardening (read_only,
+  cap_drop, no-new-privileges, tmpfs) is explicitly out of scope and is
+  deferred to task HEX-068's compose template; this task must leave a
+  comment block in both Dockerfiles stating the exact runtime flags the
+  image assumes so the HEX-068 author can pick them up.
+invariants:
+  - The numeric UID and GID of the dedicated non-root user are identical across the core image and the sidecar image, because both containers write to the same shared per-cell volume and a UID mismatch would silently break either cross-container write access or per-cell storage isolation (NFR-05).
+  - Neither final-stage image runs its ENTRYPOINT as root; both declare a USER directive to a fixed, non-zero numeric UID (not a name resolved at runtime).
+  - The chosen UID/GID is not 0 and is documented as a literal fixed number in the Dockerfile comments, not delegated to adduser/addgroup default allocation that could vary between rebuilds.
+  - Neither Dockerfile's final stage creates, modifies, or references anything under deploy/, any compose file, any .env example, or hexcell-admin/Rust/Go source files.
+  - Runtime-only hardening (read_only root filesystem enforcement, cap_drop ALL, no-new-privileges, tmpfs mounts) is not implemented in this task; it is recorded as an explicit deferred requirement inside comment blocks in both Dockerfiles for task HEX-068 to consume.
+acceptance:
+  - id: AC-1
+    statement: Both final-stage images build successfully from their existing multi-stage Dockerfiles with the hardening changes applied.
+    given: the modified Dockerfile and sidecar/Dockerfile
+    when: "`docker build` is run against each image (or the check is explicitly skipped with a stated reason if docker is unavailable in the execution environment)"
+    then: both builds complete with exit code 0, or the verification report states why docker was unavailable and that the build step was skipped
+  - id: AC-2
+    statement: Both images run their entrypoint as the same fixed non-root numeric UID.
+    given: a built core image and a built sidecar image
+    when: "`docker run --rm --entrypoint id <image>` is executed against each"
+    then: both outputs report the identical non-zero numeric UID (and GID), matching the value documented in the Dockerfile comments
+  - id: AC-3
+    statement: The root filesystem tolerates read-only operation; the process needs no writable path outside the data volume mount point.
+    given: a built image
+    when: "`docker run --rm --read-only <image>` is started with only the data volume mount writable (or the check is explicitly skipped with a stated reason if docker is unavailable)"
+    then: the process starts without a filesystem write failure outside the mounted data path, or the report states why the check was skipped
+  - id: AC-4
+    statement: No interactive shell is present in the final image, or its absence is explicitly justified if the alpine:3 base cannot drop it.
+    given: a built image
+    when: "`docker run --rm --entrypoint /bin/sh <image> -c 'exit 0'` is attempted (or the check is explicitly skipped with a stated reason if docker is unavailable)"
+    then: the command fails because no shell exists, or the spec/verification records explicitly that the base image could not drop the shell and states the reason, rather than silently passing
+  - id: AC-5
+    statement: Both Dockerfiles carry a comment block documenting the exact runtime flags (read_only, cap_drop, no-new-privileges, tmpfs paths) that task HEX-068's compose template must apply for the hardening to take full effect.
+    given: the modified Dockerfile and sidecar/Dockerfile
+    when: their content is inspected
+    then: each file contains a clearly marked comment section naming the deferred runtime flags and referencing that they are consumed by the compose template task
+  - Neither Dockerfile touches deploy/**, any compose file, .env examples, or any hexcell-admin/Rust/Go source file (verified by diff scope, not by running tests).
+risk: high
+non_goals:
+  - Implementing or modifying the compose template, docker-compose runtime flags, or any deploy/ artifact (task HEX-068, concurrent).
+  - Changing hexcell-admin, core Rust, or sidecar Go source code.
+  - Validating the 80 MB per-cell RAM budget or resource limits (plan task 6).
+  - Verifying network isolation between cells (plan task 5).
+constraints:
+  - Base images remain alpine:3 for both final stages; no change to the build-stage base images (rust:1.92-alpine, golang:1.26.5-alpine).
+  - No new runtime dependency is introduced; hardening uses only what alpine:3 and its package manager already provide (adduser/addgroup, apk del, chown/chmod at build time).
+  - The fixed UID/GID must not collide with existing well-known Alpine system UIDs/GIDs below 1000; document the chosen value and the reason for it directly in both Dockerfiles.
+  - "All new/changed comments and identifiers follow the existing repository convention: Spanish prose, matching the heavily-commented style already present in both files."

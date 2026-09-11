@@ -1,0 +1,287 @@
+task_id: HEX-069
+summary: >-
+  Harden both alpine:3 final stages: fixed non-root UID/GID 10001, owned
+  /var/lib/hexcell, shell removal, deferred-runtime-flags comment block.
+goal: >-
+  Stage A-6 plan task 4 ("Endurecer ambos contenedores"), build-time half only.
+  In BOTH final stages (root Dockerfile for the Rust core, sidecar/Dockerfile
+  for the Go sidecar): create a dedicated account with the literal numeric
+  UID/GID 10001:10001 (identical in both images, because both containers write
+  the same per-cell volume and a mismatch silently breaks either cross-container
+  writes or NFR-05); create and own the data mount point /var/lib/hexcell
+  (chown 10001:10001, chmod 0700), which is the parent of every sidecar default
+  path and of the IPC socket default; set TMPDIR/SQLITE_TMPDIR into the volume
+  as a defensive redirect for a possible SQLite spill; remove the shell as far
+  as alpine:3 allows (apk del busybox-binsh, then rm -f /bin/busybox, AFTER
+  apk add ca-certificates in the sidecar because its trigger is a shell script);
+  declare USER 10001:10001 before each unchanged exec-form ENTRYPOINT; and add
+  a marked Spanish comment block naming the runtime flags the image assumes but
+  does not enforce. Runtime enforcement (read_only, cap_drop, no-new-privileges,
+  tmpfs) is deferred BY DESIGN and is not a gap in this task.
+read:
+  - docs/plan/fase-a-6-empaquetado-cli.md
+  - docs/PRD.md
+  - crates/hexcell/src/configuracion.rs
+  - sidecar/internal/configuracion/configuracion.go
+  - sidecar/internal/servidor/servidor.go
+  - .ai/tasks/active/HEX-068-new-spec/00-spec.yaml
+  - .dockerignore
+  - sidecar/.dockerignore
+touch:
+  - Dockerfile
+  - sidecar/Dockerfile
+# NOTA PARA LA FASE DE ANALISIS (footgun conocido, no relitigar):
+# `quorum analyze contract-check` empareja rutas prohibidas por NOMBRE BASE,
+# ignorando el directorio. Esta tarea toca DOS archivos cuyo nombre base es
+# identicamente "Dockerfile", asi que ninguna entrada de forbid.files puede
+# llamarse "Dockerfile" sin producir un ok=false falso sobre un diff conforme.
+# La prueba deterministica del alcance es el ultimo paso de verify.commands:
+# `git diff main...HEAD -- <rutas prohibidas>` sin lineas de salida.
+#
+# NOTA SOBRE AC-2 (conflicto interno del 00-spec, decision ya tomada en el
+# blueprint): AC-2 prescribe `docker run --entrypoint id`, pero AC-4 exige
+# borrar el shell y `id` es un applet de busybox que desaparece con el. Las dos
+# comprobaciones no pueden correr a la vez tal como estan escritas. El 00-spec
+# es del humano y NO se reescribe. El sustituto equivalente y sin shell esta
+# cableado abajo: `docker inspect --format '{{.Config.User}}'` prueba la
+# directiva USER declarada (que es lo que exige el invariante 2 del spec) y la
+# linea Uid de /proc/<pid>/status prueba el UID efectivo en ejecucion.
+forbid:
+  files:
+    - "deploy/**"
+    - "docker-compose*.yml"
+    - "docker-compose*.yaml"
+    - "compose*.yml"
+    - "compose*.yaml"
+    - "*.env"
+    - ".env*"
+    - "crates/**"
+    - "sidecar/**/*.go"
+    - sidecar/go.mod
+    - sidecar/go.sum
+    - "docs/**"
+    - ".github/**"
+    - "scripts/**"
+    - Cargo.toml
+    - Cargo.lock
+    - rust-toolchain.toml
+    - .dockerignore
+    - sidecar/.dockerignore
+    - "*.db"
+    - "*.db-wal"
+    - "*.db-shm"
+  behaviors:
+    - "Do not create, modify or reference anything under deploy/, any compose file, or any .env example. A CONCURRENT task (HEX-068, stage A-6 task 8) is authoring deploy/cell.compose.yml and deploy/celula.env.ejemplo right now; any write there collides with it."
+    - "Do not implement the runtime hardening itself. read_only, cap_drop ALL, no-new-privileges and tmpfs are deferred BY DESIGN to the compose template; this task only makes the images compatible with them and records them in a comment block. Adding them here is a scope violation, and their absence is not a gap."
+    - "Do not change any Rust, Go, or hexcell-admin source. If read-only-root compatibility appears to need a code change (for example pinning PRAGMA temp_store=MEMORY), STOP and report it as a blocker instead of absorbing it: the TMPDIR/SQLITE_TMPDIR env vars are the only in-scope mitigation."
+    - "Do not change the base images. Both final stages stay on alpine:3 and both builder stages stay on rust:1.92-alpine and golang:1.26.5-alpine exactly; do not switch to scratch or distroless (already scoped out in HEX-065's contract, not reopened here)."
+    - "Do not remove ca-certificates from the sidecar's final stage, and do not add it to the core's. That asymmetry is deliberate and documented: the core carries its TLS roots inside the binary (rustls + webpki-tokio), the sidecar delegates verification to the OS store."
+    - "Do not place the shell-removal RUN before `apk add --no-cache ca-certificates` in the sidecar: that package's post-install trigger (update-ca-certificates) is a shell script and would fail."
+    - "Do not attempt `apk del busybox`. It is refused on alpine:3 because alpine-baselayout hard-depends on it (measured 2026-09-10); the achievable path is `apk del --no-network busybox-binsh` plus `rm -f /bin/busybox`."
+    - "Do not remove apk-tools or the /lib/apk/db package metadata; a CVE scanner would need that database; no stage A-6 task schedules such a scan today, so keeping it costs nothing and removing it would foreclose the option."
+    - "Do not wrap either ENTRYPOINT in a shell, convert it to shell form, or add an entrypoint script, HEALTHCHECK or STOPSIGNAL. Both stay exec-form static binaries; signal propagation is stage A-6 task 7 and HEX-065's contract already forbade wrapping."
+    - "Do not use a username instead of a number in USER, and do not let adduser/addgroup allocate the id by default. Both sides of USER are the literal 10001, and adduser/addgroup are called with explicit -u/-g 10001."
+    - "Do not change the ARG_VERSION_WHATSMEOW pin-verification gate, its ARG declarations, or the OCI LABEL block in sidecar/Dockerfile; they must survive unchanged and still fail closed."
+    - "Do not change the go build flags (-trimpath, -ldflags=\"-s -w\") or the cargo release profile; binary minimisation was stage A-6 task 3, closed in HEX-067."
+    - "Do not create any new file. The two Dockerfiles are the only deliverables; the AC-5 comment blocks inside them are the acceptance evidence, and no doc, script, ADR or bitacora entry is added."
+    - "Do not write any artifact content in English. Every new or changed comment in both Dockerfiles is Spanish, matching the existing didactic why-focused style of each file."
+verify:
+  commands:
+    - |
+      # 1. Chequeo textual barato y deterministico sobre AMBOS Dockerfiles.
+      # Corre sin docker y falla rapido antes de gastar un build.
+      set -u
+      FALLOS=0
+      for F in Dockerfile sidecar/Dockerfile; do
+        grep -qE '^USER[[:space:]]+10001:10001[[:space:]]*$' "$F" \
+          || { echo "FALLA [$F]: falta la directiva USER 10001:10001 numerica"; FALLOS=1; }
+        grep -qE 'adduser[^|&]*-u[[:space:]]+10001' "$F" \
+          || { echo "FALLA [$F]: adduser sin -u 10001 explicito"; FALLOS=1; }
+        grep -qE 'addgroup[^|&]*-g[[:space:]]+10001' "$F" \
+          || { echo "FALLA [$F]: addgroup sin -g 10001 explicito"; FALLOS=1; }
+        grep -qE 'chown[[:space:]]+10001:10001[[:space:]]+/var/lib/hexcell' "$F" \
+          || { echo "FALLA [$F]: no se apropia /var/lib/hexcell con chown 10001:10001"; FALLOS=1; }
+        grep -q 'busybox-binsh' "$F" \
+          || { echo "FALLA [$F]: no se retira busybox-binsh"; FALLOS=1; }
+        # Bloque de comentario de flags diferidas (AC-5): las cuatro banderas
+        # deben nombrarse literalmente en el archivo.
+        for BANDERA in 'read_only' 'cap_drop' 'no-new-privileges' 'HEX-068'; do
+          grep -q "$BANDERA" "$F" \
+            || { echo "FALLA [$F]: el bloque de flags diferidas no menciona $BANDERA"; FALLOS=1; }
+        done
+      done
+      # El ENTRYPOINT debe seguir en forma exec (JSON), nunca envuelto en shell.
+      grep -qE '^ENTRYPOINT[[:space:]]+\["/usr/local/bin/hexcell"\]' Dockerfile \
+        || { echo "FALLA: el ENTRYPOINT del nucleo dejo de estar en forma exec"; FALLOS=1; }
+      grep -qE '^ENTRYPOINT[[:space:]]+\["/usr/local/bin/hexcell-sidecar"\]' sidecar/Dockerfile \
+        || { echo "FALLA: el ENTRYPOINT del sidecar dejo de estar en forma exec"; FALLOS=1; }
+      # En el sidecar, ca-certificates debe instalarse ANTES de borrar el shell.
+      L_CA=$(grep -n 'apk add --no-cache ca-certificates' sidecar/Dockerfile | head -1 | cut -d: -f1)
+      L_RM=$(grep -n 'busybox-binsh' sidecar/Dockerfile | head -1 | cut -d: -f1)
+      if [ -z "$L_CA" ] || [ -z "$L_RM" ] || [ "$L_CA" -ge "$L_RM" ]; then
+        echo "FALLA: en sidecar/Dockerfile el borrado del shell no va DESPUES de apk add ca-certificates"
+        FALLOS=1
+      fi
+      [ "$FALLOS" -eq 0 ] && echo "OK: comprobaciones textuales de endurecimiento en ambos Dockerfiles"
+      exit "$FALLOS"
+    - |
+      # 2. AC-1: construccion real de AMBAS imagenes. Es la unica prueba
+      # valida: el contexto de Docker y el arbol de trabajo divergen en
+      # silencio (medido en HEX-066/067), asi que ninguna afirmacion sobre una
+      # imagen se acepta leyendo el Dockerfile.
+      # Medido el 2026-09-10 en este anfitrion: el nucleo tarda ~90 s con la
+      # capa de cargo en frio; el sidecar es mas rapido.
+      set -u
+      if ! docker info >/dev/null 2>&1; then
+        echo "OMITIDO (razon declarada): el demonio de Docker no esta accesible en este entorno; AC-1 no se puede verificar aqui."
+        exit 0
+      fi
+      docker build --pull -t hexcell-nucleo:hex-069 . || exit 1
+      docker build --pull -f sidecar/Dockerfile -t hexcell-sidecar:hex-069 sidecar/ || exit 1
+      echo "OK: ambas imagenes construyen con exit 0"
+    - |
+      # 3. AC-2: MISMO UID no-cero en ambas imagenes. Sustituto sin shell de
+      # `docker run --entrypoint id`, que ya no puede existir tras AC-4 (ver la
+      # nota sobre el conflicto AC-2/AC-4 en la cabecera de este contrato).
+      set -u
+      if ! docker info >/dev/null 2>&1; then
+        echo "OMITIDO (razon declarada): sin demonio de Docker no hay imagen que inspeccionar; AC-2 no se puede verificar aqui."
+        exit 0
+      fi
+      U_NUCLEO=$(docker image inspect --format '{{.Config.User}}' hexcell-nucleo:hex-069)
+      U_SIDECAR=$(docker image inspect --format '{{.Config.User}}' hexcell-sidecar:hex-069)
+      echo "USER declarado -> nucleo=[$U_NUCLEO] sidecar=[$U_SIDECAR]"
+      [ "$U_NUCLEO" = "10001:10001" ] || { echo "FALLA: el nucleo no declara USER 10001:10001"; exit 1; }
+      [ "$U_SIDECAR" = "10001:10001" ] || { echo "FALLA: el sidecar no declara USER 10001:10001"; exit 1; }
+      [ "$U_NUCLEO" = "$U_SIDECAR" ] || { echo "FALLA: los dos UID difieren y comparten volumen"; exit 1; }
+      echo "OK: ambas imagenes declaran el mismo UID:GID no-cero 10001:10001"
+    - |
+      # 4. AC-3: arranque bajo rootfs de SOLO LECTURA, sin capacidades y sin
+      # nuevos privilegios, desde un volumen VACIO. El `docker volume rm` es
+      # obligatorio: un volumen reusado ya trae la propiedad correcta y haria
+      # pasar la prueba sin probar nada del arranque en frio (footgun medido).
+      # Cada variable de entorno obligatoria se pasa en un arreglo bash de
+      # `-e CLAVE=VALOR` propios, nunca por la expansion sin comillas de una
+      # variable compuesta: el arreglo elimina por construccion cualquier
+      # dependencia de la division de palabras del shell para que el `-e`
+      # llegue al contenedor, en vez de confiar en que el formato del texto
+      # concatenado se parta como se espera. Ademas, una sonda que nunca
+      # corrio (contenedor muerto antes de que /proc/$PID/status sea
+      # legible, o sin lineas de log) se trata como FALLA explicita, nunca
+      # como paso silencioso: un guardia que nunca se vio fallar no prueba
+      # nada.
+      set -u
+      if ! docker info >/dev/null 2>&1; then
+        echo "OMITIDO (razon declarada): sin demonio de Docker no se puede arrancar contenedor; AC-3 no se puede verificar aqui."
+        exit 0
+      fi
+      ESTADO=0
+      probar_arranque_en_frio() {
+        IMG="$1"; VOL="$2"; shift 2
+        ENV_ARGS=()
+        for KV in "$@"; do
+          ENV_ARGS+=(-e "$KV")
+        done
+        docker volume rm "$VOL" >/dev/null 2>&1 || true
+        CID=$(docker run -d --read-only --cap-drop ALL --security-opt no-new-privileges \
+              -v "$VOL":/var/lib/hexcell "${ENV_ARGS[@]}" "$IMG")
+        # UID efectivo en ejecucion, leido desde el anfitrion: no necesita
+        # shell dentro de la imagen (segunda mitad de AC-2).
+        PID=$(docker inspect -f '{{.State.Pid}}' "$CID" 2>/dev/null || echo 0)
+        if [ "$PID" != "0" ] && [ -r "/proc/$PID/status" ]; then
+          UID_EFECTIVO=$(awk '/^Uid:/{print $2}' "/proc/$PID/status")
+          echo "$IMG -> UID efectivo en ejecucion: $UID_EFECTIVO"
+          [ "$UID_EFECTIVO" = "10001" ] || { echo "FALLA: $IMG corre con UID $UID_EFECTIVO, no 10001"; ESTADO=1; }
+        else
+          echo "FALLA: $IMG - la sonda de UID nunca corrio (PID observado=[$PID]); un contenedor que muere antes de poder leer /proc/\$PID/status no cuenta como arranque probado"
+          ESTADO=1
+        fi
+        timeout 20 docker wait "$CID" >/dev/null 2>&1 || true
+        SALIDA=$(docker logs "$CID" 2>&1 | head -60)
+        echo "--- logs de $IMG ---"; echo "$SALIDA"
+        if [ -z "$SALIDA" ]; then
+          echo "FALLA: $IMG no produjo ninguna linea de log; un contenedor mudo no prueba un arranque sano"
+          ESTADO=1
+        elif echo "$SALIDA" | grep -qiE 'read-only file system|permission denied|EROFS|EACCES'; then
+          echo "FALLA: $IMG reporta un fallo de escritura en sistema de archivos bajo --read-only"
+          ESTADO=1
+        fi
+        docker rm -f "$CID" >/dev/null 2>&1 || true
+        docker volume rm "$VOL" >/dev/null 2>&1 || true
+      }
+      probar_arranque_en_frio hexcell-nucleo:hex-069 hex069vn \
+        "HEXCELL_ID_CELULA=hex069" "HEXCELL_RUTA_DATOS=/var/lib/hexcell"
+      probar_arranque_en_frio hexcell-sidecar:hex-069 hex069vs \
+        "HEXCELL_VENTANA_ZONA=America/Argentina/Buenos_Aires"
+      [ "$ESTADO" -eq 0 ] && echo "OK: ambas imagenes arrancan bajo rootfs de solo lectura desde volumen vacio"
+      exit "$ESTADO"
+    - |
+      # 5. AC-4: ausencia de shell en ambas imagenes, y supervivencia del
+      # almacen de confianza TLS del sidecar tras el borrado.
+      set -u
+      if ! docker info >/dev/null 2>&1; then
+        echo "OMITIDO (razon declarada): sin demonio de Docker no hay imagen que inspeccionar; AC-4 no se puede verificar aqui."
+        exit 0
+      fi
+      ESTADO=0
+      for IMG in hexcell-nucleo:hex-069 hexcell-sidecar:hex-069; do
+        if docker run --rm --entrypoint /bin/sh "$IMG" -c 'exit 0' >/dev/null 2>&1; then
+          echo "FALLA: $IMG todavia tiene /bin/sh utilizable"
+          ESTADO=1
+        else
+          echo "OK: $IMG no tiene shell"
+        fi
+      done
+      CID=$(docker create hexcell-sidecar:hex-069)
+      if docker export "$CID" | tar -t 2>/dev/null | grep -q 'etc/ssl/certs/ca-certificates.crt'; then
+        echo "OK: el bundle de CA del sidecar sobrevive al borrado del shell"
+      else
+        echo "FALLA: el sidecar perdio /etc/ssl/certs/ca-certificates.crt"
+        ESTADO=1
+      fi
+      docker rm "$CID" >/dev/null 2>&1 || true
+      docker rmi hexcell-nucleo:hex-069 hexcell-sidecar:hex-069 >/dev/null 2>&1 || true
+      exit "$ESTADO"
+    - |
+      # 6. Refutacion deterministica del footgun de contract-check (nombre base
+      # vs. ruta completa) y prueba de que el alcance no se desbordo hacia la
+      # tarea concurrente HEX-068.
+      set -u
+      LINEAS=$(git diff main...HEAD -- deploy ':(glob)**/docker-compose*.y*ml' ':(glob)**/compose*.y*ml' \
+               ':(glob)**/.env*' crates sidecar/main.go sidecar/arranque.go ':(glob)sidecar/internal/**' \
+               sidecar/go.mod sidecar/go.sum docs .github scripts Cargo.toml Cargo.lock \
+               .dockerignore sidecar/.dockerignore | wc -l)
+      if [ "$LINEAS" -ne 0 ]; then
+        echo "FALLA: el diff toca rutas prohibidas (deploy/, compose, .env, crates, fuentes Go, docs, CI o dockerignore)"
+        git diff --stat main...HEAD
+        exit 1
+      fi
+      ARCHIVOS=$(git diff --name-only main...HEAD | sort | tr '\n' ' ')
+      echo "archivos cambiados: $ARCHIVOS"
+      [ "$ARCHIVOS" = "Dockerfile sidecar/Dockerfile " ] \
+        || { echo "FALLA: el diff no se limita a los dos Dockerfiles"; exit 1; }
+      echo "OK: alcance limitado a Dockerfile y sidecar/Dockerfile"
+acceptance:
+  human_gate: true
+limits:
+  max_files_changed: 2
+  # Dos archivos, ambos en el estilo didactico y muy comentado ya establecido
+  # (bloques de 10-25 lineas explicando el POR QUE). contract-check cuenta
+  # inserciones MAS borrados, no lineas netas.
+  # Por archivo: ~15 lineas funcionales (addgroup/adduser, mkdir+chown+chmod,
+  # dos ENV, el RUN de borrado del shell, USER) mas ~90 lineas de comentario
+  # obligatorio: la justificacion del 10001 literal (exigida por el constraint
+  # del spec), el bloque de flags diferidas de AC-5 con la advertencia de
+  # volumen nombrado vs bind mount, la nota de que 0700 no es la garantia de
+  # NFR-05, y la excepcion de `hexcell respaldar --directorio`. Son ~105 lineas
+  # insertadas por archivo, ~210 en total, mas ~15 borradas por la
+  # reconciliacion del comentario obsoleto de alpine-vs-scratch en el sidecar.
+  # Total honesto ~225; se fija 260 para dejar margen a la densidad de
+  # comentario sin invitar a que la tarea crezca hacia el alcance de HEX-068.
+  max_diff_lines: 260
+execution:
+  mode: worktree_edit
+  branch: ai/HEX-069
+retry_policy:
+  max_attempts: 2
+  escalate_after: 1

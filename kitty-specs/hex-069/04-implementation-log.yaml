@@ -1,0 +1,3 @@
+entries: []
+summary: 'Harden both alpine:3 final stages: fixed non-root UID/GID 10001, owned /var/lib/hexcell, shell removal, deferred-runtime-flags comment block.'
+task_id: HEX-069
