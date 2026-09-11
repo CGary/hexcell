@@ -133,3 +133,7 @@ Este comando no existe en la Fase B: nace de la operación del canal propio y no
 Estado (2026-09-10): planificado en la etapa A-6, tarea 22.
 
 La configuración de cada célula vive en **archivos versionables en git**: valores por defecto compartidos más *overlays* por célula que los superponen. Los archivos contienen **solo parámetros no secretos**; todo secreto sigue viajando por variables de entorno. `hexcell-admin` los renderiza al entorno de la plantilla de arranque de la célula: el binario de la célula **no gana un segundo lector de configuración**. Una clave desconocida o un valor inválido **aborta el arranque**.
+
+### 6. Composición de la célula
+
+La célula se materializa como dos contenedores —núcleo y sidecar— descritos en `deploy/cell.compose.yml`, parametrizada por célula con las variables de `deploy/celula.env.ejemplo` (nota de uso en `docs/plantilla-celula.md`). Las banderas de endurecimiento —`read_only`, `cap_drop: [ALL]`, `no-new-privileges` y el `tmpfs` de la ruta de escritura temporal— están impuestas en esa plantilla y se verifican mecánicamente con la guarda `deploy/verificar_endurecimiento.sh` (HEX-070, 2026-09-11).

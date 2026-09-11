@@ -179,6 +179,7 @@ Las entradas conservan su numeración; esta sección es la autoridad sobre el or
 * **6 antes de 16, con ajuste posterior:** 6 fija límites provisionales desde NFR-01, 16 mide bajo esos límites y 6 se ajusta con el dato.
 * **14 después de 13:** `cell status` incluye el historial de sustituciones, que solo existe tras `rebind`.
 * **12 y 13 tras la tarea 24:** no se implementa un `terminate` que borre volúmenes con la sesión viva.
+* Actualización 2026-09-11: 8, 4, 5, 9 y 24 cerradas; 25 dividida en 25-a (cerrada) y 25-b (pendiente, antes de 20). La cadena restante: 7 → 17 → 6 → 16 → 10 → 11 → 22 → 12 → 13 → 14 → 15 → 18 → 25-b → 20 → 23 → 21 → 19.
 
 ---
 
@@ -233,8 +234,8 @@ Las entradas conservan su numeración; esta sección es la autoridad sobre el or
 
     **Criterio de aceptación (revisado 2026-09-10):** Se acepta cuando `cell terminate` desvincula el
     dispositivo mediante el tipo IPC de cierre de sesión (tarea 24) y el estado transita a
-    `desvinculada_sesion_cerrada`. Bloqueada hasta que la tarea 24 cierre: no se implementa un
-    `terminate` que borre volúmenes con la sesión viva.
+    `desvinculada_sesion_cerrada`. Desbloqueada el 2026-09-11 por HEX-071 (tarea 24): el tipo IPC de
+    cierre de sesión existe.
 13. **Implementar `cell rebind`** (1 día). Re-emparejamiento de una célula existente con un número
     distinto, que es la salida técnica de un baneo permanente y no un alta nueva. Secuencia fija:
     confirmación explícita del operador —es una operación destructiva sobre la identidad de canal,
@@ -329,7 +330,7 @@ Las entradas conservan su numeración; esta sección es la autoridad sobre el or
     las ocho condiciones se provoca en prueba con un sumidero de notificación falso y produce
     exactamente una notificación con su código. Las métricas se entregan por registro estructurado o
     copias `VACUUM INTO`, nunca por endpoint HTTP ni consulta en vivo de `hexcell-admin` (adr-0024).
-    Umbrales como parámetros sin valor normativo. Depende de la tarea 25. Trazabilidad: FR-14
+    Umbrales como parámetros sin valor normativo. Depende de la tarea 25-b. Trazabilidad: FR-14
     (decisión de 2026-09-10).
 21. **Escribir el runbook de operación** (0,5 días). Qué comando usar en cada situación, qué efecto
     tiene y cómo verificar que salió bien. Incluye `cell rebind` con su remisión explícita al
@@ -351,7 +352,11 @@ Las entradas conservan su numeración; esta sección es la autoridad sobre el or
     total coincide con la suma de conciliaciones sembradas. Trazabilidad: FR-14 (decisión de
     2026-09-10).
 24. **Extensión del protocolo IPC: tipo de cierre de sesión y orden de pausa de envío**. `cerrar_sesion` es un stub que devuelve `SinConexion` (`crates/hexcell-canal-whatsmeow/src/adaptador.rs:744-747`, `TODO(A-3)`) y el protocolo no tiene tipo de logout ni orden de pausa (solo existe el estado `pausada`). Pendiente de aceptación de A-3 ejecutado en A-6. Traza a FR-12. Criterio: nuevo tipo de mensaje documentado en `docs/protocolo-ipc-nucleo-sidecar.md` con subida de versión de cable, implementado en `sidecar/internal/ipc/mensajes.go` y `crates/hexcell-canal-whatsmeow/src/mensajes.rs`, con prueba de contrato que desvincula y otra que pausa y reanuda el envío.
+
+    **Cerrada el 2026-09-11 con HEX-071**: versión de cable 6, cuatro tipos nuevos (cierre de sesión y su acuse, orden de pausa de envío y su acuse), `cerrar_sesion` implementado (`crates/hexcell-canal-whatsmeow/src/adaptador.rs:947`). El enunciado anterior describe el estado previo.
 25. **Productor de métricas del sidecar prometido en A-3**. `docs/plan/fase-a-3-adaptador-whatsmeow.md:105-109` promete ratio de acuses por contacto, reconexiones por hora y ventana de silencio; no existe productor en `sidecar/`. Trazabilidad: la promesa de A-3 no cita FR; registrada como pendiente en STATUS.md. Criterio: el sidecar emite las tres series por el canal aprobado en adr-0024 (registro estructurado), con prueba que las provoca en simulación.
+
+    **Dividida el 2026-09-11.** 25-a (HEX-072-a, cerrada): clasificación de acuses de entrega y lectura de whatsmeow en un sumidero interno del sidecar (`sidecar/internal/canal/acuses.go`); por D-45 los acuses no viajan por IPC. 25-b (pendiente): el productor periódico de las tres series (ratio de acuses por contacto, reconexiones por hora, ventana de silencio) y su emisión por registro estructurado (adr-0024), con prueba en simulación.
 
 ---
 

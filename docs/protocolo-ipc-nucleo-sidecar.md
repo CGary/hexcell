@@ -7,13 +7,14 @@
   (tarea 3), la reconexión y la taxonomía de desconexión (tareas 6 y 7, cerradas por esta versión
   para el lado sidecar), el mapeo de identidad (tarea 9) y el cliente Rust del protocolo dentro de
   `WhatsmeowAdapter` (tarea 10). No existe todavía ningún socket abierto ni ningún extremo Rust:
+  (Nota 2026-09-11: esta frase describe el estado de la primera redacción; el sidecar y el adaptador Rust existen desde la etapa A-3.)
   el estado se produce como `estado_sesion` codificable y se entrega a un sumidero inyectado.
 * **Procesos que hablan este protocolo:** el binario `hexcell` (núcleo Rust) y el binario
   `hexcell-sidecar` (Go, whatsmeow), los dos contenedores de una misma célula sobre canal propio.
   El sidecar es un **coste permanente** de ese canal (`adr-0014`): este protocolo no es un
   andamio de transición hacia ninguna otra cosa.
-* **Dónde se registrará la decisión:** `docs/adr/adr-0011-whatsmeow-sidecar-e-ipc.md`, todavía por
-  escribir, es el ADR que fija el porqué del proceso separado, la elección del mecanismo IPC y el
+* **Dónde se registrará la decisión:** `docs/adr/adr-0011-whatsmeow-sidecar-e-ipc.md`, vigente desde
+  el 2026-08-08, es el ADR que fija el porqué del proceso separado, la elección del mecanismo IPC y el
   diseño de persistencia de sesión. Este documento es la **especificación**; aquel será el
   **registro de la decisión**, y se escribe cuando la etapa tenga delante también la persistencia
   de sesión (tarea 5) y la disciplina de comportamiento (tarea 14), porque su alcance las incluye.
@@ -639,4 +640,4 @@ ofensor; **nunca la línea recibida**, que podría contener el texto de un mensa
   como mecanismo de privacidad.
 * `crates/hexcell-core/src/canal.rs`: `EventoEntrante`, `ChannelAdapter` y `CicloDeVidaSesion`, tal
   y como están declarados hoy.
-* `docs/adr/adr-0011-whatsmeow-sidecar-e-ipc.md`: ADR que registrará esta decisión, por escribir.
+* `docs/adr/adr-0011-whatsmeow-sidecar-e-ipc.md`: ADR que registrará esta decisión, vigente desde el 2026-08-08.
