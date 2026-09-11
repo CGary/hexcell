@@ -1,0 +1,3 @@
+entries: []
+summary: Add read_only/cap_drop/no-new-privileges/tmpfs to both cell services, forbid bind mounts, ship a mutation-proven guard script.
+task_id: HEX-070

@@ -1,0 +1,196 @@
+task_id: HEX-070
+summary: Add read_only/cap_drop/no-new-privileges/tmpfs to both cell services, forbid bind mounts, ship a mutation-proven guard script.
+goal: >-
+  Impose the runtime hardening flags (read_only, cap_drop: [ALL], security_opt:
+  [no-new-privileges:true], tmpfs) on both the nucleo and sidecar services in
+  deploy/cell.compose.yml, document and enforce the named-volume-only ownership
+  model (no bind mount), and add a new mechanical guard script that checks the
+  resolved compose output for these flags and is demonstrated to fail under
+  mutation before being considered done.
+read:
+  - .ai/tasks/active/HEX-070-new-spec/00-spec.yaml
+  - docs/plan/fase-a-6-empaquetado-cli.md
+  - deploy/cell.compose.yml
+  - deploy/celula.env.ejemplo
+  - Dockerfile
+  - sidecar/Dockerfile
+  - crates/hexcell/src/configuracion.rs
+  - .ai/tasks/done/HEX-068-new-spec/02-contract.yaml
+  - .ai/tasks/done/HEX-069-new-spec/02-contract.yaml
+touch:
+  - deploy/cell.compose.yml
+  - deploy/celula.env.ejemplo
+  - Dockerfile
+  - sidecar/Dockerfile
+  - deploy/verificar_endurecimiento.sh
+forbid:
+  files:
+    - "crates/**"
+    - "sidecar/**/*.go"
+    - sidecar/go.mod
+    - sidecar/go.sum
+    - Cargo.toml
+    - Cargo.lock
+    - rust-toolchain.toml
+    - ".dockerignore"
+    - sidecar/.dockerignore
+    - ".github/**"
+    - "docs/**"
+    - ".ai/**"
+    - "kitty-specs/**"
+    - "*.env"
+    - ".env*"
+    - "*.db"
+    - "*.db-wal"
+    - "*.db-shm"
+    - docs/plantilla-celula.md
+  behaviors:
+    - "Do not change mem_limit or cpus values, or any other resource-limit field, in deploy/cell.compose.yml. Resource limits are plan task 6's scope (00-spec.yaml non_goals)."
+    - "Do not implement or run the two-cell isolation demonstration (bringing up two cells and proving neither reaches the other's network or volume). Declare it deferred to plan task 17 in a written comment; do not attempt to prove it here (00-spec.yaml non_goals, AC-6)."
+    - "Do not change any RUN, USER, ENV, ENTRYPOINT, ARG, or LABEL instruction in Dockerfile or sidecar/Dockerfile, and do not change the numeric 10001:10001 user, the /var/lib/hexcell chown/chmod, or the shell-removal steps from HEX-069. Only the prose inside the existing 'FLAGS DE EJECUCIÓN DIFERIDAS' comment block may change, to stop it claiming the flags are unimposed and optional once this task imposes them. A verify command greps a git diff of both Dockerfiles for any non-comment line changed outside that block and fails if one is found."
+    - "Do not add, offer, or leave commented-out any bind-mount form (type: bind, or a host path before the colon) for the /var/lib/hexcell mount in deploy/cell.compose.yml. The datos volume stays the only mount form, named-volume only."
+    - "Do not introduce a new ${VARIABLE} in deploy/cell.compose.yml or deploy/celula.env.ejemplo. The hardening flags added are compose-level literals (read_only: true, cap_drop: [ALL], security_opt: [no-new-privileges:true], tmpfs: [/tmp]), not per-cell values; do not parametrize them."
+    - "Do not wire the new guard script into .github/workflows/ci.yml or any other CI config. CI integration is plan task 18's scope, not this task's."
+    - "Do not add a new third-party dependency (no yq, no compose-parsing library beyond python3's stdlib-adjacent PyYAML already used by HEX-068's own verify.commands) to any manifest; the guard script is a standalone shell+python3 file with no package installation step."
+    - "Do not weaken, delete, or rephrase the existing HEX-069 bind-mount warning inside either Dockerfile's comment block; extend it or correct only the 'not imposed'/'tmpfs optional' claims."
+    - "Do not write any new file beyond deploy/verificar_endurecimiento.sh. No ADR, no bitacora entry, no STATUS.md change — this task closes a plan-task gap, it does not record a product decision (00-spec.yaml traces to NFR-05 and the stage's own acceptance criteria, no new decision is being made)."
+    - "Do not write any artifact content in English. Every new or changed line in deploy/cell.compose.yml, deploy/celula.env.ejemplo, both Dockerfiles' comments, and deploy/verificar_endurecimiento.sh (identifiers, comments, script output messages) is Spanish, matching the repository-wide rule and the existing didactic style of these files."
+verify:
+  commands:
+    - |
+      set -u
+      # 1. AC-1..AC-4: el guardia corre contra la plantilla REAL (sin mutar) y
+      # debe pasar. docker compose config resuelve del lado del cliente, sin
+      # demonio, y ya se confirmo que no exige contexto de build valido, asi
+      # que esta comprobacion es rapida y deterministica.
+      # Un entorno sin docker/compose NO se declara "verificado": AC-1..AC-4
+      # fallan explicitamente en vez de omitirse con exit 0, porque un salto
+      # silencioso seria indistinguible de un pase y este contrato exige que
+      # el guardia se demuestre, no que se asuma (ubuntu-latest de GitHub
+      # Actions trae docker de fabrica, asi que este camino no deberia
+      # activarse en CI).
+      command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1 \
+        || { echo "FALLA: docker/compose no disponible en este entorno; AC-1..AC-4 no se pueden verificar y no se declaran verificadas"; exit 1; }
+      bash deploy/verificar_endurecimiento.sh deploy/cell.compose.yml
+    - |
+      set -u
+      # 2. AC-5: prueba de mutacion. El guardia debe fallar contra una copia
+      # mutada que carece de cada una de las cuatro banderas, una por vez, y
+      # pasar contra la plantilla sin mutar (repetido aqui como parte de la
+      # autoprueba). Un guardia que nunca se vio fallar no es todavia un
+      # guardia: por eso, igual que en el comando 1, la ausencia de
+      # docker/compose es FALLA, no OMITIDO — declarar AC-5 verificada sin
+      # haber corrido la autoprueba de mutacion contradice directamente la
+      # restriccion del 00-spec.yaml sobre este punto.
+      command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1 \
+        || { echo "FALLA: docker/compose no disponible en este entorno; AC-5 no se puede verificar y no se declara verificada"; exit 1; }
+      bash deploy/verificar_endurecimiento.sh --autoprueba
+    - |
+      set -u
+      # 3. AC-4 / alcance: ninguna forma de bind mount, comentada o activa,
+      # corta o larga, aparece en la plantilla. Deliberadamente SIN anclar al
+      # inicio de linea: un bind mount comentado (# - /host:/var/lib/hexcell)
+      # tambien debe detectarse, no solo el activo, porque la invariante lo
+      # prohibe "comentado o de otra forma". La forma larga (type: bind) se
+      # busca como subcadena en cualquier posicion (linea propia dentro del
+      # item de lista, o inline); la forma corta busca un origen con pinta de
+      # ruta de host (empieza con '.', '/' o '~') seguido de ':/var/lib/hexcell'.
+      # Un volumen NOMBRADO como '- datos:/var/lib/hexcell' no dispara esto
+      # porque 'datos' no empieza con ninguno de esos tres caracteres.
+      ! grep -nE 'type:[[:space:]]*bind\b|[./~][^:#[:space:]]*:[[:space:]]*/var/lib/hexcell' deploy/cell.compose.yml \
+        && echo "OK: sin forma de bind mount (activa o comentada, corta o larga) en deploy/cell.compose.yml"
+    - |
+      set -u
+      # 4. AC-6: la declaracion de alcance diferido a la tarea 17 esta escrita
+      # en la plantilla, no solo en la memoria del autor. Tolerante a variantes
+      # de redaccion razonables ("tarea 17", "tarea num. 17", "tareas 17 y 18")
+      # en vez de exigir la subcadena literal "tarea 17": exige la palabra
+      # "tarea"/"tareas" seguida, a una distancia corta y sin otro digito de
+      # por medio, del numero 17 con limite de palabra (para no confundir con
+      # "170" u otro numero que lo contenga).
+      grep -qiE 'tareas?[^0-9]{0,20}17\b' deploy/cell.compose.yml \
+        && echo "OK: aislamiento de dos celulas declarado diferido a la tarea 17" \
+        || { echo "FALLA: falta la declaracion de alcance diferido a la tarea 17"; exit 1; }
+    - |
+      set -u
+      # 5. Guarda de alcance en los Dockerfiles: solo el bloque de comentario
+      # de flags diferidas puede cambiar; ninguna linea de instruccion real
+      # (RUN/USER/ENV/ENTRYPOINT/ARG/LABEL) se toca. Sustituye al footgun de
+      # contract-check por nombre base (los dos archivos se llaman
+      # "Dockerfile"), igual que hizo HEX-069.
+      # Comparacion contra el punto de ramificacion (merge-base con main), NO
+      # contra el arbol de trabajo sin referencia: `git diff` sin ref queda
+      # vacio en cuanto el implementador hace `git add` o commitea, y ese
+      # vacio se leeria como "no cambio nada fuera de comentarios" aunque si
+      # cambio. Comparar contra el merge-base es invariante al estado del
+      # indice/HEAD: ve todo lo acumulado desde la rama, comprometido o no.
+      BASE_REF=$(git merge-base main HEAD 2>/dev/null || echo main)
+      LINEAS=$(git diff --no-color "$BASE_REF" -- Dockerfile sidecar/Dockerfile \
+        | grep -E '^[+-]' | grep -vE '^(\+\+\+|---)' | grep -vE '^[+-]\s*#' | grep -vE '^[+-]\s*$')
+      if [ -n "$LINEAS" ]; then
+        echo "FALLA: los Dockerfiles cambiaron fuera de lineas de comentario (base=$BASE_REF):"
+        echo "$LINEAS"
+        exit 1
+      fi
+      echo "OK: los Dockerfiles solo cambiaron comentarios (comparado contra $BASE_REF)"
+    - |
+      set -u
+      # 6. Consumidor existente sin regresion: docker compose config sigue
+      # resolviendo la plantilla con el env de ejemplo tras agregar las
+      # banderas. Igual que en 1 y 2: sin docker/compose esto es FALLA, no un
+      # pase silencioso, porque "no se pudo comprobar" no es lo mismo que
+      # "se comprobo y sigue resolviendo".
+      command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1 \
+        || { echo "FALLA: docker/compose no disponible en este entorno; la resolucion de la plantilla no se pudo confirmar"; exit 1; }
+      docker compose --env-file deploy/celula.env.ejemplo -f deploy/cell.compose.yml config >/dev/null \
+        && echo "OK: docker compose config resolvio la plantilla"
+    - |
+      set -u
+      # 7. Invariante: "la plantilla Y su archivo de referencia documentan" la
+      # prohibicion de bind mount y su razon (00-spec.yaml). El comando 3 solo
+      # cubre la plantilla; este cubre deploy/celula.env.ejemplo. Se ancla en
+      # la fecha medida (2026-09-10), un literal estable por la regla del
+      # proyecto de fechas siempre absolutas, en vez de una frase que puede
+      # parafrasearse.
+      grep -qi 'bind' deploy/celula.env.ejemplo && grep -q '2026-09-10' deploy/celula.env.ejemplo \
+        && echo "OK: celula.env.ejemplo documenta la prohibicion de bind mount y su razon medida" \
+        || { echo "FALLA: deploy/celula.env.ejemplo no documenta la prohibicion de bind mount con su razon medida (2026-09-10)"; exit 1; }
+    - |
+      set -u
+      # 8. AC-4: el volumen `datos` debe estar respaldado explicitamente por
+      # ${HEXCELL_VOLUMEN_CELULA}, no por un nombre fijo ni por ningun otro
+      # literal. Se lee el YAML crudo (sin resolver): no depende de docker,
+      # asi que corre siempre, incluso si los comandos 1/2/6 fallaran por
+      # falta de docker.
+      python3 -c "
+      import sys, yaml
+      with open('deploy/cell.compose.yml') as f:
+          doc = yaml.safe_load(f)
+      nombre = (doc.get('volumes') or {}).get('datos', {}).get('name')
+      esperado = '\${HEXCELL_VOLUMEN_CELULA}'
+      if nombre != esperado:
+          print(f'FALLA: volumes.datos.name es {nombre!r}, se esperaba el literal {esperado!r}')
+          sys.exit(1)
+      print('OK: el volumen datos esta respaldado por \${HEXCELL_VOLUMEN_CELULA}')
+      "
+  target_s: 45
+acceptance:
+  human_gate: true
+limits:
+  max_files_changed: 5
+  max_diff_lines: 650
+  # NOTA: no se separan Dockerfile y sidecar/Dockerfile en per_class porque
+  # `quorum analyze contract-check` empareja por NOMBRE BASE (footgun medido
+  # en HEX-069) y ambos archivos se llaman igual; una entrada per_class por
+  # nombre base sería ambigua entre los dos. Ambos quedan bajo el límite
+  # global de arriba; el comando de verify 5 ya acota su diff a solo líneas
+  # de comentario, lo que en la práctica los mantiene muy por debajo de 650.
+  per_class:
+    - glob: "deploy/verificar_endurecimiento.sh"
+      max_diff_lines: 300
+execution:
+  mode: worktree_edit
+  branch: ai/HEX-070
+retry_policy:
+  max_attempts: 3
+  escalate_after: 2

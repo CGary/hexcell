@@ -1,0 +1,140 @@
+task_id: HEX-070
+summary: Impose read_only/cap_drop/no-new-privileges/tmpfs on both cell services, forbid bind mounts, add a mutation-proven guard.
+affected_files:
+  - deploy/cell.compose.yml
+  - deploy/celula.env.ejemplo
+  - Dockerfile
+  - sidecar/Dockerfile
+  - deploy/verificar_endurecimiento.sh
+symbols:
+  - services.nucleo.read_only
+  - services.nucleo.cap_drop
+  - services.nucleo.security_opt
+  - services.nucleo.tmpfs
+  - services.sidecar.read_only
+  - services.sidecar.cap_drop
+  - services.sidecar.security_opt
+  - services.sidecar.tmpfs
+  - volumes.datos
+dependencies:
+  - deploy/celula.env.ejemplo
+test_scenarios:
+  - statement: "docker compose config against deploy/cell.compose.yml (with deploy/celula.env.ejemplo) resolves both nucleo and sidecar with read_only true, cap_drop [ALL], security_opt [no-new-privileges:true]."
+    covers: ["AC-1", "AC-2"]
+  - statement: "Both resolved services carry a tmpfs entry for their temporary-write path at the exact literal path the guard pins (/tmp), not merely a non-empty tmpfs list — a silent later change of path must flip the guard to failing."
+    covers: ["AC-3"]
+  - statement: "The resolved volumes section shows only a named-volume mount (type volume, source datos) for /var/lib/hexcell in both services, no bind type appears anywhere in the file (active or commented-out, long or short syntax), and the raw (unresolved) template's volumes.datos.name is the literal ${HEXCELL_VOLUMEN_CELULA}, not a hardcoded name."
+    covers: ["AC-4"]
+  - statement: "The new guard script (deploy/verificar_endurecimiento.sh) passes against the delivered template and fails against a mutated copy missing each one of read_only, cap_drop, no-new-privileges, or tmpfs in turn (one flag removed per run); a docker/compose-less environment is a hard verify failure, never a silent pass, for both this scenario and the two above."
+    covers: ["AC-5"]
+  - statement: "A written statement inside deploy/cell.compose.yml declares the two-cell network/volume isolation demonstration deferred to plan task 17."
+    covers: ["AC-6"]
+  - statement: "deploy/celula.env.ejemplo itself (not only deploy/cell.compose.yml) documents that a bind mount is forbidden and why, anchored on the measured date 2026-09-10, satisfying the invariant's 'the template and its reference env file document...' wording literally."
+    covers: ["AC-4"]
+  - statement: "docker compose config with deploy/celula.env.ejemplo still resolves the template successfully after the new flags are added (no regression for existing consumers)."
+    covers: ["AC-7"]
+strategy:
+  - step: 1
+    action: >-
+      Validate the temporary-write-path assumption against real source before touching any file
+      (design-only, no diff): grep crates/**/*.rs and sidecar/**/*.go for temp_dir/TempDir/os.TempDir
+      usage outside test code, and re-read the "TMPDIR/SQLITE_TMPDIR" ENV block already present in
+      both Dockerfiles (Dockerfile ~lines 88-100, sidecar/Dockerfile ~lines 229-240). Confirmed finding
+      (2026-09-11): every std::env::temp_dir() call in the Rust tree is inside a #[cfg(test)] module
+      (crates/hexcell/src/motor.rs, procesador.rs) or an integration test file; production Rust code
+      calls temp_dir() nowhere. The Go sidecar has zero production references to os.TempDir/TempFile/
+      /tmp. Both Dockerfiles already set ENV TMPDIR=/var/lib/hexcell and SQLITE_TMPDIR=/var/lib/hexcell
+      as a defensive redirect for an unproven SQLite spill (neither binary sets PRAGMA temp_store, so
+      the redirect is precautionary, not a known live path). Net effect: no identified process write
+      target sits outside /var/lib/hexcell today. This is recorded as a risk in this file, not used to
+      rewrite 00-spec.yaml — the human-imposed tmpfs requirement stands as a defensive backstop for a
+      write that could occur through an unaudited library or Go runtime path that ignores TMPDIR
+      (some C/Go stdlib paths hardcode /tmp), under a rootfs that would otherwise be 100% read-only
+      there.
+  - step: 2
+    action: >-
+      Edit deploy/cell.compose.yml: add read_only: true, cap_drop: [ALL], security_opt:
+      ["no-new-privileges:true"], and tmpfs: ["/tmp"] to both the nucleo and sidecar service blocks,
+      each with a short Spanish comment tying the tmpfs mount to the finding in step 1 (defensive
+      backstop, not a known write target — TMPDIR/SQLITE_TMPDIR already point at the volume). Do not
+      touch mem_limit/cpus (plan task 6's scope) or the environment/volumes/networks blocks beyond
+      what step 3 requires.
+    files:
+      - deploy/cell.compose.yml
+  - step: 3
+    action: >-
+      In the same file, extend the existing `volumes: datos:` comment block with an explicit Spanish
+      statement that only the Docker named-volume form is valid, a bind mount is forbidden, and why
+      (measured 2026-09-10: a bind mount does not inherit the image directory's 10001:10001/0700
+      ownership and fails with Permission denied) — mirroring the warning already present in both
+      Dockerfiles' "FLAGS DE EJECUCIÓN DIFERIDAS" comment blocks. Add one further sentence stating the
+      two-cell network/volume isolation demonstration is explicitly deferred to plan task 17 (AC-6),
+      out of this task's scope, so a reader of the template sees the boundary without needing the
+      plan doc open.
+    files:
+      - deploy/cell.compose.yml
+  - step: 4
+    action: >-
+      Update deploy/celula.env.ejemplo's header comments. No new ${VARIABLE} is introduced (read_only/
+      cap_drop/security_opt/tmpfs are literal compose-level flags, not per-cell values), but 00-spec.yaml's
+      invariant requires the bind-mount prohibition and its reason documented in "the template AND its
+      reference env file" — a pointer back to deploy/cell.compose.yml is not enough to satisfy that
+      literally. Add a self-contained Spanish comment stating: only the named-volume form (HEXCELL_VOLUMEN_CELULA)
+      is valid, a bind mount is forbidden, and why (measured 2026-09-10: a bind mount does not inherit the
+      image directory's 10001:10001/0700 ownership and fails with Permission denied) — the same fact as in
+      the template, not merely a cross-reference to it, so a reader of only this file still gets the reason.
+    files:
+      - deploy/celula.env.ejemplo
+  - step: 5
+    action: >-
+      Update the stale "FLAGS DE EJECUCIÓN DIFERIDAS A HEX-068" comment block in both Dockerfile
+      (~lines 128-155) and sidecar/Dockerfile (~lines 273-297): the block currently claims these flags
+      are "NOT IMPOSED" and describes tmpfs as optional ("solo si un operador quiere un /tmp
+      escribible; el ENTRYPOINT no lo necesita"), both of which HEX-070 makes false. Reword to state
+      the flags ARE imposed by deploy/cell.compose.yml as of HEX-070 (plan task 5), keep the bind-mount
+      warning (still true and still load-bearing), and correct the tmpfs framing to match step 1's
+      finding (defensive backstop, not a confirmed live write path). Comment-only edit: no RUN, USER,
+      ENV, or ENTRYPOINT line changes — build-time hardening from HEX-069 stays byte-identical.
+    files:
+      - Dockerfile
+      - sidecar/Dockerfile
+  - step: 6
+    action: >-
+      Write deploy/verificar_endurecimiento.sh: a POSIX-ish shell script (bash, since the repo already
+      requires bash/POSIX sh per HEX-025's contract) that (a) runs `docker compose --env-file
+      deploy/celula.env.ejemplo -f <ruta-plantilla> config`, (b) feeds the resolved YAML to an inline
+      python3 (already a verified dependency of HEX-068's own verify.commands; PyYAML confirmed
+      importable in this environment) snippet that asserts, per service (nucleo, sidecar): read_only
+      is exactly true, cap_drop is a list containing exactly "ALL", security_opt contains a string
+      equal to "no-new-privileges:true", tmpfs is present AND equals the exact pinned path chosen in
+      step 2 (["/tmp"]) — not merely "non-empty", so a later silent change of path is itself caught by
+      the guard instead of passing unnoticed — and the /var/lib/hexcell mount in volumes has type
+      "volume" (never "bind"); (c) exits non-zero with a named FALLA line per missing/wrong flag
+      (including a distinct message when tmpfs is present but at the wrong path), and prints one OK
+      line when everything matches. Default invocation: `deploy/verificar_endurecimiento.sh
+      deploy/cell.compose.yml` (checks the real template — must exit 0). Second mode
+      `deploy/verificar_endurecimiento.sh --autoprueba` is the mutation proof: for each of the four
+      imposed flags in turn, copy deploy/cell.compose.yml to a scratch temp file with exactly that
+      flag's lines stripped (sed) from both services, run the same check function against the mutated
+      copy, and assert it now exits non-zero; report one PASA/FALLA line per mutation case, then a
+      final summary line, and propagate a non-zero overall exit if any mutation case failed to fail.
+      This script covers only the four runtime flags; the separate checks for volumes.datos.name ==
+      ${HEXCELL_VOLUMEN_CELULA} and for the bind-mount documentation in both files live directly in
+      02-contract.yaml's verify.commands (contract verify commands 7 and 8), not inside this script,
+      to keep the script's own diff budget predictable. All output and identifiers are Spanish, per
+      CLAUDE.md and this task's own constraints.
+    files:
+      - deploy/verificar_endurecimiento.sh
+  - step: 7
+    action: >-
+      Do not touch .github/workflows/ci.yml, docs/plantilla-celula.md, mem_limit/cpus values, any
+      *.env file, or any Rust/Go source — all explicitly out of this task's scope per 00-spec.yaml's
+      non_goals and the concurrent-task boundaries already set by HEX-068/HEX-069's contracts. Wiring
+      the guard into CI is plan task 18's scope, not this one.
+risks:
+  - "Assumption/reality mismatch (recorded per instructions, spec NOT rewritten): 00-spec.yaml's invariant asks for tmpfs on 'their temporary-write path', implying each service has one outside /var/lib/hexcell. Direct inspection of the real binaries (step 1) found none — every production code path writes only inside /var/lib/hexcell (SQLite DBs, IPC socket) or is already redirected there by HEX-069's TMPDIR/SQLITE_TMPDIR env vars. The tmpfs this task adds at /tmp is therefore a defensive backstop against an unaudited library/runtime path, not a mount serving a confirmed write. If a future change gives either binary a real reason to write outside the volume, the tmpfs path and size chosen here should be revisited against that concrete need."
+  - "docker compose config and docker compose build --dry-run pass even when build.context is invalid (measured 2026-09-10, still true in Compose 5.5.1 verified in this environment) — the new guard only proves the resolved YAML carries the literal flags, never that either image actually builds or starts under them. AC-1/AC-2/AC-3/AC-4 are provable this way per the human-settled scope; the guard is not evidence of AC-3-of-HEX-069-style runtime behavior (that needs a live docker run, out of this task's scope, deferred to task 17/18)."
+  - "The guard's mutation self-proof (--autoprueba) uses sed to strip known flag literals; if the implementer's chosen YAML formatting differs from what sed targets (e.g. multi-line flow vs block style for security_opt), the mutation could silently no-op and falsely report the guard as proven. Implementer must run --autoprueba and inspect its per-case PASA/FALLA output, not just its exit code, before considering AC-5 satisfied."
+  - "Editing the Dockerfiles' comment-only block (step 5) touches files whose build-time hardening (HEX-069) is explicitly frozen by 00-spec.yaml's non_goals; the contract's forbid.behaviors must make the comment-only boundary explicit and verifiable (a git diff scope check), since a comment edit accidentally widened into a RUN/USER/ENV line would violate the non_goal silently."
+  - "hexcell-storage never sets PRAGMA temp_store or SQLITE_TMPDIR from Rust code (confirmed by grep) — the ENV-level redirect from HEX-069 is the only mitigation in place; this task does not add a code-level PRAGMA, consistent with HEX-069's own contract forbidding source changes for this concern."
+  - "00-spec.yaml's trailing acceptance entry (the existing-consumers-unaffected criterion, last line under acceptance:) has no id field, unlike AC-1..AC-6 above it — an orphan with no test_scenario link possible by id. This blueprint's last test_scenario now provisionally covers it as AC-7, following the existing sequential numbering, so tracing stays intact on this side; 00-spec.yaml itself is NOT edited (human-owned) — the human should add id: AC-7 to that entry (or renumber) to close the gap on the spec side. Reported here per the read-only consistency audit that found it, not fixed in the spec."

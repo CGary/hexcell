@@ -1,0 +1,56 @@
+{
+  "commands": [
+    {
+      "command": "AC-1..AC-4: el guardia corre contra la plantilla real sin mutar y debe pasar",
+      "duration_s": 1,
+      "exit_code": 0,
+      "output_excerpt": "OK: las cuatro banderas (read_only, cap_drop, no-new-privileges, tmpfs) están impuestas en nucleo y sidecar, y el mount /var/lib/hexcell es volume"
+    },
+    {
+      "command": "AC-5: autoprueba de mutacion del guardia (cuatro banderas, una por vez)",
+      "duration_s": 1,
+      "exit_code": 0,
+      "output_excerpt": "Modo --autoprueba: cada bandera, una por vez, debe ser detectada cuando se quita. PASA: quitar read_only -\u003e el guardia falla como debe PASA: quitar cap_drop -\u003e el guardia falla como debe PASA: quitar security_opt -\u003e el guardia falla como debe PASA: quitar tmpfs -\u003e el guardia falla como debe Resumen "
+    },
+    {
+      "command": "AC-4: ninguna forma de bind mount, activa o comentada, corta o larga, en la plantilla",
+      "duration_s": 1,
+      "exit_code": 0,
+      "output_excerpt": "OK: sin forma de bind mount (activa o comentada, corta o larga) en deploy/cell.compose.yml"
+    },
+    {
+      "command": "AC-6: la declaracion de alcance diferido a la tarea 17 esta escrita en la plantilla",
+      "duration_s": 1,
+      "exit_code": 0,
+      "output_excerpt": "OK: aislamiento de dos celulas declarado diferido a la tarea 17"
+    },
+    {
+      "command": "Guarda de alcance en los Dockerfiles: solo cambia el bloque de comentario, contra merge-base",
+      "duration_s": 1,
+      "exit_code": 0,
+      "output_excerpt": "OK: los Dockerfiles solo cambiaron comentarios (comparado contra 115b9e3da4d14b40993f33c8b6862bb372b1f39f)"
+    },
+    {
+      "command": "AC-7: docker compose config sigue resolviendo la plantilla con el env de ejemplo",
+      "duration_s": 1,
+      "exit_code": 0,
+      "output_excerpt": "OK: docker compose config resolvio la plantilla"
+    },
+    {
+      "command": "Invariante: deploy/celula.env.ejemplo documenta la prohibicion de bind mount y su razon",
+      "duration_s": 1,
+      "exit_code": 0,
+      "output_excerpt": "OK: celula.env.ejemplo documenta la prohibicion de bind mount y su razon medida"
+    },
+    {
+      "command": "AC-4: el volumen datos esta respaldado por ${HEXCELL_VOLUMEN_CELULA}, leido del YAML crudo",
+      "duration_s": 1,
+      "exit_code": 0,
+      "output_excerpt": "OK: el volumen datos esta respaldado por ${HEXCELL_VOLUMEN_CELULA}"
+    }
+  ],
+  "executed_at": "2026-09-11T17:40:00Z",
+  "overall_result": "passed",
+  "summary": "Los ocho comandos pasaron con exit 0, ejecutados tras commitear el diff. Guardia probado por mutacion: falla con las cuatro banderas.",
+  "task_id": "HEX-070"
+}

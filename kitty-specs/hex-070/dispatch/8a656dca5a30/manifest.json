@@ -1,0 +1,17 @@
+{
+  "task_id": "HEX-070",
+  "bundle_hash": "8a656dca5a300a491d55ba8d3a45cd79e4d74e828644eaba81734ae935c36049",
+  "files": [
+    ".ai/tasks/active/HEX-070-new-spec/00-spec.yaml",
+    ".ai/tasks/done/HEX-068-new-spec/02-contract.yaml",
+    ".ai/tasks/done/HEX-069-new-spec/02-contract.yaml",
+    "Dockerfile",
+    "crates/hexcell/src/configuracion.rs",
+    "deploy/cell.compose.yml",
+    "deploy/celula.env.ejemplo",
+    "docs/plan/fase-a-6-empaquetado-cli.md",
+    "sidecar/Dockerfile"
+  ],
+  "protocol_version": "fleet-bundle-protocol/v2",
+  "created_at": "2026-09-11T17:25:08Z"
+}

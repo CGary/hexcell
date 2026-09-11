@@ -1,0 +1,71 @@
+task_id: HEX-070
+summary: Impose runtime hardening flags and named-volume ownership model on deploy/cell.compose.yml, with a mutation-provable mechanical guard.
+goal: >
+  Plan task 5 of stage A-6 ("Componer la célula") left the per-cell compose
+  template (deploy/cell.compose.yml, produced by plan task 8 / HEX-068) with
+  runtime hardening flags named only in a comment block, not imposed, and the
+  volume ownership model unresolved. Plan task 4 (HEX-069) hardened both
+  images at build time (numeric user 10001:10001, /var/lib/hexcell owned
+  10001:10001 mode 0700, no shell) but deliberately did not impose the
+  runtime flags. This task closes that gap: impose read_only, cap_drop:
+  [ALL], security_opt: [no-new-privileges:true], and an explicit tmpfs entry
+  for the temporary-write path on both the nucleo and sidecar services; fix
+  the template to admit only a named volume (never a bind mount, which does
+  not inherit ownership and fails with Permission denied, measured
+  2026-09-10); and add a mechanical guard, provable by mutation, that checks
+  the resolved template actually carries these flags.
+invariants:
+  - "Both services (nucleo and sidecar) in deploy/cell.compose.yml carry read_only, cap_drop: [ALL], and security_opt: [no-new-privileges:true]."
+  - Both services declare an explicit tmpfs entry for their temporary-write path; no service relies on an implicit writable root filesystem.
+  - The template's data volume is declared only as a Docker named volume (the existing `datos:` volume backed by ${HEXCELL_VOLUMEN_CELULA}); no bind-mount form is offered or documented as valid.
+  - The template and its reference env file document, in Spanish, why a bind mount is forbidden (does not inherit 10001:10001/0700 ownership from the image directory, fails with Permission denied; measured 2026-09-10).
+  - The mechanical guard fails when any of the imposed flags (read_only, cap_drop, no-new-privileges, tmpfs) is removed from the resolved template, and passes on the template as delivered by this task.
+  - "The two-cell network/volume isolation demonstration (plan task 17) is explicitly out of scope here and is declared deferred in this task's artifacts, not silently dropped."
+non_goals:
+  - Do not implement or run the actual two-cell isolation demonstration (bringing up two cells and proving neither reaches the other's network or volume) — that is plan task 17's scope, not this task's.
+  - Do not change the resource-limit values (mem_limit, cpus) — that is plan task 6's scope.
+  - Do not change the build-time image hardening (numeric user, image directory ownership/mode, shell removal) done in plan task 4 (HEX-069) — this task only adds runtime (compose-level) flags.
+  - Do not implement the startup-flag parametrization already done in plan task 8 (HEX-068) beyond what is needed to carry the new flags.
+constraints:
+  - All new/edited content in deploy/cell.compose.yml, deploy/celula.env.ejemplo, and any new guard script/test must be in Spanish (identifiers, comments, messages), consistent with the repository-wide Spanish rule in CLAUDE.md.
+  - "`docker compose config` and `docker compose build --dry-run` are known to pass even when build.context is invalid (measured footgun on this project): the mechanical guard must not rely on either as sole evidence that the flags are imposed — it must inspect the resolved compose output (e.g. `docker compose config`) for the literal presence of the flags, and must be demonstrated to fail under mutation (remove a flag, guard fails) before being considered done."
+  - Must not introduce a bind-mount option, commented-out or otherwise, that a future edit could silently enable for the data volume.
+  - Must not weaken or remove the existing build-time hardening from HEX-069 (10001:10001, 0700, no shell).
+  - Must not version any *.db, *.db-wal, *.db-shm, or .env* file.
+acceptance:
+  - id: AC-1
+    statement: The nucleo service in deploy/cell.compose.yml carries read_only, cap_drop [ALL], and security_opt no-new-privileges:true.
+    given: the resolved deploy/cell.compose.yml (via docker compose config with deploy/celula.env.ejemplo)
+    when: the nucleo service definition is inspected
+    then: read_only is true, cap_drop includes ALL, and security_opt includes no-new-privileges:true
+  - id: AC-2
+    statement: The sidecar service in deploy/cell.compose.yml carries read_only, cap_drop [ALL], and security_opt no-new-privileges:true.
+    given: the resolved deploy/cell.compose.yml (via docker compose config with deploy/celula.env.ejemplo)
+    when: the sidecar service definition is inspected
+    then: read_only is true, cap_drop includes ALL, and security_opt includes no-new-privileges:true
+  - id: AC-3
+    statement: Both services declare an explicit tmpfs mount for their temporary-write path, consistent with read_only:true not blocking legitimate temp writes.
+    given: the resolved deploy/cell.compose.yml
+    when: each service's tmpfs configuration is inspected
+    then: a tmpfs entry exists for the service's temporary-write path
+  - id: AC-4
+    statement: The data volume is declared only as a Docker named volume; no bind-mount form exists in the template.
+    given: deploy/cell.compose.yml and deploy/celula.env.ejemplo
+    when: the volumes section and its documentation are inspected
+    then: the datos volume is a named volume bound to ${HEXCELL_VOLUMEN_CELULA}, with an adjacent comment explaining that a bind mount is forbidden because it does not inherit 10001:10001/0700 ownership and fails with Permission denied (measured 2026-09-10)
+  - id: AC-5
+    statement: A mechanical guard exists that verifies the resolved template carries the imposed flags, and is provable by mutation.
+    given: the mechanical guard script/test and a deliberately mutated copy of deploy/cell.compose.yml missing one imposed flag
+    when: the guard runs against the mutated copy
+    then: the guard fails (non-zero exit / reported failure), and the guard passes against the unmutated template
+  - id: AC-6
+    statement: The two-cell isolation demonstration is explicitly deferred to plan task 17, not silently omitted.
+    given: this task's delivered artifacts (compose template, docs, or task notes)
+    when: the scope boundary is inspected
+    then: a written statement declares the two-cell network/volume isolation proof as deferred to plan task 17, out of this task's scope
+  - id: AC-7
+    statement: Existing template consumers are unaffected — the template still resolves with the new flags in place.
+    given: deploy/cell.compose.yml with the imposed flags and deploy/celula.env.ejemplo
+    when: docker compose config resolves the template with that env file
+    then: the resolution succeeds and the previously working per-cell variables keep resolving as before
+risk: medium

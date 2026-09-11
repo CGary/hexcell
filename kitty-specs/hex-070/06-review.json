@@ -1,0 +1,23 @@
+{
+  "task_id": "HEX-070",
+  "summary": "Runtime hardening flags imposed on both services, bind mounts forbidden and documented, guard mutation-proven by independent re-run; Dockerfile edits comment-only; contract and coverage clean.",
+  "verdict": "approve",
+  "contract_compliance": true,
+  "forbidden_files_touched": [],
+  "unrequested_refactor": false,
+  "missing_tests": [],
+  "functional_risk": "low",
+  "notes": [
+    "contract-check ok=true; not_checked: forbid.behaviors (manually verified below).",
+    "acceptance-coverage status=pass, all AC-1..AC-7 covered, no gaps.",
+    "Independently re-ran deploy/verificar_endurecimiento.sh in normal mode and --autoprueba: both exit 0; manually mutated a copy removing read_only and confirmed the guard fails via the semantic assertion ('read_only debe ser exactamente true, se obtuvo None'), not via a docker-compose-config resolution failure — the guard genuinely inspects the resolved flags, not just YAML well-formedness.",
+    "Confirmed docker compose config always normalizes the volumes section to an explicit {type, source, target} dict even for named-volume short syntax, so the guard's type=='bind' rejection reliably fires against the real resolved shape (no unresolved-vs-resolved mismatch).",
+    "Minor non-blocking gap: the guard's volume check only rejects type=='bind'; it does not assert type=='volume' explicitly, so a hypothetical (and currently nonexistent) mount type other than bind/volume for /var/lib/hexcell would not be caught. AC-4 only requires 'no bind-mount form', which the guard satisfies literally; this is a residual hardening opportunity, not a contract or AC violation.",
+    "Dockerfile and sidecar/Dockerfile diffs are comment-only (every changed line starts with '#'); independently re-ran the merge-base diff filter from verify command 5 and confirmed empty output (no non-comment lines changed) — build-time hardening from HEX-069 (10001:10001, 0700, shell removal) is byte-identical.",
+    "Two-cell isolation demonstration (plan task 17) is declared deferred via a written comment in deploy/cell.compose.yml's volumes block; no isolation demo code/config was added.",
+    "No mem_limit/cpus lines and no new ${VARIABLE} were introduced in deploy/cell.compose.yml or deploy/celula.env.ejemplo (grepped the diff for both patterns, zero matches).",
+    "All new/changed content (compose comments, env file comments, Dockerfile comment rewording, guard script prose and messages) is in Spanish; no English-language violation found.",
+    "Touch list matches exactly the 5 contracted files; diff is 407+/16- against a 650-line global budget and 285 lines for the guard script against its 300-line per_class budget."
+  ],
+  "fix_tasks": []
+}
