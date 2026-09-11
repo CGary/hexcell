@@ -32,6 +32,13 @@
 # otro. La dirección de escucha no es una dimensión per-célula —es el MISMO
 # bind en todas las células; lo que aísla es la red de célula—, por eso no se
 # parametriza.
+#
+# HEX-070 (tarea 5 de la etapa A-6) impone el endurecimiento en tiempo de
+# ejecución que HEX-069 dejó nombrado y no aplicado: read_only, cap_drop,
+# security_opt y un tmpfs explícito en ambos servicios. Las cuatro banderas se
+# declaran en cada bloque de servicio más abajo, NO en una red de anclas
+# reutilizada, para que el guardia mecánico (deploy/verificar_endurecimiento.sh)
+# pueda inspeccionar el servicio resuelto directamente.
 # ============================================================================
 
 services:
@@ -67,6 +74,30 @@ services:
     # etapa A-6 decide los valores a partir de NFR-01).
     mem_limit: ${HEXCELL_NUCLEO_LIMITE_MEMORIA}
     cpus: ${HEXCELL_NUCLEO_LIMITE_CPUS}
+    # Endurecimiento en tiempo de ejecución (HEX-070, tarea 5 de la etapa A-6).
+    # POR QUÉ read_only + cap_drop + no-new-privileges: cierra los tres frentes
+    # clásicos del ataque por contenedor (modificación de rootfs, capabilities
+    # del kernel, escaladas por setuid/binarios con bit de capabilities). Las
+    # cuatro banderas deben viajar JUNTAS —degradar una sola de las tres rompe la
+    # garantía de las otras dos— y la plantilla las impone literalmente, no por
+    # anclas reutilizadas, para que el guardia mecánico pueda inspeccionar el
+    # servicio resuelto directamente.
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    # tmpfs explícito para /tmp: respaldo defensivo, no ruta confirmada. Ni el
+    # núcleo ni el sidecar fijan PRAGMA temp_store en el código (verificado el
+    # 2026-09-11 sobre crates/**/*.rs y sidecar/**/*.go: las únicas llamadas a
+    # temp_dir/os.TempDir viven dentro de #[cfg(test)] o archivos *_test.go), y
+    # los ENV TMPDIR/SQLITE_TMPDIR del Dockerfile ya apuntan al volumen. /tmp
+    # se monta como tmpfs igual para que una biblioteca o un runtime que
+    # ignoren TMPDIR (algunas rutas C/Go stdlib hardcodean /tmp) no escriban
+    # sobre un rootfs de solo lectura. El camino es literal y el guardia lo
+    # ancla exactamente; un cambio silencioso de ruta debe flipar el guardia.
+    tmpfs:
+      - /tmp
     volumes:
       - datos:/var/lib/hexcell
     networks:
@@ -101,6 +132,18 @@ services:
       HEXCELL_RUTA_OUTBOX: /var/lib/hexcell/outbox.db
     mem_limit: ${HEXCELL_SIDECAR_LIMITE_MEMORIA}
     cpus: ${HEXCELL_SIDECAR_LIMITE_CPUS}
+    # Mismas cuatro banderas de endurecimiento en tiempo de ejecución que el
+    # núcleo: la justificación completa y el porqué del tmpfs viven en el
+    # comentario del servicio nucleo más arriba y se repiten aquí solo en su
+    # forma literal para que el guardia pueda inspeccionar ambos servicios con
+    # la misma expresión.
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp
     volumes:
       - datos:/var/lib/hexcell
     networks:
@@ -108,6 +151,25 @@ services:
 
 volumes:
   # Volumen compartido de la célula: nombre per-célula, nunca un literal.
+  #
+  # POR QUÉ volumen nombrado y NO bind mount: la imagen crea /var/lib/hexcell
+  # con propietario 10001:10001 y modo 0700 (HEX-069). Un volumen nombrado
+  # recién creado hereda ese dueño y ese modo del directorio de la imagen y
+  # arranca en frío sin preparar nada; un bind mount NO los hereda y falla
+  # con `Permission denied` al primer open() del binario, a menos que el
+  # directorio del host se pre-propietarice a 10001:10001 desde fuera de la
+  # célula —operación ruidosa, fácil de olvidar y trivial de equivocarse.
+  # Medido 2026-09-10 en este proyecto. Por eso esta plantilla admite
+  # únicamente la forma de volumen nombrado: una forma bind (larga o corta,
+  # comentada o activa) queda prohibida por el invariante de HEX-070 y por
+  # el comando de verificación 3 del contrato, que grepea la plantilla
+  # resuelta y cruda en busca de cualquier huella de bind.
+  #
+  # ALCANCE DIFERIDO: la demostración de aislamiento de red y volumen entre
+  # dos células (que ni se ven ni se tocan) corresponde a la tarea 17 del
+  # plan de la etapa A-6 y queda explícitamente fuera de esta tarea; HEX-070
+  # declara y verifica la imposición de las banderas y la prohibición de
+  # bind mount, NO levanta dos células para probar el cruce.
   datos:
     name: ${HEXCELL_VOLUMEN_CELULA}
 
