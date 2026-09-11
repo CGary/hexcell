@@ -1,0 +1,58 @@
+task_id: HEX-071
+summary: Add IPC message types for session logout and send-pause/resume, wire version 5 to 6, per plan task 24 of A-6.
+goal: >
+  Replace the cerrar_sesion stub in crates/hexcell-canal-whatsmeow/src/adaptador.rs
+  (currently returning SinConexion, TODO(A-3)) with a real logout order over the
+  core-sidecar IPC protocol, and add a send-pause/resume order distinct from the
+  existing pausada state. Extend the wire protocol with new message types for both,
+  documented in docs/protocolo-ipc-nucleo-sidecar.md with a wire version bump from
+  5 to 6, implemented consistently in sidecar/internal/ipc/mensajes.go and
+  crates/hexcell-canal-whatsmeow/src/mensajes.rs. Traces to FR-12.
+invariants:
+  - "The wire version bump (5 to 6) is applied consistently and atomically across docs/protocolo-ipc-nucleo-sidecar.md, sidecar/internal/ipc/mensajes.go, and crates/hexcell-canal-whatsmeow/src/mensajes.rs; a mismatch between core and sidecar wire versions closes the connection with no negotiation and no partial degradation, per existing protocol rule."
+  - "Logout uses whatsmeow's real client.Logout() call: it unlinks the device on WhatsApp's side and destroys the sidecar's stored credentials (sqlstore). The operation is irreversible and requires a new QR pairing afterwards."
+  - "While send-pause is active, the sidecar rejects each outbound send attempt with a typed error (e.g. EnvioPausado) instead of buffering, queueing, or silently discarding it; the core, not the sidecar, decides what to do with a rejected send."
+  - "Send-pause state is held in memory only inside the sidecar process. It is not persisted to identidad.db or any other store; a sidecar reconnect or restart returns to the active (non-paused) send state. No schema change and no migration are introduced."
+  - "crates/hexcell-core keeps zero external dependencies; this change does not touch it in a way that adds any."
+  - "All repository content produced by this task (docs, identifiers, comments, commit messages) is in Spanish, per project convention; conventional commit types are used without AI attribution trailers in the commit subject/body semantics (attribution trailers required by the current session's instructions are appended separately and do not violate this)."
+acceptance:
+  - id: AC-1
+    statement: A new logout message type is documented in docs/protocolo-ipc-nucleo-sidecar.md under wire version 6 and implemented identically in sidecar/internal/ipc/mensajes.go and crates/hexcell-canal-whatsmeow/src/mensajes.rs.
+    given: the IPC protocol document at wire version 5 and cerrar_sesion stubbed to always return SinConexion
+    when: the new logout order type and its acknowledgment/result are added to the protocol doc and to both language implementations with wire version bumped to 6
+    then: the protocol doc, the Go message definitions, and the Rust message definitions agree on the new message type's shape and on version 6
+  - id: AC-2
+    statement: A new send-pause/resume order type is documented and implemented, distinct from the existing pausada state.
+    given: the protocol only exposes the pausada session state with no dedicated order to pause or resume outbound sending
+    when: the new pause/resume order type(s) are added to the protocol doc and to both mensajes.go and mensajes.rs under wire version 6
+    then: the sidecar can be explicitly ordered to pause and resume sending independently of the pausada session-state semantics already in the protocol
+  - id: AC-3
+    statement: cerrar_sesion in crates/hexcell-canal-whatsmeow/src/adaptador.rs sends the new logout message over IPC instead of unconditionally returning SinConexion.
+    given: cerrar_sesion stubbed at adaptador.rs:744-747 with a TODO(A-3) marker
+    when: a caller invokes cerrar_sesion with an active IPC connection to the sidecar
+    then: the adapter sends the new logout order type and returns based on the sidecar's real response, not an unconditional SinConexion
+  - id: AC-4
+    statement: A contract test unlinks (logs out) a session end to end.
+    given: a running contract test harness pairing core and sidecar (or their simulated/test doubles) with an active session
+    when: the test issues the new logout order
+    then: the sidecar's whatsmeow client.Logout() path executes, the device is reported unlinked, and the sidecar's credentials are destroyed
+  - id: AC-5
+    statement: A contract test pauses and then resumes send, verifying rejection while paused and success after resume.
+    given: a running contract test harness with an active session and normal sending allowed
+    when: the test issues the send-pause order, attempts a send, then issues the send-resume order and attempts another send
+    then: the first send attempt is rejected with a typed EnvioPausado-style error while no buffering/queueing occurs, and the second send attempt (after resume) succeeds normally
+  - id: AC-6
+    statement: docs/protocolo-ipc-nucleo-sidecar.md's version correspondence table and the "no negotiation, no partial degradation" rule are updated to include wire version 6, without altering the historical rows for prior versions.
+non_goals:
+  - Do not implement cell rebind (plan task 13) or cell terminate's full unlink flow (plan task 12); this task only unblocks them by delivering the IPC logout type.
+  - Do not persist send-pause state to any database or add a schema/migration.
+  - Do not implement bulk-sender folklore (jitter, warm-up protocols) as part of pause/resume.
+  - Do not touch the Fase B (Meta Cloud API) channel or crates/hexcell-meta.
+constraints:
+  - Wire version bump (5 to 6) must be applied together and consistently in the protocol doc, mensajes.go, and mensajes.rs; no partial rollout.
+  - No new runtime dependency is introduced in crates/hexcell-core.
+  - Logout must use whatsmeow's real client.Logout(), not a simulated/fake unlink.
+  - Send-pause is in-memory only in the sidecar process; no schema change, no migration in identidad.db.
+  - While paused, sends are rejected with a typed error; no buffering, queueing, or silent discard.
+  - All new identifiers, doc prose, and comments are in Spanish; commit messages follow conventional commits without AI attribution in the subject/body.
+risk: medium

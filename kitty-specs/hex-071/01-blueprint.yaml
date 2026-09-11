@@ -1,0 +1,266 @@
+task_id: HEX-071
+summary: >-
+  Wire version 5 to 6 across doc + Go + Rust; add 4 IPC types (logout order/ack,
+  send-pause order/ack); real client.Logout(); in-memory pause gate in the outbox gatekeeper.
+affected_files:
+  # --- Normative wire contract (Value Object definition; the doc IS the schema) ---
+  - docs/protocolo-ipc-nucleo-sidecar.md
+  # --- Go sidecar: message vocabulary (Value Objects) ---
+  - sidecar/internal/ipc/mensajes.go
+  # --- Go sidecar: IPC dispatch (Application Service) ---
+  - sidecar/internal/servidor/manejo.go
+  - sidecar/internal/servidor/servidor.go
+  # --- Go sidecar: send admission gate (Validator / policy seam) ---
+  - sidecar/internal/outbox/portero.go
+  # --- Go sidecar: whatsmeow session (Entity wrapping *whatsmeow.Client) ---
+  - sidecar/internal/canal/canal.go
+  # --- Rust adapter: message vocabulary (Value Objects) ---
+  - crates/hexcell-canal-whatsmeow/src/mensajes.rs
+  # --- Rust adapter: port implementation (Application Service) ---
+  - crates/hexcell-canal-whatsmeow/src/adaptador.rs
+  - crates/hexcell-canal-whatsmeow/src/lib.rs
+  # --- Go tests carrying hardcoded wire version 5 or doc-parity literals ---
+  - sidecar/internal/ipc/documento_test.go
+  - sidecar/internal/ipc/mensajes_test.go
+  - sidecar/internal/servidor/servidor_test.go
+  - sidecar/internal/outbox/portero_test.go
+  # --- Rust tests carrying hardcoded wire version 5 ---
+  - crates/hexcell-canal-whatsmeow/tests/comun/mod.rs
+  - crates/hexcell-canal-whatsmeow/tests/protocolo.rs
+  - crates/hexcell-canal-whatsmeow/tests/salida.rs
+  - crates/hexcell-canal-whatsmeow/tests/cierre_de_sesion.rs
+  - crates/hexcell/tests/emparejamiento_ipc.rs
+  - crates/hexcell/tests/respaldo_sqlstore_ipc.rs
+  - crates/hexcell/tests/respaldo_cli.rs
+  - crates/hexcell/tests/canal_whatsmeow_seleccionado.rs
+symbols:
+  # Wire version constants (the two that MUST move together)
+  - "ipc.VersionProtocolo (sidecar/internal/ipc/mensajes.go:32) 5 -> 6"
+  - "mensajes::VERSION_PROTOCOLO (crates/hexcell-canal-whatsmeow/src/mensajes.rs:15) 5 -> 6"
+  # New wire types (4), all Spanish, snake_case on the wire
+  - "ipc.TipoOrdenCierreDeSesion = \"orden_cierre_de_sesion\" (nucleo -> sidecar)"
+  - "ipc.TipoAcuseCierreDeSesion = \"acuse_cierre_de_sesion\" (sidecar -> nucleo)"
+  - "ipc.TipoOrdenPausaDeEnvio = \"orden_pausa_de_envio\" (nucleo -> sidecar; campo accion: pausar|reanudar)"
+  - "ipc.TipoAcusePausaDeEnvio = \"acuse_pausa_de_envio\" (sidecar -> nucleo; campos accion, resultado)"
+  - "ipc.OrdenCierreDeSesion / ipc.AcuseCierreDeSesion / ipc.OrdenPausaDeEnvio / ipc.AcusePausaDeEnvio structs + tipo() + valores() + descriptores entries"
+  # Go: session unlink seam
+  - "canal.Sesion.Desvincular(ctx) error -> s.cliente.Logout(ctx) (real whatsmeow unlink)"
+  - "servidor.Dependencias.Sesion (already present, *canal.Sesion) consumed for logout dispatch"
+  - "servidor.manejarConexion switch: 2 new cases (TipoOrdenCierreDeSesion, TipoOrdenPausaDeEnvio)"
+  # Go: in-memory send pause (MUST live on the gatekeeper, NOT on canal.Supervisor -- see risks)
+  - "outbox.ErrEnvioPausado (typed sentinel error)"
+  - "outbox.PorteroDeSalida.PausarEnvio() / ReanudarEnvio() / EnvioPausado() bool (atomic.Bool, process memory only)"
+  - "outbox.PorteroDeSalida.Admitir: pause gate BEFORE cola.Encolar (reject, never buffer)"
+  # Rust: message structs + parser arms
+  - "mensajes::OrdenCierreDeSesion / AcuseCierreDeSesion / OrdenPausaDeEnvio / AcusePausaDeEnvio"
+  - "mensajes::MensajeEntrante::{AcuseCierreDeSesion, AcusePausaDeEnvio} + analizar_mensaje_entrante arms"
+  # Rust: adapter
+  - "AdaptadorWhatsmeow::cerrar_sesion (adaptador.rs:744-747) stub -> real orden_cierre_de_sesion + await ack"
+  - "AdaptadorWhatsmeow::ordenar_pausa_de_envio(accion) -> awaits acuse_pausa_de_envio (mirrors ordenar_respaldo_sqlstore)"
+dependencies:
+  - docs/plan/fase-a-6-empaquetado-cli.md
+  - docs/adr/adr-0015-politica-de-convivencia-con-el-baneo.md
+  - docs/PRD.md
+  - crates/hexcell-core/src/canal.rs
+  - crates/hexcell-canal-whatsmeow/src/conexion.rs
+  - sidecar/internal/outbox/salida.go
+  - sidecar/internal/outbox/centinela_rutas_de_envio_test.go
+  - sidecar/internal/canal/reconexion_interno_test.go
+  - sidecar/internal/canal/emparejamiento.go
+test_scenarios:
+  - statement: "Go doc-parity: documento_test.go asserts header '**Version de este protocolo:** 1.5, fijada el 2026-09-11' and the correspondence row '| 1.5 | `6` |', while rows 1.0..1.4 survive byte-identical."
+    covers: ["AC-1", "AC-6"]
+  - statement: "Go doc-parity (already generic, must stay green): TiposDeclarados() now returns 17 types and every one of them, plus every field CamposDe() declares, is found in the section 6 tables of the doc."
+    covers: ["AC-1", "AC-2", "AC-6"]
+  - statement: "Go round-trip: Codificar/Decodificar of each of the 4 new types stamps version 6, rejects an unknown field, and a line with version 5 now yields ErrVersionIncompatible naming 'recibida 5, esperada 6'."
+    covers: ["AC-1", "AC-2"]
+  - statement: "Go gatekeeper (mutation-provable): with PausarEnvio() set, PorteroDeSalida.Admitir returns ErrEnvioPausado AND ColaDeSalida length is unchanged (proves rejection, not buffering); after ReanudarEnvio() the same Admitir enqueues exactly one row."
+    covers: ["AC-5"]
+  - statement: "Go gatekeeper ordering: the pause gate rejects even when cortacircuitos and control de baja both permit, so pause cannot be masked by another allow-path."
+    covers: ["AC-5"]
+  - statement: "Go end-to-end over the real Unix socket (servidor_test): orden_pausa_de_envio accion=pausar -> acuse_pausa_de_envio resultado=aplicado; a following mensaje_saliente produces acuse_envio estado=fallido motivo=envio_pausado and nothing is enqueued; accion=reanudar then lets the next mensaje_saliente enqueue."
+    covers: ["AC-2", "AC-5"]
+  - statement: "Go pause is in-memory only: a fresh PorteroDeSalida (simulating sidecar restart) reports EnvioPausado()==false, and no table/column/PRAGMA user_version anywhere changes."
+    covers: ["AC-2"]
+  - statement: "Go logout dispatch: orden_cierre_de_sesion invokes the injected unlink seam exactly once and answers acuse_cierre_de_sesion resultado=completado; when the seam returns an error the ack is resultado=fallido with a non-empty motivo and no credential path is named in it."
+    covers: ["AC-1", "AC-4"]
+  - statement: "Rust contract test (tests/cierre_de_sesion.rs, SidecarSimulado harness): cerrar_sesion() writes an orden_cierre_de_sesion line with version 6, and resolves Ok(()) on acuse resultado=completado / Err on resultado=fallido -- never the old unconditional SinConexion."
+    covers: ["AC-3", "AC-4"]
+  - statement: "Rust contract test (tests/salida.rs, SidecarSimulado harness): the adapter's pause order is emitted with version 6 and the paused rejection acuse_envio (estado=fallido, motivo=envio_pausado) is consumed without panicking and without being promoted to the port."
+    covers: ["AC-5"]
+  - statement: "Rust handshake: apreton_de_manos_exitoso asserts saludo.version == 6, and a sidecar greeting with version 5 closes the connection naming BOTH versions (the no-negotiation rule still holds after the bump)."
+    covers: ["AC-1", "AC-6"]
+  - statement: "Cross-language atomicity guard: no file under crates/ or sidecar/ still contains the literal '\"version\":5' or a wire-version constant equal to 5 (grep-based, run as the last verify command)."
+    covers: ["AC-1", "AC-2", "AC-6"]
+  - statement: "EXPLICITLY DEFERRED (cannot run here, needs a live paired WhatsApp device): that whatsmeow's client.Logout() actually unlinks the device server-side and wipes sqlstore credentials, and that a new QR is then required. Covered in CI only up to the seam; the live half belongs to the A-3 acceptance run on piloto-01. Do NOT report as a coverage gap."
+    covers: ["AC-4"]
+strategy:
+  - step: 1
+    action: >-
+      Value Objects first, Go side. In sidecar/internal/ipc/mensajes.go bump VersionProtocolo to 6
+      and add the four types with their Cuerpo structs, tipo(), valores() and descriptores entries.
+      Wire fields are FLAT and scalar-only (string or int64) -- the protocol admits no nesting and no
+      booleans, so pause/resume is one type carrying accion: "pausar"|"reanudar", NOT a bool flag.
+      Field sets: orden_cierre_de_sesion{motivo}; acuse_cierre_de_sesion{resultado, motivo};
+      orden_pausa_de_envio{accion}; acuse_pausa_de_envio{accion, resultado, motivo}.
+    files:
+      - sidecar/internal/ipc/mensajes.go
+  - step: 2
+    action: >-
+      Mirror the same Value Objects in Rust. Bump VERSION_PROTOCOLO to 6 in mensajes.rs, add the four
+      serde structs with identical field names and order, add the two sidecar->nucleo variants to
+      MensajeEntrante plus their arms in analizar_mensaje_entrante, and re-export from lib.rs. Field
+      names must match the Go descriptores byte-for-byte or Decodificar raises ErrCampoDesconocido.
+    files:
+      - crates/hexcell-canal-whatsmeow/src/mensajes.rs
+      - crates/hexcell-canal-whatsmeow/src/lib.rs
+  - step: 3
+    action: >-
+      Update the normative doc in ONE pass, because it is the schema the Go parity test reads. Sites:
+      header line 3 (1.4/2026-08-20 -> 1.5/2026-09-11); correspondence table lines 26-33 (APPEND
+      '| 1.5 | `6` |', touch no historical row); line 82 ('En esta especificacion, `5`' -> `6`);
+      line 83 and the section 6 intro at lines 270-276 ('trece tipos' -> 'diecisiete tipos', plus one
+      sentence declaring what version 1.5 adds); the section 6 table (4 new rows); the thirteen
+      per-type '| `version` | entero | `5`. |' cells at lines 299, 308, 331, 339, 395, 409, 423, 432,
+      443, 464, 474, 513, 523; the section 3 no-negotiation paragraph (lines 162-174, add the 5 -> 6
+      step in the same prose shape as the earlier ones); and four new '###' field-table subsections.
+    files:
+      - docs/protocolo-ipc-nucleo-sidecar.md
+  - step: 4
+    action: >-
+      Disambiguate, do NOT contradict, the pausada paragraph at doc lines 382-386. It currently says
+      'no existe mensaje IPC de reanudacion', which is a statement about the TEMPORARY-BAN session
+      state governed by adr-0015 and is still true. Add an explicit note that orden_pausa_de_envio is
+      a different thing -- a core-issued outbound-send gate, not a reactivation path for a ban -- so
+      the two never read as contradictory. Do not weaken or reword the adr-0015 sentence itself.
+    files:
+      - docs/protocolo-ipc-nucleo-sidecar.md
+  - step: 5
+    action: >-
+      Entity: add canal.Sesion.Desvincular(ctx) calling the real s.cliente.Logout(ctx) (whatsmeow),
+      returning its error untouched. Keep it on Sesion. Do NOT add any pause/resume-named method to
+      canal.Supervisor -- a reflection sentinel forbids it (see risks).
+    files:
+      - sidecar/internal/canal/canal.go
+  - step: 6
+    action: >-
+      Validator/policy: add ErrEnvioPausado plus an atomic.Bool pause flag and
+      PausarEnvio/ReanudarEnvio/EnvioPausado to PorteroDeSalida, and gate Admitir BEFORE cola.Encolar.
+      In-memory only: no field is persisted, no schema or migration is added anywhere. Follow the
+      existing cortacircuitos/baja shape (counter + registro.Aviso + typed sentinel return).
+    files:
+      - sidecar/internal/outbox/portero.go
+  - step: 7
+    action: >-
+      Application Service: add the two dispatch cases to the manejarConexion switch in manejo.go.
+      orden_pausa_de_envio flips the gatekeeper flag and answers acuse_pausa_de_envio. Unlike every
+      other send path today, the mensaje_saliente case must STOP discarding Admitir's error: when it
+      is ErrEnvioPausado it emits acuse_envio{estado:"fallido", motivo:"envio_pausado"} so the core
+      learns the send was refused (spec invariant: reject, never silently discard). Inject the unlink
+      as a narrow interface on Dependencias (mirroring ControlDeBaja) so the logout path is testable
+      without a paired device; *canal.Sesion satisfies it in production wiring.
+    files:
+      - sidecar/internal/servidor/manejo.go
+      - sidecar/internal/servidor/servidor.go
+  - step: 8
+    action: >-
+      Rust adapter: replace the cerrar_sesion stub at adaptador.rs:744-747 (drop the TODO(A-3)) with a
+      real send of orden_cierre_de_sesion awaiting acuse_cierre_de_sesion, and add
+      ordenar_pausa_de_envio(accion) as an inherent pub async fn awaiting acuse_pausa_de_envio. Copy
+      the pending-correlation pattern already used by ordenar_respaldo_sqlstore (adaptador.rs:284-336)
+      rather than inventing a new one. Keep the whatsmeow taxonomy inside this crate: nothing new
+      crosses into hexcell-core.
+    files:
+      - crates/hexcell-canal-whatsmeow/src/adaptador.rs
+  - step: 9
+    action: >-
+      Sweep every hardcoded wire-version literal in tests, all in the same commit as the constants.
+      Go: documento_test.go:64 (header string) and its correspondence assertions; mensajes_test.go:186,
+      224, 225; servidor_test.go:281 ('esperada 5' -> 'esperada 6'). Rust: protocolo.rs:28, 117, 140,
+      161; salida.rs:195; comun/mod.rs:88, 115, 152, 182, 212, 248, 261; emparejamiento_ipc.rs:60, 122,
+      128, 170, 175, 181, 210, 241; respaldo_sqlstore_ipc.rs:58, 122, 173; respaldo_cli.rs:55, 94, 240,
+      395; canal_whatsmeow_seleccionado.rs:64, 85. Leave mensajes_test.go:223 alone: its version 4 is
+      deliberate and exercises ErrValorNoEscalar, which is raised before the version check.
+    files:
+      - sidecar/internal/ipc/documento_test.go
+      - sidecar/internal/ipc/mensajes_test.go
+      - sidecar/internal/servidor/servidor_test.go
+      - crates/hexcell-canal-whatsmeow/tests/comun/mod.rs
+      - crates/hexcell-canal-whatsmeow/tests/protocolo.rs
+      - crates/hexcell-canal-whatsmeow/tests/salida.rs
+      - crates/hexcell/tests/emparejamiento_ipc.rs
+      - crates/hexcell/tests/respaldo_sqlstore_ipc.rs
+      - crates/hexcell/tests/respaldo_cli.rs
+      - crates/hexcell/tests/canal_whatsmeow_seleccionado.rs
+  - step: 10
+    action: >-
+      Write the two required contract tests. Go: extend portero_test.go with the pause/resume gate
+      cases and servidor_test.go with the socket-level pause/reject/resume and logout-dispatch cases.
+      Rust: extend tests/comun/mod.rs (SidecarSimulado) with leer_orden_cierre_de_sesion,
+      enviar_acuse_cierre_de_sesion, leer_orden_pausa_de_envio and enviar_acuse_pausa_de_envio, then
+      add tests/cierre_de_sesion.rs for the unlink scenario and the pause scenario in tests/salida.rs.
+      Each new guard must be shown to FAIL when the production line it protects is mutated -- a guard
+      never seen red is not a guard -- and must run under the same profile CI uses.
+    files:
+      - sidecar/internal/outbox/portero_test.go
+      - sidecar/internal/servidor/servidor_test.go
+      - crates/hexcell-canal-whatsmeow/tests/comun/mod.rs
+      - crates/hexcell-canal-whatsmeow/tests/cierre_de_sesion.rs
+      - crates/hexcell-canal-whatsmeow/tests/salida.rs
+risks:
+  - >-
+    BLOCKING NAMING GUARD (verified 2026-09-11). sidecar/internal/canal/reconexion_interno_test.go:226
+    TestSupervisorNoExponeMetodoDeReanudacion uses reflection to FAIL if any method of canal.Supervisor
+    has a lowercased name containing 'pausa', 'reanudar', 'resume', 'reactivar', 'unpause' or
+    'despausar'. It encodes adr-0015: a temporary ban has no automatic reactivation. Putting the
+    send-pause control on Supervisor turns a currently-green CI test red. The control belongs on
+    outbox.PorteroDeSalida, which the sentinel does not cover. Do not weaken or delete that test.
+  - >-
+    Doc/code parity is enforced, so the doc is not documentation -- it is a compiled artifact.
+    sidecar/internal/ipc/documento_test.go hardcodes '**Version de este protocolo:** 1.4, fijada el
+    2026-08-20.' and '| 1.4 | `5` |'. Editing the doc without editing that test (or the reverse)
+    breaks `go test ./...`. It also iterates TiposDeclarados() and CamposDe(), so every new type and
+    every new field name must appear in the section 6 tables in the exact '| `nombre` |' shape.
+  - >-
+    Blast radius of the version literal is wider than the spec's three files: 20 hardcoded '"version":5'
+    sites live in Rust tests, four of them in crates/hexcell (emparejamiento_ipc.rs,
+    respaldo_sqlstore_ipc.rs, respaldo_cli.rs, canal_whatsmeow_seleccionado.rs), a crate the spec never
+    names. Missing any one of them fails CI at the moment of the bump, which is the intended
+    fail-closed behaviour but must be budgeted in the contract, not discovered mid-implementation.
+  - >-
+    DESIGN DECISION taken here, with its alternative recorded. The paused rejection travels as
+    acuse_envio{estado:"fallido", motivo:"envio_pausado"} rather than as a NEW acuse_envio estado.
+    Adding a state would force EstadosDeEnvioDeclarados(), the doc's send-state table, and then
+    hexcell_core::canal::Acuse (plus crates/hexcell-core/tests/exhaustividad_resultado_envio.rs,
+    hexcell-canal-simulado and hexcell-canal-contrato) to change -- dragging the zero-dependency core
+    and the simulated Cloud-API adapter into an own-channel concern. If review prefers the new state,
+    it is a different, larger task.
+  - >-
+    Today manejo.go discards the gatekeeper's verdict (`_ = s.deps.Portero.Admitir(...)`), so
+    ErrConversacionEnTraspaso and ErrContactoDadoDeBaja are already silently dropped. This task makes
+    only ErrEnvioPausado observable, because the spec invariant demands it. That is a deliberate
+    asymmetry, not an oversight; widening it to the other two rejections is out of scope.
+  - >-
+    The Rust core consumes MensajeEntrante::AcuseEnvio(_) and drops it (adaptador.rs:637). A paused
+    rejection therefore changes no core behaviour today and cannot be asserted from the port. The
+    Rust-side assertion is that the line is parsed and consumed without protocol error; the behavioural
+    assertion (rejected, not enqueued) lives on the Go side where it is observable.
+  - >-
+    AC-4's live half is NOT testable in this environment: whatsmeow's client.Logout() needs a paired
+    device and a real WhatsApp connection, and the operation is irreversible (a new QR is required).
+    CI covers the IPC path up to an injected unlink seam. The device-actually-unlinked and
+    credentials-destroyed criteria are EXPLICITLY DEFERRED to the A-3 acceptance run on a pilot cell.
+  - >-
+    Doc lines 382-386 state, about the temporary-ban `pausada` state, that 'no existe mensaje IPC de
+    reanudacion'. After this task an IPC resume order exists for a DIFFERENT concern. The two must be
+    disambiguated in prose or the document contradicts itself; the adr-0015 rule itself is not being
+    repealed and needs no new ADR.
+  - >-
+    Scope pressure: plan task 12 (cell terminate) and task 13 (cell rebind) consume this order and
+    reference it explicitly (docs/plan/fase-a-6-empaquetado-cli.md:254). They are non-goals here. The
+    deliverable is the protocol type plus its two ends, not a CLI command.
+  - >-
+    No prior failed task overlaps these files (`quorum analyze failure-lookup` returned null,
+    .ai/tasks/failed/ is empty) and docs/bitacora-de-descartes.md holds no discard on logout or on
+    send-pause (D-22 concerns backup without prior pause, a different subject). No reopening condition
+    applies and no new bitacora entry is required by this task.

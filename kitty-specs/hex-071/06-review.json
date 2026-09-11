@@ -1,0 +1,21 @@
+{
+  "task_id": "HEX-071",
+  "summary": "Re-review after fix: contract touch list and max_files_changed now match the real 26-file diff. contract-check ok=true. No source changed.",
+  "verdict": "approve",
+  "contract_compliance": true,
+  "forbidden_files_touched": [],
+  "unrequested_refactor": false,
+  "missing_tests": [],
+  "functional_risk": "low",
+  "notes": [
+    "quorum analyze contract-check ok=true, violations=[] over all 26 real changed paths (25 tracked + the untracked crates/hexcell-canal-whatsmeow/tests/cierre_de_sesion.rs); not_checked: forbid.behaviors (verified by hand in the prior pass, unchanged).",
+    "touch list now lists all 26 paths 1:1 against the actual diff (verified both directions); the 5 previously-missing files (contrato_del_puerto.rs, emparejamiento.rs, privacidad.rs, reconexion.rs, respaldo_sqlstore.rs) and cierre_de_sesion.rs are present. limits.max_files_changed raised 24->30 (>=26 real count) and limits.max_diff_lines stays 1600 against a real ~1309 (1209 ins + 100 del), both with headroom; the new limits block carries a dated, itemized justification rather than an eyeballed number.",
+    "Hand-diffed the 5 previously-flagged test files again: each still carries nothing but the mechanical enviar_saludo(5, ...) -> enviar_saludo(6, ...) literal (contrato_del_puerto.rs 1/1, privacidad.rs 1/1, reconexion.rs 5x 5/5, respaldo_sqlstore.rs 7x 6/6, emparejamiento.rs 8x 8/8) -- no logic change, confirming the orchestrator touched only the contract and not source.",
+    "adr-0015 name guard (sidecar/internal/canal/reconexion_interno_test.go) and the outbox route sentinel (sidecar/internal/outbox/centinela_rutas_de_envio_test.go) both re-confirmed untouched via git diff --quiet against main.",
+    "acceptance-coverage re-run: status=pass, AC-1..AC-6 all state=covered, gaps=[]; AC-4's live client.Logout() half remains correctly framed as EXPLICITLY DEFERRED to A-3 pilot acceptance and is not treated as a gap here either.",
+    "05-validation.json overall_result=passed, all 7 verify commands exit 0, including the wire-atomicity guard, the adr-0015 name guard, and the scope-refutation command (git diff main against the forbidden path list, zero lines).",
+    "04-implementation-log.yaml remains empty (external delegate OOM-killed before reporting); noted, not blocking -- 05-validation.json's command evidence and this review's own hand inspection of the diff substitute for the missing log.",
+    "Everything else previously cleared (three closed human decisions, adr-0015/outbox sentinels intact, zero new hexcell-core dependencies, unconditional version-5 rejection test, pause rejection tested end-to-end over the real socket, Spanish throughout, no transport identifiers leaked) was not re-litigated; only the contract-scope blocker and its resolution were re-verified for this pass."
+  ],
+  "fix_tasks": []
+}

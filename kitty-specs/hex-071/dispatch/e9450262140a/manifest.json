@@ -1,0 +1,117 @@
+{
+  "task_id": "HEX-071",
+  "bundle_hash": "e9450262140a811b1f3e89de4e968fbe562a87482df291d4ea88de6c1acd2090",
+  "files": [
+    ".ai/tasks/active/HEX-071-new-spec/00-spec.yaml",
+    ".ai/tasks/active/HEX-071-new-spec/01-blueprint.yaml",
+    "crates/hexcell-canal-whatsmeow/src/adaptador.rs",
+    "crates/hexcell-canal-whatsmeow/src/conexion.rs",
+    "crates/hexcell-canal-whatsmeow/src/lib.rs",
+    "crates/hexcell-canal-whatsmeow/src/mensajes.rs",
+    "crates/hexcell-canal-whatsmeow/tests/comun/mod.rs",
+    "crates/hexcell-canal-whatsmeow/tests/protocolo.rs",
+    "crates/hexcell-canal-whatsmeow/tests/salida.rs",
+    "crates/hexcell-core/src/canal.rs",
+    "crates/hexcell/tests/canal_whatsmeow_seleccionado.rs",
+    "crates/hexcell/tests/emparejamiento_ipc.rs"
+  ],
+  "protocol_version": "fleet-bundle-protocol/v2",
+  "created_at": "2026-09-11T17:35:02Z",
+  "dropped": [
+    {
+      "component": "code_slice",
+      "path": "sidecar/internal/servidor/servidor_test.go",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "sidecar/internal/servidor/servidor.go",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "sidecar/internal/servidor/manejo.go",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "sidecar/internal/outbox/salida.go",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "sidecar/internal/outbox/portero_test.go",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "sidecar/internal/outbox/portero.go",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "sidecar/internal/outbox/centinela_rutas_de_envio_test.go",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "sidecar/internal/ipc/mensajes_test.go",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "sidecar/internal/ipc/mensajes.go",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "sidecar/internal/ipc/documento_test.go",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "sidecar/internal/canal/reconexion_interno_test.go",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "sidecar/internal/canal/emparejamiento.go",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "sidecar/internal/canal/canal.go",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "docs/protocolo-ipc-nucleo-sidecar.md",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "docs/plan/fase-a-6-empaquetado-cli.md",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "docs/adr/adr-0015-politica-de-convivencia-con-el-baneo.md",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "docs/PRD.md",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "crates/hexcell/tests/respaldo_sqlstore_ipc.rs",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "crates/hexcell/tests/respaldo_cli.rs",
+      "reason": "bundle exceeded max_bytes budget"
+    }
+  ]
+}

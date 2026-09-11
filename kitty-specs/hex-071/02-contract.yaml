@@ -1,0 +1,275 @@
+task_id: HEX-071
+summary: >-
+  Bump IPC wire version 5->6 atomically (doc + Go + Rust + every test literal) and add
+  logout and send-pause/resume message types with their two contract tests.
+goal: >-
+  Stage A-6 plan task 24. Extend the core<->sidecar IPC protocol with four new message types
+  (orden_cierre_de_sesion / acuse_cierre_de_sesion and orden_pausa_de_envio /
+  acuse_pausa_de_envio), replace the cerrar_sesion stub at
+  crates/hexcell-canal-whatsmeow/src/adaptador.rs:744-747 with a real logout order backed by
+  whatsmeow's client.Logout(), and add an IN-MEMORY send-pause gate in the sidecar's outbound
+  gatekeeper that REJECTS each send with a typed error (never buffers, queues or silently
+  discards). The wire version goes from 5 to 6 in the SAME commit across
+  docs/protocolo-ipc-nucleo-sidecar.md, sidecar/internal/ipc/mensajes.go,
+  crates/hexcell-canal-whatsmeow/src/mensajes.rs and all 26 hardcoded literal sites in the Go
+  and Rust test suites: a version mismatch closes the connection with no negotiation and no
+  partial degradation, so a partial bump is a broken build by design. Traces to FR-12.
+read:
+  - .ai/tasks/active/HEX-071-new-spec/00-spec.yaml
+  - .ai/tasks/active/HEX-071-new-spec/01-blueprint.yaml
+  - docs/plan/fase-a-6-empaquetado-cli.md
+  - docs/adr/adr-0015-politica-de-convivencia-con-el-baneo.md
+  - docs/PRD.md
+  - crates/hexcell-core/src/canal.rs
+  - crates/hexcell-canal-whatsmeow/src/conexion.rs
+  - sidecar/internal/canal/emparejamiento.go
+  - sidecar/internal/outbox/salida.go
+  - sidecar/internal/outbox/centinela_rutas_de_envio_test.go
+  - sidecar/internal/canal/reconexion_interno_test.go
+# NOTA PARA LA FASE DE ANALISIS (footgun conocido, no relitigar):
+# `quorum analyze contract-check` empareja las rutas de forbid.files por NOMBRE
+# BASE, ignorando el directorio. Esta tarea toca archivos cuyos nombres base son
+# muy comunes en el arbol (`lib.rs`, `mod.rs`, `canal.go`, `servidor.go`,
+# `mensajes.go`, `mensajes.rs`, `salida.rs`, `protocolo.rs`). Por eso forbid.files
+# NO puede nombrar ninguna ruta cuyo nombre base coincida con uno tocado: eso
+# produciria un ok=false falso sobre un diff conforme. En particular la
+# prohibicion sobre `crates/hexcell-core/**` y `crates/hexcell-canal-simulado/**`
+# NO se expresa aqui como glob (su base seria `**`), sino como comportamiento
+# prohibido mas la comprobacion deterministica del ultimo comando de verify:
+# `git diff main -- <rutas prohibidas>` sin lineas de salida.
+#
+# NOTA SOBRE AC-4 (mitad no comprobable, diferida a proposito): el criterio
+# "el dispositivo queda desvinculado y las credenciales destruidas" exige un
+# `client.Logout()` real contra un dispositivo emparejado vivo, es irreversible
+# y no existe en CI. Aqui se verifica la ruta IPC completa hasta una costura de
+# desvinculacion inyectada. La mitad viva queda EXPLICITAMENTE DIFERIDA a la
+# aceptacion de A-3 sobre una celula piloto y NO es una brecha de cobertura.
+touch:
+  - docs/protocolo-ipc-nucleo-sidecar.md
+  - sidecar/internal/ipc/mensajes.go
+  - sidecar/internal/ipc/documento_test.go
+  - sidecar/internal/ipc/mensajes_test.go
+  - sidecar/internal/servidor/manejo.go
+  - sidecar/internal/servidor/servidor.go
+  - sidecar/internal/servidor/servidor_test.go
+  - sidecar/internal/outbox/portero.go
+  - sidecar/internal/outbox/portero_test.go
+  - sidecar/internal/canal/canal.go
+  - crates/hexcell-canal-whatsmeow/src/mensajes.rs
+  - crates/hexcell-canal-whatsmeow/src/adaptador.rs
+  - crates/hexcell-canal-whatsmeow/src/lib.rs
+  - crates/hexcell-canal-whatsmeow/tests/comun/mod.rs
+  - crates/hexcell-canal-whatsmeow/tests/protocolo.rs
+  - crates/hexcell-canal-whatsmeow/tests/salida.rs
+  - crates/hexcell-canal-whatsmeow/tests/cierre_de_sesion.rs
+  - crates/hexcell-canal-whatsmeow/tests/contrato_del_puerto.rs
+  - crates/hexcell-canal-whatsmeow/tests/emparejamiento.rs
+  - crates/hexcell-canal-whatsmeow/tests/privacidad.rs
+  - crates/hexcell-canal-whatsmeow/tests/reconexion.rs
+  - crates/hexcell-canal-whatsmeow/tests/respaldo_sqlstore.rs
+  - crates/hexcell/tests/emparejamiento_ipc.rs
+  - crates/hexcell/tests/respaldo_sqlstore_ipc.rs
+  - crates/hexcell/tests/respaldo_cli.rs
+  - crates/hexcell/tests/canal_whatsmeow_seleccionado.rs
+forbid:
+  files:
+    - Cargo.toml
+    - Cargo.lock
+    - rust-toolchain.toml
+    - sidecar/go.mod
+    - sidecar/go.sum
+    - Dockerfile
+    - sidecar/Dockerfile
+    - deploy/cell.compose.yml
+    - .github/workflows/ci.yml
+    - README.md
+    - docs/PRD.md
+    - docs/STATUS.md
+    - docs/bitacora-de-descartes.md
+    - docs/plan/fase-a-6-empaquetado-cli.md
+    - docs/plan/fase-a-3-adaptador-whatsmeow.md
+    - docs/contrato-ipc-respaldo-del-sqlstore.md
+    - crates/hexcell-core/src/canal.rs
+    - crates/hexcell-core/tests/exhaustividad_resultado_envio.rs
+    - crates/hexcell-canal-contrato/src/bateria.rs
+    - crates/hexcell-canal-contrato/src/banco.rs
+    - sidecar/internal/canal/reconexion_interno_test.go
+    - sidecar/internal/outbox/centinela_rutas_de_envio_test.go
+    - "*.db"
+    - "*.db-wal"
+    - "*.db-shm"
+    - ".env*"
+  behaviors:
+    - "Do not put any method whose lowercased name contains 'pausa', 'reanudar', 'resume', 'reactivar', 'unpause' or 'despausar' on canal.Supervisor. sidecar/internal/canal/reconexion_interno_test.go:226 (TestSupervisorNoExponeMetodoDeReanudacion) fails by reflection if you do; it encodes adr-0015 (a temporary ban has NO automatic reactivation). The send-pause control goes on outbox.PorteroDeSalida. Do not weaken, rename around, or delete that sentinel."
+    - "Do not touch crates/hexcell-core at all: not its Cargo.toml, not canal.rs, not its tests. The port keeps exactly the four methods it has (send, estado_ventana, iniciar_emparejamiento, cerrar_sesion, estado_sesion) and ZERO external dependencies. If the design seems to need a new ResultadoEnvio or Acuse variant, STOP and report it as a blocker: that is a different, larger task that would also drag hexcell-canal-simulado and hexcell-canal-contrato in."
+    - "Do not add a new acuse_envio `estado` value. The paused rejection travels as estado=\"fallido\" with the closed token motivo=\"envio_pausado\". Adding a state changes EstadosDeEnvioDeclarados(), the doc's send-state table and hexcell_core::canal::Acuse, which is out of scope (decision recorded in 01-blueprint.yaml risks)."
+    - "Do not persist the pause state. No new table, no new column, no PRAGMA user_version change, no migration, in identidad.db, outbox.db, sqlstore.db or anywhere else. It is one process-memory flag; a sidecar restart or reconnect returns to the active send state."
+    - "Do not buffer, queue, retry or silently discard a send while paused. The gatekeeper rejects BEFORE cola.Encolar and returns the typed sentinel; the core decides what to do next."
+    - "Do not bump the wire version in only some places. The constant in sidecar/internal/ipc/mensajes.go:32, the constant in crates/hexcell-canal-whatsmeow/src/mensajes.rs:15, the thirteen `| `version` | entero | `5`. |` cells of the doc, its header, its correspondence table, and all 26 hardcoded literals in the Go and Rust tests move together in one commit. A partial bump closes every connection: there is no negotiation and no partial degradation."
+    - "Do not rewrite or delete any historical row of the doc's version-correspondence table (1.0->1, 1.1->2, 1.2->3, 1.3->4, 1.4->5). Append `| 1.5 | `6` |`. sidecar/internal/ipc/documento_test.go asserts each historical row literally."
+    - "Do not repeal, reword or soften the adr-0015 sentence at doc lines 382-386 ('no existe mensaje IPC de reanudacion') -- it is about the TEMPORARY-BAN `pausada` state and stays true. Add a note distinguishing the new core-issued send-pause order from it. A repeal would require a NEW superseding ADR, which this task does not write."
+    - "Do not write any new ADR, any docs/bitacora-de-descartes.md entry, any STATUS.md change, or any plan-file edit. Nothing is being discarded and no decision changes state; plan progress is recorded by git log, and the plan file is edited only by dedicated docs: commits."
+    - "Do not implement cell pause, cell terminate or cell rebind (plan tasks 12 and 13). This task delivers the protocol types and their two ends only; the CLI commands consume them later."
+    - "Do not introduce bulk-sender folklore: no jitter, no warm-up protocol, no proxy, no VPN, no IP rotation anywhere in the pause/resume path."
+    - "Do not introduce a new Go module dependency or a new Rust crate dependency. The Rust side already has serde/serde_json inside hexcell-canal-whatsmeow; the Go side already has whatsmeow. Nothing else is added."
+    - "Do not use booleans, floats, or nested objects in any new wire field. The protocol admits only flat string and integer scalars, so pause/resume is expressed as accion: \"pausar\"|\"reanudar\", not as a bool."
+    - "Do not put a raw transport identifier, a JID, a phone number, a QR string, a pairing code, or a credential path into any new field or into any log line the new paths emit (adr-0019). Motivos are human-readable and identifier-free."
+    - "Do not write any artifact content in English. Every new identifier, doc sentence, comment, log event name and test name is Spanish, matching the surrounding didactic style. The commit is a conventional commit with no AI attribution in its semantic subject/body."
+    - "Do not land a guard that was never seen to fail. For each new test, mutate the production line it protects, observe it go red under the same profile CI uses, then restore. A green-only guard does not count as a guard."
+verify:
+  commands:
+    - |
+      # 1. INVARIANTE DEL CABLE: el salto 5->6 es atomico o no es.
+      # Barato, sin compilar, y falla antes de gastar una compilacion entera.
+      set -u
+      FALLOS=0
+      grep -qE '^const VersionProtocolo int64 = 6$' sidecar/internal/ipc/mensajes.go \
+        || { echo "FALLA: el sidecar no declara VersionProtocolo = 6"; FALLOS=1; }
+      grep -qE '^pub const VERSION_PROTOCOLO: i64 = 6;$' crates/hexcell-canal-whatsmeow/src/mensajes.rs \
+        || { echo "FALLA: el nucleo Rust no declara VERSION_PROTOCOLO = 6"; FALLOS=1; }
+      # Ningun literal de version 5 puede sobrevivir en fuentes ni en pruebas.
+      RESTOS=$(grep -rn '"version":5' crates/ sidecar/ 2>/dev/null | grep -v 'cable-anterior-esperado' || true)
+      if [ -n "$RESTOS" ]; then
+        echo "FALLA: quedan literales de version 5 en el cable:"; echo "$RESTOS"; FALLOS=1
+      fi
+      grep -q 'esperada 6' sidecar/internal/servidor/servidor_test.go \
+        || { echo "FALLA: servidor_test.go sigue esperando la version anterior"; FALLOS=1; }
+      grep -q 'saludo_nucleo.version, 6' crates/hexcell-canal-whatsmeow/tests/protocolo.rs \
+        || { echo "FALLA: protocolo.rs no afirma que el saludo viaja en version 6"; FALLOS=1; }
+      # Documento normativo: cabecera nueva, fila nueva, filas historicas intactas.
+      grep -q '| 1.5 | `6` |' docs/protocolo-ipc-nucleo-sidecar.md \
+        || { echo "FALLA: el documento no declara la correspondencia 1.5 -> cable 6"; FALLOS=1; }
+      for FILA in '| 1.0 | `1` |' '| 1.1 | `2` |' '| 1.2 | `3` |' '| 1.3 | `4` |' '| 1.4 | `5` |'; do
+        grep -qF "$FILA" docs/protocolo-ipc-nucleo-sidecar.md \
+          || { echo "FALLA: se perdio la fila historica $FILA de la tabla de versiones"; FALLOS=1; }
+      done
+      if grep -qE '^\| `version` \| entero \| `5`\. \|$' docs/protocolo-ipc-nucleo-sidecar.md; then
+        echo "FALLA: quedan celdas de campo version con valor 5 en el documento"; FALLOS=1
+      fi
+      # Los cuatro tipos nuevos deben existir en la tabla de la seccion 6.
+      for T in orden_cierre_de_sesion acuse_cierre_de_sesion orden_pausa_de_envio acuse_pausa_de_envio; do
+        grep -qF "| \`$T\` |" docs/protocolo-ipc-nucleo-sidecar.md \
+          || { echo "FALLA: el documento no declara el tipo $T en la tabla de la seccion 6"; FALLOS=1; }
+      done
+      [ "$FALLOS" -eq 0 ] && echo "OK: el salto de version de cable 5->6 es consistente en documento, Go y Rust"
+      exit "$FALLOS"
+    - |
+      # 2. GUARDA DE NOMBRES (adr-0015): el control de pausa NO puede vivir en
+      # canal.Supervisor. El centinela por reflexion ya lo prohibe; esto lo
+      # detecta antes de correr la suite y explica por que.
+      set -u
+      if grep -nE 'func \(s?\*?[a-zA-Z]*Supervisor\) [A-Za-z]*(Pausa|Reanud|Resume|Reactiv|Unpause|Despaus)' sidecar/internal/canal/*.go; then
+        echo "FALLA: se anadio un metodo de pausa/reanudacion a canal.Supervisor; adr-0015 lo prohibe y reconexion_interno_test.go lo rompe"
+        exit 1
+      fi
+      git diff --quiet main -- sidecar/internal/canal/reconexion_interno_test.go \
+        || { echo "FALLA: se modifico el centinela TestSupervisorNoExponeMetodoDeReanudacion"; exit 1; }
+      git diff --quiet main -- sidecar/internal/outbox/centinela_rutas_de_envio_test.go \
+        || { echo "FALLA: se modifico el centinela de rutas de envio"; exit 1; }
+      echo "OK: los dos centinelas siguen intactos y el control de pausa no esta en el Supervisor"
+    - |
+      # 3. Sidecar Go: compilacion, vet y los cuatro paquetes que esta tarea toca.
+      # Se acota a ipc/outbox/servidor/canal en vez de ./... para que el bucle
+      # del implementador sea rapido; CI corre el modulo completo igualmente.
+      set -u
+      cd sidecar || exit 1
+      go build ./... || exit 1
+      go vet ./... || exit 1
+      go test ./internal/ipc/... ./internal/outbox/... ./internal/servidor/... ./internal/canal/... -count=1 || exit 1
+      echo "OK: go build + go vet + pruebas de ipc, outbox, servidor y canal"
+    - |
+      # 4. Rust: formato, clippy acotado al crate del adaptador, y su suite
+      # completa (incluye protocolo.rs, salida.rs y cierre_de_sesion.rs).
+      set -u
+      cargo fmt --check || exit 1
+      cargo clippy -p hexcell-canal-whatsmeow --all-targets -- -D warnings || exit 1
+      cargo test -p hexcell-canal-whatsmeow || exit 1
+      echo "OK: fmt, clippy y suite de hexcell-canal-whatsmeow"
+    - |
+      # 5. Las cuatro pruebas de integracion de crates/hexcell que llevan el
+      # literal de version en linea. Se nombran una a una en vez de correr
+      # `cargo test -p hexcell` entero, que es la suite lenta del repositorio.
+      set -u
+      cargo test -p hexcell --test emparejamiento_ipc --test respaldo_sqlstore_ipc \
+        --test canal_whatsmeow_seleccionado --test respaldo_cli || exit 1
+      echo "OK: las cuatro pruebas IPC de crates/hexcell pasan con version 6"
+    - |
+      # 6. El nucleo de dominio sigue sin dependencias externas (criterio de
+      # aceptacion del repositorio) y sin cambios en este diff.
+      set -u
+      DEPS=$(cargo tree -p hexcell-core --edges normal --prefix none 2>/dev/null | tail -n +2 | grep -v '^$' | wc -l)
+      if [ "$DEPS" -ne 0 ]; then
+        echo "FALLA: hexcell-core gano $DEPS dependencia(s) externa(s)"
+        cargo tree -p hexcell-core
+        exit 1
+      fi
+      echo "OK: hexcell-core mantiene cero dependencias externas"
+    - |
+      # 7. ALCANCE: refutacion deterministica del footgun de contract-check
+      # (nombre base vs. ruta completa). Esta es la prueba autoritativa de que
+      # el diff no se desbordo hacia el nucleo de dominio, el adaptador
+      # simulado, la bateria de contrato, la Fase B, el plan, los ADR o la CI.
+      set -u
+      LINEAS=$(git diff main -- \
+                crates/hexcell-core crates/hexcell-canal-simulado crates/hexcell-canal-contrato \
+                crates/hexcell-meta crates/hexcell-admin crates/hexcell-storage \
+                ':(glob)crates/hexcell/src/**' \
+                docs/PRD.md docs/STATUS.md docs/bitacora-de-descartes.md \
+                ':(glob)docs/plan/**' ':(glob)docs/adr/**' \
+                ':(glob).github/**' deploy README.md \
+                Cargo.toml Cargo.lock rust-toolchain.toml sidecar/go.mod sidecar/go.sum \
+                Dockerfile sidecar/Dockerfile \
+                sidecar/internal/canal/reconexion_interno_test.go \
+                sidecar/internal/outbox/centinela_rutas_de_envio_test.go | wc -l)
+      if [ "$LINEAS" -ne 0 ]; then
+        echo "FALLA: el diff toca rutas prohibidas"
+        git diff --stat main
+        exit 1
+      fi
+      echo "--- alcance real del diff ---"
+      git diff --stat main
+      echo "OK: el alcance se mantiene dentro de la lista de touch"
+acceptance:
+  human_gate: true
+limits:
+  max_files_changed: 30
+  # Justificacion medida el 2026-09-11 sobre el arbol real, no estimada a ojo.
+  #
+  # PRODUCCION (~485 lineas ins+del): mensajes.go +110 (4 constantes de tipo,
+  # 4 structs con tipo()/valores(), 4 entradas de `descriptores` con sus
+  # declaraciones de campo), mensajes.rs +120 (4 structs serde, 2 variantes de
+  # MensajeEntrante, 2 brazos del analizador), adaptador.rs +100 (cerrar_sesion
+  # real con correlacion pendiente + ordenar_pausa_de_envio), manejo.go +50 (2
+  # casos del switch y el acuse_envio de rechazo), portero.go +55 (sentinela
+  # tipado, atomic.Bool, tres metodos y la compuerta), canal.go +25
+  # (Desvincular -> client.Logout), servidor.go +15 (costura inyectada),
+  # lib.rs +8 (reexports). El repositorio escribe comentarios del POR QUE muy
+  # densos (10-25 lineas por bloque), ya contabilizados aqui.
+  #
+  # DOCUMENTO (~125 lineas ins+del): 13 celdas `| `version` | entero | `5`. |`
+  # (26 lineas contando insercion y borrado), cabecera, fila 1.5, dos parrafos
+  # de recuento de tipos, 4 filas de la tabla de la seccion 6, el parrafo de no
+  # negociacion, 4 subsecciones `###` nuevas y la nota que desambigua `pausada`.
+  #
+  # PRUEBAS (~690 lineas ins+del): barrido de 26 literales de version (52
+  # lineas), portero_test +140, servidor_test +180 (extremo a extremo sobre el
+  # socket real), comun/mod.rs +90 (4 ayudantes del SidecarSimulado),
+  # cierre_de_sesion.rs +140 (archivo nuevo), salida.rs +90.
+  #
+  # Total honesto ~1300. Se fija 1600 para dejar margen a la densidad de
+  # comentario obligatoria sin invitar a que la tarea crezca hacia las tareas
+  # 12 y 13 del plan, que este contrato prohibe explicitamente.
+  max_diff_lines: 1600
+  per_class:
+    - glob: "docs/**"
+      max_diff_lines: 300
+    - glob: "crates/hexcell-canal-whatsmeow/src/*.rs"
+      max_diff_lines: 300
+    - glob: "crates/hexcell/tests/*.rs"
+      max_diff_lines: 80
+execution:
+  mode: worktree_edit
+  branch: ai/HEX-071
+retry_policy:
+  max_attempts: 2
+  escalate_after: 1

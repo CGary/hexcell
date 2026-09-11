@@ -1,0 +1,70 @@
+{
+  "attempts": [],
+  "context_overflows": [],
+  "events": [
+    {
+      "at": "2026-09-11T00:00:00Z",
+      "event": "risk_level_calculated",
+      "level": "medium",
+      "reasons": [
+        "file_count_high: 21"
+      ],
+      "signals": {
+        "files_count": 21,
+        "sensitive_matches": [],
+        "symbols_count": 0
+      }
+    },
+    {
+      "blocked": "",
+      "candidate": {
+        "agent": "opencode_go",
+        "level": 2,
+        "model": "opencode-go/deepseek-v4-pro"
+      },
+      "dispatch_id": "",
+      "inputs_snapshot": {
+        "complexity_band": "L",
+        "control": {
+          "disabled": [
+            {
+              "at": "2026-09-09T16:46:15Z",
+              "by": "human",
+              "reason": "Antigravity/Gemini subscription retired 2026-09-09 (human decision); propagated from quorum",
+              "target": "agy"
+            },
+            {
+              "at": "2026-09-09T16:46:15Z",
+              "by": "human",
+              "reason": "Antigravity/Gemini subscription retired 2026-09-09 (human decision); propagated from quorum",
+              "target": "agy_edit"
+            }
+          ],
+          "updated_at": "2026-09-09T16:46:15Z"
+        },
+        "exclusions": [],
+        "hashes": {
+          "agents_yaml": "d2a24d653f2130e36eae5e7cce637634958a442576ff3002e370f9ba07a1b992",
+          "config_yaml": "a825e4199387286946c8e30e7ace95977c419314cc8e1721a79afa5fd642ce4f",
+          "routing_yaml": "8c3b821b2d603e67dc1c220721291fbb5130799d88712d0deaa4b90bbf5479cc"
+        },
+        "incumbent_family": "",
+        "level": 2,
+        "phase": "implement",
+        "risk": "medium",
+        "router_version": "fleet-route/v1"
+      },
+      "reasons": null,
+      "reroute_budget": 2,
+      "review_family_degraded": false,
+      "ts": "2026-09-11T17:34:50Z",
+      "type": "routing_decision"
+    }
+  ],
+  "execution_mode": "worktree_edit",
+  "started_at": "2026-09-11T00:00:00Z",
+  "summary": "Extend the core-sidecar IPC protocol with logout and send-pause/resume types; wire version 5 to 6.",
+  "task_id": "HEX-071",
+  "total_cost_usd": 0,
+  "violations": []
+}

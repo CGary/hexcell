@@ -1,0 +1,50 @@
+{
+  "commands": [
+    {
+      "command": "guarda de cable 5-\u003e6 (documento, Go, Rust)",
+      "duration_s": 0.3,
+      "exit_code": 0,
+      "output_excerpt": "OK: el salto de version de cable 5-\u003e6 es consistente en documento, Go y Rust"
+    },
+    {
+      "command": "guarda de nombres adr-0015 (pausa fuera de canal.Supervisor)",
+      "duration_s": 0.4,
+      "exit_code": 0,
+      "output_excerpt": "OK: los dos centinelas siguen intactos y el control de pausa no esta en el Supervisor"
+    },
+    {
+      "command": "go build ./... \u0026\u0026 go vet ./... \u0026\u0026 go test ipc/outbox/servidor/canal",
+      "duration_s": 25,
+      "exit_code": 0,
+      "output_excerpt": "OK: cuatro paquetes del sidecar en verde"
+    },
+    {
+      "command": "cargo fmt --check \u0026\u0026 cargo clippy -p hexcell-canal-whatsmeow --all-targets -- -D warnings \u0026\u0026 cargo test -p hexcell-canal-whatsmeow",
+      "duration_s": 180,
+      "exit_code": 0,
+      "output_excerpt": "OK: 41 pruebas, incluidas las dos de cierre_de_sesion.rs"
+    },
+    {
+      "command": "cuatro pruebas IPC de crates/hexcell con version 6",
+      "duration_s": 90,
+      "exit_code": 0,
+      "output_excerpt": "OK: las cuatro pruebas IPC de crates/hexcell pasan con version 6"
+    },
+    {
+      "command": "hexcell-core sin dependencias externas",
+      "duration_s": 1,
+      "exit_code": 0,
+      "output_excerpt": "OK: hexcell-core mantiene cero dependencias externas"
+    },
+    {
+      "command": "alcance por git diff contra main (arbol de trabajo incluido)",
+      "duration_s": 0.5,
+      "exit_code": 0,
+      "output_excerpt": "OK: el alcance se mantiene dentro de la lista de touch; 25 archivos, +1124/-100"
+    }
+  ],
+  "executed_at": "2026-09-11T18:05:12Z",
+  "overall_result": "passed",
+  "summary": "Los 7 comandos del contrato salen en 0. Implementacion del delegado externo deepseek-v4-pro (sin commitear; el proceso murio por memoria). Mitad viva de AC-4 diferida a A-3.",
+  "task_id": "HEX-071"
+}
