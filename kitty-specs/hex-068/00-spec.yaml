@@ -1,0 +1,43 @@
+task_id: HEX-068
+summary: Parametrize the per-cell startup template (compose + env example) so every cell-distinguishing value becomes configuration, not a hardcoded literal.
+goal: Turn the own-channel cell's container startup (core + sidecar) into a reusable, parametrized template so deploying a new cell only requires supplying per-cell values, never editing the template itself.
+invariants:
+  - Every value that differs between two cells (identifier, volume name, network name, secrets, resource limits) is expressed as a variable, never hardcoded in the template.
+  - The core and sidecar containers share one per-cell local network and one shared volume that carries the IPC socket.
+  - Secrets are injected only as environment variables; no secret is written into a committed config file.
+  - The template explicitly sets the core's health-check address (HEXCELL_DIRECCION_SALUD) to a non-loopback value so a sibling container can reach /health/ready; the code's loopback default is not relied upon inside the cell network.
+  - No Rust source, no hexcell-admin command, and no config-file rendering logic are introduced by this task; the template and its example env file are static artifacts.
+acceptance:
+  - id: AC-1
+    statement: deploy/cell.compose.yml defines exactly the core and sidecar services, wired to a per-cell network and a shared volume, with every per-cell-varying value expressed through a compose variable.
+    given: the compose template deploy/cell.compose.yml
+    when: its service definitions are inspected
+    then: no per-cell identifier, volume/network name, secret, or resource limit is a literal value; each is a variable reference
+  - id: AC-2
+    statement: deploy/celula.env.ejemplo documents every variable the template consumes, with placeholder values safe to commit.
+    given: deploy/cell.compose.yml's variable references
+    when: deploy/celula.env.ejemplo is compared against them
+    then: every variable used by the template has a corresponding documented entry in the example env file, and no entry contains a real secret
+  - id: AC-3
+    statement: docker compose config validates the template against the example env without errors.
+    given: deploy/cell.compose.yml and deploy/celula.env.ejemplo
+    when: 'running `docker compose -f deploy/cell.compose.yml config` with the example env loaded (guarded/skipped if docker is unavailable in the execution environment)'
+    then: the command exits successfully and resolves all variables, or the check is explicitly skipped with a stated reason when docker is absent
+  - id: AC-4
+    statement: a short doc note explains how to use the template and example env to stand up a new cell.
+    given: the deploy/ directory
+    when: a reader with no prior context opens the added doc note
+    then: they can identify which file is the template, which is the example env, and what each documents
+  - "Repo-wide gates pass unmodified by this task's scope: cargo fmt --check, cargo clippy --workspace -- -D warnings, cargo test --workspace."
+risk: low
+non_goals:
+  - No Rust code changes of any kind.
+  - No new hexcell-admin command or CLI surface.
+  - No rendering of per-cell config files from templates (reserved for a later A-6 task).
+  - No container hardening or resource-limit value tuning as its own deliverable (reserved for other A-6 tasks); limits are only made parametrized, not chosen.
+  - No live `docker compose up` isolation test or real multi-container run (reserved for other A-6 tasks); verification here is static only.
+constraints:
+  - Deliverables are exactly deploy/cell.compose.yml, deploy/celula.env.ejemplo, and a short doc note; no other new files.
+  - All repository content (file contents, identifiers, comments, doc note) is written in Spanish, per project convention.
+  - Secrets travel only as environment variables; config files carry non-secret parameters only.
+  - Any acceptance criterion that would require live containers is deferred explicitly rather than treated as a gap.

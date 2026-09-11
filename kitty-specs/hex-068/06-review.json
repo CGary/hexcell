@@ -1,0 +1,26 @@
+{
+  "task_id": "HEX-068",
+  "summary": "Build-context defect fixed and re-verified with real builds; both new contract guards are genuine under mutation.",
+  "verdict": "approve",
+  "contract_compliance": true,
+  "forbidden_files_touched": [],
+  "unrequested_refactor": false,
+  "missing_tests": [],
+  "functional_risk": "low",
+  "notes": [
+    "quorum analyze contract-check: ok=true, violations=[], not_checked=[\"forbid.behaviors\"].",
+    "quorum analyze acceptance-coverage: status=pass, AC-1..AC-4 all covered=true.",
+    "Prior defect RESOLVED and independently re-verified: ran 'docker compose --env-file deploy/celula.env.ejemplo -f deploy/cell.compose.yml build nucleo' and '... build sidecar' myself (not just reading the implementer's claim); both exit 0 and produce hexcell-nucleo:local and hexcell-sidecar:local images. context: .. + dockerfile: Dockerfile for nucleo resolves to the repo-root Dockerfile; context: ../sidecar for sidecar resolves to sidecar/Dockerfile. Root .dockerignore still applies to the nucleo build because Docker reads <context>/.dockerignore and context is now the repo root (unchanged file, per forbid); sidecar build context (sidecar/) already had its own pre-existing sidecar/.dockerignore, also untouched by this diff.",
+    "Verify command #2 (anti-literal guard) fix confirmed genuine: on the real file it passes (exit 0); mutation-tested by changing container_name: ${HEXCELL_ID_CELULA}-nucleo to a literal container_name: piloto-01-nucleo, the guard fails (exit 1) and reports the offending line. The old '\\$\\{' end-of-line-anchor bug is gone; '(?![$][{])' behaves as a proper negative lookahead.",
+    "Verify command #3 (new static build-context check) confirmed genuine, not a repeat of the fake dry-run guard: on the real file it passes (exit 0, 'AC-3b ok'); mutation-tested in an isolated directory tree that mirrors the real repo layout (mutating only nucleo's context: .. to context: ., with sidecar's Dockerfile physically present so it isn't a false positive) yields exactly ['nucleo'] and exit 1, matching the orchestrator's reported result.",
+    "Anti-literal guard's blind spot (never scans inside 'environment:' blocks) still stands as a structural limitation, but re-confirmed it does not matter for THIS diff: manually inspected every environment: entry in both services (HEXCELL_ID_CELULA, HEXCELL_TELEFONO_CELULA, HEXCELL_VENTANA_ZONA, both API keys, etc.) and all are correctly ${VARIABLE} references, no literal secret/id/limit leaked through that gap. Advisory only, not a blocker.",
+    "Re-ran all six verify.commands live in the worktree: AC-3 docker compose config ok, guard #2 ok, guard #3 ok, cargo fmt --check ok, cargo clippy --workspace -- -D warnings ok (0 warnings); matches 05-validation.json's recorded exit codes.",
+    "IPC socket path /var/lib/hexcell/ipc/sidecar.sock re-confirmed identical in both services and matching RUTA_SOCKET_IPC_POR_DEFECTO (crates/hexcell/src/configuracion.rs:354) and docs/protocolo-ipc-nucleo-sidecar.md section 2's stated default.",
+    "HEXCELL_DIRECCION_SALUD=0.0.0.0:8081 re-confirmed non-loopback; code's loopback default correctly cited at configuracion.rs:347-348 in both the compose comment and docs/plantilla-celula.md.",
+    "All HEXCELL_* variable names re-checked against crates/hexcell/src/configuracion.rs and sidecar/internal/configuracion/configuracion.go; none invented.",
+    "Placeholders in deploy/celula.env.ejemplo re-checked: HEXCELL_TELEFONO_CELULA and both *_API_KEY use unmistakable 'reemplazar-con-*' markers, no real secret or working number.",
+    "Diff is exactly the 3 files declared in touch (deploy/cell.compose.yml, deploy/celula.env.ejemplo, docs/plantilla-celula.md) across both commits 668f016 and dee93d6; 243 insertions total, within limits (max_files_changed=3, max_diff_lines=550); no Rust/Go source touched, no hexcell-admin command, no config-rendering/templating logic, no live docker compose up or hardening/limit tuning introduced.",
+    "docs/plantilla-celula.md and deploy/*.ejemplo comments are in Spanish; no relative-date language present (no dates cited, not a violation)."
+  ],
+  "fix_tasks": []
+}

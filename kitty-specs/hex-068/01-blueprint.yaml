@@ -1,0 +1,73 @@
+task_id: HEX-068
+summary: Add a new deploy/ dir with a parametrized two-service compose template (core+sidecar), an example env documenting every variable, and a short usage doc note.
+affected_files:
+  - Dockerfile
+  - sidecar/Dockerfile
+  - docs/protocolo-ipc-nucleo-sidecar.md
+  - crates/hexcell/src/configuracion.rs
+  - sidecar/internal/configuracion/configuracion.go
+  - docs/plan/fase-a-6-empaquetado-cli.md
+symbols:
+  - HEXCELL_ID_CELULA
+  - HEXCELL_RUTA_DATOS
+  - HEXCELL_DIRECCION_SALUD
+  - HEXCELL_DIRECCION_ADMIN
+  - HEXCELL_CANAL
+  - HEXCELL_SOCKET_IPC
+  - HEXCELL_INFERENCIA_API_KEY
+  - HEXCELL_EMBEDDINGS_API_KEY
+  - VariableSocket
+  - VariableIdCelula
+  - VariableRutaSqlstore
+  - VariableRutaIdentidad
+  - VariableRutaOutbox
+  - VariableTelefonoCelula
+  - VariableVentanaZona
+dependencies:
+  - docs/protocolo-ipc-nucleo-sidecar.md
+  - docs/plan/fase-a-6-empaquetado-cli.md
+  - .dockerignore
+test_scenarios:
+  - statement: "deploy/cell.compose.yml defines exactly two services (core, sidecar) sharing one per-cell network and one shared volume that carries the IPC socket, with every per-cell-varying value (identifier, volume/network name, secrets, resource limits) expressed as a variable, never a literal."
+    covers:
+      - AC-1
+  - statement: "deploy/celula.env.ejemplo documents every variable the compose template references, with placeholder values safe to commit and no real secret."
+    covers:
+      - AC-2
+  - statement: "`docker compose -f deploy/cell.compose.yml config` (env loaded from deploy/celula.env.ejemplo) resolves without error when docker is available; when docker is absent the check is skipped with an explicit stated reason, never silently treated as passing."
+    covers:
+      - AC-3
+  - statement: "The added doc note lets a reader with no prior context identify which file is the template, which is the example env, and how to use both to stand up a new cell."
+    covers:
+      - AC-4
+  - statement: "HEXCELL_DIRECCION_SALUD is set explicitly in the template to a non-loopback bind (0.0.0.0:8081) so the sidecar container can reach the core's /health/ready across the per-cell network; the code's loopback default (crates/hexcell/src/configuracion.rs:340-348) is never relied upon."
+    covers:
+      - AC-1
+  - statement: "Repo-wide gates (cargo fmt --check, cargo clippy --workspace -- -D warnings, cargo test --workspace) pass unmodified, because this task touches no Rust or Go source."
+strategy:
+  - step: 1
+    action: "Create deploy/cell.compose.yml (no `version:` key, modern Compose Spec) with two services under one compose project: `nucleo` (build context `.` / dockerfile `./Dockerfile`, image `${HEXCELL_IMAGEN_NUCLEO}`) and `sidecar` (build context `./sidecar` / dockerfile `./sidecar/Dockerfile`, image `${HEXCELL_IMAGEN_SIDECAR}`). Give both an explicit `container_name: ${HEXCELL_ID_CELULA}-nucleo` / `${HEXCELL_ID_CELULA}-sidecar`. Add one top-level network (compose-internal key e.g. `red`) with `name: ${HEXCELL_RED_CELULA}` and one top-level volume (compose-internal key e.g. `datos`) with `name: ${HEXCELL_VOLUMEN_CELULA}`, mounted by both services (core at HEXCELL_RUTA_DATOS's path, sidecar at its own subpaths) so both share the filesystem that carries the IPC socket directory (/var/lib/hexcell/ipc, matching docs/protocolo-ipc-nucleo-sidecar.md section 2's default path unless overridden by HEXCELL_SOCKET_IPC)."
+    files:
+      - deploy/cell.compose.yml
+  - step: 2
+    action: "Set the core service's `environment:` block from the constants read in crates/hexcell/src/configuracion.rs: HEXCELL_ID_CELULA=${HEXCELL_ID_CELULA} (required), HEXCELL_RUTA_DATOS=<mount path inside the shared volume> (required, must resolve to an existing dir at container start — the volume mount point Docker creates satisfies is_dir()), HEXCELL_DIRECCION_SALUD=0.0.0.0:8081 (explicit non-loopback bind, hardcoded literal since the bind address itself is not a per-cell-varying dimension per the spec's invariant list — only the port could be templated if a future task needs it, out of scope here), HEXCELL_SOCKET_IPC=<same shared-volume path used by the sidecar side>, HEXCELL_CANAL=whatsmeow (own channel is the default per CLAUDE.md; template must not silently fall back to the `simulado` default), HEXCELL_INFERENCIA_API_KEY=${HEXCELL_INFERENCIA_API_KEY} and HEXCELL_EMBEDDINGS_API_KEY=${HEXCELL_EMBEDDINGS_API_KEY} (secrets, injected from the shell/CI env, never given literal values), and resource limits via `mem_limit: ${HEXCELL_NUCLEO_LIMITE_MEMORIA}` / `cpus: \"${HEXCELL_NUCLEO_LIMITE_CPUS}\"` (or the equivalent `deploy.resources.limits` block, Compose V2 honors it outside swarm) — parametrized only, no value choice made here per non_goals."
+    files:
+      - deploy/cell.compose.yml
+  - step: 3
+    action: "Set the sidecar service's `environment:` block from sidecar/internal/configuracion/configuracion.go's VariableXxx constants: HEXCELL_SOCKET_IPC=<same shared-volume path as step 2>, HEXCELL_ID_CELULA=${HEXCELL_ID_CELULA}, HEXCELL_VENTANA_ZONA=${HEXCELL_VENTANA_ZONA} (the sidecar's only strictly-required variable per the package's own comment), HEXCELL_RUTA_SQLSTORE / HEXCELL_RUTA_IDENTIDAD / HEXCELL_RUTA_OUTBOX pointed at paths inside the same shared volume (distinct subpaths from the core's HEXCELL_RUTA_DATOS, since these are whatsmeow/outbox stores, not the core's sessions/knowledge DBs), and HEXCELL_TELEFONO_CELULA=${HEXCELL_TELEFONO_CELULA} (per-cell, never a literal — it is pairing-sensitive and the IPC doc states it never travels on the wire). Add an explicit `depends_on: [sidecar]`-style ordering only if compose requires it for the shared volume/network to exist first; both services can start independently since compose creates the network/volume before either container."
+    files:
+      - deploy/cell.compose.yml
+  - step: 4
+    action: "Create deploy/celula.env.ejemplo documenting, with a one-line Spanish comment each, every variable referenced by deploy/cell.compose.yml from steps 1-3 (HEXCELL_ID_CELULA, HEXCELL_RED_CELULA, HEXCELL_VOLUMEN_CELULA, HEXCELL_IMAGEN_NUCLEO, HEXCELL_IMAGEN_SIDECAR, HEXCELL_VENTANA_ZONA, HEXCELL_TELEFONO_CELULA, HEXCELL_INFERENCIA_API_KEY, HEXCELL_EMBEDDINGS_API_KEY, HEXCELL_NUCLEO_LIMITE_MEMORIA, HEXCELL_NUCLEO_LIMITE_CPUS, HEXCELL_SIDECAR_LIMITE_MEMORIA, HEXCELL_SIDECAR_LIMITE_CPUS). Use clearly-fake placeholder values for the two API keys and the phone number (e.g. `reemplazar-con-clave-real`, never a working credential), and a placeholder cell id like `piloto-01` consistent with the two real pilot names already used elsewhere in the docs (safe to commit, not a secret)."
+    files:
+      - deploy/celula.env.ejemplo
+  - step: 5
+    action: "Write docs/plantilla-celula.md (short doc note, Spanish): identifies deploy/cell.compose.yml as the template and deploy/celula.env.ejemplo as its variable reference; states the two-container-plus-shared-network-and-volume shape; states that HEXCELL_DIRECCION_SALUD is fixed non-loopback in the template on purpose (cross-link to crates/hexcell/src/configuracion.rs's loopback default and why it would break a sibling's health probe otherwise); explicitly defers rendering config files from templates (A-6 task 22), resource-limit value tuning and container hardening (A-6 tasks 4/6), and any live `docker compose up` / readiness run (A-6 tasks 5/17/11) as future work, not gaps of this task."
+    files:
+      - docs/plantilla-celula.md
+risks:
+  - "No prior deploy/, compose, or docker-hardening task has landed yet (git log shows only the two per-image Dockerfiles); this task is the first to create deploy/cell.compose.yml itself, so there is no existing template to 'parametrize' — the blueprint treats 'parametrize' as 'author the template already fully parametrized', consistent with the spec's own AC-1 wording and its non_goals (resource-limit values and hardening are explicitly deferred to other A-6 tasks, not blocked on this one)."
+  - "core and sidecar together expose roughly 50 HEXCELL_* environment variables (~20 in crates/hexcell/src/configuracion.rs, ~30 in sidecar/internal/configuracion/configuracion.go); only HEXCELL_ID_CELULA and HEXCELL_RUTA_DATOS are strictly required by the core, and HEXCELL_VENTANA_ZONA is the only strictly-required sidecar variable. AC-2 says celula.env.ejemplo must document 'every variable the template consumes' — read as every variable the compose file itself references (the per-cell-varying subset plus the small set of vars the task must set explicitly, e.g. HEXCELL_CANAL and HEXCELL_DIRECCION_SALUD), not the full ~50-variable configuration surface of both binaries. Documenting the full surface is out of this task's constraint of exactly three deliverable files with no rendering logic; a reviewer should not read AC-2 as requiring every HEXCELL_* the binaries recognize to appear in celula.env.ejemplo."
+  - "HEXCELL_DIRECCION_SALUD's value (0.0.0.0:8081) is not itself per-cell-varying — it is the same bind on every cell, only the per-cell network isolation makes it safe. The spec's mandatory-explicit-set requirement is satisfied by hardcoding it as a literal environment entry in the compose template rather than exposing it as a variable; this is a design choice the implementer should follow to avoid overreach into a fourth kind of per-cell variable the spec did not ask for. If a future task needs the port itself to vary, that is new scope, not implied by HEX-068."
+  - "AC-3's `docker compose config` check requires the docker CLI (with the compose v2 plugin) to be installed in whatever environment runs verify.commands; this repo's CI (.github/workflows/ci.yml) was not confirmed to have docker preinstalled for this job. The contract's verify command guards on `command -v docker` and `docker compose version` and prints an explicit skip message rather than failing when absent, per the spec's own AC-3 wording ('guarded/skipped if docker is unavailable') — this is a deliberate degrade-gracefully design, not a gap."
+  - "Two whatsmeow/sidecar variables (HEXCELL_TELEFONO_CELULA, a phone number, and the two *_API_KEY variables) are secret-or-PII-adjacent and must appear in celula.env.ejemplo only as clearly-fake placeholders, per the spec's 'no secret written into a committed config file' constraint; the implementer must double-check none of the three placeholder values in the final file could pass as a real credential or number."

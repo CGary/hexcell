@@ -1,0 +1,65 @@
+task_id: HEX-068
+summary: Author deploy/cell.compose.yml, deploy/celula.env.ejemplo, and a short usage doc note; no Rust/Go source touched.
+goal: Turn the own-channel cell's two-container startup into a reusable, fully parametrized static template, with every per-cell-varying value (identifier, volume, network, secrets, resource limits) expressed as a compose variable and documented in an example env file, plus a short doc note explaining how to use both to stand up a new cell.
+read:
+  - Dockerfile
+  - sidecar/Dockerfile
+  - docs/protocolo-ipc-nucleo-sidecar.md
+  - crates/hexcell/src/configuracion.rs
+  - sidecar/internal/configuracion/configuracion.go
+  - docs/plan/fase-a-6-empaquetado-cli.md
+  - docs/STATUS.md
+  - docs/bitacora-de-descartes.md
+  - .dockerignore
+touch:
+  - deploy/cell.compose.yml
+  - deploy/celula.env.ejemplo
+  - docs/plantilla-celula.md
+forbid:
+  files:
+    - "crates/**"
+    - "sidecar/**/*.go"
+    - "sidecar/go.mod"
+    - "sidecar/go.sum"
+    - "Cargo.toml"
+    - "Cargo.lock"
+    - "Dockerfile"
+    - "sidecar/Dockerfile"
+    - ".dockerignore"
+    - ".github/**"
+    - "README.md"
+    - "docs/plan/**"
+    - "docs/STATUS.md"
+    - "docs/adr/**"
+    - "docs/bitacora-de-descartes.md"
+    - "docs/protocolo-ipc-nucleo-sidecar.md"
+    - ".ai/**"
+    - "kitty-specs/**"
+  behaviors:
+    - "No Rust or Go source code changes of any kind"
+    - "No new hexcell-admin command, subcommand, or CLI surface"
+    - "No config-file rendering, templating-engine, or variable-substitution code (reserved for A-6 task 22)"
+    - "No real secret, credential, token, or working phone number committed in deploy/celula.env.ejemplo; placeholders only"
+    - "No per-cell-varying value (identifier, network name, volume name, secret, resource limit) hardcoded as a literal in deploy/cell.compose.yml; each must be a ${VARIABLE} reference"
+    - "No live docker compose up/down, no container run, no network- or volume-isolation test"
+    - "No resource-limit value tuning or container hardening (read-only rootfs, cap_drop, non-root user) as a deliverable of this task; limits stay parametrized, not chosen"
+    - "No files created beyond the three declared in touch"
+verify:
+  commands:
+    - "sh -c 'if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then docker compose --env-file deploy/celula.env.ejemplo -f deploy/cell.compose.yml config >/dev/null && echo \"AC-3 ok: docker compose config resolvio\"; else echo \"AC-3 omitido: docker/compose no disponible en este entorno\"; fi'"
+    - "sh -c '! grep -nP \"^\\s*(container_name|mem_limit|cpus|pids_limit|name)\\s*:\\s*(?![$][{])\\S\" deploy/cell.compose.yml'"
+    - 'python3 -c "import os,sys,yaml;f=''deploy/cell.compose.yml'';d=os.path.dirname(f);c=yaml.safe_load(open(f));m=[n for n,s in c[''services''].items() if s.get(''build'') and not os.path.isfile(os.path.normpath(os.path.join(d,s[''build''].get(''context'',''.''),s[''build''].get(''dockerfile'',''Dockerfile''))))];print(m or ''AC-3b ok: contextos de construccion resueltos'');sys.exit(1 if m else 0)"'
+    - "cargo fmt --check"
+    - "cargo clippy --workspace -- -D warnings"
+    - "cargo test --workspace"
+acceptance:
+  human_gate: true
+limits:
+  max_files_changed: 3
+  max_diff_lines: 550
+execution:
+  mode: worktree_edit
+  branch: ai/HEX-068
+retry_policy:
+  max_attempts: 3
+  escalate_after: 2

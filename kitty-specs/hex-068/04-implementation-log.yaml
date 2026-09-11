@@ -1,0 +1,16 @@
+task_id: HEX-068
+summary: Scoped fix after revise verdict - corrected build.context resolution in deploy/cell.compose.yml, which Compose resolves relative to the compose file's own directory, not the repo root.
+entries:
+  - changed_files:
+      - path: deploy/cell.compose.yml
+    notes:
+      - "Bug: nucleo used context: . + dockerfile: ./Dockerfile, resolving to deploy/Dockerfile (does not exist); sidecar used context: ./sidecar, resolving to deploy/sidecar (does not exist)."
+      - "Fix: nucleo now uses context: .. + dockerfile: Dockerfile (repo root); sidecar now uses context: ../sidecar + dockerfile: Dockerfile (sidecar/Dockerfile from repo root)."
+      - "Added inline comments explaining that build.context resolves relative to the compose file's directory (deploy/), not the repo root, and that the root .dockerignore still applies since it follows the build context."
+      - "No Dockerfile, sidecar/Dockerfile, or .dockerignore touched (forbidden); no literal per-cell values introduced."
+      - "docs/plantilla-celula.md did not need a matching edit: it contains no build-context or Dockerfile path references."
+    verify_pending: true
+verification_evidence:
+  - "docker compose config (dry-run) was confirmed NOT to catch this class of error: reproduced the original broken context values in a scratch copy and docker compose build --dry-run still reported success, so dry-run alone is not valid evidence."
+  - "Ran a REAL docker compose build for both services against the fixed file: 'docker compose --env-file deploy/celula.env.ejemplo -f deploy/cell.compose.yml build sidecar' succeeded (multi-stage Go build, image hexcell-sidecar:local)."
+  - "'docker compose --env-file deploy/celula.env.ejemplo -f deploy/cell.compose.yml build nucleo' succeeded (multi-stage Rust release build, image hexcell-nucleo:local); built images were removed afterward (docker rmi) since no live compose up/run is authorized by this task."

@@ -1,0 +1,39 @@
+{
+  "task_id": "HEX-068",
+  "bundle_hash": "a864962792fe44a4f40e10e70bb721cb9a6a984d088d1386ba22d31a7f74ff1a",
+  "files": [
+    ".dockerignore",
+    "Dockerfile",
+    "crates/hexcell/src/configuracion.rs",
+    "docs/STATUS.md"
+  ],
+  "protocol_version": "fleet-bundle-protocol/v2",
+  "created_at": "2026-09-10T22:37:45Z",
+  "dropped": [
+    {
+      "component": "code_slice",
+      "path": "sidecar/internal/configuracion/configuracion.go",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "sidecar/Dockerfile",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "docs/protocolo-ipc-nucleo-sidecar.md",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "docs/plan/fase-a-6-empaquetado-cli.md",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "docs/bitacora-de-descartes.md",
+      "reason": "bundle exceeded max_bytes budget"
+    }
+  ]
+}
