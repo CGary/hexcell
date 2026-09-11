@@ -1,0 +1,68 @@
+{
+  "commands": [
+    {
+      "command": "cargo build -p hexcell-admin",
+      "duration_s": 3,
+      "exit_code": 0,
+      "output_excerpt": "Finished `dev` profile [unoptimized + debuginfo] target(s)"
+    },
+    {
+      "command": "cargo test -p hexcell-admin",
+      "duration_s": 2,
+      "exit_code": 0,
+      "output_excerpt": "running 13 tests ... test result: ok. 13 passed; 0 failed; 0 ignored. Los trece tests corren contra un servidor de socket Unix falso, sin demonio Docker."
+    },
+    {
+      "command": "cargo fmt --check",
+      "duration_s": 1,
+      "exit_code": 0,
+      "output_excerpt": "sin salida (corregido con cargo fmt tras el diff del delegate, que no estaba formateado)"
+    },
+    {
+      "command": "cargo clippy --workspace -- -D warnings",
+      "duration_s": 30,
+      "exit_code": 0,
+      "output_excerpt": "Finished. Requirio colapsar un `if` anidado en transporte.rs:251 (clippy::collapsible_if) que rompia el gate -D warnings."
+    },
+    {
+      "command": "Guarda de dependencias: el arbol externo no crece",
+      "duration_s": 1,
+      "exit_code": 0,
+      "output_excerpt": "OK: sin dependencias externas nuevas en el arbol"
+    },
+    {
+      "command": "Guarda de #[ignore]: solo el smoke real permitido",
+      "duration_s": 1,
+      "exit_code": 0,
+      "output_excerpt": "OK: todo #[ignore] pertenece al smoke real permitido (o no hay ninguno)"
+    },
+    {
+      "command": "Guarda de socket real: ningun test activo toca /var/run/docker.sock",
+      "duration_s": 1,
+      "exit_code": 0,
+      "output_excerpt": "OK: ninguna ruta de socket real referenciada fuera del smoke permitido"
+    },
+    {
+      "command": "Guarda de alcance: el diff solo toca lo declarado en touch",
+      "duration_s": 1,
+      "exit_code": 0,
+      "output_excerpt": "OK: diff limitado al alcance declarado"
+    },
+    {
+      "command": "Mutacion 1 (AC-2): SEGUNDOS_DE_GRACIA 30 -\u003e 31",
+      "duration_s": 5,
+      "exit_code": 0,
+      "output_excerpt": "test detener_envia_el_margen_de_gracia_de_30_segundos ... FAILED. La guarda se vio fallar: no es vacua."
+    },
+    {
+      "command": "Mutacion 2 (AC-11): set_read_timeout(Some(t)) -\u003e None",
+      "duration_s": 90,
+      "exit_code": 0,
+      "output_excerpt": "test tiempo_de_espera_agotado_sin_respuesta has been running for over 60 seconds; cortado a los 90 s. Sin el limite de lectura el test cuelga indefinidamente, luego prueba de verdad la acotacion."
+    }
+  ],
+  "executed_at": "2026-09-11T14:35:00Z",
+  "overall_result": "passed",
+  "summary": "Los ocho comandos salieron exit 0 sobre el diff commiteado; las dos guardas mutation-provable se vieron fallar al mutarlas.",
+  "task_id": "HEX-073"
+}

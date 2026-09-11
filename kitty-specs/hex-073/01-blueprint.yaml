@@ -1,0 +1,333 @@
+task_id: HEX-073
+summary: >-
+  New docker module in hexcell-admin: hand-rolled sync HTTP/1.1 client over
+  UnixStream for start, stop t=30, inspect, remove container/volume, with
+  typed errors and a fake-socket test harness.
+affected_files:
+  - crates/hexcell-admin/Cargo.toml
+  - crates/hexcell-admin/src/lib.rs
+  - crates/hexcell-admin/src/docker/mod.rs
+  - crates/hexcell-admin/src/docker/transporte.rs
+  - crates/hexcell-admin/src/docker/cliente.rs
+  - crates/hexcell-admin/src/docker/error.rs
+  - crates/hexcell-admin/tests/cliente_docker.rs
+  - crates/hexcell-admin/tests/comun/mod.rs
+symbols:
+  - hexcell_admin::docker::transporte::ConexionDocker
+  - hexcell_admin::docker::transporte::ConexionDocker::conectar_con_tiempo_limite
+  - hexcell_admin::docker::transporte::RespuestaHttp
+  - hexcell_admin::docker::cliente::ClienteDocker
+  - hexcell_admin::docker::cliente::ClienteDocker::crear_e_iniciar_contenedor
+  - hexcell_admin::docker::cliente::ClienteDocker::detener_contenedor
+  - hexcell_admin::docker::cliente::ClienteDocker::inspeccionar_contenedor
+  - hexcell_admin::docker::cliente::ClienteDocker::eliminar_contenedor
+  - hexcell_admin::docker::cliente::ClienteDocker::eliminar_volumen
+  - hexcell_admin::docker::cliente::ResultadoDeArranque
+  - hexcell_admin::docker::error::ErrorDeClienteDocker
+dependencies:
+  - crates/hexcell/src/lib.rs
+  - crates/hexcell-canal-whatsmeow/Cargo.toml
+  - crates/hexcell-storage/src/error.rs
+  - crates/hexcell/tests/canal_whatsmeow_seleccionado.rs
+  - docs/plan/fase-a-6-empaquetado-cli.md
+  - docs/PRD.md
+test_scenarios:
+  - statement: >-
+      Fake server replies 201 to POST /containers/create then 204 to POST
+      /containers/{id}/start; crear_e_iniciar_contenedor returns
+      ResultadoDeArranque::Iniciado { id_contenedor } and no error. The id
+      always comes from the 201 create response body (Docker always returns
+      Id there); the start call's own body is irrelevant to knowing the id.
+    covers:
+      - AC-1
+  - statement: >-
+      Fake server asserts the incoming stop request path/query carries t=30;
+      detener_contenedor sends it and returns success on 204.
+    covers:
+      - AC-2
+  - statement: >-
+      Fake server replies 200 to GET /containers/{id}/json with a canonical
+      inspect payload; inspeccionar_contenedor returns a parsed value
+      reflecting that payload.
+    covers:
+      - AC-3
+  - statement: >-
+      Fake server replies 204 to DELETE /containers/{id};
+      eliminar_contenedor returns success.
+    covers:
+      - AC-4
+  - statement: >-
+      Fake server replies 204 to DELETE /volumes/{name}; eliminar_volumen
+      returns success.
+    covers:
+      - AC-5
+  - statement: >-
+      Fake server replies 404 on inspect and on remove; both operations
+      return ErrorDeClienteDocker::NoEncontrado. Written so that deleting the
+      404-branch match arm makes the test fail (mutation-provable), not just
+      covered by line count.
+    covers:
+      - AC-6
+  - statement: >-
+      Fake server replies 409 to DELETE /containers/{id}; eliminar_contenedor
+      returns ErrorDeClienteDocker::Conflicto, and a second assertion checks
+      it is a different enum variant than NoEncontrado.
+    covers:
+      - AC-7
+  - statement: >-
+      Fake server writes a truncated/invalid status line; any operation
+      against it returns ErrorDeClienteDocker::RespuestaMalformada and the
+      test process does not panic (asserted via catch_unwind or by the call
+      simply returning Err, never propagating a panic across the test).
+    covers:
+      - AC-8
+  - statement: >-
+      Client is pointed at a socket path with no listener bound; any
+      operation returns ErrorDeClienteDocker::DemonioInalcanzable.
+    covers:
+      - AC-9
+  - statement: >-
+      Client is pointed at a socket file (mode 0000) whose permissions deny
+      the current process. The test ALWAYS runs a real assertion, never a
+      silent skip (revised per external review, finding 4: a skip
+      indistinguishable from a pass is a vacuous guard). It detects the
+      privileged case with std::fs::metadata("/proc/self") (uid()==0 via
+      std::os::unix::fs::MetadataExt, no new dependency) and branches: when
+      unprivileged, asserts the operation returns
+      ErrorDeClienteDocker::PermisoDenegado, distinguishable from
+      DemonioInalcanzable; when privileged (root bypasses Unix DAC via
+      CAP_DAC_OVERRIDE), asserts the OPPOSITE — that PermisoDenegado is
+      NEVER returned for that same request — which is itself a genuine,
+      always-executed assertion about real OS behavior, not a no-op.
+    covers:
+      - AC-10
+  - statement: >-
+      Fake server accepts the connection and never writes a response; the
+      client is constructed with a short test-only timeout override and the
+      operation returns ErrorDeClienteDocker::TiempoDeEsperaAgotado within
+      that bound, never hanging. Written so that removing the
+      set_read_timeout call makes the test hang/fail (mutation-provable).
+      Covers only the post-connect (response) hang, per the spec's AC-11
+      given clause; see risks for the separate connect-phase bound and why
+      its dedicated fake-server test is deferred.
+    covers:
+      - AC-11
+  - statement: >-
+      Fake server replies 500 to an in-scope request; the operation returns
+      ErrorDeClienteDocker::ErrorDelDaemon carrying status 500, not a
+      generic/opaque error.
+    covers:
+      - AC-12
+  - statement: >-
+      Fake server replies 304 to POST /containers/{id}/start (Docker sends
+      no body on 304). Pinned return shape (resolves the spec's under-
+      specification between AC-1 and AC-13, external review finding 5):
+      crear_e_iniciar_contenedor returns
+      ResultadoDeArranque::YaEnEjecucion { id_contenedor }, where
+      id_contenedor is STILL the id read from the earlier 201 create
+      response, not from the bodyless 304. The enum variant (Iniciado vs.
+      YaEnEjecucion) is what AC-13 requires to be "distinct from an error
+      AND distinguishable from the plain-success case"; both variants always
+      carry the id, which is what AC-1 requires.
+    covers:
+      - AC-13
+strategy:
+  - step: 1
+    action: >-
+      Add serde and serde_json to crates/hexcell-admin/Cargo.toml via
+      `.workspace = true` (both already declared in the root
+      [workspace.dependencies] table with written justification; this adds
+      zero new entries to the external dependency tree). Add a Spanish
+      comment mirroring crates/hexcell-canal-whatsmeow/Cargo.toml's own
+      serde comment, but noting the DIFFERENT boundary: hexcell-admin is a
+      short-lived operator CLI process, not the always-resident per-cell
+      binary that adr-0019 and NFR-01's <=80 MB budget govern, so pulling in
+      serde_json here does not reopen that discard. Use serde_json::Value for
+      flexible partial parsing of Docker's (large, versioned) inspect JSON
+      body, extracting only the fields this task's operations need; use small
+      hand-built request bodies (string formatting, not derive(Serialize))
+      for the two POST bodies in scope (container create config, which is
+      minimal, and the start/stop/remove calls, which carry no body at all)
+      to keep the DTO surface tight and avoid modeling the full Engine API
+      schema.
+    files:
+      - crates/hexcell-admin/Cargo.toml
+  - step: 2
+    action: >-
+      Create crates/hexcell-admin/src/lib.rs exposing `pub mod docker;`,
+      mirroring crates/hexcell/src/lib.rs's own doc comment and rationale
+      (the crate stays primarily a binary; the lib target exists solely so
+      docker/ can be exercised from crates/hexcell-admin/tests/ through its
+      normal public API, without CLI wiring). Do not touch
+      crates/hexcell-admin/src/main.rs: it has nothing to call yet (the CLI
+      skeleton that would call docker::ClienteDocker is plan task 10, out of
+      scope here) and touching it would be scope creep with no behavior to
+      show for it.
+    files:
+      - crates/hexcell-admin/src/lib.rs
+  - step: 3
+    action: >-
+      Write crates/hexcell-admin/src/docker/transporte.rs: the hand-rolled
+      HTTP/1.1 transport over std::os::unix::net::UnixStream. Connection is
+      itself bounded, not just the response (external review finding 7: the
+      spec invariant covers ANY bounded wait, and UnixStream has no built-in
+      connect_timeout the way TcpStream does): ConexionDocker::conectar_con_tiempo_limite
+      spawns a std::thread that runs the blocking UnixStream::connect, sends
+      the Result over a std::sync::mpsc channel, and the caller blocks on
+      receptor.recv_timeout(limite) — a plain-std, zero-new-dependency
+      pattern; on timeout it returns ErrorDeClienteDocker::TiempoDeEsperaAgotado
+      and simply drops the receiver (the spawned thread finishes or errors on
+      its own and is not joined). After connecting: configure a read/write
+      timeout (set_read_timeout/set_write_timeout, with a constructor
+      parameter so tests can override the default to a short bound for
+      AC-11), write the request line + Host header (Docker's Engine API
+      expects one even over a Unix socket, conventionally "localhost") +
+      Content-Length (if a body is sent) + the body, then read and parse the
+      response: status line (version, code, reason phrase), headers into a
+      small ordered map, and the body via either Content-Length or chunked
+      transfer-encoding (both required by the invariant). Malformed status
+      lines, truncated headers, or a chunked stream that never terminates
+      within the timeout all become typed errors, never a panic or an
+      infinite loop.
+    files:
+      - crates/hexcell-admin/src/docker/transporte.rs
+  - step: 4
+    action: >-
+      Write crates/hexcell-admin/src/docker/error.rs:
+      ErrorDeClienteDocker, one enum for the whole module (mirroring
+      crates/hexcell-storage/src/error.rs's single-enum-per-layer style, not
+      one type per operation). Variants: DemonioInalcanzable (connect
+      refused/socket missing), PermisoDenegado (EACCES on connect),
+      RespuestaMalformada (parse failure, with a short reason string),
+      TiempoDeEsperaAgotado, NoEncontrado (404), Conflicto (409),
+      ErrorDelDaemon { estado: u16, cuerpo: String } (5xx and any other
+      unclassified >=400 in scope), plus an Io/E/S catch-all for transport
+      failures that don't map to a more specific variant. No `#[derive(Error)]`
+      or thiserror: the workspace has no thiserror/anyhow entry (checked,
+      Cargo.toml grep is empty) and this task adds none; implement
+      std::fmt::Display and std::error::Error by hand, matching
+      ErrorDeAlmacen's own hand-written style in hexcell-storage.
+    files:
+      - crates/hexcell-admin/src/docker/error.rs
+  - step: 5
+    action: >-
+      Write crates/hexcell-admin/src/docker/cliente.rs: ClienteDocker,
+      holding the socket path and the configured timeout, with the five
+      operations from the spec's invariants. Status-code dispatch is
+      explicit per response (200/201/204/304 success-shaped, 404, 409, 5xx,
+      anything else falls through to ErrorDelDaemon rather than being
+      silently ignored, satisfying AC-12's "not unclassified" requirement).
+      detener_contenedor always appends `?t=30` to the stop request path
+      (never a client-side sleep/kill loop, per the spec's explicit
+      constraint) and never a hardcoded literal duplicated elsewhere: define
+      it once as a named constant. crear_e_iniciar_contenedor returns
+      Result<ResultadoDeArranque, ErrorDeClienteDocker>, pinning the 304
+      branch (external review finding 5): ResultadoDeArranque is a two-
+      variant enum, Iniciado { id_contenedor: String } on 201+204 and
+      YaEnEjecucion { id_contenedor: String } on 201+304; id_contenedor is
+      read from the /containers/create response body in BOTH cases (Docker
+      always returns Id there; the start call's own body is irrelevant),
+      so AC-1's "returns the container id" and AC-13's "success-equivalent,
+      distinct from an error" are both satisfied by one pinned shape instead
+      of two competing ad hoc ones.
+    files:
+      - crates/hexcell-admin/src/docker/cliente.rs
+  - step: 6
+    action: >-
+      Write crates/hexcell-admin/src/docker/mod.rs: re-exports
+      (ClienteDocker, ErrorDeClienteDocker, and whatever inspect result type
+      cliente.rs defines) and a module-level doc comment stating the scope
+      boundary from the spec's non_goals (no CLI, no pause/unpause
+      orchestration, no logs/build/pull) so a future reader of this module
+      alone sees why those are absent.
+    files:
+      - crates/hexcell-admin/src/docker/mod.rs
+  - step: 7
+    action: >-
+      Write crates/hexcell-admin/tests/comun/mod.rs: a fake Docker Engine
+      API server built on std::os::unix::net::UnixListener plus
+      std::thread, mirroring the shape (not the async runtime) of
+      crates/hexcell/tests/canal_whatsmeow_seleccionado.rs's FakeSidecar and
+      the `#![allow(dead_code)]` header already used by every
+      tests/comun/mod.rs in this workspace, since not every test file uses
+      every helper. Script canonical response sequences (status code, headers,
+      body) per test, plus variants that write a malformed response, accept
+      and never write (for AC-11), or never bind at all (AC-9, achieved by
+      simply not starting a listener on a fresh temp path) and a chmod 0000
+      socket file for AC-10 (see the AC-10 test_scenario for the always-
+      executed, non-skip dual-branch assertion this helper feeds).
+    files:
+      - crates/hexcell-admin/tests/comun/mod.rs
+  - step: 8
+    action: >-
+      Write crates/hexcell-admin/tests/cliente_docker.rs: one integration
+      test function per AC-1..AC-13 (grouping AC-1/AC-13 together is
+      acceptable since both exercise crear_e_iniciar_contenedor against
+      different start-call responses), each importing hexcell_admin::docker
+      and driving one FakeDocker instance from tests/comun. AC-6 and AC-11
+      get an explicit note-in-code comment on WHY they must be
+      mutation-provable (both are the invariants the spec calls out by name),
+      so a reviewer can re-run them with the guarded branch commented out and
+      see red, per this project's guard-by-mutation lesson. If a real-Docker
+      smoke test is written at all (it is optional; the spec does not
+      require one), its function name MUST be exactly prueba_humo_docker_real
+      (or start with that exact prefix) and it MUST carry #[ignore]: this
+      contract's verify.commands allowlist that exact name as the only
+      function permitted to carry #[ignore], so any other #[ignore]d test
+      fails the gate instead of silently dropping a criterion (external
+      review finding 2).
+    files:
+      - crates/hexcell-admin/tests/cliente_docker.rs
+risks:
+  - >-
+    Docker Engine API version pinning is unresolved: the spec does not fix an
+    API version segment in the request path (e.g. /v1.43/containers/...).
+    Docker's daemon negotiates down to its own max supported version when the
+    client omits one, so this blueprint omits the version segment entirely
+    (bare /containers/..., /volumes/...) rather than hardcode a version this
+    task cannot verify against a real daemon (constraint: no live-Docker test
+    in verify.commands). If a fixed daemon version later requires an explicit
+    version prefix, that is a follow-up, not a defect of this task.
+  - >-
+    RESOLVED (external review finding 4, previously a risk): AC-10 cannot be
+    exercised meaningfully by a plain chmod if the test suite runs as root
+    (root bypasses Unix file-mode bits on a socket special file via
+    CAP_DAC_OVERRIDE). The earlier design skipped the test silently in that
+    case, which is a vacuous guard, not a pre-empted false gap. Fixed instead
+    of deferred: the test detects the privileged case via
+    std::fs::metadata("/proc/self").uid()==0 (std-only, no new dependency)
+    and always asserts something real — PermisoDenegado when unprivileged,
+    its ABSENCE when privileged — so the test never silently passes without
+    exercising a genuine assertion in either branch.
+  - >-
+    PARTIALLY RESOLVED, one sub-case still deferred (external review finding
+    7): std::os::unix::net::UnixStream's connect() has no connect_timeout
+    the way TcpStream does. The production design now bounds it anyway via
+    ConexionDocker::conectar_con_tiempo_limite (a background thread plus
+    mpsc::channel::recv_timeout, std-only), so the spec's "ANY bounded wait"
+    invariant is honored in the implementation for both connect and
+    response phases. What remains deferred is the DEDICATED fake-server test
+    for a stalled connect specifically: reliably forcing connect() itself to
+    block on a local AF_UNIX socket requires exhausting the kernel's listen
+    backlog (opening enough unaccepted connections to fill it), which is
+    backlog-size- and kernel-version-dependent and was judged too flaky for
+    a deterministic CI gate, unlike AC-11's response-hang case (trivially
+    simulated by accepting and never writing). AC-11's own test continues to
+    cover the response-hang path per its given clause; this note is the
+    explicit deferral guardrail 8 asks for, so q-analyze should not flag the
+    connect-phase test as a silent gap.
+  - >-
+    The spec's constraint clause anticipates the case where no JSON crate is
+    reachable from hexcell-admin and asks for that to be recorded as an open
+    question if so; this blueprint resolves it instead (serde/serde_json ARE
+    reachable via `.workspace = true`, per the orchestrator's 2026-09-11
+    verification), so no open question is carried forward. Recorded here so a
+    reviewer sees the constraint was checked, not skipped.
+  - >-
+    docs/protocolo-ipc-nucleo-sidecar.md documents that hexcell (the
+    always-resident cell binary) deliberately hand-rolls JSON for its sidecar
+    IPC protocol specifically to avoid adr-0019's NFR-01 memory-budget
+    tradeoff. This task's use of serde_json in hexcell-admin is a different
+    process (a short-lived CLI invocation, not a per-cell resident budget
+    line item) and does not reopen that decision; recorded so a future reader
+    does not read this task as contradicting that document.

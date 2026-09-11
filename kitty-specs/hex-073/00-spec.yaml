@@ -1,0 +1,101 @@
+task_id: HEX-073
+summary: Hand-rolled sync HTTP/1.1 client over the Docker Engine Unix socket in hexcell-admin (start/stop-with-grace/inspect/remove container/remove volume, typed errors). Risk low-to-medium.
+goal: >
+  Implement an internal module in crates/hexcell-admin (e.g. src/docker/) that speaks the
+  Docker Engine API over its Unix domain socket using a hand-rolled synchronous HTTP/1.1
+  client built on std::os::unix::net::UnixStream — no new external dependency (no bollard,
+  hyper, or tokio). The client parses the status line, headers, Content-Length and
+  chunked transfer-encoding itself, and exposes: container create+start, container stop
+  with a 30-second grace margin, container inspect, container remove, and volume remove,
+  each with explicit typed error handling. This is plan task 9 of
+  docs/plan/fase-a-6-empaquetado-cli.md (order position 9 in the revised execution order
+  8 → 4 → 5 → 7 → 17 → 6 → 16 → 9 → ...), and is the foundation the CLI skeleton (task 10)
+  and cell pause/unpause (task 11) will build on.
+invariants:
+  - The client adds zero new entries to the workspace Cargo.toml (no bollard, hyper, tokio, or any other new external dependency); the transport is std::os::unix::net::UnixStream plus a hand-written HTTP/1.1 parser.
+  - crates/hexcell-core is never touched by this task; it keeps zero external dependencies.
+  - The module lives inside the existing crates/hexcell-admin crate; no new workspace crate is created.
+  - Container stop always requests a grace margin of exactly 30 seconds (t=30) before the daemon may escalate to SIGKILL, matching the shutdown contract already described in docs/PRD.md (SIGTERM Docker Container, 30-second grace).
+  - Every Docker Engine API failure mode in scope (daemon unreachable, socket permission denied, 404 not found, 409 conflict, malformed/unparseable HTTP response, timeout) surfaces as a distinct typed error variant, never a raw string or a panic.
+  - All test/integration/unit-test doubles for the Docker Engine API run against a fake Unix-socket server started inside the test process; none of verify.commands requires a real Docker daemon or network access.
+  - Any real-Docker smoke test is #[ignore]d by default and is never included in verify.commands.
+  - All code identifiers, comments, and doc text produced by this task are in Spanish, per repository convention; this English spec is the sole deliberate exception.
+acceptance:
+  - id: AC-1
+    statement: The module starts a container by creating it and issuing the Engine API start call, returning the container id on success.
+    given: a fake Unix-socket server that replies 201 (Created) to POST /containers/create and 204 (No Content) to POST /containers/{id}/start
+    when: the client's start-container operation is invoked with a minimal container spec
+    then: the operation returns the container id and no error
+  - id: AC-2
+    statement: The module stops a container using a 30-second grace margin.
+    given: a fake Unix-socket server that expects POST /containers/{id}/stop with the t=30 query parameter and replies 204
+    when: the client's stop-container operation is invoked
+    then: the request sent by the client includes t=30 and the operation returns success on the 204 response
+  - id: AC-3
+    statement: The module inspects a container and returns its parsed state.
+    given: a fake Unix-socket server that replies 200 to GET /containers/{id}/json with a canonical inspect JSON body
+    when: the client's inspect-container operation is invoked
+    then: the operation returns a parsed representation reflecting the fake server's response with no error
+  - id: AC-4
+    statement: The module removes a container.
+    given: a fake Unix-socket server that replies 204 to DELETE /containers/{id}
+    when: the client's remove-container operation is invoked
+    then: the operation returns success with no error
+  - id: AC-5
+    statement: The module removes a volume.
+    given: a fake Unix-socket server that replies 204 to DELETE /volumes/{name}
+    when: the client's remove-volume operation is invoked
+    then: the operation returns success with no error
+  - id: AC-6
+    statement: A 404 from the daemon on inspect/remove surfaces as a distinct typed not-found error, provable by mutation.
+    given: a fake Unix-socket server that replies 404 to GET /containers/{id}/json (or DELETE /containers/{id})
+    when: the client's inspect or remove operation is invoked
+    then: the operation returns the not-found error variant, and a test asserting this must be shown to fail if the 404-handling branch is removed (mutation-provable, not merely code coverage)
+  - id: AC-7
+    statement: A 409 conflict from the daemon (e.g. removing a running container without force) surfaces as a distinct typed conflict error.
+    given: a fake Unix-socket server that replies 409 to DELETE /containers/{id}
+    when: the client's remove-container operation is invoked
+    then: the operation returns the conflict error variant, distinguishable from the not-found variant
+  - id: AC-8
+    statement: A malformed HTTP response from the socket surfaces as a distinct typed parse error rather than a panic.
+    given: a fake Unix-socket server that writes a syntactically invalid HTTP response (e.g. missing status line or truncated headers)
+    when: any client operation is invoked against it
+    then: the operation returns a typed malformed-response error and the process does not panic
+  - id: AC-9
+    statement: An unreachable daemon (socket path does not exist or connection refused) surfaces as a distinct typed connection error.
+    given: a Unix socket path with no listener
+    when: any client operation is invoked against it
+    then: the operation returns a typed daemon-unreachable error, not a panic or an unrelated error variant
+  - id: AC-10
+    statement: A socket with denied permissions surfaces as a distinct typed permission error.
+    given: a Unix socket file whose permissions deny the current process access
+    when: any client operation is invoked against it
+    then: the operation returns a typed permission-denied error distinguishable from the daemon-unreachable variant
+  - id: AC-11
+    statement: A client operation that exceeds a bounded wait surfaces as a distinct typed timeout error rather than hanging indefinitely.
+    given: a fake Unix-socket server that accepts the connection but never writes a response
+    when: any client operation is invoked against it
+    then: the operation returns a typed timeout error within the test's bounded wait, and a test asserting this must be shown to fail if the timeout enforcement is removed (mutation-provable)
+  - id: AC-12
+    statement: 5xx daemon errors (e.g. 500) are handled explicitly rather than falling through unclassified.
+    given: a fake Unix-socket server that replies 500 to any in-scope request
+    when: the corresponding client operation is invoked
+    then: the operation returns a typed daemon-error variant carrying the status code, not a generic/opaque error
+  - id: AC-13
+    statement: A 304 (Not Modified) response, where the Docker Engine API uses it (e.g. starting an already-started container), is handled explicitly and is not treated as a failure requiring caller retries.
+    given: a fake Unix-socket server that replies 304 to POST /containers/{id}/start
+    when: the client's start-container operation is invoked
+    then: the operation returns a success-equivalent outcome (already-running), distinct from an error
+  - All new tests pass under `cargo test -p hexcell-admin`, and `cargo fmt --check` and `cargo clippy --workspace -- -D warnings` remain clean with no new external dependency added to any Cargo.toml.
+risk: medium
+non_goals:
+  - The CLI argument parser, output formatting, exit codes, dry-run mode, and cell state model/transitions (plan task 10) are out of scope.
+  - cell pause and cell unpause orchestration, including the readiness-polling protocol (plan task 11), are out of scope.
+  - Container/image logs retrieval, image build, and image pull are out of scope.
+  - Any real, live Docker daemon integration test that is not #[ignore]d is out of scope for CI-facing verification.
+constraints:
+  - No new external dependencies anywhere in the workspace (Cargo.toml files); transport, HTTP parsing, and JSON handling must use only what the workspace already depends on (if a JSON crate is not already a workspace dependency available to hexcell-admin, minimal hand-written parsing/serialization for the specific request/response shapes in scope is required instead of adding one — record this constraint's resolution as an open question if the blueprint phase finds no existing JSON dependency reachable from hexcell-admin).
+  - All new tests must be able to run in CI with no Docker daemon present; the fake Unix-socket test server is spun up in-process per test.
+  - Volume creation/removal must account for the project's measured named-volume-vs-bind-mount ownership behavior under the shared UID 10001:10001 (named volumes inherit image directory ownership; bind mounts do not) where relevant to this client's volume operations.
+  - All new code identifiers, doc comments, and any commit message produced from this work are in Spanish.
+  - Stop-with-grace must use the Docker Engine API's native stop timeout mechanism (the t query parameter set to 30), not a client-side sleep-then-kill loop.

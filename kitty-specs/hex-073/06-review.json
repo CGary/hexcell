@@ -1,0 +1,18 @@
+{
+  "task_id": "HEX-073",
+  "summary": "Docker Unix-socket HTTP/1.1 client: all 13 AC covered by real variant tests, no panics, 304 id-carry correct. contract-check ok=false is a basename-matching tool false positive; diff stays in scope.",
+  "verdict": "approve",
+  "contract_compliance": true,
+  "forbidden_files_touched": [],
+  "unrequested_refactor": false,
+  "missing_tests": [],
+  "functional_risk": "low",
+  "notes": [
+    "contract-check tool ok=false with two forbid_files violations (Cargo.lock, crates/hexcell-admin/Cargo.toml) are confirmed tool artifacts of basename-only matching against the generic root-scoped 'Cargo.toml'/'Cargo.lock' forbid entries; both paths are explicitly allowed by 02-contract.yaml's touch list and the diff itself (verified by hand) stays within the intended scope: root Cargo.toml diff is empty, Cargo.lock only gains a dependencies=[...] line on the existing hexcell-admin package, no new [[package]] block.",
+    "acceptance-coverage analyzer: status pass, all 13 AC ids covered, no gaps; one legacy_untracked item is the spec's closing verify-commands sentence, not a missing scenario.",
+    "05-validation.json's first mutation-probe entry is mislabeled 'Mutacion 1 (AC-6)' while its output_excerpt shows it actually mutated SEGUNDOS_DE_GRACIA and failed the AC-2 test (detener_envia_el_margen_de_gracia_de_30_segundos), not an AC-6/404 test. The guard it exercised is real (not vacuous), just mislabeled. By direct code inspection, AC-6's own 404 branch in cliente.rs::clasificar_estado is independently mutation-provable: removing that match arm would fall through to the wildcard ErrorDelDaemon arm and fail no_encontrado_ante_un_404's exact matches! assertion. Cosmetic finding only, does not affect functional risk.",
+    "not_checked: forbid.behaviors (contract-check does not evaluate behavior-level forbids; verified by hand instead: no unwrap/expect/panic/assert! in crates/hexcell-admin/src/docker/**, no #[ignore] tests, no real /var/run|/run *.sock path referenced, main.rs untouched, no pause/unpause/logs/build/pull implementation, all new prose and identifiers are in Spanish).",
+    "Provenance: implementation came from an unattested external delegate (opencode_go/deepseek-v4-pro) whose dispatch wrapper was OOM-killed before any self-report; read adversarially per instructions. No evidence found of vacuous assertions, skipped branches, or scope creep beyond the two disclosed mechanical orchestrator fixes (cargo fmt; collapsing transporte.rs:251's nested if into a let-chain for clippy -D warnings), both confirmed by independent rerun of cargo fmt --check and cargo clippy --workspace -- -D warnings (both exit 0)."
+  ],
+  "fix_tasks": []
+}

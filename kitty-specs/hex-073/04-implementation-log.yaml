@@ -1,0 +1,3 @@
+entries: []
+summary: 'New docker module in hexcell-admin: hand-rolled sync HTTP/1.1 client over UnixStream for start, stop t=30, inspect, remove container/volume, with typed errors and a fake-socket test harness.'
+task_id: HEX-073

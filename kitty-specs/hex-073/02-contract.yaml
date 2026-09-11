@@ -1,0 +1,230 @@
+task_id: HEX-073
+summary: >-
+  New docker module in hexcell-admin: hand-rolled sync HTTP/1.1 client over
+  UnixStream for start, stop t=30, inspect, remove container/volume, with
+  typed errors and a fake-socket test harness.
+goal: >-
+  Stage A-6 plan task 9 ("Implementar el cliente del socket Unix de Docker").
+  Add an internal docker/ module inside the existing crates/hexcell-admin
+  crate that speaks the Docker Engine API over its Unix domain socket via a
+  hand-rolled synchronous HTTP/1.1 client built on
+  std::os::unix::net::UnixStream: no bollard, hyper, or tokio. The client
+  itself parses the status line, headers, Content-Length and chunked
+  transfer-encoding. It exposes container create+start, container stop with
+  a fixed 30-second grace margin (t=30, never a client-side sleep/kill
+  loop), container inspect, container remove, and volume remove, each with
+  explicit typed error handling (daemon unreachable, permission denied, 404,
+  409, malformed response, timeout, 5xx). Every Docker Engine API interaction
+  in the test suite runs against a fake Unix-socket server started in-process;
+  no test in verify.commands requires a real Docker daemon, and any
+  real-Docker smoke test is #[ignore]d. crates/hexcell-admin has no
+  dependencies today (empty [dependencies] table); this task adds serde and
+  serde_json to it via `.workspace = true` only — both already exist in the
+  root [workspace.dependencies] table with written justification, so this is
+  zero new entries in the external dependency tree, not a new dependency.
+read:
+  - .ai/tasks/active/HEX-073-new-spec/00-spec.yaml
+  - .ai/tasks/active/HEX-073-new-spec/01-blueprint.yaml
+  - docs/plan/fase-a-6-empaquetado-cli.md
+  - docs/PRD.md
+  - Cargo.toml
+  - crates/hexcell-admin/Cargo.toml
+  - crates/hexcell-admin/src/main.rs
+  - crates/hexcell/src/lib.rs
+  - crates/hexcell-canal-whatsmeow/Cargo.toml
+  - crates/hexcell-storage/src/error.rs
+  - crates/hexcell/tests/canal_whatsmeow_seleccionado.rs
+  - crates/hexcell/tests/comun/mod.rs
+  - docs/protocolo-ipc-nucleo-sidecar.md
+  - docs/bitacora-de-descartes.md
+touch:
+  - crates/hexcell-admin/Cargo.toml
+  - crates/hexcell-admin/src/lib.rs
+  - "crates/hexcell-admin/src/docker/**"
+  - "crates/hexcell-admin/tests/**"
+  # Cargo.lock entra al alcance por consecuencia mecanica, no por decision:
+  # ver la justificacion escrita en la guarda de dependencias de
+  # verify.commands (defecto del contrato corregido el 2026-09-11).
+  - Cargo.lock
+# NOTA PARA LA FASE DE ANALISIS (footgun conocido, no relitigar): `quorum
+# analyze contract-check` empareja rutas prohibidas por NOMBRE BASE, no por
+# ruta completa. "mod.rs" aparece dos veces en el alcance de esta tarea
+# (crates/hexcell-admin/src/docker/mod.rs y
+# crates/hexcell-admin/tests/comun/mod.rs) y ninguna entrada de forbid.files
+# se llama "mod.rs" por esa razon. La prueba deterministica del alcance real
+# es el ultimo paso de verify.commands: `git diff --name-only` filtrado por
+# ruta completa.
+forbid:
+  files:
+    - crates/hexcell-admin/src/main.rs
+    - "crates/hexcell-core/**"
+    - "crates/hexcell/**"
+    - "crates/hexcell-storage/**"
+    - "crates/hexcell-meta/**"
+    - "crates/hexcell-canal-simulado/**"
+    - "crates/hexcell-canal-contrato/**"
+    - "crates/hexcell-canal-whatsmeow/**"
+    - "deploy/**"
+    - "sidecar/**"
+    - "docs/**"
+    - "docs/adr/**"
+    - "docs/bitacora-de-descartes.md"
+    - Cargo.toml
+    - Cargo.lock
+    - rust-toolchain.toml
+    - Dockerfile
+    - "*.db"
+    - "*.db-wal"
+    - "*.db-shm"
+    - ".env*"
+  behaviors:
+    - "Do not touch crates/hexcell-admin/src/main.rs. The CLI argument parser, subcommands, and state model that would call this module are plan task 10 (HEX-074 or successor), explicitly out of scope; wiring main.rs to docker:: here is scope creep with nothing yet to exercise it end to end."
+    - "Do not add any entry to the root [workspace.dependencies] table, and do not add any dependency to crates/hexcell-admin/Cargo.toml other than `serde = { workspace = true, features = [\"derive\"] }` and `serde_json = { workspace = true }`. No bollard, hyper, hyper-util, http-body-util, tokio, reqwest, thiserror, or anyhow anywhere in this diff."
+    - "Do not touch crates/hexcell-core under any circumstance; it must remain at zero external dependencies (cargo tree -p hexcell-core is the acceptance check, unaffected by this task either way, but the file must not be edited)."
+    - "Do not implement cell pause/unpause orchestration, the CLI skeleton, container/image logs, image build, or image pull. All five are explicit non-goals in 00-spec.yaml."
+    - "Do not write a client-side sleep-then-kill loop for stop. The stop operation must set the Engine API's own `t` query parameter to the literal 30 and let the daemon own the grace timer; no std::thread::sleep followed by a manual kill call anywhere in docker/."
+    - "Do not let any Docker Engine API failure path produce a raw String error, an untyped Box<dyn Error>, or a panic (unwrap/expect/assert! outside #[cfg(test)] code) in crates/hexcell-admin/src/docker/**. Every failure mode named in 00-spec.yaml's invariants (daemon unreachable, permission denied, 404, 409, malformed response, timeout, 5xx) is a distinct ErrorDeClienteDocker variant."
+    - "Do not add any #[ignore]-free test, doctest, or example that opens a real Docker socket, spawns `docker`, or requires network access. A real-Docker smoke test is allowed only behind #[ignore] and must never appear in verify.commands (00-spec.yaml invariant). If such a test is written, its function name MUST be exactly `prueba_humo_docker_real` (or start with that exact prefix) — verify.commands' #[ignore] gate allowlists only that name, and any other #[ignore]d test fails the gate."
+    - "Do not write the AC-10 (permission-denied) test as a silent early-return/skip when the test process runs as root. It must always execute a real assertion: detect the privileged case via std::fs::metadata(\"/proc/self\") (uid()==0, no new dependency) and assert the DAC-bypass outcome (PermisoDenegado must NOT be returned) in that branch, versus asserting PermisoDenegado in the unprivileged branch. A skip indistinguishable from a pass is a vacuous guard (this project's own measured lesson)."
+    - "Do not add thiserror, anyhow, or any error-derive crate; the workspace has no such entry today (verified: `grep -n 'thiserror\\|anyhow' Cargo.toml crates/*/Cargo.toml` is empty) and this task does not introduce one. Implement std::fmt::Display and std::error::Error by hand on ErrorDeClienteDocker, matching crates/hexcell-storage/src/error.rs's own hand-written style."
+    - "Do not write any artifact content in English. Every new Rust doc comment, inline comment, identifier, and any commit message produced from this work is in Spanish, matching the rest of the repository; this contract and the other Quorum lifecycle artifacts are the sole deliberate exception."
+    - "Do not create or edit any ADR, any docs/plan/ file, or docs/bitacora-de-descartes.md. This is a pure implementation task inside crates/hexcell-admin; if the work surfaces a genuine new discarded alternative, STOP and report it instead of writing the bitacora entry yourself — the human decides whether it is logged and how."
+verify:
+  commands:
+    - "cargo build -p hexcell-admin"
+    - "cargo test -p hexcell-admin"
+    - "cargo fmt --check"
+    - "cargo clippy --workspace -- -D warnings"
+    - |
+      # No entra ninguna dependencia nueva salvo serde/serde_json vía
+      # workspace=true, ya declaradas y justificadas en la tabla raíz.
+      # Precondicion (hallazgo 1 de la revision externa): si `main` no
+      # resuelve, `git diff --name-only main...HEAD` no produce ninguna
+      # linea y el `grep -q .` de abajo pasaria vacio, dando un OK que no
+      # probo nada. Se falla explicito y temprano en ese caso.
+      set -u
+      if ! git rev-parse --verify main >/dev/null 2>&1; then
+        echo "FALLA: no se puede resolver la referencia 'main'; esta comprobacion no puede correr sin ella"
+        exit 1
+      fi
+      if git diff --name-only main...HEAD -- Cargo.toml | grep -q .; then
+        echo "FALLA: el diff toca el Cargo.toml del workspace raiz"
+        exit 1
+      fi
+      # Cargo.lock SI puede cambiar, y el contrato original se equivocaba al
+      # prohibirlo (defecto detectado en la fase de implementacion,
+      # 2026-09-11): declarar serde/serde_json en crates/hexcell-admin
+      # reescribe por fuerza la entrada [[package]] de ese crate en el lock,
+      # aunque no entre ninguna caja nueva al arbol. Lo que la invariante
+      # protege no es el archivo sino el ARBOL EXTERNO, asi que la guarda
+      # pasa a comprobar exactamente eso: el diff del lock no puede AGREGAR
+      # ningun paquete.
+      if git diff main...HEAD -- Cargo.lock | grep -qE '^\+\[\[package\]\]'; then
+        echo "FALLA: el diff de Cargo.lock agrega un paquete nuevo al arbol externo"
+        exit 1
+      fi
+      if ! grep -q 'serde.*workspace = true' crates/hexcell-admin/Cargo.toml; then
+        echo "FALLA: crates/hexcell-admin/Cargo.toml no declara serde via workspace=true"
+        exit 1
+      fi
+      if ! grep -q 'serde_json.*workspace = true' crates/hexcell-admin/Cargo.toml; then
+        echo "FALLA: crates/hexcell-admin/Cargo.toml no declara serde_json via workspace=true"
+        exit 1
+      fi
+      echo "OK: sin dependencias externas nuevas en el arbol"
+    - |
+      # Todo #[ignore] debe pertenecer EXACTAMENTE al smoke real permitido,
+      # identificado por nombre de funcion: prueba_humo_docker_real (hallazgo
+      # 2 de la revision externa). Antes esto solo imprimia "info:" y nunca
+      # podia fallar, asi que un implementador podia marcar #[ignore] el test
+      # de AC-10 (en vez de un salto en tiempo de ejecucion) y el gate
+      # completo seguia pasando, perdiendo el criterio en silencio. Ahora
+      # cualquier otro #[ignore] hace FALLAR el comando.
+      set -u
+      FALLOS=0
+      while IFS=: read -r ARCHIVO LINEA _RESTO; do
+        [ -z "$ARCHIVO" ] && continue
+        FUNCION=$(awk -v n="$LINEA" 'NR<=n && /fn [A-Za-z_0-9]+\(/{ult=$0} NR==n{print ult; exit}' "$ARCHIVO")
+        case "$FUNCION" in
+          *"fn prueba_humo_docker_real"*) ;;
+          *)
+            echo "FALLA: $ARCHIVO:$LINEA - #[ignore] sobre una funcion que no es el smoke real permitido (funcion detectada: [$FUNCION]); solo fn prueba_humo_docker_real puede llevar #[ignore]"
+            FALLOS=1
+            ;;
+        esac
+      done < <(grep -rn '#\[ignore\]' crates/hexcell-admin/tests/ 2>/dev/null || true)
+      [ "$FALLOS" -eq 0 ] && echo "OK: todo #[ignore] pertenece al smoke real permitido (o no hay ninguno)"
+      exit "$FALLOS"
+    - |
+      # Ningun test activo (no-#[ignore]) referencia la superficie de conexion
+      # de un daemon Docker real (hallazgo 3 de la revision externa: buscar
+      # solo la cadena literal "docker.sock" dejaba pasar cualquier otra ruta
+      # de socket real, p. ej. /run/otra-cosa.sock). Se busca el patron
+      # general de ruta de socket bajo /var/run o /run, y se excluye solo la
+      # funcion permitida prueba_humo_docker_real.
+      set -u
+      FALLOS=0
+      while IFS=: read -r ARCHIVO LINEA CONTENIDO; do
+        [ -z "$ARCHIVO" ] && continue
+        FUNCION=$(awk -v n="$LINEA" 'NR<=n && /fn [A-Za-z_0-9]+\(/{ult=$0} NR==n{print ult; exit}' "$ARCHIVO")
+        case "$FUNCION" in
+          *"fn prueba_humo_docker_real"*) continue ;;
+        esac
+        echo "FALLA: $ARCHIVO:$LINEA fuera del smoke permitido referencia una ruta de socket real: $CONTENIDO"
+        FALLOS=1
+      done < <(grep -rnE '(/var/run|/run)/[^"'"'"']*\.sock' crates/hexcell-admin/tests/ 2>/dev/null || true)
+      [ "$FALLOS" -eq 0 ] && echo "OK: ninguna ruta de socket real referenciada fuera del smoke permitido"
+      exit "$FALLOS"
+    - |
+      # Alcance final: solo las rutas permitidas por `touch` cambiaron.
+      # Misma precondicion de 'main' que el primer bloque (hallazgo 1).
+      set -u
+      if ! git rev-parse --verify main >/dev/null 2>&1; then
+        echo "FALLA: no se puede resolver la referencia 'main'; el alcance no se puede verificar sin ella"
+        exit 1
+      fi
+      FUERA=0
+      for F in $(git diff --name-only main...HEAD | sort); do
+        case "$F" in
+          crates/hexcell-admin/Cargo.toml|crates/hexcell-admin/src/lib.rs|Cargo.lock) ;;
+          crates/hexcell-admin/src/docker/*) ;;
+          crates/hexcell-admin/tests/*) ;;
+          *) echo "FALLA: $F esta fuera del alcance declarado en touch"; FUERA=1 ;;
+        esac
+      done
+      [ "$FUERA" -eq 0 ] && echo "OK: diff limitado al alcance declarado"
+      exit "$FUERA"
+  target_s: 60
+acceptance:
+  human_gate: true
+limits:
+  # 12, no 10 (hallazgo 6 de la revision externa): 8 archivos ya enumerados
+  # dejaban casi sin margen, y la estrategia contempla un submodulo chico
+  # adicional razonable (p. ej. separar los cuerpos de peticion a mano, o el
+  # ayudante de conexion con tiempo limite) sin forzar al implementador a
+  # violar el contrato por un archivo de mas.
+  max_files_changed: 12
+  # Estimado: Cargo.toml (+6/-1), src/lib.rs nuevo (~25), y cuatro archivos
+  # nuevos bajo docker/ (mod.rs ~50, error.rs ~150, transporte.rs ~320,
+  # cliente.rs ~320) para cubrir 13 criterios de aceptacion con manejo
+  # explicito de 200/201/204/304/404/409/5xx mas los cuatro modos de fallo de
+  # transporte (inalcanzable, permiso denegado, malformado, tiempo agotado).
+  # Produccion total ~870 lineas insertadas.
+  max_diff_lines: 1450
+  per_class:
+    - glob: "crates/hexcell-admin/src/**"
+      max_diff_lines: 900
+    - glob: "crates/hexcell-admin/tests/**"
+      # Servidor Unix falso en tests/comun/mod.rs (~200 lineas, sondas de
+      # respuesta canonica, malformada, muda y sin listener) mas trece
+      # funciones de test en cliente_docker.rs (~25-45 lineas cada una con
+      # su propia instancia de servidor falso), dos de ellas explicitamente
+      # mutation-provable (AC-6, AC-11) con su comentario de justificacion.
+      # ~650 lineas de test.
+      max_diff_lines: 750
+execution:
+  mode: worktree_edit
+  branch: ai/HEX-073
+retry_policy:
+  max_attempts: 2
+  escalate_after: 1
