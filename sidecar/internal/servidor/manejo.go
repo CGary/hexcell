@@ -8,9 +8,11 @@ import (
 	"io"
 	"net"
 	"sync"
+	"time"
 
 	"github.com/CGary/hexcell/sidecar/internal/canal"
 	"github.com/CGary/hexcell/sidecar/internal/ipc"
+	"github.com/CGary/hexcell/sidecar/internal/outbox"
 	"github.com/CGary/hexcell/sidecar/internal/registro"
 )
 
@@ -61,7 +63,7 @@ func leerLineaAcotada(r *bufio.Reader) ([]byte, error) {
 	return linea, nil
 }
 
-// atenderConexion realiza el apretón de manos inicial (saludo estricto v5), aplica el relevo de
+// atenderConexion realiza el apretón de manos inicial (saludo estricto v6), aplica el relevo de
 // conexión única (most-recent-wins) y arranca las goroutines lectora y escritora.
 func (s *Servidor) atenderConexion(ctx context.Context, conn net.Conn) {
 	lector := bufio.NewReader(conn)
@@ -128,7 +130,7 @@ func (s *Servidor) atenderConexion(ctx context.Context, conn net.Conn) {
 
 	if s.deps.Registro != nil {
 		s.deps.Registro.Info("servidor.saludo_completado", registro.Campos{
-			Detalle: "apretón de manos de saludo versión 5 completado con éxito",
+			Detalle: "apretón de manos de saludo versión 6 completado con éxito",
 		})
 	}
 
@@ -188,7 +190,34 @@ func (s *Servidor) leerEntrante(ctx context.Context, c *conexionActiva, lector *
 			}
 		case ipc.TipoMensajeSaliente:
 			if saliente, ok := sobre.Cuerpo.(ipc.MensajeSaliente); ok && s.deps.Portero != nil {
-				_ = s.deps.Portero.Admitir(ctx, saliente.IdMensaje, saliente.IdConversacion, saliente.Contenido, saliente.MarcaTemporalOrigenMs)
+				if err := s.deps.Portero.Admitir(ctx, saliente.IdMensaje, saliente.IdConversacion, saliente.Contenido, saliente.MarcaTemporalOrigenMs); err != nil {
+					// Asimetría deliberada: hoy el veredicto del portero se descarta para los
+					// rechazos de cortacircuitos y de baja, pero la pausa de envío DEBE ser
+					// observable por el núcleo (invariante de HEX-071): el rechazo viaja como
+					// acuse_envio{estado:"fallido", motivo:"envio_pausado"}, nunca como descarte
+					// silencioso ni como búfer. Ampliar la observabilidad a los otros dos rechazos
+					// queda fuera del alcance de esta tarea.
+					if errors.Is(err, outbox.ErrEnvioPausado) {
+						acuse := ipc.NuevoSobre(ipc.AcuseEnvio{
+							IdMensaje:       saliente.IdMensaje,
+							Estado:          ipc.EstadoEnvioFallido,
+							IdCorrelacion:   "",
+							Motivo:          "envio_pausado",
+							MarcaTemporalMs: time.Now().UnixMilli(),
+						})
+						if b, errCod := ipc.Codificar(acuse); errCod == nil {
+							c.enviar(b)
+						}
+					}
+				}
+			}
+		case ipc.TipoOrdenCierreDeSesion:
+			if _, ok := sobre.Cuerpo.(ipc.OrdenCierreDeSesion); ok {
+				s.procesarOrdenCierreDeSesion(ctx, c)
+			}
+		case ipc.TipoOrdenPausaDeEnvio:
+			if orden, ok := sobre.Cuerpo.(ipc.OrdenPausaDeEnvio); ok {
+				s.procesarOrdenPausaDeEnvio(c, orden)
 			}
 		default:
 			registroProtocoloError(s.deps.Registro, fmt.Errorf("%w: tipo no esperado en conexión establecida: %q", ipc.ErrTipoDesconocido, sobre.Tipo))
@@ -284,6 +313,89 @@ func (s *Servidor) procesarOrdenEmparejar(ctx context.Context, c *conexionActiva
 		if b, errCod := ipc.Codificar(acuse); errCod == nil {
 			c.enviar(b)
 		}
+	}
+}
+
+// procesarOrdenCierreDeSesion ejecuta la desvinculación real de la sesión y responde con el acuse.
+// La costura inyectada (Dependencias.Desvinculador, con Dependencias.Sesion como respaldo de
+// producción) hace la ruta comprobable sin un dispositivo emparejado: la mitad viva de
+// client.Logout pertenece a la aceptación de A-3 sobre una célula piloto, no a esta tarea.
+func (s *Servidor) procesarOrdenCierreDeSesion(ctx context.Context, c *conexionActiva) {
+	desvinculador := s.deps.Desvinculador
+	if desvinculador == nil && s.deps.Sesion != nil {
+		desvinculador = s.deps.Sesion
+	}
+	if desvinculador == nil {
+		acuse := ipc.NuevoSobre(ipc.AcuseCierreDeSesion{
+			Resultado: ipc.ResultadoFallido,
+			Motivo:    "desvinculación de sesión no disponible",
+		})
+		if b, err := ipc.Codificar(acuse); err == nil {
+			c.enviar(b)
+		}
+		return
+	}
+
+	if err := desvinculador.Desvincular(ctx); err != nil {
+		acuse := ipc.NuevoSobre(ipc.AcuseCierreDeSesion{
+			Resultado: ipc.ResultadoFallido,
+			Motivo:    err.Error(),
+		})
+		if b, errCod := ipc.Codificar(acuse); errCod == nil {
+			c.enviar(b)
+		}
+		return
+	}
+
+	acuse := ipc.NuevoSobre(ipc.AcuseCierreDeSesion{
+		Resultado: ipc.ResultadoCompletado,
+		Motivo:    "",
+	})
+	if b, err := ipc.Codificar(acuse); err == nil {
+		c.enviar(b)
+	}
+}
+
+// procesarOrdenPausaDeEnvio aplica la orden de pausar o reanudar el envío saliente sobre la
+// compuerta en memoria del portero y responde con el acuse correspondiente. No toca ningún
+// almacén: es estado de proceso, y un reinicio del sidecar devuelve el envío al estado activo.
+func (s *Servidor) procesarOrdenPausaDeEnvio(c *conexionActiva, orden ipc.OrdenPausaDeEnvio) {
+	if s.deps.Portero == nil {
+		acuse := ipc.NuevoSobre(ipc.AcusePausaDeEnvio{
+			Accion:    orden.Accion,
+			Resultado: ipc.ResultadoFallido,
+			Motivo:    "portero de salida no disponible",
+		})
+		if b, err := ipc.Codificar(acuse); err == nil {
+			c.enviar(b)
+		}
+		return
+	}
+
+	switch orden.Accion {
+	case ipc.AccionPausarEnvio:
+		s.deps.Portero.PausarEnvio()
+	case ipc.AccionReanudarEnvio:
+		s.deps.Portero.ReanudarEnvio()
+	default:
+		acuse := ipc.NuevoSobre(ipc.AcusePausaDeEnvio{
+			Accion:    orden.Accion,
+			Resultado: ipc.ResultadoFallido,
+			Motivo:    fmt.Sprintf("acción de pausa desconocida: %s", orden.Accion),
+		})
+		if b, err := ipc.Codificar(acuse); err == nil {
+			c.enviar(b)
+		}
+		return
+	}
+
+	acuse := ipc.NuevoSobre(ipc.AcusePausaDeEnvio{
+		Accion:    orden.Accion,
+		Resultado: ipc.ResultadoPausaAplicado,
+		Motivo:    "",
+	})
+	if b, err := ipc.Codificar(acuse); err == nil {
+		c.enviar(b)
 	}
 }
 

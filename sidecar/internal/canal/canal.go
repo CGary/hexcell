@@ -182,6 +182,17 @@ func (s *Sesion) Cerrar() {
 	s.registro.Info(EventoSesionCerrada, registro.Campos{})
 }
 
+// Desvincular cierra la sesión y desvincula el dispositivo del lado de WhatsApp con el cierre real
+// de whatsmeow (`client.Logout`). La operación es irreversible: borra las credenciales del
+// almacén (`sqlstore`) y exige un nuevo emparejamiento QR para volver a operar.
+//
+// Es la costura de la orden IPC `orden_cierre_de_sesion`: el servidor la invoca al recibir esa
+// orden, y el error devuelto —si lo hay— se transporta en el acuse sin nombrar ninguna ruta de
+// credencial (adr-0019).
+func (s *Sesion) Desvincular(ctx context.Context) error {
+	return s.cliente.Logout(ctx)
+}
+
 // CerrarDB cierra la conexión a la base de datos del sqlstore. Es una función auxiliar para
 // que main.go cierre el almacén durante el apagado ordenado.
 func CerrarDB(db *sql.DB) error {

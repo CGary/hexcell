@@ -20,7 +20,7 @@ async fn ordenar_respaldo_sqlstore_completado_retorna_acuse() {
 
     sidecar.aceptar_conexion().await;
     let _ = sidecar.leer_saludo().await;
-    sidecar.enviar_saludo(5, "celula-1").await;
+    sidecar.enviar_saludo(6, "celula-1").await;
 
     // Disparamos la orden en una tarea concurrente
     let tarea_orden = {
@@ -76,7 +76,7 @@ async fn ordenar_respaldo_sqlstore_fallido_retorna_acuse_con_motivo() {
 
     sidecar.aceptar_conexion().await;
     let _ = sidecar.leer_saludo().await;
-    sidecar.enviar_saludo(5, "celula-1").await;
+    sidecar.enviar_saludo(6, "celula-1").await;
 
     let tarea_orden = {
         let adaptador = adaptador;
@@ -128,7 +128,7 @@ async fn acuse_respaldo_huerfano_no_cierra_conexion() {
 
     sidecar.aceptar_conexion().await;
     let _ = sidecar.leer_saludo().await;
-    sidecar.enviar_saludo(5, "celula-1").await;
+    sidecar.enviar_saludo(6, "celula-1").await;
 
     // Enviamos un acuse con identificador de ronda no registrado
     sidecar
@@ -162,7 +162,7 @@ async fn ordenar_respaldo_identidad_completado_retorna_acuse() {
 
     sidecar.aceptar_conexion().await;
     let _ = sidecar.leer_saludo().await;
-    sidecar.enviar_saludo(5, "celula-1").await;
+    sidecar.enviar_saludo(6, "celula-1").await;
 
     let tarea_orden = {
         let adaptador = adaptador;
@@ -216,7 +216,7 @@ async fn acuses_de_sqlstore_e_identidad_de_la_misma_ronda_no_colisionan() {
 
     sidecar.aceptar_conexion().await;
     let _ = sidecar.leer_saludo().await;
-    sidecar.enviar_saludo(5, "celula-1").await;
+    sidecar.enviar_saludo(6, "celula-1").await;
 
     let adaptador = std::sync::Arc::new(adaptador);
     let a_sql = std::sync::Arc::clone(&adaptador);
@@ -276,7 +276,7 @@ async fn ordenar_respaldo_sqlstore_timeout_devuelve_error() {
 
     sidecar.aceptar_conexion().await;
     let _ = sidecar.leer_saludo().await;
-    sidecar.enviar_saludo(5, "celula-1").await;
+    sidecar.enviar_saludo(6, "celula-1").await;
 
     // Plazo muy corto y el sidecar nunca responde
     let err = adaptador

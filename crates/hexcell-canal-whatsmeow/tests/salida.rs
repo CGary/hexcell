@@ -21,7 +21,7 @@ async fn send_escribe_mensaje_saliente_en_ipc() {
 
     sidecar.aceptar_conexion().await;
     let _ = sidecar.leer_saludo().await;
-    sidecar.enviar_saludo(5, "celula-1").await;
+    sidecar.enviar_saludo(6, "celula-1").await;
 
     // Simula la recepción de un evento para que el adaptador guarde la marca temporal de origen
     sidecar
@@ -101,7 +101,7 @@ async fn send_sin_marca_de_origen_conocida_devuelve_error_explicito() {
 
     sidecar.aceptar_conexion().await;
     let _ = sidecar.leer_saludo().await;
-    sidecar.enviar_saludo(5, "celula-1").await;
+    sidecar.enviar_saludo(6, "celula-1").await;
 
     // A diferencia de send_escribe_mensaje_saliente_en_ipc, aquí NUNCA se envía un evento
     // entrante para "conv-nueva". El mapa de marcas de origen es memoria de proceso: arranca
@@ -175,7 +175,7 @@ async fn acuse_envio_se_consume_sin_cerrar_conexion() {
 
     sidecar.aceptar_conexion().await;
     let _ = sidecar.leer_saludo().await;
-    sidecar.enviar_saludo(5, "celula-1").await;
+    sidecar.enviar_saludo(6, "celula-1").await;
 
     // Mandamos el acuse_envio
     sidecar
@@ -192,7 +192,7 @@ async fn acuse_envio_se_consume_sin_cerrar_conexion() {
 
 #[tokio::test]
 async fn acuse_envio_no_filtra_terminos_proscritos() {
-    let texto_acuse = r#"{"version":5,"tipo":"acuse_envio","id_mensaje":"msg-1","estado":"fallido","id_correlacion":"corr-1","motivo":"phone numero dispositivo jid device telefono inválido","marca_temporal_ms":123}"#;
+    let texto_acuse = r#"{"version":6,"tipo":"acuse_envio","id_mensaje":"msg-1","estado":"fallido","id_correlacion":"corr-1","motivo":"phone numero dispositivo jid device telefono inválido","marca_temporal_ms":123}"#;
     const TERMINOS_PROSCRITOS: [&str; 6] = [
         "jid",
         "telefono",
@@ -209,4 +209,51 @@ async fn acuse_envio_no_filtra_terminos_proscritos() {
     let acuse: hexcell_canal_whatsmeow::mensajes::AcuseEnvioIpc =
         serde_json::from_str(texto_acuse).unwrap();
     assert_eq!(acuse.estado, "fallido");
+}
+
+#[tokio::test]
+async fn ordenar_pausa_de_envio_emite_orden_y_consume_rechazo() {
+    let mut sidecar = SidecarSimulado::nuevo();
+    let (adaptador, _rx) = AdaptadorWhatsmeow::nuevo(
+        sidecar.ruta_socket(),
+        "celula-1",
+        8,
+        Retroceso::nuevo(Duration::from_millis(10), 2, Duration::from_millis(10)),
+    );
+    adaptador.arrancar();
+
+    sidecar.aceptar_conexion().await;
+    let _ = sidecar.leer_saludo().await;
+    sidecar.enviar_saludo(6, "celula-1").await;
+
+    let tarea = tokio::spawn(async move {
+        adaptador
+            .ordenar_pausa_de_envio("pausar", Duration::from_secs(5))
+            .await
+    });
+
+    let orden = sidecar.leer_orden_pausa_de_envio().await;
+    assert_eq!(orden.tipo, "orden_pausa_de_envio");
+    assert_eq!(orden.version, 6);
+    assert_eq!(orden.accion, "pausar");
+
+    sidecar
+        .enviar_acuse_pausa_de_envio("pausar", "aplicado", "")
+        .await;
+
+    let acuse = tarea.await.unwrap().expect("la pausa debe acusarse");
+    assert_eq!(acuse.accion, "pausar");
+    assert_eq!(acuse.resultado, "aplicado");
+
+    // Un acuse_envio de rechazo por pausa (estado=fallido, motivo=envio_pausado) se consume sin
+    // error de protocolo ni pánico y sin promoverse al puerto: la conexión sigue viva, y el
+    // siguiente evento se confirma con normalidad.
+    sidecar
+        .enviar_acuse_envio("msg-1", "fallido", "", "envio_pausado", 12345)
+        .await;
+    sidecar
+        .enviar_evento("dedup-1", "conv-1", "rem-1", "hola", 12345)
+        .await;
+    let conf = sidecar.leer_confirmacion().await;
+    assert_eq!(conf.id_deduplicacion, "dedup-1");
 }

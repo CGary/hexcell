@@ -52,7 +52,7 @@ impl FakeSidecar {
         lector.read_line(&mut linea_saludo).await.unwrap();
 
         let saludo_sidecar = format!(
-            "{{\"version\":5,\"tipo\":\"saludo\",\"emisor\":\"sidecar\",\"id_celula\":\"{id_celula}\"}}\n"
+            "{{\"version\":6,\"tipo\":\"saludo\",\"emisor\":\"sidecar\",\"id_celula\":\"{id_celula}\"}}\n"
         );
         escritura
             .write_all(saludo_sidecar.as_bytes())
@@ -91,7 +91,7 @@ impl FakeSidecar {
         let copia = destino.join(nombre);
         std::fs::write(&copia, b"datos-ipc-simulados").unwrap();
         let acuse = format!(
-            "{{\"version\":5,\"tipo\":\"{tipo_acuse}\",\"identificador_de_ronda\":\"{ronda}\",\"resultado\":\"completado\",\"ruta_de_la_copia\":\"{}\",\"bytes\":19,\"motivo\":\"\"}}",
+            "{{\"version\":6,\"tipo\":\"{tipo_acuse}\",\"identificador_de_ronda\":\"{ronda}\",\"resultado\":\"completado\",\"ruta_de_la_copia\":\"{}\",\"bytes\":19,\"motivo\":\"\"}}",
             copia.to_string_lossy()
         );
         self.enviar_linea(&acuse).await;
@@ -237,7 +237,7 @@ async fn ejecutar_respaldo_fallido_sqlstore_deja_destino_vacio() {
     let ronda_id = extraer_identificador_de_ronda(&orden);
 
     let acuse = format!(
-        "{{\"version\":5,\"tipo\":\"acuse_respaldo_sqlstore\",\"identificador_de_ronda\":\"{ronda_id}\",\"resultado\":\"fallido\",\"ruta_de_la_copia\":\"\",\"bytes\":0,\"motivo\":\"espacio insuficiente en disco\"}}"
+        "{{\"version\":6,\"tipo\":\"acuse_respaldo_sqlstore\",\"identificador_de_ronda\":\"{ronda_id}\",\"resultado\":\"fallido\",\"ruta_de_la_copia\":\"\",\"bytes\":0,\"motivo\":\"espacio insuficiente en disco\"}}"
     );
     sidecar.enviar_linea(&acuse).await;
 
@@ -392,7 +392,7 @@ async fn binario_real_sidecar_rechaza_respaldo_falla_con_mensaje_espanol() {
         let ronda_id = extraer_identificador_de_ronda(&orden);
 
         let acuse = format!(
-            "{{\"version\":5,\"tipo\":\"acuse_respaldo_sqlstore\",\"identificador_de_ronda\":\"{ronda_id}\",\"resultado\":\"fallido\",\"ruta_de_la_copia\":\"\",\"bytes\":0,\"motivo\":\"sidecar rechazó el respaldo\"}}"
+            "{{\"version\":6,\"tipo\":\"acuse_respaldo_sqlstore\",\"identificador_de_ronda\":\"{ronda_id}\",\"resultado\":\"fallido\",\"ruta_de_la_copia\":\"\",\"bytes\":0,\"motivo\":\"sidecar rechazó el respaldo\"}}"
         );
         sidecar.enviar_linea(&acuse).await;
     });

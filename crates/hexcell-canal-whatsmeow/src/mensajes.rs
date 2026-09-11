@@ -1,4 +1,4 @@
-//! Objetos de valor del protocolo IPC versión 5 (documento 1.4): un struct por tipo de mensaje.
+//! Objetos de valor del protocolo IPC versión 6 (documento 1.5): un struct por tipo de mensaje.
 //!
 //! Cada struct lleva `#[serde(deny_unknown_fields)]` porque la regla 3 del protocolo
 //! (sección 1 de `docs/protocolo-ipc-nucleo-sidecar.md`) hace **obligatorio** rechazar campos
@@ -11,8 +11,8 @@
 
 use serde::{Deserialize, Serialize};
 
-/// Versión de cable del protocolo. En esta implementación, `5` (documento 1.4).
-pub const VERSION_PROTOCOLO: i64 = 5;
+/// Versión de cable del protocolo. En esta implementación, `6` (documento 1.5).
+pub const VERSION_PROTOCOLO: i64 = 6;
 
 /// Límite de línea del protocolo: 131 072 bytes (128 KiB), contando el salto de línea final.
 /// Una línea más larga es un error de protocolo y cierra la conexión.
@@ -165,6 +165,37 @@ pub struct AcuseRespaldoIdentidad {
     pub motivo: String,
 }
 
+/// Acuse del cierre de sesión (sección 6): desenlace de la desvinculación del dispositivo.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AcuseCierreDeSesion {
+    /// Versión de cable.
+    pub version: i64,
+    /// Tipo de mensaje: siempre `"acuse_cierre_de_sesion"`.
+    pub tipo: String,
+    /// Resultado: `"completado"` o `"fallido"`.
+    pub resultado: String,
+    /// Descripción legible si `resultado` es `"fallido"`; `""` en caso contrario. **Nunca nombra
+    /// una ruta de credencial ni un identificador de transporte** (`adr-0019`).
+    pub motivo: String,
+}
+
+/// Acuse de la pausa o reanudación del envío (sección 6): desenlace de esa orden.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AcusePausaDeEnvio {
+    /// Versión de cable.
+    pub version: i64,
+    /// Tipo de mensaje: siempre `"acuse_pausa_de_envio"`.
+    pub tipo: String,
+    /// La misma acción recibida en la orden: `"pausar"` o `"reanudar"`.
+    pub accion: String,
+    /// Resultado: `"aplicado"` si la compuerta cambió; `"fallido"` en caso contrario.
+    pub resultado: String,
+    /// Descripción legible si `resultado` es `"fallido"`; `""` en caso contrario.
+    pub motivo: String,
+}
+
 // ---------------------------------------------------------------------------
 // Mensajes del núcleo al sidecar
 // ---------------------------------------------------------------------------
@@ -269,6 +300,30 @@ pub struct OrdenRespaldoIdentidad {
     pub identificador_de_ronda: String,
 }
 
+/// Orden de cierre de sesión (sección 6): orden del núcleo de desvincular el dispositivo.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OrdenCierreDeSesion {
+    /// Versión de cable.
+    pub version: i64,
+    /// Tipo de mensaje: siempre `"orden_cierre_de_sesion"`.
+    pub tipo: String,
+    /// Descripción legible de por qué se ordena el cierre; `""` si no aplica.
+    pub motivo: String,
+}
+
+/// Orden de pausa o reanudación del envío saliente (sección 6).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OrdenPausaDeEnvio {
+    /// Versión de cable.
+    pub version: i64,
+    /// Tipo de mensaje: siempre `"orden_pausa_de_envio"`.
+    pub tipo: String,
+    /// Acción: `"pausar"` o `"reanudar"`.
+    pub accion: String,
+}
+
 // ---------------------------------------------------------------------------
 // Enumerado cerrado de despacho: línea entrante → variante tipada
 // ---------------------------------------------------------------------------
@@ -277,7 +332,8 @@ pub struct OrdenRespaldoIdentidad {
 ///
 /// Las variantes cubren los tipos que el sidecar puede emitir hacia el núcleo. Los tipos que el
 /// núcleo envía (confirmacion, orden_emparejar, orden_respaldo_sqlstore, orden_respaldo_identidad,
-/// mensaje_saliente) no aparecen aquí porque no son mensajes que el núcleo reciba.
+/// orden_cierre_de_sesion, orden_pausa_de_envio, mensaje_saliente) no aparecen aquí porque no son
+/// mensajes que el núcleo reciba.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum MensajeEntrante {
     /// Saludo de versión del sidecar.
@@ -296,6 +352,10 @@ pub enum MensajeEntrante {
     AcuseRespaldoIdentidad(AcuseRespaldoIdentidad),
     /// Acuse de envío de un mensaje saliente.
     AcuseEnvio(AcuseEnvioIpc),
+    /// Acuse del cierre de sesión (desvinculación).
+    AcuseCierreDeSesion(AcuseCierreDeSesion),
+    /// Acuse de la pausa o reanudación del envío saliente.
+    AcusePausaDeEnvio(AcusePausaDeEnvio),
 }
 
 /// Analiza una línea JSON ya validada en tamaño y la despacha al tipo concreto por el campo
@@ -361,11 +421,23 @@ pub fn analizar_mensaje_entrante(linea: &str) -> Result<MensajeEntrante, String>
                 serde_json::from_str(linea).map_err(|e| format!("acuse_envio inválido: {e}"))?;
             Ok(MensajeEntrante::AcuseEnvio(msg))
         }
+        "acuse_cierre_de_sesion" => {
+            let msg: AcuseCierreDeSesion = serde_json::from_str(linea)
+                .map_err(|e| format!("acuse_cierre_de_sesion inválido: {e}"))?;
+            Ok(MensajeEntrante::AcuseCierreDeSesion(msg))
+        }
+        "acuse_pausa_de_envio" => {
+            let msg: AcusePausaDeEnvio = serde_json::from_str(linea)
+                .map_err(|e| format!("acuse_pausa_de_envio inválido: {e}"))?;
+            Ok(MensajeEntrante::AcusePausaDeEnvio(msg))
+        }
         // Los tipos que el núcleo ENVÍA no se esperan como entrantes.
         "confirmacion"
         | "orden_emparejar"
         | "orden_respaldo_sqlstore"
         | "orden_respaldo_identidad"
+        | "orden_cierre_de_sesion"
+        | "orden_pausa_de_envio"
         | "mensaje_saliente" => Err(format!(
             "tipo '{tipo}' no es un mensaje entrante válido del sidecar"
         )),

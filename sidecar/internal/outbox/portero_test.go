@@ -416,3 +416,65 @@ func TestPorteroDeSalida_AdmitirMensajeDePresentacion_ErrorAlReclamar(t *testing
 		t.Errorf("registro no contiene %s: %s", outbox.EventoErrorReclamoPresentacion, buf.String())
 	}
 }
+
+func TestPorteroDeSalida_AdmitirRechazaPorPausaDeEnvio(t *testing.T) {
+	t.Parallel()
+	db, _ := abrirDbPruebaSalida(t)
+	cola := outbox.NuevaColaDeSalida(db, 1000, 3, nil, nil, nil)
+	portero := outbox.NuevoPorteroDeSalida(cola, nil, nil, nil, nil)
+	ctx := context.Background()
+
+	portero.PausarEnvio()
+	err := portero.Admitir(ctx, "msg-1", "conv-1", "hola", 100)
+	if !errors.Is(err, outbox.ErrEnvioPausado) {
+		t.Fatalf("se esperaba ErrEnvioPausado, se obtuvo %v", err)
+	}
+
+	// Rechazo, no búfer: la cola no cambió.
+	var cuenta int
+	db.QueryRow("SELECT COUNT(*) FROM cola_salida").Scan(&cuenta)
+	if cuenta != 0 {
+		t.Fatalf("cola_salida debía tener 0 filas, tiene %d", cuenta)
+	}
+
+	// Reanudar devuelve el envío activo y admite exactamente una fila.
+	portero.ReanudarEnvio()
+	if err := portero.Admitir(ctx, "msg-1", "conv-1", "hola", 100); err != nil {
+		t.Fatalf("tras reanudar, Admitir debía aceptar: %v", err)
+	}
+	db.QueryRow("SELECT COUNT(*) FROM cola_salida WHERE id_mensaje='msg-1'").Scan(&cuenta)
+	if cuenta != 1 {
+		t.Fatalf("el mensaje reanudado debía estar encolado una vez, tiene %d", cuenta)
+	}
+}
+
+func TestPorteroDeSalida_AdmitirPausaPrecedeCortacircuitosYBaja(t *testing.T) {
+	t.Parallel()
+	db, _ := abrirDbPruebaSalida(t)
+	cola := outbox.NuevaColaDeSalida(db, 1000, 3, nil, nil, nil)
+	baja := &controlDeBajaEspia{permitido: true}
+	corta := &controlDeCortacircuitosEspia{permitido: true}
+	portero := outbox.NuevoPorteroDeSalida(cola, baja, corta, nil, nil)
+	ctx := context.Background()
+
+	portero.PausarEnvio()
+	err := portero.Admitir(ctx, "msg-1", "conv-1", "hola", 100)
+	if !errors.Is(err, outbox.ErrEnvioPausado) {
+		t.Fatalf("se esperaba ErrEnvioPausado, se obtuvo %v", err)
+	}
+
+	// La pausa se consulta ANTES que cortacircuitos y baja: ninguna de las dos vías de permiso se
+	// consultó, así que la pausa no puede quedar enmascarada por una vía de permiso.
+	if len(corta.ordenLlamadas) != 0 {
+		t.Fatalf("el cortacircuitos no debía consultarse bajo pausa: %v", corta.ordenLlamadas)
+	}
+	if len(baja.ordenLlamadas) != 0 {
+		t.Fatalf("el control de baja no debía consultarse bajo pausa: %v", baja.ordenLlamadas)
+	}
+
+	var cuenta int
+	db.QueryRow("SELECT COUNT(*) FROM cola_salida").Scan(&cuenta)
+	if cuenta != 0 {
+		t.Fatalf("cola_salida debía tener 0 filas, tiene %d", cuenta)
+	}
+}
