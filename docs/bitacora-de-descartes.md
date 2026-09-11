@@ -1,6 +1,6 @@
 # Bitácora de descartes
 
-> Registro de lo que se consideró y **no** se hizo. Última actualización: 2026-09-10 (D-44).
+> Registro de lo que se consideró y **no** se hizo. Última actualización: 2026-09-11 (D-45).
 
 ## Para qué sirve este documento
 
@@ -78,6 +78,7 @@ se apoya en un principio de diseño, no.
 | [D-42](#d-42) | Variables de entorno adicionales para el texto de la sonda semántica y parámetros de fragmentación de ingesta | Reabrible si cambia un hecho del proyecto |
 | [D-43](#d-43) | Extraer a `abrirRecursosDeArranque` el cableado de `main()` posterior al buzón | Reabrible si cambia un hecho del árbol |
 | [D-44](#d-44) | Liberar los recursos ya abiertos cuando el arranque falla a mitad de camino | Reabrible si cambia un hecho del proyecto |
+| [D-45](#d-45) | Convertir la clasificación del acuse de entrega/lectura en un mensaje IPC (`acuse_envio` u otro) | Reabrible si aparece un consumidor fuera del proceso |
 
 ---
 
@@ -616,6 +617,14 @@ copiar `sessions.db`, `knowledge_live.db` y el almacén de identidad del adaptad
 * **Por qué se descartó:** Es un hallazgo **real** de la auditoría de arranque en frío de esta tarea, no un falso positivo: si `abrirRecursosDeArranque` falla en un paso intermedio, los recursos abiertos en los pasos anteriores no se cierran en esa ruta. Hoy eso no filtra nada observable porque el único consumidor es `main()`, que responde al error con `os.Exit(1)`, y el sistema operativo reclama los descriptores del proceso al terminar. Se descarta arreglarlo **acá** por una razón de disciplina, no porque no importe: HEX-066 existe para cerrar un defecto de ORDEN, y su prueba por mutación acredita exactamente eso. Meter en el mismo diff un cambio de gestión de recursos —que necesita su propia prueba, la de que el fallo intermedio efectivamente cierra lo ya abierto— mezclaría dos defectos de naturaleza distinta bajo una sola guarda, y la segunda quedaría sin acreditar. Se deja escrito para que exista, en vez de arreglarse a medias.
 * **Registro normativo:** `sidecar/arranque.go`.
 * **Qué tendría que cambiar para reabrirlo:** Si `abrirRecursosDeArranque` gana un segundo consumidor que no sea `main()` —una prueba que la invoque en bucle, o un modo de reintento de arranque—, el momento en que el proceso deja de terminar tras el fallo es el momento en que la fuga pasa a ser observable y este descarte se reabre.
+
+### D-45
+**Convertir la clasificación del acuse de entrega/lectura (`events.Receipt`) en un mensaje IPC —sobrecargando `acuse_envio` o añadiendo un tipo nuevo— en lugar de exponerla solo por un sumidero en-proceso.**
+
+* **Descartado:** 2026-09-11 (HEX-072-a).
+* **Por qué se descartó:** el acuse de entrega/lectura que clasifica `sidecar/internal/canal/acuses.go` no tiene consumidor fuera del propio proceso del sidecar: la señal que produce es el insumo crudo del productor de métricas periódicas de HEX-072-b, que vive dentro del mismo binario. Convertirla en un mensaje IPC —reutilizando `acuse_envio` o inventando un tipo nuevo— obligaría a ampliar el conjunto cerrado de tipos del protocolo (sección 6 de `docs/protocolo-ipc-nucleo-sidecar.md`), a subir su versión de cable y, con ello, a tocar el extremo Rust del cable y al menos un crate, todo por una señal que nadie fuera del proceso consume. Sobrecargar `acuse_envio` en particular sería peor: su vocabulario `estado` (`enviado`, `entregado`, `leido`, `fallido`) ya está cerrado y correlacionado con `mensaje_saliente`, y reutilizarlo para un acuse **sin** `id_mensaje` conocido en el núcleo ensuciaría esa correlación.
+* **Registro normativo:** `sidecar/internal/canal/acuses.go` (el sumidero en-proceso `SumideroDeAcuses`), `sidecar/internal/ipc/mensajes.go` (constantes `EstadoEnvioEntregado`/`EstadoEnvioLeido` reutilizadas sin tocar el protocolo).
+* **Qué tendría que cambiar para reabrirlo:** *reabrible si aparece un consumidor fuera del proceso.* Si una pieza que no sea el sidecar —el núcleo, el orquestador, un panel— necesitara la clasificación entregado/leído, habría que abrir un **tipo de mensaje IPC nuevo y explícito** (nunca sobrecargar en silencio el vocabulario `estado` de `acuse_envio`), con su propia versión de cable y su propia correspondencia en el extremo Rust. Eso es exactamente el trabajo que HEX-072-b descarta a su vez si decide que la métrica se queda dentro del sidecar.
 
 ---
 
