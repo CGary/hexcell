@@ -19,6 +19,9 @@ const (
 	EventoErrorConsultaCortacircuitos = "outbox.error_consulta_cortacircuitos"
 	// EventoEnvioBloqueadoPorBaja se emite al rechazar un mensaje en la admisión por baja.
 	EventoEnvioBloqueadoPorBaja = "outbox.envio_bloqueado_por_baja"
+	// EventoEnvioBloqueadoPorPausa se emite al rechazar un mensaje en la admisión por la compuerta
+	// de pausa de envío (orden del núcleo, distinta del estado de sesión `pausada` de adr-0015).
+	EventoEnvioBloqueadoPorPausa = "outbox.envio_bloqueado_por_pausa"
 	// EventoSalidaDescartadaPorBaja se emite al descartar en el drenaje una fila ya encolada.
 	EventoSalidaDescartadaPorBaja = "outbox.salida_descartada_por_baja"
 	// EventoErrorReclamoPresentacion se emite cuando el reclamo de la presentación falla (fallo cerrado).
@@ -32,6 +35,11 @@ var (
 	// ErrContactoDadoDeBaja se devuelve en la admisión cuando el destinatario está dado de baja.
 	ErrContactoDadoDeBaja = errors.New("outbox: contacto dado de baja")
 
+	// ErrEnvioPausado se devuelve en la admisión cuando el envío está pausado por orden del núcleo.
+	// Es un rechazo tipado, nunca un búfer ni un descarte silencioso: el núcleo decide qué hacer
+	// con el mensaje rechazado.
+	ErrEnvioPausado = errors.New("outbox: envío pausado por orden del núcleo")
+
 	// ContadorBloqueadasPorCortacircuitos cuenta mensajes rechazados en admisión por cortacircuitos disparado.
 	ContadorBloqueadasPorCortacircuitos atomic.Int64
 
@@ -40,6 +48,9 @@ var (
 
 	// ContadorBloqueadasPorBaja cuenta mensajes rechazados en el punto de admisión antes de encolar.
 	ContadorBloqueadasPorBaja atomic.Int64
+
+	// ContadorBloqueadasPorPausa cuenta mensajes rechazados en admisión por la compuerta de pausa.
+	ContadorBloqueadasPorPausa atomic.Int64
 
 	// ContadorDescartadasPorBaja cuenta mensajes descartados con dureza en el drenaje por haber
 	// recibido la baja mientras estaban encolados.
@@ -72,13 +83,17 @@ type ControlDePresentacion interface {
 }
 
 // PorteroDeSalida es el servicio de aplicación que custodia la entrada a la cola de salida,
-// aplicando el cortacircuitos y el control de baja en el punto más temprano posible de la ruta de envío.
+// aplicando la compuerta de pausa, el cortacircuitos y el control de baja en el punto más
+// temprano posible de la ruta de envío.
 type PorteroDeSalida struct {
 	cola           *ColaDeSalida
 	controlBaja    ControlDeBaja
 	cortacircuitos ControlDeCortacircuitos
 	presentacion   ControlDePresentacion
 	registro       *registro.Registro
+	// pausado es la compuerta de pausa de envío, memoria de proceso únicamente: no se persiste en
+	// ningún almacén y un reinicio o reconexión devuelve el envío al estado activo.
+	pausado atomic.Bool
 }
 
 // NuevoPorteroDeSalida construye el portero custodiando la cola de salida inyectada.
@@ -92,9 +107,38 @@ func NuevoPorteroDeSalida(cola *ColaDeSalida, controlBaja ControlDeBaja, cortaci
 	}
 }
 
+// PausarEnvio activa la compuerta de pausa de envío. A partir de este instante Admitir rechaza
+// todo envío saliente con [ErrEnvioPausado], sin encolar ni descartar. Es memoria de proceso.
+func (p *PorteroDeSalida) PausarEnvio() {
+	p.pausado.Store(true)
+}
+
+// ReanudarEnvio desactiva la compuerta de pausa de envío. También memoria de proceso.
+func (p *PorteroDeSalida) ReanudarEnvio() {
+	p.pausado.Store(false)
+}
+
+// EnvioPausado informa si la compuerta de pausa de envío está activa.
+func (p *PorteroDeSalida) EnvioPausado() bool {
+	return p.pausado.Load()
+}
+
 // Admitir verifica si el envío está permitido antes de encolar el mensaje.
 // [causa documentada]
 func (p *PorteroDeSalida) Admitir(ctx context.Context, idMensaje, idConversacion, contenido string, marcaTemporalOrigenMs int64) error {
+	// 0. Compuerta de pausa de envío (orden del núcleo). Va ANTES que cortacircuitos y baja a
+	// propósito: una pausa no puede quedar enmascarada por ninguna vía de permiso. Rechazo
+	// inmediato, nunca encolar ni descartar; el núcleo decide qué hacer con el rechazo.
+	if p.pausado.Load() {
+		ContadorBloqueadasPorPausa.Add(1)
+		if p.registro != nil {
+			p.registro.Aviso(EventoEnvioBloqueadoPorPausa, registro.Campos{
+				IdEvento: idMensaje,
+			})
+		}
+		return ErrEnvioPausado
+	}
+
 	// 1. Cortacircuitos primero (COSTURA de tarea 14 de A-3)
 	if p.cortacircuitos != nil {
 		permitido, err := p.cortacircuitos.SalidaPermitida(ctx, idConversacion, idMensaje)

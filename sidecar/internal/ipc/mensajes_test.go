@@ -82,6 +82,21 @@ func cuerposDeMuestra() map[ipc.TipoMensaje]ipc.Cuerpo {
 			Motivo:          "",
 			MarcaTemporalMs: 1_767_225_605_000,
 		},
+		ipc.TipoOrdenCierreDeSesion: ipc.OrdenCierreDeSesion{
+			Motivo: "",
+		},
+		ipc.TipoAcuseCierreDeSesion: ipc.AcuseCierreDeSesion{
+			Resultado: ipc.ResultadoCompletado,
+			Motivo:    "",
+		},
+		ipc.TipoOrdenPausaDeEnvio: ipc.OrdenPausaDeEnvio{
+			Accion: ipc.AccionPausarEnvio,
+		},
+		ipc.TipoAcusePausaDeEnvio: ipc.AcusePausaDeEnvio{
+			Accion:    ipc.AccionPausarEnvio,
+			Resultado: ipc.ResultadoPausaAplicado,
+			Motivo:    "",
+		},
 	}
 }
 
@@ -183,7 +198,7 @@ func TestDecodificarRechazaUnaVersionIncompatible(t *testing.T) {
 func TestDecodificarRechazaUnTipoDesconocido(t *testing.T) {
 	t.Parallel()
 
-	linea := []byte(`{"version":5,"tipo":"tipo_inexistente","texto":"hola"}` + "\n")
+	linea := []byte(`{"version":6,"tipo":"tipo_inexistente","texto":"hola"}` + "\n")
 	if _, err := ipc.Decodificar(linea); !errors.Is(err, ipc.ErrTipoDesconocido) {
 		t.Fatalf("error = %v, se esperaba ErrTipoDesconocido", err)
 	}
@@ -199,6 +214,23 @@ func TestDecodificarRechazaLaVersionAnteriorCuatro(t *testing.T) {
 	linea := []byte(`{"version":4,"tipo":"confirmacion","id_deduplicacion":"dedup-7"}` + "\n")
 	if _, err := ipc.Decodificar(linea); !errors.Is(err, ipc.ErrVersionIncompatible) {
 		t.Fatalf("error = %v, se esperaba ErrVersionIncompatible", err)
+	}
+}
+
+// TestDecodificarRechazaLaVersionAnteriorCinco fija el lockstep del salto 5->6 (HEX-071): una
+// línea de la versión de cable anterior (`5`, documento 1.4) es incompatible y el error nombra
+// AMBAS versiones, recibida y esperada, sin negociación ni degradación parcial.
+func TestDecodificarRechazaLaVersionAnteriorCinco(t *testing.T) {
+	t.Parallel()
+
+	linea := []byte(`{"version":5,"tipo":"confirmacion","id_deduplicacion":"dedup-7"}` + "\n") // cable-anterior-esperado: literal deliberado, fija el rechazo de la version 5
+	_, err := ipc.Decodificar(linea)
+	if !errors.Is(err, ipc.ErrVersionIncompatible) {
+		t.Fatalf("error = %v, se esperaba ErrVersionIncompatible", err)
+	}
+	mensaje := err.Error()
+	if !strings.Contains(mensaje, "recibida 5") || !strings.Contains(mensaje, "esperada 6") {
+		t.Fatalf("el error debe nombrar ambas versiones: %s", mensaje)
 	}
 }
 
@@ -221,8 +253,8 @@ func TestDecodificarRechazaLineasMalformadasSinEntrarEnPanico(t *testing.T) {
 		{"valor booleano", `{"version":4,"tipo":"saludo","emisor":true,"id_celula":"c"}` + "\n", ipc.ErrValorNoEscalar},
 		{"valor nulo", `{"version":4,"tipo":"saludo","emisor":null,"id_celula":"c"}` + "\n", ipc.ErrValorNoEscalar},
 		{"entero con coma", `{"version":4,"tipo":"confirmacion","id_deduplicacion":"d","extra":1.5}` + "\n", ipc.ErrValorNoEscalar},
-		{"campo ausente", `{"version":5,"tipo":"saludo","emisor":"nucleo"}` + "\n", ipc.ErrCampoAusente},
-		{"campo desconocido", `{"version":5,"tipo":"confirmacion","id_deduplicacion":"d","secuencia":7}` + "\n", ipc.ErrCampoDesconocido},
+		{"campo ausente", `{"version":6,"tipo":"saludo","emisor":"nucleo"}` + "\n", ipc.ErrCampoAusente},
+		{"campo desconocido", `{"version":6,"tipo":"confirmacion","id_deduplicacion":"d","secuencia":7}` + "\n", ipc.ErrCampoDesconocido},
 	}
 
 	for _, caso := range casos {

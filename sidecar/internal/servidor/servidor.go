@@ -29,6 +29,15 @@ import (
 // indicando que otro proceso sidecar vivo ya está escuchando en la ruta configurada.
 var ErrOtroSidecarActivo = errors.New("servidor: otro proceso sidecar ya está escuchando en el socket IPC")
 
+// DesvinculadorDeSesion es la costura de desvinculación inyectada para la orden de cierre de
+// sesión. En producción la satisface *canal.Sesion (el client.Logout real de whatsmeow); las
+// pruebas inyectan un doble para ejercitar el despacho sin un dispositivo emparejado. Se declara
+// como interfaz estrecha —espejo de outbox.ControlDeBaja— para no acoplar el paquete servidor al
+// cliente concreto.
+type DesvinculadorDeSesion interface {
+	Desvincular(ctx context.Context) error
+}
+
 // Dependencias agrupa los servicios y configuración requeridos por el servidor IPC.
 type Dependencias struct {
 	RutaSocket          string
@@ -40,6 +49,9 @@ type Dependencias struct {
 	DBRespaldoIdentidad *sql.DB
 	Sesion              *canal.Sesion
 	TelefonoCelula      string
+	// Desvinculador es la costura de desvinculación para la orden de cierre de sesión. Si queda
+	// nil, el despacho recurre a Sesion cuando esta no es nil; las pruebas inyectan aquí su doble.
+	Desvinculador DesvinculadorDeSesion
 }
 
 // Servidor gestiona la apertura, escucha, despacho de conexiones y ciclo de vida del socket IPC.

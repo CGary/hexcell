@@ -278,7 +278,7 @@ func TestSaludoDesajusteDeVersionCierraConexionYRegistraAmbas(t *testing.T) {
 
 	// Verificar que el registro contiene ambas versiones (3 y 5)
 	salidaLog := buf.String()
-	if !strings.Contains(salidaLog, "recibida 3") || !strings.Contains(salidaLog, "esperada 5") {
+	if !strings.Contains(salidaLog, "recibida 3") || !strings.Contains(salidaLog, "esperada 6") {
 		t.Fatalf("el registro no contiene ambas versiones: %s", salidaLog)
 	}
 }
@@ -700,5 +700,237 @@ func TestDesconexionDeClienteNoAfectaOperacionDelSidecarNiSesion(t *testing.T) {
 	evtRecibido := sobreEvt.Cuerpo.(ipc.EventoEntrante)
 	if evtRecibido.IdDeduplicacion != "dedup-offline" {
 		t.Fatalf("evento redistribuido incorrecto: %+v", evtRecibido)
+	}
+}
+
+// desvinculadorEspia es el doble de la costura de desvinculación: cuenta las invocaciones y
+// devuelve el error inyectado, sin tocar whatsmeow ni un dispositivo emparejado.
+type desvinculadorEspia struct {
+	llamadas int
+	err      error
+}
+
+func (d *desvinculadorEspia) Desvincular(_ context.Context) error {
+	d.llamadas++
+	return d.err
+}
+
+func TestOrdenCierreDeSesionDesvinculaYRespondeCompletado(t *testing.T) {
+	t.Parallel()
+	socketPath := filepath.Join(t.TempDir(), "ipc.sock")
+	espia := &desvinculadorEspia{}
+
+	srv := servidor.NuevoServidor(servidor.Dependencias{
+		RutaSocket:    socketPath,
+		IdCelula:      "test-cell",
+		Desvinculador: espia,
+	})
+	if err := srv.Escuchar(context.Background()); err != nil {
+		t.Fatalf("fallo al escuchar: %v", err)
+	}
+	defer srv.Cerrar()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go srv.Aceptar(ctx)
+
+	conn, err := net.Dial("unix", socketPath)
+	if err != nil {
+		t.Fatalf("error conectando cliente: %v", err)
+	}
+	defer conn.Close()
+	lector := bufio.NewReader(conn)
+
+	saludo, _ := ipc.Codificar(ipc.NuevoSobre(ipc.Saludo{Emisor: ipc.EmisorNucleo, IdCelula: "test-cell"}))
+	if _, err := conn.Write(saludo); err != nil {
+		t.Fatalf("error enviando saludo: %v", err)
+	}
+	if _, err := lector.ReadBytes('\n'); err != nil {
+		t.Fatalf("error recibiendo saludo servidor: %v", err)
+	}
+
+	orden, _ := ipc.Codificar(ipc.NuevoSobre(ipc.OrdenCierreDeSesion{Motivo: ""}))
+	if _, err := conn.Write(orden); err != nil {
+		t.Fatalf("error enviando orden de cierre: %v", err)
+	}
+
+	linea, err := lector.ReadBytes('\n')
+	if err != nil {
+		t.Fatalf("error recibiendo acuse de cierre: %v", err)
+	}
+	sobre, err := ipc.Decodificar(linea)
+	if err != nil || sobre.Tipo != ipc.TipoAcuseCierreDeSesion {
+		t.Fatalf("acuse de cierre inválido: %v, sobre=%+v", err, sobre)
+	}
+	acuse := sobre.Cuerpo.(ipc.AcuseCierreDeSesion)
+	if acuse.Resultado != ipc.ResultadoCompletado {
+		t.Fatalf("se esperaba completado, se obtuvo: %+v", acuse)
+	}
+	if espia.llamadas != 1 {
+		t.Fatalf("la costura de desvinculación debía invocarse exactamente una vez, se invocó %d", espia.llamadas)
+	}
+}
+
+func TestOrdenCierreDeSesionFallaConMotivoSinRutaDeCredencial(t *testing.T) {
+	t.Parallel()
+	socketPath := filepath.Join(t.TempDir(), "ipc.sock")
+	espia := &desvinculadorEspia{err: errors.New("desvinculación inyectada falló")}
+
+	srv := servidor.NuevoServidor(servidor.Dependencias{
+		RutaSocket:    socketPath,
+		IdCelula:      "test-cell",
+		Desvinculador: espia,
+	})
+	if err := srv.Escuchar(context.Background()); err != nil {
+		t.Fatalf("fallo al escuchar: %v", err)
+	}
+	defer srv.Cerrar()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go srv.Aceptar(ctx)
+
+	conn, err := net.Dial("unix", socketPath)
+	if err != nil {
+		t.Fatalf("error conectando cliente: %v", err)
+	}
+	defer conn.Close()
+	lector := bufio.NewReader(conn)
+
+	saludo, _ := ipc.Codificar(ipc.NuevoSobre(ipc.Saludo{Emisor: ipc.EmisorNucleo, IdCelula: "test-cell"}))
+	_, _ = conn.Write(saludo)
+	_, _ = lector.ReadBytes('\n')
+
+	orden, _ := ipc.Codificar(ipc.NuevoSobre(ipc.OrdenCierreDeSesion{Motivo: ""}))
+	_, _ = conn.Write(orden)
+
+	linea, err := lector.ReadBytes('\n')
+	if err != nil {
+		t.Fatalf("error recibiendo acuse de cierre: %v", err)
+	}
+	sobre, err := ipc.Decodificar(linea)
+	if err != nil || sobre.Tipo != ipc.TipoAcuseCierreDeSesion {
+		t.Fatalf("acuse de cierre inválido: %v, sobre=%+v", err, sobre)
+	}
+	acuse := sobre.Cuerpo.(ipc.AcuseCierreDeSesion)
+	if acuse.Resultado != ipc.ResultadoFallido {
+		t.Fatalf("se esperaba fallido, se obtuvo: %+v", acuse)
+	}
+	if acuse.Motivo == "" {
+		t.Fatal("el acuse fallido debe llevar un motivo no vacío")
+	}
+	if acuse.Motivo != "desvinculación inyectada falló" {
+		t.Fatalf("el motivo no refleja el error de la costura: %q", acuse.Motivo)
+	}
+	if espia.llamadas != 1 {
+		t.Fatalf("la costura de desvinculación debía invocarse exactamente una vez, se invocó %d", espia.llamadas)
+	}
+}
+
+func TestPausaDeEnvioRechazaYReanudaSobreSocket(t *testing.T) {
+	t.Parallel()
+	socketPath := filepath.Join(t.TempDir(), "ipc.sock")
+	buzon := abrirBuzonPrueba(t)
+	colaSalida := outbox.NuevaColaDeSalida(buzon.DB(), 1000, 3, nil, nil, nil)
+	portero := outbox.NuevoPorteroDeSalida(colaSalida, nil, nil, nil, nil)
+
+	srv := servidor.NuevoServidor(servidor.Dependencias{
+		RutaSocket: socketPath,
+		IdCelula:   "test-cell",
+		Buzon:      buzon,
+		Portero:    portero,
+	})
+	if err := srv.Escuchar(context.Background()); err != nil {
+		t.Fatalf("fallo al escuchar: %v", err)
+	}
+	defer srv.Cerrar()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go srv.Aceptar(ctx)
+
+	conn, err := net.Dial("unix", socketPath)
+	if err != nil {
+		t.Fatalf("error conectando cliente: %v", err)
+	}
+	defer conn.Close()
+	lector := bufio.NewReader(conn)
+
+	saludo, _ := ipc.Codificar(ipc.NuevoSobre(ipc.Saludo{Emisor: ipc.EmisorNucleo, IdCelula: "test-cell"}))
+	_, _ = conn.Write(saludo)
+	_, _ = lector.ReadBytes('\n')
+
+	// 1. Pausar: la orden devuelve acuse aplicado.
+	ordenPausa, _ := ipc.Codificar(ipc.NuevoSobre(ipc.OrdenPausaDeEnvio{Accion: ipc.AccionPausarEnvio}))
+	_, _ = conn.Write(ordenPausa)
+	linea, err := lector.ReadBytes('\n')
+	if err != nil {
+		t.Fatalf("error recibiendo acuse de pausa: %v", err)
+	}
+	sobrePausa, err := ipc.Decodificar(linea)
+	if err != nil || sobrePausa.Tipo != ipc.TipoAcusePausaDeEnvio {
+		t.Fatalf("acuse de pausa inválido: %v, sobre=%+v", err, sobrePausa)
+	}
+	if acuse := sobrePausa.Cuerpo.(ipc.AcusePausaDeEnvio); acuse.Resultado != ipc.ResultadoPausaAplicado {
+		t.Fatalf("se esperaba aplicado, se obtuvo: %+v", acuse)
+	}
+
+	// 2. Enviar con pausa vigente: rechazo observable, sin encolar.
+	msg, _ := ipc.Codificar(ipc.NuevoSobre(ipc.MensajeSaliente{
+		IdMensaje:             "msg-1",
+		IdConversacion:        "conv-1",
+		Contenido:             "hola",
+		MarcaTemporalOrigenMs: 2000,
+	}))
+	_, _ = conn.Write(msg)
+	linea, err = lector.ReadBytes('\n')
+	if err != nil {
+		t.Fatalf("error recibiendo acuse de envío rechazado: %v", err)
+	}
+	sobreEnvio, err := ipc.Decodificar(linea)
+	if err != nil || sobreEnvio.Tipo != ipc.TipoAcuseEnvio {
+		t.Fatalf("acuse de envío inválido: %v, sobre=%+v", err, sobreEnvio)
+	}
+	acuseEnvio := sobreEnvio.Cuerpo.(ipc.AcuseEnvio)
+	if acuseEnvio.Estado != ipc.EstadoEnvioFallido || acuseEnvio.Motivo != "envio_pausado" {
+		t.Fatalf("se esperaba fallido/envio_pausado, se obtuvo: %+v", acuseEnvio)
+	}
+	var cuenta int
+	buzon.DB().QueryRow("SELECT COUNT(*) FROM cola_salida").Scan(&cuenta)
+	if cuenta != 0 {
+		t.Fatalf("nada debía encolarse bajo pausa: cola_salida=%d", cuenta)
+	}
+
+	// 3. Reanudar: la orden devuelve acuse aplicado.
+	ordenReanuda, _ := ipc.Codificar(ipc.NuevoSobre(ipc.OrdenPausaDeEnvio{Accion: ipc.AccionReanudarEnvio}))
+	_, _ = conn.Write(ordenReanuda)
+	linea, err = lector.ReadBytes('\n')
+	if err != nil {
+		t.Fatalf("error recibiendo acuse de reanudación: %v", err)
+	}
+	sobreReanuda, err := ipc.Decodificar(linea)
+	if err != nil || sobreReanuda.Tipo != ipc.TipoAcusePausaDeEnvio {
+		t.Fatalf("acuse de reanudación inválido: %v, sobre=%+v", err, sobreReanuda)
+	}
+	if acuse := sobreReanuda.Cuerpo.(ipc.AcusePausaDeEnvio); acuse.Resultado != ipc.ResultadoPausaAplicado {
+		t.Fatalf("se esperaba aplicado, se obtuvo: %+v", acuse)
+	}
+
+	// 4. Enviar tras reanudar: se encola. Una segunda orden de reanudación (idempotente) sirve de
+	// barrera ordenada: su acuse garantiza que msg-2 ya fue procesado antes.
+	msg2, _ := ipc.Codificar(ipc.NuevoSobre(ipc.MensajeSaliente{
+		IdMensaje:             "msg-2",
+		IdConversacion:        "conv-1",
+		Contenido:             "hola de nuevo",
+		MarcaTemporalOrigenMs: 3000,
+	}))
+	_, _ = conn.Write(msg2)
+	_, _ = conn.Write(ordenReanuda)
+	if _, err := lector.ReadBytes('\n'); err != nil {
+		t.Fatalf("error recibiendo acuse de barrera: %v", err)
+	}
+	buzon.DB().QueryRow("SELECT COUNT(*) FROM cola_salida WHERE id_mensaje='msg-2'").Scan(&cuenta)
+	if cuenta != 1 {
+		t.Fatalf("el mensaje reanudado debía encolarse, filas=%d", cuenta)
 	}
 }

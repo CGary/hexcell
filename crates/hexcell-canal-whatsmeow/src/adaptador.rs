@@ -92,6 +92,29 @@ pub(crate) enum EventoDeEmparejamiento {
     Acuse(crate::mensajes::AcuseEmparejamiento),
 }
 
+/// Plazo por omisión para el cierre de sesión.
+///
+/// El trait `CicloDeVidaSesion::cerrar_sesion` no recibe plazo, así que se fija uno generoso:
+/// desvincular es una operación rara, no interactiva, y su acuse llega tras el `client.Logout`
+/// real del lado del sidecar.
+const PLAZO_CIERRE_DE_SESION: Duration = Duration::from_secs(30);
+
+/// Acuses de cierre de sesión y de pausa de envío pendientes de correlación.
+///
+/// Ambas operaciones son raras y unitarias: como máximo una de cada en vuelo, así que un
+/// `oneshot` opcional por operación basta, sin mapa ni clave de correlación. A diferencia de los
+/// acuses de respaldo, `acuse_cierre_de_sesion` y `acuse_pausa_de_envio` no portan identificador
+/// de ronda con el que correlacionar.
+#[derive(Default)]
+struct PendientesDeSesion {
+    cierre: tokio::sync::Mutex<
+        Option<tokio::sync::oneshot::Sender<crate::mensajes::AcuseCierreDeSesion>>,
+    >,
+    pausa: tokio::sync::Mutex<
+        Option<tokio::sync::oneshot::Sender<crate::mensajes::AcusePausaDeEnvio>>,
+    >,
+}
+
 /// Adaptador `ChannelAdapter` + `CicloDeVidaSesion` sobre IPC con el sidecar whatsmeow.
 ///
 /// Implementa la semántica del canal propio: ventana siempre abierta, sin plantilla requerida,
@@ -134,6 +157,8 @@ pub struct AdaptadorWhatsmeow {
     >,
     /// Canal de eventos de emparejamiento en curso, si lo hay.
     emparejamiento_pendiente: Arc<tokio::sync::Mutex<Option<mpsc::Sender<EventoDeEmparejamiento>>>>,
+    /// Acuses de cierre de sesión y de pausa de envío pendientes de correlación.
+    pendientes_de_sesion: Arc<PendientesDeSesion>,
 }
 
 impl AdaptadorWhatsmeow {
@@ -166,6 +191,7 @@ impl AdaptadorWhatsmeow {
             respaldo_pendiente: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
             respaldo_identidad_pendiente: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
             emparejamiento_pendiente: Arc::new(tokio::sync::Mutex::new(None)),
+            pendientes_de_sesion: Arc::new(PendientesDeSesion::default()),
         };
 
         (adaptador, receptor_eventos)
@@ -186,6 +212,7 @@ impl AdaptadorWhatsmeow {
         let respaldo_pendiente = Arc::clone(&self.respaldo_pendiente);
         let respaldo_identidad_pendiente = Arc::clone(&self.respaldo_identidad_pendiente);
         let emparejamiento_pendiente = Arc::clone(&self.emparejamiento_pendiente);
+        let pendientes_de_sesion = Arc::clone(&self.pendientes_de_sesion);
 
         tokio::spawn(async move {
             bucle_de_conexion(
@@ -199,6 +226,7 @@ impl AdaptadorWhatsmeow {
                 respaldo_pendiente,
                 respaldo_identidad_pendiente,
                 emparejamiento_pendiente,
+                pendientes_de_sesion,
             )
             .await;
         });
@@ -381,6 +409,153 @@ impl AdaptadorWhatsmeow {
             }
         }
     }
+
+    /// Ordena el cierre de sesión y desvinculación del dispositivo al sidecar y espera el acuse.
+    ///
+    /// Espeja el patrón de correlación pendiente de [`Self::ordenar_respaldo_sqlstore`], pero sin
+    /// clave de ronda: la orden y el acuse de cierre no portan identificador, y hay como máximo
+    /// una desvinculación en vuelo. Devuelve `Ok(())` si el sidecar reporta `completado`, o un
+    /// error si reporta `fallido`, si el plazo se agota o si la conexión se pierde.
+    ///
+    /// El error de rechazo y de plazo reutiliza [`ErrorCanalWhatsmeow::ErrorDeProtocolo`] a
+    /// propósito: el crate `error` queda fuera del alcance de esta tarea y no se le añaden
+    /// variantes nuevas para esta operación.
+    pub async fn ordenar_cierre_de_sesion(
+        &self,
+        plazo: Duration,
+    ) -> Result<(), ErrorCanalWhatsmeow> {
+        if self.escritor_compartido.lock().await.is_none() {
+            return Err(ErrorCanalWhatsmeow::SinConexion);
+        }
+
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        {
+            let mut pendiente = self.pendientes_de_sesion.cierre.lock().await;
+            *pendiente = Some(tx);
+        }
+
+        let orden = crate::mensajes::OrdenCierreDeSesion {
+            version: crate::mensajes::VERSION_PROTOCOLO,
+            tipo: "orden_cierre_de_sesion".to_string(),
+            motivo: String::new(),
+        };
+        let linea = serde_json::to_string(&orden).map_err(|e| {
+            ErrorCanalWhatsmeow::ErrorDeProtocolo(format!(
+                "no se pudo serializar orden_cierre_de_sesion: {e}"
+            ))
+        })?;
+
+        if let Err(e) = escribir_linea(&self.escritor_compartido, &linea).await {
+            let mut pendiente = self.pendientes_de_sesion.cierre.lock().await;
+            *pendiente = None;
+            return Err(e);
+        }
+
+        match tokio::time::timeout(plazo, rx).await {
+            Ok(Ok(acuse)) => {
+                if acuse.resultado == "completado" {
+                    Ok(())
+                } else {
+                    Err(ErrorCanalWhatsmeow::ErrorDeProtocolo(format!(
+                        "cierre de sesión rechazado por el sidecar: {}",
+                        acuse.motivo
+                    )))
+                }
+            }
+            Ok(Err(_oneshot_caido)) => {
+                let mut pendiente = self.pendientes_de_sesion.cierre.lock().await;
+                *pendiente = None;
+                Err(ErrorCanalWhatsmeow::ErrorDeProtocolo(
+                    "no se recibió acuse de cierre de sesión: la conexión terminó".to_string(),
+                ))
+            }
+            Err(_agotado) => {
+                let mut pendiente = self.pendientes_de_sesion.cierre.lock().await;
+                *pendiente = None;
+                Err(ErrorCanalWhatsmeow::ErrorDeProtocolo(
+                    "no se recibió acuse de cierre de sesión dentro del plazo".to_string(),
+                ))
+            }
+        }
+    }
+
+    /// Ordena pausar o reanudar el envío saliente al sidecar y espera el acuse.
+    ///
+    /// Espeja [`Self::ordenar_respaldo_sqlstore`]: devuelve el acuse crudo del sidecar, sin
+    /// interpretar su `resultado` (el llamante decide). Igual que el cierre de sesión, no hay
+    /// clave de ronda; la correlación es un `oneshot` único.
+    pub async fn ordenar_pausa_de_envio(
+        &self,
+        accion: &str,
+        plazo: Duration,
+    ) -> Result<crate::mensajes::AcusePausaDeEnvio, ErrorCanalWhatsmeow> {
+        if self.escritor_compartido.lock().await.is_none() {
+            return Err(ErrorCanalWhatsmeow::SinConexion);
+        }
+
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        {
+            let mut pendiente = self.pendientes_de_sesion.pausa.lock().await;
+            *pendiente = Some(tx);
+        }
+
+        let orden = crate::mensajes::OrdenPausaDeEnvio {
+            version: crate::mensajes::VERSION_PROTOCOLO,
+            tipo: "orden_pausa_de_envio".to_string(),
+            accion: accion.to_string(),
+        };
+        let linea = serde_json::to_string(&orden).map_err(|e| {
+            ErrorCanalWhatsmeow::ErrorDeProtocolo(format!(
+                "no se pudo serializar orden_pausa_de_envio: {e}"
+            ))
+        })?;
+
+        if let Err(e) = escribir_linea(&self.escritor_compartido, &linea).await {
+            let mut pendiente = self.pendientes_de_sesion.pausa.lock().await;
+            *pendiente = None;
+            return Err(e);
+        }
+
+        match tokio::time::timeout(plazo, rx).await {
+            Ok(Ok(acuse)) => Ok(acuse),
+            Ok(Err(_oneshot_caido)) => {
+                let mut pendiente = self.pendientes_de_sesion.pausa.lock().await;
+                *pendiente = None;
+                Err(ErrorCanalWhatsmeow::ErrorDeProtocolo(
+                    "no se recibió acuse de pausa de envío: la conexión terminó".to_string(),
+                ))
+            }
+            Err(_agotado) => {
+                let mut pendiente = self.pendientes_de_sesion.pausa.lock().await;
+                *pendiente = None;
+                Err(ErrorCanalWhatsmeow::ErrorDeProtocolo(
+                    "no se recibió acuse de pausa de envío dentro del plazo".to_string(),
+                ))
+            }
+        }
+    }
+}
+
+/// Escribe una línea del protocolo por el extremo de escritura compartido.
+///
+/// Vive en `adaptador` (no en `conexion`) porque las órdenes de cierre de sesión y de pausa de
+/// envío no tienen función de transporte dedicada en `conexion`, y esta tarea no toca ese módulo.
+async fn escribir_linea(
+    escritor_compartido: &Arc<
+        tokio::sync::Mutex<Option<tokio::io::WriteHalf<tokio::net::UnixStream>>>,
+    >,
+    linea: &str,
+) -> Result<(), ErrorCanalWhatsmeow> {
+    use tokio::io::AsyncWriteExt;
+    let mut guardia = escritor_compartido.lock().await;
+    if let Some(escritor) = guardia.as_mut() {
+        escritor.write_all(linea.as_bytes()).await?;
+        escritor.write_all(b"\n").await?;
+        escritor.flush().await?;
+        Ok(())
+    } else {
+        Err(ErrorCanalWhatsmeow::SinConexion)
+    }
 }
 
 /// Bucle de conexión con reconexión automática.
@@ -406,6 +581,7 @@ async fn bucle_de_conexion(
         >,
     >,
     emparejamiento_pendiente: Arc<tokio::sync::Mutex<Option<mpsc::Sender<EventoDeEmparejamiento>>>>,
+    pendientes_de_sesion: Arc<PendientesDeSesion>,
 ) {
     loop {
         // Intentar conectar.
@@ -432,6 +608,7 @@ async fn bucle_de_conexion(
                             &respaldo_pendiente,
                             &respaldo_identidad_pendiente,
                             &emparejamiento_pendiente,
+                            &pendientes_de_sesion,
                         )
                         .await
                         {
@@ -492,6 +669,7 @@ async fn bucle_de_conexion(
 }
 
 /// Lee mensajes de una conexión activa y los despacha.
+#[allow(clippy::too_many_arguments)]
 async fn leer_mensajes(
     conexion: &mut Conexion,
     remitente: &mpsc::Sender<EventoEntrante>,
@@ -510,6 +688,7 @@ async fn leer_mensajes(
     emparejamiento_pendiente: &Arc<
         tokio::sync::Mutex<Option<mpsc::Sender<EventoDeEmparejamiento>>>,
     >,
+    pendientes_de_sesion: &Arc<PendientesDeSesion>,
 ) -> Result<(), ErrorCanalWhatsmeow> {
     loop {
         let mensaje = conexion.leer_mensaje().await?;
@@ -636,6 +815,28 @@ async fn leer_mensajes(
                     );
                 }
             }
+            MensajeEntrante::AcuseCierreDeSesion(acuse) => {
+                let remitente = {
+                    let mut pendiente = pendientes_de_sesion.cierre.lock().await;
+                    pendiente.take()
+                };
+                if let Some(tx) = remitente {
+                    let _ = tx.send(acuse);
+                } else {
+                    eprintln!("hexcell-canal-whatsmeow: acuse_cierre_de_sesion huérfano recibido");
+                }
+            }
+            MensajeEntrante::AcusePausaDeEnvio(acuse) => {
+                let remitente = {
+                    let mut pendiente = pendientes_de_sesion.pausa.lock().await;
+                    pendiente.take()
+                };
+                if let Some(tx) = remitente {
+                    let _ = tx.send(acuse);
+                } else {
+                    eprintln!("hexcell-canal-whatsmeow: acuse_pausa_de_envio huérfano recibido");
+                }
+            }
             MensajeEntrante::AcuseEnvio(_) => {
                 // Los acuses de envío se consumen sin elevar la taxonomía de whatsmeow al puerto.
             }
@@ -740,10 +941,11 @@ impl hexcell_core::canal::CicloDeVidaSesion for AdaptadorWhatsmeow {
 
     /// Cierra la sesión y desvincula el dispositivo.
     ///
-    /// La implementación completa requiere el cable de salida (tarea 12).
+    /// Envía `orden_cierre_de_sesion` y resuelve según el acuse real del sidecar: `Ok(())` si
+    /// reporta `completado`, o un error si reporta `fallido`, si el plazo se agota o si no hay
+    /// conexión activa. Ya no devuelve `SinConexion` incondicionalmente (tarea 24 de A-6).
     async fn cerrar_sesion(&self) -> Result<(), Self::Error> {
-        // TODO(A-3): implementar cuando el cable de salida esté completo.
-        Err(ErrorCanalWhatsmeow::SinConexion)
+        self.ordenar_cierre_de_sesion(PLAZO_CIERRE_DE_SESION).await
     }
 
     /// Consulta el estado actual de la sesión del canal.

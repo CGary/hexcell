@@ -1,6 +1,6 @@
 # Protocolo IPC entre el núcleo y el sidecar
 
-* **Versión de este protocolo:** 1.4, fijada el 2026-08-20.
+* **Versión de este protocolo:** 1.5, fijada el 2026-09-11.
 * **Etapa que lo redacta:** A-3 (tarea 1 de `docs/plan/fase-a-3-adaptador-whatsmeow.md`).
 * **Etapa que lo implementa:** A-3, repartida entre varias tareas. Este documento **declara** la
   semántica completa; el código que la cumple llega después y por partes: el outbox durable
@@ -30,6 +30,7 @@
 | 1.2 | `3` |
 | 1.3 | `4` |
 | 1.4 | `5` |
+| 1.5 | `6` |
 
 ---
 
@@ -79,8 +80,8 @@ Los dos primeros campos de **toda** línea son siempre los mismos y en este orde
 
 | Campo | Tipo | Descripción |
 | :--- | :--- | :--- |
-| `version` | entero | Versión de cable del protocolo. En esta especificación, `5`. |
-| `tipo` | cadena | Uno de los trece tipos cerrados de la sección 6. |
+| `version` | entero | Versión de cable del protocolo. En esta especificación, `6`. |
+| `tipo` | cadena | Uno de los diecisiete tipos cerrados de la sección 6. |
 
 ### Por qué JSON y no un formato binario, y qué se difiere a `adr-0011`
 
@@ -165,7 +166,7 @@ desajuste de versión es un error de despliegue —una imagen que no se actualiz
 tratarlo como tal, con la célula caída y un mensaje claro, es mucho más barato que descubrirlo
 semanas después por un campo que se leía torcido.
 
-Con la versión 1.2 del documento, la versión de cable pasa de `2` a `3`. Con la versión 1.3, pasa de `3` a `4`. La regla no cambia de
+Con la versión 1.2 del documento, la versión de cable pasa de `2` a `3`. Con la versión 1.3, pasa de `3` a `4`. Con la versión 1.4, pasa de `4` a `5`. Con la versión 1.5, pasa de `5` a `6`. La regla no cambia de
 sustancia: sigue siendo igualdad estricta del entero, en las dos direcciones, sin negociación ni
 degradación. Si un sidecar que habla la versión 4 recibe un saludo con versión 3, cierra la
 conexión e informa; el caso inverso es simétrico. En la práctica, este desajuste indica que una
@@ -269,11 +270,14 @@ reactivación automática.
 
 ## 6. Conjunto cerrado de tipos de mensaje
 
-Trece tipos. Los seis de la versión 1.0 se conservan intactos; los tres tipos de emparejamiento
+Diecisiete tipos. Los seis de la versión 1.0 se conservan intactos; los tres tipos de emparejamiento
 llegan con la versión 1.1. La versión 1.2 no añade tipos: solo cierra el vocabulario de
 `estado_sesion`. La versión 1.3 añade dos tipos para la dirección saliente: `mensaje_saliente` y `acuse_envio`.
 La versión 1.4 añade dos tipos para el respaldo del almacén de identidad del sidecar
 (`identidad.db`): `orden_respaldo_identidad` y `acuse_respaldo_identidad` (`adr-0022`).
+La versión 1.5 añade cuatro tipos: `orden_cierre_de_sesion` y `acuse_cierre_de_sesion` para el
+cierre y desvinculación de la sesión (tarea 24 de A-6), y `orden_pausa_de_envio` y
+`acuse_pausa_de_envio` para pausar y reanudar el envío saliente.
 Ampliar el conjunto de tipos es cambiar la versión del protocolo.
 
 | `tipo` | Dirección | Propósito |
@@ -291,12 +295,16 @@ Ampliar el conjunto de tipos es cambiar la versión del protocolo.
 | `acuse_emparejamiento` | sidecar → núcleo | Resultado terminal del emparejamiento. |
 | `mensaje_saliente` | núcleo → sidecar | Mensaje que el núcleo envía hacia el canal. |
 | `acuse_envio` | sidecar → núcleo | Notificación de progreso o fallo de un mensaje saliente. |
+| `orden_cierre_de_sesion` | núcleo → sidecar | Orden de cerrar la sesión y desvincular el dispositivo de WhatsApp. |
+| `acuse_cierre_de_sesion` | sidecar → núcleo | Desenlace de esa desvinculación. |
+| `orden_pausa_de_envio` | núcleo → sidecar | Orden de pausar o reanudar el envío saliente. |
+| `acuse_pausa_de_envio` | sidecar → núcleo | Desenlace de esa orden de pausa o reanudación. |
 
 ### `saludo`
 
 | Campo | Tipo | Descripción |
 | :--- | :--- | :--- |
-| `version` | entero | `5`. |
+| `version` | entero | `6`. |
 | `tipo` | cadena | `saludo`. |
 | `emisor` | cadena | `nucleo` o `sidecar`. |
 | `id_celula` | cadena | Identificador opaco de la célula, para correlacionar registros. |
@@ -305,7 +313,7 @@ Ampliar el conjunto de tipos es cambiar la versión del protocolo.
 
 | Campo | Tipo | Descripción |
 | :--- | :--- | :--- |
-| `version` | entero | `5`. |
+| `version` | entero | `6`. |
 | `tipo` | cadena | `evento_entrante`. |
 | `id_deduplicacion` | cadena | Identificador durable del evento (FR-12). Es lo que el acuse referencia. |
 | `id_conversacion` | cadena | Identificador **interno** del hilo, opaco para el núcleo. |
@@ -328,7 +336,7 @@ contra el que ese TTL existe.
 
 | Campo | Tipo | Descripción |
 | :--- | :--- | :--- |
-| `version` | entero | `5`. |
+| `version` | entero | `6`. |
 | `tipo` | cadena | `confirmacion`. |
 | `id_deduplicacion` | cadena | El mismo que llegó en el `evento_entrante`. Nunca un número de secuencia. |
 
@@ -336,7 +344,7 @@ contra el que ese TTL existe.
 
 | Campo | Tipo | Descripción |
 | :--- | :--- | :--- |
-| `version` | entero | `5`. |
+| `version` | entero | `6`. |
 | `tipo` | cadena | `estado_sesion`. |
 | `estado` | cadena | `activa`, `reconectando`, `desvinculada` o `pausada`. |
 | `causa` | cadena | Variante cruda de la taxonomía de desconexión; `""` si no aplica. |
@@ -388,11 +396,16 @@ La rama `baneo_temporal` entra en `pausada`, usa el retroceso largo configurado 
 camino de reactivación automática. Volver al servicio exige reiniciar el proceso o contenedor por
 decisión humana; no existe mensaje IPC de reanudación.
 
+La `orden_pausa_de_envio` de la versión 1.5 es **otra cosa** y no contradice lo anterior: no es una
+vía de reactivación de un baneo temporal, sino una compuerta de envío saliente que el **núcleo**
+activa y desactiva a voluntad. El estado `pausada` sigue siendo terminal hasta el reinicio humano
+(`adr-0015`); la pausa de envío es reversible por orden IPC y no toca la sesión de WhatsApp.
+
 ### `orden_emparejar`
 
 | Campo | Tipo | Descripción |
 | :--- | :--- | :--- |
-| `version` | entero | `5`. |
+| `version` | entero | `6`. |
 | `tipo` | cadena | `orden_emparejar`. |
 | `metodo` | cadena | `qr` o `codigo_de_vinculacion`. |
 
@@ -406,7 +419,7 @@ identificador de transporte.
 
 | Campo | Tipo | Descripción |
 | :--- | :--- | :--- |
-| `version` | entero | `5`. |
+| `version` | entero | `6`. |
 | `tipo` | cadena | `codigo_emparejamiento`. |
 | `metodo` | cadena | `qr` o `codigo_de_vinculacion`. Indica de qué tipo es `valor`. |
 | `valor` | cadena | Dato opaco: la cadena a codificar como QR, o el código de ocho caracteres. |
@@ -420,7 +433,7 @@ exactamente uno.
 
 | Campo | Tipo | Descripción |
 | :--- | :--- | :--- |
-| `version` | entero | `5`. |
+| `version` | entero | `6`. |
 | `tipo` | cadena | `acuse_emparejamiento`. |
 | `resultado` | cadena | `completado`, `expirado` o `fallido`. |
 | `motivo` | cadena | Descripción legible si `resultado` es `fallido`; `""` en caso contrario. **Nunca lleva la cadena QR, el código de vinculación ni ningún otro dato de credencial.** |
@@ -429,7 +442,7 @@ exactamente uno.
 
 | Campo | Tipo | Descripción |
 | :--- | :--- | :--- |
-| `version` | entero | `5`. |
+| `version` | entero | `6`. |
 | `tipo` | cadena | `mensaje_saliente`. |
 | `id_mensaje` | cadena | Identificador global del mensaje originado en el núcleo. |
 | `id_conversacion` | cadena | Identificador interno de la conversación destino. |
@@ -440,13 +453,58 @@ exactamente uno.
 
 | Campo | Tipo | Descripción |
 | :--- | :--- | :--- |
-| `version` | entero | `5`. |
+| `version` | entero | `6`. |
 | `tipo` | cadena | `acuse_envio`. |
 | `id_mensaje` | cadena | El mismo identificador global del `mensaje_saliente`. |
 | `estado` | cadena | Estado de la entrega: `enviado`, `entregado`, `leido` o `fallido`. |
 | `id_correlacion` | cadena | Identificador asignado por el canal subyacente (ej. whatsmeow) al enviar; `""` si el estado es `fallido` temprano. |
 | `motivo` | cadena | Descripción legible del error si el estado es `fallido`; `""` en caso contrario. |
 | `marca_temporal_ms` | entero | Momento del suceso en milisegundos desde la época Unix. |
+
+### `orden_cierre_de_sesion`
+
+| Campo | Tipo | Descripción |
+| :--- | :--- | :--- |
+| `version` | entero | `6`. |
+| `tipo` | cadena | `orden_cierre_de_sesion`. |
+| `motivo` | cadena | Descripción legible de por qué se ordena el cierre; `""` si no aplica. Nunca lleva una ruta de credencial ni un identificador de transporte (`adr-0019`). |
+
+La orden ejecuta el cierre real de whatsmeow (`client.Logout`): desvincula el dispositivo del lado
+de WhatsApp y destruye las credenciales del `sqlstore`. Es **irreversible** y exige un nuevo
+emparejamiento QR para volver a operar.
+
+### `acuse_cierre_de_sesion`
+
+| Campo | Tipo | Descripción |
+| :--- | :--- | :--- |
+| `version` | entero | `6`. |
+| `tipo` | cadena | `acuse_cierre_de_sesion`. |
+| `resultado` | cadena | `completado` o `fallido`. |
+| `motivo` | cadena | Descripción legible si `resultado` es `fallido`; `""` en caso contrario. Nunca nombra una ruta de credencial (`adr-0019`). |
+
+### `orden_pausa_de_envio`
+
+| Campo | Tipo | Descripción |
+| :--- | :--- | :--- |
+| `version` | entero | `6`. |
+| `tipo` | cadena | `orden_pausa_de_envio`. |
+| `accion` | cadena | `pausar` o `reanudar`. El protocolo solo admite cadenas y enteros, así que la pausa es una acción cerrada, no un booleano. |
+
+Mientras la pausa está activa, el sidecar **rechaza** cada intento de envío saliente con un
+`acuse_envio` de estado `fallido` y motivo `envio_pausado`. No hay búfer, cola ni descarte
+silencioso: el núcleo decide qué hacer con el rechazo. La pausa es **memoria de proceso** del
+sidecar: no se persiste en ningún almacén y un reinicio o reconexión devuelve el envío al estado
+activo.
+
+### `acuse_pausa_de_envio`
+
+| Campo | Tipo | Descripción |
+| :--- | :--- | :--- |
+| `version` | entero | `6`. |
+| `tipo` | cadena | `acuse_pausa_de_envio`. |
+| `accion` | cadena | La misma acción recibida en la orden: `pausar` o `reanudar`. |
+| `resultado` | cadena | `aplicado` si la compuerta cambió; `fallido` si la orden no se pudo aplicar. |
+| `motivo` | cadena | Descripción legible si `resultado` es `fallido`; `""` en caso contrario. |
 
 ---
 
@@ -461,7 +519,7 @@ contrato sin modificarlo**: los campos de las dos tablas siguientes son exactame
 
 | Campo | Tipo | Descripción |
 | :--- | :--- | :--- |
-| `version` | entero | `5`. |
+| `version` | entero | `6`. |
 | `tipo` | cadena | `orden_respaldo_sqlstore`. |
 | `orden` | cadena | Cadena fija `respaldar_sqlstore`. |
 | `destino` | cadena | Directorio de destino ya resuelto por quien dispara la orden. |
@@ -471,7 +529,7 @@ contrato sin modificarlo**: los campos de las dos tablas siguientes son exactame
 
 | Campo | Tipo | Descripción |
 | :--- | :--- | :--- |
-| `version` | entero | `5`. |
+| `version` | entero | `6`. |
 | `tipo` | cadena | `acuse_respaldo_sqlstore`. |
 | `identificador_de_ronda` | cadena | El mismo recibido en la orden. |
 | `resultado` | cadena | `completado` o `fallido`. |
@@ -510,7 +568,7 @@ un solo byte.
 
 | Campo | Tipo | Descripción |
 | :--- | :--- | :--- |
-| `version` | entero | `5`. |
+| `version` | entero | `6`. |
 | `tipo` | cadena | `orden_respaldo_identidad`. |
 | `orden` | cadena | Cadena fija `respaldar_identidad`. |
 | `destino` | cadena | Directorio de destino ya resuelto por quien dispara la orden. |
@@ -520,7 +578,7 @@ un solo byte.
 
 | Campo | Tipo | Descripción |
 | :--- | :--- | :--- |
-| `version` | entero | `5`. |
+| `version` | entero | `6`. |
 | `tipo` | cadena | `acuse_respaldo_identidad`. |
 | `identificador_de_ronda` | cadena | El mismo recibido en la orden. |
 | `resultado` | cadena | `completado` o `fallido`. |

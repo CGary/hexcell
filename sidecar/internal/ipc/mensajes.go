@@ -1,7 +1,7 @@
 // Package ipc es la representación tipada del protocolo que fija
-// `docs/protocolo-ipc-nucleo-sidecar.md`, versión 1.4 (versión de cable 5).
+// `docs/protocolo-ipc-nucleo-sidecar.md`, versión 1.5 (versión de cable 6).
 //
-// Aquí no hay socket, ni escucha, ni outbox: solo los objetos de valor de los trece tipos de
+// Aquí no hay socket, ni escucha, ni outbox: solo los objetos de valor de los diecisiete tipos de
 // mensaje y dos funciones puras, [Codificar] y [Decodificar]. El transporte llega con la tarea 3
 // del plan de la etapa A-3; separarlo permite comprobar el formato con tests normales, sin abrir
 // ningún descriptor, por el mismo motivo por el que `registro::formatear` está separado de
@@ -29,7 +29,7 @@ import (
 )
 
 // VersionProtocolo es la versión que este binario habla. Un desajuste cierra la conexión.
-const VersionProtocolo int64 = 5
+const VersionProtocolo int64 = 6
 
 // LongitudMaximaDeLinea es el techo de una línea del protocolo, en bytes, salto de línea
 // incluido. Existe para que el lector del otro extremo dimensione un búfer acotado.
@@ -44,7 +44,7 @@ const (
 // TipoMensaje es el conjunto cerrado de tipos del documento.
 type TipoMensaje string
 
-// Los trece tipos del protocolo, ni uno más.
+// Los diecisiete tipos del protocolo, ni uno más.
 const (
 	TipoSaludo                 TipoMensaje = "saludo"
 	TipoEventoEntrante         TipoMensaje = "evento_entrante"
@@ -59,6 +59,10 @@ const (
 	TipoAcuseEmparejamiento    TipoMensaje = "acuse_emparejamiento"
 	TipoMensajeSaliente        TipoMensaje = "mensaje_saliente"
 	TipoAcuseEnvio             TipoMensaje = "acuse_envio"
+	TipoOrdenCierreDeSesion    TipoMensaje = "orden_cierre_de_sesion"
+	TipoAcuseCierreDeSesion    TipoMensaje = "acuse_cierre_de_sesion"
+	TipoOrdenPausaDeEnvio      TipoMensaje = "orden_pausa_de_envio"
+	TipoAcusePausaDeEnvio      TipoMensaje = "acuse_pausa_de_envio"
 )
 
 // Valores cerrados del campo `emisor` de un saludo.
@@ -125,6 +129,18 @@ const (
 	ResultadoEmparejamientoExpirado   = "expirado"
 	ResultadoEmparejamientoFallido    = "fallido"
 )
+
+// Valores cerrados del campo `accion` de la orden y el acuse de pausa de envío. La pausa se
+// expresa como acción `pausar`/`reanudar`, nunca como un booleano: el protocolo solo admite
+// cadenas y enteros (sección 1 del documento).
+const (
+	AccionPausarEnvio   = "pausar"
+	AccionReanudarEnvio = "reanudar"
+)
+
+// ResultadoPausaAplicado es el valor cerrado del campo `resultado` de un acuse de pausa de envío
+// cuando la compuerta se aplicó; el fallo reutiliza [ResultadoFallido].
+const ResultadoPausaAplicado = "aplicado"
 
 // Errores de protocolo. Cualquiera de ellos cierra la conexión: una vez que el delimitado por
 // líneas es dudoso, seguir leyendo es adivinar.
@@ -334,6 +350,48 @@ func (a AcuseEnvio) valores() []any {
 	return []any{a.IdMensaje, a.Estado, a.IdCorrelacion, a.Motivo, a.MarcaTemporalMs}
 }
 
+// OrdenCierreDeSesion es la orden del núcleo de cerrar la sesión y desvincular el dispositivo de
+// WhatsApp. La operación es irreversible: usa el cierre real de whatsmeow y exige un nuevo
+// emparejamiento QR después.
+type OrdenCierreDeSesion struct {
+	Motivo string
+}
+
+func (OrdenCierreDeSesion) tipo() TipoMensaje { return TipoOrdenCierreDeSesion }
+func (o OrdenCierreDeSesion) valores() []any  { return []any{o.Motivo} }
+
+// AcuseCierreDeSesion es el desenlace de esa orden. El motivo nunca nombra una ruta de credencial
+// ni un identificador de transporte (adr-0019).
+type AcuseCierreDeSesion struct {
+	Resultado string
+	Motivo    string
+}
+
+func (AcuseCierreDeSesion) tipo() TipoMensaje { return TipoAcuseCierreDeSesion }
+func (a AcuseCierreDeSesion) valores() []any  { return []any{a.Resultado, a.Motivo} }
+
+// OrdenPausaDeEnvio es la orden del núcleo de pausar o reanudar el envío saliente. La compuerta
+// es memoria de proceso del sidecar: no se persiste en ningún almacén y un reinicio devuelve el
+// envío al estado activo. No guarda relación con el estado de sesión `pausada` (adr-0015).
+type OrdenPausaDeEnvio struct {
+	Accion string
+}
+
+func (OrdenPausaDeEnvio) tipo() TipoMensaje { return TipoOrdenPausaDeEnvio }
+func (o OrdenPausaDeEnvio) valores() []any  { return []any{o.Accion} }
+
+// AcusePausaDeEnvio es el desenlace de esa orden: qué acción se pidió y con qué resultado.
+type AcusePausaDeEnvio struct {
+	Accion    string
+	Resultado string
+	Motivo    string
+}
+
+func (AcusePausaDeEnvio) tipo() TipoMensaje { return TipoAcusePausaDeEnvio }
+func (a AcusePausaDeEnvio) valores() []any {
+	return []any{a.Accion, a.Resultado, a.Motivo}
+}
+
 // descriptor declara los campos del cuerpo de un tipo y cómo reconstruirlo al decodificar.
 type descriptor struct {
 	campos    []declaracion
@@ -515,6 +573,37 @@ var descriptores = map[TipoMensaje]descriptor{
 			}
 		},
 	},
+	TipoOrdenCierreDeSesion: {
+		campos: []declaracion{{"motivo", claseCadena}},
+		construir: func(cadenas []string, _ []int64) Cuerpo {
+			return OrdenCierreDeSesion{Motivo: cadenas[0]}
+		},
+	},
+	TipoAcuseCierreDeSesion: {
+		campos: []declaracion{
+			{"resultado", claseCadena},
+			{"motivo", claseCadena},
+		},
+		construir: func(cadenas []string, _ []int64) Cuerpo {
+			return AcuseCierreDeSesion{Resultado: cadenas[0], Motivo: cadenas[1]}
+		},
+	},
+	TipoOrdenPausaDeEnvio: {
+		campos: []declaracion{{"accion", claseCadena}},
+		construir: func(cadenas []string, _ []int64) Cuerpo {
+			return OrdenPausaDeEnvio{Accion: cadenas[0]}
+		},
+	},
+	TipoAcusePausaDeEnvio: {
+		campos: []declaracion{
+			{"accion", claseCadena},
+			{"resultado", claseCadena},
+			{"motivo", claseCadena},
+		},
+		construir: func(cadenas []string, _ []int64) Cuerpo {
+			return AcusePausaDeEnvio{Accion: cadenas[0], Resultado: cadenas[1], Motivo: cadenas[2]}
+		},
+	},
 }
 
 // CausasDeclaradas devuelve el vocabulario cerrado de causas en orden estable,
@@ -563,6 +652,8 @@ func TiposDeclarados() []TipoMensaje {
 		TipoOrdenRespaldoIdentidad, TipoAcuseRespaldoIdentidad,
 		TipoOrdenEmparejar, TipoCodigoEmparejamiento, TipoAcuseEmparejamiento,
 		TipoMensajeSaliente, TipoAcuseEnvio,
+		TipoOrdenCierreDeSesion, TipoAcuseCierreDeSesion,
+		TipoOrdenPausaDeEnvio, TipoAcusePausaDeEnvio,
 	}
 }
 
