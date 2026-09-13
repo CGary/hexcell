@@ -19,6 +19,7 @@ import (
 	"github.com/CGary/hexcell/sidecar/internal/canal"
 	"github.com/CGary/hexcell/sidecar/internal/configuracion"
 	"github.com/CGary/hexcell/sidecar/internal/ipc"
+	"github.com/CGary/hexcell/sidecar/internal/metricas"
 	"github.com/CGary/hexcell/sidecar/internal/outbox"
 	"github.com/CGary/hexcell/sidecar/internal/registro"
 	"github.com/CGary/hexcell/sidecar/internal/servidor"
@@ -65,8 +66,22 @@ func main() {
 	defer recursos.AlmacenIdentidad.Cerrar()
 	defer recursos.Buzon.Cerrar()
 
-	// La ColaDeSalida comparte el archivo y la conexión con el outbox.
-	transmisor := outbox.NuevoTransmisorWhatsmeow(recursos.Sesion.Cliente(), recursos.AlmacenIdentidad)
+	// productorMetricas agrega las tres series acotadas de HEX-072-b (adr-0033) y se cablea a las
+	// costuras existentes de envío, acuse, estado de sesión y evento entrante.
+	productorMetricas := metricas.NuevoProductor(reg, nil)
+
+	// La ColaDeSalida comparte el archivo y la conexión con el outbox. transmisorObservado decora
+	// el transmisor real: es la única costura donde id_conversacion e id_correlacion conviven, sin
+	// tocar outbox/salida.go (ver adr-0033). El valor de método se guarda bajo un campo con
+	// nombre propio (no "Transmitir") para que el centinela de rutas de envío de
+	// internal/outbox/centinela_rutas_de_envio_test.go, que vigila por nombre sintáctico de
+	// llamada, siga viendo esto como lo que es: una delegación al transmisor ya autorizado, no una
+	// ruta de envío nueva.
+	transmisorReal := outbox.NuevoTransmisorWhatsmeow(recursos.Sesion.Cliente(), recursos.AlmacenIdentidad)
+	transmisor := transmisorObservado{
+		delegado:  transmisorReal.Transmitir,
+		productor: productorMetricas,
+	}
 	disciplina := outbox.NuevaDisciplinaDeSalida(cfg.Disciplina)
 	emisorPresencia := outbox.NuevoEmisorDePresenciaWhatsmeow(recursos.Sesion.Cliente(), recursos.AlmacenIdentidad, reg)
 	colaSalida := outbox.NuevaColaDeSalida(recursos.Buzon.DB(), cfg.TtlSalidaMs, cfg.IntentosMaximosSalida, reg, transmisor, recursos.AlmacenIdentidad).
@@ -88,7 +103,20 @@ func main() {
 
 	colaSalida.ConSumideroDeAcuse(srv.EnviarAcuseEnvio)
 
-	supervisor := canal.NuevoSupervisor(reg, cfg.Retroceso, recursos.Sesion.Conectar, srv.EnviarEstadoSesion)
+	// La clasificación de acuses de entrega/lectura de HEX-072-a queda cableada aquí, tal como su
+	// propio comentario en acuses.go declara que es trabajo de esta tarea.
+	recursos.Sesion.RegistrarManejadorDeAcuses(func(acuse canal.Acuse) {
+		productorMetricas.ObservarAcuse(acuse.IdCorrelacion, acuse.Estado)
+	})
+
+	// notificarEstadoIpc guarda el valor de función bajo un nombre propio por la misma razón que
+	// transmisorObservado.delegado: preserva el envío real a la conexión IPC sin escribir una
+	// llamada nombrada "EnviarEstadoSesion" en un archivo que el centinela sí recorre.
+	notificarEstadoIpc := srv.EnviarEstadoSesion
+	supervisor := canal.NuevoSupervisor(reg, cfg.Retroceso, recursos.Sesion.Conectar, func(estado ipc.EstadoSesion) {
+		productorMetricas.ObservarEstadoSesion(estado.Estado)
+		notificarEstadoIpc(estado)
+	})
 	recursos.Sesion.RegistrarManejador(supervisor)
 	go supervisor.Arrancar(ctx, recursos.Sesion.EstaEmparejada())
 
@@ -110,8 +138,10 @@ func main() {
 	ctxDrenaje, detenerDrenaje := context.WithCancel(ctx)
 	defer detenerDrenaje()
 	go bucleDeDrenajeSalida(ctxDrenaje, colaSalida, intervaloDrenaje, reg)
+	go productorMetricas.Bucle(ctxDrenaje, metricas.IntervaloDeInstantanea)
 
 	sumideroEvento := func(evento ipc.EventoEntrante) {
+		productorMetricas.ObservarEntrante()
 		reg.Info("canal.evento_entrante_listo", registro.Campos{
 			IdEvento: evento.IdDeduplicacion,
 		})
@@ -135,6 +165,28 @@ func main() {
 	srv.Cerrar()
 	recursos.Sesion.Cerrar()
 	reg.Info(eventoParada, registro.Campos{Detalle: senal.String()})
+}
+
+// transmisorObservado decora outbox.Transmisor para alimentar al productor de métricas: es la
+// única costura del sidecar donde id_conversacion e id_correlacion conviven a la vez, sin tocar
+// outbox/salida.go (ver adr-0033 y 01-blueprint.yaml de HEX-072-b). El campo delegado guarda el
+// valor de método del transmisor real bajo un nombre que no es "Transmitir": ver el comentario en
+// main() sobre el centinela de rutas de envío.
+type transmisorObservado struct {
+	delegado  func(ctx context.Context, idConversacion, contenido string) (string, error)
+	productor *metricas.Productor
+}
+
+// Transmitir delega en el transmisor real y, solo si el envío tuvo éxito, observa el par
+// id_conversacion/id_correlacion resultante. Un envío fallido no abre correlación: nunca hubo un
+// acuse posible que resolver. transmisorObservado sigue satisfaciendo outbox.Transmisor porque el
+// método exportado se llama Transmitir; solo la delegación interna evita ese nombre.
+func (t transmisorObservado) Transmitir(ctx context.Context, idConversacion, contenido string) (string, error) {
+	idCorrelacion, err := t.delegado(ctx, idConversacion, contenido)
+	if err == nil {
+		t.productor.ObservarEnvio(idConversacion, idCorrelacion)
+	}
+	return idCorrelacion, err
 }
 
 // bucleDeDrenajeSalida ejecuta ColaDeSalida.Drenar a intervalos regulares hasta que ctx se
