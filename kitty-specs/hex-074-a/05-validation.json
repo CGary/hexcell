@@ -1,0 +1,32 @@
+{
+  "task_id": "HEX-074-a",
+  "summary": "Verificación rápida pasó para comandos de contrato.",
+  "executed_at": "2026-09-13T00:00:00Z",
+  "commands": [
+    {
+      "command": "cargo fmt --check",
+      "exit_code": 0,
+      "duration_s": 0.1,
+      "output_excerpt": "No output (all files formatted correctly)"
+    },
+    {
+      "command": "cargo build --workspace",
+      "exit_code": 0,
+      "duration_s": 0.05,
+      "output_excerpt": "Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.03s"
+    },
+    {
+      "command": "cargo test -p hexcell-admin",
+      "exit_code": 0,
+      "duration_s": 0.35,
+      "output_excerpt": "test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out\ntest result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out\nDoc-tests hexcell_admin: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out"
+    },
+    {
+      "command": "cargo clippy --workspace -- -D warnings",
+      "exit_code": 0,
+      "duration_s": 0.05,
+      "output_excerpt": "Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.04s"
+    }
+  ],
+  "overall_result": "passed"
+}

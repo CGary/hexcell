@@ -1,0 +1,237 @@
+task_id: HEX-074-a
+summary: >-
+  Cell control-plane state aggregate in hexcell-admin: five-state enum, 11-pair transition table with
+  no catch-all arm, typed rejection enum, and an aggregate root whose only mutator validates.
+affected_files:
+  - crates/hexcell-admin/src/estado_de_celula.rs
+  - crates/hexcell-admin/src/lib.rs
+  - crates/hexcell-admin/tests/estado_de_celula.rs
+symbols:
+  - "hexcell_admin::estado_de_celula (new module, declared in lib.rs as `pub mod estado_de_celula;`)"
+  - "estado_de_celula::EstadoDeCelula (closed enum: Aprovisionada, EnEjecucion, Suspendida, Reemparejando, Retirada; derives Clone, Copy, PartialEq, Eq, Hash, Debug and NOTHING from serde)"
+  - "EstadoDeCelula::TODOS (associated const [EstadoDeCelula; 5], fixed-length array literal)"
+  - "EstadoDeCelula::transiciones_permitidas(self) -> &'static [EstadoDeCelula] (the transition table; `match self` with exactly 5 arms and no catch-all)"
+  - "EstadoDeCelula::permite(self, hacia: EstadoDeCelula) -> bool (derived from transiciones_permitidas, never a second hand-written table)"
+  - "EstadoDeCelula::transitar(self, hacia: EstadoDeCelula) -> Result<EstadoDeCelula, TransicionInvalida>"
+  - "EstadoDeCelula::es_terminal(self) -> bool (derived as transiciones_permitidas(self).is_empty(), so it cannot drift from the table)"
+  - "impl std::fmt::Display for EstadoDeCelula (Spanish operator label; second no-catch-all match over the state set)"
+  - "estado_de_celula::TransicionInvalida (closed public enum: ParNoPermitido { desde, hacia }, OrigenTerminal { desde, hacia }) - the stable surface HEX-074-b maps onto an exit code"
+  - "TransicionInvalida::desde(&self) -> EstadoDeCelula and TransicionInvalida::hacia(&self) -> EstadoDeCelula (third no-catch-all match)"
+  - "impl std::fmt::Display for TransicionInvalida (Spanish operator message naming both states) + impl std::error::Error for TransicionInvalida"
+  - "estado_de_celula::CicloDeVidaDeCelula (aggregate root; PRIVATE field `estado`, no public setter, no From/Into that installs a state)"
+  - "CicloDeVidaDeCelula::nueva() -> Self (the only public constructor; starts in Aprovisionada)"
+  - "CicloDeVidaDeCelula::estado(&self) -> EstadoDeCelula (read-only accessor)"
+  - "CicloDeVidaDeCelula::aplicar(&mut self, hacia: EstadoDeCelula) -> Result<(), TransicionInvalida> (the ONLY mutator; on Err the stored state is left unchanged)"
+  - "CicloDeVidaDeCelula::es_terminal(&self) -> bool"
+dependencies:
+  - crates/hexcell-admin/Cargo.toml
+  - crates/hexcell-admin/src/main.rs
+  - crates/hexcell-admin/src/docker/mod.rs
+  - crates/hexcell-admin/tests/cliente_docker.rs
+  - crates/hexcell-core/tests/exhaustividad_resultado_envio.rs
+  - crates/hexcell-storage/src/reversion.rs
+  - Cargo.toml
+  - docs/plan/fase-a-6-empaquetado-cli.md
+  - docs/protocolo-ipc-nucleo-sidecar.md
+  - docs/PRD.md
+  - .ai/tasks/active/HEX-074-new-spec/01-blueprint.yaml
+  - .ai/tasks/active/HEX-074-new-spec/02-contract.yaml
+test_scenarios:
+  - statement: >-
+      All 25 ordered pairs of the 5-state set are driven through transitar: the 11 pairs in the table
+      are accepted and return `hacia`, the 14 absent are rejected. The test spells the expected verdict
+      of every pair out of an independent literal table, so adding a spurious pair to the production
+      table turns a rejection assertion red and deleting a legitimate pair turns an acceptance assertion
+      red. Self-transitions (the 5 identity pairs) are among the rejected 14 on purpose.
+    covers: [AC-1]
+  - statement: >-
+      Rejection is typed and carries the offending pair - a transition attempted out of Retirada yields
+      TransicionInvalida::OrigenTerminal { desde: Retirada, hacia } and every other invalid pair yields
+      ParNoPermitido { desde, hacia } with both fields equal to the exact states attempted. Collapsing
+      the two variants into one, or dropping the payload, makes this test red.
+    covers: [AC-1]
+  - statement: >-
+      Compiler-enforced exhaustiveness from OUTSIDE the crate - tests/estado_de_celula.rs declares its
+      own `const TODOS_LOS_ESTADOS: [EstadoDeCelula; 5]` and its own local `fn etiqueta(EstadoDeCelula)
+      -> &'static str` whose match has no catch-all arm, mirroring the idiom of
+      crates/hexcell-core/tests/exhaustividad_resultado_envio.rs. Adding a sixth variant to
+      EstadoDeCelula fails to compile the production match in transiciones_permitidas AND this external
+      test file, before any assertion runs.
+    covers: [AC-2]
+  - statement: >-
+      Closure of the state set - every state that appears in any transiciones_permitidas list is a
+      member of EstadoDeCelula::TODOS, and TODOS collected into a HashSet has exactly 5 entries. A state
+      added to the enum but omitted from TODOS, or a duplicated entry, cannot hide behind a length check.
+    covers: [AC-2]
+  - statement: >-
+      Retirada is the single terminal state - es_terminal() is true for Retirada and false for the other
+      four, and Retirada::transiciones_permitidas() is empty. Because es_terminal is derived from the
+      table rather than from a second hand-written match, emptying or filling a row moves both answers
+      together and cannot leave them inconsistent.
+    covers: [AC-2]
+  - statement: >-
+      The aggregate root owns legality - CicloDeVidaDeCelula::nueva() starts in Aprovisionada; aplicar
+      with a legal target advances estado(); aplicar with an illegal target returns Err AND leaves
+      estado() at its previous value (asserted explicitly, so a mutator that writes before validating
+      turns the test red). The type exposes no public field, no setter and no constructor that installs
+      an arbitrary state.
+    covers: [AC-1]
+  - statement: >-
+      Source-scan guard over include_str!("../src/estado_de_celula.rs"): the production module contains
+      no `crate::docker`, `ClienteDocker`, `ConexionDocker`, `UnixStream`, `Serialize`, `Deserialize`,
+      `rusqlite`, `panic!`, `unreachable!`, `.unwrap()`, `.expect(`, `debug_assert` and no ` _ =>`
+      catch-all arm. Introducing any of them turns the guard red. This is the only mechanical proof for
+      the no-catch-all, no-serde and no-panic invariants, which clippy does not enforce.
+    covers: [AC-2]
+  - statement: >-
+      Dependency-set guard over include_str!("../Cargo.toml"): the [dependencies] section still names
+      exactly serde and serde_json, and contains no clap, argh, pico-args, structopt, lexopt or anyhow
+      token.
+    covers: [AC-2]
+  - statement: >-
+      Existing tests/cliente_docker.rs keeps passing unchanged under `cargo test -p hexcell-admin`,
+      proving the docker module and its public API were not disturbed by the new module declaration in
+      lib.rs.
+    covers: [AC-2]
+strategy:
+  - step: 1
+    action: >-
+      Entity / aggregate root - create crates/hexcell-admin/src/estado_de_celula.rs holding the whole
+      aggregate in one module, because the state vocabulary, the transition table and the root that
+      enforces it are one unit and splitting them would let a caller reach the table without the root.
+      Declare EstadoDeCelula as a CLOSED enum (no #[non_exhaustive]) with the five control-plane states
+      Aprovisionada, EnEjecucion, Suspendida, Reemparejando, Retirada, deriving Clone, Copy, PartialEq,
+      Eq, Hash and Debug and deliberately NOTHING from serde - serde is on the crate's dependency list,
+      so deriving Serialize here would be the first step of the persistence this task defers. Closed and
+      non_exhaustive-free is deliberate for the same reason hexcell-core keeps ResultadoEnvio closed -
+      HEX-074-b and later tasks must be able to match it without a wildcard.
+    files:
+      - crates/hexcell-admin/src/estado_de_celula.rs
+  - step: 2
+    action: >-
+      Value Object - the transition table itself, as `transiciones_permitidas(self) -> &'static
+      [EstadoDeCelula]`, a `match self` with exactly five arms returning static slices and NO catch-all,
+      so adding a state without extending the table fails to compile inside the crate. The table is:
+      Aprovisionada -> {EnEjecucion, Retirada}; EnEjecucion -> {Suspendida, Reemparejando, Retirada};
+      Suspendida -> {EnEjecucion, Reemparejando, Retirada}; Reemparejando -> {EnEjecucion, Suspendida,
+      Retirada}; Retirada -> {} (terminal). Eleven legal ordered pairs out of twenty-five. Add TODOS as a
+      fixed-length [EstadoDeCelula; 5] associated const, and derive permite and es_terminal FROM
+      transiciones_permitidas rather than writing a second table that could drift. Each arm carries a
+      Spanish doc comment naming the A-6 plan task that justifies the row.
+    files:
+      - crates/hexcell-admin/src/estado_de_celula.rs
+  - step: 3
+    action: >-
+      Validator + stable error surface - TransicionInvalida as a closed public enum with two variants,
+      ParNoPermitido { desde, hacia } and OrigenTerminal { desde, hacia }, both carrying the offending
+      pair as public fields so HEX-074-b can match on it and map it onto an exit code without parsing a
+      string. Add desde()/hacia() accessors (a third exhaustive match), a Spanish Display naming both
+      states, and impl std::error::Error. Then `transitar(self, hacia) -> Result<EstadoDeCelula,
+      TransicionInvalida>` consults permite and returns Ok(hacia) or the right rejection variant. No
+      failure path uses panic!, unwrap, expect, unreachable! or assert!, and no guard is shaped as
+      debug_assert!, which the release profile (Cargo.toml:92, panic = "abort") compiles out of the
+      binary the operator actually runs.
+    files:
+      - crates/hexcell-admin/src/estado_de_celula.rs
+  - step: 4
+    action: >-
+      Aggregate root - CicloDeVidaDeCelula, a struct with a PRIVATE `estado: EstadoDeCelula` field, whose
+      only public constructor is nueva() (starting in Aprovisionada), whose only read is estado(), and
+      whose only mutator is `aplicar(&mut self, hacia) -> Result<(), TransicionInvalida>`, which
+      validates through transitar and writes the field ONLY on Ok. That is what makes "no caller moves a
+      cell between states except through this model" a property of the type rather than a convention:
+      the enum's variants are public vocabulary anyone may name, but a governed cell's stored state has
+      exactly one write path. The name follows the A-6 plan's own phrase "comandos de ciclo de vida" and
+      the DeCelula suffix keeps it distinct from the session-side CicloDeVidaSesion. No rehydration
+      constructor is added: reconstructing a cell from the deferred control-plane state store is that
+      store's deliverable, and inventing its API now would be designing for a task that does not exist.
+    files:
+      - crates/hexcell-admin/src/estado_de_celula.rs
+  - step: 5
+    action: >-
+      Composition - add `pub mod estado_de_celula;` to crates/hexcell-admin/src/lib.rs and correct only
+      the sentence of its module doc comment that today says the library face exists solely to let the
+      docker module be exercised from tests/. The note must NOT be rewritten to claim the CLI skeleton
+      exists: the parser, the subcommands, the exit codes and simulation mode are siblings HEX-074-b and
+      HEX-074-c. src/main.rs is NOT touched - wiring a state model into main() without any command to
+      drive it would be scope belonging to HEX-074-c.
+    files:
+      - crates/hexcell-admin/src/lib.rs
+  - step: 6
+    action: >-
+      Tests - crates/hexcell-admin/tests/estado_de_celula.rs, an EXTERNAL test crate that sees only the
+      public API, holding: the 5x5 table-driven acceptance/rejection walk against an independent literal
+      verdict table; the typed-rejection variant and payload assertions; the crate-external
+      TODOS_LOS_ESTADOS array plus a local no-catch-all match; the TODOS closure and HashSet distinctness
+      check; the terminal-state check; the aggregate-root tests including state-unchanged-on-Err; and the
+      two include_str! guards over src/estado_de_celula.rs and Cargo.toml. Every test runs in-process and
+      deterministically - nothing spawns a process, opens a socket, writes to the filesystem, sleeps or
+      needs a Docker daemon, and no test is marked #[ignore]. Beware the self-trip: the production
+      module's Spanish doc comments must discuss panics and wildcards in prose without ever writing the
+      literal tokens the source-scan guard searches for.
+    files:
+      - crates/hexcell-admin/tests/estado_de_celula.rs
+risks:
+  - >-
+    VOCABULARY COLLISION, carried from the parent and re-confirmed against disk on 2026-09-13: A-6 plan
+    task 12 says cell terminate transitions to `desvinculada_sesion_cerrada`, but
+    docs/protocolo-ipc-nucleo-sidecar.md:382 lists that string as a `causa` projecting to the SESSION
+    state `desvinculada`, and the session taxonomy at line 350 is activa/reconectando/desvinculada/
+    pausada. The control-plane terminal state is therefore Retirada and the paused state is Suspendida.
+    The implementer must NOT rename them to match the plan's prose; HEX-074-c records the divergence in
+    the ADR so task 12 inherits the corrected vocabulary.
+  - >-
+    DELIBERATE DIVERGENCE FROM THE PARENT BLUEPRINT, needs the human's eye: the parent's table had ten
+    legal pairs and forbade EnEjecucion -> Reemparejando, forcing a rebind to pass through Suspendida.
+    Re-reading A-6 plan task 13 shows that is wrong: its "pausa de envio" is explicitly "ejercida por la
+    orden IPC de la tarea 24", an outbound send gate internal to the rebind sequence, NOT the
+    control-plane pause of task 11, which stops both containers. Forbidding the pair would make cell
+    rebind impossible on a running cell without a spurious cell pause. The pair is therefore added and the
+    table has ELEVEN legal pairs. Suspendida -> Reemparejando stays legal too: rebinding an
+    operator-paused cell is the permanent-ban recovery path of adr-0015.
+  - >-
+    HONEST LIMIT OF THE AGGREGATE: EstadoDeCelula's variants are public, so any caller can name a state
+    value - that is the point of a vocabulary. What the aggregate guarantees is narrower and is the thing
+    that matters: the stored state of a CicloDeVidaDeCelula has exactly one write path, aplicar, which
+    validates first. The blueprint claims that property and not the stronger one, and the test asserts it
+    by checking the state is unchanged after a rejected aplicar.
+  - >-
+    SELF-TRANSITIONS ARE REJECTED ON PURPOSE and this is NOT a gap: the five identity pairs are absent
+    from the table. Idempotent re-execution of a partially failed command is A-6 plan task 15, and it
+    belongs at the command layer (read the current state, skip the work if already there), not in an
+    aggregate that would have to call a no-op a legal move. Flagging the absent identity pairs as missing
+    coverage would be a false finding.
+  - >-
+    EXPLICITLY DEFERRED, do not flag as gaps: persistence of cell state across CLI invocations, the
+    control-plane state store and its schema and migrations, reconciliation of the stored state against
+    docker inspect and /health/ready (plan task 14), idempotence and partial-failure recovery (task 15),
+    and the auditable number-substitution record (task 13). None can be exercised without the state store
+    and real command behaviour; this aggregate is in-memory typing only.
+  - >-
+    DEFERRED TO SIBLINGS, do not flag as gaps: the exit-code enumeration and the stdout/stderr split are
+    HEX-074-b; the hand-rolled argument parser, the six cell subcommands, simulation mode and BOTH the ADR
+    and the bitacora-de-descartes entry recording the exit-code and state-transition contracts are
+    HEX-074-c. This child claims NO adr-NNNN number and NO D-NN number, touches neither docs/adr/** nor
+    docs/bitacora-de-descartes.md, and does not touch src/main.rs.
+  - >-
+    STALE DOC COMMENT FOUND ON DISK: crates/hexcell-admin/src/lib.rs today states that the library face
+    exists only so the docker module can be exercised from tests/, and that the CLI skeleton "es la tarea
+    10 de la etapa A-6, fuera del alcance de esta tarea". Adding a second public module makes the first
+    half inaccurate. The correction is limited to that sentence; the note must not be rewritten to claim
+    the CLI skeleton now exists, because after this child it still does not.
+  - >-
+    GUARD SELF-TRIP HAZARD: the source-scan test searches src/estado_de_celula.rs for literal tokens
+    (`_ =>`, `panic!`, `.unwrap()`, `Serialize`, `debug_assert`). The production module's Spanish doc
+    comments legitimately need to explain why there is no wildcard arm and no panic path; they must do so
+    in prose without reproducing those exact tokens, or the module will fail its own guard. Conversely the
+    guard must scan the source file and never itself.
+  - >-
+    Complexity band: only two production files change (src/estado_de_celula.rs and a one-line
+    src/lib.rs), tests are noncounted, so the file count lands inside band M rather than the parent's L;
+    the symbol count is above s_max_symbols so it is not S. Declared risk stays `high`, inherited from the
+    parent and not lowered - this task fixes a contract that A-6 plan tasks 11 to 15 all inherit, and a
+    wrong transition table is cheap to write and expensive to discover.
+  - >-
+    NO PRIOR FAILURES: `quorum analyze failure-lookup` over the three affected files returned null, and the
+    HSME advisory read returned only low-similarity Quorum-tooling memories with nothing applicable. No
+    lesson from a failed task is being carried in.

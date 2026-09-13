@@ -1,0 +1,44 @@
+task_id: HEX-074-a
+summary: 'Cell control-plane state aggregate: state enumeration and exhaustive valid-transition table with typed rejection of every pair absent from the table.'
+goal: 'Subset of HEX-074: Cell control-plane state aggregate: state enumeration and exhaustive valid-transition table with typed rejection of every pair absent from the table.'
+invariants:
+    - hexcell-admin adds ZERO new dependencies; its dependency set stays exactly serde + serde_json.
+    - crates/hexcell-core is not touched and keeps zero external dependencies (cargo tree -p hexcell-core).
+    - The public API of the existing docker module (ClienteDocker, ErrorDeClienteDocker, ConexionDocker, RespuestaHttp) is unchanged; no existing docker test is modified or deleted; this task does not import, name or reference anything from crate::docker, nor open any socket.
+    - All new code identifiers, comments, doc comments and documentation are written in Spanish; commit messages are conventional commits with no AI attribution.
+    - No code path ends in panic - no panic!, unwrap, expect, unreachable! or assert! outside tests, and no debug_assert! standing in for a guard; release profile sets panic = "abort", so a panic leaves the operator no message.
+    - The transition match has no catch-all `_ =>` arm; exhaustiveness over the declared state enumeration is enforced by the compiler, so adding a new state without extending the transition table fails to compile.
+    - No persistence of any kind - no SQLite, no state file, no schema, no migration, no serialization of the state type to disk; the control-plane state store is a separate A-6 deliverable and the aggregate is exercised in memory only.
+    - The cell control-plane state model does NOT redefine, shadow or reuse the session-state taxonomy of docs/protocolo-ipc-nucleo-sidecar.md (activa, reconectando, desvinculada, pausada) as its own control-plane states; per the parent's contract the terminal cell state is Retirada and the paused cell state is Suspendida.
+    - The typed transition-rejection error is a public, stable surface designed to be matched on by a caller (sibling task HEX-074-b maps it onto an exit code), not an opaque string.
+    - cargo build --workspace, cargo test -p hexcell-admin, cargo fmt --check and cargo clippy --workspace -- -D warnings stay green.
+acceptance:
+    - id: AC-1
+      statement: The cell state machine accepts every declared valid transition and rejects every transition absent from the table.
+      given: the table of valid cell state transitions
+      when: a test drives each valid pair and then each invalid pair
+      then: valid pairs are accepted and invalid pairs are rejected with a typed error; adding a spurious pair to the table makes a rejection test fail
+    - id: AC-2
+      statement: The transition function is exhaustive over the declared state set with no catch-all arm, proven by a test that enumerates every state.
+      given: the enumeration of possible cell states
+      when: a test iterates the full state set and queries the transitions allowed from each
+      then: every state is covered, and adding a new state without extending the transition table fails to compile or fails the test
+    - cargo build --workspace, cargo test -p hexcell-admin, cargo fmt --check and cargo clippy --workspace -- -D warnings all pass.
+risk: high
+non_goals:
+    - Do not implement the control-plane persistent state store, its schema or its migrations; that is a separate A-6 deliverable and the state model here is in-memory typing only.
+    - Do not invoke Docker, construct a ClienteDocker in any command path, or extend the docker module.
+    - Do not implement the argument parser, the six cell subcommands, the exit-code enumeration, stdout/stderr separation, or simulation (dry-run) mode; those are sibling tasks HEX-074-b (exit codes and output sinks) and HEX-074-c (parser, subcommands, simulation mode).
+    - Do not write an ADR or a bitacora-de-descartes entry, and do not claim an ADR number or a D-NN number; the ADR and bitacora entry recording the exit-code and state-transition contract are written in HEX-074-c, not here.
+    - Do not implement the real behaviour of cell pause, unpause, terminate, rebind, list or status; tasks 11 to 15 own those.
+    - Do not implement Telegram alerts, metrics collection, the dead-man's switch, the canary rollout, cell create, Caddy, subdomains or anything belonging to stage B-2.
+    - Do not add an external argument-parsing crate (clap, argh, pico-args, structopt, lexopt) or the anyhow crate, or any other new dependency.
+constraints:
+    - RISK to carry into the blueprint - plan task 12 states that cell terminate transitions to `desvinculada_sesion_cerrada`, but in docs/protocolo-ipc-nucleo-sidecar.md that string is a `causa` projecting to the session state `desvinculada`, not a cell control-plane state; the state model must name its own terminal state and must not adopt that string as one.
+    - EXPLICITLY DEFERRED - persistence of cell state across CLI invocations and reconciliation of the stored state against Docker depend on the control-plane state store and are out of scope; the state model is exercised in memory only.
+    - Executing this task before plan tasks 7, 17, 6 and 16 is out of the plan's declared order and was explicitly authorised by the human on 2026-09-11; it is not a blocker.
+    - Traceability - FR-11 (CLI traffic-shedding operations, Fase A variant) and the A-6 plan file are the only sources; the task invents no requirement and fixes no client, cell or price figures.
+    - Verification must stay fast - cargo build --workspace, cargo test -p hexcell-admin, cargo fmt --check, cargo clippy --workspace -- -D warnings.
+    - Dates written into code or docs are absolute (2026-09-12), never relative.
+depends_on: []
+parent_task: HEX-074

@@ -1,0 +1,105 @@
+task_id: HEX-074-a
+summary: >-
+  State aggregate only: one new module, one module declaration, one external test file. No parser, no
+  exit codes, no subcommands, no ADR, no Docker, no persistence, zero new dependencies.
+goal: >-
+  Fix the cell control-plane state vocabulary and its transition table as compiler-enforced, in-memory
+  Rust types inside hexcell-admin (first child of task 10 of stage A-6, FR-11), so that A-6 plan tasks 11
+  to 15 inherit one exhaustive, mutation-proven table and one typed rejection surface that sibling
+  HEX-074-b can map onto an exit code. Every ordered pair absent from the table is rejected with a typed
+  error carrying the offending from/to pair; adding a state without extending the table must fail to
+  compile. Nothing is persisted and no command behaviour is implemented.
+read:
+  - .ai/tasks/active/HEX-074-a/00-spec.yaml
+  - .ai/tasks/active/HEX-074-a/01-blueprint.yaml
+  - .ai/tasks/active/HEX-074-new-spec/01-blueprint.yaml
+  - .ai/tasks/active/HEX-074-new-spec/02-contract.yaml
+  - CLAUDE.md
+  - CONTRIBUTING.md
+  - Cargo.toml
+  - crates/hexcell-admin/Cargo.toml
+  - crates/hexcell-admin/src/lib.rs
+  - crates/hexcell-admin/src/main.rs
+  - crates/hexcell-admin/src/docker/mod.rs
+  - crates/hexcell-admin/tests/cliente_docker.rs
+  - crates/hexcell-core/tests/exhaustividad_resultado_envio.rs
+  - crates/hexcell-storage/src/reversion.rs
+  - docs/plan/fase-a-6-empaquetado-cli.md
+  - docs/protocolo-ipc-nucleo-sidecar.md
+  - docs/PRD.md
+touch:
+  - crates/hexcell-admin/src/estado_de_celula.rs
+  - crates/hexcell-admin/src/lib.rs
+  - crates/hexcell-admin/tests/estado_de_celula.rs
+forbid:
+  files:
+    - crates/hexcell-admin/Cargo.toml
+    - crates/hexcell-admin/src/main.rs
+    - crates/hexcell-admin/src/cli/**
+    - crates/hexcell-admin/src/docker/mod.rs
+    - crates/hexcell-admin/src/docker/cliente.rs
+    - crates/hexcell-admin/src/docker/error.rs
+    - crates/hexcell-admin/src/docker/transporte.rs
+    - crates/hexcell-admin/tests/cliente_docker.rs
+    - crates/hexcell-admin/tests/comun/mod.rs
+    - crates/hexcell-core/**
+    - crates/hexcell/**
+    - crates/hexcell-storage/**
+    - crates/hexcell-canal-simulado/**
+    - crates/hexcell-canal-contrato/**
+    - crates/hexcell-canal-whatsmeow/**
+    - crates/hexcell-meta/**
+    - sidecar/**
+    - Cargo.toml
+    - Cargo.lock
+    - .github/workflows/ci.yml
+    - docs/adr/**
+    - docs/bitacora-de-descartes.md
+    - docs/STATUS.md
+    - docs/PRD.md
+    - docs/plan/fase-a-6-empaquetado-cli.md
+    - docs/protocolo-ipc-nucleo-sidecar.md
+    - .ai/tasks/active/HEX-074-a/00-spec.yaml
+  behaviors:
+    - "Adding ANY dependency to crates/hexcell-admin/Cargo.toml, which is forbidden outright as a file. The [dependencies] section must stay exactly serde + serde_json; clap, argh, pico-args, structopt, lexopt and anyhow are all forbidden. This child needs no dependency at all: the whole aggregate is std-only."
+    - "Deriving, implementing or referencing serde Serialize or Deserialize on EstadoDeCelula, TransicionInvalida or CicloDeVidaDeCelula. serde is already a crate dependency, which is exactly why this is spelled out: serializing the state type is the first step of the persistence this task defers."
+    - "Any persistence: no SQLite, no rusqlite, no state file, no schema, no migration, no writing the state to disk in any format. The control-plane state store is a separate A-6 deliverable; this aggregate is in-memory typing only."
+    - "Importing, naming or referencing crate::docker, ClienteDocker, ConexionDocker, ErrorDeClienteDocker, ResultadoDeArranque, RespuestaHttp or std::os::unix::net::UnixStream from src/estado_de_celula.rs or tests/estado_de_celula.rs. No path in this task constructs a Docker client or opens any socket."
+    - "Changing, re-exporting differently, or extending the public API of the docker module, and modifying or deleting any existing test in tests/cliente_docker.rs. The only permitted edit to src/lib.rs is adding `pub mod estado_de_celula;` and correcting the one stale sentence of the module doc comment."
+    - "A catch-all `_ =>` arm, a `..` rest pattern or any default/fallback arm in any match over EstadoDeCelula or TransicionInvalida, in production code or in tests. Exhaustiveness over the state set must be enforced by the compiler, so that adding a state without extending the table fails to compile."
+    - "Marking EstadoDeCelula or TransicionInvalida #[non_exhaustive]. Both are closed on purpose so HEX-074-b and A-6 tasks 11-15 can match them from outside the crate without a wildcard, following the precedent of ResultadoEnvio in hexcell-core."
+    - "Exposing a public field, a public setter, a From/TryFrom impl or any second constructor on CicloDeVidaDeCelula that installs an arbitrary state. Its stored state must have exactly one write path, `aplicar`, which validates before writing and leaves the state unchanged on rejection."
+    - "Making the typed rejection an opaque string, a bare bool, a unit struct or a Box<dyn Error>. TransicionInvalida must carry the offending `desde` and `hacia` states as matchable public data, because HEX-074-b maps it onto an exit code."
+    - "Writing a second hand-maintained transition table: permite and es_terminal must be derived from transiciones_permitidas, never re-listed, so the two answers cannot drift apart."
+    - "panic!, unwrap, expect, unreachable! or assert! on any non-test code path. The release profile sets panic = \"abort\" (Cargo.toml:92), so a panic leaves the operator no message. Guards must not be shaped as debug_assert!, which that profile compiles out of the binary the operator actually runs."
+    - "Reusing the session-state taxonomy of docs/protocolo-ipc-nucleo-sidecar.md (activa, reconectando, desvinculada, pausada) or the `causa` string desvinculada_sesion_cerrada as names of control-plane cell states. The terminal cell state is Retirada and the paused cell state is Suspendida."
+    - "Implementing anything belonging to a sibling or a later task: the argument parser, the six cell subcommands, the exit-code enumeration, stdout/stderr sinks, simulation mode, wiring into src/main.rs, container start/stop, IPC, health polling or re-pairing. Every one of those is HEX-074-b, HEX-074-c, or A-6 tasks 11-15."
+    - "Writing an ADR or a bitacora-de-descartes entry, or claiming an adr-NNNN or D-NN number. Both documents are written once, by HEX-074-c, recording the exit-code and state-transition contracts together."
+    - "Writing any non-Spanish identifier, comment or doc comment. Dates written into code or comments are absolute (2026-09-13), never relative."
+    - "Tests that spawn a process, open a socket, touch the network, write to the filesystem, sleep, or depend on a Docker daemon. Every new test runs in-process and deterministically."
+    - "Marking any new test #[ignore], or weakening an assertion, to make verification pass."
+verify:
+  commands:
+    - cargo fmt --check
+    - cargo build --workspace
+    - cargo test -p hexcell-admin
+    - cargo clippy --workspace -- -D warnings
+  target_s: 60
+acceptance:
+  human_gate: true
+limits:
+  max_files_changed: 3
+  max_diff_lines: 620
+  per_class:
+    - glob: "crates/hexcell-admin/src/estado_de_celula.rs"
+      max_diff_lines: 300
+    - glob: "crates/hexcell-admin/src/lib.rs"
+      max_diff_lines: 20
+    - glob: "crates/hexcell-admin/tests/**"
+      max_diff_lines: 300
+execution:
+  mode: worktree_edit
+  branch: ai/HEX-074-a
+retry_policy:
+  max_attempts: 2
+  escalate_after: 1

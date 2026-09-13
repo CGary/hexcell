@@ -1,0 +1,17 @@
+task_id: HEX-074-a
+summary: Implemented cell control-plane state aggregate (EstadoDeCelula, TransicionInvalida, CicloDeVidaDeCelula) in hexcell-admin, in memory only.
+entries:
+  - changed_files:
+      - path: crates/hexcell-admin/src/estado_de_celula.rs
+    notes:
+      - New module: 5-state closed enum, 11-pair transition table with no catch-all arm, permite/es_terminal derived from the table, transitar returning typed TransicionInvalida (ParNoPermitido/OrigenTerminal with public desde/hacia), and CicloDeVidaDeCelula aggregate root with private state field and aplicar as sole mutator.
+      - No serde derive, no persistence, no docker references, no panic-path constructs (panic!/unwrap/expect/unreachable!/assert!/debug_assert!) outside tests.
+  - changed_files:
+      - path: crates/hexcell-admin/src/lib.rs
+    notes:
+      - Added `pub mod estado_de_celula;` and corrected the stale module doc-comment sentence that claimed the library face existed only for docker tests, without claiming the CLI skeleton exists.
+  - changed_files:
+      - path: crates/hexcell-admin/tests/estado_de_celula.rs
+    notes:
+      - External test crate covering both acceptance criteria - full 25-pair table walk against an independent literal verdict table, typed-rejection payload checks, exhaustiveness/closure checks (TODOS, local no-catch-all match), terminal-state check, aggregate-root state-unchanged-on-error check, and include_str! guards over the production module and Cargo.toml.
+verify_pending: true
