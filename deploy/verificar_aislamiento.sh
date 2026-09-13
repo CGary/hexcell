@@ -97,6 +97,14 @@ CONTENEDOR_NUCLEO_B="${ID_CELULA_B}-nucleo"
 CONTENEDOR_SIDECAR_B="${ID_CELULA_B}-sidecar"
 ENV_TEMP_B="$(mktemp -t hex076-env-b.XXXXXX)"
 
+# stderr del ÚLTIMO `docker run` auxiliar (efímero, uno a la vez: el script
+# es secuencial) más su código de salida, para distinguir "el auxiliar nunca
+# llegó a correr la comprobación" de un resultado negativo genuino. Los
+# rellenan desde()/leer_volumen()/escribir_volumen(); ver fallo_de_auxiliar().
+ERR_TEMP="$(mktemp -t hex076-err.XXXXXX)"
+CODIGO_AUXILIAR=0
+ERR_AUXILIAR=""
+
 limpiar() {
     echo ""
     echo "Limpiando: contenedores, redes y volúmenes de un solo uso de A y B..."
@@ -104,7 +112,7 @@ limpiar() {
     docker compose -p "$PROYECTO_B" --env-file "$ENV_TEMP_B" -f "$PLANTILLA" down --volumes --remove-orphans >/dev/null 2>&1 || true
     docker volume rm "$VOLUMEN_A" "$VOLUMEN_B" >/dev/null 2>&1 || true
     docker network rm "$RED_A" "$RED_B" >/dev/null 2>&1 || true
-    rm -f "$ENV_TEMP_A" "$ENV_TEMP_B"
+    rm -f "$ENV_TEMP_A" "$ENV_TEMP_B" "$ERR_TEMP"
 }
 trap limpiar EXIT
 
@@ -203,7 +211,11 @@ fi
 desde() {
     local contenedor="$1"
     shift
-    docker run --rm --network "container:${contenedor}" --volumes-from "${contenedor}" alpine:3 sh -c "$*"
+    docker run --rm --network "container:${contenedor}" --volumes-from "${contenedor}" alpine:3 sh -c "$*" 2>"$ERR_TEMP"
+    CODIGO_AUXILIAR=$?
+    ERR_AUXILIAR="$(cat "$ERR_TEMP" 2>/dev/null)"
+    [ -n "$ERR_AUXILIAR" ] && echo "$ERR_AUXILIAR" >&2
+    return "$CODIGO_AUXILIAR"
 }
 
 # Auxiliar de solo lectura sobre un volumen ajeno, sin tocar red ni montar
@@ -212,13 +224,41 @@ desde() {
 leer_volumen() {
     local volumen="$1"
     shift
-    docker run --rm -v "${volumen}:/datos-ajenos:ro" alpine:3 sh -c "$*"
+    docker run --rm -v "${volumen}:/datos-ajenos:ro" alpine:3 sh -c "$*" 2>"$ERR_TEMP"
+    CODIGO_AUXILIAR=$?
+    ERR_AUXILIAR="$(cat "$ERR_TEMP" 2>/dev/null)"
+    [ -n "$ERR_AUXILIAR" ] && echo "$ERR_AUXILIAR" >&2
+    return "$CODIGO_AUXILIAR"
 }
 
 escribir_volumen() {
     local volumen="$1"
     shift
-    docker run --rm -v "${volumen}:/datos-ajenos" alpine:3 sh -c "$*"
+    docker run --rm -v "${volumen}:/datos-ajenos" alpine:3 sh -c "$*" 2>"$ERR_TEMP"
+    CODIGO_AUXILIAR=$?
+    ERR_AUXILIAR="$(cat "$ERR_TEMP" 2>/dev/null)"
+    [ -n "$ERR_AUXILIAR" ] && echo "$ERR_AUXILIAR" >&2
+    return "$CODIGO_AUXILIAR"
+}
+
+# Distingue "el auxiliar efímero nunca llegó a ejecutar la comprobación"
+# (docker run fallido: imagen no disponible, --network container:<X> en
+# carrera, límite de recursos) de un resultado negativo genuino (nc/test
+# saliendo con 1). Docker usa 125 por convención cuando el propio `docker
+# run` no pudo arrancar el contenedor; se complementa con un match de stderr
+# por si el daemon reporta el fallo con otro código. Mismo criterio que ya
+# usan el NOEXISTE de AC-8 y la precondición de resolución de IP de AC-7: no
+# confundir "no se pudo probar" con "se probó y dio bien".
+fallo_de_auxiliar() {
+    local codigo="$1"
+    local err="$2"
+    if [ "$codigo" -eq 125 ]; then
+        return 0
+    fi
+    case "$err" in
+        *"Error response from daemon"*) return 0 ;;
+    esac
+    return 1
 }
 
 # --- AC-6: cruce de volumen (lectura y escritura) ---------------------------
@@ -233,6 +273,8 @@ if ! escribir_volumen "$VOLUMEN_B" "echo secreto-de-B > /datos-ajenos/${MARCADOR
     registrar_falla "no se pudo plantar el marcador de B; el vector de lectura no se puede probar"
 elif desde "$CONTENEDOR_NUCLEO_A" "test -f /var/lib/hexcell/${MARCADOR_B}"; then
     registrar_falla "A pudo LEER el marcador plantado en el volumen de B (cruce de volumen roto)"
+elif fallo_de_auxiliar "$CODIGO_AUXILIAR" "$ERR_AUXILIAR"; then
+    registrar_falla "el contenedor auxiliar no pudo ejecutarse contra A (código ${CODIGO_AUXILIAR}); el vector de lectura no se puede probar"
 else
     registrar_ok "A no pudo leer el marcador plantado en el volumen de B"
 fi
@@ -241,6 +283,8 @@ if ! desde "$CONTENEDOR_NUCLEO_A" "echo escrito-desde-A > /var/lib/hexcell/${MAR
     registrar_falla "A no pudo escribir en su propio volumen; el vector de escritura no se puede probar"
 elif leer_volumen "$VOLUMEN_B" "test -f /datos-ajenos/${MARCADOR_A}"; then
     registrar_falla "el archivo que A escribió apareció en el volumen de B (cruce de volumen roto)"
+elif fallo_de_auxiliar "$CODIGO_AUXILIAR" "$ERR_AUXILIAR"; then
+    registrar_falla "el contenedor auxiliar no pudo ejecutarse contra el volumen de B (código ${CODIGO_AUXILIAR}); el vector de escritura no se puede probar"
 else
     registrar_ok "lo que A escribió nunca apareció en el volumen de B"
 fi
@@ -273,6 +317,8 @@ else
         puerto="${resto#*:}"
         if desde "$CONTENEDOR_NUCLEO_A" "nc -w 2 -z ${destino} ${puerto}"; then
             registrar_falla "A alcanzó a ${etiqueta} (${destino}:${puerto}) — alcance de red roto"
+        elif fallo_de_auxiliar "$CODIGO_AUXILIAR" "$ERR_AUXILIAR"; then
+            registrar_falla "el contenedor auxiliar no pudo ejecutarse contra A para probar ${etiqueta} (código ${CODIGO_AUXILIAR}); el vector no se puede probar"
         else
             registrar_ok "A no alcanzó a ${etiqueta} (${destino}:${puerto})"
         fi
