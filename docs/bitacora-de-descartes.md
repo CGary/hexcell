@@ -626,6 +626,14 @@ copiar `sessions.db`, `knowledge_live.db` y el almacén de identidad del adaptad
 * **Registro normativo:** `sidecar/internal/canal/acuses.go` (el sumidero en-proceso `SumideroDeAcuses`), `sidecar/internal/ipc/mensajes.go` (constantes `EstadoEnvioEntregado`/`EstadoEnvioLeido` reutilizadas sin tocar el protocolo).
 * **Qué tendría que cambiar para reabrirlo:** *reabrible si aparece un consumidor fuera del proceso.* Si una pieza que no sea el sidecar —el núcleo, el orquestador, un panel— necesitara la clasificación entregado/leído, habría que abrir un **tipo de mensaje IPC nuevo y explícito** (nunca sobrecargar en silencio el vocabulario `estado` de `acuse_envio`), con su propia versión de cable y su propia correspondencia en el extremo Rust. Eso es exactamente el trabajo que HEX-072-b descarta a su vez si decide que la métrica se queda dentro del sidecar.
 
+### D-47
+**Declarar la señal de parada con la clave `stop_signal:` de `deploy/cell.compose.yml` en lugar de la directiva `STOPSIGNAL` de cada Dockerfile.**
+
+* **Descartado:** 2026-09-13 (HEX-075).
+* **Por qué se descartó:** `stop_signal:` en el YAML de composición y `STOPSIGNAL` en el Dockerfile expresan la misma señal, pero en capas distintas y con alcance distinto. La imagen es el artefacto que se distribuye y se ejecuta también fuera de esta plantilla de composición (`docker run` directo, otra orquestación futura); si la señal de parada viviera solo en `deploy/cell.compose.yml`, cualquier consumidor de la imagen que no pasara por esa plantilla heredaría el valor por omisión de Docker sin saber que el contrato explícito es SIGTERM. Fijarla en el Dockerfile la hace parte del contrato de la IMAGEN, no de un despliegue particular, y es además lo que permite anclarla con un guardia que lee el Dockerfile directamente (`deploy/verificar_senales.sh`) sin depender de que `docker compose config` la resuelva. Con ambas rutas disponibles, elegir la del Dockerfile es coherente con cómo esta tarea ya trata USER y el resto de instrucciones de endurecimiento de HEX-069: en la imagen, no en la composición.
+* **Registro normativo:** `Dockerfile`, `sidecar/Dockerfile` (directiva `STOPSIGNAL SIGTERM`).
+* **Qué tendría que cambiar para reabrirlo:** *reabrible si aparece un caso donde la señal de parada deba variar por célula* (hoy no existe: SIGTERM es fijo para las dos imágenes y no es una dimensión per-célula). Si tal caso apareciera, `stop_signal:` en la plantilla de composición sería la vía correcta, porque ahí sí vive lo que distingue a una célula de otra.
+
 ---
 
 ## Deuda de esta bitácora

@@ -179,4 +179,9 @@ USER 10001:10001
 # entorno al arrancar —HEXCELL_ID_CELULA y HEXCELL_RUTA_DATOS son obligatorias; el
 # resto tiene valores por defecto de loopback—. No se hornea ningún valor de
 # configuración ni credencial en la imagen; todo llega en tiempo de ejecución.
+# POR QUÉ STOPSIGNAL explícito (HEX-075, tarea 7 A-6): SIGTERM ya es la señal de
+# parada por omisión de Docker, pero declararla aquí hace el contrato anclable
+# por el guardia mecánico (deploy/verificar_senales.sh) en vez de depender de un
+# valor implícito que una imagen base distinta podría cambiar sin avisar.
+STOPSIGNAL SIGTERM
 ENTRYPOINT ["/usr/local/bin/hexcell"]

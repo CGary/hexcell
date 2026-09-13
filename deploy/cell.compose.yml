@@ -98,6 +98,14 @@ services:
     # ancla exactamente; un cambio silencioso de ruta debe flipar el guardia.
     tmpfs:
       - /tmp
+    # Margen de apagado ordenado (HEX-075, tarea 7 A-6): coincide con el
+    # plazo de gracia de 30 s del PRD y es mayor que
+    # apagado::LIMITE_DE_DRENAJE_POR_DEFECTO (20 s, crates/hexcell/src/apagado.rs)
+    # para que el punto de control del WAL y el resto de la salida quepan
+    # dentro del margen antes de que Docker recurra a SIGKILL. Literal fijo,
+    # no una variable per-célula: el guardia mecánico
+    # (deploy/verificar_senales.sh) lo ancla exactamente.
+    stop_grace_period: "30s"
     volumes:
       - datos:/var/lib/hexcell
     networks:
@@ -144,6 +152,11 @@ services:
       - no-new-privileges:true
     tmpfs:
       - /tmp
+    # Mismo margen de apagado ordenado que el núcleo: la justificación
+    # completa vive en el comentario del servicio nucleo más arriba y se
+    # repite aquí solo en su forma literal, para que el guardia pueda
+    # inspeccionar ambos servicios con la misma expresión.
+    stop_grace_period: "30s"
     volumes:
       - datos:/var/lib/hexcell
     networks:

@@ -180,6 +180,7 @@ Las entradas conservan su numeración; esta sección es la autoridad sobre el or
 * **14 después de 13:** `cell status` incluye el historial de sustituciones, que solo existe tras `rebind`.
 * **12 y 13 tras la tarea 24:** no se implementa un `terminate` que borre volúmenes con la sesión viva.
 * Actualización 2026-09-11: 8, 4, 5, 9 y 24 cerradas; 25 dividida en 25-a (cerrada) y 25-b (pendiente, antes de 20). La cadena restante: 7 → 17 → 6 → 16 → 10 → 11 → 22 → 12 → 13 → 14 → 15 → 18 → 25-b → 20 → 23 → 21 → 19.
+* Actualización 2026-09-13: 7 cerrada (HEX-075). La cadena restante: 17 → 6 → 16 → 10 → 11 → 22 → 12 → 13 → 14 → 15 → 18 → 25-b → 20 → 23 → 21 → 19.
 
 ---
 
@@ -212,6 +213,14 @@ Las entradas conservan su numeración; esta sección es la autoridad sobre el or
 7. **Verificar la propagación de señales** (0,5 días). Comprobar que `docker stop` con margen de 30
    segundos produce el apagado ordenado del núcleo y el cierre limpio de sesión del sidecar, con
    salidas con código 0 y sin recurrir a `SIGKILL`.
+
+   **Cerrada el 2026-09-13 con HEX-075**: `STOPSIGNAL SIGTERM` anclado en ambos Dockerfiles y
+   `stop_grace_period: "30s"` en ambos servicios de `deploy/cell.compose.yml`; guardia mecánico
+   `deploy/verificar_senales.sh` (probado por mutación, en CI) más el script manual en vivo
+   `deploy/verificar_apagado_ordenado.sh`, corrido contra contenedores reales desde un volumen
+   vacío: ambos contenedores salieron con código 0 dentro del margen, sin `SIGKILL`, con el
+   checkpoint del WAL confirmado. No se encontró ningún defecto en el manejo de señales a nivel de
+   proceso (`crates/hexcell/src/apagado.rs`, `sidecar/main.go`), que ya era correcto.
 8. **Parametrizar la plantilla de arranque por célula** (1 día). Todo lo que distingue a una célula de
    otra pasa a ser configuración: identificador, volumen, red, secretos y límites.
 9. **Implementar el cliente del socket Unix de Docker** (1,5 días). Arranque, parada con margen,

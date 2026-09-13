@@ -321,4 +321,10 @@ USER 10001:10001
 # hornea en la imagen: todo llega en tiempo de ejecución. Sin CMD se
 # evita que un `docker run <imagen> <cmd>` inadvertido sobrescriba el
 # proceso principal del sidecar con algo que no es el sidecar.
+# POR QUÉ STOPSIGNAL explícito (HEX-075, tarea 7 A-6): SIGTERM ya es la señal
+# de parada por omisión de Docker, pero declararla aquí hace el contrato
+# anclable por el guardia mecánico (deploy/verificar_senales.sh) en vez de
+# depender de un valor implícito que una imagen base distinta podría cambiar
+# sin avisar.
+STOPSIGNAL SIGTERM
 ENTRYPOINT ["/usr/local/bin/hexcell-sidecar"]

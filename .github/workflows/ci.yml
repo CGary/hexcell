@@ -128,3 +128,21 @@ jobs:
           conteo="$(go test ./... -count=1 -v 2>&1 | grep -c -- '^--- PASS')"
           echo "casos de test superados: ${conteo}"
           test "${conteo}" -ge 36
+
+  guardas-deploy:
+    name: Guardas de despliegue — propagación de señales de apagado (HEX-075)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # AC-4: el guardia mecánico ancla ENTRYPOINT en forma exec, STOPSIGNAL
+      # SIGTERM y stop_grace_period: 30s en ambos servicios. El ciclo vivo de
+      # docker stop contra contenedores reales queda fuera de CI a propósito:
+      # es un script manual y humano, distinto de este guardia mecánico.
+      - name: Verificar ENTRYPOINT exec, STOPSIGNAL y stop_grace_period
+        run: bash deploy/verificar_senales.sh deploy/cell.compose.yml
+
+      # AC-5: prueba de mutación. Un guardia que nunca se vio fallar no es
+      # todavía un guardia.
+      - name: Autoprueba de mutación del guardia de señales
+        run: bash deploy/verificar_senales.sh --autoprueba
