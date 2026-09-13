@@ -244,17 +244,27 @@ func TestDesalojoDeContactoDesempataPorIdAscendente(t *testing.T) {
 }
 
 // Escenario 8: el desalojo de correlaciones por encima de 1024 también incrementa
-// contactos_omitidos, para que el truncamiento sea observable y nunca silencioso.
-// MUTACIÓN: desalojar sin incrementar el contador y esta prueba debe fallar.
-func TestDesalojoDeCorrelacionIncrementaContactosOmitidos(t *testing.T) {
+// contactos_omitidos, para que el truncamiento sea observable y nunca silencioso, y la víctima
+// desalojada es demostrablemente la más antigua (corr-0000), no una cualquiera.
+// MUTACIÓN: desalojar sin incrementar el contador, o desalojar la correlación equivocada
+// (más nueva primero), y esta prueba debe fallar.
+//
+// corr-0000 nace en su propio contacto (conv-vieja) precisamente para que el resultado sea
+// numéricamente distinguible: con un único contacto para las 1025 correlaciones, 1/1025 también
+// redondea a 0.00 bajo %.2f, así que desalojar la víctima correcta o la incorrecta producían el
+// mismo texto. Aislar corr-0000 en su propio contacto convierte el desenlace en 0.00 (desalojada)
+// frente a 1.00 (sobrevivió), que sí se distinguen.
+func TestDesalojoDeCorrelacionIncrementaContactosOmitidosYDesalojaLaMasAntigua(t *testing.T) {
 	t.Parallel()
 	reloj := &relojFalso{ahoraMs: 0}
 	p, _ := nuevoProductorDePrueba(reloj)
 
-	// Un único contacto recibe MaximoCorrelaciones+1 envíos sin que ninguno se acuse todavía:
-	// las correlaciones se acumulan sin resolverse y fuerzan el desalojo por su propio límite,
-	// no por el de contactos (que solo tiene esta única entrada).
-	for i := 0; i < metricas.MaximoCorrelaciones+1; i++ {
+	// corr-0000 es la primera y, por tanto, la de creación más antigua.
+	p.ObservarEnvio("conv-vieja", "corr-0000")
+	// El resto de los envíos, hasta completar MaximoCorrelaciones+1 en total, se apilan en un
+	// segundo contacto sin que ninguno se acuse todavía: las correlaciones se acumulan sin
+	// resolverse y fuerzan el desalojo por su propio límite, no por el de contactos.
+	for i := 1; i <= metricas.MaximoCorrelaciones; i++ {
 		reloj.avanzar(1)
 		p.ObservarEnvio("conv-unica", fmt.Sprintf("corr-%04d", i))
 	}
@@ -264,10 +274,41 @@ func TestDesalojoDeCorrelacionIncrementaContactosOmitidos(t *testing.T) {
 		t.Errorf("contactos_omitidos = %s, se esperaba 1 tras desalojar una correlación", v)
 	}
 
-	// La correlación más antigua (corr-0000) ya no debe poder resolver un acuse.
+	// La correlación más antigua (corr-0000) ya no debe poder resolver un acuse: si de verdad
+	// fue desalojada, conv-vieja se queda en 0.00; si sobrevivió (por ejemplo, por un desalojo
+	// que elige la más nueva primero), el acuse la confirmaría y conv-vieja pasaría a 1.00.
 	p.ObservarAcuse("corr-0000", "entregado")
-	if v := buscarClave(t, p.Instantanea(), "ack_ratio.conv-unica"); v != "0.00" {
-		t.Errorf("ack_ratio.conv-unica = %s, se esperaba 0.00: corr-0000 debía estar desalojada", v)
+	if v := buscarClave(t, p.Instantanea(), "ack_ratio.conv-vieja"); v != "0.00" {
+		t.Errorf("ack_ratio.conv-vieja = %s, se esperaba 0.00: corr-0000 debía estar desalojada", v)
+	}
+}
+
+// Escenario 12: con correlaciones de idéntica marca de creación, el desempate del desalojo es el
+// id ascendente, igual que en el desalojo de contactos (escenario 7).
+// MUTACIÓN: invertir el desempate a descendente y esta prueba debe fallar.
+//
+// corr-0000 nace en su propio contacto (conv-vieja) por la misma razón que en el escenario 8:
+// aislarla vuelve el desenlace distinguible (0.00 desalojada frente a 1.00 sobreviviente) en vez
+// de diluirse en un ack ratio compartido con las demás correlaciones empatadas.
+func TestDesalojoDeCorrelacionDesempataPorIdAscendente(t *testing.T) {
+	t.Parallel()
+	reloj := &relojFalso{ahoraMs: 700}
+	p, _ := nuevoProductorDePrueba(reloj)
+
+	// corr-0000 es el id ascendente más bajo de todo el lote.
+	p.ObservarEnvio("conv-vieja", "corr-0000")
+	// El resto, hasta completar MaximoCorrelaciones en total, comparte exactamente la misma
+	// marca de creación: el reloj no avanza entre envíos.
+	for i := 1; i < metricas.MaximoCorrelaciones; i++ {
+		p.ObservarEnvio("conv-unica", fmt.Sprintf("corr-%04d", i))
+	}
+	// Fuerza el desalojo: todas las correlaciones existentes están empatadas en marca de
+	// actividad, así que el desempate por id ascendente decide, y corr-0000 es el id más bajo.
+	p.ObservarEnvio("conv-unica", "corr-nueva")
+
+	p.ObservarAcuse("corr-0000", "entregado")
+	if v := buscarClave(t, p.Instantanea(), "ack_ratio.conv-vieja"); v != "0.00" {
+		t.Errorf("ack_ratio.conv-vieja = %s, se esperaba 0.00: corr-0000 (id ascendente más bajo) debía ser la víctima del desempate", v)
 	}
 }
 
