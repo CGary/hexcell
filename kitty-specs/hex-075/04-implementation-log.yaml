@@ -1,0 +1,3 @@
+entries: []
+summary: Add STOPSIGNAL/stop_grace_period plus a mutation-proven static guard and a manual live docker-stop script.
+task_id: HEX-075

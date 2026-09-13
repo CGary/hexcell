@@ -1,0 +1,50 @@
+{
+  "commands": [
+    {
+      "command": "bash deploy/verificar_senales.sh deploy/cell.compose.yml",
+      "duration_s": 1,
+      "exit_code": 0,
+      "output_excerpt": "OK: ENTRYPOINT en forma exec, STOPSIGNAL SIGTERM y stop_grace_period: 30s estan anclados en nucleo y sidecar"
+    },
+    {
+      "command": "bash deploy/verificar_senales.sh --autoprueba",
+      "duration_s": 1,
+      "exit_code": 0,
+      "output_excerpt": "Resumen autoprueba: 3/3 casos pasan. PASA: ENTRYPOINT en forma shell -\u003e el guardia falla. PASA: quitar STOPSIGNAL -\u003e el guardia falla. PASA: quitar stop_grace_period -\u003e el guardia falla."
+    },
+    {
+      "command": "Guarda de alcance en los Dockerfiles (diff contra merge-base)",
+      "duration_s": 1,
+      "exit_code": 0,
+      "output_excerpt": "OK: los Dockerfiles solo agregaron la linea STOPSIGNAL SIGTERM y comentarios (comparado contra 0d31ee29cd6adefa4c395e1dceecf2f9650af649)"
+    },
+    {
+      "command": "Guarda de CI: solo el guardia mecanico, nunca el ciclo manual",
+      "duration_s": 1,
+      "exit_code": 0,
+      "output_excerpt": "OK: CI invoca el guardia mecanico y no el ciclo manual de docker stop"
+    },
+    {
+      "command": "Guarda de plan: la tarea 7 anota su cierre",
+      "duration_s": 1,
+      "exit_code": 0,
+      "output_excerpt": "OK: la tarea 7 anota su cierre con HEX-075"
+    },
+    {
+      "command": "Guarda de README: referencia al guardia",
+      "duration_s": 1,
+      "exit_code": 0,
+      "output_excerpt": "OK: README referencia deploy/verificar_senales.sh"
+    },
+    {
+      "command": "Guarda del script manual: existe, ejecutable y no declarado como guardia mecanico",
+      "duration_s": 1,
+      "exit_code": 0,
+      "output_excerpt": "OK: deploy/verificar_apagado_ordenado.sh existe, es ejecutable, y no se declara guardia mecanico"
+    }
+  ],
+  "executed_at": "2026-09-13T00:00:00Z",
+  "overall_result": "passed",
+  "summary": "Los siete comandos salieron exit 0 sobre el diff commiteado (2e71534); la autoprueba de mutacion vio fallar al guardia en los tres casos anclados.",
+  "task_id": "HEX-075"
+}

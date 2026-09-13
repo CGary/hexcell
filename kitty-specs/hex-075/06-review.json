@@ -1,0 +1,28 @@
+{
+  "task_id": "HEX-075",
+  "summary": "Diff matches contract exactly: STOPSIGNAL added only, stop_grace_period literal, mutation-proven static guard, live script correctly checks exit/SIGKILL/WAL; bitacora D-47 correctly numbered.",
+  "verdict": "approve",
+  "contract_compliance": true,
+  "forbidden_files_touched": [],
+  "unrequested_refactor": false,
+  "missing_tests": [],
+  "functional_risk": "low",
+  "notes": [
+    "contract-check ok=true; violations=[]; not_checked=[\"forbid.behaviors\"] (manually reviewed by hand below).",
+    "acceptance-coverage status=pass; AC-1..AC-6 all covered; two spec bullets without an id (existing-suite-green, bitacora-discard) are legacy_untracked, not gaps.",
+    "05-validation.json: overall_result=passed, all 7 verify.commands exit 0 (independently re-run by the orchestrator against commit 2e71534, matching this artifact).",
+    "Dockerfiles: diffed against merge-base 0d31ee2 with 'git diff' by hand; zero deletions in either file; the only added non-comment line in each is the literal 'STOPSIGNAL SIGTERM', ENTRYPOINT/USER/ENV/ARG untouched, matches contract clause verbatim.",
+    "deploy/cell.compose.yml: +13/-0, adds only 'stop_grace_period: \"30s\"' (no new ${VARIABLE}) to nucleo and sidecar service blocks near the existing tmpfs block; no bind-mount form for /var/lib/hexcell introduced anywhere, named volume (${HEXCELL_VOLUMEN_CELULA}) remains the only mount form, consistent with HEX-070's invariant.",
+    "deploy/verificar_senales.sh (static guard, CI-wired): hard-fails (no || true, no silent skip) when docker/compose/python3/PyYAML are absent; checks ENTRYPOINT exec-form and STOPSIGNAL via direct grep on the Dockerfiles (build-time directives invisible to `docker compose config`, correctly reasoned) and stop_grace_period via docker compose config's RESOLVED yaml parsed with PyYAML, matching HEX-070's established technique; no pipelines determine pass/fail so the missing 'set -o pipefail' is immaterial here.",
+    "--autoprueba mutates real copies of the guarded files (cp then sed -i on the copy) and calls the SAME verificar_entrypoint_exec/verificar_stopsignal/verificar_stop_grace_period functions the normal path uses against those copies -- not a scratch path the guard never reads. 05-validation.json shows 3/3 mutations correctly turn the guard red.",
+    "deploy/verificar_apagado_ordenado.sh (manual, NOT wired into CI or verify.commands, confirmed absent from both by grep): creates a per-run-unique named volume+network (timestamp+PID suffix), never reused; tears down unconditionally via `trap limpiar EXIT` (the only '|| true' uses are inside this cleanup trap, which is legitimate, not a vacuous check on the assertions themselves); distinguishes clean exit (code 0), non-zero exit, SIGKILL (137) and OOMKilled with three separate FALLA branches in verificar_salida_limpia; waits on a real startup log line per container ('hexcell: canal configurado: whatsmeow' and '\"evento\":\"sidecar.arrancado\"'), both confirmed present verbatim in crates/hexcell/src/main.rs:305 and sidecar/main.go:29/44 (unmodified by this diff), not a fabricated pattern; never issues orden_emparejar.",
+    "AC-3 check (WAL): confirmed against crates/hexcell-storage/src/pools.rs that punto_de_control_de_wal runs `PRAGMA wal_checkpoint(TRUNCATE)` specifically on sessions.db, which per SQLite semantics truncates the -wal file to zero bytes on success -- the script's nonzero-size sessions.db-wal check is semantically grounded, not an arbitrary heuristic, and is required in addition to (not instead of) the punto_de_control_wal log-line grep.",
+    "docs/bitacora-de-descartes.md: D-47 added, correctly above both the file's real max (D-45) and the reserved D-46 (HEX-072-a/b, still only in .ai/tasks/active/, not yet on disk in the bitacora itself); has a dated reason (stop_signal: in compose vs STOPSIGNAL in Dockerfile) and an explicit reopening condition (per-cell-varying stop signal, which does not exist today).",
+    "README.md and docs/plan/fase-a-6-empaquetado-cli.md updates append to existing sentences verbatim (no rewording or deletion of prior HEX-070/task-24 text), consistent with the append-not-replace convention.",
+    ".github/workflows/ci.yml new 'guardas-deploy' job is valid YAML, indentation matches sibling jobs, wires only verificar_senales.sh (normal + --autoprueba); grepped and confirmed verificar_apagado_ordenado.sh does not appear anywhere in ci.yml and --autoprueba does not appear anywhere in the manual script, so the described grep-guard self-collision never materialized in the committed diff.",
+    "Diff limits respected: 9 files (limit 9), 566/800 total diff lines, verificar_senales.sh 273/280, verificar_apagado_ordenado.sh 233/340.",
+    "Residual, non-blocking operational uncertainty (not a contract violation): whether the GitHub Actions ubuntu-latest runner ships PyYAML for python3 out of the box is unverified from this sandbox; if absent, the new CI job fails loudly with an explicit FALLA message (by design, not a silent skip), so worst case is a red CI check, not a false pass -- flagged for visibility only.",
+    "Implementer's claim of a real docker compose up/stop -t 30 cycle with confirmed WAL checkpoint is unverified prose per the orchestrator's brief; not scored either way, but the static guard and script logic were judged directly against their own code and against real repository facts (log line literals, checkpoint pragma) rather than taken on faith."
+  ],
+  "fix_tasks": []
+}

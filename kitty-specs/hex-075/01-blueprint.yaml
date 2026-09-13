@@ -1,0 +1,212 @@
+task_id: HEX-075
+summary: >-
+  Add STOPSIGNAL to both Dockerfiles and stop_grace_period to both compose
+  services, ship a mutation-proven static guard plus a manual live
+  docker-stop verification script (task 7 of stage A-6).
+affected_files:
+  - Dockerfile
+  - sidecar/Dockerfile
+  - deploy/cell.compose.yml
+  - deploy/verificar_senales.sh
+  - deploy/verificar_apagado_ordenado.sh
+  - .github/workflows/ci.yml
+  - docs/bitacora-de-descartes.md
+  - docs/plan/fase-a-6-empaquetado-cli.md
+  - README.md
+symbols: []
+dependencies:
+  - deploy/verificar_endurecimiento.sh
+  - deploy/celula.env.ejemplo
+  - crates/hexcell/src/apagado.rs
+  - crates/hexcell/src/main.rs
+  - crates/hexcell-storage/src/drenaje.rs
+  - sidecar/main.go
+test_scenarios:
+  - statement: >-
+      The new static guard passes against the real, unmutated Dockerfile,
+      sidecar/Dockerfile, and deploy/cell.compose.yml.
+    covers:
+      - AC-4
+  - statement: >-
+      The static guard's --autoprueba mode fails the guard against three
+      independent scratch mutations (shell-form ENTRYPOINT, missing
+      STOPSIGNAL, missing/insufficient stop_grace_period), proving it is not
+      vacuous.
+    covers:
+      - AC-5
+  - statement: >-
+      The manual live script (deploy/verificar_apagado_ordenado.sh) brings up
+      the cell against a freshly created, empty named volume with the
+      sidecar unpaired, issues `docker stop -t 30` on both containers, and
+      reports exit codes and any SIGKILL/OOMKilled signature.
+    covers:
+      - AC-1
+      - AC-2
+  - statement: >-
+      The manual live script inspects the WAL checkpoint outcome on the
+      named volume after the core container exits 0 (via a nonzero-size
+      dangling -wal file check and/or the core's existing
+      "punto_de_control_wal" structured log line) and fails if the
+      checkpoint did not happen.
+    covers:
+      - AC-3
+  - statement: >-
+      Any defect the manual run exposes (missing STOPSIGNAL, missing
+      stop_grace_period) is fixed only in the Dockerfiles and/or
+      deploy/cell.compose.yml, then re-verified by both the manual script and
+      the static guard.
+    covers:
+      - AC-6
+strategy:
+  - step: 1
+    action: >-
+      Add a literal `STOPSIGNAL SIGTERM` directive immediately before the
+      existing `ENTRYPOINT ["/usr/local/bin/hexcell"]` line (~182), with a
+      short Spanish comment noting Docker's default stop signal is already
+      SIGTERM but the directive makes the contract explicit and anchorable
+      by the new guard. Do not touch USER, ENV, ARG, or the ENTRYPOINT line
+      itself.
+    files:
+      - Dockerfile
+  - step: 2
+    action: >-
+      Same addition in sidecar/Dockerfile before
+      `ENTRYPOINT ["/usr/local/bin/hexcell-sidecar"]` (~324); same
+      constraint: only the new STOPSIGNAL line plus its comment change.
+    files:
+      - sidecar/Dockerfile
+  - step: 3
+    action: >-
+      Add the literal `stop_grace_period: "30s"` to both the `nucleo` and
+      `sidecar` service blocks in deploy/cell.compose.yml (near the existing
+      `tmpfs` block), matching the 30 s grace named in the plan and in
+      apagado.rs's LIMITE_DE_DRENAJE_POR_DEFECTO comment. Verified
+      empirically that `docker compose config` resolves this to the
+      unquoted scalar `stop_grace_period: 30s` (PyYAML reads it back as the
+      string "30s"). Do not introduce a new ${VARIABLE}; this is a fixed
+      mechanical value, not a per-cell knob, consistent with the other four
+      hardening/mount fields already fixed the same way in this file.
+    files:
+      - deploy/cell.compose.yml
+  - step: 4
+    action: >-
+      Write deploy/verificar_senales.sh, new mechanical static guard
+      mirroring deploy/verificar_endurecimiento.sh's shape (header block,
+      `<ruta-plantilla> | --autoprueba` argument surface, hard-fail — never
+      silent-skip — when docker/compose or python3+PyYAML are unavailable).
+      Two independent check families: (a) direct text checks on Dockerfile
+      and sidecar/Dockerfile — exec-form ENTRYPOINT (JSON array, no shell)
+      and a `STOPSIGNAL SIGTERM` line present in each, since these are
+      Dockerfile build-time directives invisible to `docker compose config`;
+      (b) `docker compose config` resolved-YAML check (same technique as the
+      sibling guard) that both `nucleo` and `sidecar` declare
+      `stop_grace_period` equal to `30s`. --autoprueba copies the guarded
+      files to a scratch dir and flips each of the three anchored conditions
+      one at a time (shell-form ENTRYPOINT, missing STOPSIGNAL,
+      missing/shorter stop_grace_period), asserting the guard fails on every
+      one of the three mutated copies and prints a PASA/FALLA line per case,
+      exactly like the sibling script's summary format.
+    files:
+      - deploy/verificar_senales.sh
+  - step: 5
+    action: >-
+      Write deploy/verificar_apagado_ordenado.sh, new manual Docker-based
+      live verification script, sibling in header style to
+      deploy/verificar_endurecimiento.sh but NOT a mechanical guard: it
+      needs a live Docker daemon and takes real time, so it is never invoked
+      from verify.commands or CI. Sequence: create a fresh, uniquely-named
+      empty named volume and network per run (never reuse one); bring the
+      cell up from deploy/cell.compose.yml with the sidecar cold-started and
+      unpaired (no orden_emparejar issued); wait on a liveness signal (NOT a
+      full /health/ready 200 — an intentionally-unpaired sidecar never
+      reaches the channel-active readiness state the plan's cell-unpause
+      criterion requires, so waiting for 200 would hang or false-fail) — a
+      known startup log line or "container running" state suffices; issue
+      `docker stop -t 30` on both containers; read back `docker inspect
+      --format` exit code and OOMKilled flag on both; assert exit code 0 and
+      no 137/OOMKilled on either; inspect the named volume for a dangling
+      nonzero-size `-wal` file on the core's databases and/or grep the
+      core's captured stdout for the existing "punto_de_control_wal"
+      structured log line (crates/hexcell/src/main.rs) confirming the
+      checkpoint ran; tear down and delete the scratch volume and network
+      unconditionally (trap on EXIT); pass/fail summary printed per
+      AC-1/AC-2/AC-3, non-zero exit on any failure. Same UID (10001:10001)
+      and named-volume-only invariant as the rest of deploy/.
+    files:
+      - deploy/verificar_apagado_ordenado.sh
+  - step: 6
+    action: >-
+      Wire deploy/verificar_senales.sh into .github/workflows/ci.yml as a
+      new step or lightweight new job (ubuntu-latest ships docker + docker
+      compose already). Do NOT wire deploy/verificar_apagado_ordenado.sh or
+      any live docker-stop cycle into CI — that stays manual and
+      human-run.
+    files:
+      - .github/workflows/ci.yml
+  - step: 7
+    action: >-
+      Append a "Cerrada el <fecha> con HEX-075" annotation to task 7 in
+      docs/plan/fase-a-6-empaquetado-cli.md's numbered task list, and update
+      the "Orden de ejecución" chain line accordingly, following the exact
+      precedent set by task 24's closure annotation in commit 0d31ee2.
+    files:
+      - docs/plan/fase-a-6-empaquetado-cli.md
+  - step: 8
+    action: >-
+      Add one pointer sentence to README.md's "Composición de la célula"
+      section (~line 139, right after the existing
+      deploy/verificar_endurecimiento.sh sentence), naming the two new
+      scripts and their roles, following the exact style of the existing
+      sentence.
+    files:
+      - README.md
+  - step: 9
+    action: >-
+      Conditional: only if a genuine technique choice is discarded while
+      designing steps 4-5 (e.g. compose-level `stop_signal:` key vs.
+      Dockerfile STOPSIGNAL, or log-line parsing vs. -wal file-size checking
+      for AC-3), log it in docs/bitacora-de-descartes.md in the same commit,
+      numbered strictly above the file's real current maximum AND above
+      D-46, which is reserved by sibling tasks HEX-072-a/b — re-check the
+      file's actual max at implement time (visible max at blueprint time is
+      D-45). Do not fabricate a discard if none genuinely occurred.
+    files:
+      - docs/bitacora-de-descartes.md
+risks:
+  - >-
+    AC-6 bounds any defect fix strictly to Dockerfiles and/or
+    deploy/cell.compose.yml; validated against HEAD (0d31ee2) that
+    apagado.rs already installs SIGTERM+SIGINT handlers, main.rs already
+    runs the WAL checkpoint (emitir_punto_de_control) after ordered
+    shutdown, and both ENTRYPOINTs are already exec-form — no Rust/Go code
+    defect is expected, so crates/** and sidecar/**/*.go stay out of scope.
+  - >-
+    STOPSIGNAL and exec-form ENTRYPOINT are Dockerfile build-time directives
+    invisible to `docker compose config`; the new guard must grep the
+    Dockerfiles' text directly for those two checks and use `docker compose
+    config` resolved YAML only for stop_grace_period, unlike the sibling
+    guard which checks everything via compose config alone.
+  - >-
+    Empirically confirmed against HEAD (docker compose 5.5.1 installed
+    locally): `stop_grace_period: "30s"` resolves to the unquoted scalar
+    `stop_grace_period: 30s`, which PyYAML reads back as the string "30s" —
+    the guard's assertion must compare against that exact resolved form.
+  - >-
+    deploy/verificar_endurecimiento.sh (HEX-070) is still not wired into
+    .github/workflows/ci.yml as of HEAD; HEX-070's own contract explicitly
+    forbade wiring it in and deferred that to plan task 18. 00-spec.yaml for
+    this task explicitly asks for its OWN new guard to run in CI now (AC-4,
+    constraints) — a deliberate divergence from that sibling's precedent per
+    the human's own spec, not an oversight; flagged for visibility only, not
+    a blocker.
+  - >-
+    The plan's readiness semantics for `cell unpause` require SQLite pools
+    operativos AND an active channel session before /health/ready returns
+    200; an intentionally-unpaired sidecar (AC-1's given clause) never
+    reaches that state, so the manual live script must not wait on a full
+    200 — it needs a liveness signal instead (container running state or a
+    known startup log line), or it will hang or false-fail.
+  - >-
+    .ai/tasks/failed/ is empty and `quorum analyze failure-lookup` returned
+    no matches for the touched files at blueprint time; no prior-failure
+    context to carry forward.

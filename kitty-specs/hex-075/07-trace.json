@@ -1,0 +1,16 @@
+{
+  "events": [
+    {
+      "event": "risk_level_calculated",
+      "level": "medium",
+      "reasons": [
+        "file_count_high: 9"
+      ],
+      "signals": {
+        "files_count": 9,
+        "symbols_count": 0,
+        "sensitive_matches": []
+      }
+    }
+  ]
+}

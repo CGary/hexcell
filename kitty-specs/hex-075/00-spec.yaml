@@ -1,0 +1,74 @@
+task_id: HEX-075
+summary: Verify docker stop signal propagation with 30s grace shuts down core and sidecar cleanly, exit 0, no SIGKILL.
+goal: >
+  Prove, at the container/compose level (not just process level), that `docker stop`
+  with a 30-second grace period on the cell's two containers (hexcell core and the
+  whatsmeow sidecar) results in ordered shutdown: SIGTERM reaches PID 1 in both
+  containers, both exit with code 0, the core's WAL checkpoint completes, and neither
+  container is forced with SIGKILL (exit 137 / forced-kill signature). Deliver this as
+  a manual Docker-based verification script under deploy/ (sibling of and consistent
+  with deploy/verificar_endurecimiento.sh) plus a mechanical static guard, runnable in
+  CI, that anchors exec-form ENTRYPOINT and STOPSIGNAL in both Dockerfiles and the stop
+  grace period in the compose template. If the verification surfaces a real gap
+  (missing STOPSIGNAL, missing stop_grace_period, a WAL checkpoint that does not
+  actually happen), fixing it in the Dockerfiles and/or deploy/cell.compose.yml is in
+  scope; the task closes with the verification green. This is task 7 of stage A-6
+  (docs/plan/fase-a-6-empaquetado-cli.md), covering FR-02 (per-cell isolation in
+  dedicated containers on minimal images) and the shutdown acceptance criterion at the
+  end of that plan file's "Criterios de aceptación" section.
+invariants:
+  - Both container images keep exec-form ENTRYPOINT with no shell wrapper and no CMD, so SIGTERM reaches PID 1 directly.
+  - Both binaries keep their existing process-level SIGTERM/SIGINT handling (crates/hexcell/src/apagado.rs, sidecar/main.go) unchanged unless the verification finds a real defect in it.
+  - The manual verification script starts the cell from a freshly created, empty named volume every run; a reused volume never counts as a valid run.
+  - The manual verification script never uses a bind mount for /var/lib/hexcell, consistent with HEX-070's named-volume-only invariant.
+  - Both containers run under the same literal UID:GID (10001:10001), consistent with the established one-cell-one-UID convention.
+  - The static guard inspects `docker compose config`'s resolved YAML, not the raw compose file, consistent with deploy/verificar_endurecimiento.sh's established approach.
+  - No SIGKILL (exit code 137 or an OOMKilled-style forced-kill signature) occurs on either container during the verified stop cycle.
+  - The full docker-stop verification cycle is not added to .github/workflows/ci.yml; only the static guard runs in CI.
+  - All new scripts, comments, commit messages, and any doc updates are written in Spanish, per repository convention.
+acceptance:
+  - id: AC-1
+    statement: A new deploy/ script brings up the cell from the compose template against a freshly created empty named volume, with the sidecar cold-started with no paired whatsmeow session, then issues `docker stop -t 30` on both containers.
+    given: the cell is up from deploy/cell.compose.yml with an empty named volume and an unpaired sidecar session
+    when: the verification script runs `docker stop -t 30` against both containers
+    then: the script observes and reports both containers' exit codes and whether either was forced with SIGKILL
+  - id: AC-2
+    statement: Both containers exit with code 0 within the 30-second grace period, and neither shows a SIGKILL/forced-kill signature (exit 137 or OOMKilled).
+    given: the stop command has been issued per AC-1
+    when: both containers finish stopping
+    then: the script asserts exit code 0 on both and fails loudly if either container was SIGKILLed or exceeded the grace window
+  - id: AC-3
+    statement: The core container's WAL checkpoint completes as part of the ordered shutdown, observable from the verification run (e.g. absence of a dangling -wal file of nonzero size, or an equivalent checkpoint signal already available in the core).
+    given: the core container has exited 0 per AC-2
+    when: the verification script inspects the checkpoint outcome on the named volume
+    then: the script confirms the WAL was checkpointed and fails if it was not
+  - id: AC-4
+    statement: A new mechanical static guard script, consistent in shape and style with deploy/verificar_endurecimiento.sh, anchors exec-form ENTRYPOINT and STOPSIGNAL in both Dockerfiles (Dockerfile and sidecar/Dockerfile) and the stop grace period in deploy/cell.compose.yml, and runs in CI.
+    given: the two Dockerfiles and deploy/cell.compose.yml as committed
+    when: the static guard runs
+    then: it passes on the current repository state and is wired into a CI-runnable check
+  - id: AC-5
+    statement: The static guard is provable by mutation — introducing a scratch-copy regression (shell-form ENTRYPOINT, missing STOPSIGNAL, or a missing/insufficient stop grace period) makes the guard fail.
+    given: a scratch copy of the guarded files with exactly one anchored condition flipped
+    when: the static guard runs against the mutated copy
+    then: the guard reports failure for every mutation tested, proving it is not a vacuous check
+  - id: AC-6
+    statement: Any defect the verification exposes (missing STOPSIGNAL, missing stop_grace_period, a WAL checkpoint that does not actually happen) is fixed in the Dockerfiles and/or deploy/cell.compose.yml before the task closes.
+    given: a defect is found during AC-1 through AC-4
+    when: the fix is applied
+    then: re-running the manual verification script and the static guard both pass
+  - Existing test suites stay green (cargo build/test/fmt/clippy --workspace, and the sidecar's go build/vet/test) after any Dockerfile or compose template change made to fix a found defect.
+  - Any new discard or rejected shortcut identified while designing this verification is logged in docs/bitacora-de-descartes.md in the same commit that discards it, with a sequential D-NN number strictly above the current file maximum and above any number already reserved for sibling tasks (re-check the file's real maximum at implement time; do not assume the number recorded during specification).
+risk: medium
+non_goals:
+  - Do not add the full docker-stop verification cycle to .github/workflows/ci.yml; only the static guard runs in CI.
+  - Do not pair a real WhatsApp session or exercise any real channel traffic; the sidecar cold-starts with no paired session.
+  - Do not change the shutdown order between core and sidecar (already fixed by an existing ADR and verified by the lifecycle test); this task verifies the container-level signal path, not the ordering decision itself.
+  - Do not introduce bulk-sender folklore, proxies, VPNs, or IP rotation.
+  - Do not add or change monetization, portfolio-ceiling, or incident-threshold decisions; those remain open blockers tracked elsewhere.
+constraints:
+  - Verification vehicle is a Docker-based bash script under deploy/, executed manually, sibling to and consistent in shape/style with the existing deploy/verificar_endurecimiento.sh.
+  - The static guard must be genuinely runnable in CI (deterministic, no live docker stop cycle, no network dependency beyond what docker compose config needs).
+  - No new runtime dependencies are introduced to the core or sidecar; the verification only exercises existing shutdown handling and container configuration.
+  - Every mechanical guard added must be validated by a mutation self-test mode (an `--autoprueba`-style flag or equivalent), following the same convention as deploy/verificar_endurecimiento.sh.
+  - Scope is bounded to task 7 of docs/plan/fase-a-6-empaquetado-cli.md; do not expand into other A-6 tasks' territory (e.g. the RAM budget measurement or cross-cell isolation tests belong to other tasks).

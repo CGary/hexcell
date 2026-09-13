@@ -1,0 +1,165 @@
+task_id: HEX-075
+summary: Add STOPSIGNAL/stop_grace_period plus a mutation-proven static guard and a manual live docker-stop script.
+goal: >-
+  Anchor exec-form ENTRYPOINT and a literal STOPSIGNAL SIGTERM in both
+  Dockerfiles and a literal stop_grace_period: 30s on both compose services,
+  ship deploy/verificar_senales.sh (mechanical, CI-runnable, mutation-proven
+  by --autoprueba) and deploy/verificar_apagado_ordenado.sh (manual, human-run,
+  live docker-stop cycle against a fresh empty volume with an unpaired
+  sidecar), and fix any real gap the manual run exposes, strictly within
+  the Dockerfiles and/or deploy/cell.compose.yml.
+read:
+  - .ai/tasks/active/HEX-075-new-spec/00-spec.yaml
+  - .ai/tasks/active/HEX-075-new-spec/01-blueprint.yaml
+  - docs/plan/fase-a-6-empaquetado-cli.md
+  - deploy/verificar_endurecimiento.sh
+  - deploy/cell.compose.yml
+  - deploy/celula.env.ejemplo
+  - Dockerfile
+  - sidecar/Dockerfile
+  - crates/hexcell/src/apagado.rs
+  - crates/hexcell/src/main.rs
+  - crates/hexcell-storage/src/drenaje.rs
+  - sidecar/main.go
+  - docs/bitacora-de-descartes.md
+  - README.md
+  - .github/workflows/ci.yml
+  - .ai/tasks/done/HEX-070-new-spec/02-contract.yaml
+touch:
+  - Dockerfile
+  - sidecar/Dockerfile
+  - deploy/cell.compose.yml
+  - deploy/verificar_senales.sh
+  - deploy/verificar_apagado_ordenado.sh
+  - .github/workflows/ci.yml
+  - docs/bitacora-de-descartes.md
+  - docs/plan/fase-a-6-empaquetado-cli.md
+  - README.md
+forbid:
+  files:
+    - "crates/**"
+    - "sidecar/**/*.go"
+    - sidecar/go.mod
+    - sidecar/go.sum
+    - Cargo.toml
+    - Cargo.lock
+    - rust-toolchain.toml
+    - ".dockerignore"
+    - sidecar/.dockerignore
+    - deploy/celula.env.ejemplo
+    - deploy/verificar_endurecimiento.sh
+    - "*.env"
+    - ".env*"
+    - "*.db"
+    - "*.db-wal"
+    - "*.db-shm"
+    - "docs/adr/**"
+    - docs/STATUS.md
+    - docs/protocolo-ipc-nucleo-sidecar.md
+    - "kitty-specs/**"
+    - ".ai/**"
+  behaviors:
+    - "Do not change mem_limit, cpus, or any other resource-limit field in deploy/cell.compose.yml; resource limits are plan task 6's scope."
+    - "Do not implement or run the two-cell isolation demonstration; that stays plan task 17's scope, out of this task's non_goals."
+    - "Do not change any RUN, USER, ENV, ARG, or LABEL instruction, and do not change the ENTRYPOINT line's value or the 10001:10001 user, in Dockerfile or sidecar/Dockerfile. The only permitted addition to each file is one new STOPSIGNAL SIGTERM line plus its own explanatory comment; a verify command diffs both files against the merge-base and fails on any removed line or any added non-comment line that is not exactly STOPSIGNAL SIGTERM."
+    - "Do not add, offer, or leave commented-out any bind-mount form for /var/lib/hexcell in deploy/cell.compose.yml; the named-volume-only invariant from HEX-070 still applies even though this task's scope is signal propagation, not mounts."
+    - "Do not introduce a new ${VARIABLE} for stop_grace_period or for anything the new guard checks; these are fixed mechanical literals (stop_grace_period: \"30s\", STOPSIGNAL SIGTERM), not per-cell knobs."
+    - "Do not wire deploy/verificar_apagado_ordenado.sh, or any live docker stop cycle, into .github/workflows/ci.yml or into this contract's verify.commands. It is a manual, human-executed script; only deploy/verificar_senales.sh (the static guard) is wired into CI."
+    - "deploy/verificar_apagado_ordenado.sh must never pair a real WhatsApp session or issue orden_emparejar; the sidecar cold-starts unpaired, consistent with 00-spec.yaml's AC-1 given clause."
+    - "Do not add a new third-party dependency or tool; both new scripts stay bash + python3 stdlib-adjacent PyYAML, the same toolset deploy/verificar_endurecimiento.sh already uses."
+    - "Do not weaken, delete, or rephrase any existing HEX-069/HEX-070 comment block in either Dockerfile or in deploy/cell.compose.yml; only add new lines and comments belonging to this task."
+    - "Do not touch crates/** or sidecar/**/*.go under any circumstance: 00-spec.yaml's AC-6 bounds any defect fix strictly to the Dockerfiles and/or deploy/cell.compose.yml. If the manual run's findings appear to require a Rust or Go source change, stop and report it as a blocker instead of expanding this diff."
+    - "If, and only if, a genuine technique choice is discarded while designing the two new scripts (e.g. compose-level stop_signal vs. Dockerfile STOPSIGNAL, or log-line parsing vs. -wal file-size checking for AC-3), log it in docs/bitacora-de-descartes.md in the same commit with a sequential D-NN strictly above the file's real current maximum and above D-46 (reserved by sibling tasks HEX-072-a/b) — re-check the file's actual current maximum at implement time; do not assume the number named during blueprinting (D-45 was the visible max then) and do not fabricate a discard if none genuinely occurred."
+    - "Every new or changed line of prose, identifiers, comments, and script/CI output messages is Spanish, matching repository convention; this applies to both new scripts, both Dockerfiles' new comments, the compose file, the CI step, and the two doc files."
+verify:
+  commands:
+    - |
+      set -u
+      # 1. AC-4: el guardia nuevo corre contra los archivos REALES (sin mutar)
+      # y debe pasar. Un entorno sin docker/compose es FALLA, no omision.
+      command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1 \
+        || { echo "FALLA: docker/compose no disponible; AC-4/AC-5 no se pueden verificar"; exit 1; }
+      test -x deploy/verificar_senales.sh \
+        || { echo "FALLA: deploy/verificar_senales.sh no existe o no es ejecutable"; exit 1; }
+      bash deploy/verificar_senales.sh deploy/cell.compose.yml
+    - |
+      set -u
+      # 2. AC-5: prueba de mutacion. El guardia debe fallar contra cada una de
+      # las tres condiciones ancladas cuando se quita/rompe, una por vez. Un
+      # guardia que nunca se vio fallar no es todavia un guardia.
+      command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1 \
+        || { echo "FALLA: docker/compose no disponible; AC-5 no se puede verificar"; exit 1; }
+      bash deploy/verificar_senales.sh --autoprueba
+    - |
+      set -u
+      # 3. Alcance en los Dockerfiles: la UNICA linea de instruccion nueva
+      # permitida es "STOPSIGNAL SIGTERM"; ninguna linea existente puede
+      # borrarse. Comparacion contra el merge-base con main (invariante al
+      # estado del indice/HEAD), siguiendo el mismo patron que HEX-070.
+      BASE_REF=$(git merge-base main HEAD 2>/dev/null || echo main)
+      DIFF=$(git diff --no-color "$BASE_REF" -- Dockerfile sidecar/Dockerfile)
+      BORRADAS=$(echo "$DIFF" | grep -E '^-' | grep -vE '^---')
+      if [ -n "$BORRADAS" ]; then
+        echo "FALLA: se borraron lineas de los Dockerfiles (base=$BASE_REF):"
+        echo "$BORRADAS"
+        exit 1
+      fi
+      MALAS=$(echo "$DIFF" | grep -E '^\+' | grep -vE '^\+\+\+' | grep -vE '^\+[[:space:]]*#' | grep -vE '^\+[[:space:]]*$' \
+        | sed -E 's/^\+[[:space:]]*//' | grep -vE '^STOPSIGNAL SIGTERM[[:space:]]*$')
+      if [ -n "$MALAS" ]; then
+        echo "FALLA: los Dockerfiles agregaron algo distinto de 'STOPSIGNAL SIGTERM' (base=$BASE_REF):"
+        echo "$MALAS"
+        exit 1
+      fi
+      echo "OK: los Dockerfiles solo agregaron la linea STOPSIGNAL SIGTERM y comentarios (comparado contra $BASE_REF)"
+    - |
+      set -u
+      # 4. La guardia mecanica queda en CI y el ciclo manual de docker stop NO.
+      grep -q 'verificar_senales.sh' .github/workflows/ci.yml \
+        || { echo "FALLA: .github/workflows/ci.yml no invoca deploy/verificar_senales.sh"; exit 1; }
+      if grep -q 'verificar_apagado_ordenado.sh' .github/workflows/ci.yml; then
+        echo "FALLA: deploy/verificar_apagado_ordenado.sh (ciclo manual) no debe aparecer en CI"
+        exit 1
+      fi
+      echo "OK: CI invoca el guardia mecanico y no el ciclo manual de docker stop"
+    - |
+      set -u
+      # 5. AC-6 / trazabilidad: la tarea 7 del plan anota su cierre con este ID.
+      grep -q 'HEX-075' docs/plan/fase-a-6-empaquetado-cli.md \
+        && echo "OK: la tarea 7 anota su cierre con HEX-075" \
+        || { echo "FALLA: falta la anotacion de cierre de la tarea 7 con HEX-075"; exit 1; }
+    - |
+      set -u
+      # 6. README referencia los dos scripts nuevos, siguiendo el patron ya
+      # establecido para deploy/verificar_endurecimiento.sh.
+      grep -q 'verificar_senales.sh' README.md \
+        && echo "OK: README referencia deploy/verificar_senales.sh" \
+        || { echo "FALLA: README.md no referencia deploy/verificar_senales.sh"; exit 1; }
+    - |
+      set -u
+      # 7. El script manual existe y es ejecutable, y jamas se declara mecanico
+      # (no lleva --autoprueba, que es un modo exclusivo del guardia estatico).
+      test -x deploy/verificar_apagado_ordenado.sh \
+        || { echo "FALLA: deploy/verificar_apagado_ordenado.sh no existe o no es ejecutable"; exit 1; }
+      if grep -q -- '--autoprueba' deploy/verificar_apagado_ordenado.sh; then
+        echo "FALLA: el script manual no debe implementar --autoprueba; ese modo es exclusivo del guardia mecanico"
+        exit 1
+      fi
+      echo "OK: deploy/verificar_apagado_ordenado.sh existe, es ejecutable, y no se declara guardia mecanico"
+  target_s: 45
+acceptance:
+  human_gate: true
+limits:
+  max_files_changed: 9
+  max_diff_lines: 800
+  per_class:
+    - glob: "deploy/verificar_senales.sh"
+      max_diff_lines: 280
+    - glob: "deploy/verificar_apagado_ordenado.sh"
+      max_diff_lines: 340
+execution:
+  mode: worktree_edit
+  branch: ai/HEX-075
+retry_policy:
+  max_attempts: 3
+  escalate_after: 2
