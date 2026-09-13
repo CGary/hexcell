@@ -602,6 +602,56 @@ fn configuracion_embeddings_desde_la_fuente_y_validaciones() {
 }
 
 #[test]
+fn configuracion_notificaciones_telegram_desde_la_fuente() {
+    let directorio_temporal = std::env::temp_dir().join(format!(
+        "hexcell-test-config-telegram-{}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&directorio_temporal).expect("crear el directorio temporal");
+
+    let mut fuente = FuenteEnMemoria::vacia()
+        .con("HEXCELL_ID_CELULA", "piloto-01")
+        .con("HEXCELL_RUTA_DATOS", directorio_temporal.to_string_lossy());
+
+    // Sin token -> sin notificaciones configuradas.
+    let config = Configuracion::desde_fuente(&fuente).expect("configuración por defecto válida");
+    assert!(config.notificaciones.is_none());
+
+    // Token presente sin chat -> falla.
+    fuente.fijar("HEXCELL_TELEGRAM_BOT_TOKEN", "token-de-prueba");
+    let err =
+        Configuracion::desde_fuente(&fuente).expect_err("debe fallar sin HEXCELL_TELEGRAM_CHAT_ID");
+    assert_eq!(
+        err,
+        ErrorDeConfiguracion::VariableAusente {
+            nombre: "HEXCELL_TELEGRAM_CHAT_ID",
+            formato_esperado: "identificador de chat de Telegram, p. ej. 123456789",
+        }
+    );
+
+    // Token y chat presentes -> configurado, con la URL base por defecto.
+    fuente.fijar("HEXCELL_TELEGRAM_CHAT_ID", "123456789");
+    let config = Configuracion::desde_fuente(&fuente).expect("configuración de Telegram válida");
+    let notificaciones = config
+        .notificaciones
+        .expect("debe activarse el sumidero Telegram");
+    assert_eq!(notificaciones.url_base, "https://api.telegram.org");
+    assert_eq!(notificaciones.token, "token-de-prueba");
+    assert_eq!(notificaciones.id_chat, "123456789");
+
+    // URL base personalizada -> se respeta, para que el test del sumidero pueda apuntar a un
+    // servidor de loopback en vez del real.
+    fuente.fijar("HEXCELL_TELEGRAM_URL_BASE", "http://127.0.0.1:9");
+    let config = Configuracion::desde_fuente(&fuente).expect("configuración de Telegram válida");
+    assert_eq!(
+        config.notificaciones.expect("debe seguir activo").url_base,
+        "http://127.0.0.1:9"
+    );
+
+    let _ = std::fs::remove_dir_all(&directorio_temporal);
+}
+
+#[test]
 fn configuracion_direccion_admin_y_limite_cuerpo_desde_la_fuente() {
     let directorio_temporal =
         std::env::temp_dir().join(format!("hexcell-test-config-admin-{}", std::process::id()));
