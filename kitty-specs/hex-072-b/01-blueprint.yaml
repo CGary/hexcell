@@ -1,0 +1,99 @@
+task_id: HEX-072-b
+summary: "Sidecar metrics producer in new leaf package internal/metricas: bounded per-contact ack ratio, reconnections/hour and incoming silence in one periodic key=value log line, plus adr-0033."
+
+affected_files:
+  - sidecar/internal/metricas/metricas.go
+  - sidecar/internal/metricas/metricas_test.go
+  - sidecar/main.go
+  - docs/adr/adr-0033-metricas-de-canal-propio-en-el-sidecar.md
+  - docs/adr/README.md
+  - docs/STATUS.md
+  - docs/bitacora-de-descartes.md
+
+symbols:
+  - "metricas.Productor (Application Service; the single production file holding ALL producer logic, per the spec's single-file constraint)"
+  - "metricas.NuevoProductor(reg *registro.Registro, ahoraMs func() int64) *Productor (injected clock is the test seam; no time.Now() inside the logic)"
+  - "metricas.EventoMetricasSidecar = \"sidecar.metricas_instantanea\" (fixed event name, homologous to adr-0024's metricas_instantanea)"
+  - "metricas.MaximoContactos = 256 (cardinality bound, Value Object constant)"
+  - "metricas.MaximoCorrelaciones = 1024 (cardinality bound, Value Object constant)"
+  - "metricas.IntervaloDeInstantanea = 60 * time.Second (matches adr-0024's INTERVALO_DE_INSTANTANEA)"
+  - "Productor.ObservarEnvio(idConversacion, idCorrelacion string) (records correlation->contact join key and increments the ack-ratio denominator)"
+  - "Productor.ObservarAcuse(idCorrelacion, estado string) (resolves the join and increments the ack-ratio numerator; no-op on unknown/evicted correlation)"
+  - "Productor.ObservarEstadoSesion(estado string) (counts transitions INTO the connected state; the reconnections counter)"
+  - "Productor.ObservarEntrante() (stamps last-inbound time for the silence-window series)"
+  - "Productor.Instantanea() string (pure function building the deterministic key=value detalle payload; the assertion surface of every test)"
+  - "Productor.Emitir() (one registro.Info line carrying Instantanea() in the Detalle field)"
+  - "Productor.Bucle(ctx context.Context, intervalo time.Duration) (periodic goroutine, mirroring bucleDeDrenajeSalida in main.go)"
+  - "Productor.desalojarContacto / desalojarCorrelacion (deterministic eviction: oldest activity first, ascending id as tiebreak; increments contactosOmitidos)"
+  - "main.go: transmisorObservado (Transmisor decorator wrapping outbox.Transmisor; the ONLY seam that sees idConversacion and idCorrelacion together)"
+
+dependencies:
+  - sidecar/internal/canal/acuses.go
+  - sidecar/internal/outbox/transmisor.go
+  - sidecar/internal/outbox/salida.go
+  - sidecar/internal/registro/registro.go
+  - sidecar/internal/ipc/mensajes.go
+  - sidecar/internal/canal/reconexion.go
+  - sidecar/arranque.go
+  - docs/adr/adr-0024-metricas-internas-de-operacion.md
+  - docs/adr/adr-0019-registro-estructurado.md
+  - docs/plan/fase-a-6-empaquetado-cli.md
+  - docs/plan/fase-a-3-adaptador-whatsmeow.md
+
+test_scenarios:
+  - "One emitted line carries all three series at once: per-contact ack ratio, reconnections per hour and incoming silence window. Mutation: delete any one series from Instantanea() and the test fails."
+  - "The ack ratio is segmented per contact and never a single aggregate: two contacts with different send/ack counts both appear with their own distinct ratios. Mutation: collapse the per-contact map into one aggregate figure and the test fails."
+  - "An ack whose correlation was never observed as a send (or was already evicted) is ignored: it neither panics nor invents a phantom contact. Mutation: drop the existence check and the test fails."
+  - "Reconnections per hour is derived from the injected clock and the count of transitions INTO the connected state; repeated connected states without an intervening disconnection do not inflate the count. Mutation: count every state instead of the transition and the test fails."
+  - "The incoming-silence window grows with the injected clock and resets to zero on ObservarEntrante(). Mutation: never reset the stamp and the test fails."
+  - "Contact eviction past 256: the 257th distinct contact evicts the oldest-activity contact, contactos_omitidos increments, and the surviving set is exactly the expected one. Mutation: pick any other victim (newest, random, map-iteration order) and the test fails."
+  - "Contact eviction tiebreak: with two contacts sharing an identical last-activity timestamp, the victim is the one with the lower (ascending) id, deterministically, across repeated runs. Mutation: flip the tiebreak to descending and the test fails."
+  - "Correlation eviction past 1024 behaves the same way and also increments contactos_omitidos, so truncation is observable and never silent. Mutation: evict without incrementing and the test fails."
+  - "The emitted line is a single registro entry whose evento is the fixed constant and whose payload is a key=value string in the detalle field, never JSON and never a new IPC message type. Mutation: emit JSON in detalle and the test fails."
+  - "The per-contact key is the internal id_conversacion and never a raw transport JID: a JID-shaped input is never accepted as a contact key from the producer's own API surface. Mutation: key the map by a JID and the test fails."
+  - "Instantanea() renders contacts in a deterministic (ascending id) order, so two calls on identical state produce byte-identical output. Mutation: iterate the Go map directly and the test fails under -count=1 map-order randomisation."
+
+strategy:
+  - step: 1
+    action: "Create the leaf package sidecar/internal/metricas with metricas.go as the SINGLE production file holding all producer logic (Application Service). It imports only stdlib plus internal/registro: NOT canal, NOT outbox, NOT whatsmeow. Observers therefore take plain scalars (idConversacion, idCorrelacion, estado strings), which both removes any import-cycle risk and keeps the test binary free of whatsmeow."
+    files:
+      - sidecar/internal/metricas/metricas.go
+  - step: 2
+    action: "Implement the two bounded maps behind one mutex: correlaciones (id_correlacion -> id_conversacion, cap 1024) and contactos (id_conversacion -> enviados/acusados/ultima_actividad_ms, cap 256). Eviction is deterministic: scan for the oldest ultima_actividad_ms, break ties on the lower (ascending) id, evict that entry and increment contactosOmitidos. Never use Go map iteration order as the victim selector, and never use randomness."
+    files:
+      - sidecar/internal/metricas/metricas.go
+  - step: 3
+    action: "Implement the three series and the snapshot. Ack ratio is per contact (acusados/enviados, contacts sorted ascending for byte-stable output); reconexiones_por_hora is the monotonic reconnection count normalised over elapsed time from the injected clock; silencio_entrante_ms is now minus the last inbound stamp. Instantanea() returns one key=value string; Emitir() passes it as registro.Campos{Detalle: ...} under the fixed evento constant, exactly the adr-0024 convention, never JSON."
+    files:
+      - sidecar/internal/metricas/metricas.go
+  - step: 4
+    action: "Write metricas_test.go covering all eleven scenarios with an injected fake clock and a bytes.Buffer-backed registro. Every assertion must be mutation-provable: the test author flips the emission, segmentation, eviction-victim and tiebreak conditions in turn and confirms each flip turns the suite red. Record the compilation profile explicitly (plain `go test ./... -count=1`, the same profile CI runs), because a guard proven under one profile is only proven under that profile."
+    files:
+      - sidecar/internal/metricas/metricas_test.go
+  - step: 5
+    action: "Wire the producer in the sidecar composition root. main.go is wiring only, no producer logic: (a) wrap outbox.Transmisor in a small decorator calling ObservarEnvio on a successful Transmitir, which is the only place idConversacion and idCorrelacion are both in scope; (b) call recursos.Sesion.RegistrarManejadorDeAcuses so HEX-072-a's sink stops being dead code, forwarding each Acuse to ObservarAcuse; (c) decorate the Supervisor's SumideroDeEstado around srv.EnviarEstadoSesion; (d) decorate sumideroEvento to call ObservarEntrante; (e) start Bucle in a goroutine alongside bucleDeDrenajeSalida."
+    files:
+      - sidecar/main.go
+  - step: 6
+    action: "Write docs/adr/adr-0033-metricas-de-canal-propio-en-el-sidecar.md as a NEW sequential ADR extending adr-0024 without rewriting it, add its row to docs/adr/README.md (whose numbering is the source of truth), add a fresh Definido entry to docs/STATUS.md for this producer, and add bitacora entry D-46 for the alternatives discarded while designing the cardinality bound and the emission mechanism, in the SAME commit that discards them."
+    files:
+      - docs/adr/adr-0033-metricas-de-canal-propio-en-el-sidecar.md
+      - docs/adr/README.md
+      - docs/STATUS.md
+      - docs/bitacora-de-descartes.md
+
+risks:
+  - "RESOLVED SPEC MISMATCH (do not treat as a gap): 00-spec.yaml's acceptance says the new ADR must be `adr-0032 ... next after adr-0031`. That is STALE. docs/adr/adr-0032-protocolo-ipc-version-de-cable-6.md ALREADY EXISTS (closed 2026-09-11 by HEX-071, row present in docs/adr/README.md line 43). Because ADR numbering is sequential and NEVER reused or reordered, the new ADR for this task is adr-0033. The spec is not to be edited; this blueprint records the correction. Verified on main at 0d31ee2."
+  - "VERIFIED: the bitacora number in the spec is correct. The highest existing entry is `### D-45` (docs/bitacora-de-descartes.md line 621, HEX-072-a), so this task's entry is D-46."
+  - "LOAD-BEARING DESIGN CONSTRAINT: canal.Acuse (HEX-072-a) carries only IdCorrelacion, Estado and MarcaTemporalMs. It has NO contact identifier, and neither does ipc.AcuseEnvio. Per-contact segmentation is therefore impossible from the ack sink alone and REQUIRES a correlation->contact join. This is precisely why the spec bounds 256 contacts AND 1024 correlations separately. The only seam where id_conversacion and id_correlacion are both in scope without editing outbox/salida.go is the outbox.Transmisor interface (Transmitir(ctx, idConversacion, contenido) (idCorrelacion, error)), which is already injected from main.go. A decorator there costs zero changes to existing production logic."
+  - "SCOPE FACT: sidecar/internal/canal/acuses.go states in its own doc comment that composing RegistrarManejadorDeAcuses in sidecar/main.go 'es trabajo de HEX-072-b'. Wiring main.go is therefore mandatory, not optional, and main.go must be in the touch list. acuses.go itself stays untouched."
+  - "PRIVACY INVARIANT: the per-contact key must be the internal id_conversacion, NEVER a raw WhatsApp JID. registro.Campos documents IdConversacion as 'nunca un JID', and sessions.db never stores raw transport identifiers. A metrics line leaking a JID would breach the adr-0019 privacy boundary, so it is both a test scenario and a forbidden behavior."
+  - "IMPORT HYGIENE: metricas must stay a leaf importing only stdlib plus internal/registro. If it imported canal or outbox for their types it would pull whatsmeow into its test binary and couple the producer to two packages it does not need. Observers take plain scalars; main.go does the type adaptation."
+  - "MEMORY: 256 contacts (~3 int64 plus an id each) plus 1024 correlations (two ids each) lands in the low hundreds of KB, the same order of magnitude as the spec's ~110 KB target and consistent with adr-0024's memory-footprint constraint. No allocation grows without bound; there is no history buffer and no database."
+  - "EXPLICITLY DEFERRED, NOT A GAP (pre-empting a false finding in q-analyze): latency-to-ack, the fourth series named in the original A-3 promise at docs/plan/fase-a-3-adaptador-whatsmeow.md:105-109, is out of scope by the spec's own non_goals and invariants. Its absence is deliberate."
+  - "EXPLICITLY OUT OF SCOPE, NOT A GAP: no end-to-end test against a real WhatsApp channel is possible or attempted; verification is a pure in-simulation Go test with an injected clock and no network I/O, per the spec's constraints."
+  - "EXPLICITLY OUT OF SCOPE, NOT A GAP: closing task 25-b in docs/plan/fase-a-6-empaquetado-cli.md is post-merge bookkeeping the human performs in a separate docs commit (see commit 0d31ee2, which registered closures for tasks 5, 9, 24 and 25-a). The plan file is read context here, not a touched file."
+  - "DOWNSTREAM CONTRACT: plan task 20 (notificaciones) declares 'Depende de la tarea 25-b' and consumes the ack-ratio-per-contact series as an alert condition (docs/STATUS.md line ~194). The emitted key names are therefore a published interface: they must be stable and must be written down in adr-0033, not left implicit in the code."
+  - "NO EXISTING PENDIENTE TO TRANSITION: verified against docs/STATUS.md. The only nearby entry (line ~191, 'Alertas push y dead-man's switch') is a Definido entry describing the future CONSUMER of this series, not this producer. A fresh Definido entry is required, exactly as the spec states."
+  - "MUTATION DISCIPLINE AND PROFILE: a guard never seen to fail is not yet a guard, and a guard only holds under the compilation profile its test ran in. Every assertion here must be shown red by flipping its condition, under the plain `go test ./... -count=1` profile that CI runs."
+  - "CI INVARIANT: the sidecar test suite must remain non-empty and go build / go vet / go test must all stay green; no new runtime dependency may enter sidecar/go.mod or go.sum."

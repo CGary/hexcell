@@ -1,0 +1,114 @@
+task_id: HEX-072-b
+summary: "Sidecar metrics producer in new leaf package internal/metricas: bounded per-contact ack ratio, reconnections/hour and incoming silence in one periodic key=value log line, plus adr-0033."
+goal: >-
+  Add a sidecar-native metrics producer that emits three bounded series (per-contact delivery-ack
+  ratio, reconnections per hour, incoming-silence window) in ONE periodic key=value structured log
+  line through sidecar/internal/registro, consuming the events.Receipt-derived sink built by
+  HEX-072-a without modifying it. Per-contact and per-correlation state is bounded (256/1024) with
+  deterministic eviction (oldest activity first, ascending id as tiebreak) and a contactos_omitidos
+  counter, so truncation is observable rather than silent. Ship a new sequential ADR adr-0033
+  extending adr-0024, a fresh Definido entry in docs/STATUS.md, and bitacora entry D-46. The whole
+  code change is contained in sidecar/; no Rust crate, no IPC message type, no cable-version bump.
+
+read:
+  - sidecar/internal/canal/acuses.go
+  - sidecar/internal/canal/reconexion.go
+  - sidecar/internal/outbox/transmisor.go
+  - sidecar/internal/outbox/salida.go
+  - sidecar/internal/registro/registro.go
+  - sidecar/internal/registro/registro_test.go
+  - sidecar/internal/ipc/mensajes.go
+  - sidecar/arranque.go
+  - docs/adr/adr-0024-metricas-internas-de-operacion.md
+  - docs/adr/adr-0019-registro-estructurado.md
+  - docs/adr/README.md
+  - docs/plan/fase-a-6-empaquetado-cli.md
+  - docs/plan/fase-a-3-adaptador-whatsmeow.md
+  - docs/bitacora-de-descartes.md
+  - CLAUDE.md
+
+touch:
+  - sidecar/internal/metricas/metricas.go
+  - sidecar/internal/metricas/metricas_test.go
+  - sidecar/main.go
+  - docs/adr/adr-0033-metricas-de-canal-propio-en-el-sidecar.md
+  - docs/adr/README.md
+  - docs/STATUS.md
+  - docs/bitacora-de-descartes.md
+
+forbid:
+  files:
+    - sidecar/internal/canal/acuses.go
+    - sidecar/internal/canal/acuses_test.go
+    - sidecar/internal/canal/reconexion.go
+    - sidecar/internal/outbox/salida.go
+    - sidecar/internal/outbox/transmisor.go
+    - sidecar/internal/ipc/mensajes.go
+    - sidecar/internal/registro/registro.go
+    - sidecar/go.mod
+    - sidecar/go.sum
+    - docs/protocolo-ipc-nucleo-sidecar.md
+    - docs/PRD.md
+    - docs/plan/fase-a-6-empaquetado-cli.md
+    - docs/plan/fase-a-3-adaptador-whatsmeow.md
+    - docs/adr/adr-0024-metricas-internas-de-operacion.md
+    - .ai/tasks/active/HEX-072-b/00-spec.yaml
+  behaviors:
+    - "Modifying sidecar/internal/canal/acuses.go or its test in any way. That file is HEX-072-a's delivered scope; this task CONSUMES its SumideroDeAcuses and Acuse type and must not reshape them."
+    - "Touching ANY Rust crate. The entire code change is contained in sidecar/. crates/** is out of bounds without exception, including crates/hexcell-canal-whatsmeow."
+    - "Adding, renaming or versioning any IPC message type, or editing docs/protocolo-ipc-nucleo-sidecar.md, or bumping the IPC cable version. The metrics line is a LOG line, never an IPC message."
+    - "Adding any new runtime dependency to the sidecar Go module. sidecar/go.mod and sidecar/go.sum must be byte-identical after the change."
+    - "Emitting the ack ratio as a single aggregate figure across all contacts. The series is ALWAYS segmented per contact; an aggregate-only emission is the primary defect this task exists to prevent."
+    - "Using a raw WhatsApp JID (or any raw transport identifier) as the per-contact key, or letting one reach the emitted log line. The key is the internal id_conversacion, per the adr-0019 privacy boundary and registro.Campos' 'nunca un JID'."
+    - "Random, map-iteration-order, newest-first, or otherwise non-deterministic eviction. Eviction is strictly oldest-activity-first with ascending id as tiebreak, per doctrine D-08."
+    - "Evicting without incrementing contactos_omitidos. Silent truncation is exactly the failure mode the counter exists to make observable, for BOTH the contact and the correlation bound."
+    - "Emitting the payload as JSON, or as anything other than a key=value string in the registro Campos.Detalle field. The convention is adr-0024's metricas_instantanea, homologous, not reinvented."
+    - "Letting metricas_test.go rely on Go map iteration order, wall-clock time, sleeps, or network I/O. The clock is injected; the test is pure simulation and deterministic under -count=1."
+    - "Splitting the metrics-producer logic across more than one production file. ALL producer logic lives in sidecar/internal/metricas/metricas.go; sidecar/main.go carries wiring only (decorators and goroutine start), no counting, formatting or eviction logic."
+    - "Importing internal/canal, internal/outbox or whatsmeow from internal/metricas. The producer is a leaf importing only stdlib plus internal/registro; main.go adapts the concrete types to the producer's scalar observers."
+    - "Implementing latency-to-ack. It is explicitly deferred by the spec's non_goals; its absence is deliberate and is NOT a gap."
+    - "Introducing a metrics history table, a new database, or any write to sqlstore.db or identidad.db. The snapshot is in-memory only and bounded by the 256/1024 caps."
+    - "Introducing jitter, warm-up protocols, proxies, VPNs or IP rotation. The own channel's ban risk is structural, not behavioral."
+    - "Reusing or reordering an ADR number. adr-0032 already exists (HEX-071, 2026-09-11); the new ADR is adr-0033 and it EXTENDS adr-0024 without rewriting it."
+    - "Editing or deleting any existing bitacora entry. D-46 is appended; D-01..D-45 are immutable and may only ever be marked REABIERTO."
+    - "Rewriting 00-spec.yaml. The human owns the spec; the stale adr-0032 reference is recorded as a resolved risk in 01-blueprint.yaml instead."
+    - "Editing the repository root README.md or any README.md other than docs/adr/README.md."
+    - "Writing any repository content in English. Docs, identifiers, comments and the commit message are in Spanish (conventional commits, no AI attribution). CLAUDE.md is the only English file and is not touched."
+    - "Leaving the sidecar test suite empty or skipping tests to make the build pass. CI blocks on go build, go vet and a non-empty go test."
+    - "Claiming a guard works without having seen it fail. Every assertion must be shown red by flipping its condition (emission, segmentation, eviction victim, tiebreak) under the same -count=1 profile CI runs."
+
+verify:
+  commands:
+    - "cd sidecar && go build ./..."
+    - "cd sidecar && go vet ./..."
+    - "cd sidecar && go test ./internal/metricas/ -count=1"
+    - "cd sidecar && go test ./... -count=1"
+    - "cd sidecar && git diff --quiet -- go.mod go.sum && echo 'OK: sin dependencias nuevas'"
+    - "git diff --name-only | grep -qE '^crates/|^docs/protocolo-ipc-nucleo-sidecar.md$' && echo 'FALLO: crate Rust o protocolo IPC tocado' && exit 1 || echo 'OK: cambio contenido en sidecar/'"
+    - "test -f docs/adr/adr-0033-metricas-de-canal-propio-en-el-sidecar.md && grep -q 'adr-0033' docs/adr/README.md && echo 'OK: adr-0033 con su fila'"
+    - "grep -q 'D-46' docs/bitacora-de-descartes.md && echo 'OK: entrada D-46 presente'"
+  target_s: 60
+
+acceptance:
+  human_gate: true
+
+limits:
+  max_files_changed: 7
+  max_diff_lines: 950
+  per_class:
+    - glob: "sidecar/internal/metricas/metricas.go"
+      max_diff_lines: 340
+    - glob: "sidecar/main.go"
+      max_diff_lines: 60
+    - glob: "sidecar/internal/metricas/metricas_test.go"
+      max_diff_lines: 460
+    - glob: "docs/**"
+      max_diff_lines: 140
+
+execution:
+  mode: worktree_edit
+  branch: ai/HEX-072-b
+
+retry_policy:
+  max_attempts: 2
+  escalate_after: 2

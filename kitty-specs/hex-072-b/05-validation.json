@@ -1,0 +1,56 @@
+{
+  "commands": [
+    {
+      "command": "cd sidecar && go build ./...",
+      "duration_s": 1,
+      "exit_code": 0,
+      "output_excerpt": "sin salida"
+    },
+    {
+      "command": "cd sidecar && go vet ./...",
+      "duration_s": 1,
+      "exit_code": 0,
+      "output_excerpt": "sin salida"
+    },
+    {
+      "command": "cd sidecar && go test ./internal/metricas/ -count=1",
+      "duration_s": 1,
+      "exit_code": 0,
+      "output_excerpt": "ok github.com/CGary/hexcell/sidecar/internal/metricas 0.002s"
+    },
+    {
+      "command": "cd sidecar && go test ./... -count=1",
+      "duration_s": 1,
+      "exit_code": 0,
+      "output_excerpt": "ok github.com/CGary/hexcell/sidecar 0.006s ok github.com/CGary/hexcell/sidecar/internal/canal 0.050s ok github.com/CGary/hexcell/sidecar/internal/configuracion 0.003s ok github.com/CGary/hexcell/sidec"
+    },
+    {
+      "command": "cd sidecar && git diff --quiet -- go.mod go.sum && echo 'OK: sin dependencias nuevas'",
+      "duration_s": 1,
+      "exit_code": 0,
+      "output_excerpt": "OK: sin dependencias nuevas NOTA DEL ORQUESTADOR: guarda vacua tal como esta escrita (el trabajo esta committeado, asi que `git diff` arbol-vs-HEAD esta vacio y la guarda no puede fallar). Reejecutada por el orquestador contra main (`git diff --quiet main...HEAD -- sidecar/go.mod sidecar/go.sum`): OK, go.mod/go.sum sin cambios reales."
+    },
+    {
+      "command": "git diff --name-only | grep -qE '^crates/|^docs/protocolo-ipc-nucleo-sidecar.md$' && echo 'FALLO: crate Rust o protocolo IPC tocado' && exit 1 || echo 'OK: cambio contenido en sidecar/'",
+      "duration_s": 1,
+      "exit_code": 0,
+      "output_excerpt": "OK: cambio contenido en sidecar/ NOTA DEL ORQUESTADOR: guarda vacua tal como esta escrita (grep sobre un `git diff --name-only` vacio siempre da OK). Reejecutada por el orquestador contra main: los 7 archivos del diff real son docs/STATUS.md, docs/adr/README.md, docs/adr/adr-0033-*.md, docs/bitacora-de-descartes.md, sidecar/internal/metricas/metricas.go, sidecar/internal/metricas/metricas_test.go, sidecar/main.go; ningun crates/ ni el protocolo IPC. La version corregida se probo por mutacion (sembrando 'crates/hexcell-core/src/lib.rs') y SI detecta."
+    },
+    {
+      "command": "test -f docs/adr/adr-0033-metricas-de-canal-propio-en-el-sidecar.md && grep -q 'adr-0033' docs/adr/README.md && echo 'OK: adr-0033 con su fila'",
+      "duration_s": 1,
+      "exit_code": 0,
+      "output_excerpt": "OK: adr-0033 con su fila"
+    },
+    {
+      "command": "grep -q 'D-46' docs/bitacora-de-descartes.md && echo 'OK: entrada D-46 presente'",
+      "duration_s": 1,
+      "exit_code": 0,
+      "output_excerpt": "OK: entrada D-46 presente"
+    }
+  ],
+  "task_id": "HEX-072-b",
+  "executed_at": "2026-09-13T00:00:00Z",
+  "overall_result": "passed",
+  "summary": "Los ocho comandos dan exit 0 sobre el commit 919e7a6 (arreglo de revision). Salvedad: las guardas 4 y 5 son vacuas; reejecutadas contra main, la invariante si se cumple."
+}

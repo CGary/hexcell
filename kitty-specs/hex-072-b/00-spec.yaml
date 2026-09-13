@@ -1,0 +1,40 @@
+acceptance:
+    - The sidecar's periodic structured log emits a per-contact delivery-ack ratio series, never a single aggregate figure across all contacts.
+    - The sidecar's periodic structured log emits a reconnections-per-hour series.
+    - The sidecar's periodic structured log emits an incoming-silence-window series.
+    - Per-contact and per-correlation state is bounded (256 contacts / 1024 correlations) with deterministic eviction by oldest activity and ascending-id tiebreak on ties, never random eviction, and a contactos_omitidos counter increments on every eviction so truncation is observable rather than silent.
+    - A Go test in simulation provokes all three series (ack ratio, reconnections, silence window) and asserts their presence and per-contact segmentation in the emitted structured log line, provable by mutation (flip the emission or segmentation condition and see the test fail).
+    - A Go test in simulation provokes eviction past the cardinality bound and asserts contactos_omitidos increments and the deterministic (oldest-activity, ascending-id) victim is chosen, provable by mutation.
+    - cd sidecar && go build ./... && go vet ./... && go test ./... -count=1 passes, and the sidecar test suite remains non-empty per CI requirements.
+    - adr-0032 exists as a new, sequential ADR (next after adr-0031) that extends adr-0024 without rewriting it, with its row added to docs/adr/README.md whose numbering is the source of truth.
+    - docs/STATUS.md gains a new Definido entry for this producer. No existing Pendiente entry covers this item today (verified against docs/STATUS.md) even though the parent task text and docs/plan/fase-a-6-empaquetado-cli.md:354 both describe it as "registrada como pendiente en STATUS.md" — that describing text is inaccurate and must not be treated as an existing Pendiente to transition; a fresh Definido entry is required instead.
+    - A new bitácora entry is added starting at D-46 (D-45 is reserved for sibling task HEX-072-a) in docs/bitacora-de-descartes.md for any alternative technique considered and discarded while implementing the cardinality bound or the emission mechanism, logged in the same commit that discards it.
+constraints:
+    - Mechanism must reuse sidecar/internal/registro (existing structured logging package); no new logging dependency.
+    - Output format is a key=value string assigned to the detalle field, matching adr-0024's convention, not JSON.
+    - No new runtime dependencies in the sidecar Go module.
+    - Verification must be a Go test in simulation (no real WhatsApp channel, no network I/O) that provokes and asserts all three series plus the eviction/contactos_omitidos behavior.
+    - The per-server cell ceiling and RSS budgets (<=80 MB own channel) are not validated under sustained load; this task must not add measurable steady-state overhead beyond a periodic in-memory snapshot bounded by the 256/1024 cardinality caps (target order of magnitude ~110 KB), consistent with adr-0024's memory-footprint constraint.
+    - This task consumes the events.Receipt-derived sink built by HEX-072-a (its depends_on); it does not build or modify that wiring, and does not touch sidecar/internal/canal/acuses.go.
+    - Implementation must stay within a small, fixed set of touched production files so the task remains on the eligible side of the complexity-band boundary used for external-fleet routing; the metrics-producer logic must live in a single file and must not be split across two files to accommodate this change.
+depends_on:
+    - HEX-072-a
+goal: 'Subset of HEX-072: sidecar-native metrics producer that emits three bounded series (per-contact ack ratio, reconnections per hour, incoming silence window) in one periodic key=value log line through sidecar/internal/registro, building on the events.Receipt sink wired by HEX-072-a, plus new ADR adr-0032 extending adr-0024 and a new Definido entry in docs/STATUS.md.'
+invariants:
+    - The ack-ratio series is always segmented per contact; it is never emitted as a single aggregate figure across all contacts.
+    - The emission mechanism is the sidecar's own periodic structured log line through sidecar/internal/registro (key=value string in the detalle field), homologous to adr-0024's metricas_instantanea, never a new IPC message type.
+    - No change touches docs/protocolo-ipc-nucleo-sidecar.md, its cable version, or any Rust crate; the entire change is contained in sidecar/.
+    - Latency-to-ack (the fourth series named in the original A-3 promise) is out of scope for this task and is not implemented.
+    - Per-contact and per-correlation tracking is bounded (256 contacts / 1024 correlations); eviction when a bound is exceeded is always deterministic (oldest activity first, ascending id as tiebreak), never random, per doctrine D-08, and every eviction increments a contactos_omitidos counter.
+    - No bulk-sender folklore (jitter, warm-up protocols), proxies, VPNs, or IP rotation is introduced by this change.
+non_goals:
+    - Do not implement latency-to-ack, the fourth series named in the original A-3 promise; it is explicitly deferred, not a gap in this task.
+    - Do not add any IPC message type, do not version docs/protocolo-ipc-nucleo-sidecar.md, and do not touch any Rust crate (crates/hexcell-canal-whatsmeow or otherwise).
+    - Do not build or modify the events.Receipt wiring or sidecar/internal/canal/acuses.go; that scope, and bitácora entry D-45, belong to sibling task HEX-072-a.
+    - Do not introduce a metrics history table, a new database, or any write to sqlstore.db/identidad.db for this purpose.
+    - Do not invent an FR; this task traces to no FR per the A-3 promise's own text.
+    - Do not use random eviction, jitter, or any bulk-sender-adjacent technique for bounding cardinality; eviction is strictly deterministic (oldest activity, ascending-id tiebreak).
+parent_task: HEX-072
+risk: high
+summary: 'Sidecar metrics producer on HEX-072-a: bounded per-contact ack ratio, reconnections/hour and incoming silence in one periodic key=value log line, plus adr-0032.'
+task_id: HEX-072-b

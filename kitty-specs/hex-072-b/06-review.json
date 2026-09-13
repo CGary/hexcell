@@ -1,0 +1,28 @@
+{
+  "task_id": "HEX-072-b",
+  "summary": "Re-review of fix commit 919e7a6: both fix_tasks resolved, correlation eviction now provable by mutation, metricas.go byte-identical, contract still holds. Approved.",
+  "verdict": "approve",
+  "contract_compliance": true,
+  "forbidden_files_touched": [],
+  "unrequested_refactor": false,
+  "missing_tests": [],
+  "functional_risk": "low",
+  "notes": [
+    "RE-REVIEW SCOPE: commit 919e7a6 sits on the previously reviewed 80556b5 and modifies exactly one file, sidecar/internal/metricas/metricas_test.go (+51/-10). Verified independently, not taken on the implementer's word: git diff 80556b5..919e7a6 --name-status lists only that path, and sha256 of sidecar/internal/metricas/metricas.go equals the sha256 of the same file at 80556b5 (98489c1d94097a8e361b8119dd4536a95a12e1095a4f48a9925c66e97a946ba1). Working tree clean, no uncommitted diff. No production code changed, so the first pass's approvals are undisturbed and are not re-litigated.",
+    "fix_task 1 correlacion-desalojo-victima-probable: RESOLVED. Scenario 8, renamed TestDesalojoDeCorrelacionIncrementaContactosOmitidosYDesalojaLaMasAntigua, now sends corr-0000 alone into contact conv-vieja at t=0, then 1024 sends into conv-unica at t=1..1024. At the 1024th send len(correlaciones)==1024 triggers desalojarCorrelacion; corr-0000 is the unique minimum creadaMs, so it is the victim. The subsequent ObservarAcuse(corr-0000) is a no-op and conv-vieja reads acusados/enviados = 0/1 = 0.00. Under a newest-first mutation corr-0000 survives, the ack resolves, and conv-vieja reads 1/1 = 1.00. The two branches print genuinely different text under %.2f, so the old 1/1025-also-rounds-to-0.00 vacuity is gone. Arithmetic checked against the real numbers in the test, not the commit message.",
+    "fix_task 2 correlacion-desempate-id-ascendente: RESOLVED. New scenario TestDesalojoDeCorrelacionDesempataPorIdAscendente pins relojFalso at 700 and never calls avanzar, so all 1024 correlations (corr-0000 in conv-vieja plus corr-0001..corr-1023 in conv-unica) carry identical creadaMs=700. The primary comparison corr.creadaMs < marcaVictima can therefore never fire and only the ascending-id tiebreak can select a victim; corr-0000 is the lexicographic minimum and is evicted, so conv-vieja reads 0.00. Reversing the tiebreak to descending picks corr-1023, corr-0000 survives, and conv-vieja reads 1.00. The scenario genuinely exercises the tiebreak branch.",
+    "The two scenarios are correctly orthogonal, which corroborates the reported mutation results: scenario 8's primary comparison is decisive (corr-0000 uniquely oldest) so a descending-id mutation leaves it green, and scenario 12's entries are all tied so a newest-first mutation leaves it green. Each mutation is caught by exactly one test.",
+    "No new vacuous assertion introduced. buscarClave calls t.Fatalf when the key is absent, so an ack_ratio.conv-vieja assertion cannot pass by the key silently going missing. Contact eviction cannot interfere in either scenario (2 contacts against MaximoContactos=256).",
+    "Leaf-package invariant intact: metricas_test.go's import block is unchanged by this commit and still holds only stdlib (bytes, encoding/json, fmt, log/slog, strings, testing) plus internal/metricas and internal/registro. No import added.",
+    "Suite re-run under the CI profile: cd sidecar && go vet ./... clean, and go test ./internal/metricas/ -count=1 -v shows 12 scenarios, all PASS.",
+    "contract-check ok=true; violations: none; not_checked: forbid.behaviors",
+    "acceptance-coverage status=pass; gaps: none (all items legacy_untracked, no AC ids in this spec). Spec acceptance item 6 (eviction victim deterministic by oldest-activity and ascending-id, provable by mutation) is now genuinely satisfied for correlations as well as contacts; it was the sole basis of the prior revise.",
+    "Limits all respected against main: 7/7 files, 886 insertions + 3 deletions = 889/950 total lines, metricas_test.go 397/460, metricas.go 304/340, main.go 58/60, docs/** 130/140.",
+    "Commit 919e7a6 is a conventional commit (test(sidecar): ...), written in Spanish, with no AI attribution. No stale reference to the renamed scenario 8 remains anywhere in sidecar/, docs/, or the task artifacts.",
+    "CARRIED FORWARD, non-blocking lesson (adjudicated in the first pass, unchanged here): internal/outbox/centinela_rutas_de_envio_test.go is NOT evaded by main.go's function-valued indirections, but the exemption lives only as prose in main.go rather than in the guard itself. Recommended follow-up outside this contract's touch list: record the two known-legitimate main.go delegations as an in-line exemption inside the sentinel so it documents its own blind spot for function-valued indirection.",
+    "CARRIED FORWARD, non-blocking CONTRACT defect (adjudicated in the first pass, unchanged here): verify.commands[4] and [5] diff the working tree against HEAD, which is empty once the work is committed, so they pass unconditionally and can never fail. The orchestrator re-ran corrected main...HEAD forms on 919e7a6 and both invariants hold in substance (go.mod/go.sum byte-identical; no crates/ and no docs/protocolo-ipc-nucleo-sidecar.md in the diff), and mutation-tested the corrected form. Lesson, not a blocker: a contract guard comparing the working tree against HEAD is dead on arrival for any committed diff and must be written as <BASE_BRANCH>...HEAD.",
+    "Latency-to-ack remains correctly absent per non_goals; not counted as a gap.",
+    "05-validation.json overall_result=passed: all eight verify.commands exit 0 on 919e7a6."
+  ],
+  "fix_tasks": []
+}
