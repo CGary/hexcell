@@ -1,6 +1,6 @@
 # Bitácora de descartes
 
-> Registro de lo que se consideró y **no** se hizo. Última actualización: 2026-09-13 (D-47).
+> Registro de lo que se consideró y **no** se hizo. Última actualización: 2026-09-13 (D-48).
 
 ## Para qué sirve este documento
 
@@ -641,6 +641,14 @@ copiar `sessions.db`, `knowledge_live.db` y el almacén de identidad del adaptad
 * **Por qué se descartó:** `stop_signal:` en el YAML de composición y `STOPSIGNAL` en el Dockerfile expresan la misma señal, pero en capas distintas y con alcance distinto. La imagen es el artefacto que se distribuye y se ejecuta también fuera de esta plantilla de composición (`docker run` directo, otra orquestación futura); si la señal de parada viviera solo en `deploy/cell.compose.yml`, cualquier consumidor de la imagen que no pasara por esa plantilla heredaría el valor por omisión de Docker sin saber que el contrato explícito es SIGTERM. Fijarla en el Dockerfile la hace parte del contrato de la IMAGEN, no de un despliegue particular, y es además lo que permite anclarla con un guardia que lee el Dockerfile directamente (`deploy/verificar_senales.sh`) sin depender de que `docker compose config` la resuelva. Con ambas rutas disponibles, elegir la del Dockerfile es coherente con cómo esta tarea ya trata USER y el resto de instrucciones de endurecimiento de HEX-069: en la imagen, no en la composición.
 * **Registro normativo:** `Dockerfile`, `sidecar/Dockerfile` (directiva `STOPSIGNAL SIGTERM`).
 * **Qué tendría que cambiar para reabrirlo:** *reabrible si aparece un caso donde la señal de parada deba variar por célula* (hoy no existe: SIGTERM es fijo para las dos imágenes y no es una dimensión per-célula). Si tal caso apareciera, `stop_signal:` en la plantilla de composición sería la vía correcta, porque ahí sí vive lo que distingue a una célula de otra.
+
+### D-48
+**Ejercer los vectores de cruce de red y de socket IPC del script en vivo de aislamiento (`deploy/verificar_aislamiento.sh`) con `docker exec` directo dentro de los contenedores `nucleo`/`sidecar` reales, usando `nc`/`stat` de BusyBox como ya hace `deploy/verificar_endurecimiento.sh` sobre el YAML resuelto.**
+
+* **Descartado:** 2026-09-13 (HEX-076).
+* **Por qué se descartó:** el endurecimiento de HEX-069 retira `/bin/sh` y `/bin/busybox` de las dos imágenes finales (`Dockerfile:126`, `sidecar/Dockerfile:270`; confirmado corriendo `alpine:3` sin endurecer, donde `nc`/`stat`/`sh` sí existen, contra las imágenes finales del proyecto, donde no queda ningún binario salvo el propio `ENTRYPOINT` estático). Un `docker exec` contra `nucleo` o `sidecar` no tiene ningún intérprete ni herramienta que invocar: la premisa de que "BusyBox ya está presente en las imágenes finales `alpine:3`" es cierta para la imagen `alpine:3` sin modificar, pero falsa para las imágenes finales de este proyecto, que la retiran deliberadamente en la misma tarea que impone el resto del endurecimiento. Se optó, en cambio, por un contenedor auxiliar efímero `alpine:3` (la misma base ya usada por `deploy/verificar_apagado_ordenado.sh` para inspeccionar el WAL, no una herramienta nueva) lanzado con `--network container:<contenedor>` y `--volumes-from <contenedor>`: comparte el espacio de nombres de red y los montajes exactos del contenedor objetivo sin ejecutar nada dentro de la imagen endurecida ni añadirle un binario.
+* **Registro normativo:** `deploy/verificar_aislamiento.sh` (funciones `desde`, `leer_volumen`, `escribir_volumen`).
+* **Qué tendría que cambiar para reabrirlo:** *reabrible si una tarea futura reintroduce un intérprete o BusyBox en las imágenes finales* (hoy no existe: la retirada es deliberada y documentada en ambos Dockerfiles como parte del endurecimiento de HEX-069). Si eso cambiara, `docker exec` directo volvería a ser viable y más simple que el contenedor auxiliar compartido.
 
 ---
 

@@ -146,3 +146,23 @@ jobs:
       # todavía un guardia.
       - name: Autoprueba de mutación del guardia de señales
         run: bash deploy/verificar_senales.sh --autoprueba
+
+  guardas-aislamiento:
+    name: Guardas de despliegue — aislamiento por célula (HEX-076)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # AC-1/AC-2: el guardia mecánico ancla, sobre el YAML resuelto, que
+      # cada célula declara su propia red y su propio volumen nombrado con
+      # los nombres exactos del referente, y que ningún servicio publica un
+      # puerto al host. El script manual en vivo con dos células reales
+      # (bajo deploy/) queda fuera de CI a propósito: tarda minutos y
+      # depende de un daemon Docker vivo, distinto de este guardia mecánico.
+      - name: Verificar red y volumen propios por célula, sin puertos publicados
+        run: bash deploy/verificar_aislamiento_estatica.sh deploy/cell.compose.yml
+
+      # AC-3: prueba de mutación. Un guardia que nunca se vio fallar no es
+      # todavía un guardia.
+      - name: Autoprueba de mutación del guardia de aislamiento
+        run: bash deploy/verificar_aislamiento_estatica.sh --autoprueba
