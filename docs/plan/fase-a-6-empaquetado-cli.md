@@ -182,6 +182,7 @@ Las entradas conservan su numeración; esta sección es la autoridad sobre el or
 * Actualización 2026-09-11: 8, 4, 5, 9 y 24 cerradas; 25 dividida en 25-a (cerrada) y 25-b (pendiente, antes de 20). La cadena restante: 7 → 17 → 6 → 16 → 10 → 11 → 22 → 12 → 13 → 14 → 15 → 18 → 25-b → 20 → 23 → 21 → 19.
 * Actualización 2026-09-13: 7 cerrada (HEX-075). La cadena restante: 17 → 6 → 16 → 10 → 11 → 22 → 12 → 13 → 14 → 15 → 18 → 25-b → 20 → 23 → 21 → 19.
 * Actualización 2026-09-13: 25-b cerrada (HEX-072-b), con lo que la tarea 25 queda cerrada por completo y la 20 deja de estar bloqueada. La cadena restante: 17 → 6 → 16 → 10 → 11 → 22 → 12 → 13 → 14 → 15 → 18 → 20 → 23 → 21 → 19.
+* Actualización 2026-09-13: 10 dividida en 10-a (HEX-074-a, cerrada) y 10-b (pendiente). La cadena restante: 17 → 6 → 16 → 10-b → 11 → 22 → 12 → 13 → 14 → 15 → 18 → 20 → 23 → 21 → 19.
 
 ---
 
@@ -229,6 +230,11 @@ Las entradas conservan su numeración; esta sección es la autoridad sobre el or
 10. **Construir el esqueleto de la CLI y el modelo de estado** (1 día). Analizador de argumentos,
     salida legible, códigos de retorno significativos, modo de simulación, y estados posibles de una
     célula con sus transiciones válidas.
+    **Dividida el 2026-09-13.** 10-a (HEX-074-a, cerrada): agregado de estado de célula del plano de
+    control (`CicloDeVidaDeCelula`, `crates/hexcell-admin/src/estado_de_celula.rs`), solo en memoria y
+    sin dependencias nuevas. 10-b (HEX-074-b, pendiente): analizador de argumentos, subcomandos, códigos
+    de retorno, modo de simulación y cableado de `src/main.rs`; la persistencia del plano de control
+    queda diferida a la tarea de A-6 que la decida.
 11. **Implementar `cell pause` y `cell unpause`** (1,5 días). Orden explícito en la pausa —primero el
     sidecar, después el núcleo— y sondeo de disponibilidad cada 100 ms con límite temporal y mensaje
     de error claro si nunca llega a estar lista.

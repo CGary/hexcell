@@ -1,6 +1,6 @@
 # Bitácora de descartes
 
-> Registro de lo que se consideró y **no** se hizo. Última actualización: 2026-09-11 (D-45).
+> Registro de lo que se consideró y **no** se hizo. Última actualización: 2026-09-13 (D-47).
 
 ## Para qué sirve este documento
 

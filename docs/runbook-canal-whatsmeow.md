@@ -88,6 +88,16 @@ Durante la sesión de laboratorio del **2026-08-18**, se validaron empíricament
 
 ---
 
+## 6. Métricas nativas y apagado ordenado (2026-09-13)
+
+* **Métricas del canal propio**: el sidecar emite periódicamente una línea de registro estructurado con el
+  ratio de acuses por contacto, las reconexiones por hora y la ventana de silencio entrante
+  (`sidecar/internal/metricas`, HEX-072-b). No hay endpoint HTTP ni tipo IPC para ellas (`adr-0024`, D-45).
+* **Apagado ordenado**: `docker stop` entrega `SIGTERM` a ambos contenedores con `stop_grace_period` de 30 s
+  (`deploy/cell.compose.yml`); el núcleo drena en 20 s como máximo (`crates/hexcell/src/apagado.rs`).
+  Guardas: `deploy/verificar_senales.sh` (en CI) y `deploy/verificar_apagado_ordenado.sh` (manual, con
+  contenedores reales; HEX-075).
+
 ## Referencias
 
 * `docs/adr/adr-0015-politica-de-convivencia-con-el-baneo.md` (ítem 14 `[precautorio]`, Capa 3 canary de biblioteca).
