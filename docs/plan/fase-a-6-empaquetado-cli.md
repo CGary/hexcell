@@ -181,6 +181,7 @@ Las entradas conservan su numeración; esta sección es la autoridad sobre el or
 * **12 y 13 tras la tarea 24:** no se implementa un `terminate` que borre volúmenes con la sesión viva.
 * Actualización 2026-09-11: 8, 4, 5, 9 y 24 cerradas; 25 dividida en 25-a (cerrada) y 25-b (pendiente, antes de 20). La cadena restante: 7 → 17 → 6 → 16 → 10 → 11 → 22 → 12 → 13 → 14 → 15 → 18 → 25-b → 20 → 23 → 21 → 19.
 * Actualización 2026-09-13: 7 cerrada (HEX-075). La cadena restante: 17 → 6 → 16 → 10 → 11 → 22 → 12 → 13 → 14 → 15 → 18 → 25-b → 20 → 23 → 21 → 19.
+* Actualización 2026-09-13: 25-b cerrada (HEX-072-b), con lo que la tarea 25 queda cerrada por completo y la 20 deja de estar bloqueada. La cadena restante: 17 → 6 → 16 → 10 → 11 → 22 → 12 → 13 → 14 → 15 → 18 → 20 → 23 → 21 → 19.
 
 ---
 
@@ -365,7 +366,7 @@ Las entradas conservan su numeración; esta sección es la autoridad sobre el or
     **Cerrada el 2026-09-11 con HEX-071**: versión de cable 6, cuatro tipos nuevos (cierre de sesión y su acuse, orden de pausa de envío y su acuse), `cerrar_sesion` implementado (`crates/hexcell-canal-whatsmeow/src/adaptador.rs:947`). El enunciado anterior describe el estado previo.
 25. **Productor de métricas del sidecar prometido en A-3**. `docs/plan/fase-a-3-adaptador-whatsmeow.md:105-109` promete ratio de acuses por contacto, reconexiones por hora y ventana de silencio; no existe productor en `sidecar/`. Trazabilidad: la promesa de A-3 no cita FR; registrada como pendiente en STATUS.md. Criterio: el sidecar emite las tres series por el canal aprobado en adr-0024 (registro estructurado), con prueba que las provoca en simulación.
 
-    **Dividida el 2026-09-11.** 25-a (HEX-072-a, cerrada): clasificación de acuses de entrega y lectura de whatsmeow en un sumidero interno del sidecar (`sidecar/internal/canal/acuses.go`); por D-45 los acuses no viajan por IPC. 25-b (pendiente): el productor periódico de las tres series (ratio de acuses por contacto, reconexiones por hora, ventana de silencio) y su emisión por registro estructurado (adr-0024), con prueba en simulación.
+    **Dividida el 2026-09-11.** 25-a (HEX-072-a, cerrada): clasificación de acuses de entrega y lectura de whatsmeow en un sumidero interno del sidecar (`sidecar/internal/canal/acuses.go`); por D-45 los acuses no viajan por IPC. 25-b (HEX-072-b, cerrada el 2026-09-13): el productor periódico de las tres series (ratio de acuses por contacto, reconexiones por hora, ventana de silencio) en una sola línea `key=value` del registro estructurado (`sidecar/internal/metricas/metricas.go`), homóloga a `metricas_instantanea` y normada en adr-0033, que extiende adr-0024. El acuse no lleva identificador de contacto, así que la segmentación por contacto se resuelve con un join correlación → conversación acotado a 256 contactos y 1024 correlaciones, con desalojo determinista (actividad más antigua primero, id ascendente como desempate) y contador `contactos_omitidos` para que el truncamiento sea observable; por D-46 se descartó la lista de LRU real. La clave por contacto es `id_conversacion`, nunca un JID (adr-0019). La latencia hasta el acuse, cuarta serie de la promesa de A-3, queda explícitamente diferida.
 
 ---
 
