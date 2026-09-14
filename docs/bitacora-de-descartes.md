@@ -1,6 +1,6 @@
 # Bitácora de descartes
 
-> Registro de lo que se consideró y **no** se hizo. Última actualización: 2026-09-13 (D-52).
+> Registro de lo que se consideró y **no** se hizo. Última actualización: 2026-09-14 (D-53).
 
 ## Para qué sirve este documento
 
@@ -86,6 +86,7 @@ se apoya en un principio de diseño, no.
 | [D-50](#d-50) | Promedio móvil de latencias a través de múltiples acuses en `sidecar/internal/metricas`, en lugar de la última observada por acuse | Principio de diseño, no reabrir |
 | [D-51](#d-51) | Vigilancia externa: subcomando de hexcell-admin, binario/crate nuevo, ping gateado a la salud de la célula, y reintento/backoff local | Principio de diseño, no reabrir |
 | [D-52](#d-52) | Forma explícita `soft`/`hard` de `ulimits.nofile` y comprobación de "campo presente" en el guardia de límites de recursos (HEX-078) | Principio de diseño, no reabrir |
+| [D-53](#d-53) | Bibliotecas externas de análisis de argumentos para `hexcell-admin` (`clap`, `argh`, `pico-args`, `structopt`) | Principio de diseño, no reabrir |
 
 ---
 
@@ -743,6 +744,46 @@ igualdad exacta contra el referente.**
   `soft`/`hard` solo se reconsideraría si una tarea futura necesitara deliberadamente un tope blando
   distinto del duro (hoy no existe ningún caso); la presencia solo si se quisiera aceptar límites no
   fijados en el referente, que es exactamente lo contrario de lo que esta tarea decide.
+### D-53
+
+**Bibliotecas externas de análisis de argumentos (`clap`, `argh`, `pico-args`, `structopt`) para
+la CLI `hexcell-admin`.**
+
+* **Descartado:** 2026-09-14 (HEX-074-c).
+* **Por qué se descartó:** son cuatro alternativas distintas, agrupadas bajo un solo número
+  siguiendo el precedente de D-28 y D-51, porque las cuatro se estudiaron y rechazaron en el
+  mismo diseño y ninguna sobrevive sola. (1) **`clap`**: árbol de dependencias grande
+  (`clap_builder`, `clap_lex`, `anstream`, `anstyle`, `clap_derive` con `syn` completo) y
+  modelo de `Command`/`Arg` con atributos de derivación ajeno a la disciplina de enumerados
+  cerrados sin `#[non_exhaustive]` que ya siguen `EstadoDeCelula`, `CodigoDeSalida` y
+  `TransicionInvalida` en este mismo crate. (2) **`argh`**: más ligero que `clap` pero
+  introduce una dependencia nueva en un crate cuyo punto de diseño es casi-cero
+  dependencias (solo `serde` + `serde_json`, justificados en el `Cargo.toml` por el análisis
+  del JSON del motor Docker) y duplica la superficie que ya resuelve a mano
+  `crates/hexcell/src/emparejar.rs` para `hexcell emparejar`. (3) **`pico-args`**: la más
+  pequeña de las cuatro y la más cercana a un analizador a mano, pero sigue siendo una
+  dependencia externa para un trabajo que el proyecto ya sabe hacer —el precedente de
+  `emparejar.rs` lo demuestra— y que, además, necesita reglas de validación específicas por
+  subcomando (opciones obligatorias, opciones rechazadas por subcomando, confirmación de
+  destructivos) que `pico-args` no modela y que habría que escribir de todos modos
+  alrededor. (4) **`structopt`**: *wrapper* derivacional sobre `clap`; hereda todo su árbol
+  de dependencias y su modelo de `Command`/`Arg` sin aportar nada que justifique el coste;
+  el propio proyecto lo considera obsoleto y recomienda migrar a `clap` v4 con derivación.
+  El analizador a mano sobre `std::env::args` que entrega HEX-074-c
+  (`crates/hexcell-admin/src/argumentos.rs`) cumple las mismas reglas de gramática, expone
+  los mismos errores tipados y se deja ejercitar desde las pruebas externas con un
+  `Vec<String>` propio, sin sumar ninguna dependencia al `Cargo.toml` de `hexcell-admin` y
+  sin romper la línea de minimización de dependencias abierta por `adr-0019`.
+* **Registro normativo:** `crates/hexcell-admin/src/argumentos.rs`,
+  `crates/hexcell-admin/tests/argumentos.rs`,
+  `docs/adr/adr-0036-contrato-de-analisis-de-argumentos-y-modo-de-simulacion.md`.
+* **Qué tendría que cambiar para reabrirlo:** *principio de diseño, no reabrir por defecto.*
+  Solo sería reabrible si una tarea futura añadiera un subcomando con una gramática
+  suficientemente compleja (subcomandos anidados, opciones de valor múltiple, completado
+  automático para shell) que el analizador a mano dejara de cubrir de forma legible; incluso
+  en ese caso, la reapertura tendría que justificar por qué la extensión se hace con una
+  biblioteca externa y no con un segundo módulo de análisis dentro del mismo crate, siguiendo
+  la línea de `adr-0019`.
 
 ---
 
