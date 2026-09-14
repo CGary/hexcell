@@ -38,6 +38,119 @@ use crate::error::ErrorCanalWhatsmeow;
 use crate::mensajes::MensajeEntrante;
 use crate::reconexion::Retroceso;
 
+/// Par indivisible «estado de sesión + expiración del baneo temporal».
+///
+/// Los dos valores se difunden **juntos** por un único `watch` precisamente para que no exista
+/// ninguna ventana en la que un consumidor observe `EstadoSesion::Pausada` sin la fecha de
+/// expiración que la alerta de baneo debe llevar siempre. La expiración es `None` para todo
+/// estado que no sea un baneo temporal con fecha declarada por el sidecar.
+pub type EstadoConExpiracion = (EstadoSesion, Option<SystemTime>);
+
+/// Contadores de acuse por conversación, espejo del `Productor` del sidecar (`adr-0033`).
+///
+/// Mantiene un mapa acotado de `(enviados, acusados)` por `id_conversacion`, y un mapa transitorio
+/// de `id_mensaje → id_conversacion` para resolver los acuses entrantes.
+#[derive(Clone, Debug)]
+pub struct ContadoresDeAcusePorConversacion {
+    datos: Arc<tokio::sync::Mutex<EstadoDeContadoresDeAcuse>>,
+}
+
+#[derive(Debug, Default)]
+struct EstadoDeContadoresDeAcuse {
+    por_conversacion: HashMap<IdConversacion, ContadorDeConversacion>,
+    mensajes_en_vuelo: HashMap<String, IdConversacion>,
+    max_contactos: usize,
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct ContadorDeConversacion {
+    enviados: u64,
+    acusados: u64,
+}
+
+/// Capacidad máxima de conversaciones distintas retenidas en los contadores de acuse.
+const MAXIMO_CONTACTOS_ACUSE: usize = 256;
+/// Capacidad máxima de mensajes en vuelo pendientes de acuse.
+const MAXIMO_MENSAJES_EN_VUELO: usize = 1024;
+
+impl ContadoresDeAcusePorConversacion {
+    fn nuevo() -> Self {
+        Self {
+            datos: Arc::new(tokio::sync::Mutex::new(EstadoDeContadoresDeAcuse {
+                max_contactos: MAXIMO_CONTACTOS_ACUSE,
+                ..Default::default()
+            })),
+        }
+    }
+
+    async fn registrar_envio(&self, id_conversacion: &IdConversacion, id_mensaje: &str) {
+        let mut estado = self.datos.lock().await;
+
+        if estado.mensajes_en_vuelo.len() >= MAXIMO_MENSAJES_EN_VUELO {
+            estado.mensajes_en_vuelo.clear();
+        }
+        estado
+            .mensajes_en_vuelo
+            .insert(id_mensaje.to_string(), id_conversacion.clone());
+
+        if !estado.por_conversacion.contains_key(id_conversacion) {
+            if estado.por_conversacion.len() >= estado.max_contactos
+                && let Some(clave) = estado.por_conversacion.keys().next().cloned()
+            {
+                estado.por_conversacion.remove(&clave);
+            }
+            estado
+                .por_conversacion
+                .insert(id_conversacion.clone(), ContadorDeConversacion::default());
+        }
+        if let Some(c) = estado.por_conversacion.get_mut(id_conversacion) {
+            c.enviados += 1;
+        }
+    }
+
+    /// Registra un acuse del sidecar, contando **solo** los acuses de entrega.
+    ///
+    /// Espejo fiel del `Productor` del sidecar (`adr-0033`), que observa únicamente la ruta de
+    /// `Receipt` (`entregado` / `leido`). El sidecar emite además `enviado` en **cada** envío
+    /// aceptado por el servidor: contarlo como acuse igualaría `acusados` a `enviados` para todo
+    /// mensaje que sale, el ratio quedaría clavado en 1.0 y la condición de caída (AC-9) sería
+    /// inalcanzable en producción. Por eso `enviado` no cuenta y **no** saca el mensaje de vuelo:
+    /// el mensaje sigue esperando su acuse de entrega.
+    ///
+    /// Un estado terminal que no es entrega (`fallido` y cualquier otro) saca el mensaje de vuelo
+    /// sin contarlo como acusado: dejó de estar pendiente, pero nunca se entregó.
+    async fn registrar_acuse(&self, id_mensaje: &str, estado_acuse: &str) {
+        let mut estado = self.datos.lock().await;
+
+        if estado_acuse == "enviado" {
+            // Acuse de salida al servidor, no de entrega al destinatario: el mensaje sigue
+            // en vuelo y no se contabiliza.
+            return;
+        }
+
+        let id_conversacion = match estado.mensajes_en_vuelo.remove(id_mensaje) {
+            Some(id) => id,
+            None => return,
+        };
+
+        if (estado_acuse == "entregado" || estado_acuse == "leido")
+            && let Some(c) = estado.por_conversacion.get_mut(&id_conversacion)
+        {
+            c.acusados += 1;
+        }
+    }
+
+    /// Devuelve una instantánea de los contadores actuales, como lista de `(id, enviados, acusados)`.
+    pub async fn instantanea(&self) -> Vec<(IdConversacion, u64, u64)> {
+        let estado = self.datos.lock().await;
+        estado
+            .por_conversacion
+            .iter()
+            .map(|(id, c)| (id.clone(), c.enviados, c.acusados))
+            .collect()
+    }
+}
+
 /// Límite duro de conversaciones distintas que [`MarcasDeOrigen`] retiene en memoria.
 ///
 /// Sin este límite el mapa crece sin cota con el número de conversaciones distintas a lo largo
@@ -159,6 +272,13 @@ pub struct AdaptadorWhatsmeow {
     emparejamiento_pendiente: Arc<tokio::sync::Mutex<Option<mpsc::Sender<EventoDeEmparejamiento>>>>,
     /// Acuses de cierre de sesión y de pausa de envío pendientes de correlación.
     pendientes_de_sesion: Arc<PendientesDeSesion>,
+    /// Estado de sesión y expiración del baneo temporal difundidos **juntos**, en un único
+    /// `watch` de pares, para los consumidores de alertas.
+    estado_con_expiracion: watch::Sender<EstadoConExpiracion>,
+    /// Receptor del par estado/expiración, para suscripciones.
+    receptor_estado_con_expiracion: watch::Receiver<EstadoConExpiracion>,
+    /// Contadores de acuse por conversación, para la alerta de caída de ratio (AC-9).
+    contadores_de_acuse: ContadoresDeAcusePorConversacion,
 }
 
 impl AdaptadorWhatsmeow {
@@ -177,6 +297,8 @@ impl AdaptadorWhatsmeow {
     ) -> (Self, mpsc::Receiver<EventoEntrante>) {
         let (remitente_eventos, receptor_eventos) = mpsc::channel(capacidad);
         let (estado_tx, estado_rx) = watch::channel(EstadoSesion::Reconectando);
+        let (estado_expiracion_tx, estado_expiracion_rx) =
+            watch::channel((EstadoSesion::Reconectando, None));
 
         let adaptador = Self {
             ruta_socket: ruta_socket.into(),
@@ -192,6 +314,9 @@ impl AdaptadorWhatsmeow {
             respaldo_identidad_pendiente: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
             emparejamiento_pendiente: Arc::new(tokio::sync::Mutex::new(None)),
             pendientes_de_sesion: Arc::new(PendientesDeSesion::default()),
+            estado_con_expiracion: estado_expiracion_tx,
+            receptor_estado_con_expiracion: estado_expiracion_rx,
+            contadores_de_acuse: ContadoresDeAcusePorConversacion::nuevo(),
         };
 
         (adaptador, receptor_eventos)
@@ -213,6 +338,8 @@ impl AdaptadorWhatsmeow {
         let respaldo_identidad_pendiente = Arc::clone(&self.respaldo_identidad_pendiente);
         let emparejamiento_pendiente = Arc::clone(&self.emparejamiento_pendiente);
         let pendientes_de_sesion = Arc::clone(&self.pendientes_de_sesion);
+        let estado_con_expiracion = self.estado_con_expiracion.clone();
+        let contadores = self.contadores_de_acuse.clone();
 
         tokio::spawn(async move {
             bucle_de_conexion(
@@ -227,6 +354,8 @@ impl AdaptadorWhatsmeow {
                 respaldo_identidad_pendiente,
                 emparejamiento_pendiente,
                 pendientes_de_sesion,
+                estado_con_expiracion,
+                contadores,
             )
             .await;
         });
@@ -245,6 +374,26 @@ impl AdaptadorWhatsmeow {
     /// Suscribe un receptor a las actualizaciones del estado de sesión del canal.
     pub fn suscribir_estado(&self) -> watch::Receiver<EstadoSesion> {
         self.receptor_estado.clone()
+    }
+
+    /// Suscribe un receptor al par «estado de sesión + expiración del baneo temporal».
+    ///
+    /// Ambos valores viajan **juntos en un único `watch`**, no en dos canales independientes: un
+    /// consumidor que leyera el estado de un canal y la expiración de otro podría observar
+    /// `Pausada` antes de que la expiración llegara a su canal y emitir la alerta de baneo sin
+    /// fecha. La expiración es `Some(SystemTime)` cuando el sidecar declara un baneo temporal con
+    /// fecha, y `None` en cualquier otro caso.
+    ///
+    /// No cambia el puerto `ChannelAdapter`: es un accesor sobre el tipo concreto
+    /// `AdaptadorWhatsmeow` que eleva un campo que ya llega por el cable pero que el diseño
+    /// confina a este crate (`mensajes::EstadoSesionIpc::expira_en_ms`).
+    pub fn suscribir_estado_con_expiracion(&self) -> watch::Receiver<EstadoConExpiracion> {
+        self.receptor_estado_con_expiracion.clone()
+    }
+
+    /// Referencia a los contadores de acuse por conversación, para la alerta de caída de ratio.
+    pub fn contadores_de_acuse(&self) -> &ContadoresDeAcusePorConversacion {
+        &self.contadores_de_acuse
     }
 
     /// Ordena un emparejamiento al sidecar y procesa el flujo de códigos rotativos hasta el acuse terminal.
@@ -558,6 +707,22 @@ async fn escribir_linea(
     }
 }
 
+/// Difunde el estado de sesión y la expiración del baneo temporal sin dejar ninguna ventana entre
+/// ambos.
+///
+/// El par viaja primero, en un solo envío atómico, por el `watch` que consumen las alertas; el
+/// `watch` de solo-estado se actualiza después y existe únicamente por compatibilidad con
+/// [`AdaptadorWhatsmeow::suscribir_estado`], cuyos consumidores no necesitan la expiración.
+fn publicar_estado_de_sesion(
+    estado_tx: &watch::Sender<EstadoSesion>,
+    estado_con_expiracion: &watch::Sender<EstadoConExpiracion>,
+    estado: EstadoSesion,
+    expiracion: Option<SystemTime>,
+) {
+    let _ = estado_con_expiracion.send((estado, expiracion));
+    let _ = estado_tx.send(estado);
+}
+
 /// Bucle de conexión con reconexión automática.
 #[allow(clippy::too_many_arguments)]
 async fn bucle_de_conexion(
@@ -582,6 +747,8 @@ async fn bucle_de_conexion(
     >,
     emparejamiento_pendiente: Arc<tokio::sync::Mutex<Option<mpsc::Sender<EventoDeEmparejamiento>>>>,
     pendientes_de_sesion: Arc<PendientesDeSesion>,
+    estado_con_expiracion: watch::Sender<EstadoConExpiracion>,
+    contadores: ContadoresDeAcusePorConversacion,
 ) {
     loop {
         // Intentar conectar.
@@ -591,7 +758,12 @@ async fn bucle_de_conexion(
                 match conexion.saludar(&id_celula).await {
                     Ok(_saludo) => {
                         // Conexión establecida y saludo exitoso.
-                        let _ = estado_tx.send(EstadoSesion::Activa);
+                        publicar_estado_de_sesion(
+                            &estado_tx,
+                            &estado_con_expiracion,
+                            EstadoSesion::Activa,
+                            None,
+                        );
                         {
                             let mut r = retroceso
                                 .lock()
@@ -609,11 +781,18 @@ async fn bucle_de_conexion(
                             &respaldo_identidad_pendiente,
                             &emparejamiento_pendiente,
                             &pendientes_de_sesion,
+                            &estado_con_expiracion,
+                            &contadores,
                         )
                         .await
                         {
                             // La conexión se perdió; pasar a reconectando.
-                            let _ = estado_tx.send(EstadoSesion::Reconectando);
+                            publicar_estado_de_sesion(
+                                &estado_tx,
+                                &estado_con_expiracion,
+                                EstadoSesion::Reconectando,
+                                None,
+                            );
                         }
 
                         // Limpiar escritor al desconectar
@@ -633,7 +812,12 @@ async fn bucle_de_conexion(
                             "hexcell-canal-whatsmeow: desajuste de versión IPC: \
                              propia={propia}, remota={remota}"
                         );
-                        let _ = estado_tx.send(EstadoSesion::Reconectando);
+                        publicar_estado_de_sesion(
+                            &estado_tx,
+                            &estado_con_expiracion,
+                            EstadoSesion::Reconectando,
+                            None,
+                        );
                     }
                     Err(_e) => {
                         // Limpiar escritor
@@ -642,7 +826,12 @@ async fn bucle_de_conexion(
                             *lock = None;
                         }
                         // Error de saludo: reconectar.
-                        let _ = estado_tx.send(EstadoSesion::Reconectando);
+                        publicar_estado_de_sesion(
+                            &estado_tx,
+                            &estado_con_expiracion,
+                            EstadoSesion::Reconectando,
+                            None,
+                        );
                     }
                 }
             }
@@ -653,7 +842,12 @@ async fn bucle_de_conexion(
                     *lock = None;
                 }
                 // No se pudo conectar; ya estamos en Reconectando.
-                let _ = estado_tx.send(EstadoSesion::Reconectando);
+                publicar_estado_de_sesion(
+                    &estado_tx,
+                    &estado_con_expiracion,
+                    EstadoSesion::Reconectando,
+                    None,
+                );
             }
         }
 
@@ -689,6 +883,8 @@ async fn leer_mensajes(
         tokio::sync::Mutex<Option<mpsc::Sender<EventoDeEmparejamiento>>>,
     >,
     pendientes_de_sesion: &Arc<PendientesDeSesion>,
+    estado_con_expiracion: &watch::Sender<EstadoConExpiracion>,
+    contadores: &ContadoresDeAcusePorConversacion,
 ) -> Result<(), ErrorCanalWhatsmeow> {
     loop {
         let mensaje = conexion.leer_mensaje().await?;
@@ -754,7 +950,15 @@ async fn leer_mensajes(
                         )));
                     }
                 };
-                let _ = estado_tx.send(estado);
+                // Elevar la expiración del baneo temporal sin tocar el puerto. Solo se publica
+                // cuando el estado es Pausada y hay una expiración declarada; en cualquier otro
+                // caso se limpia a None. Viaja en el MISMO envío que el estado.
+                let expiracion = if estado == EstadoSesion::Pausada && estado_ipc.expira_en_ms > 0 {
+                    Some(UNIX_EPOCH + Duration::from_millis(estado_ipc.expira_en_ms as u64))
+                } else {
+                    None
+                };
+                publicar_estado_de_sesion(estado_tx, estado_con_expiracion, estado, expiracion);
             }
             MensajeEntrante::CodigoEmparejamiento(codigo) => {
                 let remitente = {
@@ -837,8 +1041,13 @@ async fn leer_mensajes(
                     eprintln!("hexcell-canal-whatsmeow: acuse_pausa_de_envio huérfano recibido");
                 }
             }
-            MensajeEntrante::AcuseEnvio(_) => {
-                // Los acuses de envío se consumen sin elevar la taxonomía de whatsmeow al puerto.
+            MensajeEntrante::AcuseEnvio(acuse) => {
+                // Los acuses de envío se consumen sin elevar la taxonomía de whatsmeow al puerto,
+                // pero se registran en los contadores de acuse por conversación para la alerta de
+                // caída de ratio (AC-9).
+                contadores
+                    .registrar_acuse(&acuse.id_mensaje, &acuse.estado)
+                    .await;
             }
             MensajeEntrante::Saludo(_) => {
                 // Un segundo saludo después del inicial es un error de protocolo.
@@ -895,6 +1104,12 @@ impl ChannelAdapter for AdaptadorWhatsmeow {
             conversacion.como_str(),
             self.contador_mensajes.fetch_add(1, Ordering::Relaxed)
         );
+
+        // Registrar el envío en los contadores de acuse por conversación para la alerta de
+        // caída de ratio (AC-9).
+        self.contadores_de_acuse
+            .registrar_envio(conversacion, &id_mensaje)
+            .await;
 
         let msj_ipc = crate::mensajes::MensajeSalienteIpc {
             version: crate::mensajes::VERSION_PROTOCOLO,

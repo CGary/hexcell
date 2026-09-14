@@ -45,8 +45,10 @@
 
 use std::process::ExitCode;
 use std::sync::Arc;
+use std::time::SystemTime;
 
 use hexcell::admin::{EstadoDeAdmin, servir_servicios_http};
+use hexcell::alertas::EmisorDeAlertas;
 use hexcell::apagado::Apagado;
 use hexcell::concurrencia::LimitadorDeConcurrencia;
 use hexcell::configuracion::{
@@ -61,6 +63,7 @@ use hexcell::metricas::{
     INTERVALO_DE_INSTANTANEA, RegistroDeMetricas, emitir_instantanea, tomar_instantanea,
 };
 use hexcell::motor::Motor;
+use hexcell::notificacion::SumideroDeCelula;
 use hexcell::preparacion::SesionDelCanal;
 use hexcell::procesador::ProcesadorDeInferencia;
 use hexcell::proveedor_embeddings::ProveedorDeEmbeddingsOpenRouter;
@@ -149,16 +152,27 @@ async fn main() -> ExitCode {
     let limitador = LimitadorDeConcurrencia::nuevo(configuracion.limite_de_concurrencia);
     let metricas = Arc::new(RegistroDeMetricas::nuevo());
 
+    let sumidero = SumideroDeCelula::desde_configuracion(configuracion.notificaciones.clone());
+    let emisor_alertas = Arc::new(EmisorDeAlertas::nuevo(
+        configuracion.umbrales_de_alerta.clone(),
+        sumidero,
+    ));
+
     let _metricas_task = {
         let metricas = Arc::clone(&metricas);
         let limitador = limitador.clone();
         let repositorio = Arc::clone(&repositorio);
+        let emisor = Arc::clone(&emisor_alertas);
         tokio::spawn(async move {
             let mut intervalo = tokio::time::interval(INTERVALO_DE_INSTANTANEA);
             loop {
                 intervalo.tick().await;
                 if let Ok(instantanea) = tomar_instantanea(&metricas, &limitador, &repositorio) {
                     emitir_instantanea(&instantanea);
+                    let rechazos = hexcell_core::canal::rechazos_de_construccion();
+                    emisor
+                        .evaluar_y_emitir_instantanea(&instantanea, rechazos)
+                        .await;
                 }
             }
         })
@@ -310,6 +324,52 @@ async fn main() -> ExitCode {
                 Retroceso::por_omision(),
             );
             adaptador.arrancar();
+
+            let mut receptor_estado_alertas = adaptador.suscribir_estado_con_expiracion();
+            let contadores = adaptador.contadores_de_acuse().clone();
+            let emisor = Arc::clone(&emisor_alertas);
+
+            // Observador del estado de sesión para las alertas AC-2, AC-3 y AC-4.
+            //
+            // Reacciona a los cambios del par (estado, expiración) —que el adaptador publica en un
+            // único envío, sin ventana entre ambos— y además **reevalúa periódicamente el último
+            // estado observado**. La reevaluación periódica no es un adorno: la condición AC-4
+            // («el sidecar no reconecta pasada la ventana configurada») es temporal, y el sidecar
+            // emite `reconectando` una sola vez por desconexión. Sin un disparo por reloj, un
+            // estado `Reconectando` persistente no volvería a evaluarse nunca y la ventana jamás
+            // se cruzaría. La regla de «exactamente una» vive en el evaluador, así que reevaluar
+            // una condición ya alertada no produce una segunda notificación.
+            let _alertas_sesion_task = tokio::spawn(async move {
+                let mut reevaluacion = tokio::time::interval(INTERVALO_DE_INSTANTANEA);
+                loop {
+                    tokio::select! {
+                        resultado = receptor_estado_alertas.changed() => {
+                            if resultado.is_err() {
+                                break;
+                            }
+                        }
+                        _ = reevaluacion.tick() => {}
+                    }
+                    let (estado, expira_en) = *receptor_estado_alertas.borrow();
+                    emisor
+                        .evaluar_y_emitir_estado(estado, expira_en, SystemTime::now())
+                        .await;
+                }
+            });
+
+            let _alertas_acuses_task = {
+                let emisor = Arc::clone(&emisor_alertas);
+                tokio::spawn(async move {
+                    let mut intervalo = tokio::time::interval(INTERVALO_DE_INSTANTANEA);
+                    loop {
+                        intervalo.tick().await;
+                        let instantanea_de_contadores = contadores.instantanea().await;
+                        emisor
+                            .evaluar_y_emitir_acuses(&instantanea_de_contadores)
+                            .await;
+                    }
+                })
+            };
 
             let procesador = ProcesadorDeInferencia::nuevo(proveedor, Arc::clone(&repositorio));
             let mut motor = Motor::nuevo(

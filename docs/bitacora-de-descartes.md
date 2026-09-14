@@ -1,6 +1,6 @@
 # Bitácora de descartes
 
-> Registro de lo que se consideró y **no** se hizo. Última actualización: 2026-09-14 (D-53).
+> Registro de lo que se consideró y **no** se hizo. Última actualización: 2026-09-14 (D-54).
 
 ## Para qué sirve este documento
 
@@ -87,6 +87,7 @@ se apoya en un principio de diseño, no.
 | [D-51](#d-51) | Vigilancia externa: subcomando de hexcell-admin, binario/crate nuevo, ping gateado a la salud de la célula, y reintento/backoff local | Principio de diseño, no reabrir |
 | [D-52](#d-52) | Forma explícita `soft`/`hard` de `ulimits.nofile` y comprobación de "campo presente" en el guardia de límites de recursos (HEX-078) | Principio de diseño, no reabrir |
 | [D-53](#d-53) | Bibliotecas externas de análisis de argumentos para `hexcell-admin` (`clap`, `argh`, `pico-args`, `structopt`) | Principio de diseño, no reabrir |
+| [D-54](#d-54) | Alerta de bucle de reinicios de contenedores dentro de HEX-077-b, sin productor de señal que la alimente | Reabrir si se construye un observador de reinicios |
 
 ---
 
@@ -784,6 +785,30 @@ la CLI `hexcell-admin`.**
   en ese caso, la reapertura tendría que justificar por qué la extensión se hace con una
   biblioteca externa y no con un segundo módulo de análisis dentro del mismo crate, siguiendo
   la línea de `adr-0019`.
+### D-54: Alerta de bucle de reinicios de contenedores en HEX-077-b
+
+**Descartado el:** 2026-09-13  
+**Decisión registrada en:** `docs/plan/fase-a-6-empaquetado-cli.md` (la línea «Alertas activas») y `docs/adr/adr-0037-condiciones-de-alerta-sobre-senales-existentes.md`
+
+### Qué se consideró
+
+Incluir la octava condición de alerta de la tarea 20 del plan —bucle de reinicios de cualquiera de
+los dos contenedores (núcleo o sidecar)— entre las siete condiciones que HEX-077-b entrega.
+
+### Por qué se descartó
+
+No existe ningún productor de señal para contar o persistir reinicios de contenedor en el
+repositorio: ni `crates/hexcell` ni el sidecar cuentan ni persisten reinicios, y la política de
+reinicio de Docker no es observable por la aplicación. Construir uno aquí violaría el non-goal de
+HEX-077-b («no añadir ningún productor de señal que no exista ya»). Leer el estado de reinicio de
+Docker o persistir conteos de arranque es un problema distinto que merece su propio blueprint.
+
+### Qué tendría que cambiar para reabrirlo
+
+Que una tarea futura decida construir un observador de reinicios de contenedor (por ejemplo, un
+contador persistido en volumen que el entrypoint del contenedor incrementa en cada arranque, o una
+integración con la Docker API del anfitrión). Esa tarea definiría la señal, su ubicación y su
+coste; HEX-077-b entonces la consumiría como las demás.
 
 ---
 

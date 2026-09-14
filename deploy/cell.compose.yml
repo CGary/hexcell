@@ -70,6 +70,24 @@ services:
       # Secretos: solo por variable de entorno, nunca con valor literal aquí.
       HEXCELL_INFERENCIA_API_KEY: ${HEXCELL_INFERENCIA_API_KEY}
       HEXCELL_EMBEDDINGS_API_KEY: ${HEXCELL_EMBEDDINGS_API_KEY}
+      # Notificaciones operativas por Telegram (HEX-077-b): el token viaja solo
+      # por entorno, nunca en un archivo por célula (precedente HEX-064/HEX-065).
+      HEXCELL_TELEGRAM_BOT_TOKEN: ${HEXCELL_TELEGRAM_BOT_TOKEN:-}
+      HEXCELL_TELEGRAM_CHAT_ID: ${HEXCELL_TELEGRAM_CHAT_ID:-}
+      HEXCELL_TELEGRAM_URL_BASE: ${HEXCELL_TELEGRAM_URL_BASE:-}
+      HEXCELL_TELEGRAM_TIMEOUT_MS: ${HEXCELL_TELEGRAM_TIMEOUT_MS:-}
+      # Umbrales de alerta (HEX-077-b): parámetros de configuración, nunca
+      # constantes normativas. Si la variable no está definida en el entorno, el
+      # `:-` la pasa como cadena vacía y el núcleo la trata como ausente,
+      # recayendo en su valor de respaldo; ninguno de esos respaldos se afirma
+      # como correcto. Sin estas líneas la célula desplegada NUNCA podría
+      # calibrarse: `environment:` es una lista explícita y `--env-file` solo
+      # alimenta la sustitución `${...}`, no el entorno del contenedor.
+      HEXCELL_ALERTAS_VENTANA_RECONEXION_SEGUNDOS: ${HEXCELL_ALERTAS_VENTANA_RECONEXION_SEGUNDOS:-}
+      HEXCELL_ALERTAS_SUELO_BALANCE_DISPONIBLE: ${HEXCELL_ALERTAS_SUELO_BALANCE_DISPONIBLE:-}
+      HEXCELL_ALERTAS_LIMITE_TASA_DESCARTES: ${HEXCELL_ALERTAS_LIMITE_TASA_DESCARTES:-}
+      HEXCELL_ALERTAS_LIMITE_CAIDA_RATIO_ACUSES: ${HEXCELL_ALERTAS_LIMITE_CAIDA_RATIO_ACUSES:-}
+      HEXCELL_ALERTAS_MINIMO_ENVIOS_PARA_EVALUAR_ACUSE: ${HEXCELL_ALERTAS_MINIMO_ENVIOS_PARA_EVALUAR_ACUSE:-}
     # Límites de recursos: parametrizados, no elegidos aquí (la tarea 6 de la
     # etapa A-6, HEX-078, decide los valores a partir de NFR-01 y cierra esta
     # frase). El límite de descriptores de archivo (ulimits.nofile) sigue la
