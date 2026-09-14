@@ -71,9 +71,14 @@ services:
       HEXCELL_INFERENCIA_API_KEY: ${HEXCELL_INFERENCIA_API_KEY}
       HEXCELL_EMBEDDINGS_API_KEY: ${HEXCELL_EMBEDDINGS_API_KEY}
     # Límites de recursos: parametrizados, no elegidos aquí (la tarea 6 de la
-    # etapa A-6 decide los valores a partir de NFR-01).
+    # etapa A-6, HEX-078, decide los valores a partir de NFR-01 y cierra esta
+    # frase). El límite de descriptores de archivo (ulimits.nofile) sigue la
+    # misma disciplina de parametrización per-célula que mem_limit y cpus:
+    # nunca un literal.
     mem_limit: ${HEXCELL_NUCLEO_LIMITE_MEMORIA}
     cpus: ${HEXCELL_NUCLEO_LIMITE_CPUS}
+    ulimits:
+      nofile: ${HEXCELL_NUCLEO_LIMITE_NOFILE}
     # Endurecimiento en tiempo de ejecución (HEX-070, tarea 5 de la etapa A-6).
     # POR QUÉ read_only + cap_drop + no-new-privileges: cierra los tres frentes
     # clásicos del ataque por contenedor (modificación de rootfs, capabilities
@@ -140,6 +145,8 @@ services:
       HEXCELL_RUTA_OUTBOX: /var/lib/hexcell/outbox.db
     mem_limit: ${HEXCELL_SIDECAR_LIMITE_MEMORIA}
     cpus: ${HEXCELL_SIDECAR_LIMITE_CPUS}
+    ulimits:
+      nofile: ${HEXCELL_SIDECAR_LIMITE_NOFILE}
     # Mismas cuatro banderas de endurecimiento en tiempo de ejecución que el
     # núcleo: la justificación completa y el porqué del tmpfs viven en el
     # comentario del servicio nucleo más arriba y se repiten aquí solo en su

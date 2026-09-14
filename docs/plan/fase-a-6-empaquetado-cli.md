@@ -185,6 +185,7 @@ Las entradas conservan su numeración; esta sección es la autoridad sobre el or
 * Actualización 2026-09-13: 10 dividida en 10-a (HEX-074-a, cerrada) y 10-b (pendiente). La cadena restante: 17 → 6 → 16 → 10-b → 11 → 22 → 12 → 13 → 14 → 15 → 18 → 20 → 23 → 21 → 19.
 * Actualización 2026-09-13: 17 cerrada (HEX-076). La cadena restante: 6 → 16 → 10-b → 11 → 22 → 12 → 13 → 14 → 15 → 18 → 20 → 23 → 21 → 19.
 * Actualización 2026-09-13: 10-b cerrada (HEX-074-b) con el analizador y los subcomandos desplazados a 10-c (HEX-074-c). 20 dividida: 20-a (HEX-077-a), 20-c (HEX-077-c) y 20-d (HEX-077-d) cerradas; 20-b (HEX-077-b) pendiente. La cadena restante: 6 → 16 → 10-c → 11 → 22 → 12 → 13 → 14 → 15 → 18 → 20-b → 23 → 21 → 19.
+* Actualización 2026-09-13: 6 cerrada (HEX-078) con el reparto de memoria 48m/32m, CPU 0.5/0.25 y nofile 1024 —los tres PROVISIONALES hasta la medición de la tarea 16— y el guardia `deploy/verificar_limites.sh` (probado por mutación, en CI). La cadena restante: 16 → 10-c → 11 → 22 → 12 → 13 → 14 → 15 → 18 → 20-b → 23 → 21 → 19.
 
 ---
 
@@ -214,6 +215,15 @@ Las entradas conservan su numeración; esta sección es la autoridad sobre el or
    denied`.
 6. **Fijar los límites de recursos** (0,5 días). Memoria, CPU y descriptores por contenedor, con el
    reparto entre núcleo y sidecar coherente con el techo de 80 MB por célula.
+
+   **Cerrada el 2026-09-13 con HEX-078**: reparto de memoria fijado en 48m al núcleo + 32m al
+   sidecar = 80m exactos (NFR-01), CPU en 0.5/0.25 y `ulimits.nofile` en 1024 para ambos, todo
+   parametrizado por célula en `deploy/cell.compose.yml` con los valores en
+   `deploy/celula.env.ejemplo`. Los tres valores son PROVISIONALES y se confirman o corrigen con la
+   medición de la tarea 16 ("6 antes de 16, con ajuste posterior"); guardia mecánico
+   `deploy/verificar_limites.sh` (probado por mutación en sus seis casos, en CI) que ancla los
+   límites sobre el YAML resuelto con igualdad exacta contra el referente. El procedimiento de
+   respuesta ante un `OOMKilled` de estos límites queda diferido a la tarea 21.
 7. **Verificar la propagación de señales** (0,5 días). Comprobar que `docker stop` con margen de 30
    segundos produce el apagado ordenado del núcleo y el cierre limpio de sesión del sidecar, con
    salidas con código 0 y sin recurrir a `SIGKILL`.
@@ -382,6 +392,12 @@ Las entradas conservan su numeración; esta sección es la autoridad sobre el or
     tiene y cómo verificar que salió bien. Incluye `cell rebind` con su remisión explícita al
     runbook de baneo de la etapa A-7, que es donde se decide **si procede** sustituir el número;
     aquí solo se documenta **cómo** se ejecuta.
+
+    **Alcance añadido (decidido 2026-09-13, HEX-078):** el procedimiento de respuesta ante un
+    `OOMKilled` —qué hacer cuando un contenedor muere por exceder su límite de memoria, fijados los
+    límites en la tarea 6— pasa a ser alcance explícito de esta tarea: se documenta en el runbook
+    que aquí se escribe, diferido desde HEX-078 (AC-6 del 00-spec.yaml de esa tarea).
+    `docs/runbook-operacion.md` NO se crea en HEX-078.
 22. **Configuración por célula como archivos** (1 día). Implementar la gestión de configuración basada en archivos (valores por defecto compartidos y superposiciones o overlays por célula) con validación de fallo cerrado al arrancar (concretando la tarea 8 sin editarla), gestionada de forma centralizada por `hexcell-admin` y versionable en git.
 
     **Criterio de aceptación (revisado 2026-09-10):** Los archivos contienen solo parámetros no

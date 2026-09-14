@@ -1,6 +1,6 @@
 # Bitácora de descartes
 
-> Registro de lo que se consideró y **no** se hizo. Última actualización: 2026-09-13 (D-51).
+> Registro de lo que se consideró y **no** se hizo. Última actualización: 2026-09-13 (D-52).
 
 ## Para qué sirve este documento
 
@@ -85,6 +85,7 @@ se apoya en un principio de diseño, no.
 | [D-49](#d-49) | Probar que el socket IPC de una célula no es alcanzable desde otra comparando únicamente el dispositivo de archivos (`stat -c %d`) | Reabrible solo si los volúmenes pasaran a sistemas de archivos separados |
 | [D-50](#d-50) | Promedio móvil de latencias a través de múltiples acuses en `sidecar/internal/metricas`, en lugar de la última observada por acuse | Principio de diseño, no reabrir |
 | [D-51](#d-51) | Vigilancia externa: subcomando de hexcell-admin, binario/crate nuevo, ping gateado a la salud de la célula, y reintento/backoff local | Principio de diseño, no reabrir |
+| [D-52](#d-52) | Forma explícita `soft`/`hard` de `ulimits.nofile` y comprobación de "campo presente" en el guardia de límites de recursos (HEX-078) | Principio de diseño, no reabrir |
 
 ---
 
@@ -714,6 +715,34 @@ reintento/backoff local ante un fallo transitorio.**
   publicar un puerto de salud por célula al anfitrión (lo que hoy NFR-05 y A-6 tarea 17 prohíben);
   el subcomando de `hexcell-admin` solo si ese crate decidiera adoptar una pila TLS por otra razón
   independiente que ya pagara ese costo.
+
+---
+
+### D-52
+
+**Dos técnicas descartadas al diseñar el guardia de límites de recursos (HEX-078): la forma
+explícita `soft`/`hard` de `ulimits.nofile`, y la comprobación de "campo presente" en lugar de la
+igualdad exacta contra el referente.**
+
+* **Descartado:** 2026-09-13 (HEX-078).
+* **Por qué se descartó:** son dos alternativas estudiadas y rechazadas en el mismo diseño,
+  agrupadas bajo un solo número siguiendo el precedente de D-28 y D-51. (1) **Forma explícita
+  `soft`/`hard` de `ulimits.nofile`**: permite un límite blando distinto del duro, pero una banda
+  elástica es flexibilidad muerta en una célula contenida cuyo único objetivo es no agotar
+  descriptores; la forma corta (un solo escalar fija blando == duro) resuelve en `docker compose
+  config` a un entero plano (`nofile: 1024`, medido 2026-09-13) y expresa exactamente la intención.
+  (2) **Comprobación de "campo presente" en el guardia**: comparar solo que `mem_limit`/`cpus`/
+  `ulimits.nofile` existan en el YAML resuelto es estrictamente más débil que la igualdad exacta —
+  no detecta un valor que se desvía en silencio del referente (una memoria que deja de sumar 80 MB,
+  una CPU fuera de lo decidido, un nofile que cambia sin anotarlo), que es justo el modo de fallo
+  que la tarea 6 existe para impedir. El guardia compara en igualdad exacta y, además, convierte el
+  sufijo `<N>m` del referente a bytes porque compose resuelve `mem_limit` a una cadena de bytes
+  crudos ("50331648" para 48m).
+* **Registro normativo:** `deploy/verificar_limites.sh` (comparación exacta), `deploy/cell.compose.yml` y `deploy/celula.env.ejemplo` (forma corta de `ulimits.nofile` y valores 1024).
+* **Qué tendría que cambiar para reabrirlo:** *principio de diseño, no reabrir por defecto.* La forma
+  `soft`/`hard` solo se reconsideraría si una tarea futura necesitara deliberadamente un tope blando
+  distinto del duro (hoy no existe ningún caso); la presencia solo si se quisiera aceptar límites no
+  fijados en el referente, que es exactamente lo contrario de lo que esta tarea decide.
 
 ---
 
