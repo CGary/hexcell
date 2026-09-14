@@ -1,0 +1,156 @@
+task_id: HEX-077-b
+summary: >-
+  Seven alert conditions over existing sidecar/core signals, emitted through HEX-077-a's
+  notification port, plus the Telegram composition-root wiring.
+goal: >-
+  Deliver the seven alert conditions of plan task 20 (docs/plan/fase-a-6-empaquetado-cli.md, the
+  "Alertas activas" sub-item, FR-14) in a new crates/hexcell/src/alertas.rs, each fed from a signal
+  that ALREADY exists on disk and each producing exactly one Notificacion through the merged
+  SumideroDeNotificaciones port, provable against the fake sink. Complete the composition-root
+  wiring HEX-077-a left undone: HEXCELL_TELEGRAM_* selects the real sink, the fake sink is the
+  fallback, and the variables are documented in deploy/celula.env.ejemplo and deploy/cell.compose.yml.
+  All identifiers, comments, log messages and commit messages in Spanish.
+read:
+  - .ai/tasks/active/HEX-077-b/00-spec.yaml
+  - .ai/tasks/active/HEX-077-b/01-blueprint.yaml
+  - crates/hexcell-core/src/notificacion.rs
+  - crates/hexcell/src/notificacion.rs
+  - crates/hexcell/src/notificador_telegram.rs
+  - crates/hexcell/tests/notificaciones.rs
+  - crates/hexcell-core/src/canal.rs
+  - crates/hexcell-core/src/admision.rs
+  - crates/hexcell-core/tests/testigo_de_entrante.rs
+  - crates/hexcell/src/metricas.rs
+  - crates/hexcell/src/motor.rs
+  - crates/hexcell/src/procesador.rs
+  - crates/hexcell-storage/src/presupuesto.rs
+  - crates/hexcell-canal-whatsmeow/src/mensajes.rs
+  - crates/hexcell-canal-whatsmeow/tests/privacidad.rs
+  - crates/hexcell-canal-whatsmeow/tests/comun/mod.rs
+  - sidecar/internal/canal/taxonomia.go
+  - sidecar/internal/canal/reconexion.go
+  - sidecar/internal/canal/acuses.go
+  - sidecar/internal/metricas/metricas.go
+  - sidecar/internal/ipc/mensajes.go
+  - docs/PRD.md
+  - docs/plan/fase-a-6-empaquetado-cli.md
+  - docs/adr/README.md
+  - docs/adr/adr-0033-metricas-de-canal-propio-en-el-sidecar.md
+  - docs/adr/adr-0024-metricas-internas-de-operacion.md
+  - docs/bitacora-de-descartes.md
+  - CONTRIBUTING.md
+touch:
+  - crates/hexcell/src/alertas.rs
+  - crates/hexcell/src/lib.rs
+  - crates/hexcell/src/configuracion.rs
+  - crates/hexcell/src/main.rs
+  - crates/hexcell-canal-whatsmeow/src/adaptador.rs
+  - crates/hexcell/tests/alertas.rs
+  - crates/hexcell/tests/configuracion.rs
+  - crates/hexcell-canal-whatsmeow/tests/senales_de_alerta.rs
+  - crates/hexcell-canal-whatsmeow/tests/comun/mod.rs
+  - deploy/celula.env.ejemplo
+  - deploy/cell.compose.yml
+  - docs/adr/adr-0036-condiciones-de-alerta-sobre-senales-existentes.md
+  - docs/adr/README.md
+  - docs/bitacora-de-descartes.md
+  - docs/plan/fase-a-6-empaquetado-cli.md
+forbid:
+  files:
+    - crates/hexcell-core/src/notificacion.rs
+    - crates/hexcell-core/src/canal.rs
+    - crates/hexcell-core/src/admision.rs
+    - crates/hexcell-core/Cargo.toml
+    - crates/hexcell/src/notificacion.rs
+    - crates/hexcell/src/notificador_telegram.rs
+    - crates/hexcell-storage/src/migraciones.rs
+    - crates/hexcell-storage/src/sesiones.rs
+    - crates/hexcell-admin/src/admin.rs
+    - docs/protocolo-ipc-nucleo-sidecar.md
+    - sidecar/main.go
+    - sidecar/internal/canal/acuses.go
+    - sidecar/internal/canal/reconexion.go
+    - sidecar/internal/canal/taxonomia.go
+    - sidecar/internal/ipc/mensajes.go
+    - sidecar/internal/metricas/metricas.go
+    - Cargo.lock
+    - docs/STATUS.md
+  behaviors:
+    - >-
+      Do NOT add any new signal producer. Every one of the seven conditions must read a signal that
+      already exists on disk today - the sidecar (stage A-3) or the core (stage A-4). Plumbing an
+      already-parsed but discarded field to a new consumer is allowed; inventing a new detection
+      source, a new IPC message type or a wire-version bump above 6 (adr-0032) is not.
+    - >-
+      Do NOT change the channel port. hexcell_core::canal::ChannelAdapter, CicloDeVidaSesion and the
+      EstadoSesion enum keep their exact current shape; the ban expiry must NOT become a field of
+      EstadoSesion. New accessors go on the concrete AdaptadorWhatsmeow struct only.
+    - >-
+      Do NOT change the SumideroDeNotificaciones port signature or any of HEX-077-a's public types
+      (CodigoDeNotificacion, ValorDeDato, DatoDeNotificacion, Notificacion, SumideroSimulado,
+      SumideroDeCelula, NotificadorTelegram). If a payload cannot be expressed with the existing
+      ValorDeDato variants, STOP and report a blocker instead of widening the port.
+    - >-
+      Do NOT change the sessions.db schema, and never store or emit a raw transport identifier.
+      Contact segmentation keys on id_conversacion (adr-0019/adr-0010) in every alert, log field and
+      counter key.
+    - >-
+      Do NOT hardcode any threshold as a normative constant. The reconnection window, GCRA
+      discard-rate bound, ack-ratio drop bound and balance floor are configuration parameters; a
+      fallback may exist so the cell boots, but no test or document may assert a fallback is the
+      correct value.
+    - >-
+      Do NOT let the Telegram bot token reach a per-cell config file, a Debug or Display impl, a log
+      line, an error message or a test fixture. Environment variable only (HEX-064/HEX-065
+      precedent); deploy/celula.env.ejemplo carries a placeholder, never a real token.
+    - >-
+      Do NOT claim, anywhere, that any alert observes how many users have reported the number. That
+      signal does not exist by any route (AC-14).
+    - >-
+      Do NOT imply that alerting reduces ban probability. The own-channel ban risk is structural -
+      Meta fingerprints the library protocol - and this delivery only shortens reaction time. No
+      bulk-sender folklore (jitter, warm-up protocols), no proxies, no VPNs, no IP rotation.
+    - >-
+      Do NOT implement the restart-loop-of-either-container condition. It is split out by human
+      decision of 2026-09-13 into a future task; ComponenteDeCelula stays unused here.
+    - >-
+      Do NOT invent a runtime path for AC-8's literal wording. A witness-less MensajeSaliente fails
+      to compile under TestigoDeEntrante/adr-0021; the delivered proxy is cross-conversation testigo
+      misuse counted by rechazos_de_construccion, read as a DELTA in tests because the counter is a
+      process-global AtomicU64.
+    - >-
+      Do NOT re-implement anything HEX-077-a, HEX-077-c or HEX-077-d already merged into main
+      (notification port, fake and Telegram sinks, per-cell metrics, latency-to-ack, dead-man's
+      switch). The 00-spec calls them "pending merge"; that text is stale - read the disk.
+    - >-
+      Do NOT let any alert fire more than once per condition-occurrence. A watch channel re-delivers
+      and the 60 s tick re-evaluates forever, so hold per-condition emission state and prove the
+      second observation stays silent.
+    - >-
+      Do NOT add an external crate dependency, and do NOT add any dependency to hexcell-core, whose
+      zero-dependency property is an acceptance criterion (cargo tree -p hexcell-core).
+    - >-
+      Do NOT write English identifiers, comments, log messages or commit messages, and do NOT add AI
+      attribution lines to commits. Conventional commits in Spanish.
+    - >-
+      Do NOT assume D-52 and adr-0036 are free. Re-read docs/bitacora-de-descartes.md and
+      docs/adr/README.md from disk at the moment of writing and use the next genuinely free numbers;
+      rename the ADR file accordingly. Never edit or renumber an existing D-NN or ADR. Dates absolute
+      (2026-09-13), never relative.
+verify:
+  commands:
+    - cargo fmt --check
+    - cargo clippy --workspace -- -D warnings
+    - cargo build --workspace
+    - cargo test --workspace
+acceptance:
+  human_gate: true
+limits:
+  max_files_changed: 16
+  max_diff_lines: 2200
+execution:
+  mode: worktree_edit
+  branch: ai/HEX-077-b
+retry_policy:
+  max_attempts: 2
+  escalate_after: 1

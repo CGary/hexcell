@@ -1,0 +1,42 @@
+task_id: HEX-077-b
+summary: Fix-loop pass over the review's fix_tasks; alert conditions made reachable in production and guards made non-vacuous.
+entries:
+  - changed_files:
+      - crates/hexcell-canal-whatsmeow/src/adaptador.rs
+    notes:
+      - "registrar_acuse no longer counts the sidecar's 'enviado' acknowledgement as a delivery ack and no longer clears the in-flight entry for it; only 'entregado'/'leido' count, a non-delivery terminal state clears without counting. Faithful mirror of the Go Productor's Receipt-only path. AC-9 was dead in production before this."
+      - "Session state and ban expiry now travel in ONE watch of pairs (EstadoConExpiracion), published by a single helper, so no consumer can observe Pausada without its expiry. The state-only watch is kept for suscribir_estado consumers."
+  - changed_files:
+      - crates/hexcell/src/main.rs
+      - crates/hexcell/src/alertas.rs
+    notes:
+      - "The session alert observer now re-evaluates the last observed state on the existing 60 s interval as well as on watch changes. The sidecar emits 'reconectando' once per disconnection, so without a clock-driven re-evaluation the AC-4 window could never be crossed."
+      - "The ban alert always carries the expira_en key; when the sidecar declares no expiry it carries Texto(EXPIRACION_DESCONOCIDA) instead of omitting the key."
+  - changed_files:
+      - crates/hexcell/tests/alertas.rs
+      - crates/hexcell-canal-whatsmeow/tests/senales_de_alerta.rs
+      - crates/hexcell/tests/configuracion.rs
+    notes:
+      - "AC-2 asserts the VALUE of expira_en; AC-9 asserts the identity of the affected contact and that no healthy contact is named; the affected contact is no longer first in the fixture."
+      - "AC-10 now contrasts the per-contact computation against the aggregate one through the same evaluator instead of duplicating AC-9."
+      - "Delivered the blueprint's promised mutation scenario as cumple_criterio_ac9 asserted green on the real evaluator and red on three mutants (always-first-contact, aggregate-instead-of-segmented, unreachable bound)."
+      - "The JID guard now populates the counters through send() and asserts they are non-empty; it was vacuous before."
+      - "Adapter test drives the real enviado -> entregado sequence, plus a contact whose delivery acks cease and whose ratio therefore drops."
+  - changed_files:
+      - crates/hexcell/src/configuracion.rs
+      - deploy/cell.compose.yml
+      - deploy/celula.env.ejemplo
+    notes:
+      - "cell.compose.yml now passes the five HEXCELL_ALERTAS_* variables plus TELEGRAM_URL_BASE/TIMEOUT_MS; a deployed cell could only run on fallback thresholds before."
+      - "The six new parses filter empty/whitespace values so a ${X:-} passthrough falls back instead of failing boot; a non-numeric value is still an error naming the variable."
+      - "Renamed HEXCELL_ALERTAS_VENTANA_RECONECION_SEGUNDOS to RECONEXION."
+  - changed_files:
+      - docs/adr/adr-0036-condiciones-de-alerta-sobre-senales-existentes.md
+      - docs/adr/README.md
+      - docs/bitacora-de-descartes.md
+      - docs/plan/fase-a-6-empaquetado-cli.md
+    notes:
+      - "Recorded the ban-severity limitation per the human decision of 2026-09-14: the invariant demands maximum priority, the delivery distinguishes the ban only by its alert code, the port carries no severity per D-09, and the reopening condition is a consumer that must behave differently."
+      - "Renumbered the discard from D-52 to D-53: HEX-078 took D-52 on main after this branch was cut. Fixed its heading level and added the missing index row."
+      - "Language: replaced exactly-one / exactly_one / watcher with Spanish wording in identifiers, comments, the ADR and the ADR index."
+    verify_pending: false

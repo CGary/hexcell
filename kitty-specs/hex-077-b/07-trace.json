@@ -1,0 +1,191 @@
+{
+  "attempts": [
+    {
+      "duration_s": 900.073912477,
+      "model": "opencode-go/qwen3.7-plus",
+      "notes": "{\"type\":\"step_start\",\"timestamp\":1789355886651,\"sessionID\":\"ses_f6214112affeep7irvHARXSMjT\",\"part\":{\"id\":\"prt_09dec08370012jrAKX56ytz0VB\",\"messageID\":\"msg_09debefc2001v30SQ9itAUbyIF\",\"sessionID\":\"ses_f6214112affeep7irvHARXSMjT\",\"snapshot\":\"4bb59919d3c5425c0934551406fb99f020f970d2\",\"type\":\"step-start\"}} {\"type\":\"tool_use\",\"timestamp\":1789355892926,\"sessionID\":\"ses_f6214112affeep7irvHARXSMjT\",\"part\":{\"type\":\"tool\",\"tool\":\"read\",\"callID\":\"call_5cc301af0c1c4fa7957cb487\",\"state\":{\"status\":\"completed\",\"input\":{\"filePath\":\"/home/gary/dev/hexcell/worktrees/HEX-077-b/crates/hexcell/src/notificacion.rs\"},\"output\":\"\u003cpath\u003e/home/gary/dev/hexcell/worktrees/HEX-077-b/crates/hexcell/src/notificacion.rs\u003c/path\u003e\\n\u003ctype\u003efile\u003c/type\u003e\\n\u003ccontent\u003e\\n1: //! Sumidero simulado y selector estático de sumideros de notificación operativa.\\n2: //!\\n3: //! Agrupa dos componentes del binario, siguiendo el precedente de `crate::embeddings`:\\n4: //!\\n5: //! 1. [`SumideroSimulado`]: doble de prueba que captura notificaciones en proceso, sin red.\\n6: //! 2. [`SumideroDeCelula`]: selector estático por enumeración para despachar entre el sumidero\\n7: //!    simulado y el sumidero real de Telegram, sin recurrir a `Box\u003cdyn\u003e` (el puerto no es\\n8: //!    compatible con objetos de trait; ver `hexcell_core::notificacion`).\\n9: \\n10: use std::fmt;\\n11: use std::sync::{Arc, Mutex};\\n12: \\n13: use hexcell_core::notificacion::{Notificacion, SumideroDeNotificaciones};\\n14: \\n15: /// Avería del sumidero simulado.\\n16: #[derive(Clone, Copy, Debug, PartialEq, Eq)]\\n17: pub enum ErrorDeSumideroSimulado {\\n18:     /// Avería forzada a propósito por un test mediante `SumideroSimulado::que_falla`.\\n19:     AveriaSimulada,\\n20: }\\n21: \\n22: impl fmt::Display for ErrorDeSumideroSimulado {\\n23:     fn fmt(\u0026self, f: \u0026mut fmt::Formatter\u003c'_\u003e) -\u003e fmt::Result {\\n24:         match self {\\n25:             Self::AveriaSimulada =\u003e write!(\\n26:                 f,\\n27:                 \\\"avería de notificación simulada, forzada a...",
+      "phase": "execute",
+      "result": "failed"
+    }
+  ],
+  "context_overflows": [],
+  "events": [
+    {
+      "event": "risk_level_calculated",
+      "level": "medium",
+      "reasons": [
+        "file_count_high: 15"
+      ],
+      "signals": {
+        "files_count": 15,
+        "sensitive_matches": [],
+        "symbols_count": 0
+      }
+    },
+    {
+      "blocked": "",
+      "candidate": {
+        "agent": "opencode_go",
+        "level": 3,
+        "model": "opencode-go/gpt-5.6-luna"
+      },
+      "dispatch_id": "",
+      "inputs_snapshot": {
+        "complexity_band": "",
+        "control": {
+          "disabled": [
+            {
+              "at": "2026-09-09T16:46:15Z",
+              "by": "human",
+              "reason": "Antigravity/Gemini subscription retired 2026-09-09 (human decision); propagated from quorum",
+              "target": "agy"
+            },
+            {
+              "at": "2026-09-09T16:46:15Z",
+              "by": "human",
+              "reason": "Antigravity/Gemini subscription retired 2026-09-09 (human decision); propagated from quorum",
+              "target": "agy_edit"
+            }
+          ],
+          "updated_at": "2026-09-09T16:46:15Z"
+        },
+        "exclusions": null,
+        "hashes": {
+          "agents_yaml": "ea0f730316f5ee07d999731405e39b6d5a2b8040b6222489976f447ac2b8f450",
+          "config_yaml": "959b1fc9182793ab6c2a8510f82f49724db816b46ddb6ab7aa9fa8f1fb2f890e",
+          "routing_yaml": "8c3b821b2d603e67dc1c220721291fbb5130799d88712d0deaa4b90bbf5479cc"
+        },
+        "incumbent_family": "",
+        "level": 3,
+        "phase": "implement",
+        "risk": "medium",
+        "router_version": "fleet-route/v1"
+      },
+      "reasons": null,
+      "reroute_budget": 2,
+      "review_family_degraded": false,
+      "ts": "2026-09-14T03:17:25Z",
+      "type": "routing_decision"
+    },
+    {
+      "blocked": "",
+      "candidate": {
+        "agent": "opencode_go",
+        "level": 2,
+        "model": "opencode-go/qwen3.7-plus"
+      },
+      "dispatch_id": "",
+      "inputs_snapshot": {
+        "complexity_band": "L",
+        "control": {
+          "disabled": [
+            {
+              "at": "2026-09-09T16:46:15Z",
+              "by": "human",
+              "reason": "Antigravity/Gemini subscription retired 2026-09-09 (human decision); propagated from quorum",
+              "target": "agy"
+            },
+            {
+              "at": "2026-09-09T16:46:15Z",
+              "by": "human",
+              "reason": "Antigravity/Gemini subscription retired 2026-09-09 (human decision); propagated from quorum",
+              "target": "agy_edit"
+            }
+          ],
+          "updated_at": "2026-09-09T16:46:15Z"
+        },
+        "exclusions": null,
+        "hashes": {
+          "agents_yaml": "ea0f730316f5ee07d999731405e39b6d5a2b8040b6222489976f447ac2b8f450",
+          "config_yaml": "959b1fc9182793ab6c2a8510f82f49724db816b46ddb6ab7aa9fa8f1fb2f890e",
+          "routing_yaml": "8c3b821b2d603e67dc1c220721291fbb5130799d88712d0deaa4b90bbf5479cc"
+        },
+        "incumbent_family": "",
+        "level": 2,
+        "phase": "implement",
+        "risk": "medium",
+        "router_version": "fleet-route/v1"
+      },
+      "reasons": null,
+      "reroute_budget": 2,
+      "review_family_degraded": false,
+      "ts": "2026-09-14T03:17:31Z",
+      "type": "routing_decision"
+    },
+    {
+      "bundle_hash": "5ab390d791de0bbe2d0560b9983f8396c1e31413f2559040eade615c2cf45603",
+      "dispatch_id": "5ab390d791de",
+      "ts": "2026-09-14T03:17:59Z",
+      "type": "dispatch_started"
+    },
+    {
+      "applied": false,
+      "cause": null,
+      "diff_stat": {
+        "deletions": 5,
+        "empty": false,
+        "files_changed": 14,
+        "indeterminate": false,
+        "insertions": 1509
+      },
+      "dispatch_id": "5ab390d791de",
+      "forensic_ref": "refs/fleet/HEX-077-b/attempt-1-opencode-go-qwen3.7-plus",
+      "noop": false,
+      "outcome_class": "attempt",
+      "ts": "2026-09-14T03:32:59Z",
+      "type": "dispatch_finished",
+      "usage_source": "none"
+    },
+    {
+      "blocked": "",
+      "candidate": {
+        "agent": "opencode_go",
+        "level": 2,
+        "model": "opencode-go/qwen3.7-plus"
+      },
+      "dispatch_id": "",
+      "inputs_snapshot": {
+        "complexity_band": "L",
+        "control": {
+          "disabled": [
+            {
+              "at": "2026-09-09T16:46:15Z",
+              "by": "human",
+              "reason": "Antigravity/Gemini subscription retired 2026-09-09 (human decision); propagated from quorum",
+              "target": "agy"
+            },
+            {
+              "at": "2026-09-09T16:46:15Z",
+              "by": "human",
+              "reason": "Antigravity/Gemini subscription retired 2026-09-09 (human decision); propagated from quorum",
+              "target": "agy_edit"
+            }
+          ],
+          "updated_at": "2026-09-09T16:46:15Z"
+        },
+        "exclusions": null,
+        "hashes": {
+          "agents_yaml": "ea0f730316f5ee07d999731405e39b6d5a2b8040b6222489976f447ac2b8f450",
+          "config_yaml": "959b1fc9182793ab6c2a8510f82f49724db816b46ddb6ab7aa9fa8f1fb2f890e",
+          "routing_yaml": "8c3b821b2d603e67dc1c220721291fbb5130799d88712d0deaa4b90bbf5479cc"
+        },
+        "incumbent_family": "qwen",
+        "level": 2,
+        "phase": "review",
+        "risk": "medium",
+        "router_version": "fleet-route/v1"
+      },
+      "reasons": null,
+      "reroute_budget": 1,
+      "review_family_degraded": false,
+      "ts": "2026-09-14T03:41:26Z",
+      "type": "routing_decision"
+    }
+  ],
+  "execution_mode": "worktree_edit",
+  "started_at": "2026-09-14T03:15:15Z",
+  "summary": "Seven alert conditions over existing sidecar/core signals, emitted through HEX-077-a's notification port, plus the Telegram composition-root wiring.",
+  "task_id": "HEX-077-b",
+  "total_cost_usd": 0,
+  "violations": []
+}

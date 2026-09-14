@@ -1,0 +1,141 @@
+{
+  "task_id": "HEX-077-b",
+  "bundle_hash": "5ab390d791de0bbe2d0560b9983f8396c1e31413f2559040eade615c2cf45603",
+  "files": [
+    ".ai/tasks/active/HEX-077-b/00-spec.yaml",
+    ".ai/tasks/active/HEX-077-b/01-blueprint.yaml",
+    "CONTRIBUTING.md",
+    "crates/hexcell-canal-whatsmeow/src/adaptador.rs",
+    "crates/hexcell-canal-whatsmeow/src/mensajes.rs",
+    "crates/hexcell-canal-whatsmeow/tests/comun/mod.rs",
+    "crates/hexcell-canal-whatsmeow/tests/privacidad.rs",
+    "crates/hexcell-core/src/admision.rs",
+    "crates/hexcell-core/src/canal.rs",
+    "crates/hexcell-core/src/notificacion.rs",
+    "crates/hexcell-core/tests/testigo_de_entrante.rs"
+  ],
+  "protocol_version": "fleet-bundle-protocol/v2",
+  "created_at": "2026-09-14T03:17:52Z",
+  "dropped": [
+    {
+      "component": "code_slice",
+      "path": "sidecar/internal/metricas/metricas.go",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "sidecar/internal/ipc/mensajes.go",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "sidecar/internal/canal/taxonomia.go",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "sidecar/internal/canal/reconexion.go",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "sidecar/internal/canal/acuses.go",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "docs/plan/fase-a-6-empaquetado-cli.md",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "docs/bitacora-de-descartes.md",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "docs/adr/adr-0033-metricas-de-canal-propio-en-el-sidecar.md",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "docs/adr/adr-0024-metricas-internas-de-operacion.md",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "docs/adr/README.md",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "docs/PRD.md",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "deploy/celula.env.ejemplo",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "deploy/cell.compose.yml",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "crates/hexcell/tests/notificaciones.rs",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "crates/hexcell/tests/configuracion.rs",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "crates/hexcell/src/procesador.rs",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "crates/hexcell/src/notificador_telegram.rs",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "crates/hexcell/src/notificacion.rs",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "crates/hexcell/src/motor.rs",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "crates/hexcell/src/metricas.rs",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "crates/hexcell/src/main.rs",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "crates/hexcell/src/lib.rs",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "crates/hexcell/src/configuracion.rs",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "crates/hexcell-storage/src/presupuesto.rs",
+      "reason": "bundle exceeded max_bytes budget"
+    }
+  ]
+}

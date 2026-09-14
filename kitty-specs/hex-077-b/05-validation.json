@@ -1,0 +1,32 @@
+{
+  "commands": [
+    {
+      "command": "cargo fmt --check",
+      "duration_s": 0.34,
+      "exit_code": 0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "cargo clippy --workspace -- -D warnings",
+      "duration_s": 0.63,
+      "exit_code": 0,
+      "output_excerpt": "    Checking hexcell v0.1.0 (/home/gary/dev/hexcell/worktrees/HEX-077-b/crates/hexcell)\n    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.17s\n"
+    },
+    {
+      "command": "cargo build --workspace",
+      "duration_s": 0.71,
+      "exit_code": 0,
+      "output_excerpt": "   Compiling hexcell v0.1.0 (/home/gary/dev/hexcell/worktrees/HEX-077-b/crates/hexcell)\n    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.65s\n"
+    },
+    {
+      "command": "cargo test --workspace",
+      "duration_s": 14.04,
+      "exit_code": 0,
+      "output_excerpt": "ored; 0 measured; 0 filtered out; finished in 0.01s\n\nall doctests ran in 0.10s; merged doctests compilation took 0.09s\n   Doc-tests hexcell_meta\n\nrunning 0 tests\n\ntest result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n   Doc-tests hexcell_storage\n\nrunning 0 tests\n\ntest result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n\n\n[mutacion, orquestador] evaluar_acuses_por_contacto forzado a reportar siempre contadores[0]: rojos ac9_caida_ratio_por_contacto_nombra_al_contacto_afectado_y_solo_a_el, ac10_el_computo_por_contacto_detecta_lo_que_el_agregado_no_ve y ac9_ac10_la_guarda_del_ratio_de_acuses_se_pone_roja_bajo_mutacion; restaurado -\u003e 18/18 verde, worktree limpio."
+    }
+  ],
+  "executed_at": "2026-09-14T13:58:28Z",
+  "overall_result": "passed",
+  "summary": "4/4 comandos del contrato en 0 sobre c26b990; guardas AC-9/AC-10 probadas por mutacion.",
+  "task_id": "HEX-077-b"
+}

@@ -1,0 +1,145 @@
+task_id: HEX-077-b
+summary: 'Seven of the eight alert conditions of task 20 (A-6), wired to existing sidecar/core signals, delivered through the SumideroDeNotificaciones port from HEX-077-a; restart-loop split out. Risk medium.'
+goal: >-
+  Deliver active alerting for SEVEN of the eight conditions of plan task 20
+  (docs/plan/fase-a-6-empaquetado-cli.md lines 320-331), each detected from a signal that already
+  exists in the sidecar (stage A-3) or the core (stage A-4), each producing exactly one
+  notification through the SumideroDeNotificaciones port (HEX-077-a) when provoked in test against
+  the fake sink. The eighth condition, restart-loop-of-either-container, is explicitly split out of
+  this task into a future task of its own (see non_goals) because it has no existing signal
+  producer anywhere in the repository. This task also completes the composition-root wiring
+  HEX-077-a deliberately left undone: selecting the real Telegram sink vs. the fake sink at
+  startup, and adding the HEXCELL_TELEGRAM_* environment variables to
+  crates/hexcell/src/main.rs, deploy/cell.compose.yml, and deploy/celula.env.ejemplo.
+invariants:
+  - The temporary-ban-detected alert always carries the ban's expiry date (sourced from the
+    sidecar's expira_en_ms) and is treated as maximum priority; no other alert condition may share
+    its channel behavior or be conflated with it.
+  - The delivery-ack-ratio drop is evaluated per id_conversacion (contact), never in aggregate
+    across contacts; an aggregate-only implementation does not satisfy this alert.
+  - Contact segmentation keys on id_conversacion, never a raw JID (adr-0019); sessions.db never
+    stores raw transport identifiers.
+  - The Telegram bot token travels only by environment variable, never in a per-cell config file
+    (HEX-064/HEX-065 precedent), and is never logged or echoed.
+  - No alert or notification claims to observe how many users have reported the number; that
+    signal does not exist by any route and no artifact produced by this task may imply otherwise.
+  - Threshold values (reconnection-silence window, discard-rate anomaly bound, ack-ratio drop
+    bound) are configuration parameters with no normative default asserted as correct by any
+    acceptance criterion.
+  - This delivery mechanism shortens reaction time; it does not reduce the probability of a ban,
+    and introduces no bulk-sender folklore (jitter, warm-up), proxies, VPNs, or IP rotation.
+acceptance:
+  - id: AC-2
+    statement: The temporary-ban-detected condition is provoked in test against the fake sink and
+      produces exactly one notification carrying its code and the ban's expiry date.
+  - id: AC-3
+    statement: The channel-session-unlinked condition is provoked in test against the fake sink and
+      produces exactly one notification carrying its code.
+  - id: AC-4
+    statement: The sidecar-not-reconnected-for-over-5-minutes condition is provoked in test against
+      the fake sink and produces exactly one notification carrying its code.
+  - id: AC-6
+    statement: The LLM-balance-exhausted-or-degraded-mode condition is provoked in test against the
+      fake sink and produces exactly one notification carrying its code.
+  - id: AC-7
+    statement: The anomalous-GCRA-discard-rate condition is provoked in test against the fake sink
+      and produces exactly one notification carrying its code.
+  - id: AC-8
+    statement: The plan's literal wording for this condition (a witness-less unsolicited send) is
+      UNREACHABLE by construction, because TestigoDeEntrante plus adr-0021 make a witness-less
+      MensajeSaliente fail to compile -- there is no runtime event for that literal case, so this
+      criterion is deliberately a PROXY, not a literal match. The real residual runtime violation
+      of the only-respond invariant that the type system does not prevent is cross-conversation
+      testigo misuse -- RECHAZOS_DE_CONSTRUCCION / rechazos_de_construccion() in
+      crates/hexcell-core/src/canal.rs, incremented when MensajeSaliente::respuesta_libre or
+      ::plantilla is built with a testigo whose conversation does not match the destination
+      conversation. This condition is provoked in test by causing that cross-conversation misuse
+      against the fake sink, and produces exactly one notification carrying its code.
+  - id: AC-9
+    statement: The anomalous-drop-in-delivery-ack-ratio-segmented-by-contact condition is provoked
+      in test against the fake sink, using per-contact (id_conversacion) data where one contact's
+      ratio drops while others do not, and produces exactly one notification carrying its code and
+      the affected contact's id_conversacion.
+  - id: AC-10
+    statement: An aggregate-only computation of the delivery-ack ratio (not segmented by contact)
+      is rejected by a test as insufficient to satisfy AC-9, proving the per-contact segmentation
+      is enforced rather than incidental.
+  - id: AC-14
+    statement: No artifact (code, log field, alert payload, or documentation produced by this task)
+      claims to measure or expose how many users have reported the number.
+  - id: AC-15
+    statement: The real Telegram sink is selected at composition-root startup behind a
+      HEXCELL_TELEGRAM_* environment-variable configuration (following the
+      HEXCELL_INFERENCIA_*/HEXCELL_EMBEDDINGS_* naming precedent), with the fake sink as the
+      default/fallback when the configuration is absent, and the new variables documented in
+      deploy/celula.env.ejemplo and wired in deploy/cell.compose.yml.
+  - cargo fmt --check, cargo clippy --workspace -- -D warnings, cargo build --workspace, and cargo
+    test --workspace remain green; cd sidecar && go build ./... && go vet ./... && go test ./...
+    -count=1 remain green.
+  - All new identifiers, comments, log messages, and commit messages are written in Spanish,
+    matching repository convention.
+risk: medium
+non_goals:
+  - Do not implement the notification port itself, its HTTP-to-Telegram sink implementation, or
+    its fake-sink test double; those are delivered by HEX-077-a (branch ai/HEX-077-a, approved,
+    pending merge) and consumed here as-is.
+  - Do not implement per-cell metrics (reconnections-per-hour, inbound-silence-window,
+    latency-to-ack) or their delivery via structured log / VACUUM INTO; those are delivered by
+    HEX-077-c (branch ai/HEX-077-c, approved, pending merge).
+  - Do not implement the external dead-man's switch (healthchecks.io ping); that is delivered by
+    HEX-077-d (branch ai/HEX-077-d, approved, pending merge).
+  - Do not pick or hardcode any threshold value (reconnection rate, silence window, discard-rate
+    bound, ack-ratio drop bound, ban-detection heuristic) as a normative constant; thresholds are
+    configuration parameters only.
+  - Do not implement or require a real Telegram bot or real bot token for any test; the Telegram
+    integration is exercised only against the fake sink or a local TcpListener stub, never a live
+    account.
+  - Do not add any signal producer that does not already exist in the sidecar (stage A-3) or the
+    core (stage A-4); this task consumes and delivers existing signals via thresholds, it does not
+    invent new detection logic.
+  - HUMAN DECISION (2026-09-13) -- the restart-loop-of-either-container condition is split OUT of
+    this task entirely, into a future task of its own, and is NOT one of the seven conditions this
+    task delivers. Reason -- at brief time, no existing producer was found in-repo for container
+    restart-loop counting -- nothing in crates/hexcell or the sidecar counts or persists container
+    restarts, and Docker's own restart policy is not observed by the app today. Building one here
+    would violate the non-goal above (add no new signal producer); reading Docker restart state or
+    persisting boot counts is a different problem that deserves its own blueprint. Do not create
+    that future task from this spec; the orchestrator does so separately.
+  - HUMAN DECISION (2026-09-13) -- the unsolicited-send-discarded condition (AC-8) is delivered as a
+    PROXY against the existing RECHAZOS_DE_CONSTRUCCION / rechazos_de_construccion() counter in
+    crates/hexcell-core/src/canal.rs (cross-conversation testigo misuse), not against the plan's
+    literal wording (a witness-less send), because the literal case is unreachable -- it fails to
+    compile under TestigoDeEntrante / adr-0021, so there is no runtime event to alert on. See AC-8
+    for the full reasoning; do not treat this proxy relationship as sloppiness or attempt to
+    "fix" it by inventing a runtime path for the literal, unreachable case.
+  - Do not introduce bulk-sender folklore (jitter, warm-up protocols), proxies, VPNs, or IP
+    rotation.
+  - Do not change the channel port (ChannelAdapter) design, the SumideroDeNotificaciones port
+    signature, or the sessions.db schema.
+constraints:
+  - Trace to docs/PRD.md FR-14; normative source is docs/plan/fase-a-6-empaquetado-cli.md lines
+    304-350 (task 20 of stage A-6), specifically the "Alertas activas" sub-item (lines 320-331).
+  - This task depends on HEX-077-a (branch ai/HEX-077-a) -- the SumideroDeNotificaciones trait and
+    value types in crates/hexcell-core/src/notificacion.rs, the fake sink and static selection
+    enum SumideroDeCelula in crates/hexcell/src/notificacion.rs, and the HTTP emitter in
+    crates/hexcell/src/notificador_telegram.rs. Do not modify that port's public shape; if a
+    condition's payload cannot be expressed with the existing ValorDeDato variants (Texto,
+    Instante, Conversacion, Componente), treat that as a blocker for a human decision, not grounds
+    to reopen the merged sibling's contract.
+  - Alert delivery is an outbound HTTP call to Telegram only; this is explicitly permitted by
+    adr-0024/adr-0033 alongside the prohibition on inbound HTTP endpoints and live sessions.db
+    queries from hexcell-admin, which this task does not touch.
+  - Contact segmentation for the delivery-ack-ratio alert keys on id_conversacion per adr-0019;
+    never a raw JID.
+  - The Telegram bot token is supplied only via environment variable (HEXCELL_TELEGRAM_*), never
+    in per-cell config files, per the HEX-064/HEX-065 precedent.
+  - crates/hexcell-core keeps zero external dependencies; any new HTTP-client wiring or
+    composition-root code lives in crates/hexcell, not crates/hexcell-core.
+  - Next-free D-NN and adr-NNNN numbers must be re-verified against disk at implement time, never
+    assumed as settled from this spec -- as of 2026-09-13, main is at D-49/adr-0034, HEX-077-c
+    holds D-50/adr-0035 unmerged, and HEX-077-d holds D-51 unmerged, so the next genuinely free
+    would be D-52/adr-0036; these have already shifted once today under concurrent sessions, so
+    re-verify rather than trust this note.
+parent_task: HEX-077
+depends_on:
+  - HEX-077-a

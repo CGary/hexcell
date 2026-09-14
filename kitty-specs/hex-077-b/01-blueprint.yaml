@@ -1,0 +1,249 @@
+task_id: HEX-077-b
+summary: >-
+  Seven alert conditions wired to already-existing sidecar/core signals, evaluated by a new
+  crates/hexcell/src/alertas.rs and emitted through HEX-077-a's SumideroDeNotificaciones.
+affected_files:
+  - crates/hexcell/src/alertas.rs
+  - crates/hexcell/src/lib.rs
+  - crates/hexcell/src/configuracion.rs
+  - crates/hexcell/src/main.rs
+  - crates/hexcell-canal-whatsmeow/src/adaptador.rs
+  - crates/hexcell/tests/alertas.rs
+  - crates/hexcell/tests/configuracion.rs
+  - crates/hexcell-canal-whatsmeow/tests/senales_de_alerta.rs
+  - deploy/celula.env.ejemplo
+  - deploy/cell.compose.yml
+  - docs/adr/adr-0036-condiciones-de-alerta-sobre-senales-existentes.md
+  - docs/adr/README.md
+  - docs/bitacora-de-descartes.md
+  - docs/plan/fase-a-6-empaquetado-cli.md
+symbols:
+  - 'alertas::CodigoDeAlerta (seven opaque codes; Application Service value object)'
+  - 'alertas::UmbralesDeAlerta (Value Object; no normative default asserted as correct)'
+  - 'alertas::EstadoDeEvaluacion (Entity; remembers last transition instant and last emitted code)'
+  - 'alertas::EvaluadorDeAlertas::evaluar_estado_de_sesion (AC-2, AC-3, AC-4)'
+  - 'alertas::EvaluadorDeAlertas::evaluar_instantanea (AC-6, AC-7, AC-8 proxy)'
+  - 'alertas::EvaluadorDeAlertas::evaluar_acuses_por_contacto (AC-9, AC-10)'
+  - 'alertas::EmisorDeAlertas::emitir (Application Service; owns SumideroDeCelula, one Notificacion per condition)'
+  - 'configuracion::HEXCELL_TELEGRAM_URL_BASE / _TOKEN / _ID_CHAT / _TIMEOUT_MS (AC-15)'
+  - 'configuracion::HEXCELL_ALERTAS_* threshold variables'
+  - 'configuracion::Configuracion::telegram / ::umbrales_de_alerta'
+  - 'adaptador::AdaptadorWhatsmeow::suscribir_expiracion_de_baneo (lifts the already-parsed expira_en_ms as SystemTime)'
+  - 'adaptador::AdaptadorWhatsmeow::contadores_de_acuse (bounded per-id_conversacion enviados/acusados snapshot)'
+  - 'adaptador::ContadoresDeAcusePorConversacion (mirror of sidecar metricas.Productor, adr-0033)'
+dependencies:
+  - crates/hexcell-core/src/notificacion.rs
+  - crates/hexcell/src/notificacion.rs
+  - crates/hexcell/src/notificador_telegram.rs
+  - crates/hexcell-core/src/canal.rs
+  - crates/hexcell-core/src/admision.rs
+  - crates/hexcell/src/metricas.rs
+  - crates/hexcell/src/motor.rs
+  - crates/hexcell/src/procesador.rs
+  - crates/hexcell-canal-whatsmeow/src/mensajes.rs
+  - crates/hexcell-storage/src/presupuesto.rs
+  - sidecar/internal/canal/taxonomia.go
+  - sidecar/internal/canal/reconexion.go
+  - sidecar/internal/canal/acuses.go
+  - sidecar/internal/metricas/metricas.go
+  - docs/adr/adr-0033-metricas-de-canal-propio-en-el-sidecar.md
+  - docs/adr/adr-0019-identidad-de-conversacion.md
+test_scenarios:
+  - statement: >-
+      EstadoSesion::Pausada observed on the adapter watch, together with the expiry lifted from the
+      sidecar's expira_en_ms, produces exactly one notification carrying the ban code and a
+      ValorDeDato::Instante with the expiry date.
+    covers: [AC-2]
+  - statement: >-
+      EstadoSesion::Desvinculada observed on the adapter watch produces exactly one notification
+      carrying the unlinked-session code, and no second notification while the state persists.
+    covers: [AC-3]
+  - statement: >-
+      EstadoSesion::Reconectando held past the configured window (test clock, not wall clock)
+      produces exactly one notification carrying the not-reconnected code; held under the window it
+      produces none.
+    covers: [AC-4]
+  - statement: >-
+      An InstantaneaDeMetricas whose disponible has fallen to or below the configured floor produces
+      exactly one notification carrying the LLM-balance/degraded-mode code.
+    covers: [AC-6]
+  - statement: >-
+      An InstantaneaDeMetricas whose descartados_admision over admitidos exceeds the configured
+      bound produces exactly one notification carrying the anomalous-GCRA-discard-rate code; below
+      the bound it produces none.
+    covers: [AC-7]
+  - statement: >-
+      A cross-conversation testigo misuse that increments rechazos_de_construccion produces exactly
+      one notification carrying the unsolicited-send code; the test reads the counter as a DELTA
+      because RECHAZOS_DE_CONSTRUCCION is a process-global AtomicU64 shared across the test binary.
+    covers: [AC-8]
+  - statement: >-
+      Per-contact ack counters where one id_conversacion's ratio drops past the bound while two
+      other contacts stay healthy produce exactly one notification carrying the ack-ratio code and a
+      ValorDeDato::Conversacion naming the affected contact only.
+    covers: [AC-9]
+  - statement: >-
+      The same three-contact fixture, collapsed to a single aggregate ratio, is asserted to stay
+      above the bound and therefore to emit NOTHING, proving the aggregate computation is
+      insufficient and the per-contact segmentation is enforced rather than incidental.
+    covers: [AC-10]
+  - statement: >-
+      A mutation test over the ack evaluator (bound made unreachable, or segmentation replaced by
+      the aggregate) turns the AC-9 case red, proving the guard is live and not vacuous.
+    covers: [AC-9, AC-10]
+  - statement: >-
+      No emitted CodigoDeAlerta, notification key, log field, env var name, ADR or plan line added
+      by this task contains any wording about reports of the number by users.
+    covers: [AC-14]
+  - statement: >-
+      Configuracion::desde_entorno with the four HEXCELL_TELEGRAM_* variables present selects
+      SumideroDeCelula::Telegram; with them absent it selects SumideroDeCelula::Simulado; the token
+      never appears in any Debug, Display or log output.
+    covers: [AC-15]
+  - statement: >-
+      The adapter test drives a SidecarSimulado through estado_sesion pausada with expira_en_ms and
+      through mensaje_saliente/acuse_envio rounds, asserting the expiry surfaces as SystemTime and
+      the ack counters key on id_conversacion, never on a raw transport identifier.
+    covers: [AC-2, AC-9]
+strategy:
+  - step: 1
+    action: >-
+      Create the alertas module as pure domain-ish Application Service - Value Objects
+      (CodigoDeAlerta, UmbralesDeAlerta), an Entity holding per-condition evaluation state
+      (last-transition instant, last-emitted code for the exactly-one rule), and three evaluar_*
+      functions that take already-observed signals and return Vec<Notificacion>. No I/O, no clock
+      of its own - the instant is a parameter, so tests drive it.
+    files:
+      - crates/hexcell/src/alertas.rs
+      - crates/hexcell/src/lib.rs
+  - step: 2
+    action: >-
+      Lift the two signals that already arrive at the adapter but are discarded there - the
+      estado_sesion expira_en_ms (dropped at the wire-to-domain mapping) and the acuse_envio body
+      (matched as AcuseEnvio(_) and ignored). Expose them as a watch::Receiver<Option<SystemTime>>
+      and a bounded per-id_conversacion counter snapshot, mirroring the already-approved Go
+      Productor of adr-0033. hexcell_core::canal::EstadoSesion and the ChannelAdapter trait are NOT
+      touched; the expiry never becomes a port field.
+    files:
+      - crates/hexcell-canal-whatsmeow/src/adaptador.rs
+  - step: 3
+    action: >-
+      Add the HEXCELL_TELEGRAM_* block and the HEXCELL_ALERTAS_* threshold block to the
+      configuration Validator, following the existing HEXCELL_INFERENCIA_*/HEXCELL_EMBEDDINGS_*
+      shape literally - all-or-nothing group, token redacted in Debug, thresholds optional with
+      documented non-normative fallbacks.
+    files:
+      - crates/hexcell/src/configuracion.rs
+  - step: 4
+    action: >-
+      Wire the composition root - build SumideroDeCelula::desde_configuracion from the parsed
+      Telegram config, feed the EmisorDeAlertas into the ALREADY EXISTING 60 s metrics tick task
+      (AC-6, AC-7, AC-8) and into a new session-state watcher task reading suscribir_estado plus
+      suscribir_expiracion_de_baneo (AC-2, AC-3, AC-4) and the ack counters (AC-9). The engine loop
+      in motor.rs is deliberately NOT touched - every signal it produces is already readable from
+      the metrics snapshot.
+    files:
+      - crates/hexcell/src/main.rs
+  - step: 5
+    action: >-
+      Write the acceptance tests, including the aggregate-rejection case (AC-10) and the mutation
+      check that the ack guard can actually go red.
+    files:
+      - crates/hexcell/tests/alertas.rs
+      - crates/hexcell/tests/configuracion.rs
+      - crates/hexcell-canal-whatsmeow/tests/senales_de_alerta.rs
+  - step: 6
+    action: >-
+      Document the operator surface and the decisions - the four Telegram variables and the
+      threshold variables in the env example and compose template, a new ADR recording that the
+      seven conditions consume existing producers and that the adapter lifts two already-arriving
+      fields, a bitacora entry for what was discarded, and the closure note on task 20's Alertas
+      activas sub-item. Re-read the next free D-NN and adr-NNNN FROM DISK at this moment, not from
+      the spec's note; dates absolute.
+    files:
+      - deploy/celula.env.ejemplo
+      - deploy/cell.compose.yml
+      - docs/adr/adr-0036-condiciones-de-alerta-sobre-senales-existentes.md
+      - docs/adr/README.md
+      - docs/bitacora-de-descartes.md
+      - docs/plan/fase-a-6-empaquetado-cli.md
+risks:
+  - >-
+    SPEC IS STALE, DISK IS TRUTH - 00-spec.yaml calls HEX-077-a/-c/-d "approved, pending merge".
+    Verified 2026-09-13 at main 97bbb92 - all three ARE merged, their branches are gone, and
+    crates/hexcell-core/src/notificacion.rs, crates/hexcell/src/notificacion.rs and
+    crates/hexcell/src/notificador_telegram.rs exist on main. Consume them as-is; re-implementing
+    any of them is a defect.
+  - >-
+    NUMBERING RE-VERIFIED ON DISK 2026-09-13 - last used are D-51 in docs/bitacora-de-descartes.md
+    and adr-0035 in docs/adr/ and docs/adr/README.md, so the next free are D-52 and adr-0036. The
+    spec's guess happens to match ONLY because -c and -d merged; re-read both at implement time
+    because concurrent sessions have moved them twice today already.
+  - >-
+    AC-2 CROSSES A DELIBERATE CONFINEMENT - expira_en_ms is parsed into
+    crates/hexcell-canal-whatsmeow/src/mensajes.rs EstadoSesionIpc and then DROPPED on purpose at
+    crates/hexcell-canal-whatsmeow/src/adaptador.rs (the wire-to-domain match carries the comment
+    "causa, codigo y expira_en_ms se quedan DENTRO de este crate"), and
+    crates/hexcell-canal-whatsmeow/tests/privacidad.rs anchors that boundary. EstadoSesion is a
+    field-less Copy enum, so the expiry is NOT reachable from the port today. The only way to honour
+    the spec's own invariant ("always carries the ban's expiry date, sourced from the sidecar's
+    expira_en_ms") is a new accessor on the concrete AdaptadorWhatsmeow struct. That does not change
+    the ChannelAdapter port and does not trip privacidad.rs (a SystemTime contains none of the six
+    proscribed terms), but it DOES widen a stage A-3 crate that the spec never names. Flagged for
+    the human.
+  - >-
+    AC-9 CROSSES THE SAME CONFINEMENT, TWICE OVER - crates/hexcell-canal-whatsmeow/src/adaptador.rs
+    matches MensajeEntrante::AcuseEnvio(_) and discards it with the comment "se consumen sin elevar
+    la taxonomia de whatsmeow al puerto", and the IPC AcuseEnvio (sidecar/internal/ipc/mensajes.go)
+    carries id_mensaje/estado/id_correlacion/motivo/marca_temporal_ms but NO id_conversacion. So the
+    core has zero per-contact ack data today. The segmented producer that DOES exist is Go-side -
+    sidecar/internal/metricas/metricas.go Productor.ObservarEnvio/ObservarAcuse/Instantanea, which
+    already emits ack_ratio.<id_conversacion> per adr-0033 - but it reaches the operator only as a
+    key=value log line the Rust core never reads, and adr-0033 forbids a new IPC type or a wire-
+    version bump (protocol stays at 6, adr-0032). The blueprint therefore mirrors that Go join on
+    the Rust side, where the core already knows the conversation because it is the sender.
+  - >-
+    AC-8's counter is process-global - RECHAZOS_DE_CONSTRUCCION in
+    crates/hexcell-core/src/canal.rs:48 is a single static AtomicU64 for the whole process,
+    incremented at lines 227 and 247. It cannot attribute a rejection to a conversation, so the AC-8
+    notification carries only its code, and the test MUST read deltas the way
+    crates/hexcell-core/tests/testigo_de_entrante.rs already does, or it will flake under the
+    parallel test harness.
+  - >-
+    AC-6 uses the metrics snapshot (InstantaneaDeMetricas.disponible) rather than the sharper
+    discrete event - crates/hexcell/src/procesador.rs:116 VeredictoDeReserva::Rechazada is the exact
+    moment the cell enters degraded mode and already emits the "modo_degradado" log entry, but
+    reading it would force an Arc through ProcesadorDeInferencia::nuevo and ripple into every
+    construction site. The snapshot path is one file cheaper and fires within the existing 60 s
+    tick. If the reviewer judges the discrete event mandatory, that is a contract amendment, not a
+    silent widening.
+  - >-
+    EXACTLY-ONE is a real obligation, not a phrase - every acceptance criterion says "exactly one
+    notification". A watch channel re-delivers on every observation and the 60 s tick re-evaluates
+    forever, so the evaluator must hold per-condition emission state; without it, a single ban
+    produces one alert per minute until someone silences the bot. Test the second observation, not
+    only the first.
+  - >-
+    Thresholds carry NO normative default - the spec forbids asserting any threshold as correct.
+    Provide fallbacks so the cell boots without configuration, but no acceptance test may pin a
+    fallback value as the right one, and the ADR must say the numbers are pending calibration
+    against real data.
+  - >-
+    Alerting shortens reaction time; it does NOT reduce ban probability. The own-channel ban risk is
+    structural - Meta fingerprints the library protocol. The ADR and any code comment touching the
+    ban alert must say so, and must not drift into bulk-sender folklore (jitter, warm-up), proxies,
+    VPNs or IP rotation.
+  - >-
+    The restart-loop condition is OUT by human decision (2026-09-13) and ComponenteDeCelula in
+    crates/hexcell-core/src/notificacion.rs stays unused by this task. Leaving a port variant unused
+    is correct here; do not invent a seventh-plus condition to consume it.
+  - >-
+    ValorDeDato is SUFFICIENT - verified against crates/hexcell-core/src/notificacion.rs: Instante
+    carries the ban expiry (expira_en_ms is absolute Unix epoch ms per
+    sidecar/internal/canal/taxonomia.go, so UNIX_EPOCH + Duration::from_millis), Conversacion
+    carries the affected id_conversacion as the opaque internal id required by adr-0019, and Texto
+    carries observed rates and windows. NO blocker on the port, and no grounds to reopen HEX-077-a.
+  - >-
+    No new crate dependency is needed - crates/hexcell already pulls hyper/hyper-util for the health
+    server and HEX-077-a's Telegram sink. crates/hexcell-core must stay at zero external
+    dependencies; verify with cargo tree -p hexcell-core if anything is added there by mistake.
