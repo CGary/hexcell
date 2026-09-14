@@ -1,6 +1,6 @@
 # Bitácora de descartes
 
-> Registro de lo que se consideró y **no** se hizo. Última actualización: 2026-09-13 (D-52).
+> Registro de lo que se consideró y **no** se hizo. Última actualización: 2026-09-14 (D-53).
 
 ## Para qué sirve este documento
 
@@ -85,6 +85,7 @@ se apoya en un principio de diseño, no.
 | [D-49](#d-49) | Probar que el socket IPC de una célula no es alcanzable desde otra comparando únicamente el dispositivo de archivos (`stat -c %d`) | Reabrible solo si los volúmenes pasaran a sistemas de archivos separados |
 | [D-50](#d-50) | Promedio móvil de latencias a través de múltiples acuses en `sidecar/internal/metricas`, en lugar de la última observada por acuse | Principio de diseño, no reabrir |
 | [D-51](#d-51) | Vigilancia externa: subcomando de hexcell-admin, binario/crate nuevo, ping gateado a la salud de la célula, y reintento/backoff local | Principio de diseño, no reabrir |
+| [D-53](#d-53) | Alerta de bucle de reinicios de contenedores dentro de HEX-077-b, sin productor de señal que la alimente | Reabrir si se construye un observador de reinicios |
 
 ---
 
@@ -717,10 +718,10 @@ reintento/backoff local ante un fallo transitorio.**
 
 ---
 
-## D-52: Alerta de bucle de reinicios de contenedores en HEX-077-b
+### D-53: Alerta de bucle de reinicios de contenedores en HEX-077-b
 
 **Descartado el:** 2026-09-13  
-**Decisión registrada en:** `docs/plan/fase-a-6-empaquetado-cli.md` (non-goals de HEX-077-b)
+**Decisión registrada en:** `docs/plan/fase-a-6-empaquetado-cli.md` (la línea «Alertas activas») y `docs/adr/adr-0036-condiciones-de-alerta-sobre-senales-existentes.md`
 
 ### Qué se consideró
 

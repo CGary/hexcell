@@ -45,6 +45,7 @@
 
 use std::process::ExitCode;
 use std::sync::Arc;
+use std::time::SystemTime;
 
 use hexcell::admin::{EstadoDeAdmin, servir_servicios_http};
 use hexcell::alertas::EmisorDeAlertas;
@@ -324,31 +325,35 @@ async fn main() -> ExitCode {
             );
             adaptador.arrancar();
 
-            let mut receptor_estado = adaptador.suscribir_estado();
-            let mut receptor_expiracion = adaptador.suscribir_expiracion_de_baneo();
+            let mut receptor_estado_alertas = adaptador.suscribir_estado_con_expiracion();
             let contadores = adaptador.contadores_de_acuse().clone();
             let emisor = Arc::clone(&emisor_alertas);
 
+            // Observador del estado de sesión para las alertas AC-2, AC-3 y AC-4.
+            //
+            // Reacciona a los cambios del par (estado, expiración) —que el adaptador publica en un
+            // único envío, sin ventana entre ambos— y además **reevalúa periódicamente el último
+            // estado observado**. La reevaluación periódica no es un adorno: la condición AC-4
+            // («el sidecar no reconecta pasada la ventana configurada») es temporal, y el sidecar
+            // emite `reconectando` una sola vez por desconexión. Sin un disparo por reloj, un
+            // estado `Reconectando` persistente no volvería a evaluarse nunca y la ventana jamás
+            // se cruzaría. La regla de «exactamente una» vive en el evaluador, así que reevaluar
+            // una condición ya alertada no produce una segunda notificación.
             let _alertas_sesion_task = tokio::spawn(async move {
+                let mut reevaluacion = tokio::time::interval(INTERVALO_DE_INSTANTANEA);
                 loop {
                     tokio::select! {
-                        resultado = receptor_estado.changed() => {
-                            if resultado.is_err() { break; }
-                            let estado = *receptor_estado.borrow();
-                            let expira_en = *receptor_expiracion.borrow();
-                            emisor
-                                .evaluar_y_emitir_estado(estado, expira_en, std::time::SystemTime::now())
-                                .await;
+                        resultado = receptor_estado_alertas.changed() => {
+                            if resultado.is_err() {
+                                break;
+                            }
                         }
-                        resultado = receptor_expiracion.changed() => {
-                            if resultado.is_err() { break; }
-                            let estado = *receptor_estado.borrow();
-                            let expira_en = *receptor_expiracion.borrow();
-                            emisor
-                                .evaluar_y_emitir_estado(estado, expira_en, std::time::SystemTime::now())
-                                .await;
-                        }
+                        _ = reevaluacion.tick() => {}
                     }
+                    let (estado, expira_en) = *receptor_estado_alertas.borrow();
+                    emisor
+                        .evaluar_y_emitir_estado(estado, expira_en, SystemTime::now())
+                        .await;
                 }
             });
 

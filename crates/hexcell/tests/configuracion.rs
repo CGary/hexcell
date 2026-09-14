@@ -744,3 +744,66 @@ fn ac15_sin_telegram_se_selecciona_el_sumidero_simulado() {
 
     let _ = std::fs::remove_dir_all(&directorio_temporal);
 }
+
+// ---------------------------------------------------------------------------
+// Umbrales de alerta: la cadena vacía se trata como ausencia, no como error
+// ---------------------------------------------------------------------------
+
+#[test]
+fn los_umbrales_de_alerta_tratan_la_cadena_vacia_como_ausente() {
+    // deploy/cell.compose.yml pasa estas variables con `${X:-}`: si el operador no las define,
+    // el contenedor las recibe como cadena vacía. Sin el filtro, el arranque fallaría con
+    // ValorInvalido y la célula no levantaría por no haber configurado un umbral opcional.
+    let directorio_temporal =
+        std::env::temp_dir().join(format!("hexcell-test-config-vacio-{}", std::process::id()));
+    std::fs::create_dir_all(&directorio_temporal).unwrap();
+
+    let fuente = FuenteEnMemoria::vacia()
+        .con("HEXCELL_ID_CELULA", "piloto-01")
+        .con("HEXCELL_RUTA_DATOS", directorio_temporal.to_string_lossy())
+        .con("HEXCELL_ALERTAS_VENTANA_RECONEXION_SEGUNDOS", "")
+        .con("HEXCELL_ALERTAS_SUELO_BALANCE_DISPONIBLE", "")
+        .con("HEXCELL_ALERTAS_LIMITE_TASA_DESCARTES", "")
+        .con("HEXCELL_ALERTAS_LIMITE_CAIDA_RATIO_ACUSES", "")
+        .con("HEXCELL_ALERTAS_MINIMO_ENVIOS_PARA_EVALUAR_ACUSE", "")
+        .con("HEXCELL_TELEGRAM_TIMEOUT_MS", "");
+
+    let config = Configuracion::desde_fuente(&fuente)
+        .expect("una variable vacía debe recaer en el valor de respaldo, no abortar el arranque");
+
+    // Se afirma que se usó el respaldo, NO cuál es ese valor: ningún umbral es normativo.
+    let respaldo = hexcell::alertas::UmbralesDeAlerta::por_defecto();
+    assert_eq!(
+        config.umbrales_de_alerta.ventana_reconexion,
+        respaldo.ventana_reconexion
+    );
+    assert_eq!(
+        config.umbrales_de_alerta.minimo_envios_para_evaluar_acuse,
+        respaldo.minimo_envios_para_evaluar_acuse
+    );
+
+    let _ = std::fs::remove_dir_all(&directorio_temporal);
+}
+
+#[test]
+fn un_umbral_de_alerta_con_valor_no_numerico_si_es_error() {
+    // El filtro de cadena vacía no debe degenerar en "ignorar cualquier valor malo": un umbral
+    // mal escrito sigue abortando el arranque nombrando la variable.
+    let directorio_temporal =
+        std::env::temp_dir().join(format!("hexcell-test-config-malo-{}", std::process::id()));
+    std::fs::create_dir_all(&directorio_temporal).unwrap();
+
+    let fuente = FuenteEnMemoria::vacia()
+        .con("HEXCELL_ID_CELULA", "piloto-01")
+        .con("HEXCELL_RUTA_DATOS", directorio_temporal.to_string_lossy())
+        .con("HEXCELL_ALERTAS_VENTANA_RECONEXION_SEGUNDOS", "trescientos");
+
+    let error = Configuracion::desde_fuente(&fuente)
+        .expect_err("un valor no numérico debe seguir siendo un error de configuración");
+    assert!(
+        format!("{error}").contains("HEXCELL_ALERTAS_VENTANA_RECONEXION_SEGUNDOS"),
+        "el error debe nombrar la variable concreta: {error}"
+    );
+
+    let _ = std::fs::remove_dir_all(&directorio_temporal);
+}

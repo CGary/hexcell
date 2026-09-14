@@ -341,7 +341,7 @@ Las entradas conservan su numeración; esta sección es la autoridad sobre el or
       A-4). Esta tarea las **entrega**.
     * **Alertas activas** — **Siete de las ocho condiciones entregadas con HEX-077-b**
       (2026-09-13, `adr-0036`). La condición de bucle de reinicios de contenedores queda para una
-      tarea futura (D-52) porque no existe ningún productor de señal para ella en el repositorio.
+      tarea futura (D-53) porque no existe ningún productor de señal para ella en el repositorio.
     * **Métricas por célula**: reconexiones por hora y ventana de silencio entrante —cero mensajes
       recibidos en X horas hábiles cuando históricamente hay tráfico—, además de la latencia hasta el
       acuse. Los umbrales quedan como parámetros a calibrar con datos reales, no como constantes

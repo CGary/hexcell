@@ -16,7 +16,7 @@
 //!   las señales observadas y devuelve las notificaciones pendientes.
 //! - [`EmisorDeAlertas`]: combina el evaluador con el sumidero de notificación y despacha.
 //!
-//! # Invariante de exactly-one
+//! # Invariante de «exactamente una»
 //!
 //! Cada criterio de aceptación exige «exactamente una notificación». Un canal `watch` re-entrega
 //! en cada observación y el tick de 60 s re-evalúa indefinidamente, así que el evaluador mantiene
@@ -54,6 +54,12 @@ pub const CODIGO_DESCARTES_GCRA: &str = "tasa_descartes_gcra_anomala";
 pub const CODIGO_ENVIO_NO_SOLICITADO: &str = "descarte_envio_no_solicitado";
 /// Código de alerta para la condición de caída anómala del ratio de acuses por contacto (AC-9).
 pub const CODIGO_CAIDA_ACUSES: &str = "caida_anomala_ratio_acuses_por_contacto";
+
+/// Valor del dato `expira_en` cuando el sidecar declaró un baneo temporal sin fecha de expiración.
+///
+/// La alerta de baneo lleva siempre la clave `expira_en`; cuando el cable no trae fecha, la clave
+/// se emite con este texto en lugar de desaparecer del payload.
+pub const EXPIRACION_DESCONOCIDA: &str = "expiracion_desconocida";
 
 /// Valor opaco que identifica una condición de alerta.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -120,7 +126,7 @@ impl UmbralesDeAlerta {
 // Estado de evaluación
 // ---------------------------------------------------------------------------
 
-/// Estado mutable que el evaluador mantiene para garantizar exactly-one por condición.
+/// Estado mutable que el evaluador mantiene para garantizar «exactamente una» por condición.
 ///
 /// Recuerda qué condición está activa y si ya se emitió la notificación correspondiente.
 /// Cuando la condición se despeja, la entrada se reinicia.
@@ -151,7 +157,7 @@ pub struct EstadoDeEvaluacion {
 /// Evaluador puro de alertas: recibe señales observadas y devuelve notificaciones pendientes.
 ///
 /// No tiene I/O ni reloj propio; el instante se recibe como parámetro para que los tests lo
-/// controlen. Mantiene [`EstadoDeEvaluacion`] internamente para la regla de exactly-one.
+/// controlen. Mantiene [`EstadoDeEvaluacion`] internamente para la regla de «exactamente una».
 pub struct EvaluadorDeAlertas {
     umbrales: UmbralesDeAlerta,
     estado: EstadoDeEvaluacion,
@@ -171,6 +177,11 @@ impl EvaluadorDeAlertas {
     /// - AC-2: `EstadoSesion::Pausada` con fecha de expiración → baneo temporal.
     /// - AC-3: `EstadoSesion::Desvinculada` → sesión desvinculada.
     /// - AC-4: `EstadoSesion::Reconectando` sostenido más allá de la ventana → sin reconectar.
+    ///
+    /// La condición AC-4 es **temporal**, no de transición: el sidecar emite `reconectando` una
+    /// sola vez por desconexión, así que quien llame debe volver a invocar este método
+    /// periódicamente con el último estado observado y el reloj actual. Sin esa reevaluación la
+    /// ventana nunca se cruzaría y la alerta sería inalcanzable.
     pub fn evaluar_estado_de_sesion(
         &mut self,
         estado: EstadoSesion,
@@ -195,12 +206,18 @@ impl EvaluadorDeAlertas {
             EstadoSesion::Pausada => {
                 if !self.estado.alerta_emitida_para_estado {
                     self.estado.alerta_emitida_para_estado = true;
-                    let mut n =
-                        Notificacion::nueva(CodigoDeNotificacion::nuevo(CODIGO_BANEO_TEMPORAL));
-                    if let Some(expira) = expira_en {
-                        n = n.con_dato("expira_en", ValorDeDato::Instante(expira));
-                    }
-                    notificaciones.push(n);
+                    // Invariante 1 de la especificación: la alerta de baneo lleva SIEMPRE el dato
+                    // `expira_en`. El adaptador publica estado y expiración en un único envío, así
+                    // que no hay carrera que pueda perderla; si el sidecar no declaró fecha, el
+                    // dato se emite igualmente, marcado como desconocido, en vez de omitirse.
+                    let valor_expiracion = match expira_en {
+                        Some(expira) => ValorDeDato::Instante(expira),
+                        None => ValorDeDato::Texto(EXPIRACION_DESCONOCIDA.to_string()),
+                    };
+                    notificaciones.push(
+                        Notificacion::nueva(CodigoDeNotificacion::nuevo(CODIGO_BANEO_TEMPORAL))
+                            .con_dato("expira_en", valor_expiracion),
+                    );
                 }
             }
             EstadoSesion::Desvinculada => {
@@ -359,7 +376,7 @@ impl EvaluadorDeAlertas {
 /// Servicio de aplicación que combina el evaluador con el sumidero y despacha notificaciones.
 ///
 /// La interior mutabilidad del evaluador permite compartir el emisor por `Arc` entre varias tareas
-/// (el watcher de estado de sesión y el tick de métricas).
+/// (el observador de estado de sesión y el tick de métricas).
 pub struct EmisorDeAlertas {
     evaluador: Mutex<EvaluadorDeAlertas>,
     sumidero: SumideroDeCelula,

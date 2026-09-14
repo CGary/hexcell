@@ -356,8 +356,8 @@ pub const HEXCELL_TELEGRAM_TIMEOUT_MS: &str = "HEXCELL_TELEGRAM_TIMEOUT_MS";
 
 /// Nombre de la variable de entorno con la ventana de reconexión antes de alertar, en segundos
 /// (opcional, AC-4).
-pub const HEXCELL_ALERTAS_VENTANA_RECONECION_SEGUNDOS: &str =
-    "HEXCELL_ALERTAS_VENTANA_RECONECION_SEGUNDOS";
+pub const HEXCELL_ALERTAS_VENTANA_RECONEXION_SEGUNDOS: &str =
+    "HEXCELL_ALERTAS_VENTANA_RECONEXION_SEGUNDOS";
 /// Nombre de la variable de entorno con el suelo de balance disponible para alertar (opcional, AC-6).
 pub const HEXCELL_ALERTAS_SUELO_BALANCE_DISPONIBLE: &str =
     "HEXCELL_ALERTAS_SUELO_BALANCE_DISPONIBLE";
@@ -669,7 +669,7 @@ impl Configuracion {
 
                 let timeout = match fuente.leer(HEXCELL_INFERENCIA_TIMEOUT_MS) {
                     Some(valor) => {
-                        let ms = valor.parse::<u64>().map_err(|_| {
+                        let ms = valor.trim().parse::<u64>().map_err(|_| {
                             ErrorDeConfiguracion::ValorInvalido {
                                 nombre: HEXCELL_INFERENCIA_TIMEOUT_MS,
                                 valor: valor.clone(),
@@ -896,7 +896,10 @@ impl Configuracion {
                     .filter(|v| !v.trim().is_empty())
                     .unwrap_or_else(|| URL_BASE_TELEGRAM_POR_DEFECTO.to_string());
 
-                let timeout = match fuente.leer(HEXCELL_TELEGRAM_TIMEOUT_MS) {
+                let timeout = match fuente
+                    .leer(HEXCELL_TELEGRAM_TIMEOUT_MS)
+                    .filter(|v| !v.trim().is_empty())
+                {
                     Some(valor) => {
                         let ms = valor.parse::<u64>().map_err(|_| {
                             ErrorDeConfiguracion::ValorInvalido {
@@ -930,71 +933,80 @@ impl Configuracion {
 
         let defectos_alerta = crate::alertas::UmbralesDeAlerta::por_defecto();
 
-        let ventana_reconexion = match fuente.leer(HEXCELL_ALERTAS_VENTANA_RECONECION_SEGUNDOS) {
+        let ventana_reconexion = match fuente
+            .leer(HEXCELL_ALERTAS_VENTANA_RECONEXION_SEGUNDOS)
+            .filter(|v| !v.trim().is_empty())
+        {
             Some(valor) => {
-                let segundos =
-                    valor
-                        .parse::<u64>()
-                        .map_err(|_| ErrorDeConfiguracion::ValorInvalido {
-                            nombre: HEXCELL_ALERTAS_VENTANA_RECONECION_SEGUNDOS,
-                            valor: valor.clone(),
-                            formato_esperado: "entero no negativo de segundos, p. ej. 300",
-                        })?;
+                let segundos = valor.trim().parse::<u64>().map_err(|_| {
+                    ErrorDeConfiguracion::ValorInvalido {
+                        nombre: HEXCELL_ALERTAS_VENTANA_RECONEXION_SEGUNDOS,
+                        valor: valor.clone(),
+                        formato_esperado: "entero no negativo de segundos, p. ej. 300",
+                    }
+                })?;
                 Duration::from_secs(segundos)
             }
             None => defectos_alerta.ventana_reconexion,
         };
 
-        let suelo_balance = match fuente.leer(HEXCELL_ALERTAS_SUELO_BALANCE_DISPONIBLE) {
-            Some(valor) => {
-                valor
-                    .parse::<i64>()
-                    .map_err(|_| ErrorDeConfiguracion::ValorInvalido {
+        let suelo_balance =
+            match fuente
+                .leer(HEXCELL_ALERTAS_SUELO_BALANCE_DISPONIBLE)
+                .filter(|v| !v.trim().is_empty())
+            {
+                Some(valor) => valor.trim().parse::<i64>().map_err(|_| {
+                    ErrorDeConfiguracion::ValorInvalido {
                         nombre: HEXCELL_ALERTAS_SUELO_BALANCE_DISPONIBLE,
                         valor: valor.clone(),
                         formato_esperado: "entero de unidades de presupuesto, p. ej. 0",
-                    })?
-            }
-            None => defectos_alerta.suelo_balance_disponible,
-        };
+                    }
+                })?,
+                None => defectos_alerta.suelo_balance_disponible,
+            };
 
-        let limite_tasa_descartes = match fuente.leer(HEXCELL_ALERTAS_LIMITE_TASA_DESCARTES) {
-            Some(valor) => {
-                valor
-                    .parse::<f64>()
-                    .map_err(|_| ErrorDeConfiguracion::ValorInvalido {
+        let limite_tasa_descartes =
+            match fuente
+                .leer(HEXCELL_ALERTAS_LIMITE_TASA_DESCARTES)
+                .filter(|v| !v.trim().is_empty())
+            {
+                Some(valor) => valor.trim().parse::<f64>().map_err(|_| {
+                    ErrorDeConfiguracion::ValorInvalido {
                         nombre: HEXCELL_ALERTAS_LIMITE_TASA_DESCARTES,
                         valor: valor.clone(),
                         formato_esperado: "número flotante entre 0 y 1, p. ej. 0.5",
-                    })?
-            }
-            None => defectos_alerta.limite_tasa_descartes,
-        };
+                    }
+                })?,
+                None => defectos_alerta.limite_tasa_descartes,
+            };
 
-        let limite_caida_ratio = match fuente.leer(HEXCELL_ALERTAS_LIMITE_CAIDA_RATIO_ACUSES) {
-            Some(valor) => {
-                valor
-                    .parse::<f64>()
-                    .map_err(|_| ErrorDeConfiguracion::ValorInvalido {
+        let limite_caida_ratio =
+            match fuente
+                .leer(HEXCELL_ALERTAS_LIMITE_CAIDA_RATIO_ACUSES)
+                .filter(|v| !v.trim().is_empty())
+            {
+                Some(valor) => valor.trim().parse::<f64>().map_err(|_| {
+                    ErrorDeConfiguracion::ValorInvalido {
                         nombre: HEXCELL_ALERTAS_LIMITE_CAIDA_RATIO_ACUSES,
                         valor: valor.clone(),
                         formato_esperado: "número flotante entre 0 y 1, p. ej. 0.5",
-                    })?
-            }
-            None => defectos_alerta.limite_caida_ratio_acuses,
-        };
+                    }
+                })?,
+                None => defectos_alerta.limite_caida_ratio_acuses,
+            };
 
         let minimo_envios_acuse =
-            match fuente.leer(HEXCELL_ALERTAS_MINIMO_ENVIOS_PARA_EVALUAR_ACUSE) {
-                Some(valor) => {
-                    valor
-                        .parse::<u64>()
-                        .map_err(|_| ErrorDeConfiguracion::ValorInvalido {
-                            nombre: HEXCELL_ALERTAS_MINIMO_ENVIOS_PARA_EVALUAR_ACUSE,
-                            valor: valor.clone(),
-                            formato_esperado: "entero no negativo, p. ej. 5",
-                        })?
-                }
+            match fuente
+                .leer(HEXCELL_ALERTAS_MINIMO_ENVIOS_PARA_EVALUAR_ACUSE)
+                .filter(|v| !v.trim().is_empty())
+            {
+                Some(valor) => valor.trim().parse::<u64>().map_err(|_| {
+                    ErrorDeConfiguracion::ValorInvalido {
+                        nombre: HEXCELL_ALERTAS_MINIMO_ENVIOS_PARA_EVALUAR_ACUSE,
+                        valor: valor.clone(),
+                        formato_esperado: "entero no negativo, p. ej. 5",
+                    }
+                })?,
                 None => defectos_alerta.minimo_envios_para_evaluar_acuse,
             };
 
