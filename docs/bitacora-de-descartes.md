@@ -1,6 +1,6 @@
 # Bitácora de descartes
 
-> Registro de lo que se consideró y **no** se hizo. Última actualización: 2026-09-13 (D-48).
+> Registro de lo que se consideró y **no** se hizo. Última actualización: 2026-09-13 (D-50).
 
 ## Para qué sirve este documento
 
@@ -79,6 +79,11 @@ se apoya en un principio de diseño, no.
 | [D-43](#d-43) | Extraer a `abrirRecursosDeArranque` el cableado de `main()` posterior al buzón | Reabrible si cambia un hecho del árbol |
 | [D-44](#d-44) | Liberar los recursos ya abiertos cuando el arranque falla a mitad de camino | Reabrible si cambia un hecho del proyecto |
 | [D-45](#d-45) | Convertir la clasificación del acuse de entrega/lectura en un mensaje IPC (`acuse_envio` u otro) | Reabrible si aparece un consumidor fuera del proceso |
+| [D-46](#d-46) | Lista de LRU real (`container/list`) para el desalojo de `contactos` y `correlaciones` de `sidecar/internal/metricas` | Principio de diseño, no reabrir |
+| [D-47](#d-47) | Declarar la señal de parada con la clave `stop_signal:` de `deploy/cell.compose.yml` en lugar de la directiva `STOPSIGNAL` de cada Dockerfile | Reabrible si aparece un caso donde la señal de parada deba variar por célula |
+| [D-48](#d-48) | Ejercer los vectores de cruce de red y de socket IPC del script en vivo de aislamiento con `docker exec` directo dentro de los contenedores reales | Reabrible si se reintroduce un intérprete en las imágenes finales |
+| [D-49](#d-49) | Probar que el socket IPC de una célula no es alcanzable desde otra comparando únicamente el dispositivo de archivos (`stat -c %d`) | Reabrible solo si los volúmenes pasaran a sistemas de archivos separados |
+| [D-50](#d-50) | Promedio móvil de latencias a través de múltiples acuses en `sidecar/internal/metricas`, en lugar de la última observada por acuse | Principio de diseño, no reabrir |
 
 ---
 
@@ -660,6 +665,17 @@ copiar `sessions.db`, `knowledge_live.db` y el almacén de identidad del adaptad
 * **Por qué se descartó:** dos volúmenes nombrados distintos de Docker viven en el **mismo sistema de archivos del anfitrión**, así que su número de dispositivo coincide siempre. Medido el 2026-09-13 sobre dos volúmenes recién creados: ambos devuelven dispositivo `31` con inodos distintos (`20349905` y `20349970`). La aserción, por lo tanto, no podía pasar nunca: era una **guarda invertida**, roja incluso con el aislamiento intacto, y así se comportó en la primera corrida real del script en vivo, que reportó `FALLA` en AC-8 mientras AC-6 demostraba con marcadores reales que los volúmenes sí estaban aislados. El discriminante correcto es el par **dispositivo:inodo** (`stat -c %d:%i`), que es la identidad de archivo de POSIX; con él las once aserciones pasan.
 * **Registro normativo:** `deploy/verificar_aislamiento.sh` (bloque AC-8).
 * **Qué tendría que cambiar para reabrirlo:** *reabrible solo si los volúmenes de una célula pasaran a residir en sistemas de archivos separados* (por ejemplo, un dispositivo de bloque dedicado por célula). En ese escenario el número de dispositivo volvería a discriminar, pero seguiría siendo redundante frente al par dispositivo:inodo, que es correcto en ambos casos.
+
+---
+
+### D-50
+
+**Promedio móvil de latencias a través de múltiples acuses en `sidecar/internal/metricas`, en lugar de la métrica de "última observada" entre `ObservarEnvio` y `ObservarAcuse` que `adr-0035` define como `latencia_hasta_acuse_ms`.**
+
+* **Descartado:** 2026-09-13 (HEX-077-c).
+* **Por qué se descartó:** la alternativa introduce estado nuevo (un contador de acuses y un acumulador de deltas, además del campo de salida) para una funcionalidad que ni la promesa original de A-3 ni la tarea 20 de A-6 (`docs/plan/fase-a-6-empaquetado-cli.md:320-323`) piden. La promesa del plan enumera la latencia como una serie más del productor, en la misma cardinalidad que `reconexiones_por_hora` y `silencio_entrante_ms` (un único entero por célula), no como una distribución. Un promedio móvil rompería esa cardinalidad —pasaría de un escalar a un escalar + un contador, o a un escalar con un factor de decadencia que exige disciplina de promoción a la vista— y lo haría **silenciosamente**: HEX-077-c está acotado por contrato a una sola clave nueva, y un cambio de cardinalidad sin un ADR específico que lo justifique sería una re-implementación del contrato de la tarea 20, no una mejora de implementación. Además, el evento de interés para la alerta futura no es la "tendencia" sino el **último caso**: una latencia puntual en degradación sostenida es detectable con un umbral simple sobre la última observada (la forma que ya cubre la métrica agregada de las tres series de adr-0033), y promediar la escondería bajo el peso de los acuses anteriores. Por último, el cálculo del promedio añadiría a `ObservarAcuse` una sección crítica adicional bajo el mismo `mu` que ya protege la unión `id_correlacion -> id_conversacion`: hoy ese mutex solo lee `corr.creadaMs` y muta `ultimaLatenciaAcuseMs`; un promedio añadiría dos mutaciones más y un invariante de no-desborde, más superficie para un defecto de sincronización silencioso. Una métrica de "última observada" se reduce a una resta y una asignación, trivialmente correcta de leer y de probar por mutación: la prueba `TestLatenciaHastaAcuseReflejaElMasRecienteNoElPrimero` (escenario 15) documenta que un latch de tipo `if zero` sería un ataque al invariante, y bajo `-count=1` falla en rojo exactamente cuando se introduce.
+* **Registro normativo:** `docs/adr/adr-0035-latencia-hasta-el-acuse-en-metricas-del-sidecar.md` (sección "Alternativas consideradas y descartadas"), `sidecar/internal/metricas/metricas.go` (`ObservarAcuse`, `ultimaLatenciaAcuseMs`, `Instantanea`), `sidecar/internal/metricas/metricas_test.go` (escenario 15 con su `// MUTACIÓN:` que ancla la guarda contra el latch).
+* **Qué tendría que cambiar para reabrirlo:** *principio de diseño.* **No reabrir** mientras la promesa de la tarea 20 siga siendo "un entero por célula, comparable con `reconexiones_por_hora` y `silencio_entrante_ms`". Se reconsideraría solo si la tarea 20 del plan (HEX-077-b, alertas) necesitara una **tendencia** y no un valor puntual, situación en la que la métrica agregada se quedaría corta por contrato y la alternativa exigiría su propio ADR —con su propio D-NN que la registrara como descarte aquí—. Lo que **no** justifica reabrirlo es la observación aislada de que "un promedio suaviza el ruido": ese es exactamente el argumento que el latch de la prueba de mutación desenmascara como semánticamente distinto, y la diferencia entre "tendencia" y "último caso" es una diferencia de contrato que la promesa del plan no autoriza a tomar en silencio.
 
 ---
 

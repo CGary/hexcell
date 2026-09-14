@@ -68,9 +68,9 @@ func tieneClave(detalle, clave string) bool {
 	return false
 }
 
-// Escenario 1: una sola línea lleva las tres series a la vez.
-// MUTACIÓN: borrar cualquiera de las tres series de Instantanea() y esta prueba debe fallar.
-func TestInstantaneaLlevaLasTresSeriesALaVez(t *testing.T) {
+// Escenario 1: una sola línea lleva las cuatro series a la vez.
+// MUTACIÓN: borrar cualquiera de las cuatro series de Instantanea() y esta prueba debe fallar.
+func TestInstantaneaLlevaLasCuatroSeriesALaVez(t *testing.T) {
 	t.Parallel()
 	reloj := &relojFalso{ahoraMs: 1_000_000}
 	p, _ := nuevoProductorDePrueba(reloj)
@@ -82,7 +82,7 @@ func TestInstantaneaLlevaLasTresSeriesALaVez(t *testing.T) {
 	reloj.avanzar(3_600_000)
 
 	detalle := p.Instantanea()
-	for _, clave := range []string{"reconexiones_por_hora", "silencio_entrante_ms", "contactos_omitidos", "ack_ratio.conv-1"} {
+	for _, clave := range []string{"reconexiones_por_hora", "silencio_entrante_ms", "latencia_hasta_acuse_ms", "contactos_omitidos", "ack_ratio.conv-1"} {
 		if !tieneClave(detalle, clave) {
 			t.Errorf("falta la clave %q en %q", clave, detalle)
 		}
@@ -386,6 +386,91 @@ func TestInstantaneaEsDeterministaEntreLlamadasRepetidas(t *testing.T) {
 		if segunda := p.Instantanea(); segunda != primera {
 			t.Fatalf("Instantanea() no es determinista entre llamadas:\n%q\n%q", primera, segunda)
 		}
+	}
+}
+
+// Escenario 13: un solo acuse conocido resuelve una correlación cuyo tiempo en vuelo se refleja
+// como latencia_hasta_acuse_ms igual al delta exacto del reloj inyectado, en milisegundos
+// enteros (nunca con formato float, para que dos entradas distintas no puedan colapsar en el
+// mismo texto por precisión perdida).
+// MUTACIÓN: nunca calcular ni almacenar el tiempo transcurrido y esta prueba debe fallar.
+func TestLatenciaHastaAcuseCalculadaSobreAcuseConocido(t *testing.T) {
+	t.Parallel()
+	reloj := &relojFalso{ahoraMs: 0}
+	p, _ := nuevoProductorDePrueba(reloj)
+
+	p.ObservarEnvio("conv-1", "corr-1")
+	reloj.avanzar(1500)
+	p.ObservarAcuse("corr-1", "entregado")
+
+	if v := buscarClave(t, p.Instantanea(), "latencia_hasta_acuse_ms"); v != "1500" {
+		t.Errorf("latencia_hasta_acuse_ms = %s, se esperaba 1500 (delta exacto del reloj inyectado)", v)
+	}
+}
+
+// Escenario 14: antes de observar ningún acuse, latencia_hasta_acuse_ms vale 0 (valor por
+// omisión documentado), no un valor sin inicializar ni basura de memoria.
+// MUTACIÓN: no tener el campo en absoluto, o devolver un literal distinto de cero cuando el
+// campo está sin inicializar, y esta prueba debe fallar.
+func TestLatenciaHastaAcuseValeCeroAntesDeCualquierAcuse(t *testing.T) {
+	t.Parallel()
+	reloj := &relojFalso{ahoraMs: 100}
+	p, _ := nuevoProductorDePrueba(reloj)
+
+	if v := buscarClave(t, p.Instantanea(), "latencia_hasta_acuse_ms"); v != "0" {
+		t.Errorf("latencia_hasta_acuse_ms = %s, se esperaba 0 antes de cualquier acuse", v)
+	}
+}
+
+// Escenario 15: la métrica refleja el acuse MÁS RECIENTE, no el primero: dos acuses en
+// secuencia con latencias distintas (p. ej. 1000 ms y luego 4000 ms) dejan la métrica en el
+// segundo valor. Es la semántica de "última observada" que adr-0035 fija y que D-50 descarta
+// reemplazar por un promedio.
+// MUTACIÓN: enclavar el valor tras el primer acuse (p. ej. con sync.Once o un guarda "if zero")
+// y esta prueba debe fallar.
+func TestLatenciaHastaAcuseReflejaElMasRecienteNoElPrimero(t *testing.T) {
+	t.Parallel()
+	reloj := &relojFalso{ahoraMs: 0}
+	p, _ := nuevoProductorDePrueba(reloj)
+
+	p.ObservarEnvio("conv-1", "corr-1")
+	reloj.avanzar(1000)
+	p.ObservarAcuse("corr-1", "entregado")
+
+	p.ObservarEnvio("conv-1", "corr-2")
+	reloj.avanzar(4000)
+	p.ObservarAcuse("corr-2", "entregado")
+
+	if v := buscarClave(t, p.Instantanea(), "latencia_hasta_acuse_ms"); v != "4000" {
+		t.Errorf("latencia_hasta_acuse_ms = %s, se esperaba 4000 (la del acuse más reciente)", v)
+	}
+}
+
+// Escenario 16: un acuse sobre una correlación desconocida o ya desalojada no altera
+// latencia_hasta_acuse_ms, exactamente igual que no crea un contacto fantasma ni mueve
+// contactos_omitidos. La guarda existente contra acuses huérfanos se conserva.
+// MUTACIÓN: calcular un tiempo transcurrido espurio a partir de una correlación inexistente
+// (p. ej. reasignando ultimaLatenciaAcuseMs antes del retorno temprano) y esta prueba debe
+// fallar.
+func TestLatenciaHastaAcuseNoSeMuevePorAcuseHuerfano(t *testing.T) {
+	t.Parallel()
+	reloj := &relojFalso{ahoraMs: 0}
+	p, _ := nuevoProductorDePrueba(reloj)
+
+	// Sembrar una observación válida primero para que, si la guarda fallara y calculara un
+	// delta espurio desde el reloj, sustituyera el valor real y la aserción final fallara.
+	p.ObservarEnvio("conv-1", "corr-1")
+	reloj.avanzar(750)
+	p.ObservarAcuse("corr-1", "entregado")
+	if v := buscarClave(t, p.Instantanea(), "latencia_hasta_acuse_ms"); v != "750" {
+		t.Fatalf("precondición rota: latencia_hasta_acuse_ms = %s, se esperaba 750", v)
+	}
+
+	// Acuse huérfano: correlación nunca observada, varios miles de ms después del reloj.
+	reloj.avanzar(5000)
+	p.ObservarAcuse("corr-nunca-vista", "entregado")
+	if v := buscarClave(t, p.Instantanea(), "latencia_hasta_acuse_ms"); v != "750" {
+		t.Errorf("latencia_hasta_acuse_ms = %s, se esperaba 750 (sin cambio por acuse huérfano)", v)
 	}
 }
 
