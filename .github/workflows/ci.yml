@@ -184,3 +184,23 @@ jobs:
       # un guardia.
       - name: Autoprueba de mutación del guardia de vigilancia externa
         run: bash deploy/verificar_ping_de_vigilancia.sh --autoprueba
+
+  guardas-limites:
+    name: Guardas de despliegue — límites de recursos por contenedor (HEX-078)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # AC-3/AC-4: el guardia mecánico ancla, sobre el YAML resuelto, que
+      # nucleo y sidecar llevan mem_limit, cpus y ulimits.nofile con los
+      # valores EXACTOS del referente deploy/celula.env.ejemplo (memoria
+      # comparada en bytes, porque compose resuelve 48m como "50331648").
+      # La medición real de RSS bajo los límites es la tarea 16 del plan y
+      # queda fuera de CI a propósito: no requiere contenedor vivo.
+      - name: Verificar límites de memoria, CPU y descriptores de archivo
+        run: bash deploy/verificar_limites.sh deploy/cell.compose.yml
+
+      # Prueba de mutación. Un guardia que nunca se vio fallar no es todavía
+      # un guardia.
+      - name: Autoprueba de mutación del guardia de límites
+        run: bash deploy/verificar_limites.sh --autoprueba
