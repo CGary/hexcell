@@ -1,0 +1,293 @@
+task_id: HEX-074-c
+summary: >-
+    Hand-rolled argv parser, six cell subcommands with argument validation, simulation mode, main.rs
+    wiring, adr-0036 and bitacora D-52. Zero new dependencies.
+affected_files:
+    - crates/hexcell-admin/src/argumentos.rs
+    - crates/hexcell-admin/src/comandos.rs
+    - crates/hexcell-admin/src/lib.rs
+    - crates/hexcell-admin/src/main.rs
+    - crates/hexcell-admin/tests/argumentos.rs
+    - crates/hexcell-admin/tests/comandos.rs
+    - docs/adr/adr-0036-contrato-de-analisis-de-argumentos-y-modo-de-simulacion.md
+    - docs/adr/README.md
+    - docs/bitacora-de-descartes.md
+symbols:
+    - argumentos::Subcomando
+    - argumentos::Subcomando::Pausar
+    - argumentos::Subcomando::Reanudar
+    - argumentos::Subcomando::Retirar
+    - argumentos::Subcomando::Reemparejar
+    - argumentos::Subcomando::Listar
+    - argumentos::Subcomando::Estado
+    - argumentos::Subcomando::NOMBRE_EN_CLI
+    - argumentos::Invocacion
+    - argumentos::Invocacion::subcomando
+    - argumentos::Invocacion::id
+    - argumentos::Invocacion::motivo
+    - argumentos::Invocacion::simular
+    - argumentos::Invocacion::confirmar
+    - argumentos::ErrorDeArgumentos
+    - argumentos::ErrorDeArgumentos::SinSubcomando
+    - argumentos::ErrorDeArgumentos::GrupoDesconocido
+    - argumentos::ErrorDeArgumentos::SubcomandoDesconocido
+    - argumentos::ErrorDeArgumentos::OpcionDesconocida
+    - argumentos::ErrorDeArgumentos::OpcionRepetida
+    - argumentos::ErrorDeArgumentos::FaltaValorDeOpcion
+    - argumentos::ErrorDeArgumentos::FaltaOpcionObligatoria
+    - argumentos::ErrorDeArgumentos::OpcionNoAdmitida
+    - argumentos::ErrorDeArgumentos::ArgumentoPosicionalSobrante
+    - argumentos::analizar
+    - argumentos::TEXTO_DE_USO
+    - comandos::ejecutar
+    - comandos::estado_objetivo
+dependencies:
+    - crates/hexcell-admin/Cargo.toml
+    - crates/hexcell-admin/src/codigo_de_salida.rs
+    - crates/hexcell-admin/src/salida.rs
+    - crates/hexcell-admin/src/estado_de_celula.rs
+    - crates/hexcell-admin/src/docker/mod.rs
+    - crates/hexcell/src/main.rs
+    - crates/hexcell/src/emparejar.rs
+    - docs/plan/fase-a-6-empaquetado-cli.md
+    - docs/protocolo-ipc-nucleo-sidecar.md
+    - README.md
+test_scenarios:
+    - statement: >-
+          analizar() is driven from the external test crate over an owned Vec<String> of arguments
+          (never from the live process argv), proving the parser is a pure function of its input and
+          exercisable from crates/hexcell-admin/tests/ through the public API only.
+      covers:
+          - AC-1
+    - statement: >-
+          An empty argument list, a bare "cell" with no subcommand, and an unknown top-level group
+          each yield ErrorDeArgumentos, which comandos::ejecutar maps to CodigoDeSalida::UsoIncorrecto
+          (2), asserted to be different from CodigoDeSalida::Fallo (1) and from Exito (0).
+      covers:
+          - AC-2
+    - statement: >-
+          An unknown subcommand name after "cell" (for example "restart") yields
+          SubcomandoDesconocido, and the diagnostic buffer holds a Spanish message naming the
+          rejected token; the standard buffer stays empty.
+      covers:
+          - AC-2
+          - AC-7
+    - statement: >-
+          Each of the six names pause, unpause, terminate, rebind, list, status parses to its own
+          Subcomando variant; a table-driven test walks all six and asserts variant identity, so a
+          renamed or dropped name fails.
+      covers:
+          - AC-3
+    - statement: >-
+          Argument validation happens before dispatch - pause/unpause/status without --id, terminate
+          without --confirmar, and rebind without --motivo or without --confirmar are all
+          UsoIncorrecto (2), never NoImplementadoTodavia (3) and never Fallo (1).
+      covers:
+          - AC-3
+    - statement: >-
+          An unknown flag, a repeated flag, a flag whose value is missing or empty, a flag not
+          admitted by that subcommand (--id on list), and a surplus positional token are each
+          UsoIncorrecto (2); both the --clave valor and the --clave=valor spellings are accepted for
+          --id and --motivo.
+      covers:
+          - AC-3
+    - statement: >-
+          A valid invocation of each of the six subcommands WITHOUT --simular returns
+          CodigoDeSalida::NoImplementadoTodavia (3) and writes its Spanish notice only to the
+          diagnostic sink; the standard sink stays empty and no command performs work.
+      covers:
+          - AC-4
+    - statement: >-
+          A valid invocation WITH --simular returns CodigoDeSalida::Exito (0) and writes the planned
+          action as one Spanish line on the standard sink only; the diagnostic sink stays empty.
+      covers:
+          - AC-5
+          - AC-7
+    - statement: >-
+          The simulated line for pause, unpause, terminate and rebind names the target EstadoDeCelula
+          (suspendida, en ejecucion, retirada, reemparejando) through its existing Display impl, and
+          the literal "desvinculada_sesion_cerrada" appears nowhere in the crate.
+      covers:
+          - AC-5
+    - statement: >-
+          comandos::ejecutar is driven with a Salida built over two independent in-memory buffers, so
+          the simulation path is proven to touch no Docker socket, create no file and mutate no state:
+          it receives no ClienteDocker and no filesystem path at all.
+      covers:
+          - AC-5
+    - statement: >-
+          A write failure on either sink (a Write impl that always returns io::Error) is turned into
+          CodigoDeSalida::Fallo (1) and never into a panic, unwrap or expect.
+      covers:
+          - AC-4
+          - AC-6
+    - statement: >-
+          Human-readable output and diagnostics never cross - one test asserts the exact expected
+          bytes in one buffer AND emptiness of the other, in both directions, over the same Salida.
+      covers:
+          - AC-7
+    - statement: >-
+          Matches over Subcomando in the external test crate carry no wildcard arm and no rest
+          pattern, so adding or removing a variant breaks the test crate's compilation (the
+          EstadoDeCelula / CodigoDeSalida precedent).
+      covers:
+          - AC-3
+    - statement: >-
+          Every operator-visible message captured from either buffer is asserted as its exact Spanish
+          literal, so an English string cannot slip through.
+      covers:
+          - AC-1
+    - statement: >-
+          cargo build --workspace, cargo test -p hexcell-admin, cargo fmt --check and cargo clippy
+          --workspace -- -D warnings all exit 0, and cargo tree -p hexcell-admin still shows exactly
+          serde and serde_json.
+      covers:
+          - AC-8
+          - AC-11
+strategy:
+    - step: 1
+      action: >-
+          Create src/argumentos.rs as the parsing domain, with no orchestration and no I/O. Value
+          Objects - Subcomando, a closed six-variant enum (Pausar, Reanudar, Retirar, Reemparejar,
+          Listar, Estado) with no #[non_exhaustive], each carrying its CLI spelling through a
+          NOMBRE_EN_CLI accessor so the wire name lives in exactly one place; Invocacion, the
+          validated result (subcomando, id: Option<String>, motivo: Option<String>, simular: bool,
+          confirmar: bool) with private fields and public accessors, constructible only by the
+          parser; ErrorDeArgumentos, a closed enum of the nine rejection shapes with a Display impl
+          emitting Spanish. No panic, no unwrap, no expect, no std::process::exit anywhere.
+      files:
+          - crates/hexcell-admin/src/argumentos.rs
+    - step: 2
+      action: >-
+          Write the Validator - analizar(argumentos: &[String]) -> Result<Invocacion,
+          ErrorDeArgumentos>, a pure function over an owned slice that never reads std::env itself.
+          Grammar, closed here and in adr-0036 - "cell" is the only top-level group; the six
+          subcommand names follow it; --simular is accepted by all six; --id <cell_id> is required by
+          pause, unpause, terminate, rebind and status and REJECTED on list; --motivo <texto> is
+          required by rebind only; --confirmar is required by terminate and rebind (destructive per
+          README and plan tasks 12-13) and rejected elsewhere. Both --clave valor and --clave=valor
+          spellings are accepted, following crates/hexcell/src/emparejar.rs; an empty value, a
+          repeated flag, an unknown flag and a surplus positional are each rejected rather than
+          silently resolved. Also expose TEXTO_DE_USO, the Spanish usage text.
+      files:
+          - crates/hexcell-admin/src/argumentos.rs
+    - step: 3
+      action: >-
+          Create src/comandos.rs as the Application Service - ejecutar(resultado: Result<Invocacion,
+          ErrorDeArgumentos>, salida: &mut Salida<S, D>) -> CodigoDeSalida, generic over the two sink
+          writers so a test injects buffers. Outcome table, closed - a parse error writes its Spanish
+          Display plus TEXTO_DE_USO to the DIAGNOSTIC sink and returns UsoIncorrecto (2); a valid
+          invocation with simular writes one Spanish line naming the action, the cell id and the
+          target state to the STANDARD sink and returns Exito (0); a valid invocation without simular
+          writes its Spanish "todavia no implementado" notice plus the owning plan task to the
+          DIAGNOSTIC sink and returns NoImplementadoTodavia (3); any io::Error from a sink becomes
+          Fallo (1). ejecutar receives no ClienteDocker, no path and no clock, which is what makes
+          "no side effect" a property of the signature rather than of a code review.
+      files:
+          - crates/hexcell-admin/src/comandos.rs
+    - step: 4
+      action: >-
+          Add estado_objetivo(Subcomando) -> Option<EstadoDeCelula> in src/comandos.rs - a pure total
+          function with an exhaustive six-arm match - Pausar to Suspendida, Reanudar to EnEjecucion,
+          Retirar to Retirada, Reemparejar to Reemparejando, Listar and Estado to None because they
+          are read-only. It constructs NO CicloDeVidaDeCelula and applies NO transition - the CURRENT
+          state is unknowable without the deferred control-plane store, so only the TARGET is named,
+          and it is rendered through the existing Display of EstadoDeCelula.
+      files:
+          - crates/hexcell-admin/src/comandos.rs
+    - step: 5
+      action: >-
+          Declare pub mod argumentos and pub mod comandos in src/lib.rs and rewrite the stale
+          paragraph of its module doc that says the parser, the six subcommands, the simulation mode
+          and the main.rs wiring are "la tarea hermana HEX-074-c, fuera del alcance de esta tarea".
+          Nothing else in lib.rs changes.
+      files:
+          - crates/hexcell-admin/src/lib.rs
+    - step: 6
+      action: >-
+          Rewrite src/main.rs as a thin composition root that returns std::process::ExitCode - collect
+          std::env::args() into a Vec<String>, skip argv[0], call argumentos::analizar over the rest,
+          build Salida::estandar(), call comandos::ejecutar, and return ExitCode::from(codigo). The
+          A-1 stub println! disappears; main.rs holds no parsing logic, no match over subcommands and
+          no message text of its own, so every string stays testable from the library side.
+      files:
+          - crates/hexcell-admin/src/main.rs
+    - step: 7
+      action: >-
+          Write tests/argumentos.rs and tests/comandos.rs as external integration tests that see only
+          the public API, mirroring the shape of the existing tests/codigo_de_salida.rs and
+          tests/salida.rs. tests/argumentos.rs covers the grammar and every rejection shape;
+          tests/comandos.rs drives ejecutar over two in-memory buffers and asserts the exit code AND
+          the exact Spanish bytes in the right buffer AND the emptiness of the other, plus the failing
+          writer path. No existing test file is modified or deleted.
+      files:
+          - crates/hexcell-admin/tests/argumentos.rs
+          - crates/hexcell-admin/tests/comandos.rs
+    - step: 8
+      action: >-
+          Write docs/adr/adr-0036-contrato-de-analisis-de-argumentos-y-modo-de-simulacion.md - number
+          re-read from disk first, adr-0035 is the last row of the table - recording the hand-rolled
+          parser, the closed grammar, --confirmar as a flag rather than an interactive prompt (a
+          prompt would read stdin, a side effect the simulation mode forbids, and is untestable off a
+          TTY), the three-way outcome table with its exit codes, and the rule that the control-plane
+          target state is named but never transitioned. Add its row to the docs/adr/README.md table,
+          appended after adr-0035, never reordering existing rows. Absolute date 2026-09-13.
+      files:
+          - docs/adr/adr-0036-contrato-de-analisis-de-argumentos-y-modo-de-simulacion.md
+          - docs/adr/README.md
+    - step: 9
+      action: >-
+          Log the discard of clap, argh, pico-args and structopt in docs/bitacora-de-descartes.md as
+          the next free D-NN read from disk (D-51 is the last entry, so D-52), following the D-51
+          precedent of grouping sibling alternatives under one number - three edits, the "Ultima
+          actualizacion" line at the top, one row in the "Indice por idea" table, and the entry body
+          with its four bullets (Descartado, Por que se descarto, Registro normativo, Que tendria que
+          cambiar para reabrirlo). It ships in the SAME commit as the code that makes the discard.
+      files:
+          - docs/bitacora-de-descartes.md
+risks:
+    - >-
+        Numbering race - the spec's constraints block still says "next free number above adr-0032"
+        and "next free D-NN above D-45/D-46", which the spec's own acceptance block supersedes with
+        0036 and D-52. Verified on disk at 2026-09-13 - last ADR file and last README row are
+        adr-0035, last bitacora entry is D-51, no other worktree or branch exists in this repo. The
+        implementer MUST re-read docs/adr/ and docs/bitacora-de-descartes.md before writing and use
+        the next free number found there; the README table is the source of truth and is never
+        reordered.
+    - >-
+        Plan task 12 (docs/plan/fase-a-6-empaquetado-cli.md) says cell terminate transitions to
+        `desvinculada_sesion_cerrada`, but in docs/protocolo-ipc-nucleo-sidecar.md that string is a
+        `causa` projecting to the SESSION state `desvinculada` inside the sidecar, not a cell
+        control-plane state. The control-plane terminal state is EstadoDeCelula::Retirada. This task
+        must not adopt the IPC session taxonomy as its own, and the string must appear nowhere in
+        crates/hexcell-admin.
+    - >-
+        EXPLICITLY DEFERRED, not gaps - idempotent re-execution after a partial failure (plan task
+        15), persistence of the control-plane state across CLI invocations, reconciliation of stored
+        state against `docker inspect` (plan task 14), and the number-substitution audit record shown
+        by cell status (plan tasks 13-14) all depend on the control-plane state store, which is a
+        separate A-6 deliverable. q-analyze must not flag any of them as missing coverage here.
+    - >-
+        EXPLICITLY DEFERRED - the real behaviour of all six subcommands (plan tasks 11-15), the Fase B
+        flags --domain and --waba named in README section 3, a --ayuda/--help surface, and refreshing
+        the README line 81 status note ("todavia no existen en hexcell-admin", still literally true
+        because no command does work yet). None is in the spec's acceptance list and each would be
+        scope creep.
+    - >-
+        Dependency trap - the whole point of the task is that no argument-parsing crate is added.
+        hexcell-admin must stay at exactly serde + serde_json and Cargo.toml / Cargo.lock must not
+        appear in the diff at all; hexcell-core must stay untouched at zero external dependencies.
+    - >-
+        Panic trap - the release profile sets panic = "abort", so a panic leaves no usable message.
+        No unwrap, expect, indexing, slicing by range, integer overflow or std::process::exit in any
+        production path; sink writes return io::Result and become CodigoDeSalida::Fallo.
+    - >-
+        Language trap - every identifier, comment, doc comment, operator message and document is in
+        Spanish; only the CLI wire names (cell, pause, unpause, terminate, rebind, list, status) and
+        the flag --id stay as PRD and README fix them. The commit message is a conventional commit
+        with NO AI attribution line of any kind.
+    - >-
+        External-delegation trap - this task is a candidate for fleet dispatch, so the grammar,
+        the outcome table and the exit code of every path are fixed here and in adr-0036 rather than
+        left to the implementer's taste. A delegate that invents a different flag name, a different
+        exit code for the simulated path, or an interactive confirmation prompt is out of contract.

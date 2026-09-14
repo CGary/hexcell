@@ -1,0 +1,137 @@
+acceptance:
+- given: the hand-rolled argument module of crates/hexcell-admin
+  id: AC-1
+  statement: The argument parser is hand-rolled over std::env::args, adds no dependency, and lives in a new module of crates/hexcell-admin
+    so it can be exercised from crates/hexcell-admin/tests/.
+  then: the parser lives in its own module, is exercised from crates/hexcell-admin/tests/, and no new dependency appears
+  when: the workspace is built and its dependency tree inspected
+- given: the CLI dispatcher
+  id: AC-2
+  statement: An unknown or absent subcommand is rejected with the usage exit code of the EXISTING codigo_de_salida::CodigoDeSalida
+    enumeration, distinct from the generic failure code, and a Spanish message on stderr.
+  then: it returns the usage exit code of CodigoDeSalida, never 0 and never the generic failure code, with a Spanish message
+    on stderr
+  when: it is invoked with no subcommand, an unknown subcommand or an unknown flag
+- given: the six declared subcommands cell pause, unpause, terminate, rebind, list, status
+  id: AC-3
+  statement: Each of the six cell subcommands (pause, unpause, terminate, rebind, list, status) is recognised by name and
+    its arguments are validated before dispatch; a wrong arity or an unknown flag is a usage error, not a failure.
+  then: parsing succeeds for a correct invocation and a wrong arity or unknown flag yields the usage exit code, not the failure
+    code
+  when: each is invoked with its arguments
+- given: a correctly parsed subcommand invocation outside simulation mode
+  id: AC-4
+  statement: Every recognised subcommand reaches a distinct, documented "not implemented yet" outcome (the reserved outcome
+    already provided by 10-b) rather than performing work.
+  then: it reaches the reserved not-implemented outcome provided by HEX-074-b, performing no work
+  when: it is dispatched
+- given: a correctly parsed invocation with simulation mode enabled
+  id: AC-5
+  statement: Simulation (dry-run) mode reports the planned action through the EXISTING salida::Salida sink and returns the
+    success exit code without touching the Docker socket, opening a file or mutating state.
+  then: the planned action is reported through salida::Salida and the success exit code is returned, with no socket opened,
+    no file written and no state mutated
+  when: it is dispatched
+- given: crates/hexcell-admin/src/main.rs
+  id: AC-6
+  statement: crates/hexcell-admin/src/main.rs no longer prints the A-1 stub; it parses argv, dispatches, and returns the parser's
+    exit code via std::process::ExitCode.
+  then: it parses argv, dispatches and returns the resulting exit code via std::process::ExitCode, and the stage A-1 stub
+    string is gone
+  when: the binary is run
+- given: the output sinks of salida::Salida
+  id: AC-7
+  statement: Human-readable output goes to stdout and diagnostics to stderr, asserted by a test that captures both streams
+    separately through the Salida sink.
+  then: the two streams are captured separately by a test and each line lands on the intended stream
+  when: a command produces human-readable output and a diagnostic
+- given: the manifest of crates/hexcell-admin
+  id: AC-8
+  statement: The dependency set of hexcell-admin is unchanged (serde + serde_json).
+  then: it is exactly serde + serde_json
+  when: its dependency set is inspected
+- given: the architectural decision about argument parsing, subcommands and simulation mode
+  id: AC-9
+  statement: The parser/subcommand/dry-run contract is recorded in a NEW ADR taking number 0036 (0034 already records the
+    exit-code and output-sink contract from 10-b; re-read docs/adr/ on disk before writing, sibling tasks may have claimed
+    it) and added to the docs/adr/README.md table, in the same commit.
+  then: a new ADR with the next free number read from docs/adr/ records it and the docs/adr/README.md table lists it, in that
+    same commit
+  when: the implementation commit is made
+- given: the discard of clap, argh, pico-args and structopt
+  id: AC-10
+  statement: The discard of clap, argh, pico-args and structopt is logged in docs/bitacora-de-descartes.md as the next free
+    D-NN on disk (D-52 at the time of writing; re-read the file, never reuse a number), in the same commit that makes the
+    discard.
+  then: docs/bitacora-de-descartes.md carries a new D-NN entry with its reason and reopening condition, in that same commit
+  when: the implementation commit is made
+- given: the workspace
+  id: AC-11
+  statement: cargo build --workspace, cargo test -p hexcell-admin, cargo fmt --check and cargo clippy --workspace -- -D warnings
+    all pass.
+  then: cargo build --workspace, cargo test -p hexcell-admin, cargo fmt --check and cargo clippy --workspace -- -D warnings
+    all exit 0
+  when: the four verification commands are run
+constraints:
+- ALREADY PROVIDED, CONSUMED WITHOUT MODIFICATION - the exit-code enumeration (crates/hexcell-admin/src/codigo_de_salida.rs),
+  the output sinks (src/salida.rs) and the cell state aggregate (src/estado_de_celula.rs) were delivered and tested by sibling
+  tasks HEX-074-a and HEX-074-b. This task USES them; it does not redefine, extend, re-test or modify them, and it does not
+  re-open adr-0034.
+- The cell state aggregate is consumed only if a subcommand path genuinely needs it; wiring persistence or reconciliation
+  of that state is out of scope.
+- The argument parser is hand-rolled over std::env::args, consistent with the dependency-minimising line of adr-0019 and with
+  the existing hand-rolled dispatch in crates/hexcell/src/main.rs; the discard of clap, argh and pico-args must be logged
+  in docs/bitacora-de-descartes.md in the same commit, taking the next free D-NN read from disk (D-52 at 2026-09-13).
+- The exit-code and state-transition contract is an architectural decision and is recorded in a new ADR taking the next free
+  number above adr-0032 (claimed by HEX-072-b), added to the docs/adr/README.md table; numbering is sequential and never reused.
+- Meaningful exit codes require ExitCode::from(u8); the repository currently only uses ExitCode::SUCCESS and ExitCode::FAILURE,
+  so this task introduces the richer contract deliberately and documents it.
+- RISK to carry into the blueprint - plan task 12 states that cell terminate transitions to `desvinculada_sesion_cerrada`,
+  but in docs/protocolo-ipc-nucleo-sidecar.md that string is a `causa` projecting to the session state `desvinculada`, not
+  a cell control-plane state; the state model must name its own terminal state and must not adopt that string as one.
+- RISK to carry into the blueprint - the plan requires that interrupting any command and re-running it leaves the system in
+  the intended state; idempotency cannot be exercised without real command behaviour and is EXPLICITLY DEFERRED to tasks 11
+  to 15, so q-analyze must not flag it as a gap here.
+- EXPLICITLY DEFERRED - persistence of cell state across CLI invocations, reconciliation of the stored state against Docker,
+  and cell status output of the number-substitution audit record all depend on the control-plane state store and are out of
+  scope; the state model is exercised in memory only.
+- Executing this task before plan tasks 7, 17, 6 and 16 is out of the plan's declared order and was explicitly authorised
+  by the human on 2026-09-11; it is not a blocker.
+- Traceability - FR-11 (CLI traffic-shedding operations, Fase A variant) and the A-6 plan file are the only sources; the task
+  invents no requirement and fixes no client, cell or price figures.
+- Verification must stay fast - cargo build --workspace, cargo test -p hexcell-admin, cargo fmt --check, cargo clippy --workspace
+  -- -D warnings.
+- Dates written into code or docs are absolute (2026-09-11), never relative.
+- NOT AUTOMATABLE BY DESIGN - AC-9 (new ADR + docs/adr/README.md row) and AC-10 (new D-NN bitacora entry) are documentation
+  artifacts verified by the reviewer's inspection of the diff, not by a cargo test; q-analyze flags them as uncovered acceptance
+  and that is a FALSE gap, triaged and dismissed by the orchestrator on 2026-09-13.
+depends_on:
+- HEX-074-b
+goal: 'Subset of HEX-074: Hand-rolled argument parser, the six cell subcommands, simulation mode, and the ADR plus bitacora
+  entries recording both contracts.'
+invariants:
+- hexcell-admin adds ZERO new dependencies; its dependency set stays exactly serde + serde_json.
+- crates/hexcell-core is not touched and keeps zero external dependencies (cargo tree -p hexcell-core).
+- The public API of the existing docker module (ClienteDocker, ErrorDeClienteDocker, ConexionDocker, RespuestaHttp) is unchanged;
+  no existing docker test is modified or deleted.
+- All new code identifiers, comments, doc comments and documentation are written in Spanish; commit messages are conventional
+  commits with no AI attribution.
+- No code path ends in panic; release profile sets panic = "abort", so every failure is reported on stderr and expressed as
+  an exit code.
+- The cell control-plane state model does NOT redefine, shadow or reuse the session-state taxonomy of docs/protocolo-ipc-nucleo-sidecar.md
+  (activa, reconectando, desvinculada, pausada) as its own control-plane states.
+- Simulation (dry-run) mode performs no side effect whatsoever - it opens no socket, creates no file and mutates no state.
+- cargo build --workspace, cargo test --workspace, cargo fmt --check and cargo clippy --workspace -- -D warnings stay green.
+non_goals:
+- Do not implement the control-plane persistent state store, its schema or its migrations; that is a separate A-6 deliverable
+  and the state model here is in-memory typing only.
+- Do not invoke Docker, construct a ClienteDocker in any command path, or extend the docker module.
+- Do not implement the real behaviour of cell pause, unpause, terminate, rebind, list or status; tasks 11 to 15 own those.
+- Do not implement Telegram alerts, metrics collection, the dead-man's switch, the canary rollout or any observability surface.
+- Do not implement cell create, Caddy, subdomains or anything belonging to stage B-2.
+- Do not add an external argument-parsing crate (clap, argh, pico-args, structopt) or any other new dependency.
+parent_task: HEX-074
+risk: high
+summary: Hand-rolled argument parser, the six cell subcommands, simulation mode, and the ADR plus bitacora entries recording
+  both contracts.
+task_id: HEX-074-c

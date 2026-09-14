@@ -1,0 +1,42 @@
+{
+  "task_id": "HEX-074-c",
+  "bundle_hash": "fed5d02681bdd1270b1c8e547a66237130ac7f3e54dffcdb1dfc67d8aef7c960",
+  "files": [
+    ".ai/tasks/active/HEX-074-c/00-spec.yaml",
+    ".ai/tasks/active/HEX-074-c/01-blueprint.yaml",
+    "README.md",
+    "crates/hexcell-admin/Cargo.toml",
+    "crates/hexcell-admin/src/codigo_de_salida.rs",
+    "crates/hexcell-admin/src/docker/mod.rs",
+    "crates/hexcell-admin/src/estado_de_celula.rs",
+    "crates/hexcell-admin/src/lib.rs",
+    "crates/hexcell-admin/src/main.rs",
+    "crates/hexcell-admin/src/salida.rs",
+    "crates/hexcell-admin/tests/codigo_de_salida.rs",
+    "crates/hexcell-admin/tests/salida.rs",
+    "crates/hexcell/src/emparejar.rs",
+    "crates/hexcell/src/main.rs",
+    "docs/adr/README.md",
+    "docs/adr/adr-0034-contrato-de-codigos-de-salida-y-sumideros-de-salida.md",
+    "docs/adr/adr-0035-latencia-hasta-el-acuse-en-metricas-del-sidecar.md"
+  ],
+  "protocol_version": "fleet-bundle-protocol/v2",
+  "created_at": "2026-09-14T03:12:55Z",
+  "dropped": [
+    {
+      "component": "code_slice",
+      "path": "docs/protocolo-ipc-nucleo-sidecar.md",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "docs/plan/fase-a-6-empaquetado-cli.md",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "docs/bitacora-de-descartes.md",
+      "reason": "bundle exceeded max_bytes budget"
+    }
+  ]
+}

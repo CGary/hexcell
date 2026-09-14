@@ -1,0 +1,32 @@
+{
+  "commands": [
+    {
+      "command": "cargo build --workspace",
+      "duration_s": 11,
+      "exit_code": 0,
+      "output_excerpt": "Finished `dev` profile target(s)"
+    },
+    {
+      "command": "cargo test -p hexcell-admin",
+      "duration_s": 3,
+      "exit_code": 0,
+      "output_excerpt": "test result: ok en 7+13+10+8+15+6 pruebas; 0 failed"
+    },
+    {
+      "command": "cargo fmt --check",
+      "duration_s": 0.3,
+      "exit_code": 0,
+      "output_excerpt": "sin diferencias de formato"
+    },
+    {
+      "command": "cargo clippy --workspace -- -D warnings",
+      "duration_s": 8,
+      "exit_code": 0,
+      "output_excerpt": "Finished `dev` profile target(s), sin advertencias"
+    }
+  ],
+  "executed_at": "2026-09-14T04:40:00Z",
+  "overall_result": "passed",
+  "summary": "Reverificacion tras aplicar los dos fix_tasks de 06-review.json: los cuatro comandos del contrato salieron en 0 sobre worktrees/HEX-074-c, con 59 pruebas de hexcell-admin en verde.",
+  "task_id": "HEX-074-c"
+}

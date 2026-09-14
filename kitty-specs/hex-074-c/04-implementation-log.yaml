@@ -1,0 +1,3 @@
+entries: []
+summary: Hand-rolled argv parser, six cell subcommands with validation, simulation mode, main.rs wiring, adr-0036 and bitacora D-52. Zero new dependencies.
+task_id: HEX-074-c

@@ -1,0 +1,183 @@
+task_id: HEX-074-c
+summary: >-
+    Hand-rolled argv parser, six cell subcommands with validation, simulation mode, main.rs wiring,
+    adr-0036 and bitacora D-52. Zero new dependencies.
+goal: >-
+    Give hexcell-admin its command-line surface without adding a single dependency. A new parsing
+    module over std::env::args turns an owned argument slice into either a validated Invocacion or a
+    typed ErrorDeArgumentos; a new command module maps that result, plus the two sinks already
+    delivered by HEX-074-b, onto exactly three outcomes - a usage error returns CodigoDeSalida
+    UsoIncorrecto (2) with a Spanish diagnostic, a valid invocation in simulation mode returns Exito
+    (0) after writing the planned action to the standard sink and touching nothing else, and a valid
+    invocation outside simulation mode returns NoImplementadoTodavia (3) because tasks 11 to 15 of the
+    A-6 plan own the real behaviour. src/main.rs stops printing the stage A-1 stub and becomes a thin
+    composition root returning std::process::ExitCode. The parser/subcommand/simulation contract is
+    recorded in a new ADR and the discard of clap, argh, pico-args and structopt is logged in the
+    bitacora in the same commit. Nothing panics, nothing opens a socket, nothing persists state.
+read:
+    - .ai/tasks/active/HEX-074-c/00-spec.yaml
+    - .ai/tasks/active/HEX-074-c/01-blueprint.yaml
+    - crates/hexcell-admin/Cargo.toml
+    - crates/hexcell-admin/src/codigo_de_salida.rs
+    - crates/hexcell-admin/src/salida.rs
+    - crates/hexcell-admin/src/estado_de_celula.rs
+    - crates/hexcell-admin/src/docker/mod.rs
+    - crates/hexcell-admin/tests/codigo_de_salida.rs
+    - crates/hexcell-admin/tests/salida.rs
+    - crates/hexcell/src/main.rs
+    - crates/hexcell/src/emparejar.rs
+    - docs/adr/adr-0034-contrato-de-codigos-de-salida-y-sumideros-de-salida.md
+    - docs/adr/adr-0035-latencia-hasta-el-acuse-en-metricas-del-sidecar.md
+    - docs/plan/fase-a-6-empaquetado-cli.md
+    - docs/protocolo-ipc-nucleo-sidecar.md
+    - README.md
+touch:
+    - crates/hexcell-admin/src/argumentos.rs
+    - crates/hexcell-admin/src/comandos.rs
+    - crates/hexcell-admin/src/lib.rs
+    - crates/hexcell-admin/src/main.rs
+    - crates/hexcell-admin/tests/argumentos.rs
+    - crates/hexcell-admin/tests/comandos.rs
+    - docs/adr/adr-0036-contrato-de-analisis-de-argumentos-y-modo-de-simulacion.md
+    - docs/adr/README.md
+    - docs/bitacora-de-descartes.md
+forbid:
+    files:
+        - Cargo.toml
+        - Cargo.lock
+        - crates/hexcell-admin/Cargo.toml
+        - crates/hexcell-admin/src/codigo_de_salida.rs
+        - crates/hexcell-admin/src/salida.rs
+        - crates/hexcell-admin/src/estado_de_celula.rs
+        - crates/hexcell-admin/src/docker/cliente.rs
+        - crates/hexcell-admin/src/docker/error.rs
+        - crates/hexcell-admin/src/docker/mod.rs
+        - crates/hexcell-admin/src/docker/transporte.rs
+        - crates/hexcell-admin/tests/cliente_docker.rs
+        - crates/hexcell-admin/tests/codigo_de_salida.rs
+        - crates/hexcell-admin/tests/estado_de_celula.rs
+        - crates/hexcell-admin/tests/salida.rs
+        - crates/hexcell-admin/tests/comun/mod.rs
+        - crates/hexcell-core/**
+        - crates/hexcell/**
+        - crates/hexcell-storage/**
+        - crates/hexcell-canal-simulado/**
+        - crates/hexcell-canal-contrato/**
+        - crates/hexcell-canal-whatsmeow/**
+        - crates/hexcell-meta/**
+        - sidecar/**
+        - deploy/**
+        - docs/PRD.md
+        - docs/STATUS.md
+        - docs/plan/fase-a-6-empaquetado-cli.md
+        - docs/protocolo-ipc-nucleo-sidecar.md
+        - .github/workflows/ci.yml
+    behaviors:
+        - >-
+            Do NOT add any dependency to any crate, and do NOT modify any Cargo.toml or Cargo.lock.
+            hexcell-admin stays at exactly serde + serde_json; hexcell-core stays untouched at zero
+            external dependencies. Adding clap, argh, pico-args, structopt, lexopt, getopts, bpaf,
+            gumdrop or any other argument-parsing crate is the single failure this task exists to
+            prevent - the parser is hand-rolled over std::env::args.
+        - >-
+            Do NOT redefine, extend, weaken, re-test or modify CodigoDeSalida, Salida, EstadoDeCelula,
+            TransicionInvalida, CicloDeVidaDeCelula or anything under src/docker/. They were delivered
+            by HEX-074-a and HEX-074-b and are CONSUMED here without modification. Do NOT re-open or
+            amend adr-0034. Do NOT modify or delete any existing test file.
+        - >-
+            The new ADR takes the next free number read from docs/adr/ on disk BEFORE writing;
+            adr-0035 is the last file and the last row of the docs/adr/README.md table, so the number
+            is 0036 unless disk says otherwise. Numbering is sequential and never reused or reordered;
+            the new row is appended after adr-0035 and no existing row is edited or moved.
+        - >-
+            The clap/argh/pico-args/structopt discard takes the next free D-NN read from
+            docs/bitacora-de-descartes.md on disk BEFORE writing; D-51 is the last entry, so the
+            number is D-52 unless disk says otherwise. Group the four alternatives under one number
+            following the D-51 precedent. It ships in the SAME commit as the code that makes the
+            discard, and no existing D-NN entry is edited, renumbered or deleted.
+        - >-
+            The parsing module contains NO orchestration and NO I/O - analizar is a pure function over
+            an owned &[String] slice and never reads std::env itself, so the external test crate can
+            drive it. Only src/main.rs calls std::env::args.
+        - >-
+            comandos::ejecutar receives NO ClienteDocker, no filesystem path, no clock and no network
+            handle - only the parse result and a &mut Salida. Simulation mode performs no side effect
+            whatsoever - it opens no socket, creates no file and mutates no state. Do NOT construct a
+            ClienteDocker, invoke Docker, or implement the real behaviour of any of the six cell
+            subcommands; plan tasks 11 to 15 own that.
+        - >-
+            The exit-code table is fixed and must not be reinterpreted - a usage error (unknown or
+            absent group or subcommand, missing or repeated or unknown or empty-valued flag, a flag
+            not admitted by that subcommand, a surplus positional) is UsoIncorrecto (2), never Fallo;
+            a valid invocation with --simular is Exito (0); a valid invocation without --simular is
+            NoImplementadoTodavia (3); an io::Error from a sink is Fallo (1).
+        - >-
+            Human-readable output goes ONLY to the standard sink and diagnostics ONLY to the
+            diagnostic sink. The simulated action line goes to standard; every usage error, usage
+            text and "todavia no implementado" notice goes to diagnostic. Do NOT use println!,
+            eprintln!, print! or write! against the process streams anywhere - those macros panic on a
+            broken pipe and the release profile sets panic = "abort". All output goes through Salida.
+        - >-
+            No production code path may panic, unwrap, expect, slice or index out of bounds, or call
+            std::process::exit. Failures are values that become exit codes, and main returns
+            std::process::ExitCode built through ExitCode::from(CodigoDeSalida).
+        - >-
+            The control-plane state model must NOT adopt the IPC session taxonomy of
+            docs/protocolo-ipc-nucleo-sidecar.md. The string "desvinculada_sesion_cerrada" - which
+            that document defines as a `causa` projecting to the SESSION state `desvinculada`, not a
+            cell state - must appear nowhere in crates/hexcell-admin. The control-plane terminal state
+            is EstadoDeCelula::Retirada. Name the TARGET state only; construct no CicloDeVidaDeCelula
+            and apply no transition, because the CURRENT state is unknowable without the deferred
+            control-plane store.
+        - >-
+            Do NOT implement control-plane state persistence, its schema or its migrations; command
+            idempotency or resume-after-partial-failure; reconciliation of stored state against
+            docker inspect; or the number-substitution audit record shown by cell status. All four are
+            explicitly deferred to plan tasks 11 to 15 and are out of scope here, not gaps.
+        - >-
+            Do NOT add a --ayuda/--help surface, the Fase B flags --domain or --waba, a cell create
+            subcommand, Telegram alerts, metrics, a dead-man's switch or any observability surface,
+            and do NOT refresh the README.md status note - none is in the acceptance list.
+        - >-
+            Confirmation for the two destructive subcommands (terminate, rebind) is the flag
+            --confirmar, validated by the parser. Do NOT implement an interactive prompt - reading
+            stdin is a side effect the simulation mode forbids and cannot be exercised off a TTY.
+        - >-
+            Do NOT mark Subcomando, Invocacion or ErrorDeArgumentos as #[non_exhaustive], and do NOT
+            use a wildcard arm or a rest pattern when matching Subcomando in the external tests.
+            Adding or removing a variant must break the test crate's compilation.
+        - >-
+            All identifiers, comments, doc comments, operator messages and documentation are written
+            in Spanish; only the CLI wire names (cell, pause, unpause, terminate, rebind, list,
+            status) and the flag --id stay as docs/PRD.md and README.md fix them. The commit message
+            is a conventional commit in Spanish with NO AI attribution line of any kind
+            (no Co-Authored-By, no Generated with, no Claude-Session).
+        - >-
+            Dates written into code or documentation are absolute (2026-09-13), never relative.
+verify:
+    commands:
+        - cargo build --workspace
+        - cargo test -p hexcell-admin
+        - cargo fmt --check
+        - cargo clippy --workspace -- -D warnings
+    target_s: 60
+acceptance:
+    human_gate: true
+limits:
+    max_files_changed: 9
+    max_diff_lines: 1350
+    per_class:
+        - glob: crates/hexcell-admin/src/**
+          max_diff_lines: 650
+        - glob: crates/hexcell-admin/tests/**
+          max_diff_lines: 560
+        - glob: docs/adr/**
+          max_diff_lines: 200
+        - glob: docs/bitacora-de-descartes.md
+          max_diff_lines: 70
+execution:
+    mode: worktree_edit
+    branch: ai/HEX-074-c
+retry_policy:
+    max_attempts: 2
+    escalate_after: 2
