@@ -1,0 +1,184 @@
+task_id: HEX-076
+summary: Mutation-proven static isolation guard plus a live two-cell isolation script for deploy/cell.compose.yml; fix the template in this same task only if the live run finds a real gap.
+goal: >-
+  Ship deploy/verificar_aislamiento_estatica.sh (mechanical, CI-runnable via
+  docker compose config only, mutation-proven by --autoprueba) asserting
+  each cell gets its own network, its own named volume, and publishes no
+  host port, plus deploy/verificar_aislamiento.sh (manual, human-run, two
+  real cells) exercising cross-volume read/write, cross-network reach by
+  service name and raw IP to the other cell's core and sidecar, the other
+  cell's sidecar IPC socket, and no published host ports - and correct
+  deploy/cell.compose.yml in this same task if and only if that live run
+  finds a genuine gap.
+read:
+  - .ai/tasks/active/HEX-076-new-spec/00-spec.yaml
+  - .ai/tasks/active/HEX-076-new-spec/01-blueprint.yaml
+  - docs/plan/fase-a-6-empaquetado-cli.md
+  - docs/PRD.md
+  - deploy/cell.compose.yml
+  - deploy/celula.env.ejemplo
+  - deploy/verificar_senales.sh
+  - deploy/verificar_endurecimiento.sh
+  - deploy/verificar_apagado_ordenado.sh
+  - Dockerfile
+  - sidecar/Dockerfile
+  - docs/bitacora-de-descartes.md
+  - README.md
+  - .github/workflows/ci.yml
+  - .ai/tasks/done/HEX-070-new-spec/02-contract.yaml
+  - .ai/tasks/done/HEX-075-new-spec/02-contract.yaml
+touch:
+  - deploy/cell.compose.yml
+  - deploy/verificar_aislamiento_estatica.sh
+  - deploy/verificar_aislamiento.sh
+  - .github/workflows/ci.yml
+  - docs/plan/fase-a-6-empaquetado-cli.md
+  - README.md
+  - docs/bitacora-de-descartes.md
+forbid:
+  files:
+    - "crates/**"
+    - "sidecar/**/*.go"
+    - sidecar/go.mod
+    - sidecar/go.sum
+    - Cargo.toml
+    - Cargo.lock
+    - rust-toolchain.toml
+    - Dockerfile
+    - sidecar/Dockerfile
+    - ".dockerignore"
+    - sidecar/.dockerignore
+    - deploy/celula.env.ejemplo
+    - deploy/verificar_senales.sh
+    - deploy/verificar_endurecimiento.sh
+    - deploy/verificar_apagado_ordenado.sh
+    - "*.env"
+    - ".env*"
+    - "*.db"
+    - "*.db-wal"
+    - "*.db-shm"
+    - "docs/adr/**"
+    - docs/STATUS.md
+    - docs/protocolo-ipc-nucleo-sidecar.md
+    - "kitty-specs/**"
+    - ".ai/**"
+  behaviors:
+    - "Do not touch crates/** or sidecar/**/*.go under any circumstance: the spec bounds any compose-file fix strictly to deploy/cell.compose.yml. If a live-run finding appears to require a Rust or Go source change, stop and report it as a blocker instead of expanding this diff."
+    - "Do not change mem_limit, cpus, read_only, cap_drop, security_opt, tmpfs, or stop_grace_period in deploy/cell.compose.yml; those are HEX-070/HEX-075 scope, not this task's. The only permitted edits to deploy/cell.compose.yml are the networks/volumes name: overrides and the absence of a ports: key, and only if the live script proves one of them is actually broken."
+    - "Do not add, offer, or leave commented-out any bind-mount form for /var/lib/hexcell in deploy/cell.compose.yml; the named-volume-only invariant from HEX-070 still applies."
+    - "Do not add a new job step to the existing guardas-deploy job in .github/workflows/ci.yml (that job was created by and named for HEX-075); add a new, separate job for this task's static guard, matching guardas-deploy's step shape (a normal-invocation step and an --autoprueba step)."
+    - "Do not wire deploy/verificar_aislamiento.sh, or any two-cell docker compose up cycle, into .github/workflows/ci.yml or into this contract's verify.commands; it requires a real Docker daemon, two live cells, and minutes of runtime, so it is deferred to manual/local execution, exactly like deploy/verificar_apagado_ordenado.sh."
+    - "deploy/verificar_aislamiento.sh must never pair a real WhatsApp session or issue orden_emparejar for either cell; both cold-start unpaired, consistent with deploy/verificar_apagado_ordenado.sh's existing pattern and this spec's AC-5 given clause."
+    - "deploy/verificar_aislamiento.sh must never publish a host port from either test cell, even temporarily, to perform its checks; use docker compose exec, docker inspect, and in-network container-to-container calls only."
+    - "deploy/verificar_aislamiento.sh must start both cells from freshly created, empty named volumes on every run (per-run unique suffix, same as deploy/verificar_apagado_ordenado.sh), never a pre-seeded or reused volume."
+    - "deploy/verificar_aislamiento_estatica.sh's --autoprueba mode must run the guard through the exact same docker compose config invocation the normal mode uses (same env-file, same command shape); a guard proven only under a different profile than the one CI runs is not proven at all."
+    - "Do not add a new third-party dependency or tool for either script; both stay bash + python3 stdlib-adjacent PyYAML (already used by verificar_endurecimiento.sh/verificar_senales.sh) for the static guard, and docker CLI + busybox utilities already present in the alpine:3 final images (Dockerfile:43, sidecar/Dockerfile:156) for the live script's in-container checks."
+    - "Do not weaken, delete, or rephrase any existing HEX-069/HEX-070/HEX-075 comment block in deploy/cell.compose.yml; only add new lines and comments belonging to this task, and only where the live script actually proves a gap."
+    - "If, and only if, a genuine technique choice is discarded while designing either script, log it in docs/bitacora-de-descartes.md in the same commit with a sequential D-NN strictly above the file's real current maximum (re-check at implement time; do not assume D-47 is still the max) and above any range already reserved by sibling tasks; do not fabricate a discard if none genuinely occurred."
+    - "Every new or changed line of prose, identifiers, comments, and script/CI output messages is Spanish, matching repository convention; this applies to both new scripts, the CI job, the compose file (if touched), and the two doc files."
+    - "Never include an AI attribution line (e.g. Co-Authored-By) in any commit this task produces; the repository's commit convention forbids it."
+verify:
+  commands:
+    - |
+      set -u
+      # 1. Los dos scripts nuevos existen y son ejecutables; el script en vivo
+      # jamas implementa --autoprueba (modo exclusivo del guardia estatico).
+      test -x deploy/verificar_aislamiento_estatica.sh \
+        || { echo "FALLA: deploy/verificar_aislamiento_estatica.sh no existe o no es ejecutable"; exit 1; }
+      test -x deploy/verificar_aislamiento.sh \
+        || { echo "FALLA: deploy/verificar_aislamiento.sh no existe o no es ejecutable"; exit 1; }
+      if grep -q -- '--autoprueba' deploy/verificar_aislamiento.sh; then
+        echo "FALLA: el script en vivo no debe implementar --autoprueba; ese modo es exclusivo del guardia estatico"
+        exit 1
+      fi
+      echo "OK: ambos scripts existen, son ejecutables, y el script en vivo no se declara guardia mecanico"
+    - |
+      set -u
+      # 2. AC-1/AC-2: el guardia estatico corre contra la plantilla REAL (sin
+      # mutar) y debe pasar. Un entorno sin docker/compose es FALLA, no omision.
+      command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1 \
+        || { echo "FALLA: docker/compose no disponible; AC-1/AC-2/AC-3 no se pueden verificar"; exit 1; }
+      bash deploy/verificar_aislamiento_estatica.sh deploy/cell.compose.yml
+    - |
+      set -u
+      # 3. AC-3: prueba de mutacion. El guardia debe fallar contra cada una de
+      # las tres condiciones ancladas (red per-celula, volumen per-celula, sin
+      # ports:) cuando se rompe, una por vez, corriendo bajo el mismo perfil
+      # que el modo normal.
+      command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1 \
+        || { echo "FALLA: docker/compose no disponible; AC-3 no se puede verificar"; exit 1; }
+      bash deploy/verificar_aislamiento_estatica.sh --autoprueba
+    - |
+      set -u
+      # 4. AC-4: el guardia mecanico queda en un job de CI propio (no se le
+      # agregan pasos al job guardas-deploy existente, que HEX-075 creo y
+      # nombro para si mismo), y el script en vivo NUNCA aparece en CI.
+      grep -q 'verificar_aislamiento_estatica.sh' .github/workflows/ci.yml \
+        || { echo "FALLA: .github/workflows/ci.yml no invoca deploy/verificar_aislamiento_estatica.sh"; exit 1; }
+      if grep -q 'verificar_aislamiento.sh"' .github/workflows/ci.yml || grep -qE 'verificar_aislamiento\.sh([^_]|$)' .github/workflows/ci.yml; then
+        echo "FALLA: deploy/verificar_aislamiento.sh (script en vivo) no debe aparecer en CI"
+        exit 1
+      fi
+      echo "OK: CI invoca el guardia mecanico estatico y no el script en vivo de dos celulas"
+    - |
+      set -u
+      # 5. Trazabilidad: la tarea 17 del plan anota su cierre con este ID.
+      grep -q 'HEX-076' docs/plan/fase-a-6-empaquetado-cli.md \
+        && echo "OK: la tarea 17 anota su cierre con HEX-076" \
+        || { echo "FALLA: falta la anotacion de cierre de la tarea 17 con HEX-076"; exit 1; }
+    - |
+      set -u
+      # 6. README referencia los dos scripts nuevos, siguiendo el patron ya
+      # establecido para deploy/verificar_endurecimiento.sh y similares.
+      grep -q 'verificar_aislamiento_estatica.sh' README.md \
+        || { echo "FALLA: README.md no referencia deploy/verificar_aislamiento_estatica.sh"; exit 1; }
+      grep -q 'verificar_aislamiento.sh' README.md \
+        || { echo "FALLA: README.md no referencia deploy/verificar_aislamiento.sh"; exit 1; }
+      echo "OK: README referencia ambos scripts nuevos"
+    - |
+      set -u
+      # 7. Guardia de alcance sobre deploy/cell.compose.yml: si el archivo
+      # cambio contra el merge-base, las cuatro banderas de endurecimiento y
+      # el margen de apagado ordenado (HEX-070/HEX-075) deben seguir intactas
+      # literalmente; esta tarea solo puede tocar networks/volumes/ports.
+      BASE_REF=$(git merge-base main HEAD 2>/dev/null || echo main)
+      if git diff --quiet --no-color "$BASE_REF" -- deploy/cell.compose.yml; then
+        echo "OK: deploy/cell.compose.yml sin cambios (hallazgo esperado: la plantilla ya aisla)"
+      else
+        for ancla in 'read_only: true' 'cap_drop:' '- ALL' 'no-new-privileges:true' 'tmpfs:' '- /tmp' 'stop_grace_period: "30s"'; do
+          antes=$(git show "$BASE_REF:deploy/cell.compose.yml" | grep -cF -- "$ancla")
+          despues=$(grep -cF -- "$ancla" deploy/cell.compose.yml)
+          if [ "$despues" -lt "$antes" ]; then
+            echo "FALLA: deploy/cell.compose.yml perdio ocurrencias de '$ancla' (antes=$antes, despues=$despues)"
+            exit 1
+          fi
+        done
+        if grep -qE '^\s*ports:\s*$' deploy/cell.compose.yml; then
+          echo "FALLA: deploy/cell.compose.yml publica un host port (clave ports:) tras el cambio"
+          exit 1
+        fi
+        echo "OK: deploy/cell.compose.yml cambio pero conserva las banderas de HEX-070/HEX-075 y no publica puertos"
+      fi
+  target_s: 45
+acceptance:
+  human_gate: true
+limits:
+  max_files_changed: 8
+  max_diff_lines: 1300
+  per_class:
+    - glob: "deploy/verificar_aislamiento_estatica.sh"
+      max_diff_lines: 360
+    - glob: "deploy/verificar_aislamiento.sh"
+      max_diff_lines: 650
+    - glob: "deploy/cell.compose.yml"
+      max_diff_lines: 80
+    - glob: ".github/workflows/ci.yml"
+      max_diff_lines: 70
+    - glob: "docs/bitacora-de-descartes.md"
+      max_diff_lines: 60
+execution:
+  mode: worktree_edit
+  branch: ai/HEX-076
+retry_policy:
+  max_attempts: 3
+  escalate_after: 2

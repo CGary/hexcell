@@ -1,0 +1,93 @@
+task_id: HEX-076
+summary: Prove cell isolation (network, volume, IPC, host ports) with a mutation-proof static guard plus a live two-cell script. Risk medium.
+goal: >
+  Deliver the isolation acceptance test for cell composition (task 17 of the
+  A-6 stage plan, also the acceptance criterion of task 5). Two artifacts,
+  mirroring the HEX-075 pattern: (1) a static mechanical guard over
+  deploy/cell.compose.yml asserting each cell gets its own network and its
+  own named volume and publishes no host ports, proven by mutation (a
+  self-test that mutates the template and asserts the guard turns red), wired
+  into a CI job in .github/workflows/ci.yml; (2) a live script
+  deploy/verificar_aislamiento.sh that brings up two real cells from the same
+  template and exercises cross-access attempts against real containers. If
+  the live script finds isolation actually broken today (e.g. both cells
+  sharing a default network), the fix to deploy/cell.compose.yml is in scope
+  for this task; test and fix travel together.
+invariants:
+  - A cell's container can never read or write another cell's named volume, even knowing the absolute path.
+  - A cell's container can never reach another cell's core or sidecar service, by service name or by raw IP, on any port.
+  - A cell's core can never speak another cell's sidecar IPC socket.
+  - No cell's compose service publishes any port to the host.
+  - Each cell composed from deploy/cell.compose.yml gets its own dedicated Docker network and its own dedicated named volume (no shared default network, no shared volume).
+  - The static guard fails (turns red) when deploy/cell.compose.yml is mutated to remove the per-cell network, remove the per-cell volume, or add a host port publication; a guard never seen to fail is not a guard.
+acceptance:
+  - id: AC-1
+    statement: A static mechanical guard inspects deploy/cell.compose.yml and asserts each cell declares its own network and its own named volume with no shared defaults.
+    given: deploy/cell.compose.yml as committed
+    when: the static isolation guard runs
+    then: the guard passes, confirming per-cell network and per-cell named volume declarations
+  - id: AC-2
+    statement: The static guard asserts no service in deploy/cell.compose.yml publishes a host port.
+    given: deploy/cell.compose.yml as committed
+    when: the static isolation guard runs
+    then: the guard finds no `ports:` host-publish mapping on any service
+  - id: AC-3
+    statement: The static guard is proven by mutation — a self-test mutates deploy/cell.compose.yml (removing the per-cell network, removing the per-cell volume, or adding a host port) and asserts the guard turns red for each mutation, run under the same profile/invocation the guard itself uses.
+    given: a mutated copy of deploy/cell.compose.yml with one isolation property removed
+    when: the static isolation guard runs against the mutated copy
+    then: the guard fails, and the self-test asserts that failure
+  - id: AC-4
+    statement: The static guard runs as a CI job in .github/workflows/ci.yml, matching the idiom of the existing "Guardas de despliegue" jobs (e.g. HEX-075's signal-propagation job), including both the guard run and its mutation self-test.
+    given: a pull request or push touching deploy/cell.compose.yml or the guard script
+    when: CI runs
+    then: the isolation guard job and its mutation self-test both execute and block on failure
+  - id: AC-5
+    statement: deploy/verificar_aislamiento.sh brings up two real cells (A and B) composed from deploy/cell.compose.yml with distinct per-cell identifiers, networks, and volumes, starting cold from empty volumes.
+    given: no prior containers, networks, or volumes for cells A and B
+    when: deploy/verificar_aislamiento.sh runs
+    then: both cells reach a healthy/ready state before any cross-access attempt is exercised
+  - id: AC-6
+    statement: The live script attempts, from cell A's container, to read and to write cell B's named volume by its known absolute path, and asserts both attempts fail.
+    given: two running cells A and B with A knowing B's volume path
+    when: A's container attempts a read and a write against B's volume path
+    then: both the read and the write attempts fail
+  - id: AC-7
+    statement: The live script attempts, from cell A, to reach cell B's core and B's sidecar health port by service name and by raw IP address, and asserts all attempts fail.
+    given: two running cells A and B on their own per-cell networks
+    when: A attempts network connections to B's core and B's sidecar, both by service name and by raw IP
+    then: all four connection attempts fail
+  - id: AC-8
+    statement: The live script attempts, from cell A's core, to speak cell B's sidecar IPC socket, and asserts the attempt fails.
+    given: two running cells A and B, each with its own core-sidecar IPC socket inside its own volume
+    when: A's core attempts to open or write to B's sidecar IPC socket
+    then: the attempt fails because A cannot reach B's socket path
+  - id: AC-9
+    statement: The live script asserts that neither cell's compose services publish any port to the host (no port bindings observable via docker inspect/ps).
+    given: two running cells A and B started from deploy/cell.compose.yml
+    when: the live script inspects the running containers' port bindings
+    then: no host port binding is found for any service of either cell
+  - id: AC-10
+    statement: If any live cross-access attempt in AC-6 through AC-8 unexpectedly succeeds, the live script reports isolation as broken and this task's scope includes fixing deploy/cell.compose.yml (e.g. per-cell network/volume declarations) until all attempts fail, with the fix and the test delivered together.
+    given: a live script run that reveals a successful cross-cell access
+    when: the isolation gap is diagnosed against deploy/cell.compose.yml
+    then: deploy/cell.compose.yml is corrected in this same task and the live script is re-run to confirm all cross-access attempts now fail
+  - id: AC-11
+    statement: The live script tears down both cells (containers, networks, volumes) at the end of a run, whether it passes or fails, leaving no residual state.
+    given: a completed run of deploy/verificar_aislamiento.sh, pass or fail
+    when: the script exits
+    then: no leftover containers, networks, or volumes from cells A or B remain
+  - All new script and guard content is written in Spanish (identifiers, comments, messages), following the idiom of deploy/verificar_senales.sh, deploy/verificar_endurecimiento.sh, and deploy/verificar_apagado_ordenado.sh.
+  - cargo fmt --check, cargo clippy --workspace -- -D warnings, and the existing CI jobs remain green; the new CI job is additive.
+risk: medium
+non_goals:
+  - Do not measure or validate the RAM budget (≤ 80 MB / < 50 MB per cell) under load; that is a separate, unvalidated concern per CLAUDE.md.
+  - Do not add isolation mechanisms beyond Docker's own network/volume/namespace boundaries (no new proxies, VPNs, or IP rotation — already discarded per docs/bitacora-de-descartes.md conventions).
+  - Do not change the channel port (ChannelAdapter) design or add a new channel adapter.
+  - Do not address Fase B (Meta Cloud API) isolation; this task covers the own-channel (whatsmeow) two-container cell only, matching deploy/cell.compose.yml's current scope.
+constraints:
+  - "Trace to docs/PRD.md FR-02 (Aislamiento Completo por Célula) and NFR-05 (aislamiento estricto de almacenamiento: un contenedor no puede mapear ni acceder al volumen de datos de otra célula)."
+  - The static guard and its mutation self-test must run under the same invocation/profile (no profile mismatch between the guard as CI runs it and the guard as the self-test exercises it).
+  - The live script must start both cells from an empty (cold) named volume, not a pre-seeded one, per the cold-start lesson already applied in deploy/verificar_apagado_ordenado.sh and the packaging smoke tests.
+  - The live script requires a real Docker daemon and two live cells; it is NOT runnable in the static-guard CI job and must be explicitly declared as deferred to manual/local execution (or a separate opt-in CI job) rather than flagged as an untested acceptance criterion.
+  - Do not publish any host port from either test cell, even temporarily, to perform the health check — use in-network/in-container checks instead (e.g. docker compose exec, docker inspect health status).
+  - Reuse the existing per-cell UID convention (10001:10001 literal in both images) and existing env template deploy/celula.env.ejemplo for the two test cells' distinguishing values (id, network name, volume name).

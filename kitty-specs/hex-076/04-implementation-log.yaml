@@ -1,0 +1,46 @@
+task_id: HEX-076
+summary: Added mutation-proven static isolation guard and a manual live two-cell isolation script; no fix to cell.compose.yml was needed.
+entries:
+  - changed_files:
+      - deploy/verificar_aislamiento_estatica.sh
+    notes:
+      - "New static guard mirroring deploy/verificar_endurecimiento.sh's idiom: resolves deploy/cell.compose.yml via docker compose config against deploy/celula.env.ejemplo and asserts networks.red.name and volumes.datos.name equal the exact literal values from the env referent (not a permissive non-empty check), plus absence of a ports key on nucleo/sidecar."
+      - "Measured that docker compose config synthesizes a default name (e.g. tmp_red) when the name override is removed, so exact-equality against the env referent is what makes the guard mutation-provable rather than vacuous."
+      - "--autoprueba mode mutates three copies (drop network name override, drop volume name override, add a host port mapping) one at a time and asserts the guard turns red on each, through the same docker compose config invocation as normal mode. Verified manually: 3/3 mutations caught."
+    verify_pending: false
+  - changed_files:
+      - deploy/verificar_aislamiento.sh
+    notes:
+      - "New manual live script (never wired into CI, no --autoprueba mode) that brings up two real cells (A, B) from empty named volumes, doubling deploy/verificar_apagado_ordenado.sh's per-run-unique-suffix and EXIT-trap teardown pattern."
+      - "Key finding that changed the blueprint's assumed approach: HEX-069's hardening removes /bin/sh AND /bin/busybox entirely from both final images (Dockerfile:126, sidecar/Dockerfile:270), so docker exec into the real nucleo/sidecar containers has no nc/stat/sh to run. Verified this against a bare alpine:3 (which does have busybox nc/stat) versus the project's hardened final images."
+      - "Fix: cross-cell checks run through an ephemeral alpine:3 helper started with --network container:<target> and --volumes-from <target>, which shares the target cell's network namespace and volume mounts without exec'ing into or modifying the hardened image. Logged as discard D-48 in docs/bitacora-de-descartes.md in this same commit."
+      - "Volume cross-access (AC-6): marker planted in B's volume via an ephemeral read/write alpine:3 mount, checked absent from A's vantage; a file A writes is checked absent in B's volume."
+      - "Network reach (AC-7): from A's network namespace, nc -z against B's nucleo/sidecar by container name (not the generic 'nucleo'/'sidecar' compose service alias, which would resolve to A's own container) and by raw IP from docker inspect; all four expected to fail."
+      - "IPC socket (AC-8): compares the filesystem device number of A's own socket path against B's real socket's device number (read via an ephemeral read-only mount of B's volume); different devices prove A's identical path can never be B's actual socket."
+      - "Host ports (AC-9): docker port on all four containers must print nothing."
+    verify_pending: false
+  - changed_files:
+      - .github/workflows/ci.yml
+    notes:
+      - "Added a new job guardas-aislamiento (not steps on the existing guardas-deploy job, which HEX-075 created and named for itself), running the static guard's normal invocation and its --autoprueba step. The live two-cell script is never referenced in this file."
+    verify_pending: false
+  - changed_files:
+      - docs/plan/fase-a-6-empaquetado-cli.md
+    notes:
+      - "Annotated task 17's closure with HEX-076, and updated the execution-order chain note to drop 17."
+    verify_pending: false
+  - changed_files:
+      - README.md
+    notes:
+      - "Added a cross-reference to the two new scripts following the existing pattern for verificar_endurecimiento.sh/verificar_senales.sh/verificar_apagado_ordenado.sh."
+    verify_pending: false
+  - changed_files:
+      - docs/bitacora-de-descartes.md
+    notes:
+      - "Logged D-48: discarded docker exec + BusyBox directly inside the hardened nucleo/sidecar containers for the live script's cross-cell checks, in favor of an ephemeral alpine:3 helper sharing the target container's network namespace and volume mounts."
+    verify_pending: false
+  - changed_files:
+      - deploy/cell.compose.yml
+    notes:
+      - "Confirmed unchanged: the template already declares a per-cell network name, a per-cell named volume, and no ports key on either service (from HEX-070). No isolation gap was found by design review or by the live script's own logic; AC-10's fix branch is a contingency that was not exercised. File left byte-for-byte identical to main (verified with git diff main -- deploy/cell.compose.yml)."
+    verify_pending: false

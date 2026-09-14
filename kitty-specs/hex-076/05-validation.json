@@ -1,0 +1,56 @@
+{
+  "commands": [
+    {
+      "command": "set -u\n# 1. Los dos scripts nuevos existen y son ejecutables; el script en vivo\n# jamas implementa --autoprueba (modo exclusivo del guardia estatico).\ntest -x deploy/verificar_aislamiento_estatica.sh \\\n  || { echo \"FALLA: deploy/verificar_aislamiento_estatica.sh no existe o no es ejecutable\"; exit 1; }\ntest -x deploy/verificar_aislamiento.sh \\\n  || { echo \"FALLA: deploy/verificar_aislamiento.sh no existe o no es ejecutable\"; exit 1; }\nif grep -q -- '--autoprueba' deploy/verificar_aislamiento.sh; then\n  echo \"FALLA: el script en vivo no debe implementar --autoprueba; ese modo es exclusivo del guardia estatico\"\n  exit 1\nfi\necho \"OK: ambos scripts existen, son ejecutables, y el script en vivo no se declara guardia mecanico\"\n",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "OK: ambos scripts existen, son ejecutables, y el script en vivo no se declara guardia mecanico"
+    },
+    {
+      "command": "set -u\n# 2. AC-1/AC-2: el guardia estatico corre contra la plantilla REAL (sin\n# mutar) y debe pasar. Un entorno sin docker/compose es FALLA, no omision.\ncommand -v docker \u003e/dev/null 2\u003e\u00261 \u0026\u0026 docker compose version \u003e/dev/null 2\u003e\u00261 \\\n  || { echo \"FALLA: docker/compose no disponible; AC-1/AC-2/AC-3 no se pueden verificar\"; exit 1; }\nbash deploy/verificar_aislamiento_estatica.sh deploy/cell.compose.yml\n",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "OK: red y volumen propios por célula con los nombres esperados, y ningún servicio publica un puerto al host"
+    },
+    {
+      "command": "set -u\n# 3. AC-3: prueba de mutacion. El guardia debe fallar contra cada una de\n# las tres condiciones ancladas (red per-celula, volumen per-celula, sin\n# ports:) cuando se rompe, una por vez, corriendo bajo el mismo perfil\n# que el modo normal.\ncommand -v docker \u003e/dev/null 2\u003e\u00261 \u0026\u0026 docker compose version \u003e/dev/null 2\u003e\u00261 \\\n  || { echo \"FALLA: docker/compose no disponible; AC-3 no se puede verificar\"; exit 1; }\nbash deploy/verificar_aislamiento_estatica.sh --autoprueba\n",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "Modo --autoprueba: cada propiedad de aislamiento, una por vez, debe ser detectada al romperse.\nPASA: quitar el nombre per-célula de la red -\u003e el guardia falla como debe\nPASA: quitar el nombre per-célula del volumen -\u003e el guardia falla como debe\nPASA: publicar un puerto al host en nucleo -\u003e el guardia falla como debe\n\nResumen autoprueba: 3/3 casos pasan (cada propiedad rota debe hacer fallar al guardia)\nOK: el guardia falla bajo cada mutación"
+    },
+    {
+      "command": "set -u\n# 4. AC-4: el guardia mecanico queda en un job de CI propio (no se le\n# agregan pasos al job guardas-deploy existente, que HEX-075 creo y\n# nombro para si mismo), y el script en vivo NUNCA aparece en CI.\ngrep -q 'verificar_aislamiento_estatica.sh' .github/workflows/ci.yml \\\n  || { echo \"FALLA: .github/workflows/ci.yml no invoca deploy/verificar_aislamiento_estatica.sh\"; exit 1; }\nif grep -q 'verificar_aislamiento.sh\"' .github/workflows/ci.yml || grep -qE 'verificar_aislamiento\\.sh([^_]|$)' .github/workflows/ci.yml; then\n  echo \"FALLA: deploy/verificar_aislamiento.sh (script en vivo) no debe aparecer en CI\"\n  exit 1\nfi\necho \"OK: CI invoca el guardia mecanico estatico y no el script en vivo de dos celulas\"\n",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "OK: CI invoca el guardia mecanico estatico y no el script en vivo de dos celulas"
+    },
+    {
+      "command": "set -u\n# 5. Trazabilidad: la tarea 17 del plan anota su cierre con este ID.\ngrep -q 'HEX-076' docs/plan/fase-a-6-empaquetado-cli.md \\\n  \u0026\u0026 echo \"OK: la tarea 17 anota su cierre con HEX-076\" \\\n  || { echo \"FALLA: falta la anotacion de cierre de la tarea 17 con HEX-076\"; exit 1; }\n",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "OK: la tarea 17 anota su cierre con HEX-076"
+    },
+    {
+      "command": "set -u\n# 6. README referencia los dos scripts nuevos, siguiendo el patron ya\n# establecido para deploy/verificar_endurecimiento.sh y similares.\ngrep -q 'verificar_aislamiento_estatica.sh' README.md \\\n  || { echo \"FALLA: README.md no referencia deploy/verificar_aislamiento_estatica.sh\"; exit 1; }\ngrep -q 'verificar_aislamiento.sh' README.md \\\n  || { echo \"FALLA: README.md no referencia deploy/verificar_aislamiento.sh\"; exit 1; }\necho \"OK: README referencia ambos scripts nuevos\"\n",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "OK: README referencia ambos scripts nuevos"
+    },
+    {
+      "command": "set -u\n# 7. Guardia de alcance sobre deploy/cell.compose.yml: si el archivo\n# cambio contra el merge-base, las cuatro banderas de endurecimiento y\n# el margen de apagado ordenado (HEX-070/HEX-075) deben seguir intactas\n# literalmente; esta tarea solo puede tocar networks/volumes/ports.\nBASE_REF=$(git merge-base main HEAD 2\u003e/dev/null || echo main)\nif git diff --quiet --no-color \"$BASE_REF\" -- deploy/cell.compose.yml; then\n  echo \"OK: deploy/cell.compose.yml sin cambios (hallazgo esperado: la plantilla ya aisla)\"\nelse\n  for ancla in 'read_only: true' 'cap_drop:' '- ALL' 'no-new-privileges:true' 'tmpfs:' '- /tmp' 'stop_grace_period: \"30s\"'; do\n    antes=$(git show \"$BASE_REF:deploy/cell.compose.yml\" | grep -cF -- \"$ancla\")\n    despues=$(grep -cF -- \"$ancla\" deploy/cell.compose.yml)\n    if [ \"$despues\" -lt \"$antes\" ]; then\n      echo \"FALLA: deploy/cell.compose.yml perdio ocurrencias de '$ancla' (antes=$antes, despues=$despues)\"\n      exit 1\n    fi\n  done\n  if grep -qE '^\\s*ports:\\s*$' deploy/cell.compose.yml; then\n    echo \"FALLA: deploy/cell.compose.yml publica un host port (clave ports:) tras el cambio\"\n    exit 1\n  fi\n  echo \"OK: deploy/cell.compose.yml cambio pero conserva las banderas de HEX-070/HEX-075 y no publica puertos\"\nfi\n",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "OK: deploy/cell.compose.yml sin cambios (hallazgo esperado: la plantilla ya aisla)"
+    },
+    {
+      "command": "deploy/verificar_aislamiento.sh (manual, fuera de CI: dos celulas reales desde volumenes vacios)",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "OK: aislamiento verificado entre A y B - AC-5 a AC-9 pasan. Las once aserciones en verde tras el arreglo de AC-8 (dispositivo:inodo). Corrida previa con la asercion vieja: FALLA en AC-8 por guarda invertida."
+    }
+  ],
+  "executed_at": "2026-09-14T00:19:06Z",
+  "overall_result": "passed",
+  "summary": "Seven contract verify commands exit 0 and the manual two-cell live script passes all eleven assertions after the AC-8 device:inode fix.",
+  "task_id": "HEX-076"
+}

@@ -1,0 +1,82 @@
+task_id: HEX-076
+summary: Cell isolation test (plan task 17) - mutation-proven static guard on the compose template plus a live two-cell script exercising four cross-access vectors.
+affected_files:
+  - deploy/cell.compose.yml
+  - deploy/verificar_aislamiento_estatica.sh
+  - deploy/verificar_aislamiento.sh
+  - .github/workflows/ci.yml
+  - docs/plan/fase-a-6-empaquetado-cli.md
+  - README.md
+  - docs/bitacora-de-descartes.md
+symbols:
+  - verificar_red_dedicada
+  - verificar_volumen_dedicado
+  - verificar_sin_publicacion_de_puertos
+  - verificar_todo
+  - verificar_cruce_de_volumen
+  - verificar_alcance_de_red
+  - verificar_socket_ipc_ajeno
+  - verificar_sin_puertos_publicados_en_vivo
+dependencies:
+  - deploy/verificar_senales.sh
+  - deploy/verificar_endurecimiento.sh
+  - deploy/verificar_apagado_ordenado.sh
+  - deploy/celula.env.ejemplo
+  - docs/PRD.md
+  - docs/bitacora-de-descartes.md
+  - .ai/tasks/done/HEX-070-new-spec/02-contract.yaml
+  - .ai/tasks/done/HEX-075-new-spec/02-contract.yaml
+test_scenarios:
+  - statement: "Static guard passes against the committed template: one dedicated network with a parametrized name, one dedicated named volume with a parametrized name, zero ports: publications on either service."
+    covers: ["AC-1", "AC-2"]
+  - statement: "Static guard mutation self-test flips, one at a time, the per-cell network name override, the per-cell volume name override, and adds a host port mapping; the guard turns red for each of the three mutated copies, run through the same docker compose config invocation the normal guard uses."
+    covers: ["AC-3"]
+  - statement: "A new CI job runs the static guard's normal invocation and its --autoprueba mutation self-test, matching the guardas-deploy job shape from HEX-075; it blocks CI on failure."
+    covers: ["AC-4"]
+  - statement: "Live script builds two cells (A, B) from deploy/cell.compose.yml with distinct HEXCELL_ID_CELULA/HEXCELL_RED_CELULA/HEXCELL_VOLUMEN_CELULA derived from deploy/celula.env.ejemplo by substitution, each from a freshly created empty named volume, and waits for each container's known startup log line (the same signal deploy/verificar_apagado_ordenado.sh already uses, not a paired /health/ready 200, since the sidecar cold-starts unpaired)."
+    covers: ["AC-5"]
+  - statement: "From cell A's nucleo container, a read attempt and a write attempt against a path in A's own mount that would collide with a marker planted in B's volume both fail to observe B's data, proving the two named volumes never overlap even under an identical in-container absolute path."
+    covers: ["AC-6"]
+  - statement: "From cell A's nucleo container, four connection attempts (to B's nucleo by service name, B's nucleo by raw IP obtained via docker inspect, B's sidecar by service name, B's sidecar by raw IP) each fail, using busybox nc already present in the alpine:3 final image (no new tool)."
+    covers: ["AC-7"]
+  - statement: "From cell A's nucleo container, an attempt to open or write B's sidecar IPC socket path fails because A's mount namespace never exposes B's socket."
+    covers: ["AC-8"]
+  - statement: "docker inspect/ps on both cells' containers shows no host port binding for any of the four services."
+    covers: ["AC-9"]
+  - statement: "If any AC-6..AC-8 attempt unexpectedly succeeds, the run is treated as a real isolation gap: deploy/cell.compose.yml is corrected in this same task (e.g. restoring a dropped per-cell name: override) and the live script is re-run to confirm all attempts now fail."
+    covers: ["AC-10"]
+  - statement: "The live script's EXIT trap removes both cells' containers, networks, and volumes on every exit path, pass or fail, leaving no residual per-run state (same one-shot-suffix pattern as deploy/verificar_apagado_ordenado.sh, doubled for A and B)."
+    covers: ["AC-11"]
+strategy:
+  - step: 1
+    action: "Confirm the current isolation finding before writing anything: deploy/cell.compose.yml already declares exactly one top-level network (networks.red.name: ${HEXCELL_RED_CELULA}) and one top-level named volume (volumes.datos.name: ${HEXCELL_VOLUMEN_CELULA}), both bound to per-cell variables, and neither service declares a ports: key anywhere in the file. Declaratively the template already isolates; this task is expected to be additive-only (two new scripts + CI job + doc cross-references). AC-10's compose-file-fix branch is a contingency the contract must still allow, not the predicted outcome."
+    files:
+      - deploy/cell.compose.yml
+  - step: 2
+    action: "Write deploy/verificar_aislamiento_estatica.sh mirroring deploy/verificar_endurecimiento.sh's exact idiom: docker compose --env-file deploy/celula.env.ejemplo -f <plantilla> config to get the resolved YAML, then a python3+PyYAML block asserting (a) top-level networks has exactly the red entry with a name field that is not a hardcoded literal shared value, (b) top-level volumes has exactly the datos entry with a name field likewise, (c) neither nucleo nor sidecar service has a ports key at all (not just empty). Ship the same --autoprueba mode as verificar_senales.sh/verificar_endurecimiento.sh: sed out the network name: override, the volume name: override, and add a ports: mapping, one mutation per copy, asserting the guard turns red on each of the three, printing one PASA/FALLA line per case."
+    files:
+      - deploy/verificar_aislamiento_estatica.sh
+  - step: 3
+    action: "Write deploy/verificar_aislamiento.sh reusing verificar_apagado_ordenado.sh's per-run-unique-suffix and EXIT-trap teardown pattern, doubled for cell A and cell B (two ID_CELULA/RED/VOLUMEN triples derived by sed from deploy/celula.env.ejemplo, two docker compose -p projects). Wait for each container's known startup log line, not /health/ready. Exercise, in order: (1) volume cross-read/write via a marker file planted in B and checked absent at the identical path inside A, plus a write from A and a check it never appears in B; (2) network reach from A to B's nucleo and sidecar, by service name and by a raw IP obtained via docker inspect on the host, using busybox nc already in the alpine:3 image; (3) IPC socket reach from A's nucleo to B's sidecar socket path; (4) docker inspect/ps on all four containers confirming no host port binding. Print one PASA/FALLA line per vector, matching the reporting idiom of the other verificar_*.sh scripts."
+    files:
+      - deploy/verificar_aislamiento.sh
+  - step: 4
+    action: "Add a new CI job (not steps appended to the existing guardas-deploy job, which HEX-075 created and named specifically for itself) running only the static guard's normal invocation and its --autoprueba, matching guardas-deploy's step shape; the live two-cell script is never referenced in .github/workflows/ci.yml."
+    files:
+      - .github/workflows/ci.yml
+  - step: 5
+    action: "Annotate plan task 17's closure with HEX-076 in docs/plan/fase-a-6-empaquetado-cli.md, and add a README cross-reference to the two new scripts following the existing pattern (the line that already lists verificar_endurecimiento.sh/verificar_senales.sh/verificar_apagado_ordenado.sh)."
+    files:
+      - docs/plan/fase-a-6-empaquetado-cli.md
+      - README.md
+  - step: 6
+    action: "Only if a genuine technique choice is discarded while designing either script (e.g. nc vs. wget for the reachability check, or marker-file vs. bind-mount-inspection for the volume-cross-access check), log it in docs/bitacora-de-descartes.md in the same commit with a sequential D-NN strictly above the file's real current maximum (D-47 as of 2026-09-13, re-check at implement time) and above D-46/D-47 reserved ranges; do not fabricate a discard if none genuinely occurred."
+    files:
+      - docs/bitacora-de-descartes.md
+risks:
+  - "Static reading of deploy/cell.compose.yml (2026-09-13) finds no isolation gap: the network and volume names are already parametrized per-cell and no ports: key exists anywhere in the file. The compose-file-fix branch of AC-10 is a contingency, not the expected outcome; if the live script finds nothing broken, deploy/cell.compose.yml stays untouched and that is a pass, not a shortfall."
+  - "AC-7's raw-IP vector needs cell B's container IP, which cell A's own minimal alpine:3 container cannot discover on its own (no docker.sock mounted, by design, per hardening); the live script itself must resolve B's IP via docker inspect on the host and hand it to the exec'd command inside A as a literal argument."
+  - "Both final images are alpine:3 (Dockerfile:43, sidecar/Dockerfile:156), so busybox nc is already present in-container for the reachability checks; no new dependency is needed and none should be added, consistent with the 'no new third-party dependency' constraint already applied in HEX-075."
+  - "deploy/verificar_endurecimiento.sh (HEX-070) is not wired into .github/workflows/ci.yml at all today (confirmed by grep) - a pre-existing gap, out of this task's scope; do not fold fixing that into this diff."
+  - "The existing guardas-deploy CI job (.github/workflows/ci.yml:132) was created fresh by HEX-075 and its display name hardcodes '(HEX-075)'; the established idiom is one dedicated job per guard task, not steps appended into a prior task's named job, so this task adds a new job rather than editing guardas-deploy."
+  - "hsme-cli search-fuzzy and quorum analyze failure-lookup both returned no relevant prior context (2026-09-13); no divergent risk signal from those checks."
