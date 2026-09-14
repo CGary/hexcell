@@ -1,6 +1,7 @@
-// Package metricas es el productor de métricas nativas del canal propio: agrega tres series
-// acotadas —ratio de acuse por contacto, reconexiones por hora y ventana de silencio entrante— y
-// las emite en una sola línea periódica de registro estructurado (`docs/adr/adr-0033`).
+// Package metricas es el productor de métricas nativas del canal propio: agrega cuatro series
+// acotadas —ratio de acuse por contacto, reconexiones por hora, ventana de silencio entrante y
+// latencia hasta el acuse— y las emite en una sola línea periódica de registro estructurado
+// (`docs/adr/adr-0033`, extendido por `docs/adr/adr-0035`).
 //
 // # Por qué es una hoja
 //
@@ -71,7 +72,7 @@ type correlacionPendiente struct {
 	creadaMs       int64
 }
 
-// Productor acumula las tres series y expone la instantánea determinista de texto plano que
+// Productor acumula las cuatro series y expone la instantánea determinista de texto plano que
 // sidecar/main.go emite por su Bucle. Todo el estado mutable vive detrás de mu: ObservarEnvio,
 // ObservarAcuse, ObservarEstadoSesion y ObservarEntrante se llaman desde manejadores de eventos de
 // whatsmeow, que whatsmeow despacha cada uno en su propia goroutine.
@@ -79,14 +80,15 @@ type Productor struct {
 	reg     *registro.Registro
 	ahoraMs func() int64
 
-	mu                sync.Mutex
-	contactos         map[string]*contacto
-	correlaciones     map[string]*correlacionPendiente
-	contactosOmitidos int64
-	reconexiones      int64
-	sesionConectada   bool
-	inicioMs          int64
-	ultimoEntranteMs  int64
+	mu                    sync.Mutex
+	contactos             map[string]*contacto
+	correlaciones         map[string]*correlacionPendiente
+	contactosOmitidos     int64
+	reconexiones          int64
+	sesionConectada       bool
+	inicioMs              int64
+	ultimoEntranteMs      int64
+	ultimaLatenciaAcuseMs int64
 }
 
 // NuevoProductor construye el productor con el reloj inyectado como costura de prueba: ninguna
@@ -151,9 +153,14 @@ func (p *Productor) ObservarEnvio(idConversacion, idCorrelacion string) {
 // ObservarAcuse resuelve la unión id_correlacion -> id_conversacion y confirma el envío: entregado
 // y leído cuentan igual como acuse. Una correlación desconocida o ya desalojada es un no-op
 // silencioso a propósito, la misma disciplina que canal.manejarEventoDeAcuse aplica a un evento que
-// no clasifica: nunca inventa un contacto fantasma ni entra en pánico. Resuelta la unión, la
-// correlación se borra: ya cumplió su único propósito y libera cupo de MaximoCorrelaciones para
-// los envíos todavía en vuelo.
+// no clasifica: nunca inventa un contacto fantasma ni entra en pánico. Resuelta la unión, antes de
+// borrar la correlación se estampa ultimaLatenciaAcuseMs con el tiempo transcurrido entre el envío
+// (creadaMs, capturado por ObservarEnvio sobre el mismo reloj inyectado) y este acuse, clampado a
+// 0 si fuera negativo por la misma defensa que silencioMs aplica en Instantanea(). La métrica
+// resultante es la última observada —no un promedio, no una ventana— por la semántica fijada en
+// adr-0035 y la alternativa descartada en D-50. Resuelta la unión, la correlación se borra: ya
+// cumplió su único propósito y libera cupo de MaximoCorrelaciones para los envíos todavía en
+// vuelo.
 func (p *Productor) ObservarAcuse(idCorrelacion, estado string) {
 	if idCorrelacion == "" || estado == "" {
 		return
@@ -167,6 +174,11 @@ func (p *Productor) ObservarAcuse(idCorrelacion, estado string) {
 	if !existe {
 		return
 	}
+	latenciaMs := ahora - corr.creadaMs
+	if latenciaMs < 0 {
+		latenciaMs = 0
+	}
+	p.ultimaLatenciaAcuseMs = latenciaMs
 	c, existe := p.contactos[corr.idConversacion]
 	if existe {
 		c.acusados++
@@ -235,11 +247,11 @@ func (p *Productor) desalojarCorrelacion() {
 	p.contactosOmitidos++
 }
 
-// Instantanea construye el payload determinista de la línea periódica: siempre las tres series
-// agregadas (reconexiones_por_hora, silencio_entrante_ms, contactos_omitidos) más una entrada
-// ack_ratio.<id_conversacion> por cada contacto conocido, en orden ascendente de id para que dos
-// llamadas sobre el mismo estado produzcan el mismo texto byte a byte, sin depender del orden de
-// iteración del mapa de Go.
+// Instantanea construye el payload determinista de la línea periódica: siempre las cuatro series
+// agregadas (reconexiones_por_hora, silencio_entrante_ms, latencia_hasta_acuse_ms,
+// contactos_omitidos) más una entrada ack_ratio.<id_conversacion> por cada contacto conocido, en
+// orden ascendente de id para que dos llamadas sobre el mismo estado produzcan el mismo texto byte
+// a byte, sin depender del orden de iteración del mapa de Go.
 func (p *Productor) Instantanea() string {
 	ahora := p.ahoraMs()
 
@@ -266,6 +278,7 @@ func (p *Productor) Instantanea() string {
 	partes := []string{
 		fmt.Sprintf("reconexiones_por_hora=%.2f", tasaReconexion),
 		fmt.Sprintf("silencio_entrante_ms=%d", silencioMs),
+		fmt.Sprintf("latencia_hasta_acuse_ms=%d", p.ultimaLatenciaAcuseMs),
 		fmt.Sprintf("contactos_omitidos=%d", p.contactosOmitidos),
 	}
 	for _, id := range ids {
