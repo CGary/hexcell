@@ -183,6 +183,7 @@ Las entradas conservan su numeración; esta sección es la autoridad sobre el or
 * Actualización 2026-09-13: 7 cerrada (HEX-075). La cadena restante: 17 → 6 → 16 → 10 → 11 → 22 → 12 → 13 → 14 → 15 → 18 → 25-b → 20 → 23 → 21 → 19.
 * Actualización 2026-09-13: 25-b cerrada (HEX-072-b), con lo que la tarea 25 queda cerrada por completo y la 20 deja de estar bloqueada. La cadena restante: 17 → 6 → 16 → 10 → 11 → 22 → 12 → 13 → 14 → 15 → 18 → 20 → 23 → 21 → 19.
 * Actualización 2026-09-13: 10 dividida en 10-a (HEX-074-a, cerrada) y 10-b (pendiente). La cadena restante: 17 → 6 → 16 → 10-b → 11 → 22 → 12 → 13 → 14 → 15 → 18 → 20 → 23 → 21 → 19.
+* Actualización 2026-09-13: 17 cerrada (HEX-076). La cadena restante: 6 → 16 → 10-b → 11 → 22 → 12 → 13 → 14 → 15 → 18 → 20 → 23 → 21 → 19.
 
 ---
 
@@ -289,6 +290,16 @@ Las entradas conservan su numeración; esta sección es la autoridad sobre el or
     HEX-067).
 17. **Escribir la prueba de aislamiento** (1 día). Levantar dos células y demostrar que ninguna puede
     leer ni escribir el volumen de la otra ni alcanzar su red, ni siquiera conociendo la ruta.
+
+    **Cerrada el 2026-09-13 con HEX-076**: guardia mecánico
+    `deploy/verificar_aislamiento_estatica.sh` (probado por mutación, en CI) que ancla, sobre el
+    YAML resuelto de `deploy/cell.compose.yml`, que cada célula declara su propia red y su propio
+    volumen nombrado con los nombres exactos del referente y que ningún servicio publica un puerto
+    al host; más el script manual en vivo `deploy/verificar_aislamiento.sh`, que levanta dos células
+    reales (A y B) desde volúmenes vacíos y ejerce el cruce de volumen (lectura y escritura), el
+    alcance de red al núcleo y al sidecar ajenos (por nombre de contenedor y por IP cruda) y el
+    socket IPC ajeno. No se encontró ningún hallazgo que corrigiera `deploy/cell.compose.yml`: la
+    plantilla ya declaraba red y volumen per-célula y ningún `ports:` desde HEX-070.
 18. **Integrar la construcción de las imágenes en la CI** (1 día). Construcción reproducible,
     etiquetado por versión y por commit, y publicación en el registro elegido.
     * Guarda en CI que falla si la imagen corre como root o sin rootfs de solo lectura (criterio ya
