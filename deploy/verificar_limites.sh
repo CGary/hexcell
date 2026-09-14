@@ -42,8 +42,12 @@
 #       de las seis condiciones por vez (mem_limit/cpus/ulimits.nofile sobre
 #       cada uno de nucleo/sidecar), verificando que el guardia falla sobre
 #       cada copia mutada bajo el MISMO `docker compose config` que el modo
-#       normal. Si alguna mutación pasa al guardia, no es todavía un guardia.
-#       Este modo es la prueba de mutación exigida por AC-4 del 00-spec.yaml.
+#       normal. Además corrompe una séptima copia, esta vez de
+#       deploy/celula.env.ejemplo (el referente), desviando la suma de
+#       memoria del techo NFR-01, y verifica que verificar_techo_nfr01 la
+#       atrapa. Si alguna de las siete mutaciones pasa al guardia, no es
+#       todavía un guardia. Este modo es la prueba de mutación exigida por
+#       AC-4 del 00-spec.yaml.
 #
 # DEPENDENCIAS
 #
@@ -129,6 +133,59 @@ if [ -z "$MEMORIA_NUCLEO_BYTES" ] || [ -z "$MEMORIA_SIDECAR_BYTES" ] \
     || [ -z "$CPUS_NUCLEO" ] || [ -z "$CPUS_SIDECAR" ] \
     || [ -z "$NOFILE_NUCLEO" ] || [ -z "$NOFILE_SIDECAR" ]; then
     echo "FALLA: no se pudieron leer los seis HEXCELL_*_LIMITE_* de $REFERENTE" >&2
+    exit 1
+fi
+
+# --- Techo NFR-01: la SUMA de memoria del referente, anclada como constante -
+#
+# El bloque anterior compara la plantilla resuelta CONTRA $REFERENTE, pero
+# $REFERENTE es el mismo archivo que `docker compose --env-file` usa para
+# resolver la plantilla: ambos lados se mueven juntos. Ese diseño atrapa una
+# plantilla que se desvía de su referente, pero es estructuralmente incapaz
+# de atrapar al referente desviándose del techo NFR-01 (medido 2026-09-13:
+# mutar HEXCELL_NUCLEO_LIMITE_MEMORIA=48m -> 128m en deploy/celula.env.ejemplo
+# y correr este guardia en modo directo seguía saliendo OK con código 0).
+#
+# Por eso esta aserción ancla una CONSTANTE fuera del referente: la SUMA de
+# HEXCELL_NUCLEO_LIMITE_MEMORIA + HEXCELL_SIDECAR_LIMITE_MEMORIA debe ser
+# exactamente 83886080 bytes (80 MiB = 80 * 1048576, el techo de NFR-01 del
+# PRD). Se ancla la SUMA y no los literales 48m/32m: ese reparto es
+# explícitamente provisional (00-spec.yaml, tarea 16 de la etapa A-6 puede
+# re-repartirlo legítimamente) y anclar los literales pondría este guardia en
+# rojo ante un cambio legítimo. Anclar la suma sobrevive a un re-reparto
+# legítimo y sigue atrapando al referente desviándose del techo real.
+NFR01_TECHO_BYTES=83886080
+
+# verificar_techo_nfr01 <ruta-referente>
+#   Lee HEXCELL_{NUCLEO,SIDECAR}_LIMITE_MEMORIA del referente indicado (no
+#   necesariamente el global $REFERENTE: el modo --autoprueba lo llama sobre
+#   una copia mutada) y falla si la suma en bytes no es exactamente
+#   $NFR01_TECHO_BYTES.
+verificar_techo_nfr01() {
+    local referente="$1"
+    local mem_nucleo mem_sidecar bytes_nucleo bytes_sidecar suma
+
+    mem_nucleo="$(sed -n 's/^HEXCELL_NUCLEO_LIMITE_MEMORIA=//p' "$referente")"
+    mem_sidecar="$(sed -n 's/^HEXCELL_SIDECAR_LIMITE_MEMORIA=//p' "$referente")"
+
+    if [ -z "$mem_nucleo" ] || [ -z "$mem_sidecar" ]; then
+        echo "FALLA: no se pudieron leer HEXCELL_NUCLEO_LIMITE_MEMORIA / HEXCELL_SIDECAR_LIMITE_MEMORIA de $referente para el techo NFR-01"
+        return 1
+    fi
+
+    bytes_nucleo="$(convertir_memoria_a_bytes "$mem_nucleo")"
+    bytes_sidecar="$(convertir_memoria_a_bytes "$mem_sidecar")"
+    suma=$((bytes_nucleo + bytes_sidecar))
+
+    if [ "$suma" -ne "$NFR01_TECHO_BYTES" ]; then
+        echo "FALLA: la suma de HEXCELL_NUCLEO_LIMITE_MEMORIA + HEXCELL_SIDECAR_LIMITE_MEMORIA en $referente es $suma bytes, debe ser exactamente $NFR01_TECHO_BYTES bytes (80m, techo NFR-01 del PRD)"
+        return 1
+    fi
+
+    return 0
+}
+
+if ! verificar_techo_nfr01 "$REFERENTE"; then
     exit 1
 fi
 
@@ -257,8 +314,10 @@ fi
 # intacta, el guardia pasaría y el caso se reportaría como FALLA —el guardia
 # debe ser capaz de detectar también el no-op de su propia mutación. Se
 # imprime una línea PASA/FALLA por cada caso y se sale con código 0 solo si
-# los seis casos fallaron. El implementador DEBE leer las seis líneas
-# PASA/FALLA —no solo el exit code— antes de dar AC-4 por satisfecha.
+# los siete casos fallaron (los seis anteriores más el séptimo, que corrompe
+# el referente mismo para probar verificar_techo_nfr01). El implementador
+# DEBE leer las siete líneas PASA/FALLA —no solo el exit code— antes de dar
+# AC-4 por satisfecha.
 
 DIR_TEMP=""
 DIR_TEMP=$(mktemp -d -t hex078-guard.XXXXXX)
@@ -338,6 +397,41 @@ mutar_y_verificar \
     'nofile: \${HEXCELL_SIDECAR_LIMITE_NOFILE}' \
     'nofile: ${HEXCELL_SIDECAR_LIMITE_NOFILE}' \
     'nofile: 999'
+
+# mutar_referente_y_verificar_techo <etiqueta> <patron_plano> <sustitucion>
+#   Como mutar_y_verificar, pero corrompe una COPIA de $REFERENTE (no de la
+#   plantilla) y ejerce verificar_techo_nfr01 directamente sobre esa copia:
+#   este caso prueba el techo NFR-01 (la suma anclada), no la comparación
+#   plantilla-contra-referente que cubren los seis casos anteriores.
+mutar_referente_y_verificar_techo() {
+    local etiqueta="$1"
+    local patron_plano="$2"
+    local sustitucion="$3"
+
+    TOTAL=$((TOTAL + 1))
+    local copia
+    copia="$DIR_TEMP/referente-mutado-${TOTAL}.env"
+    cp "$REFERENTE" "$copia"
+
+    sed -i "s|${patron_plano}|${sustitucion}|" "$copia"
+
+    if grep -qF -- "$patron_plano" "$copia"; then
+        echo "FALLA: ${etiqueta} -> la mutación no cambió el archivo (patrón no encontrado); no es una prueba"
+        return
+    fi
+
+    if ! verificar_techo_nfr01 "$copia" >/dev/null 2>&1; then
+        echo "PASA: ${etiqueta} -> el guardia falla como debe"
+        ACIERTOS=$((ACIERTOS + 1))
+    else
+        echo "FALLA: ${etiqueta} -> el guardia PASÓ la copia mutada (no es un guardia)"
+    fi
+}
+
+mutar_referente_y_verificar_techo \
+    "corromper el techo NFR-01 en el referente (la suma deja de ser 80m)" \
+    'HEXCELL_NUCLEO_LIMITE_MEMORIA=48m' \
+    'HEXCELL_NUCLEO_LIMITE_MEMORIA=128m'
 
 echo ""
 echo "Resumen autoprueba: $ACIERTOS/$TOTAL casos pasan (cada límite roto debe hacer fallar al guardia)"
