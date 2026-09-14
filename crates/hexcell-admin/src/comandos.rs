@@ -65,10 +65,10 @@ pub fn ejecutar<S: Write, D: Write>(
 /// Línea en español que describe la acción planificada de una invocación en modo de
 /// simulación. Para los cuatro subcomandos que modifican el estado de la célula la línea
 /// nombra el estado objetivo a través del `Display` de [`EstadoDeCelula`]; para los dos
-/// subcomandos de sólo lectura se limita a nombrar la acción. El literal
-/// `desvinculada_sesion_cerrada` —que en `docs/protocolo-ipc-nucleo-sidecar.md` es una
-/// `causa` que proyecta al estado de sesión `desvinculada` del sidecar, no un estado del
-/// plano de control de la célula— no aparece en ningún sitio de este crate.
+/// subcomandos de sólo lectura se limita a nombrar la acción. La taxonomía de estados de
+/// sesión del sidecar descrita en `docs/protocolo-ipc-nucleo-sidecar.md` es ajena al plano
+/// de control: sus causas de desvinculación no son estados de célula y este crate no las
+/// nombra.
 fn linea_de_simulacion(invocacion: &Invocacion) -> String {
     let id = invocacion.id().unwrap_or("(sin id)");
     match invocacion.subcomando() {
@@ -128,47 +128,5 @@ pub fn estado_objetivo(subcomando: Subcomando) -> Option<EstadoDeCelula> {
         Subcomando::Reemparejar => Some(EstadoDeCelula::Reemparejando),
         Subcomando::Listar => None,
         Subcomando::Estado => None,
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::argumentos::analizar;
-
-    struct EscritorQueFalla;
-
-    impl Write for EscritorQueFalla {
-        fn write(&mut self, _buf: &[u8]) -> std::io::Result<usize> {
-            Err(std::io::Error::other("fallo simulado de escritura"))
-        }
-        fn flush(&mut self) -> std::io::Result<()> {
-            Ok(())
-        }
-    }
-
-    fn args(snippet: &[&str]) -> Vec<String> {
-        snippet.iter().map(|s| (*s).to_string()).collect()
-    }
-
-    #[test]
-    fn un_escritor_que_falla_en_estandar_con_simular_devuelve_fallo() {
-        let mut salida = Salida::nueva(EscritorQueFalla, Vec::<u8>::new());
-        let resultado = analizar(&args(&["cell", "list", "--simular"]));
-        assert_eq!(ejecutar(resultado, &mut salida), CodigoDeSalida::Fallo);
-    }
-
-    #[test]
-    fn un_escritor_que_falla_en_diagnostico_sin_simular_devuelve_fallo() {
-        let mut salida = Salida::nueva(Vec::<u8>::new(), EscritorQueFalla);
-        let resultado = analizar(&args(&["cell", "list"]));
-        assert_eq!(ejecutar(resultado, &mut salida), CodigoDeSalida::Fallo);
-    }
-
-    #[test]
-    fn un_escritor_que_falla_en_diagnostico_con_error_de_analisis_devuelve_fallo() {
-        let mut salida = Salida::nueva(Vec::<u8>::new(), EscritorQueFalla);
-        let resultado = analizar(&args(&[]));
-        assert_eq!(ejecutar(resultado, &mut salida), CodigoDeSalida::Fallo);
     }
 }

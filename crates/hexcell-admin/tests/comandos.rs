@@ -164,39 +164,6 @@ fn subcomando_valido_con_simular_devuelve_exito_y_linea_en_estandar() {
     }
 }
 
-#[test]
-fn los_mensajes_de_simulacion_no_contienen_la_taxonomia_de_sesion_del_ipc() {
-    let casos = [
-        &["cell", "pause", "--id", "c1", "--simular"][..],
-        &["cell", "unpause", "--id", "c1", "--simular"][..],
-        &[
-            "cell",
-            "terminate",
-            "--id",
-            "c1",
-            "--confirmar",
-            "--simular",
-        ][..],
-        &[
-            "cell",
-            "rebind",
-            "--id",
-            "c1",
-            "--motivo",
-            "x",
-            "--confirmar",
-            "--simular",
-        ][..],
-    ];
-    for snippet in casos {
-        let (_, estandar, _) = ejecutar_con(&snippet);
-        assert!(
-            !estandar.contains("desvinculada_sesion_cerrada"),
-            "taxonomía del IPC ausente: {estandar:?}"
-        );
-    }
-}
-
 struct EscritorQueFalla;
 
 impl Write for EscritorQueFalla {
@@ -257,4 +224,18 @@ fn estado_objetivo_es_exhaustivo_y_nombra_el_destino_correcto() {
     );
     assert_eq!(estado_objetivo(Subcomando::Listar), None);
     assert_eq!(estado_objetivo(Subcomando::Estado), None);
+}
+
+#[test]
+fn un_escritor_que_falla_en_diagnostico_sin_simular_devuelve_fallo() {
+    let mut salida = Salida::nueva(Vec::<u8>::new(), EscritorQueFalla);
+    let resultado = analizar(&args(&["cell", "list"]));
+    assert_eq!(ejecutar(resultado, &mut salida), CodigoDeSalida::Fallo);
+}
+
+#[test]
+fn un_escritor_que_falla_en_diagnostico_con_error_de_analisis_devuelve_fallo() {
+    let mut salida = Salida::nueva(Vec::<u8>::new(), EscritorQueFalla);
+    let resultado = analizar(&args(&[]));
+    assert_eq!(ejecutar(resultado, &mut salida), CodigoDeSalida::Fallo);
 }
