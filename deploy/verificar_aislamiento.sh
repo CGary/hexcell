@@ -334,10 +334,18 @@ RUTA_SOCKET="/var/lib/hexcell/ipc/sidecar.sock"
 
 # El sidecar crea el socket al escuchar; se espera hasta 10 s a que aparezca
 # en el propio montaje de A antes de comparar identidades.
+#
+# POR QUE dispositivo E INODO, y no solo el dispositivo: dos volumenes
+# nombrados distintos viven en el MISMO sistema de archivos del anfitrion
+# (medido el 2026-09-13: ambos dan dispositivo 31), asi que comparar solo
+# `stat -c %d` da siempre igualdad y la asercion solo puede salir roja —
+# seria una guarda invertida, imposible de pasar aun con el aislamiento
+# intacto. El inodo es el discriminante real: la identidad de archivo es el
+# par dispositivo:inodo.
 DISPOSITIVO_A="NOEXISTE"
 intentos=10
 while [ "$intentos" -gt 0 ]; do
-    DISPOSITIVO_A="$(desde "$CONTENEDOR_NUCLEO_A" "stat -c %d ${RUTA_SOCKET} 2>/dev/null || echo NOEXISTE")"
+    DISPOSITIVO_A="$(desde "$CONTENEDOR_NUCLEO_A" "stat -c %d:%i ${RUTA_SOCKET} 2>/dev/null || echo NOEXISTE")"
     if [ "$DISPOSITIVO_A" != "NOEXISTE" ]; then
         break
     fi
@@ -345,16 +353,16 @@ while [ "$intentos" -gt 0 ]; do
     sleep 1
 done
 
-DISPOSITIVO_B="$(leer_volumen "$VOLUMEN_B" "stat -c %d /datos-ajenos/ipc/sidecar.sock 2>/dev/null || echo NOEXISTE")"
+DISPOSITIVO_B="$(leer_volumen "$VOLUMEN_B" "stat -c %d:%i /datos-ajenos/ipc/sidecar.sock 2>/dev/null || echo NOEXISTE")"
 
 if [ "$DISPOSITIVO_A" = "NOEXISTE" ]; then
     registrar_falla "el socket IPC de A nunca apareció; el vector de socket ajeno no se puede probar"
 elif [ "$DISPOSITIVO_B" = "NOEXISTE" ]; then
     registrar_falla "el socket IPC de B nunca apareció; el vector de socket ajeno no se puede probar"
 elif [ "$DISPOSITIVO_A" = "$DISPOSITIVO_B" ]; then
-    registrar_falla "el socket de A y el socket real de B viven en el MISMO dispositivo de archivos (dispositivo ${DISPOSITIVO_A}) — el aislamiento de volumen que respalda el socket IPC está roto"
+    registrar_falla "el socket de A y el socket real de B son el MISMO objeto de archivo (dispositivo:inodo ${DISPOSITIVO_A}) — el aislamiento de volumen que respalda el socket IPC está roto"
 else
-    registrar_ok "el socket de A (dispositivo ${DISPOSITIVO_A}) y el socket real de B (dispositivo ${DISPOSITIVO_B}) son objetos de archivo distintos: la ruta idéntica de A jamás puede ser el socket de B"
+    registrar_ok "el socket de A (dispositivo:inodo ${DISPOSITIVO_A}) y el socket real de B (dispositivo:inodo ${DISPOSITIVO_B}) son objetos de archivo distintos: la ruta idéntica de A jamás puede ser el socket de B"
 fi
 
 # --- AC-9: ningún servicio publica un puerto al host ------------------------

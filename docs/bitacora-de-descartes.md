@@ -652,6 +652,17 @@ copiar `sessions.db`, `knowledge_live.db` y el almacén de identidad del adaptad
 
 ---
 
+### D-49
+
+**Probar que el socket IPC de una célula no es alcanzable desde otra comparando únicamente el dispositivo de archivos (`stat -c %d`) de ambos sockets, y declarar el aislamiento roto cuando coinciden.**
+
+* **Descartado:** 2026-09-13 (HEX-076).
+* **Por qué se descartó:** dos volúmenes nombrados distintos de Docker viven en el **mismo sistema de archivos del anfitrión**, así que su número de dispositivo coincide siempre. Medido el 2026-09-13 sobre dos volúmenes recién creados: ambos devuelven dispositivo `31` con inodos distintos (`20349905` y `20349970`). La aserción, por lo tanto, no podía pasar nunca: era una **guarda invertida**, roja incluso con el aislamiento intacto, y así se comportó en la primera corrida real del script en vivo, que reportó `FALLA` en AC-8 mientras AC-6 demostraba con marcadores reales que los volúmenes sí estaban aislados. El discriminante correcto es el par **dispositivo:inodo** (`stat -c %d:%i`), que es la identidad de archivo de POSIX; con él las once aserciones pasan.
+* **Registro normativo:** `deploy/verificar_aislamiento.sh` (bloque AC-8).
+* **Qué tendría que cambiar para reabrirlo:** *reabrible solo si los volúmenes de una célula pasaran a residir en sistemas de archivos separados* (por ejemplo, un dispositivo de bloque dedicado por célula). En ese escenario el número de dispositivo volvería a discriminar, pero seguiría siendo redundante frente al par dispositivo:inodo, que es correcto en ambos casos.
+
+---
+
 ## Deuda de esta bitácora
 
 Tres descartes **no tienen ningún registro documental** y solo sobreviven en el historial de git:
