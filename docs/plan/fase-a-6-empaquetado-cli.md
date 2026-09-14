@@ -186,6 +186,7 @@ Las entradas conservan su numeración; esta sección es la autoridad sobre el or
 * Actualización 2026-09-13: 17 cerrada (HEX-076). La cadena restante: 6 → 16 → 10-b → 11 → 22 → 12 → 13 → 14 → 15 → 18 → 20 → 23 → 21 → 19.
 * Actualización 2026-09-13: 10-b cerrada (HEX-074-b) con el analizador y los subcomandos desplazados a 10-c (HEX-074-c). 20 dividida: 20-a (HEX-077-a), 20-c (HEX-077-c) y 20-d (HEX-077-d) cerradas; 20-b (HEX-077-b) pendiente. La cadena restante: 6 → 16 → 10-c → 11 → 22 → 12 → 13 → 14 → 15 → 18 → 20-b → 23 → 21 → 19.
 * Actualización 2026-09-13: 6 cerrada (HEX-078) con el reparto de memoria 48m/32m, CPU 0.5/0.25 y nofile 1024 —los tres PROVISIONALES hasta la medición de la tarea 16— y el guardia `deploy/verificar_limites.sh` (probado por mutación, en CI). La cadena restante: 16 → 10-c → 11 → 22 → 12 → 13 → 14 → 15 → 18 → 20-b → 23 → 21 → 19.
+* Actualización 2026-09-14: 10-c cerrada (HEX-074-c) y con ella la tarea 10 completa: analizador de argumentos a mano sobre `std::env::args`, los seis subcomandos `cell` con validación, modo de simulación sin efectos laterales y `src/main.rs` cableado —ya no imprime el talón de A-1—, sobre el contrato de códigos de salida de 10-b. Registrados `adr-0036` (gramática, tabla de desenlaces y modo de simulación) y D-53 (descarte de `clap`, `argh`, `pico-args` y `structopt`). La persistencia del estado del plano de control, la idempotencia, la reconciliación contra Docker y el registro de sustituciones de `cell status` siguen diferidos a las tareas 11 a 15. La cadena restante: 16 → 11 → 22 → 12 → 13 → 14 → 15 → 18 → 20-b → 23 → 21 → 19.
 
 ---
 
@@ -249,9 +250,12 @@ Las entradas conservan su numeración; esta sección es la autoridad sobre el or
     queda diferida a la tarea de A-6 que la decida.
     **Actualización 2026-09-13.** 10-b (HEX-074-b) cerró con menos alcance del anotado: entregó
     `codigo_de_salida.rs`, `salida.rs` y el cliente Docker (`src/docker/`) sobre `lib.rs`; el
-    analizador de argumentos, los subcomandos y el cableado de `src/main.rs` —que sigue imprimiendo el
-    talón de A-1— pasan a 10-c (HEX-074-c, en bandeja de entrada). La tarea 10 no queda cerrada por
-    completo hasta 10-c.
+    analizador de argumentos, los subcomandos y el cableado de `src/main.rs` pasan a 10-c
+    (HEX-074-c).
+    **Cerrada por completo el 2026-09-14** con 10-c (HEX-074-c): analizador a mano sobre
+    `std::env::args`, los seis subcomandos `cell` con validación de argumentos, modo de simulación sin
+    efectos laterales y `src/main.rs` cableado —ya no imprime el talón de A-1—, con `adr-0036` y D-53
+    registrados.
 11. **Implementar `cell pause` y `cell unpause`** (1,5 días). Orden explícito en la pausa —primero el
     sidecar, después el núcleo— y sondeo de disponibilidad cada 100 ms con límite temporal y mensaje
     de error claro si nunca llega a estar lista.
