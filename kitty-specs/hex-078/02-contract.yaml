@@ -1,0 +1,310 @@
+task_id: HEX-078
+summary: >-
+  Fix provisional RAM split (48m/32m), keep CPU provisional, add ulimits.nofile
+  to both services, ship a mutation-proven static guard, and write adr-0007.
+goal: >-
+  Close task 6 of stage A-6 by writing the decided-but-provisional
+  memory/CPU/nofile limits into deploy/celula.env.ejemplo and
+  deploy/cell.compose.yml, shipping a mutation-proven mechanical guard
+  (deploy/verificar_limites.sh) that checks those limits on the RESOLVED
+  compose template, wiring it into CI the same way as the sibling guards,
+  writing docs/adr/adr-0007-imagen-y-aislamiento.md in full as a
+  transcription of HEX-069/HEX-070/this task's already-taken decisions, and
+  recording the OOM-response-procedure deferral as added scope of plan task
+  21 — without creating docs/runbook-operacion.md or measuring real
+  RSS/CPU under load (plan task 16's scope).
+read:
+  - .ai/tasks/active/HEX-078-new-spec/00-spec.yaml
+  - .ai/tasks/active/HEX-078-new-spec/01-blueprint.yaml
+  - docs/plan/fase-a-6-empaquetado-cli.md
+  - docs/PRD.md
+  - deploy/cell.compose.yml
+  - deploy/celula.env.ejemplo
+  - deploy/verificar_senales.sh
+  - deploy/verificar_aislamiento_estatica.sh
+  - deploy/verificar_endurecimiento.sh
+  - docs/adr/README.md
+  - docs/adr/adr-0018-apagado-ordenado.md
+  - docs/adr/adr-0033-metricas-de-canal-propio-en-el-sidecar.md
+  - kitty-specs/hex-069
+  - kitty-specs/hex-070
+  - docs/bitacora-de-descartes.md
+  - README.md
+  - .github/workflows/ci.yml
+touch:
+  - deploy/celula.env.ejemplo
+  - deploy/cell.compose.yml
+  - deploy/verificar_limites.sh
+  - .github/workflows/ci.yml
+  - docs/adr/adr-0007-imagen-y-aislamiento.md
+  - docs/adr/README.md
+  - docs/plan/fase-a-6-empaquetado-cli.md
+  - README.md
+  - docs/bitacora-de-descartes.md
+forbid:
+  files:
+    - "crates/**"
+    - "sidecar/**"
+    - Cargo.toml
+    - Cargo.lock
+    - rust-toolchain.toml
+    - Dockerfile
+    - sidecar/Dockerfile
+    - ".dockerignore"
+    - sidecar/.dockerignore
+    - deploy/verificar_senales.sh
+    - deploy/verificar_endurecimiento.sh
+    - deploy/verificar_aislamiento_estatica.sh
+    - deploy/verificar_aislamiento.sh
+    - deploy/verificar_apagado_ordenado.sh
+    - deploy/verificar_ping_de_vigilancia.sh
+    - deploy/ping_de_vigilancia_externa.sh
+    - docs/runbook-operacion.md
+    - "docs/adr/adr-0001*.md"
+    - "docs/adr/adr-0002*.md"
+    - "docs/adr/adr-0003*.md"
+    - "docs/adr/adr-0004*.md"
+    - "docs/adr/adr-0005*.md"
+    - "docs/adr/adr-0006*.md"
+    - "docs/adr/adr-0008*.md"
+    - "docs/adr/adr-0009*.md"
+    - "docs/adr/adr-001[0-9]*.md"
+    - "docs/adr/adr-002[0-9]*.md"
+    - "docs/adr/adr-003[0-9]*.md"
+    - docs/STATUS.md
+    - docs/protocolo-ipc-nucleo-sidecar.md
+    - "*.env"
+    - ".env*"
+    - "*.db"
+    - "*.db-wal"
+    - "*.db-shm"
+    - "kitty-specs/**"
+    - ".ai/**"
+  behaviors:
+    - >-
+      Do not change mem_limit, cpus, or ulimits.nofile into a literal value
+      anywhere in deploy/cell.compose.yml; every limit stays a
+      ${HEXCELL_<SERVICIO>_LIMITE_...} reference (decision A3 of
+      00-spec.yaml). Only the values in deploy/celula.env.ejemplo change.
+    - >-
+      The sum of HEXCELL_NUCLEO_LIMITE_MEMORIA and
+      HEXCELL_SIDECAR_LIMITE_MEMORIA in deploy/celula.env.ejemplo must equal
+      exactly 80m (48m + 32m) — never more, never less.
+    - >-
+      Do not touch read_only, cap_drop, security_opt, tmpfs, or
+      stop_grace_period in deploy/cell.compose.yml; those are HEX-070's and
+      HEX-075's scope, not this task's.
+    - >-
+      Do not add, offer, or leave commented-out any bind-mount form for
+      /var/lib/hexcell; the named-volume-only invariant from HEX-070 still
+      applies.
+    - >-
+      Do not measure real memory or CPU consumption under a running
+      container or under load, and do not add any verify command that
+      requires a live/long-running container; that is plan task 16's scope
+      and 00-spec.yaml's explicit non-goal.
+    - >-
+      Do not create docs/runbook-operacion.md. The OOM-response procedure is
+      recorded ONLY as an added-scope note inside task 21's entry in
+      docs/plan/fase-a-6-empaquetado-cli.md.
+    - >-
+      deploy/verificar_limites.sh must check the RESOLVED template (`docker
+      compose --env-file deploy/celula.env.ejemplo -f deploy/cell.compose.yml
+      config`), never the raw YAML, for mem_limit/cpus/ulimits.nofile on
+      both nucleo and sidecar.
+    - >-
+      deploy/verificar_limites.sh must fail hard (never silently skip) when
+      docker/docker compose or python3+PyYAML are unavailable, matching the
+      precedent set by deploy/verificar_senales.sh and
+      deploy/verificar_aislamiento_estatica.sh.
+    - >-
+      deploy/verificar_limites.sh's --autoprueba mode must prove by mutation
+      that the guard can fail: it must break each of the six checked
+      conditions (mem_limit/cpus/ulimits.nofile x nucleo/sidecar) one at a
+      time on a scratch copy and assert the guard fails on every one of the
+      six mutated cases, printing a PASA/FALLA line per case and exiting
+      non-zero unless every case was caught. A mutation that never actually
+      changes the copied file (e.g. a sed pattern that fails to match) does
+      not count as proving anything; the autoprueba's own logic must be
+      capable of catching that failure mode too.
+    - >-
+      Wire deploy/verificar_limites.sh into .github/workflows/ci.yml in
+      BOTH forms — direct invocation against deploy/cell.compose.yml, and
+      --autoprueba — as two steps of one job, the same shape as the existing
+      `guardas-deploy` job. Do not touch any other CI job.
+    - >-
+      docs/adr/adr-0007-imagen-y-aislamiento.md introduces no new
+      product/architecture decision: it transcribes only what HEX-069,
+      HEX-070, and this task already decided and implemented. If writing it
+      surfaces a genuine open question, stop and report it as a blocker
+      instead of deciding it inside the ADR.
+    - >-
+      docs/adr/README.md: change ONLY the adr-0007 row's status cell to
+      "**Vigente** (2026-09-13)". Do not renumber, reorder, add, or remove
+      any other row, and do not edit any other cell of the adr-0007 row.
+    - >-
+      docs/plan/fase-a-6-empaquetado-cli.md: only APPEND closure/added-scope
+      prose to task 6's and task 21's existing entries and append one new
+      "Orden de ejecución" update bullet; never rewrite or delete an
+      existing sentence, and never renumber a task.
+    - >-
+      Any genuine technique choice discarded while designing this task's
+      changes is logged in docs/bitacora-de-descartes.md in the SAME commit,
+      numbered strictly above the file's real current maximum at implement
+      time (D-51 was the visible max at blueprint time, 2026-09-13 —
+      re-check it; do not trust this number blindly, and do not fabricate a
+      discard if none genuinely occurred). Existing entries are never edited
+      or deleted.
+    - >-
+      Every new or changed line of prose, identifiers, comments, commit
+      message, and script/CI output message is Spanish, matching repository
+      convention, across every touched file.
+    - >-
+      No new runtime or CI dependency is introduced; the guard stays
+      bash + python3 stdlib-adjacent PyYAML + docker compose, the same
+      toolset the sibling guards already use.
+    - >-
+      Before appending new variables to deploy/celula.env.ejemplo, ensure a
+      newline precedes them — the file's current last line has no trailing
+      newline; a naive append would silently concatenate and corrupt the
+      file (reproduced during blueprinting).
+verify:
+  commands:
+    - |
+      set -u
+      # 1. AC-1: memory split fixed to 48m/32m and the section header no
+      # longer calls the values undecided.
+      grep -q '^HEXCELL_NUCLEO_LIMITE_MEMORIA=48m$' deploy/celula.env.ejemplo \
+        && grep -q '^HEXCELL_SIDECAR_LIMITE_MEMORIA=32m$' deploy/celula.env.ejemplo \
+        || { echo "FALLA: deploy/celula.env.ejemplo no fija 48m/32m"; exit 1; }
+      if grep -q 'no decididos aquí' deploy/celula.env.ejemplo; then
+        echo "FALLA: la seccion de limites de recursos todavia se describe como no decidida"
+        exit 1
+      fi
+      grep -qi 'provisional' deploy/celula.env.ejemplo \
+        || { echo "FALLA: deploy/celula.env.ejemplo no marca los valores como provisionales pendientes de la tarea 16"; exit 1; }
+      echo "OK: AC-1 memoria 48m/32m fijada y documentada como decidida-pero-provisional"
+    - |
+      set -u
+      # 2. AC-2: CPU 0.5/0.25 (o un cambio razonado) presente y marcado
+      # provisional.
+      grep -qE '^HEXCELL_NUCLEO_LIMITE_CPUS=' deploy/celula.env.ejemplo \
+        && grep -qE '^HEXCELL_SIDECAR_LIMITE_CPUS=' deploy/celula.env.ejemplo \
+        || { echo "FALLA: faltan las variables de CPU en deploy/celula.env.ejemplo"; exit 1; }
+      echo "OK: AC-2 variables de CPU presentes (valor validado por lectura humana; ver 01-blueprint.yaml)"
+    - |
+      set -u
+      # 3. AC-3: nofile parametrizado en ambos servicios, presente en las
+      # dos variables del referente.
+      grep -qE '^HEXCELL_NUCLEO_LIMITE_NOFILE=' deploy/celula.env.ejemplo \
+        && grep -qE '^HEXCELL_SIDECAR_LIMITE_NOFILE=' deploy/celula.env.ejemplo \
+        || { echo "FALLA: faltan HEXCELL_NUCLEO_LIMITE_NOFILE / HEXCELL_SIDECAR_LIMITE_NOFILE"; exit 1; }
+      grep -q 'ulimits' deploy/cell.compose.yml \
+        || { echo "FALLA: deploy/cell.compose.yml no declara ulimits"; exit 1; }
+      command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1 \
+        || { echo "FALLA: docker compose no disponible; AC-3 no se puede verificar por resolucion"; exit 1; }
+      docker compose --env-file deploy/celula.env.ejemplo -f deploy/cell.compose.yml config \
+        | grep -A1 'ulimits' | grep -qE 'nofile: [0-9]+' \
+        || { echo "FALLA: docker compose config no resuelve ulimits.nofile a un entero concreto"; exit 1; }
+      echo "OK: AC-3 ulimits.nofile parametrizado y resuelto a un entero concreto en ambos servicios"
+    - |
+      set -u
+      # 4. AC-4: el guardia nuevo corre contra los archivos REALES (sin
+      # mutar) y debe pasar. Un entorno sin docker/compose es FALLA.
+      command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1 \
+        || { echo "FALLA: docker/compose no disponible; AC-4 no se puede verificar"; exit 1; }
+      test -x deploy/verificar_limites.sh \
+        || { echo "FALLA: deploy/verificar_limites.sh no existe o no es ejecutable"; exit 1; }
+      bash deploy/verificar_limites.sh deploy/cell.compose.yml
+    - |
+      set -u
+      # 5. AC-4: prueba de mutacion. Un guardia que nunca se vio fallar no
+      # es todavia un guardia.
+      command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1 \
+        || { echo "FALLA: docker/compose no disponible; la autoprueba no se puede correr"; exit 1; }
+      bash deploy/verificar_limites.sh --autoprueba
+    - |
+      set -u
+      # 6. El guardia nuevo queda en CI, en ambas formas.
+      grep -q 'verificar_limites.sh' .github/workflows/ci.yml \
+        || { echo "FALLA: .github/workflows/ci.yml no invoca deploy/verificar_limites.sh"; exit 1; }
+      grep -q -- '--autoprueba' .github/workflows/ci.yml \
+        || { echo "FALLA: .github/workflows/ci.yml no corre ninguna autoprueba"; exit 1; }
+      OCURRENCIAS=$(grep -c 'verificar_limites.sh' .github/workflows/ci.yml)
+      test "$OCURRENCIAS" -ge 2 \
+        || { echo "FALLA: .github/workflows/ci.yml no invoca verificar_limites.sh en las dos formas (directa y --autoprueba)"; exit 1; }
+      echo "OK: CI invoca verificar_limites.sh en forma directa y --autoprueba"
+    - |
+      set -u
+      # 7. AC-5: adr-0007 existe, cubre las tres areas, y el README lo marca
+      # Vigente con la fecha correcta, sin tocar otras filas.
+      test -f docs/adr/adr-0007-imagen-y-aislamiento.md \
+        || { echo "FALLA: docs/adr/adr-0007-imagen-y-aislamiento.md no existe"; exit 1; }
+      for marcador in "HEX-069" "HEX-070" "HEX-078" "ulimits" "80"; do
+        grep -qi "$marcador" docs/adr/adr-0007-imagen-y-aislamiento.md \
+          || { echo "FALLA: adr-0007 no menciona [$marcador]"; exit 1; }
+      done
+      grep -qE '^\| `adr-0007-imagen-y-aislamiento\.md` \|.*Vigente.*\(2026-09-13\)' docs/adr/README.md \
+        || { echo "FALLA: docs/adr/README.md no marca adr-0007 como Vigente (2026-09-13)"; exit 1; }
+      OTRAS_VIGENTE_FALTANTES=$(grep -c '| \*\*Vigente\*\*' docs/adr/README.md)
+      test "$OTRAS_VIGENTE_FALTANTES" -ge 30 \
+        || { echo "FALLA: el conteo de filas Vigente en docs/adr/README.md bajo de lo esperado; alguna otra fila pudo haberse alterado"; exit 1; }
+      echo "OK: AC-5 adr-0007 escrito y su fila marcada Vigente (2026-09-13)"
+    - |
+      set -u
+      # 8. AC-6: sin runbook nuevo, con el diferido anotado en la tarea 21.
+      if [ -f docs/runbook-operacion.md ]; then
+        echo "FALLA: docs/runbook-operacion.md no debia crearse en esta tarea"
+        exit 1
+      fi
+      grep -qi 'HEX-078' docs/plan/fase-a-6-empaquetado-cli.md \
+        || { echo "FALLA: docs/plan/fase-a-6-empaquetado-cli.md no anota HEX-078 en ningun lado"; exit 1; }
+      awk '/^21\. \*\*Escribir el runbook/{f=1} f{print} f && /^22\. \*\*Configuraci/{exit}' docs/plan/fase-a-6-empaquetado-cli.md \
+        | grep -qi 'OOM' \
+        || { echo "FALLA: la entrada de la tarea 21 no registra el diferido del procedimiento de respuesta a OOM"; exit 1; }
+      echo "OK: AC-6 sin runbook nuevo y con el diferido anotado en la tarea 21"
+    - |
+      set -u
+      # 9. README referencia el guardia nuevo, siguiendo el patron ya
+      # establecido para los tres guardias hermanos.
+      grep -q 'verificar_limites.sh' README.md \
+        && echo "OK: README referencia deploy/verificar_limites.sh" \
+        || { echo "FALLA: README.md no referencia deploy/verificar_limites.sh"; exit 1; }
+  target_s: 50
+acceptance:
+  human_gate: true
+limits:
+  max_files_changed: 9
+  max_diff_lines: 950
+  per_class:
+    # Enmienda 2026-09-13 (decision humana): 380 -> 460. El tope original se
+    # fijo antes de que existiera el fix_task `anclar-techo-nfr-01-en-guardia-limites`
+    # que la propia revision exigio. Ese arreglo suma la asercion de la suma de
+    # memoria, el comentario que deriva 83886080 bytes de NFR-01 y un septimo
+    # caso de autoprueba con disciplina anti-no-op. Recortar a 380 obligaria a
+    # borrar exactamente lo que la revision pidio. Contrato subdimensionado, no
+    # alcance desbordado.
+    - glob: "deploy/verificar_limites.sh"
+      max_diff_lines: 460
+    - glob: "docs/adr/adr-0007-imagen-y-aislamiento.md"
+      max_diff_lines: 240
+    - glob: "docs/plan/fase-a-6-empaquetado-cli.md"
+      max_diff_lines: 70
+    - glob: "deploy/cell.compose.yml"
+      max_diff_lines: 40
+    - glob: "deploy/celula.env.ejemplo"
+      max_diff_lines: 45
+    - glob: ".github/workflows/ci.yml"
+      max_diff_lines: 40
+    - glob: "README.md"
+      max_diff_lines: 15
+    - glob: "docs/adr/README.md"
+      max_diff_lines: 10
+    - glob: "docs/bitacora-de-descartes.md"
+      max_diff_lines: 45
+execution:
+  mode: worktree_edit
+  branch: ai/HEX-078
+retry_policy:
+  max_attempts: 3
+  escalate_after: 2

@@ -1,0 +1,12 @@
+task_id: HEX-078
+summary: Fix provisional RAM split (48m/32m), keep CPU provisional, add ulimits.nofile to both services, ship a mutation-proven static guard, and write adr-0007.
+entries:
+  - changed_files:
+      - deploy/verificar_limites.sh
+    notes:
+      - "Fix-loop attempt on top of committed f864466: reviewer found the guard's referent (deploy/celula.env.ejemplo) is its own input, so it cannot detect the referent itself drifting off NFR-01's 80 MB ceiling."
+      - "Added verificar_techo_nfr01(): anchors the SUM of the two memory limits read from a given referent against a hardcoded constant (83886080 bytes = 80m), not the 48m/32m literals, since the split is provisional and task 16 of stage A-6 may legitimately re-split it."
+      - "Called against the real referent unconditionally before dispatching to normal/--autoprueba mode, so both invocation forms exercise it."
+      - "Added a 7th --autoprueba case (mutar_referente_y_verificar_techo) that mutates a copy of the referent's HEXCELL_NUCLEO_LIMITE_MEMORIA away from 48m and asserts the new assertion catches it; follows the existing mutation-applied-check pattern before trusting a red result."
+      - "Verified manually: guard green on real files (exit 0), autoprueba 7/7, independent probe (48m -> 128m in deploy/celula.env.ejemplo) makes the guard exit 1, restoring the file makes it exit 0 again. All 9 contract verify.commands pass."
+    verify_pending: false

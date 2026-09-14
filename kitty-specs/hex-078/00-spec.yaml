@@ -1,0 +1,115 @@
+task_id: HEX-078
+summary: Fix provisional per-container resource limits, add a mechanical limits guard, and write adr-0007 (task 6, stage A-6).
+goal: >
+  Close task 6 of stage A-6 ("Fijar los limites de recursos") by fixing the provisional
+  values that split NFR-01's 80 MB per-cell ceiling between the two containers of a cell
+  (nucleo and sidecar), adding a file-descriptor limit that does not exist today, adding a
+  mechanical guard that proves those limits survive in the resolved compose template, and
+  writing adr-0007 (currently "Por escribir" in docs/adr/README.md) to transcribe the
+  already-implemented image, two-container composition, volume-ownership, and resource-limit
+  decisions (HEX-069, HEX-070, and this task). The memory and CPU values fixed here are
+  explicitly PROVISIONAL pending the measurement task (task 16 of stage A-6), per the plan's
+  declared execution order ("6 antes de 16, con ajuste posterior").
+invariants:
+  - The sum of HEXCELL_NUCLEO_LIMITE_MEMORIA and HEXCELL_SIDECAR_LIMITE_MEMORIA in
+    deploy/celula.env.ejemplo equals exactly 80m (48m nucleo + 32m sidecar), matching NFR-01's
+    per-cell ceiling on the own channel.
+  - Resource limits (memory, CPU, nofile) remain parameterized per-cell variables in
+    deploy/cell.compose.yml (${HEXCELL_<SERVICIO>_LIMITE_...}); no limit is converted into a
+    literal value inside the template.
+  - deploy/celula.env.ejemplo remains the single reference for the decided provisional values,
+    with its existing "Limites de recursos" section updated to state the values are decided
+    (not open placeholders) and provisional pending task 16.
+  - The new mechanical guard inspects the RESOLVED template (`docker compose --env-file ...
+    config`), not the raw one, consistent with the precedent set by HEX-070's volume-mount
+    guard, because the limits stay parameterized rather than becoming literals.
+  - docs/adr/adr-0007-imagen-y-aislamiento.md transcribes decisions already implemented
+    (HEX-069 base images, HEX-070 two-container composition and volume ownership, and this
+    task's resource limits); it introduces no new product or architecture decision.
+  - docs/adr/README.md's adr-0007 row moves from "Por escribir" to "Vigente" with the absolute
+    date 2026-09-13, without renumbering or reordering any other ADR row.
+  - "Nothing under crates/ or sidecar/ changes: this task only fixes configuration values, adds
+    a guard script, wires CI, and writes documentation."
+  - No *.db, *.db-wal, *.db-shm, or .env* file is versioned.
+acceptance:
+  - id: AC-1
+    statement: The provisional memory split (48m nucleo / 32m sidecar) is recorded in
+      deploy/celula.env.ejemplo, replacing the 64m/16m placeholder, with its section header no
+      longer describing the values as undecided example markers.
+    given: deploy/celula.env.ejemplo before this task, with HEXCELL_NUCLEO_LIMITE_MEMORIA=64m
+      and HEXCELL_SIDECAR_LIMITE_MEMORIA=16m under a section explicitly marked as not-yet-decided
+    when: this task's changes are applied
+    then: HEXCELL_NUCLEO_LIMITE_MEMORIA=48m and HEXCELL_SIDECAR_LIMITE_MEMORIA=32m, and the
+      section states the values are decided-but-provisional pending task 16's measurement
+  - id: AC-2
+    statement: The CPU split stays at nucleo=0.5 / sidecar=0.25 unless the blueprint records a
+      reasoned change, and in either case is documented as provisional pending task 16.
+    given: deploy/celula.env.ejemplo with HEXCELL_NUCLEO_LIMITE_CPUS=0.5 and
+      HEXCELL_SIDECAR_LIMITE_CPUS=0.25
+    when: this task's changes are applied
+    then: the CPU values (kept at 0.5/0.25, or changed with a recorded reason) appear in
+      deploy/celula.env.ejemplo tagged as provisional pending task 16's measurement
+  - id: AC-3
+    statement: A file-descriptor limit (ulimits nofile) is added to both services of
+      deploy/cell.compose.yml, parameterized per-cell, with a corresponding variable and value
+      in deploy/celula.env.ejemplo.
+    given: deploy/cell.compose.yml with no ulimits block on either the nucleo or sidecar service
+    when: this task's changes are applied
+    then: both services declare a parameterized ulimits.nofile entry, and
+      `docker compose --env-file deploy/celula.env.ejemplo -f deploy/cell.compose.yml config`
+      resolves both to a concrete nofile value
+  - id: AC-4
+    statement: A new mechanical guard deploy/verificar_limites.sh exists, checks the resolved
+      template for memory, CPU, and nofile limits on both services, supports --autoprueba
+      proving by mutation that it can fail, and is wired into .github/workflows/ci.yml the same
+      way as deploy/verificar_senales.sh (both the direct-template invocation and the
+      --autoprueba invocation).
+    given: deploy/ with no verificar_limites.sh and .github/workflows/ci.yml with no reference
+      to it
+    when: this task's changes are applied
+    then: deploy/verificar_limites.sh exits 0 against deploy/cell.compose.yml resolved with
+      deploy/celula.env.ejemplo, exits 0 under --autoprueba (proving a mutated/removed limit is
+      caught), and .github/workflows/ci.yml invokes it in both forms
+  - id: AC-5
+    statement: docs/adr/adr-0007-imagen-y-aislamiento.md is written in full, transcribing the
+      base-image (HEX-069), two-container composition and volume-ownership (HEX-070), and
+      resource-limit (this task) decisions, and docs/adr/README.md's adr-0007 row is updated to
+      Vigente with date 2026-09-13.
+    given: docs/adr/adr-0007-imagen-y-aislamiento.md does not exist; docs/adr/README.md lists
+      adr-0007 as "Por escribir"
+    when: this task's changes are applied
+    then: docs/adr/adr-0007-imagen-y-aislamiento.md exists with substantive content covering all
+      three areas, and the docs/adr/README.md row reads "Vigente (2026-09-13)" with the ADR
+      table's other rows and numbering unchanged
+  - id: AC-6
+    statement: The OOM-response procedure is explicitly deferred to task 21 of stage A-6, without
+      creating docs/runbook-operacion.md in this task.
+    given: docs/plan/fase-a-6-empaquetado-cli.md's task 21 text does not mention an OOM response
+      procedure as part of its scope
+    when: this task's changes are applied
+    then: docs/runbook-operacion.md still does not exist, and
+      docs/plan/fase-a-6-empaquetado-cli.md's task 21 entry records the OOM response procedure
+      as added scope, traceable to this task's deferral
+  - Running `docker compose --env-file deploy/celula.env.ejemplo -f deploy/cell.compose.yml
+    config` after this task succeeds and shows resolved mem_limit, cpus, and ulimits.nofile
+    values for both services (mirrors the existing verification pattern used by
+    verificar_senales.sh and verificar_aislamiento_estatica.sh).
+  - Any criterion requiring a running container under sustained load (real RSS measurement
+    under the fixed limits) is explicitly OUT OF SCOPE and deferred to task 16 of stage A-6; it
+    is not required for this task's acceptance.
+risk: medium
+non_goals:
+  - Do not measure real memory or CPU consumption under load (task 16's scope).
+  - Do not create docs/runbook-operacion.md (task 21's scope); only record the OOM-response
+    deferral as added scope of task 21.
+  - Do not change crates/hexcell or sidecar/ source code.
+  - Do not convert parameterized limits into literal values in deploy/cell.compose.yml.
+  - Do not renumber or reorder any existing ADR.
+constraints:
+  - All new/edited file content is in Spanish (docs, comments, variable-adjacent prose,
+    commit messages), per repository language rule.
+  - New guard script follows the existing style of deploy/verificar_senales.sh /
+    verificar_endurecimiento.sh / verificar_aislamiento_estatica.sh (usage header, fixed exit
+    codes, one FALLA line per reason, --autoprueba mode).
+  - No new runtime dependencies.
+  - Memory split must sum to exactly 80m (NFR-01 ceiling); do not exceed or under-fill it.

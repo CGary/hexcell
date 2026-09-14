@@ -1,0 +1,21 @@
+{
+  "task_id": "HEX-078",
+  "summary": "Contract amended (380->460 for verificar_limites.sh, documented/dated/reasoned); contract-check now clean on the unchanged diff. Approved.",
+  "verdict": "approve",
+  "contract_compliance": true,
+  "forbidden_files_touched": [],
+  "unrequested_refactor": false,
+  "missing_tests": [],
+  "functional_risk": "low",
+  "notes": [
+    "contract-check ok=true against the amended 02-contract.yaml, changed_files/diff_stat/file_diffs recomputed from git -C worktrees/HEX-078 diff main...HEAD; not_checked: forbid.behaviors (verified by hand, see below). Zero violations, including deploy/verificar_limites.sh now measured against the amended max_diff_lines=460 (actual 445, within budget).",
+    "Confirmed git -C worktrees/HEX-078 log --oneline main..HEAD still shows exactly two commits, f864466 and cc668fb; no third commit appeared. diff --stat/--numstat are byte-identical in file list and per-file insertion/deletion counts to what was reviewed in pass 2 (9 files, 712 insertions/12 deletions, deploy/verificar_limites.sh at 445/0).",
+    "Read the full amended 02-contract.yaml end to end. Only the deploy/verificar_limites.sh per_class entry changed (380 -> 460), carrying an inline Spanish comment with the amendment date (2026-09-13) and the stated reasoning (ceiling predates the review-mandated fix_task). Everything else -- touch list, forbid.files, forbid.behaviors (17 entries), the other 8 per_class globs and their numbers, global max_diff_lines=950 and max_files_changed=9, verify.commands (all 9), acceptance.human_gate, execution/retry_policy -- reads as the same content described and quoted in the pass-2 06-review.json handed to me; no git history exists for .ai/** (gitignored, untracked) so this is a full-read cross-check against pass-2's recorded notes rather than a mechanical git diff, and I found no other change.",
+    "05-validation.json: all 9 contract verify.commands show exit_code 0 with matching OK output_excerpts, plus a 10th non-contract entry recording the orchestrator's independent mutation probe on the NFR-01 sum guard, also exit_code 0. overall_result=passed.",
+    "Spot-checked rather than re-derived pass-2's closed fix_task anclar-techo-nfr-01-en-guardia-limites: confirmed NFR01_TECHO_BYTES=83886080 is present with its derivation comment (80 MiB = 80*1048576, NFR-01 of the PRD) directly above it; confirmed the byte conversion path reuses the same arithmetic pattern already used elsewhere in the script (no second divergent converter introduced); confirmed the source contains the PASA/FALLA templating used by both the original six-case loop and the added seventh NFR-01 case (two template sites, matching a six-case loop plus one added case, not a search for a literal count of 7).",
+    "Spot-checked cross-file regression risk: docs/bitacora-de-descartes.md still shows D-52 as the sole new entry (heading at line ~721), table row added without editing any prior row, header timestamp updated to 2026-09-13 (D-52); deploy/cell.compose.yml still carries read_only, cap_drop, security_opt and stop_grace_period on both services and only named-volume mounts (datos:/var/lib/hexcell), no bind-mount form; docs/runbook-operacion.md still absent from the tree.",
+    "Grepped the full cumulative diff (git diff main...HEAD) and both commit messages case-insensitively for co-authored-by/anthropic/claude/generated-by: zero matches.",
+    "Prior fix_task recortar-verificar-limites-bajo-presupuesto-per-class is resolved via the human's contract-amendment path (option b offered in that fix_task), not by trimming the script; no code change was required or made."
+  ],
+  "fix_tasks": []
+}

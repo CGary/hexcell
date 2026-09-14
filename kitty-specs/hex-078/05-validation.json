@@ -1,0 +1,68 @@
+{
+  "commands": [
+    {
+      "command": "set -u\n# 1. AC-1: memory split fixed to 48m/32m and the section header no\n# longer calls the values undecided.\ngrep -q '^HEXCELL_NUCLEO_LIMITE_MEMORIA=48m$' deploy/celula.env.ejemplo \\\n  \u0026\u0026 grep -q '^HEXCELL_SIDECAR_LIMITE_MEMORIA=32m$' deploy/celula.env.ejemplo \\\n  || { echo \"FALLA: deploy/celula.env.ejemplo no fija 48m/32m\"; exit 1; }\nif grep -q 'no decididos aquí' deploy/celula.env.ejemplo; then\n  echo \"FALLA: la seccion de limites de recursos todavia se describe como no decidida\"\n  exit 1\nfi\ngrep -qi 'provisional' deploy/celula.env.ejemplo \\\n  || { echo \"FALLA: deploy/celula.env.ejemplo no marca los valores como provisionales pendientes de la tarea 16\"; exit 1; }\necho \"OK: AC-1 memoria 48m/32m fijada y documentada como decidida-pero-provisional\"\n",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "OK: AC-1 memoria 48m/32m fijada y documentada como decidida-pero-provisional"
+    },
+    {
+      "command": "set -u\n# 2. AC-2: CPU 0.5/0.25 (o un cambio razonado) presente y marcado\n# provisional.\ngrep -qE '^HEXCELL_NUCLEO_LIMITE_CPUS=' deploy/celula.env.ejemplo \\\n  \u0026\u0026 grep -qE '^HEXCELL_SIDECAR_LIMITE_CPUS=' deploy/celula.env.ejemplo \\\n  || { echo \"FALLA: faltan las variables de CPU en deploy/celula.env.ejemplo\"; exit 1; }\necho \"OK: AC-2 variables de CPU presentes (valor validado por lectura humana; ver 01-blueprint.yaml)\"\n",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "OK: AC-2 variables de CPU presentes (valor validado por lectura humana; ver 01-blueprint.yaml)"
+    },
+    {
+      "command": "set -u\n# 3. AC-3: nofile parametrizado en ambos servicios, presente en las\n# dos variables del referente.\ngrep -qE '^HEXCELL_NUCLEO_LIMITE_NOFILE=' deploy/celula.env.ejemplo \\\n  \u0026\u0026 grep -qE '^HEXCELL_SIDECAR_LIMITE_NOFILE=' deploy/celula.env.ejemplo \\\n  || { echo \"FALLA: faltan HEXCELL_NUCLEO_LIMITE_NOFILE / HEXCELL_SIDECAR_LIMITE_NOFILE\"; exit 1; }\ngrep -q 'ulimits' deploy/cell.compose.yml \\\n  || { echo \"FALLA: deploy/cell.compose.yml no declara ulimits\"; exit 1; }\ncommand -v docker \u003e/dev/null 2\u003e\u00261 \u0026\u0026 docker compose version \u003e/dev/null 2\u003e\u00261 \\\n  || { echo \"FALLA: docker compose no disponible; AC-3 no se puede verificar por resolucion\"; exit 1; }\ndocker compose --env-file deploy/celula.env.ejemplo -f deploy/cell.compose.yml config \\\n  | grep -A1 'ulimits' | grep -qE 'nofile: [0-9]+' \\\n  || { echo \"FALLA: docker compose config no resuelve ulimits.nofile a un entero concreto\"; exit 1; }\necho \"OK: AC-3 ulimits.nofile parametrizado y resuelto a un entero concreto en ambos servicios\"\n",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "OK: AC-3 ulimits.nofile parametrizado y resuelto a un entero concreto en ambos servicios"
+    },
+    {
+      "command": "set -u\n# 4. AC-4: el guardia nuevo corre contra los archivos REALES (sin\n# mutar) y debe pasar. Un entorno sin docker/compose es FALLA.\ncommand -v docker \u003e/dev/null 2\u003e\u00261 \u0026\u0026 docker compose version \u003e/dev/null 2\u003e\u00261 \\\n  || { echo \"FALLA: docker/compose no disponible; AC-4 no se puede verificar\"; exit 1; }\ntest -x deploy/verificar_limites.sh \\\n  || { echo \"FALLA: deploy/verificar_limites.sh no existe o no es ejecutable\"; exit 1; }\nbash deploy/verificar_limites.sh deploy/cell.compose.yml\n",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "OK: mem_limit, cpus y ulimits.nofile coinciden exactamente con el referente en nucleo y sidecar"
+    },
+    {
+      "command": "set -u\n# 5. AC-4: prueba de mutacion. Un guardia que nunca se vio fallar no\n# es todavia un guardia.\ncommand -v docker \u003e/dev/null 2\u003e\u00261 \u0026\u0026 docker compose version \u003e/dev/null 2\u003e\u00261 \\\n  || { echo \"FALLA: docker/compose no disponible; la autoprueba no se puede correr\"; exit 1; }\nbash deploy/verificar_limites.sh --autoprueba\n",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "e nucleo -\u003e el guardia falla como debe\nPASA: corromper cpus de nucleo -\u003e el guardia falla como debe\nPASA: corromper ulimits.nofile de nucleo -\u003e el guardia falla como debe\nPASA: corromper mem_limit de sidecar -\u003e el guardia falla como debe\nPASA: corromper cpus de sidecar -\u003e el guardia falla como debe\nPASA: corromper ulimits.nofile de sidecar -\u003e el guardia falla como debe\nPASA: corromper el techo NFR-01 en el referente (la suma deja de ser 80m) -\u003e el guardia falla como debe\n\nResumen autoprueba: 7/7 casos pasan (cada límite roto debe hacer fallar al guardia)\nOK: el guardia falla bajo cada mutación"
+    },
+    {
+      "command": "set -u\n# 6. El guardia nuevo queda en CI, en ambas formas.\ngrep -q 'verificar_limites.sh' .github/workflows/ci.yml \\\n  || { echo \"FALLA: .github/workflows/ci.yml no invoca deploy/verificar_limites.sh\"; exit 1; }\ngrep -q -- '--autoprueba' .github/workflows/ci.yml \\\n  || { echo \"FALLA: .github/workflows/ci.yml no corre ninguna autoprueba\"; exit 1; }\nOCURRENCIAS=$(grep -c 'verificar_limites.sh' .github/workflows/ci.yml)\ntest \"$OCURRENCIAS\" -ge 2 \\\n  || { echo \"FALLA: .github/workflows/ci.yml no invoca verificar_limites.sh en las dos formas (directa y --autoprueba)\"; exit 1; }\necho \"OK: CI invoca verificar_limites.sh en forma directa y --autoprueba\"\n",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "OK: CI invoca verificar_limites.sh en forma directa y --autoprueba"
+    },
+    {
+      "command": "set -u\n# 7. AC-5: adr-0007 existe, cubre las tres areas, y el README lo marca\n# Vigente con la fecha correcta, sin tocar otras filas.\ntest -f docs/adr/adr-0007-imagen-y-aislamiento.md \\\n  || { echo \"FALLA: docs/adr/adr-0007-imagen-y-aislamiento.md no existe\"; exit 1; }\nfor marcador in \"HEX-069\" \"HEX-070\" \"HEX-078\" \"ulimits\" \"80\"; do\n  grep -qi \"$marcador\" docs/adr/adr-0007-imagen-y-aislamiento.md \\\n    || { echo \"FALLA: adr-0007 no menciona [$marcador]\"; exit 1; }\ndone\ngrep -qE '^\\| `adr-0007-imagen-y-aislamiento\\.md` \\|.*Vigente.*\\(2026-09-13\\)' docs/adr/README.md \\\n  || { echo \"FALLA: docs/adr/README.md no marca adr-0007 como Vigente (2026-09-13)\"; exit 1; }\nOTRAS_VIGENTE_FALTANTES=$(grep -c '| \\*\\*Vigente\\*\\*' docs/adr/README.md)\ntest \"$OTRAS_VIGENTE_FALTANTES\" -ge 30 \\\n  || { echo \"FALLA: el conteo de filas Vigente en docs/adr/README.md bajo de lo esperado; alguna otra fila pudo haberse alterado\"; exit 1; }\necho \"OK: AC-5 adr-0007 escrito y su fila marcada Vigente (2026-09-13)\"\n",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "OK: AC-5 adr-0007 escrito y su fila marcada Vigente (2026-09-13)"
+    },
+    {
+      "command": "set -u\n# 8. AC-6: sin runbook nuevo, con el diferido anotado en la tarea 21.\nif [ -f docs/runbook-operacion.md ]; then\n  echo \"FALLA: docs/runbook-operacion.md no debia crearse en esta tarea\"\n  exit 1\nfi\ngrep -qi 'HEX-078' docs/plan/fase-a-6-empaquetado-cli.md \\\n  || { echo \"FALLA: docs/plan/fase-a-6-empaquetado-cli.md no anota HEX-078 en ningun lado\"; exit 1; }\nawk '/^21\\. \\*\\*Escribir el runbook/{f=1} f{print} f \u0026\u0026 /^22\\. \\*\\*Configuraci/{exit}' docs/plan/fase-a-6-empaquetado-cli.md \\\n  | grep -qi 'OOM' \\\n  || { echo \"FALLA: la entrada de la tarea 21 no registra el diferido del procedimiento de respuesta a OOM\"; exit 1; }\necho \"OK: AC-6 sin runbook nuevo y con el diferido anotado en la tarea 21\"\n",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "OK: AC-6 sin runbook nuevo y con el diferido anotado en la tarea 21"
+    },
+    {
+      "command": "set -u\n# 9. README referencia el guardia nuevo, siguiendo el patron ya\n# establecido para los tres guardias hermanos.\ngrep -q 'verificar_limites.sh' README.md \\\n  \u0026\u0026 echo \"OK: README referencia deploy/verificar_limites.sh\" \\\n  || { echo \"FALLA: README.md no referencia deploy/verificar_limites.sh\"; exit 1; }\n",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "OK: README referencia deploy/verificar_limites.sh"
+    },
+    {
+      "command": "sonda de mutacion independiente del orquestador sobre deploy/celula.env.ejemplo (fuera del contrato)",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "48m-\u003e128m (suma rota): guardia exit=1 con FALLA por suma 167772160 != 83886080. Re-reparto legitimo 56m/24m (suma intacta): guardia exit=0. Restaurado: exit=0. El guardia discrimina en ambas direcciones."
+    }
+  ],
+  "executed_at": "2026-09-13T00:00:00Z",
+  "overall_result": "passed",
+  "summary": "Los nueve comandos del contrato salen 0 tras el fix; la sonda de mutacion del orquestador confirma el anclaje de la suma NFR-01.",
+  "task_id": "HEX-078"
+}
