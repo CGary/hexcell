@@ -58,3 +58,8 @@ las aísla es la red de célula—, así que no se parametriza.
   aislamiento entre células**: las tareas 5, 11 y 17 de la etapa A-6. Esta
   tarea es de verificación estática: `docker compose config` resuelve la
   plantilla sin crear ningún contenedor.
+* **El vigilante de vida externo (dead-man's switch, HEX-077-d)**: es una
+  entrada de cron **por servidor**, no por célula, e instalada fuera de esta
+  plantilla. Nunca va en `deploy/celula.env.ejemplo` ni en este archivo — un
+  cron por célula convertiría un anfitrión con N células en N pings idénticos
+  hacia el mismo servicio externo. Ver `docs/runbook-vigilancia-externa.md`.
