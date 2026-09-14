@@ -1,0 +1,148 @@
+task_id: HEX-074-b
+summary: >-
+    Typed exit-code enum and typed stdout/stderr output sinks for hexcell-admin, plus adr-0034. No
+    parser, no subcommands, no simulation mode: HEX-074-c consumes this contract.
+affected_files:
+    - crates/hexcell-admin/src/codigo_de_salida.rs
+    - crates/hexcell-admin/src/salida.rs
+    - crates/hexcell-admin/src/lib.rs
+    - crates/hexcell-admin/tests/codigo_de_salida.rs
+    - crates/hexcell-admin/tests/salida.rs
+    - docs/adr/adr-0034-contrato-de-codigos-de-salida-y-sumideros-de-salida.md
+    - docs/adr/README.md
+symbols:
+    - CodigoDeSalida
+    - CodigoDeSalida::Exito
+    - CodigoDeSalida::Fallo
+    - CodigoDeSalida::UsoIncorrecto
+    - CodigoDeSalida::NoImplementadoTodavia
+    - CodigoDeSalida::codigo
+    - From<CodigoDeSalida> for std::process::ExitCode
+    - Salida
+    - Salida::nueva
+    - Salida::estandar
+    - Salida::linea
+    - Salida::diagnostico
+dependencies:
+    - crates/hexcell-admin/Cargo.toml
+    - crates/hexcell-admin/src/estado_de_celula.rs
+    - crates/hexcell-admin/tests/estado_de_celula.rs
+    - docs/plan/fase-a-6-empaquetado-cli.md
+test_scenarios:
+    - statement: >-
+          Each CodigoDeSalida variant maps to its own numeric value, asserted one variant at a time
+          (Exito=0, Fallo=1, UsoIncorrecto=2, NoImplementadoTodavia=3), and a set of all numeric
+          values has the same cardinality as the variant list, proving non-overlap.
+      covers:
+          - AC-1
+    - statement: >-
+          ExitCode::from(CodigoDeSalida::Exito) equals ExitCode::SUCCESS and the conversion of every
+          other variant is built through ExitCode::from(u8) with that variant's number.
+      covers:
+          - AC-2
+    - statement: >-
+          NoImplementadoTodavia is numerically distinct from both Exito and Fallo, asserted directly
+          rather than inferred from the set-cardinality check.
+      covers:
+          - AC-3
+    - statement: >-
+          UsoIncorrecto is numerically distinct from Fallo and from Exito, so HEX-074-c can reject an
+          unknown subcommand with a code the operator can tell apart from a real failure.
+      covers:
+          - AC-4
+    - statement: >-
+          A Salida built over two independent in-memory byte buffers routes human-readable text only
+          to the stdout buffer and diagnostics only to the stderr buffer; the test asserts the
+          expected bytes in one buffer AND emptiness/absence in the other, in both directions.
+      covers:
+          - AC-5
+    - statement: >-
+          Every message emitted by the new modules is in Spanish, asserted by matching the exact
+          Spanish literal captured from the sink buffers.
+      covers:
+          - AC-6
+    - statement: >-
+          A write failure on either sink (simulated with a Write implementation that always returns
+          io::Error) is returned as a value the caller maps to a CodigoDeSalida, and never panics or
+          unwraps; the test drives the failing writer and asserts the error path.
+      covers:
+          - AC-7
+    - statement: >-
+          The exhaustive match over CodigoDeSalida in tests/codigo_de_salida.rs has no wildcard arm
+          and no rest pattern, so adding or removing a variant breaks compilation of the external
+          test crate (the estado_de_celula.rs precedent).
+      covers:
+          - AC-1
+strategy:
+    - step: 1
+      action: >-
+          Create the CodigoDeSalida Value Object as a closed (not non_exhaustive) enum with the four
+          variants and an explicit u8 discriminant accessor. Closedness is deliberate so external
+          tests match exhaustively and a future variant breaks them.
+      files:
+          - crates/hexcell-admin/src/codigo_de_salida.rs
+    - step: 2
+      action: >-
+          Implement From<CodigoDeSalida> for std::process::ExitCode routed through ExitCode::from(u8)
+          so the numeric contract and the process exit status cannot drift apart.
+      files:
+          - crates/hexcell-admin/src/codigo_de_salida.rs
+    - step: 3
+      action: >-
+          Create the Salida Application Service generic over two std::io::Write sinks, with an
+          injecting constructor for tests and a production constructor over io::stdout/io::stderr.
+          Write methods return io::Result; nothing uses println!/eprintln!, whose panic on a broken
+          pipe would violate the panic = "abort" invariant.
+      files:
+          - crates/hexcell-admin/src/salida.rs
+    - step: 4
+      action: >-
+          Declare both new modules in lib.rs and update its doc comment so it stops claiming the
+          return codes belong to a later task.
+      files:
+          - crates/hexcell-admin/src/lib.rs
+    - step: 5
+      action: >-
+          Write the external test crates asserting the numeric contract variant by variant, the
+          ExitCode conversion, the stream separation over injected buffers, and the non-panicking
+          write-failure path.
+      files:
+          - crates/hexcell-admin/tests/codigo_de_salida.rs
+          - crates/hexcell-admin/tests/salida.rs
+    - step: 6
+      action: >-
+          Write adr-0034 in Spanish recording the exit-code contract and the sink discipline, with
+          the absolute date 2026-09-13, and append its row to the docs/adr/README.md table. The
+          number is 0034, not 0033.
+      files:
+          - docs/adr/adr-0034-contrato-de-codigos-de-salida-y-sumideros-de-salida.md
+          - docs/adr/README.md
+risks:
+    - >-
+        ADR NUMBERING MISMATCH (verified on disk 2026-09-13): the dispatch brief said to take the
+        next free number above adr-0032, but adr-0033-metricas-de-canal-propio-en-el-sidecar.md
+        already exists and is listed as Vigente (2026-09-12). The next free number is 0034. Using
+        0033 would reuse a number, which the documentary hierarchy forbids.
+    - >-
+        PLAN DIVERGENCE: docs/plan/fase-a-6-empaquetado-cli.md task 10 still records a TWO-way split
+        and assigns to HEX-074-b the parser, subcommands, simulation mode and src/main.rs wiring,
+        i.e. the pre-narrowing scope; it does not mention HEX-074-c at all. 00-spec.yaml (narrowed
+        2026-09-13) is authoritative here. Updating the plan file is NOT in this task's touch list;
+        the human must decide whether HEX-074-c or a docs commit reconciles it.
+    - >-
+        SPEC INVARIANT SLIGHTLY UNDER-LISTS THE DOCKER SURFACE: the invariant names ClienteDocker,
+        ErrorDeClienteDocker, ConexionDocker and RespuestaHttp, but docker/mod.rs also exports
+        ResultadoDeArranque. Treat the whole docker public surface as frozen; the task touches none
+        of it.
+    - >-
+        BROKEN-PIPE PANIC TRAP: println!/eprintln! panic when stdout is closed (piped into head).
+        With panic = "abort" in the release profile that is an abort, not a clean exit code. The sink
+        must return io::Result and the macros must not appear in the new modules.
+    - >-
+        CLOSED-ENUM TENSION: the enum is deliberately NOT non_exhaustive so external tests stay
+        exhaustive; that makes adding a variant a breaking change for any external consumer. Within
+        this workspace that is the intended guard, matching the estado_de_celula.rs precedent.
+    - >-
+        Phase 1b external summarization degraded (opencode_go cell returned no output within the
+        window); the file set was instead read directly and targetedly, as the skill's guardrail
+        permits. No prior failed task overlaps these files (failure-lookup returned null).

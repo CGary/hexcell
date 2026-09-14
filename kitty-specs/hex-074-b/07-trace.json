@@ -1,0 +1,82 @@
+{
+  "attempts": [],
+  "context_overflows": [],
+  "events": [
+    {
+      "at": "2026-09-13T19:57:27Z",
+      "event": "risk_level_calculated",
+      "level": "medium",
+      "reasons": [
+        "file_count_high: 7",
+        "symbols_count_high: 12"
+      ],
+      "signals": {
+        "files_count": 7,
+        "sensitive_matches": [],
+        "symbols_count": 12
+      }
+    },
+    {
+      "at": "2026-09-13T19:57:27Z",
+      "calculated": "medium",
+      "declared": "high",
+      "event": "risk_level_divergence",
+      "note": "Human-declared risk in 00-spec.yaml wins; scorer is advisory. 00-spec.yaml not modified.",
+      "reasons": [
+        "file_count_high: 7",
+        "symbols_count_high: 12"
+      ]
+    },
+    {
+      "blocked": "",
+      "candidate": {
+        "agent": "opencode_go",
+        "level": 3,
+        "model": "opencode-go/kimi-k3"
+      },
+      "dispatch_id": "",
+      "inputs_snapshot": {
+        "complexity_band": "L",
+        "control": {
+          "disabled": [
+            {
+              "at": "2026-09-09T16:46:15Z",
+              "by": "human",
+              "reason": "Antigravity/Gemini subscription retired 2026-09-09 (human decision); propagated from quorum",
+              "target": "agy"
+            },
+            {
+              "at": "2026-09-09T16:46:15Z",
+              "by": "human",
+              "reason": "Antigravity/Gemini subscription retired 2026-09-09 (human decision); propagated from quorum",
+              "target": "agy_edit"
+            }
+          ],
+          "updated_at": "2026-09-09T16:46:15Z"
+        },
+        "exclusions": [],
+        "hashes": {
+          "agents_yaml": "ea0f730316f5ee07d999731405e39b6d5a2b8040b6222489976f447ac2b8f450",
+          "config_yaml": "a825e4199387286946c8e30e7ace95977c419314cc8e1721a79afa5fd642ce4f",
+          "routing_yaml": "8c3b821b2d603e67dc1c220721291fbb5130799d88712d0deaa4b90bbf5479cc"
+        },
+        "incumbent_family": "",
+        "level": 3,
+        "phase": "implement",
+        "risk": "high",
+        "router_version": "fleet-route/v1"
+      },
+      "reasons": null,
+      "reroute_budget": 2,
+      "review_family_degraded": false,
+      "ts": "2026-09-13T19:58:27Z",
+      "type": "routing_decision"
+    }
+  ],
+  "execution_mode": "worktree_edit",
+  "started_at": "2026-09-13T19:57:27Z",
+  "summary": "Add CodigoDeSalida (typed exit codes) and Salida (typed stdout/stderr sinks) to hexcell-admin, with adr-0034. Zero new dependencies, no parser, no subcommands.",
+  "task_id": "HEX-074-b",
+  "total_cost_usd": 0,
+  "violations": []
+}

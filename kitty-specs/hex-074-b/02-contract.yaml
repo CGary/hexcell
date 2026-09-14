@@ -1,0 +1,112 @@
+task_id: HEX-074-b
+summary: >-
+    Add CodigoDeSalida (typed exit codes) and Salida (typed stdout/stderr sinks) to hexcell-admin,
+    with adr-0034. Zero new dependencies, no parser, no subcommands.
+goal: >-
+    Give hexcell-admin a typed exit-code contract and a typed output-sink discipline that every later
+    CLI command consumes. The enum is closed and maps to distinct u8 values converted into
+    std::process::ExitCode via ExitCode::from(u8); success is 0, and both a usage/invocation-error
+    variant and a reserved not-implemented variant are numerically distinct from the generic failure
+    code. Human-readable output goes to a stdout sink and diagnostics to a stderr sink, both
+    injectable so a test can capture the two streams separately. Nothing may panic: write failures
+    are returned as values that become exit codes. Argument parsing, subcommand dispatch, simulation
+    mode and the src/main.rs wiring belong to sibling task HEX-074-c and are out of scope here.
+read:
+    - .ai/tasks/active/HEX-074-b/00-spec.yaml
+    - .ai/tasks/active/HEX-074-b/01-blueprint.yaml
+    - crates/hexcell-admin/Cargo.toml
+    - crates/hexcell-admin/src/estado_de_celula.rs
+    - crates/hexcell-admin/tests/estado_de_celula.rs
+    - crates/hexcell-admin/src/docker/mod.rs
+    - docs/adr/README.md
+    - docs/adr/adr-0033-metricas-de-canal-propio-en-el-sidecar.md
+    - docs/plan/fase-a-6-empaquetado-cli.md
+touch:
+    - crates/hexcell-admin/src/codigo_de_salida.rs
+    - crates/hexcell-admin/src/salida.rs
+    - crates/hexcell-admin/src/lib.rs
+    - crates/hexcell-admin/tests/codigo_de_salida.rs
+    - crates/hexcell-admin/tests/salida.rs
+    - docs/adr/adr-0034-contrato-de-codigos-de-salida-y-sumideros-de-salida.md
+    - docs/adr/README.md
+forbid:
+    files:
+        - Cargo.toml
+        - Cargo.lock
+        - crates/hexcell-admin/Cargo.toml
+        - crates/hexcell-admin/src/main.rs
+        - crates/hexcell-admin/src/estado_de_celula.rs
+        - crates/hexcell-admin/src/docker/cliente.rs
+        - crates/hexcell-admin/src/docker/error.rs
+        - crates/hexcell-admin/src/docker/mod.rs
+        - crates/hexcell-admin/src/docker/transporte.rs
+        - crates/hexcell-admin/tests/cliente_docker.rs
+        - crates/hexcell-admin/tests/comun/mod.rs
+        - crates/hexcell-admin/tests/estado_de_celula.rs
+        - crates/hexcell-core/**
+        - docs/bitacora-de-descartes.md
+        - docs/PRD.md
+        - docs/STATUS.md
+        - docs/plan/fase-a-6-empaquetado-cli.md
+        - sidecar/**
+    behaviors:
+        - >-
+            Do NOT add any dependency to any crate. hexcell-admin stays exactly at serde +
+            serde_json, and hexcell-core stays at zero external dependencies.
+        - >-
+            Do NOT write an argument parser, subcommand dispatch, a simulation/dry-run mode, or wire
+            src/main.rs. HEX-074-c owns all of that and consumes this contract.
+        - >-
+            Do NOT log the clap/argh/pico-args discard in docs/bitacora-de-descartes.md; that discard
+            belongs to HEX-074-c, the task that actually hand-rolls the parser.
+        - >-
+            Do NOT redefine, weaken or rewrite CicloDeVidaDeCelula, EstadoDeCelula or
+            TransicionInvalida, and do not modify or delete any existing docker or estado_de_celula
+            test.
+        - >-
+            Do NOT use println!, eprintln!, print! or write! to the standard streams directly in the
+            new modules. Those macros panic on a broken pipe and the release profile sets
+            panic = "abort". All output goes through the typed sink, which returns io::Result.
+        - >-
+            No production code path may panic, unwrap, expect, index out of bounds, or call
+            std::process::exit. Failures are values that become exit codes.
+        - >-
+            The new ADR takes the number 0034. adr-0033 already exists (own-channel sidecar metrics,
+            Vigente 2026-09-12). Numbering is sequential and never reused or reordered.
+        - >-
+            Do NOT mark CodigoDeSalida as #[non_exhaustive], and do NOT use a wildcard arm or a rest
+            pattern when matching it in the external tests. Adding or removing a variant must break
+            the test crate's compilation.
+        - >-
+            All identifiers, comments, doc comments and documentation are written in Spanish. Commit
+            messages are conventional commits with NO AI attribution line of any kind.
+        - >-
+            Dates written into code or documentation are absolute (2026-09-13), never relative.
+        - >-
+            Do NOT invoke Docker, construct a ClienteDocker, or implement the real behaviour of any
+            cell subcommand.
+verify:
+    commands:
+        - cargo build --workspace
+        - cargo test -p hexcell-admin
+        - cargo fmt --check
+        - cargo clippy --workspace -- -D warnings
+    target_s: 60
+acceptance:
+    human_gate: true
+limits:
+    max_files_changed: 7
+    max_diff_lines: 750
+    per_class:
+        - glob: crates/hexcell-admin/src/**
+          max_diff_lines: 320
+        - glob: crates/hexcell-admin/tests/**
+          max_diff_lines: 300
+        - glob: docs/adr/**
+          max_diff_lines: 140
+execution:
+    mode: worktree_edit
+    branch: ai/HEX-074-b
+retry_policy:
+    max_attempts: 2
+    escalate_after: 2

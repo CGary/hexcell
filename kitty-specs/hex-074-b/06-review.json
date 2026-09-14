@@ -1,0 +1,24 @@
+{
+  "task_id": "HEX-074-b",
+  "summary": "CodigoDeSalida and Salida<S,D> match spec/contract exactly; all 4 verify commands passed; no forbidden files touched; no panics; exhaustive matches; ADR-0034 correct.",
+  "verdict": "approve",
+  "contract_compliance": true,
+  "forbidden_files_touched": [],
+  "unrequested_refactor": false,
+  "missing_tests": [],
+  "functional_risk": "low",
+  "notes": [
+    "contract-check ok=true; not_checked: forbid.behaviors (verified by hand below)",
+    "Each CodigoDeSalida variant asserted individually (exito_vale_cero, fallo_vale_uno, uso_incorrecto_vale_dos, no_implementado_todavia_vale_tres) plus a HashSet cardinality check for non-overlap, satisfying AC-1 without a vacuous formatting/round-trip guard",
+    "ExitCode conversion tested both for Exito == ExitCode::SUCCESS and for every variant via ExitCode::from(u8) equality, satisfying AC-2",
+    "Stream separation asserted in both directions in tests/salida.rs: linea() checked to populate stdout buffer AND leave stderr buffer empty, diagnostico() checked the mirror case, so the guard is not satisfiable by a bug that duplicates output to both streams",
+    "Write-failure path exercised with EscritorQueFalla for both linea() and diagnostico(), asserting Err without touching a real broken pipe; no panic/unwrap/expect/println!/eprintln!/process::exit found in src/codigo_de_salida.rs or src/salida.rs (grep clean)",
+    "Match over CodigoDeSalida in codigo() (production) and in tests/codigo_de_salida.rs (etiqueta helper) both have 4 explicit arms and no wildcard/rest pattern, following the estado_de_celula.rs precedent",
+    "hexcell-admin Cargo.toml and hexcell-core untouched (forbidden-files list clean); docker module and estado_de_celula.rs untouched; no argument parser, subcommands, simulation mode, main.rs wiring, or bitacora-de-descartes.md entry present, correctly matching the decomposition boundary",
+    "adr-0034 is the correct next free number after adr-0033, added as a docs/adr/README.md row in the same commit, dated 2026-09-13 (absolute), and does not rewrite or contradict any earlier ADR",
+    "All identifiers, comments and doc comments are in Spanish; commit message is a conventional feat() commit with no AI attribution line",
+    "Control-plane naming (CodigoDeSalida, Salida, Exito/Fallo/UsoIncorrecto/NoImplementadoTodavia) does not shadow or overlap the IPC session-state vocabulary (activa/reconectando/desvinculada/pausada)",
+    "quorum analyze acceptance-coverage flagged 01-blueprint.yaml test_scenarios[*].covers referencing AC-1..AC-7 as 'unknown acceptance id' because 00-spec.yaml's acceptance list has no explicit id: AC-N tags; this is a pre-existing spec/blueprint authoring format mismatch, not a defect introduced by this diff (00-spec.yaml is read-only reference, not in this task's touch list), and every spec acceptance line is in fact covered 1:1 by a test scenario or by 05-validation.json's command results"
+  ],
+  "fix_tasks": []
+}

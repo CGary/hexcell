@@ -1,0 +1,49 @@
+task_id: HEX-074-b
+parent_task: HEX-074
+depends_on:
+    - HEX-074-a
+summary: 'Exit-code contract and output sinks for hexcell-admin: named enumeration with distinct values, stdout/stderr separation, and the reserved not-implemented outcome.'
+goal: >-
+    Subset of HEX-074, narrowed on 2026-09-13: give hexcell-admin a typed exit-code contract and a
+    typed output-sink discipline that every later CLI command will use. No argument parser, no
+    subcommands and no simulation mode are built here; they belong to sibling task HEX-074-c, which
+    consumes this contract.
+risk: high
+acceptance:
+    - The exit-code contract is a named enumeration whose variants map to distinct, non-overlapping numeric values, asserted one by one in a test.
+    - The enumeration converts into std::process::ExitCode via ExitCode::from(u8), and the success variant is numeric 0.
+    - A reserved "not implemented yet" outcome exists as its own documented variant, numerically distinct from both success and the generic failure code.
+    - A usage/invocation-error variant exists and is numerically distinct from the generic failure code, so HEX-074-c can reject unknown subcommands with it.
+    - Human-readable output goes to stdout and diagnostics go to stderr, through a typed sink, asserted by a test that captures both streams separately.
+    - Every message emitted by this task is written in Spanish.
+    - No code path introduced here can panic; failures are values that become exit codes.
+    - The dependency set of hexcell-admin is unchanged.
+    - The exit-code contract is recorded in a new ADR in the same commit that introduces it.
+    - cargo build --workspace, cargo test -p hexcell-admin, cargo fmt --check and cargo clippy --workspace -- -D warnings all pass.
+invariants:
+    - hexcell-admin adds ZERO new dependencies; its dependency set stays exactly serde + serde_json.
+    - crates/hexcell-core is not touched and keeps zero external dependencies (cargo tree -p hexcell-core).
+    - The public API of the existing docker module (ClienteDocker, ErrorDeClienteDocker, ConexionDocker, RespuestaHttp) is unchanged; no existing docker test is modified or deleted.
+    - The cell state aggregate delivered by HEX-074-a (CicloDeVidaDeCelula, crates/hexcell-admin/src/estado_de_celula.rs) is consumed if needed but not redefined, weakened or rewritten.
+    - All new code identifiers, comments, doc comments and documentation are written in Spanish; commit messages are conventional commits with no AI attribution.
+    - No code path ends in panic; the release profile sets panic = "abort", so every failure is reported on stderr and expressed as an exit code.
+    - cargo build --workspace, cargo test --workspace, cargo fmt --check and cargo clippy --workspace -- -D warnings stay green.
+non_goals:
+    - Do not write the argument parser, the six cell subcommands, the simulation (dry-run) mode or the wiring of src/main.rs; sibling task HEX-074-c owns all of that and consumes this contract.
+    - Do not log the discard of clap, argh and pico-args in docs/bitacora-de-descartes.md; that discard belongs to HEX-074-c, which is the task that actually hand-rolls the parser.
+    - Do not redefine or extend the cell state machine; HEX-074-a closed it.
+    - Do not implement the control-plane persistent state store, its schema or its migrations.
+    - Do not invoke Docker, construct a ClienteDocker in any code path, or extend the docker module.
+    - Do not implement the real behaviour of cell pause, unpause, terminate, rebind, list or status; tasks 11 to 15 own those.
+    - Do not implement Telegram alerts, metrics, the dead-man's switch, the canary rollout or any observability surface.
+    - Do not add an external argument-parsing crate (clap, argh, pico-args, structopt) or any other new dependency.
+constraints:
+    - The exit-code contract is an architectural decision and is recorded in a new ADR taking the next free number above adr-0032 (claimed by HEX-072-b), added to the docs/adr/README.md table; numbering is sequential and never reused.
+    - Meaningful exit codes require ExitCode::from(u8); the repository currently only uses ExitCode::SUCCESS and ExitCode::FAILURE, so this task introduces the richer contract deliberately and documents it.
+    - EXPLICITLY DEFERRED - argument parsing, subcommand dispatch and simulation mode are out of scope by decomposition (HEX-074-c); q-analyze must not flag their absence as a gap.
+    - EXPLICITLY DEFERRED - idempotency of interrupted commands cannot be exercised without real command behaviour and belongs to tasks 11 to 15.
+    - EXPLICITLY DEFERRED - persistence of cell state across CLI invocations and reconciliation against Docker are out of scope.
+    - Executing this task before plan tasks 7, 17, 6 and 16 is out of the plan's declared order and was explicitly authorised by the human on 2026-09-11; it is not a blocker.
+    - Traceability - FR-11 (CLI traffic-shedding operations, Fase A variant) and the A-6 plan file are the only sources; the task invents no requirement and fixes no client, cell or price figures.
+    - Verification must stay fast - cargo build --workspace, cargo test -p hexcell-admin, cargo fmt --check, cargo clippy --workspace -- -D warnings.
+    - Dates written into code or docs are absolute (2026-09-13), never relative.

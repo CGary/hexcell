@@ -1,0 +1,18 @@
+{
+  "task_id": "HEX-074-b",
+  "bundle_hash": "f18e67c2ed8a1b66f6515ddd8781260f91602a05dff4f82cedc49c2b850a3595",
+  "files": [
+    ".ai/tasks/active/HEX-074-b/00-spec.yaml",
+    ".ai/tasks/active/HEX-074-b/01-blueprint.yaml",
+    "crates/hexcell-admin/Cargo.toml",
+    "crates/hexcell-admin/src/docker/mod.rs",
+    "crates/hexcell-admin/src/estado_de_celula.rs",
+    "crates/hexcell-admin/src/lib.rs",
+    "crates/hexcell-admin/tests/estado_de_celula.rs",
+    "docs/adr/README.md",
+    "docs/adr/adr-0033-metricas-de-canal-propio-en-el-sidecar.md",
+    "docs/plan/fase-a-6-empaquetado-cli.md"
+  ],
+  "protocol_version": "fleet-bundle-protocol/v2",
+  "created_at": "2026-09-13T19:58:37Z"
+}

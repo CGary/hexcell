@@ -1,0 +1,37 @@
+task_id: HEX-074-b
+summary: Implemented CodigoDeSalida exit-code contract and Salida typed output sinks in hexcell-admin, plus adr-0034.
+entries:
+  - changed_files:
+      - crates/hexcell-admin/src/codigo_de_salida.rs
+    notes:
+      - Closed enum CodigoDeSalida with four variants (Exito=0, Fallo=1, UsoIncorrecto=2, NoImplementadoTodavia=3).
+      - codigo() method uses an exhaustive match with no wildcard arm, following the estado_de_celula.rs precedent.
+      - From<CodigoDeSalida> for std::process::ExitCode routes through ExitCode::from(u8).
+  - changed_files:
+      - crates/hexcell-admin/src/salida.rs
+    notes:
+      - Salida<S, D> generic over two independent std::io::Write sinks (estandar, diagnostico).
+      - linea() and diagnostico() write via Write::write_all and return io::Result, never println!/eprintln!/write!.
+      - Salida::estandar() is the production constructor over io::stdout/io::stderr; Salida::nueva() is the test-injection constructor.
+  - changed_files:
+      - crates/hexcell-admin/src/lib.rs
+    notes:
+      - Declared the two new modules and updated the doc comment to stop claiming exit codes/sinks belong to a later task.
+  - changed_files:
+      - crates/hexcell-admin/tests/codigo_de_salida.rs
+    notes:
+      - External test crate asserting each variant's numeric value one by one, set-cardinality non-overlap, ExitCode::from(u8) conversion equality with ExitCode::SUCCESS, and pairwise distinctness for NoImplementadoTodavia and UsoIncorrecto.
+      - Exhaustive local match with no wildcard/rest pattern over CodigoDeSalida, so adding/removing a variant breaks compilation.
+  - changed_files:
+      - crates/hexcell-admin/tests/salida.rs
+    notes:
+      - Stream-separation tests in both directions using two in-memory Vec<u8> buffers via &mut references (Write is implemented for &mut W).
+      - Exact Spanish literal assertion on captured buffer bytes.
+      - Write-failure path exercised with a fixture Write impl that always returns io::Error; asserts Err, never panics.
+  - changed_files:
+      - docs/adr/adr-0034-contrato-de-codigos-de-salida-y-sumideros-de-salida.md
+      - docs/adr/README.md
+    notes:
+      - New ADR 0034 (next free number after adr-0033) recording the exit-code contract and sink discipline decision, dated 2026-09-13.
+      - Appended its row to docs/adr/README.md's ADR table.
+verify_pending: false
