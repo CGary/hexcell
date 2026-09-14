@@ -363,8 +363,10 @@ async fn main() -> ExitCode {
                     let mut intervalo = tokio::time::interval(INTERVALO_DE_INSTANTANEA);
                     loop {
                         intervalo.tick().await;
-                        let contadores_snap = contadores.instantanea().await;
-                        emisor.evaluar_y_emitir_acuses(&contadores_snap).await;
+                        let instantanea_de_contadores = contadores.instantanea().await;
+                        emisor
+                            .evaluar_y_emitir_acuses(&instantanea_de_contadores)
+                            .await;
                     }
                 })
             };

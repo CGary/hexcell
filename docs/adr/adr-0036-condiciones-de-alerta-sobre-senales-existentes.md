@@ -120,8 +120,8 @@ exactamente el descarte D-09.
 ## Alternativas descartadas
 
 - **Leer el evento discreto `VeredictoDeReserva::Rechazada` para AC-6**: más preciso que la
-  instantánea, pero obligaría a pasar un `Arc` a través de `ProcesadorDeInferencia::nuevo` y
-  ripple en todos los sitios de construcción. La instantánea basta y se evalúa en el tick de 60 s
+  instantánea, pero obligaría a pasar un `Arc` a través de `ProcesadorDeInferencia::nuevo` y a
+  propagar ese cambio en cascada por todos los sitios de construcción. La instantánea basta y se evalúa en el tick de 60 s
   ya existente.
 - **Agregar un tipo IPC nuevo para los acuses por contacto**: violaría `adr-0033` (protocolo
   estable en versión 6, `adr-0032`). El espejo en Rust resuelve la unión `id_mensaje →
