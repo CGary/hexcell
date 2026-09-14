@@ -299,7 +299,12 @@ Las entradas conservan su numeración; esta sección es la autoridad sobre el or
     reales (A y B) desde volúmenes vacíos y ejerce el cruce de volumen (lectura y escritura), el
     alcance de red al núcleo y al sidecar ajenos (por nombre de contenedor y por IP cruda) y el
     socket IPC ajeno. No se encontró ningún hallazgo que corrigiera `deploy/cell.compose.yml`: la
-    plantilla ya declaraba red y volumen per-célula y ningún `ports:` desde HEX-070.
+    plantilla ya declaraba red y volumen per-célula y ningún `ports:` desde HEX-070. El
+    script en vivo se corrió de punta a punta contra contenedores reales el 2026-09-13: las once
+    aserciones pasan. Esa primera corrida encontró un defecto en la propia prueba —AC-8 comparaba
+    solo el número de dispositivo de ambos sockets, que dos volúmenes nombrados comparten siempre,
+    de modo que la aserción era una guarda invertida imposible de pasar—; se corrigió al par
+    dispositivo:inodo y quedó registrado como D-49.
 18. **Integrar la construcción de las imágenes en la CI** (1 día). Construcción reproducible,
     etiquetado por versión y por commit, y publicación en el registro elegido.
     * Guarda en CI que falla si la imagen corre como root o sin rootfs de solo lectura (criterio ya
