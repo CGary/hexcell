@@ -25,6 +25,8 @@ pub mod inferencia;
 pub mod ingesta;
 pub mod metricas;
 pub mod motor;
+pub mod notificacion;
+pub mod notificador_telegram;
 pub mod preparacion;
 pub mod procesador;
 pub mod promocion;

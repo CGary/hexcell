@@ -199,6 +199,9 @@ pub struct Configuracion {
     pub inferencia: Option<crate::proveedor_openai::ConfiguracionDeInferencia>,
     /// Configuración opcional del proveedor de incrustaciones HTTPS real (OpenRouter o Gemini).
     pub embeddings: Option<ConfiguracionDeEmbeddingsSegunProveedor>,
+    /// Configuración opcional del sumidero de notificación Telegram, activada por la presencia
+    /// del token del bot.
+    pub notificaciones: Option<crate::notificador_telegram::ConfiguracionDeTelegram>,
 }
 
 /// Error de configuración: nombra siempre la variable concreta y su formato esperado.
@@ -336,6 +339,21 @@ pub const TIMEOUT_EMBEDDINGS_POR_DEFECTO: Duration = Duration::from_millis(8000)
 pub const REINTENTOS_EMBEDDINGS_POR_DEFECTO: u32 = 1;
 /// Tamaño de lote de embeddings por defecto: 32.
 pub const TAMANO_DE_LOTE_EMBEDDINGS_POR_DEFECTO: usize = 32;
+
+/// Nombre de la variable de entorno con el token del bot de Telegram (opcional, su presencia
+/// activa el sumidero de notificación real; viaja solo por entorno, nunca en un archivo por
+/// célula, precedente `HEX-064`/`HEX-065`).
+pub const HEXCELL_TELEGRAM_BOT_TOKEN: &str = "HEXCELL_TELEGRAM_BOT_TOKEN";
+/// Nombre de la variable de entorno con el identificador de chat de Telegram (obligatoria si
+/// `HEXCELL_TELEGRAM_BOT_TOKEN` está presente).
+pub const HEXCELL_TELEGRAM_CHAT_ID: &str = "HEXCELL_TELEGRAM_CHAT_ID";
+/// Nombre de la variable de entorno con la URL base de la API de Telegram (opcional).
+pub const HEXCELL_TELEGRAM_URL_BASE: &str = "HEXCELL_TELEGRAM_URL_BASE";
+
+/// URL base de la API de Telegram por defecto.
+pub const URL_BASE_TELEGRAM_POR_DEFECTO: &str = "https://api.telegram.org";
+/// Tiempo de espera del sumidero Telegram por defecto: 5000 milisegundos.
+pub const TIMEOUT_TELEGRAM_POR_DEFECTO: Duration = Duration::from_millis(5000);
 
 /// Dirección de salud por defecto: loopback (127.0.0.1), nunca `0.0.0.0`. Una célula sobre canal
 /// propio empaquetada en un contenedor (etapa A-6) necesita sondear esta ruta desde un
@@ -844,6 +862,28 @@ impl Configuracion {
             _ => None,
         };
 
+        let notificaciones = match fuente.leer(HEXCELL_TELEGRAM_BOT_TOKEN) {
+            Some(token) if !token.trim().is_empty() => {
+                let id_chat = leer_obligatoria(
+                    fuente,
+                    HEXCELL_TELEGRAM_CHAT_ID,
+                    "identificador de chat de Telegram, p. ej. 123456789",
+                )?;
+                let url_base = fuente
+                    .leer(HEXCELL_TELEGRAM_URL_BASE)
+                    .filter(|v| !v.trim().is_empty())
+                    .unwrap_or_else(|| URL_BASE_TELEGRAM_POR_DEFECTO.to_string());
+
+                Some(crate::notificador_telegram::ConfiguracionDeTelegram {
+                    url_base,
+                    token,
+                    id_chat,
+                    timeout: TIMEOUT_TELEGRAM_POR_DEFECTO,
+                })
+            }
+            _ => None,
+        };
+
         Ok(Self {
             id_celula,
             ruta_datos,
@@ -863,6 +903,7 @@ impl Configuracion {
             presupuesto_inicial_unidades,
             inferencia,
             embeddings,
+            notificaciones,
         })
     }
 }
