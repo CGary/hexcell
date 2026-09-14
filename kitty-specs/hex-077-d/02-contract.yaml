@@ -1,0 +1,112 @@
+task_id: HEX-077-d
+summary: >
+  Ship the external dead-man's switch as a deploy/ shell emitter plus a mutation-tested guard, a
+  per-server runbook, and CI wiring. No Rust code, no new dependencies.
+goal: >
+  Add deploy/ping_de_vigilancia_externa.sh, which emits exactly one outbound curl GET to the URL held
+  in HEXCELL_URL_PING_VIGILANCIA and is driven by ONE per-server cron entry every 5 minutes, so that
+  the ABSENCE of that ping fires the notification from the external healthchecks.io-compatible service,
+  outside this server. Prove it with deploy/verificar_ping_de_vigilancia.sh against a 127.0.0.1 fake
+  endpoint plus a --autoprueba mutation mode, document the per-server install honestly in
+  docs/runbook-vigilancia-externa.md, wire both guard steps into CI, and record the bundled discard.
+
+read:
+  - .ai/tasks/active/HEX-077-d/00-spec.yaml
+  - .ai/tasks/active/HEX-077-d/01-blueprint.yaml
+  - deploy/verificar_senales.sh
+  - deploy/cell.compose.yml
+  - deploy/celula.env.ejemplo
+  - crates/hexcell-admin/Cargo.toml
+  - crates/hexcell-admin/src/docker/transporte.rs
+  - docs/plan/fase-a-6-empaquetado-cli.md
+  - docs/bitacora-de-descartes.md
+  - CLAUDE.md
+
+touch:
+  - deploy/ping_de_vigilancia_externa.sh
+  - deploy/verificar_ping_de_vigilancia.sh
+  - docs/runbook-vigilancia-externa.md
+  - docs/plantilla-celula.md
+  - .github/workflows/ci.yml
+  - docs/bitacora-de-descartes.md
+
+forbid:
+  files:
+    - crates/**
+    - sidecar/**
+    - Cargo.toml
+    - Cargo.lock
+    - deploy/cell.compose.yml
+    - deploy/celula.env.ejemplo
+    - docs/plan/fase-a-6-empaquetado-cli.md
+    - docs/adr/**
+    - docs/STATUS.md
+    - .ai/tasks/active/HEX-077-d/00-spec.yaml
+    - .ai/tasks/active/HEX-077-a/**
+    - .ai/tasks/active/HEX-077-b/**
+    - .ai/tasks/active/HEX-077-c/**
+    - .ai/tasks/active/HEX-076-new-spec/**
+    - .env
+    - .env.*
+    - "**/*.db"
+  behaviors:
+    - "Never notify from inside the server on a locally detected failure. The notification comes from
+       the external service observing the ABSENCE of a ping. An implementation that alerts from inside
+       has misunderstood the task."
+    - "Never add a third-party dependency, a workspace member, or an HTTP/TLS client to any Rust crate.
+       This task writes no Rust code at all."
+    - "Never hardcode a default, fallback, or example ping URL anywhere in the repository. With
+       HEXCELL_URL_PING_VIGILANCIA unset or empty the emitter exits non-zero and sends zero requests."
+    - "Never read the ping URL from a config file, a per-cell template, deploy/celula.env.ejemplo,
+       deploy/cell.compose.yml, or any .env file. Process environment only."
+    - "Never install the cron entry per cell. Exactly one entry per SERVER, regardless of cell count."
+    - "Never add local retry or backoff to the emitter. Transient-blip tolerance belongs to the external
+       service's grace period; local retry would mask a degraded host across the interval boundary."
+    - "Never swallow curl's exit status (no '|| true', no unconditional 'exit 0'). A failed ping must
+       exit non-zero; outward silence is the intended alarm."
+    - "Never gate the ping on cell health, and never publish a cell health port or use docker exec to
+       reach one. That would weaken the per-cell isolation of NFR-05 and A-6 task 17."
+    - "Never claim the ping proves anything about the cells, the sidecar, the channel session, or
+       message flow. Documentation states only host + cron + egress, and names the residual gap."
+    - "Never add an inbound HTTP endpoint and never query sessions.db (adr-0024). Outbound only."
+    - "Never hardcode healthchecks.io grace-period or alert-threshold values as normative constants;
+       only the 5-minute cadence is this task's documented value."
+    - "Never require network access, DNS resolution, or a healthchecks.io account in any test. The fake
+       endpoint binds 127.0.0.1 only."
+    - "Never assert '>= 1 request' where the criterion is exactly one, and never report a bare
+       aggregate pass count: each guard case prints its own PASA/FALLA line naming the case."
+    - "Never write an ADR, and never edit, renumber, or delete an existing bitacora entry. Append one
+       new bundled entry whose number is computed from the file at implement time."
+    - "Never introduce jitter, warm-up protocols, proxies, VPNs, or IP rotation."
+    - "All identifiers, comments, log messages, docs and the commit message in Spanish; no AI
+       attribution in the commit message."
+
+verify:
+  commands:
+    - bash deploy/verificar_ping_de_vigilancia.sh
+    - bash deploy/verificar_ping_de_vigilancia.sh --autoprueba
+    - cargo fmt --check
+  target_s: 60
+
+acceptance:
+  bdd_suite: >
+    cargo build --workspace && cargo clippy --workspace -- -D warnings && cargo test --workspace &&
+    cd sidecar && go build ./... && go vet ./... && go test ./... -count=1
+  human_gate: true
+
+limits:
+  max_files_changed: 6
+  max_diff_lines: 700
+  per_class:
+    - glob: deploy/ping_de_vigilancia_externa.sh
+      max_diff_lines: 180
+    - glob: docs/**
+      max_diff_lines: 200
+
+execution:
+  mode: worktree_edit
+  branch: ai/HEX-077-d
+
+retry_policy:
+  max_attempts: 2
+  escalate_after: 1

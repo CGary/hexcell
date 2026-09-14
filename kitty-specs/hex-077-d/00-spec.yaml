@@ -1,0 +1,88 @@
+task_id: HEX-077-d
+summary: External dead-man's switch; per-server cron pings a healthchecks.io-compatible URL every 5 minutes, tested against a fake HTTP endpoint.
+goal: >
+  Implement ONLY the external dead-man's switch slice of task 20 (docs/plan/fase-a-6-empaquetado-cli.md
+  lines 304-350, FR-14): a per-server cron job that pings an external healthchecks.io-compatible URL
+  every 5 minutes. The detection logic is inverted from every other alert in task 20 and from this
+  child's siblings: it is the ABSENCE of a ping, observed and alarmed from OUTSIDE this server by the
+  external service, that fires the notification — not a condition detected and reported from inside
+  the server. An implementation that notifies from inside the server on some local failure condition
+  has misunderstood this task: a dead server cannot report that it died, so the watcher must live
+  somewhere else. This child owns only the outbound ping emission and its installation; it does not
+  own any notification port, alert condition, or metric.
+invariants:
+  - The dead-man's switch notification fires from the external healthchecks.io-compatible service
+    upon absence of a ping, never from a condition detected and reported by this server itself.
+  - The healthchecks.io-compatible ping URL travels only by environment variable, never in a
+    per-cell or per-server config file (HEX-064/HEX-065 precedent); it is never versioned (no
+    `.env*` file committed).
+  - The cron entry that triggers the ping is installed once per SERVER, not once per cell — a host
+    running multiple cells runs exactly one dead-man's-switch cron entry, not one per cell.
+  - This delivery mechanism shortens reaction time; it does not reduce the probability of a ban and
+    introduces no bulk-sender folklore (jitter, warm-up), proxies, VPNs, or IP rotation.
+  - The ping emitter adds no inbound HTTP endpoint and does not query the hot sessions.db; it only
+    performs an outbound request, which does not conflict with adr-0024 (adr-0024 forbids exposing
+    an inbound endpoint or a live query of sessions.db, not an outbound ping).
+acceptance:
+  - id: AC-1
+    statement: A ping-emission mechanism performs a periodic outbound request to a healthchecks.io-compatible
+      ping URL read exclusively from an environment variable, intended to run every 5 minutes under a
+      local cron entry.
+    given: the ping URL environment variable is set to a fake HTTP endpoint's address
+    when: the ping-emission mechanism runs
+    then: exactly one outbound HTTP request reaches the fake endpoint, with no live healthchecks.io
+      account involved
+  - id: AC-2
+    statement: Test coverage for the ping-emission logic runs against a fake/mock HTTP endpoint only;
+      no test requires a live healthchecks.io account or network access, and the live-account
+      integration is explicitly declared deferred to manual/operational setup.
+  - id: AC-3
+    statement: The chosen location for the ping emitter and the mechanism for installing and documenting
+      its cron entry are recorded, explicitly noting the entry is per-server (not per-cell), and the
+      choice adds no new dependency to crates/hexcell-core (which keeps zero external dependencies).
+  - cargo fmt --check, cargo clippy --workspace -- -D warnings, cargo build --workspace, and cargo
+    test --workspace remain green; cd sidecar && go build ./... && go vet ./... && go test ./...
+    -count=1 remain green.
+  - All new identifiers, comments, log messages, and commit messages are written in Spanish, matching
+    repository convention.
+risk: medium
+non_goals:
+  - Do not implement the notification port (trait/interface) or its HTTP-to-Telegram implementation;
+    that belongs to HEX-077-a. This child has no dependency on that port — its own notification comes
+    from the external healthchecks.io-compatible service, not from anything wired through the
+    notification port.
+  - Do not implement any of the eight active-alert conditions (temporary ban, channel-session
+    unlinked, sidecar not reconnected, restart loop, LLM balance/degraded mode, anomalous GCRA
+    discard rate, unsolicited-send discard, anomalous delivery-ack-ratio drop); those belong to
+    HEX-077-b.
+  - Do not implement the three per-cell metrics (reconnections-per-hour, inbound-silence-window,
+    latency-to-ack) or their structured-log / VACUUM INTO delivery; those belong to HEX-077-c.
+  - Do not pick or hardcode the ping interval as anything other than the documented 5-minute cadence,
+    and do not pick or hardcode healthchecks.io grace-period or alert-threshold values; those remain
+    external-service configuration, not this task's normative constants.
+  - Do not implement a metrics dashboard or panel; the full observability panel belongs to stage B-3.
+  - Do not require or provision a real healthchecks.io account, project, or check for any test in
+    this task's suite.
+  - Do not introduce bulk-sender folklore (jitter, warm-up protocols), proxies, VPNs, or IP rotation.
+constraints:
+  - Trace to docs/PRD.md FR-14; normative source is docs/plan/fase-a-6-empaquetado-cli.md lines
+    304-350 (task 20 of stage A-6), specifically the "dead-man's switch externo" bullet.
+  - The healthchecks.io-compatible ping URL is supplied only via environment variable, never in a
+    per-cell or per-server config file, per the HEX-064/HEX-065 precedent; it is never versioned
+    (`.env*` stays out of git).
+  - The cron entry is per-server — it does not belong to `deploy/celula.env.ejemplo` or any per-cell
+    template variable, and it must be documented as such wherever it is installed.
+  - crates/hexcell-core keeps zero external dependencies (verifiable with `cargo tree -p
+    hexcell-core`); if the ping emitter needs an HTTP client, that code does not live in
+    crates/hexcell-core.
+  - Before choosing where the ping emitter lives, inspect what already exists under `deploy/`
+    (existing shell tooling — verificar_endurecimiento.sh, verificar_apagado_ordenado.sh,
+    verificar_senales.sh, cell.compose.yml, celula.env.ejemplo) and the operations CLI in
+    crates/hexcell-admin (currently depending only on serde/serde_json, no HTTP client), and prefer
+    the option that adds the least new surface (dependency, binary, or crate).
+  - This child does not use and has no dependency on the notification port from HEX-077-a — its
+    notification path is entirely external, via the healthchecks.io-compatible service.
+  - No artifact (code, log field, alert payload, or documentation produced by this task) claims to
+    measure or expose how many users have reported the number.
+depends_on: []
+parent_task: HEX-077

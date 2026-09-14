@@ -1,0 +1,176 @@
+task_id: HEX-077-d
+summary: >
+  External dead-man's switch as a deploy/ shell emitter driven by one per-server cron entry; zero new
+  Rust dependencies. Guard script proves it against a local fake endpoint plus mutation self-test.
+
+affected_files:
+  - deploy/ping_de_vigilancia_externa.sh
+  - deploy/verificar_ping_de_vigilancia.sh
+  - docs/runbook-vigilancia-externa.md
+  - docs/plantilla-celula.md
+  - .github/workflows/ci.yml
+  - docs/bitacora-de-descartes.md
+
+symbols:
+  - HEXCELL_URL_PING_VIGILANCIA
+  - exigir_url_de_vigilancia
+  - emitir_ping
+  - caso_un_solo_ping
+  - caso_falla_cerrada_sin_url
+  - caso_no_enmascara_fallo
+  - caso_higiene_de_secreto
+  - levantar_sumidero_local
+  - autoprueba
+
+dependencies:
+  - deploy/verificar_senales.sh
+  - deploy/cell.compose.yml
+  - deploy/celula.env.ejemplo
+  - docs/plan/fase-a-6-empaquetado-cli.md
+  - crates/hexcell-admin/Cargo.toml
+  - crates/hexcell-admin/src/docker/transporte.rs
+
+test_scenarios:
+  - "AC-1: with HEXCELL_URL_PING_VIGILANCIA pointing at a local fake endpoint on 127.0.0.1, the emitter
+     sends EXACTLY ONE outbound GET and exits 0. The assertion counts requests (==1), never >=1."
+  - "AC-2: the whole suite runs against a 127.0.0.1 fake endpoint. No test resolves DNS, leaves the
+     loopback interface, or needs a healthchecks.io account. Live-account setup is manual/operational."
+  - "Fail-closed: with the env var unset or empty, the emitter exits non-zero AND the fake endpoint
+     records ZERO requests. No default or fallback URL exists anywhere in the repository."
+  - "No masking: with the env var pointing at a closed port, the emitter exits non-zero. A failed ping
+     must never be reported as success, because outward silence is the intended alarm."
+  - "Mutation: an emitter copy that pings twice must turn caso_un_solo_ping red."
+  - "Mutation: an emitter copy carrying a hardcoded fallback URL must turn caso_falla_cerrada_sin_url
+     and caso_higiene_de_secreto red."
+  - "Mutation: an emitter copy that swallows curl's exit status (|| true) must turn
+     caso_no_enmascara_fallo red."
+  - "Secret hygiene: deploy/celula.env.ejemplo and deploy/cell.compose.yml never gain
+     HEXCELL_URL_PING_VIGILANCIA, and no versioned file contains a real ping URL."
+  - "Each guard case prints its own PASA/FALLA line naming WHICH case went red; a bare aggregate
+     count is not acceptable evidence."
+
+strategy:
+  - step: 1
+    action: >
+      DESIGN DECISION (the escalated one) - the ping emitter lives in deploy/ as a shell script run by
+      a per-server cron entry, NOT in hexcell-admin and NOT in a new binary. Evidence on disk: (a)
+      deploy/ already holds three operational scripts and has its own CI job wiring the pattern
+      guard+--autoprueba; (b) crates/hexcell-admin/src/docker/transporte.rs is a hand-rolled HTTP/1.1
+      client over UnixStream, documented "sin bollard, sin hyper y sin tokio", and its main.rs is 10
+      lines with no subcommand dispatch - a healthchecks.io URL is https, so a subcommand would force
+      a TLS stack (rustls + hyper-rustls + tokio + hyper) into the one crate whose design point is
+      near-zero dependencies; (c) a new crate is strictly a superset of that cost plus a workspace
+      member. The shell script adds ZERO new third-party dependencies. Fate-sharing argument, which
+      outranks tidiness here - cron is the OS's own scheduler on the very host being attested: if the
+      host loses power, the kernel dies, or the network drops, cron stops and the ping stops, which IS
+      the alarm. A long-lived daemon or an in-container timer each introduce a way to keep pinging
+      while the host's real workload is gone, or to die independently of it.
+    files:
+      - deploy/ping_de_vigilancia_externa.sh
+  - step: 2
+    action: >
+      Write the emitter (Application Service, no domain logic). Reads HEXCELL_URL_PING_VIGILANCIA
+      strictly from the process environment via exigir_url_de_vigilancia and FAILS CLOSED if unset or
+      empty - exit non-zero, emit zero requests, never fall back to a default URL. emitir_ping issues
+      one curl GET with --silent --show-error --fail and --max-time bounded well under the 300 s cron
+      period so runs never overlap. NO --retry and no local backoff loop: tolerance for a transient
+      blip belongs to the EXTERNAL service's grace period (out of scope per non_goals), never to local
+      retry logic, which would let a degraded host keep looking healthy across the interval boundary.
+      curl's exit status propagates to the script's exit status; diagnostics in Spanish on stderr so
+      cron logs them. Keep the body tight (per_class cap 180 lines) even though repo style mandates a
+      long rationale header.
+    files:
+      - deploy/ping_de_vigilancia_externa.sh
+  - step: 3
+    action: >
+      Write the mechanical guard (Validator) with four cases plus --autoprueba, modelled on
+      deploy/verificar_senales.sh. It needs NO Docker and no network beyond 127.0.0.1.
+      levantar_sumidero_local starts a one-shot python3 recorder on loopback (python3 is already a
+      validated CI dependency via HEX-068). caso_un_solo_ping asserts exactly one request and exit 0;
+      caso_falla_cerrada_sin_url asserts non-zero exit and zero requests with the var unset;
+      caso_no_enmascara_fallo asserts non-zero exit against a closed port; caso_higiene_de_secreto
+      greps that the per-cell surfaces never gain the variable and no versioned file carries a real
+      URL. --autoprueba mutates a COPY of the emitter once per case (double ping, hardcoded fallback
+      URL, "|| true" swallowing curl's status) and exits 0 only if every mutation was caught - a guard
+      never seen to fail is not yet a guard. Print one PASA/FALLA line per case naming the case.
+    files:
+      - deploy/verificar_ping_de_vigilancia.sh
+  - step: 4
+    action: >
+      Write the per-server operator runbook. It must state plainly WHAT THE PING PROVES - the host is
+      powered with kernel and cron running, the crontab entry is installed and the script is executable,
+      and outbound DNS/TLS/routing to the ping endpoint works - and WHAT IT DOES NOT PROVE: nothing
+      about any cell. A host that is alive while every cell is dead leaves this alarm SILENT by design.
+      Under-claiming honestly beats a switch the operator trusts for more than it covers. Give the
+      exact crontab line with the */5 cadence, state that the URL is supplied through the crontab's own
+      environment in a root-owned crontab that never enters git and never enters
+      deploy/celula.env.ejemplo, and state ONE ENTRY PER SERVER regardless of how many cells the host
+      runs. Include a manual post-install verification (run it once by hand and confirm the external
+      check flips to up), since no CI step can prove a host-side cron entry exists. Do not name
+      period, grace or alert-threshold values: those are external-service configuration.
+    files:
+      - docs/runbook-vigilancia-externa.md
+  - step: 5
+    action: >
+      Add one bullet to the existing "Que queda fuera de esta plantilla (y por que no es un hueco)"
+      section of docs/plantilla-celula.md pointing at the new runbook and saying the dead-man's switch
+      is PER-SERVER, not per-cell. This is the idiomatic anchor for that section and it is what stops
+      an operator from installing one cron entry per cell. Keep it to a few lines; touch nothing else
+      in that file.
+    files:
+      - docs/plantilla-celula.md
+  - step: 6
+    action: >
+      Append a NEW CI job (do not edit the HEX-075 job or its name) running the guard and its
+      --autoprueba, mirroring the existing two-step shape. Appending a separate job instead of editing
+      the existing one keeps the conflict surface with the concurrent sibling tasks minimal.
+    files:
+      - .github/workflows/ci.yml
+  - step: 7
+    action: >
+      Record ONE bundled discard entry in docs/bitacora-de-descartes.md, in the same commit that makes
+      the discard, covering the four alternatives rejected here: the hexcell-admin subcommand, a new
+      binary/crate, gating the ping on cell health, and local retry/backoff. Bundling them under a
+      single number follows the D-28 precedent and keeps the collision surface with concurrent siblings
+      to one number. USE D-51 AS A LITERAL. The orchestrator serialized the numbering across the four
+      HEX-077 children on 2026-09-13 (main is at D-49; HEX-077-c owns D-50 and adr-0035, this task owns
+      D-51). Do NOT compute the next free number by reading the file at implement time: the sibling
+      holding D-50 may not have merged yet, so reading would yield D-50 and collide. Add the matching
+      index row. Never edit or renumber an existing entry.
+    files:
+      - docs/bitacora-de-descartes.md
+
+risks:
+  - "COORDINATION / RESOLVED by the orchestrator on 2026-09-13: docs/bitacora-de-descartes.md
+     numbering is sequential and is never reused. The high-water mark on main is D-49 as of 2026-09-13 after HEX-074-b and HEX-076 merged, verified
+     against the file. The orchestrator serialized the numbers across the four HEX-077 children
+     in advance so that two siblings cannot both claim the same number: HEX-077-c takes D-50 (and adr-0035),
+     HEX-077-d takes D-51, HEX-077-a needs neither, HEX-077-b takes whatever follows. THEREFORE
+     this task MUST use D-51 as a literal, and MUST NOT compute the next number by reading the
+     file at implementation time, because the sibling that owns D-50 may not have merged yet.
+     Accepted consequence: if a sibling never merges, the sequence has a gap; the repo rule
+     forbids reuse and reordering, not gaps."
+  - "The .github/workflows/ci.yml edit may conflict textually with a sibling that also adds a job. The
+     blueprint appends a new job rather than editing the HEX-075 job to keep that surface minimal."
+  - "Residual coverage gap, named and NOT closed here: host alive + every cell dead leaves this alarm
+     silent. It is out of scope by construction (the cron is per-server, the siblings own cell state),
+     and the runbook must say so rather than imply coverage."
+  - "A cron entry is host state, not repository state. No CI step can prove the operator installed it;
+     only the runbook's manual verification does. The guard proves the script works, not that it runs."
+  - "curl is assumed present on the production host and on the CI runner. The emitter must fail loudly
+     with a Spanish diagnostic if it is missing, never exit 0 silently - a silent success here is the
+     worst possible failure mode for a dead-man's switch."
+  - "The emitter's runtime dependency set stays {bash, curl}. python3 is used ONLY by the guard, never
+     by the emitter, so a production host never needs python3 for the switch to work."
+  - "Cell health is NOT reachable from a host cron: deploy/cell.compose.yml publishes no ports and
+     HEXCELL_DIRECCION_SALUD 0.0.0.0:8081 lives on the per-cell Docker network, with a sibling
+     CONTAINER as the intended prober (docs/plantilla-celula.md). Gating the ping on cell health would
+     require publishing a port or docker exec, weakening the isolation NFR-05 and A-6 task 17 anchor."
+  - "No ADR is required. adr-0024 forbids EXPOSING an inbound endpoint or live-querying the hot
+     sessions.db; this task only emits an OUTBOUND request and reads no database. Recorded here so
+     review does not re-litigate it. If an implementer believes an ADR is needed, STOP and ask - do not
+     write one silently."
+  - "No prior discard blocks this design: docs/bitacora-de-descartes.md was searched for cron, ping,
+     healthchecks, curl, dead-man and monitoring, with no matching entry."
+  - "HSME advisory read returned only near-zero-score matches from an unrelated project; no relevant
+     semantic context. Proceeding without it, per the advisory-only rule."

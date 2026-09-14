@@ -1,0 +1,28 @@
+{
+  "task_id": "HEX-077-d",
+  "summary": "Contract satisfied; 3/3 verify green; suite proven offline-safe in loopback-only netns; all 3 mutations apply and are checked; runbook under-claims honestly.",
+  "verdict": "approve",
+  "contract_compliance": true,
+  "forbidden_files_touched": [],
+  "unrequested_refactor": false,
+  "missing_tests": [],
+  "functional_risk": "low",
+  "notes": [
+    "contract-check ok=true, violations=[]; not_checked: forbid.behaviors (reviewed by hand below). Limits: 6/6 files, 641/700 lines, emitter 92/180, docs 155/200.",
+    "acceptance-coverage tool reports AC-1..AC-3 as gaps only because it does not parse the AC-n: prefix inside blueprint test_scenarios strings; manual mapping: AC-1 -> caso_un_solo_ping (count == 1, exit 0); AC-2 -> loopback-only suite + runbook declares live-account setup manual; AC-3 -> runbook + plantilla-celula bullet + D-51, zero Rust/Cargo changes.",
+    "05-validation.json: 3/3 commands exit 0, overall_result passed. Independently re-run both guard modes inside unshare -rn (loopback only, no egress, no DNS): 4/4 cases and 4/4 mutations pass. Suite is genuinely offline-safe; caso_falla_cerrada_sin_url now intercepts curl via a fake binary on PATH and asserts it was never invoked, so no case depends on network presence or absence.",
+    "Mutation audit: all three sed patterns match a real emitter line (line 88 double ping, line 54 fallback URL, line 80 || true with trailing >/dev/null) and exigir_mutacion_aplicada is called after each of the three mutations (guard lines 323, 337, 358). Green side proven by normal mode on the unmutated emitter; red side by --autoprueba. Orchestrator meta-test of exigir_mutacion_aplicada accepted as reported.",
+    "Inversion survives: emitter is a host-cron shell script with no daemon, no --retry/backoff, no health gating, curl exit status propagated, --max-time 60 < 300 s period, exit 127 if curl missing, exit 1 with zero requests if URL unset/empty. Nothing notifies from inside the server.",
+    "Runbook does NOT overclaim: it lists exactly host+kernel+cron, crontab entry+executable, DNS/TLS/egress as proven, states plainly that a healthy host with every cell dead leaves the alarm silent by design, says ONE entry per SERVER (also anchored in docs/plantilla-celula.md), names no grace/threshold values, and mandates manual post-install verification.",
+    "Secret hygiene: env var only; never echoed or logged by the emitter (fail-closed message names the variable, not its value; curl errors disclose host at most, never the path). deploy/celula.env.ejemplo and deploy/cell.compose.yml untouched (forbidden and grep-guarded).",
+    "LOW (docs/runbook-vigilancia-externa.md, crontab line and manual-verification block): illustrative URL https://hc-ping.com/id-real-del-servicio appears twice; the contract forbid.behaviors letter says never hardcode a default, fallback, or example ping URL anywhere in the repository. Spirit is met (the emitter has no fallback and cannot use it; an operator pasting it verbatim gets curl --fail non-zero and the external check never flips up, which the mandated manual verification catches). Suggest a vendor-neutral placeholder such as https://<servicio>/<id-del-chequeo> in a follow-up; non-blocking. This corrects the orchestrator claim that hc-ping.com appears only inside the mutation string.",
+    "LOW (deploy/verificar_ping_de_vigilancia.sh caso_higiene_de_secreto): grep -qE on deploy/celula.env.ejemplo and cell.compose.yml silently passes if the file is missing or renamed (grep exit 2 is treated as not-found); and the blueprint scenario no-versioned-file-contains-a-real-ping-URL is implemented only as an http(s):// grep on the emitter, not repo-wide. Neither is exercised by a mutation. Acceptable for this slice; a future guard could add [ -f ] checks and a repo-wide UUID-shaped ping-URL grep.",
+    "LOW (deploy/verificar_ping_de_vigilancia.sh caso_no_enmascara_fallo): relies on 127.0.0.1:1 being closed; loopback only, no network, but a listener on port 1 would spuriously turn the case red. Acceptable.",
+    "INFO (guard): EXIT trap removes the temp dir but does not kill the python sink on abnormal termination (only detener_sumidero does); harmless orphan on loopback. diff is used by exigir_mutacion_aplicada but is not listed in the DEPENDENCIAS header.",
+    "INFO (artifact inconsistency, not a code finding): 02-contract forbid.behaviors says the bitacora number is computed from the file at implement time while 01-blueprint mandates the literal D-51; D-51 is correct per the orchestrator serialization (main at D-49, HEX-077-c holds D-50 unmerged). The gap at D-50 is expected. Index rows for D-46..D-49 are absent on main already; pre-existing, not introduced here.",
+    "Project invariants: all content in Spanish; both commit messages Spanish with no AI attribution; outbound-only (adr-0024 respected); no sibling port used; no jitter/warm-up/proxies; only the 5-minute cadence is stated as normative; absolute dates (2026-09-13).",
+    "CI: new job guardas-vigilancia-externa appended (0 deletions), runs guard + --autoprueba from repo root with checkout@v4 consistent with existing jobs; guard exits 1 on any FALLA, so no grep-matches-nothing shape.",
+    "External pre-read (advisory): cell opencode-go/minimax-m3 via quorum fleet route; timed out at 300 s; returned 7 findings, all referencing HEX-077-c artifacts (D-48 rows, sidecar/internal/metricas/metricas.go, docs/STATUS.md) that are not in this diff; 0 applicable, all discarded. Verdict is Claude own reading."
+  ],
+  "fix_tasks": []
+}

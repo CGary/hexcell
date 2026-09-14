@@ -1,0 +1,26 @@
+{
+  "commands": [
+    {
+      "command": "bash deploy/verificar_ping_de_vigilancia.sh",
+      "duration_s": 0.126,
+      "exit_code": 0,
+      "output_excerpt": "Verificación mecánica del emisor de vigilancia externa (HEX-077-d):\nPASA: caso_un_solo_ping\nFALLA: HEXCELL_URL_PING_VIGILANCIA no está definida o está vacía; el vigilante externo no puede emitir el ping (fail-closed)\nPASA: caso_falla_cerrada_sin_url\ncurl: (7) Failed to connect to 127.0.0.1:1 after 0 ms: Could not connect to server\nPASA: caso_no_enmascara_fallo -\u003e el emisor sale distinto de 0 contra un puerto cerrado\nPASA: caso_higiene_de_secreto\n\nResumen: 4/4 casos pasan\nOK: el emisor cumple el contrato de vigilancia externa"
+    },
+    {
+      "command": "bash deploy/verificar_ping_de_vigilancia.sh --autoprueba",
+      "duration_s": 0.136,
+      "exit_code": 0,
+      "output_excerpt": "Modo --autoprueba: cada propiedad anclada, una por vez, debe ser detectada al romperse.\nPASA: doble ping -\u003e el guardia falla como debe\nPASA: URL de respaldo embebida -\u003e caso_falla_cerrada_sin_url falla como debe\nPASA: URL de respaldo embebida -\u003e caso_higiene_de_secreto falla como debe\nPASA: '|| true' que traga curl -\u003e caso_no_enmascara_fallo falla como debe\n\nResumen autoprueba: 4/4 mutaciones detectadas\nOK: el guardia falla bajo cada mutación"
+    },
+    {
+      "command": "cargo fmt --check",
+      "duration_s": 0.266,
+      "exit_code": 0,
+      "output_excerpt": ""
+    }
+  ],
+  "executed_at": "2026-09-14T02:42:49Z",
+  "overall_result": "passed",
+  "summary": "Runbook placeholder URL neutralized per forbid.behaviors. 3/3 exit 0; 4/4 cases and 4/4 mutations, re-confirmed offline under unshare -rn with loopback up.",
+  "task_id": "HEX-077-d"
+}

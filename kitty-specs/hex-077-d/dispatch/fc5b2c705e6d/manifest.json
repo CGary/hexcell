@@ -1,0 +1,30 @@
+{
+  "task_id": "HEX-077-d",
+  "bundle_hash": "fc5b2c705e6d4941785fa69d264c5e5edd65c86475ee8224bdd1faa1cd62da0f",
+  "files": [
+    ".ai/tasks/active/HEX-077-d/00-spec.yaml",
+    ".ai/tasks/active/HEX-077-d/01-blueprint.yaml",
+    ".github/workflows/ci.yml",
+    "CLAUDE.md",
+    "crates/hexcell-admin/Cargo.toml",
+    "crates/hexcell-admin/src/docker/transporte.rs",
+    "deploy/cell.compose.yml",
+    "deploy/celula.env.ejemplo",
+    "deploy/verificar_senales.sh",
+    "docs/bitacora-de-descartes.md"
+  ],
+  "protocol_version": "fleet-bundle-protocol/v2",
+  "created_at": "2026-09-14T00:38:26Z",
+  "dropped": [
+    {
+      "component": "code_slice",
+      "path": "docs/plantilla-celula.md",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "docs/plan/fase-a-6-empaquetado-cli.md",
+      "reason": "bundle exceeded max_bytes budget"
+    }
+  ]
+}

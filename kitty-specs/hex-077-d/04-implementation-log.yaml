@@ -1,0 +1,32 @@
+task_id: HEX-077-d
+summary: |
+    Fixed two undetected mutations in the guard's --autoprueba (caso_falla_cerrada_sin_url and caso_no_enmascara_fallo) and completed the remaining blueprint steps: runbook, plantilla-celula anchor, CI job append, bitacora entry D-51.
+entries:
+  - changed_files:
+      - path: deploy/verificar_ping_de_vigilancia.sh
+    notes:
+      - "Fixed caso_falla_cerrada_sin_url: it relied on the local sink counter and real network reachability to judge an embedded fallback URL mutation; on this sandbox the fallback URL (hc-ping.com) was actually reachable and returned HTTP 400, which coincidentally produced a nonzero exit code and left the local sink counter at 0, making the mutated copy pass undetected. Replaced with a fake curl binary prepended to PATH that records any invocation; the case now asserts curl was never called at all when the env var is unset, independent of network reachability."
+      - "Fixed the '|| true' mutation in --autoprueba: the sed pattern anchored on a line without the trailing '>/dev/null' that the real emitter line actually has, so the substitution silently matched nothing and the mutated copy was identical to the original. Updated the pattern to match the real line exactly."
+      - "Added exigir_mutacion_aplicada() called after each of the three sed mutations: it diffs the mutated copy against the real emitter and aborts the whole autoprueba run if nothing changed, so a future sed-pattern drift fails loudly instead of silently reporting a false PASA/FALLA."
+      - "Confirmed both fixed cases still PASS on the unmutated script (normal-mode run: 4/4 casos pasan, exit 0) and --autoprueba now reports 4/4 mutaciones detectadas, exit 0."
+    verify_pending: false
+  - changed_files:
+      - path: docs/runbook-vigilancia-externa.md
+    notes:
+      - "New per-server operator runbook: states plainly what the ping proves (host up, kernel+cron alive, crontab installed, egress/DNS/TLS to the endpoint work) and what it does not prove (nothing about any cell; a healthy host with every cell dead leaves the alarm silent by design, and reaching cell health from host cron would require publishing a port or docker exec, weakening NFR-05 / A-6 task 17 isolation). Gives the exact */5 crontab line with the URL supplied inline in a root crontab that never enters git, states ONE ENTRY PER SERVER regardless of cell count, and a manual post-install verification since no CI step can prove a host-side cron entry exists. No period/grace/threshold values named (those are external-service config)."
+    verify_pending: false
+  - changed_files:
+      - path: docs/plantilla-celula.md
+    notes:
+      - "Added one bullet to the existing 'Que queda fuera de esta plantilla' section pointing at the new runbook and stating the dead-man's switch is per-server, never per-cell, and must never enter deploy/celula.env.ejemplo or deploy/cell.compose.yml."
+    verify_pending: false
+  - changed_files:
+      - path: .github/workflows/ci.yml
+    notes:
+      - "Appended a new job 'guardas-vigilancia-externa' running the guard and its --autoprueba, mirroring the shape of the existing HEX-075/HEX-076 deploy-guard jobs. Did not edit or restructure any existing job."
+    verify_pending: false
+  - changed_files:
+      - path: docs/bitacora-de-descartes.md
+    notes:
+      - "Appended one bundled discard entry D-51 (literal, per orchestrator's pre-serialized numbering — not computed from the file) covering the four rejected alternatives: hexcell-admin subcommand, new binary/crate, gating the ping on cell health, and local retry/backoff. Added the matching index row. No existing entry edited, renumbered, or reordered."
+    verify_pending: false
