@@ -1,0 +1,3 @@
+entries: []
+summary: Add latencia_hasta_acuse_ms as a fourth key on the sidecar metrics producer's existing periodic log line; verify the other two per-cell series already ship end-to-end.
+task_id: HEX-077-c

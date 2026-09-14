@@ -1,0 +1,38 @@
+task_id: HEX-077-c
+summary: 'Add latency-to-ack as the sidecar metrics producer''s third series; verify reconnections-per-hour and inbound-silence-window already deliver end-to-end.'
+goal: 'Subset of HEX-077 (per-cell metrics only): compute latency-to-ack in sidecar/internal/metricas from the send-time already captured per in-flight correlation, emit it on the existing structured key=value log line per adr-0024/adr-0033, and verify (without re-implementing) that reconnections-per-hour and inbound-silence-window already deliver end to end from HEX-072-b.'
+invariants:
+    - Metrics are delivered only by structured log line (adr-0024, extended by adr-0033) or VACUUM INTO copies; no HTTP endpoint is exposed for metrics and no live query is issued against the hot sessions.db from hexcell-admin.
+    - Latency-to-ack is computed from the send-time timestamp already captured in correlacionPendiente when ObservarAcuse resolves the correlation, before that entry is deleted; no new signal producer, no new IPC message, no IPC protocol version bump.
+    - Threshold or bound values for any of the three series are configuration parameters; no acceptance criterion or test asserts a specific numeric threshold as normative.
+    - Contact segmentation, wherever it appears in code this task touches, keys on id_conversacion, never a raw JID (adr-0019).
+    - This task does not wire any metric to a notification or alert; it produces and delivers metric values only.
+acceptance:
+    - id: AC-1
+      statement: Per-cell metrics reconnections-per-hour and inbound-silence-window are verified, with a test read on the existing sidecar/internal/metricas output, to already deliver end-to-end via the sidecar's existing key=value structured log line (adr-0033) without modification; latency-to-ack is added as a new third series computed from the send-timestamp already captured per in-flight correlation and emitted on the same log line. No metric is delivered by an HTTP endpoint or by a live query of the hot sessions.db from hexcell-admin.
+      given: an in-flight correlation created by ObservarEnvio with its send-time recorded
+      when: ObservarAcuse resolves that correlation with a delivered or read receipt
+      then: the elapsed time between send and acuse is captured and reflected in the producer's next emitted key=value instantanea as the latency-to-ack series
+    - id: AC-2
+      statement: All three per-cell metrics' threshold or bound values are read from configuration parameters, with no acceptance criterion or test asserting a specific numeric threshold as normative.
+    - cargo fmt --check, cargo clippy --workspace -- -D warnings, cargo build --workspace, and cargo test --workspace remain green; cd sidecar && go build ./... && go vet ./... && go test ./... -count=1 remain green.
+    - All new identifiers, comments, log messages, and commit messages are written in Spanish, matching repository convention.
+risk: medium
+non_goals:
+    - Do not implement the notification port (trait/interface, HTTP-to-Telegram sink, fake sink) — that belongs to sibling task HEX-077-a.
+    - Do not implement any of the eight alert conditions or wire any threshold to a notification, including the delivery-ack-ratio-per-contact alert and its aggregate-rejection test — those belong to sibling task HEX-077-b. This task's ack_ratio.<id_conversacion> segmentation was already delivered end-to-end by HEX-072-b (adr-0033) and is left untouched here.
+    - Do not implement the dead-man's switch (periodic healthchecks.io-compatible ping) — that belongs to sibling task HEX-077-d.
+    - Do not implement a metrics dashboard, panel, or any query surface beyond the existing structured log line; that belongs to stage B-3.
+    - Do not add any signal producer, IPC message, or IPC protocol version bump beyond reading the send-timestamp already captured in correlacionPendiente.
+    - Do not claim or expose, in any log field, metric, or documentation produced by this task, how many users have reported the number; that signal does not exist by any route.
+    - Do not introduce bulk-sender folklore (jitter, warm-up protocols), proxies, VPNs, or IP rotation.
+constraints:
+    - Trace to docs/PRD.md FR-14; normative source is docs/plan/fase-a-6-empaquetado-cli.md lines 304-350 (task 20 of stage A-6), of which this child covers only the per-cell-metrics slice.
+    - 'Sibling child tasks under the same parent_task HEX-077 cover the rest of task 20: HEX-077-a (notification port), HEX-077-b (the eight alert conditions), HEX-077-d (dead-man''s switch). No acceptance criterion in this spec may straddle into their scope.'
+    - This task is unblocked by HEX-072-b (closed 2026-09-13), which already delivered reconnections-per-hour and inbound-silence-window end to end in sidecar/internal/metricas/metricas.go, plus the ack_ratio-per-contact segmentation; and by HEX-072-a, which delivered delivery-ack classification in sidecar/internal/canal/acuses.go. This task consumes that prior art; it does not re-implement it.
+    - Metrics delivery obeys adr-0024 (structured log or VACUUM INTO, never an HTTP endpoint, never a live query of the hot sessions.db from hexcell-admin) and adr-0033 (the sidecar's periodic single-line key=value metrics record, whose existing keys are a published interface that must remain stable).
+    - Latency-to-ack computation must reuse the send-time already recorded in correlacionPendiente (sidecar/internal/metricas/metricas.go); it must not require a new timestamp source, a new IPC field, or a change to the IPC protocol version (adr-0032).
+    - Contact segmentation, wherever this task's code touches it, keys on id_conversacion per adr-0019; never a raw JID.
+    - crates/hexcell-core keeps zero external dependencies; this task's scope is expected to be sidecar-only (Go), and must not add a dependency to hexcell-core if it turns out to touch the Rust side.
+depends_on: []
+parent_task: HEX-077

@@ -1,0 +1,68 @@
+{
+  "commands": [
+    {
+      "command": "cd sidecar \u0026\u0026 go build ./...",
+      "duration_s": 0.474,
+      "exit_code": 0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "cd sidecar \u0026\u0026 go vet ./...",
+      "duration_s": 0.062,
+      "exit_code": 0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "cd sidecar \u0026\u0026 go test ./internal/metricas/ -count=1 -v",
+      "duration_s": 0.103,
+      "exit_code": 0,
+      "output_excerpt": "toDesempataPorIdAscendente (0.00s)\n--- PASS: TestAcuseDeCorrelacionDesconocidaSeIgnoraSinContactoFantasma (0.00s)\n--- PASS: TestReconexionesPorHoraCuentaTransicionesNoEstadosRepetidos (0.00s)\n--- PASS: TestAckRatioSegmentadoPorContactoNuncaAgregado (0.00s)\n--- PASS: TestLatenciaHastaAcuseCalculadaSobreAcuseConocido (0.00s)\n--- PASS: TestDesalojoDeContactoElimaAlDeActividadMasAntigua (0.00s)\n--- PASS: TestLatenciaHastaAcuseNoSeMuevePorAcuseHuerfano (0.00s)\n--- PASS: TestLatenciaHastaAcuseReflejaElMasRecienteNoElPrimero (0.00s)\nPASS\nok  \tgithub.com/CGary/hexcell/sidecar/internal/metricas\t0.003s"
+    },
+    {
+      "command": "cd sidecar \u0026\u0026 go test ./... -count=1",
+      "duration_s": 0.433,
+      "exit_code": 0,
+      "output_excerpt": "ok  \tgithub.com/CGary/hexcell/sidecar\t0.006s\nok  \tgithub.com/CGary/hexcell/sidecar/internal/canal\t0.064s\nok  \tgithub.com/CGary/hexcell/sidecar/internal/configuracion\t0.002s\nok  \tgithub.com/CGary/hexcell/sidecar/internal/identidad\t0.036s\nok  \tgithub.com/CGary/hexcell/sidecar/internal/ipc\t0.003s\nok  \tgithub.com/CGary/hexcell/sidecar/internal/metricas\t0.003s\nok  \tgithub.com/CGary/hexcell/sidecar/internal/outbox\t0.034s\nok  \tgithub.com/CGary/hexcell/sidecar/internal/registro\t0.002s\nok  \tgithub.com/CGary/hexcell/sidecar/internal/servidor\t0.008s"
+    },
+    {
+      "command": "git diff --quiet main...HEAD -- sidecar/go.mod sidecar/go.sum \u0026\u0026 echo 'OK: sin dependencias nuevas'",
+      "duration_s": 0.003,
+      "exit_code": 0,
+      "output_excerpt": "OK: sin dependencias nuevas"
+    },
+    {
+      "command": "cd sidecar \u0026\u0026 test \"$(go test ./internal/metricas/ -run 'TestReconexionesPorHoraCuentaTransicionesNoEstadosRepetidos|TestSilencioEntranteCreceYSeReiniciaConObservarEntrante' -v -count=1 | grep -c '^--- PASS')\" -eq 2",
+      "duration_s": 0.1,
+      "exit_code": 0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "grep -q 'latencia_hasta_acuse_ms' sidecar/internal/metricas/metricas.go \u0026\u0026 echo 'OK: nueva clave presente en el productor'",
+      "duration_s": 0.002,
+      "exit_code": 0,
+      "output_excerpt": "OK: nueva clave presente en el productor"
+    },
+    {
+      "command": "git diff --name-only main...HEAD | grep -qE '^crates/|\\.rs$|^docs/protocolo-ipc-nucleo-sidecar\\.md$' \u0026\u0026 echo 'FALLO: crate Rust o protocolo IPC tocado' \u0026\u0026 exit 1 || echo 'OK: cambio sin tocar crates ni protocolo IPC'",
+      "duration_s": 0.003,
+      "exit_code": 0,
+      "output_excerpt": "OK: cambio sin tocar crates ni protocolo IPC"
+    },
+    {
+      "command": "test -f docs/adr/adr-0035-latencia-hasta-el-acuse-en-metricas-del-sidecar.md \u0026\u0026 grep -q 'adr-0035' docs/adr/README.md \u0026\u0026 echo 'OK: adr-0035 con su fila'",
+      "duration_s": 0.002,
+      "exit_code": 0,
+      "output_excerpt": "OK: adr-0035 con su fila"
+    },
+    {
+      "command": "grep -q '### D-50' docs/bitacora-de-descartes.md \u0026\u0026 echo 'OK: entrada D-50 presente'",
+      "duration_s": 0.002,
+      "exit_code": 0,
+      "output_excerpt": "OK: entrada D-50 presente"
+    }
+  ],
+  "executed_at": "2026-09-14T00:55:08Z",
+  "overall_result": "passed",
+  "summary": "Post-amend: commit message renumbered to adr-0035/D-50, ADR mutation evidence corrected to the measured 3-of-4, typo fixed. 10/10 exit 0.",
+  "task_id": "HEX-077-c"
+}

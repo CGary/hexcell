@@ -1,0 +1,46 @@
+{
+  "task_id": "HEX-077-c",
+  "bundle_hash": "963b7f720bf2aab919831fbc42e3cef6496a0d29a7c5e5ff40e2ac8d05ce8b75",
+  "files": [
+    ".ai/tasks/active/HEX-077-c/00-spec.yaml",
+    "CLAUDE.md",
+    "docs/STATUS.md",
+    "docs/adr/README.md",
+    "docs/adr/adr-0024-metricas-internas-de-operacion.md",
+    "docs/adr/adr-0033-metricas-de-canal-propio-en-el-sidecar.md"
+  ],
+  "protocol_version": "fleet-bundle-protocol/v2",
+  "created_at": "2026-09-14T00:15:26Z",
+  "dropped": [
+    {
+      "component": "code_slice",
+      "path": "sidecar/main.go",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "sidecar/internal/metricas/metricas_test.go",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "sidecar/internal/metricas/metricas.go",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "sidecar/internal/canal/acuses.go",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "docs/plan/fase-a-6-empaquetado-cli.md",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "docs/bitacora-de-descartes.md",
+      "reason": "bundle exceeded max_bytes budget"
+    }
+  ]
+}

@@ -1,0 +1,105 @@
+task_id: HEX-077-c
+summary: "Add latencia_hasta_acuse_ms as a fourth key on the sidecar metrics producer's existing periodic log line; verify the other two per-cell series already ship end-to-end."
+goal: >-
+  Compute latencia_hasta_acuse_ms in sidecar/internal/metricas from the send-time already captured
+  per in-flight correlation (correlacionPendiente.creadaMs) and emit it as a fourth key on the
+  EXISTING periodic key=value log line (adr-0024, extended by adr-0033), as the last-observed
+  elapsed time between ObservarEnvio and the ObservarAcuse call that resolves it. Verify, without
+  re-implementing, that reconexiones_por_hora and silencio_entrante_ms already deliver end to end
+  via the existing tests in metricas_test.go. Document the addition with a new sequential ADR
+  (0034, extending 0033) plus one appended STATUS.md bullet and one appended bitacora entry. No
+  IPC message, no cable-version bump, no Rust crate touched, no per-contact segmentation of this
+  new key, no notification wiring.
+
+read:
+  - sidecar/internal/canal/acuses.go
+  - sidecar/main.go
+  - docs/adr/adr-0024-metricas-internas-de-operacion.md
+  - docs/adr/adr-0033-metricas-de-canal-propio-en-el-sidecar.md
+  - docs/adr/README.md
+  - docs/plan/fase-a-6-empaquetado-cli.md
+  - docs/bitacora-de-descartes.md
+  - CLAUDE.md
+  - .ai/tasks/active/HEX-077-c/00-spec.yaml
+
+touch:
+  - sidecar/internal/metricas/metricas.go
+  - sidecar/internal/metricas/metricas_test.go
+  - docs/adr/adr-0035-latencia-hasta-el-acuse-en-metricas-del-sidecar.md
+  - docs/adr/README.md
+  - docs/STATUS.md
+  - docs/bitacora-de-descartes.md
+
+forbid:
+  files:
+    - sidecar/internal/canal/acuses.go
+    - sidecar/internal/canal/acuses_test.go
+    - sidecar/main.go
+    - sidecar/go.mod
+    - sidecar/go.sum
+    - docs/protocolo-ipc-nucleo-sidecar.md
+    - docs/PRD.md
+    - docs/plan/fase-a-6-empaquetado-cli.md
+    - docs/adr/adr-0024-metricas-internas-de-operacion.md
+    - docs/adr/adr-0033-metricas-de-canal-propio-en-el-sidecar.md
+    - .ai/tasks/active/HEX-077-c/00-spec.yaml
+    - .ai/tasks/active/HEX-077-a/**
+    - .ai/tasks/active/HEX-077-b/**
+    - .ai/tasks/active/HEX-077-d/**
+    - .ai/tasks/active/HEX-076-new-spec/**
+    - .ai/tasks/active/HEX-074-b/**
+  behaviors:
+    - "Touching ANY crates/** path or any *.rs file. The entire change is sidecar Go plus Markdown; Rust gates stay green only because nothing Rust is touched."
+    - "Adding, renaming or versioning any IPC message type, editing docs/protocolo-ipc-nucleo-sidecar.md, or bumping the IPC cable version (currently 6, adr-0032). The new value is computed entirely from state already local to the sidecar process."
+    - "Adding a new field, parameter or signature change to Productor.ObservarAcuse, ObservarEnvio, or any call site in sidecar/main.go. The elapsed time is derived purely from corr.creadaMs vs the already-injected p.ahoraMs(); no new clock source, no new caller-supplied timestamp."
+    - "Adding any new runtime dependency to the sidecar Go module. sidecar/go.mod and sidecar/go.sum must be byte-identical after the change."
+    - "Segmenting latencia_hasta_acuse_ms per contact (a latencia_hasta_acuse.<id_conversacion> style key). This series is a single aggregate value, exactly like reconexiones_por_hora and silencio_entrante_ms; per-contact segmentation is ack_ratio's own, explicit, and untouched design (adr-0033), reserved for HEX-077-b's alert condition."
+    - "Computing latencia_hasta_acuse_ms as a running average, percentile, or windowed statistic across multiple acuses instead of the last-observed value, without first flagging that deviation to the human. The blueprint's risks section documents this as a design decision needing confirmation, not a free choice for the implementer to make silently."
+    - "Re-implementing, renaming, or modifying reconexiones_por_hora, silencio_entrante_ms, ack_ratio, contactos_omitidos, or their eviction/tiebreak logic in any way. This task VERIFIES those two series with existing tests; it does not touch their production code."
+    - "Modifying, deleting, or renaming any existing test function in metricas_test.go other than the minimal key-list extension described in the blueprint's step 3 for the 'lleva las series a la vez' scenario. TestReconexionesPorHoraCuentaTransicionesNoEstadosRepetidas and TestSilencioEntranteCreceYSeReiniciaConObservarEntrante must remain byte-for-byte as they are today (they ARE the AC-1 verification evidence)."
+    - "Emitting the new key as anything other than a plain integer millisecond count (`latencia_hasta_acuse_ms=%d`). Never a float with lossy formatting (no %.2f-style precision that could collapse two distinguishable inputs into identical text), never JSON, never a second log line."
+    - "Asserting a specific numeric value of any of the three per-cell series as normatively correct or incorrect against a fixed real-world threshold. Every test assertion must be a value the test itself derives from injected clock deltas — per AC-2, thresholds are configuration parameters with no normative value and no test may embed one as ground truth."
+    - "Letting any new or modified test in this diff rely on wall-clock time, sleeps, real network I/O, or Go map iteration order. relojFalso is the only clock; -count=1 is the profile CI runs, and that is the profile every new assertion must be shown to fail under before it is trusted."
+    - "Rewriting the existing docs/STATUS.md HEX-072-b bullet (currently ~line 45) to remove or alter its 'queda diferida' claim. That bullet is a historical record of what HEX-072-b actually shipped; this task APPENDS a new bullet instead."
+    - "Rewriting or deleting any existing docs/adr/adr-0033-*.md text, or reusing/reordering any existing ADR number. The new ADR is 0034 (0033 is the current highest); it EXTENDS 0033 without editing it, the same relationship 0033 already has with 0024."
+    - "Editing or deleting any existing bitacora entry (D-01 through D-49). They are immutable and may only ever gain a trailing REABIERTO line; this task's entry is a new, appended D-50."
+    - "Editing the repository root README.md or any README.md other than docs/adr/README.md."
+    - "Writing any repository content in English. All new identifiers, comments, log messages, ADR/STATUS/bitacora prose, and the commit message are in Spanish, matching repository convention (CLAUDE.md); this contract's own field values are the documented English exception."
+    - "Leaving the sidecar test suite empty, skipping tests, or making `go test ./... -count=1` fail or emit fewer assertions to make the build pass."
+    - "Claiming a guard works without having seen it fail. Every new assertion (the computed elapsed value, the zero default, the most-recent-not-first update, the unknown-correlation no-op) must be shown red by flipping its corresponding production-code condition under the same -count=1 profile CI runs, and the test comment must say which flip proves it, per this file's own established comment convention (see the existing '// MUTACIÓN:' comments)."
+
+verify:
+  commands:
+    - "cd sidecar && go build ./..."
+    - "cd sidecar && go vet ./..."
+    - "cd sidecar && go test ./internal/metricas/ -count=1 -v"
+    - "cd sidecar && go test ./... -count=1"
+    - "git diff --quiet main...HEAD -- sidecar/go.mod sidecar/go.sum && echo 'OK: sin dependencias nuevas'"
+    - "cd sidecar && test \"$(go test ./internal/metricas/ -run 'TestReconexionesPorHoraCuentaTransicionesNoEstadosRepetidos|TestSilencioEntranteCreceYSeReiniciaConObservarEntrante' -v -count=1 | grep -c '^--- PASS')\" -eq 2"
+    - "grep -q 'latencia_hasta_acuse_ms' sidecar/internal/metricas/metricas.go && echo 'OK: nueva clave presente en el productor'"
+    - "git diff --name-only main...HEAD | grep -qE '^crates/|\\.rs$|^docs/protocolo-ipc-nucleo-sidecar\\.md$' && echo 'FALLO: crate Rust o protocolo IPC tocado' && exit 1 || echo 'OK: cambio sin tocar crates ni protocolo IPC'"
+    - "test -f docs/adr/adr-0035-latencia-hasta-el-acuse-en-metricas-del-sidecar.md && grep -q 'adr-0035' docs/adr/README.md && echo 'OK: adr-0035 con su fila'"
+    - "grep -q '### D-50' docs/bitacora-de-descartes.md && echo 'OK: entrada D-50 presente'"
+  target_s: 60
+
+acceptance:
+  human_gate: true
+
+limits:
+  max_files_changed: 6
+  max_diff_lines: 420
+  per_class:
+    - glob: "sidecar/internal/metricas/metricas.go"
+      max_diff_lines: 100
+    - glob: "sidecar/internal/metricas/metricas_test.go"
+      max_diff_lines: 220
+    - glob: "docs/**"
+      max_diff_lines: 180
+
+execution:
+  mode: worktree_edit
+  branch: ai/HEX-077-c
+
+retry_policy:
+  max_attempts: 2
+  escalate_after: 2

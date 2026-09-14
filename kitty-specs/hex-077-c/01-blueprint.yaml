@@ -1,0 +1,69 @@
+task_id: HEX-077-c
+summary: "Add latencia_hasta_acuse_ms as a fourth key on the sidecar metrics producer's existing periodic log line; verify reconexiones_por_hora and silencio_entrante_ms already ship end-to-end."
+
+affected_files:
+  - sidecar/internal/metricas/metricas.go
+  - sidecar/internal/metricas/metricas_test.go
+  - docs/adr/adr-0035-latencia-hasta-el-acuse-en-metricas-del-sidecar.md
+  - docs/adr/README.md
+  - docs/STATUS.md
+  - docs/bitacora-de-descartes.md
+
+symbols:
+  - "metricas.Productor (Application Service; add one field, no new file, no new import)"
+  - "Productor.ObservarAcuse(idCorrelacion, estado string) (add: on resolving a known correlation, compute elapsed = ahora - corr.creadaMs, clamp to 0, store as the new last-observed-latency field, BEFORE deleting the correlation)"
+  - "Productor.Instantanea() string (add: emit `latencia_hasta_acuse_ms=%d` reading the stored field, defaulting to 0 before any acuse is ever observed)"
+
+dependencies:
+  - sidecar/internal/canal/acuses.go
+  - sidecar/main.go
+  - docs/adr/adr-0024-metricas-internas-de-operacion.md
+  - docs/adr/adr-0033-metricas-de-canal-propio-en-el-sidecar.md
+  - docs/plan/fase-a-6-empaquetado-cli.md
+  - docs/bitacora-de-descartes.md
+
+test_scenarios:
+  - statement: "Verification only, no new test required: TestReconexionesPorHoraCuentaTransicionesNoEstadosRepetidas and TestSilencioEntranteCreceYSeReiniciaConObservarEntrante already exist in metricas_test.go and already pass under `go test ./sidecar/internal/metricas/ -count=1`. They are the AC-1 evidence that reconexiones_por_hora and silencio_entrante_ms ship end-to-end without modification. Do not touch them beyond what's needed to keep them green."
+    covers: ["AC-1"]
+  - statement: "A single acuse: ObservarEnvio at t0, advance the injected clock by a fixed delta (e.g. 1500 ms), ObservarAcuse resolves it. Instantanea() then reports latencia_hasta_acuse_ms equal to exactly that delta, in milliseconds (integer format, never %.2f, so the assertion cannot collapse two different inputs into the same text). Mutation: never compute or never store the elapsed time, and this fails."
+    covers: ["AC-1"]
+  - statement: "Before any acuse has ever been observed, latencia_hasta_acuse_ms reads 0 (documented default), not an uninitialized or garbage value."
+    covers: ["AC-1"]
+  - statement: "The value reflects the MOST RECENT acuse, not the first: two acuses in sequence with distinct latencies (e.g. 1000 ms then 4000 ms) leave latencia_hasta_acuse_ms at the second value. Mutation: latch the value after the first acuse (e.g. a sync.Once or an 'if zero' guard) and this fails."
+    covers: ["AC-1"]
+  - statement: "An acuse on an unknown or already-evicted correlation (the existing no-phantom-contact guard) does not alter latencia_hasta_acuse_ms. Mutation: compute a bogus elapsed time from a nil/zero-value correlation and this fails."
+    covers: ["AC-1"]
+  - statement: "No acceptance criterion or test in this task's diff asserts a specific numeric value of reconexiones_por_hora, silencio_entrante_ms or latencia_hasta_acuse_ms as normatively correct/incorrect against a fixed real-world threshold; every asserted number is a value the test itself constructed from injected clock deltas, never a business threshold."
+    covers: ["AC-2"]
+
+strategy:
+  - step: 1
+    action: "In metricas.go, add one field to Productor (e.g. ultimaLatenciaAcuseMs int64, zero-valued by default) and, inside ObservarAcuse, after resolving `corr` and BEFORE `delete(p.correlaciones, idCorrelacion)`, compute `latenciaMs := ahora - corr.creadaMs`, clamp negative to 0 (defensive, mirrors the existing silencioMs clamp in Instantanea()), and assign it to the new field. This reuses the same injected `p.ahoraMs()` clock already used to stamp `creadaMs` in ObservarEnvio, so no new clock source, no new IPC field, no cable-version bump."
+    files:
+      - sidecar/internal/metricas/metricas.go
+  - step: 2
+    action: "In Instantanea(), add `fmt.Sprintf(\"latencia_hasta_acuse_ms=%d\", p.ultimaLatenciaAcuseMs)` to the `partes` slice, placed right after `silencio_entrante_ms` and before `contactos_omitidos`, so the three always-present aggregate keys stay grouped ahead of the per-contact ack_ratio entries. Update the package doc comment (currently says 'tres series acotadas') and the Instantanea() doc comment (currently lists three aggregate keys) to name the fourth key. No change to ack_ratio segmentation, no change to the eviction logic, no change to main.go: ObservarAcuse's existing signature and call site in sidecar/main.go already supply everything needed."
+    files:
+      - sidecar/internal/metricas/metricas.go
+  - step: 3
+    action: "In metricas_test.go, add the four new scenarios listed above (single-acuse computation, zero default, most-recent-not-first, unknown-correlation no-op) using the existing relojFalso/buscarClave/tieneClave helpers already in the file — no new test infrastructure. Optionally extend the existing 'lleva las series a la vez' scenario's key list to include latencia_hasta_acuse_ms (rename it if it still says 'tres'); do not touch the eviction, ack-ratio-segmentation, determinism or JID-guard scenarios, which are unrelated to this change."
+    files:
+      - sidecar/internal/metricas/metricas_test.go
+  - step: 4
+    action: "Write docs/adr/adr-0035-latencia-hasta-el-acuse-en-metricas-del-sidecar.md as a NEW sequential ADR (0034 is the next free number after 0033) that EXTENDS adr-0033 without rewriting it: it records that the fourth key adr-0033's own Consequences section called 'explícitamente diferida' is now delivered, states the key name and its last-observed (not averaged, not per-contact) semantics, and cross-references bitacora D-50 for the averaging alternative considered and discarded. Add its row to docs/adr/README.md (whose numbering is the source of truth; do not touch any existing row). Append one new bullet to docs/STATUS.md (do NOT edit the existing HEX-072-b bullet at line 45, which stays historically accurate to what HEX-072-b actually shipped) recording this as a fresh Definido decision. Append bitacora entry D-50 (next free number after D-49) in the same commit, following the D-46 entry's structure (Descartado/Por qué se descartó/Registro normativo/Qué tendría que cambiar para reabrirlo), for the discarded 'running average across all acuses' alternative in favor of last-observed-value."
+    files:
+      - docs/adr/adr-0035-latencia-hasta-el-acuse-en-metricas-del-sidecar.md
+      - docs/adr/README.md
+      - docs/STATUS.md
+      - docs/bitacora-de-descartes.md
+
+risks:
+  - "CONFIRMED, not refuted: verified directly against sidecar/internal/metricas/metricas.go (current, at HEAD e9800ca) that reconexiones_por_hora and silencio_entrante_ms are already computed in Instantanea() and already covered by TestReconexionesPorHoraCuentaTransicionesNoEstadosRepetidas and TestSilencioEntranteCreceYSeReiniciaConObservarEntrante in metricas_test.go, and that sidecar/main.go already wires ObservarEstadoSesion/ObservarEntrante/Bucle into the composition root. Nothing here needs re-implementation; AC-1's 'verify' half is satisfied by the tests that already exist and already pass."
+  - "CONFIRMED, not refuted: latencia_hasta_acuse is genuinely missing. adr-0033's own Consequences section states it 'queda explícitamente diferida, no implementada por esta tarea.' The raw datum needed is correlacionPendiente.creadaMs, set in ObservarEnvio and read (only implicitly, for eviction ordering) until ObservarAcuse deletes the entry — the interval between those two points was never computed. Verified directly in the current file; no signal producer is missing, only the subtraction and the emission."
+  - "NO main.go CHANGE NEEDED: ObservarAcuse(idCorrelacion, estado string) already receives everything required. The elapsed time is computed entirely from state already inside Productor (corr.creadaMs vs p.ahoraMs()), the same injected clock ObservarEnvio already used to stamp creadaMs. This keeps the touch list to one production file plus its test, well inside band S."
+  - "DESIGN DECISION FLAGGED FOR HUMAN CONFIRMATION (the spec's AC-1 wording supports this reading but does not pin it down verbatim): latencia_hasta_acuse_ms is the LAST OBSERVED per-acuse latency (updated on every ObservarAcuse call, like ultimoEntranteMs is updated on every ObservarEntrante call), NOT a lifetime running average like reconexiones_por_hora, and NOT segmented per contact like ack_ratio. Reasoning: AC-1's given/when/then describes a single occurrence ('an in-flight correlation... resolves... the elapsed time... is captured and reflected') rather than an aggregation across many; last-observed is also the smaller, simpler diff consistent with this task's declared band-S sizing. If the human intends a running average or a percentile instead, that is a respec, not an implement-phase judgment call — say so before /q-implement runs. The discarded average alternative is recorded as bitacora D-50 so it is not silently re-litigated later."
+  - "DOC-FOOTPRINT DECISION: chose a NEW ADR (adr-0035, extending adr-0033) over editing adr-0033's already-Vigente text in place, because CLAUDE.md's ADR discipline treats a decision as amended by a NEW ADR, never by rewriting a settled one — the same relationship adr-0033 already has with adr-0024. docs/STATUS.md gets an APPENDED bullet, not an edit to the existing HEX-072-b entry, for the same reason (that entry accurately describes what HEX-072-b shipped at the time; the deferral note belongs to that historical record, not to be erased)."
+  - "OUT OF SCOPE, NOT A GAP: docs/plan/fase-a-6-empaquetado-cli.md line ~375 ('La latencia hasta el acuse... queda explícitamente diferida') becomes stale text once this task merges, but per HEX-072-b's own blueprint precedent (its risks section: 'closing task 25-b... is post-merge bookkeeping the human performs in a separate docs commit'), plan-file narrative updates are the human's separate bookkeeping action, not this task's diff. The plan file is read-only context here."
+  - "SCOPE BOUNDARY REAFFIRMED: this task does not touch ack_ratio.<id_conversacion> (HEX-072-b/adr-0033, untouched, per the spec's own non_goals) and does not wire any threshold to a notification (HEX-077-b's scope). latencia_hasta_acuse_ms carries no per-contact identifier and no threshold logic of any kind."
+  - "BAND CONFIRMATION: production file count is 1 (sidecar/internal/metricas/metricas.go; the test file and all docs/** files are noncounted per .agents/policies/complexity.yaml), symbol count is 3 (Productor's new field, ObservarAcuse, Instantanea). Both are within s_max_files=2 and s_max_symbols=3 — band S holds. `quorum analyze risk-score` returned calculated=low against declared=medium (files_count=4 counted all four touch-list files including docs, no sensitive-path or migration/public-api/schema-change signal matched); the divergence is recorded in 07-trace.json per this skill's Phase 4 rule. The human's declared medium risk stands as authoritative; it is not overridden here."
+  - "CI GATE SCOPE: this task is sidecar-only Go code plus Markdown; it does not touch any Rust source, so cargo build/test/fmt/clippy stay green trivially and are not included in verify.commands (mirroring HEX-072-b's own contract), but forbid.behaviors still blocks any accidental crates/** edit."
