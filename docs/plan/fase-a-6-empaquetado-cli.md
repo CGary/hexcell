@@ -184,6 +184,7 @@ Las entradas conservan su numeración; esta sección es la autoridad sobre el or
 * Actualización 2026-09-13: 25-b cerrada (HEX-072-b), con lo que la tarea 25 queda cerrada por completo y la 20 deja de estar bloqueada. La cadena restante: 17 → 6 → 16 → 10 → 11 → 22 → 12 → 13 → 14 → 15 → 18 → 20 → 23 → 21 → 19.
 * Actualización 2026-09-13: 10 dividida en 10-a (HEX-074-a, cerrada) y 10-b (pendiente). La cadena restante: 17 → 6 → 16 → 10-b → 11 → 22 → 12 → 13 → 14 → 15 → 18 → 20 → 23 → 21 → 19.
 * Actualización 2026-09-13: 17 cerrada (HEX-076). La cadena restante: 6 → 16 → 10-b → 11 → 22 → 12 → 13 → 14 → 15 → 18 → 20 → 23 → 21 → 19.
+* Actualización 2026-09-13: 10-b cerrada (HEX-074-b) con el analizador y los subcomandos desplazados a 10-c (HEX-074-c). 20 dividida: 20-a (HEX-077-a), 20-c (HEX-077-c) y 20-d (HEX-077-d) cerradas; 20-b (HEX-077-b) pendiente. La cadena restante: 6 → 16 → 10-c → 11 → 22 → 12 → 13 → 14 → 15 → 18 → 20-b → 23 → 21 → 19.
 
 ---
 
@@ -233,9 +234,14 @@ Las entradas conservan su numeración; esta sección es la autoridad sobre el or
     célula con sus transiciones válidas.
     **Dividida el 2026-09-13.** 10-a (HEX-074-a, cerrada): agregado de estado de célula del plano de
     control (`CicloDeVidaDeCelula`, `crates/hexcell-admin/src/estado_de_celula.rs`), solo en memoria y
-    sin dependencias nuevas. 10-b (HEX-074-b, pendiente): analizador de argumentos, subcomandos, códigos
+    sin dependencias nuevas. 10-b (HEX-074-b, cerrada el 2026-09-13; alcance real abajo): analizador de argumentos, subcomandos, códigos
     de retorno, modo de simulación y cableado de `src/main.rs`; la persistencia del plano de control
     queda diferida a la tarea de A-6 que la decida.
+    **Actualización 2026-09-13.** 10-b (HEX-074-b) cerró con menos alcance del anotado: entregó
+    `codigo_de_salida.rs`, `salida.rs` y el cliente Docker (`src/docker/`) sobre `lib.rs`; el
+    analizador de argumentos, los subcomandos y el cableado de `src/main.rs` —que sigue imprimiendo el
+    talón de A-1— pasan a 10-c (HEX-074-c, en bandeja de entrada). La tarea 10 no queda cerrada por
+    completo hasta 10-c.
 11. **Implementar `cell pause` y `cell unpause`** (1,5 días). Orden explícito en la pausa —primero el
     sidecar, después el núcleo— y sondeo de disponibilidad cada 100 ms con límite temporal y mensaje
     de error claro si nunca llega a estar lista.
@@ -364,6 +370,14 @@ Las entradas conservan su numeración; esta sección es la autoridad sobre el or
     copias `VACUUM INTO`, nunca por endpoint HTTP ni consulta en vivo de `hexcell-admin` (adr-0024).
     Umbrales como parámetros sin valor normativo. Depende de la tarea 25-b. Trazabilidad: FR-14
     (decisión de 2026-09-10).
+    **Dividida el 2026-09-13.** 20-a (HEX-077-a, cerrada): puerto de notificación en `hexcell-core`
+    con sumidero falso y sumidero Telegram en `crates/hexcell` (`HEXCELL_TELEGRAM_BOT_TOKEN`,
+    `HEXCELL_TELEGRAM_CHAT_ID`, `HEXCELL_TELEGRAM_URL_BASE`), sin cablear en `main.rs` ni en la
+    composición. 20-c (HEX-077-c, cerrada): latencia hasta el acuse como cuarta clave del productor de
+    métricas del sidecar (`adr-0035`). 20-d (HEX-077-d, cerrada): dead-man's switch. 20-b (HEX-077-b,
+    pendiente): las condiciones de alerta y su cableado —bucle de reinicio separado en su propia
+    re-especificación—; hasta que cierre, ninguna de las ocho condiciones dispara y la ruta Telegram no
+    es alcanzable en una célula desplegada.
 21. **Escribir el runbook de operación** (0,5 días). Qué comando usar en cada situación, qué efecto
     tiene y cómo verificar que salió bien. Incluye `cell rebind` con su remisión explícita al
     runbook de baneo de la etapa A-7, que es donde se decide **si procede** sustituir el número;
