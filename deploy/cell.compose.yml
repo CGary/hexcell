@@ -70,6 +70,10 @@ services:
       # Secretos: solo por variable de entorno, nunca con valor literal aquí.
       HEXCELL_INFERENCIA_API_KEY: ${HEXCELL_INFERENCIA_API_KEY}
       HEXCELL_EMBEDDINGS_API_KEY: ${HEXCELL_EMBEDDINGS_API_KEY}
+      # Notificaciones operativas por Telegram (HEX-077-b): el token viaja solo
+      # por entorno, nunca en un archivo por célula (precedente HEX-064/HEX-065).
+      HEXCELL_TELEGRAM_BOT_TOKEN: ${HEXCELL_TELEGRAM_BOT_TOKEN:-}
+      HEXCELL_TELEGRAM_CHAT_ID: ${HEXCELL_TELEGRAM_CHAT_ID:-}
     # Límites de recursos: parametrizados, no elegidos aquí (la tarea 6 de la
     # etapa A-6 decide los valores a partir de NFR-01).
     mem_limit: ${HEXCELL_NUCLEO_LIMITE_MEMORIA}

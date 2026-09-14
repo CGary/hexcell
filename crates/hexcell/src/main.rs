@@ -47,6 +47,7 @@ use std::process::ExitCode;
 use std::sync::Arc;
 
 use hexcell::admin::{EstadoDeAdmin, servir_servicios_http};
+use hexcell::alertas::EmisorDeAlertas;
 use hexcell::apagado::Apagado;
 use hexcell::concurrencia::LimitadorDeConcurrencia;
 use hexcell::configuracion::{
@@ -61,6 +62,7 @@ use hexcell::metricas::{
     INTERVALO_DE_INSTANTANEA, RegistroDeMetricas, emitir_instantanea, tomar_instantanea,
 };
 use hexcell::motor::Motor;
+use hexcell::notificacion::SumideroDeCelula;
 use hexcell::preparacion::SesionDelCanal;
 use hexcell::procesador::ProcesadorDeInferencia;
 use hexcell::proveedor_embeddings::ProveedorDeEmbeddingsOpenRouter;
@@ -149,16 +151,27 @@ async fn main() -> ExitCode {
     let limitador = LimitadorDeConcurrencia::nuevo(configuracion.limite_de_concurrencia);
     let metricas = Arc::new(RegistroDeMetricas::nuevo());
 
+    let sumidero = SumideroDeCelula::desde_configuracion(configuracion.notificaciones.clone());
+    let emisor_alertas = Arc::new(EmisorDeAlertas::nuevo(
+        configuracion.umbrales_de_alerta.clone(),
+        sumidero,
+    ));
+
     let _metricas_task = {
         let metricas = Arc::clone(&metricas);
         let limitador = limitador.clone();
         let repositorio = Arc::clone(&repositorio);
+        let emisor = Arc::clone(&emisor_alertas);
         tokio::spawn(async move {
             let mut intervalo = tokio::time::interval(INTERVALO_DE_INSTANTANEA);
             loop {
                 intervalo.tick().await;
                 if let Ok(instantanea) = tomar_instantanea(&metricas, &limitador, &repositorio) {
                     emitir_instantanea(&instantanea);
+                    let rechazos = hexcell_core::canal::rechazos_de_construccion();
+                    emisor
+                        .evaluar_y_emitir_instantanea(&instantanea, rechazos)
+                        .await;
                 }
             }
         })
@@ -310,6 +323,46 @@ async fn main() -> ExitCode {
                 Retroceso::por_omision(),
             );
             adaptador.arrancar();
+
+            let mut receptor_estado = adaptador.suscribir_estado();
+            let mut receptor_expiracion = adaptador.suscribir_expiracion_de_baneo();
+            let contadores = adaptador.contadores_de_acuse().clone();
+            let emisor = Arc::clone(&emisor_alertas);
+
+            let _alertas_sesion_task = tokio::spawn(async move {
+                loop {
+                    tokio::select! {
+                        resultado = receptor_estado.changed() => {
+                            if resultado.is_err() { break; }
+                            let estado = *receptor_estado.borrow();
+                            let expira_en = *receptor_expiracion.borrow();
+                            emisor
+                                .evaluar_y_emitir_estado(estado, expira_en, std::time::SystemTime::now())
+                                .await;
+                        }
+                        resultado = receptor_expiracion.changed() => {
+                            if resultado.is_err() { break; }
+                            let estado = *receptor_estado.borrow();
+                            let expira_en = *receptor_expiracion.borrow();
+                            emisor
+                                .evaluar_y_emitir_estado(estado, expira_en, std::time::SystemTime::now())
+                                .await;
+                        }
+                    }
+                }
+            });
+
+            let _alertas_acuses_task = {
+                let emisor = Arc::clone(&emisor_alertas);
+                tokio::spawn(async move {
+                    let mut intervalo = tokio::time::interval(INTERVALO_DE_INSTANTANEA);
+                    loop {
+                        intervalo.tick().await;
+                        let contadores_snap = contadores.instantanea().await;
+                        emisor.evaluar_y_emitir_acuses(&contadores_snap).await;
+                    }
+                })
+            };
 
             let procesador = ProcesadorDeInferencia::nuevo(proveedor, Arc::clone(&repositorio));
             let mut motor = Motor::nuevo(

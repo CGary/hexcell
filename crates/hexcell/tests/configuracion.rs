@@ -691,3 +691,56 @@ fn configuracion_direccion_admin_y_limite_cuerpo_desde_la_fuente() {
 
     let _ = std::fs::remove_dir_all(&directorio_temporal);
 }
+
+// ---------------------------------------------------------------------------
+// AC-15: Selección del sumidero Telegram por variable de entorno
+// ---------------------------------------------------------------------------
+
+#[test]
+fn ac15_con_telegram_se_selecciona_el_sumidero_real() {
+    let directorio_temporal =
+        std::env::temp_dir().join(format!("hexcell-test-config-tg-{}", std::process::id()));
+    std::fs::create_dir_all(&directorio_temporal).unwrap();
+
+    let fuente = FuenteEnMemoria::vacia()
+        .con("HEXCELL_ID_CELULA", "piloto-01")
+        .con("HEXCELL_RUTA_DATOS", directorio_temporal.to_string_lossy())
+        .con("HEXCELL_TELEGRAM_BOT_TOKEN", "token-de-prueba-no-real")
+        .con("HEXCELL_TELEGRAM_CHAT_ID", "12345");
+
+    let config = Configuracion::desde_fuente(&fuente).unwrap();
+    assert!(
+        config.notificaciones.is_some(),
+        "con las variables Telegram presentes debe haber configuración de notificaciones"
+    );
+    let tg = config.notificaciones.unwrap();
+    assert_eq!(tg.id_chat, "12345");
+    assert!(!tg.token.is_empty());
+
+    let debug_output = format!("{:?}", tg);
+    assert!(
+        !debug_output.contains("token-de-prueba-no-real"),
+        "el token no debe aparecer en Debug: {debug_output}"
+    );
+
+    let _ = std::fs::remove_dir_all(&directorio_temporal);
+}
+
+#[test]
+fn ac15_sin_telegram_se_selecciona_el_sumidero_simulado() {
+    let directorio_temporal =
+        std::env::temp_dir().join(format!("hexcell-test-config-notg-{}", std::process::id()));
+    std::fs::create_dir_all(&directorio_temporal).unwrap();
+
+    let fuente = FuenteEnMemoria::vacia()
+        .con("HEXCELL_ID_CELULA", "piloto-01")
+        .con("HEXCELL_RUTA_DATOS", directorio_temporal.to_string_lossy());
+
+    let config = Configuracion::desde_fuente(&fuente).unwrap();
+    assert!(
+        config.notificaciones.is_none(),
+        "sin variables Telegram no debe haber configuración de notificaciones"
+    );
+
+    let _ = std::fs::remove_dir_all(&directorio_temporal);
+}

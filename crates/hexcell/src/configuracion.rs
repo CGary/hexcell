@@ -202,6 +202,8 @@ pub struct Configuracion {
     /// Configuración opcional del sumidero de notificación Telegram, activada por la presencia
     /// del token del bot.
     pub notificaciones: Option<crate::notificador_telegram::ConfiguracionDeTelegram>,
+    /// Umbrales de alerta para las siete condiciones de HEX-077-b.
+    pub umbrales_de_alerta: crate::alertas::UmbralesDeAlerta,
 }
 
 /// Error de configuración: nombra siempre la variable concreta y su formato esperado.
@@ -349,6 +351,26 @@ pub const HEXCELL_TELEGRAM_BOT_TOKEN: &str = "HEXCELL_TELEGRAM_BOT_TOKEN";
 pub const HEXCELL_TELEGRAM_CHAT_ID: &str = "HEXCELL_TELEGRAM_CHAT_ID";
 /// Nombre de la variable de entorno con la URL base de la API de Telegram (opcional).
 pub const HEXCELL_TELEGRAM_URL_BASE: &str = "HEXCELL_TELEGRAM_URL_BASE";
+/// Nombre de la variable de entorno con el tiempo de espera de Telegram en milisegundos (opcional).
+pub const HEXCELL_TELEGRAM_TIMEOUT_MS: &str = "HEXCELL_TELEGRAM_TIMEOUT_MS";
+
+/// Nombre de la variable de entorno con la ventana de reconexión antes de alertar, en segundos
+/// (opcional, AC-4).
+pub const HEXCELL_ALERTAS_VENTANA_RECONECION_SEGUNDOS: &str =
+    "HEXCELL_ALERTAS_VENTANA_RECONECION_SEGUNDOS";
+/// Nombre de la variable de entorno con el suelo de balance disponible para alertar (opcional, AC-6).
+pub const HEXCELL_ALERTAS_SUELO_BALANCE_DISPONIBLE: &str =
+    "HEXCELL_ALERTAS_SUELO_BALANCE_DISPONIBLE";
+/// Nombre de la variable de entorno con el límite de tasa de descartes GCRA (opcional, AC-7).
+pub const HEXCELL_ALERTAS_LIMITE_TASA_DESCARTES: &str = "HEXCELL_ALERTAS_LIMITE_TASA_DESCARTES";
+/// Nombre de la variable de entorno con el límite de caída de ratio de acuses por contacto
+/// (opcional, AC-9).
+pub const HEXCELL_ALERTAS_LIMITE_CAIDA_RATIO_ACUSES: &str =
+    "HEXCELL_ALERTAS_LIMITE_CAIDA_RATIO_ACUSES";
+/// Nombre de la variable de entorno con el mínimo de envíos para evaluar el ratio de acuses
+/// (opcional, AC-9).
+pub const HEXCELL_ALERTAS_MINIMO_ENVIOS_PARA_EVALUAR_ACUSE: &str =
+    "HEXCELL_ALERTAS_MINIMO_ENVIOS_PARA_EVALUAR_ACUSE";
 
 /// URL base de la API de Telegram por defecto.
 pub const URL_BASE_TELEGRAM_POR_DEFECTO: &str = "https://api.telegram.org";
@@ -874,14 +896,114 @@ impl Configuracion {
                     .filter(|v| !v.trim().is_empty())
                     .unwrap_or_else(|| URL_BASE_TELEGRAM_POR_DEFECTO.to_string());
 
+                let timeout = match fuente.leer(HEXCELL_TELEGRAM_TIMEOUT_MS) {
+                    Some(valor) => {
+                        let ms = valor.parse::<u64>().map_err(|_| {
+                            ErrorDeConfiguracion::ValorInvalido {
+                                nombre: HEXCELL_TELEGRAM_TIMEOUT_MS,
+                                valor: valor.clone(),
+                                formato_esperado:
+                                    "entero estrictamente positivo de milisegundos, p. ej. 5000",
+                            }
+                        })?;
+                        if ms == 0 {
+                            return Err(ErrorDeConfiguracion::ValorInvalido {
+                                nombre: HEXCELL_TELEGRAM_TIMEOUT_MS,
+                                valor: valor.clone(),
+                                formato_esperado: "entero estrictamente positivo de milisegundos, p. ej. 5000",
+                            });
+                        }
+                        Duration::from_millis(ms)
+                    }
+                    None => TIMEOUT_TELEGRAM_POR_DEFECTO,
+                };
+
                 Some(crate::notificador_telegram::ConfiguracionDeTelegram {
                     url_base,
                     token,
                     id_chat,
-                    timeout: TIMEOUT_TELEGRAM_POR_DEFECTO,
+                    timeout,
                 })
             }
             _ => None,
+        };
+
+        let defectos_alerta = crate::alertas::UmbralesDeAlerta::por_defecto();
+
+        let ventana_reconexion = match fuente.leer(HEXCELL_ALERTAS_VENTANA_RECONECION_SEGUNDOS) {
+            Some(valor) => {
+                let segundos =
+                    valor
+                        .parse::<u64>()
+                        .map_err(|_| ErrorDeConfiguracion::ValorInvalido {
+                            nombre: HEXCELL_ALERTAS_VENTANA_RECONECION_SEGUNDOS,
+                            valor: valor.clone(),
+                            formato_esperado: "entero no negativo de segundos, p. ej. 300",
+                        })?;
+                Duration::from_secs(segundos)
+            }
+            None => defectos_alerta.ventana_reconexion,
+        };
+
+        let suelo_balance = match fuente.leer(HEXCELL_ALERTAS_SUELO_BALANCE_DISPONIBLE) {
+            Some(valor) => {
+                valor
+                    .parse::<i64>()
+                    .map_err(|_| ErrorDeConfiguracion::ValorInvalido {
+                        nombre: HEXCELL_ALERTAS_SUELO_BALANCE_DISPONIBLE,
+                        valor: valor.clone(),
+                        formato_esperado: "entero de unidades de presupuesto, p. ej. 0",
+                    })?
+            }
+            None => defectos_alerta.suelo_balance_disponible,
+        };
+
+        let limite_tasa_descartes = match fuente.leer(HEXCELL_ALERTAS_LIMITE_TASA_DESCARTES) {
+            Some(valor) => {
+                valor
+                    .parse::<f64>()
+                    .map_err(|_| ErrorDeConfiguracion::ValorInvalido {
+                        nombre: HEXCELL_ALERTAS_LIMITE_TASA_DESCARTES,
+                        valor: valor.clone(),
+                        formato_esperado: "número flotante entre 0 y 1, p. ej. 0.5",
+                    })?
+            }
+            None => defectos_alerta.limite_tasa_descartes,
+        };
+
+        let limite_caida_ratio = match fuente.leer(HEXCELL_ALERTAS_LIMITE_CAIDA_RATIO_ACUSES) {
+            Some(valor) => {
+                valor
+                    .parse::<f64>()
+                    .map_err(|_| ErrorDeConfiguracion::ValorInvalido {
+                        nombre: HEXCELL_ALERTAS_LIMITE_CAIDA_RATIO_ACUSES,
+                        valor: valor.clone(),
+                        formato_esperado: "número flotante entre 0 y 1, p. ej. 0.5",
+                    })?
+            }
+            None => defectos_alerta.limite_caida_ratio_acuses,
+        };
+
+        let minimo_envios_acuse =
+            match fuente.leer(HEXCELL_ALERTAS_MINIMO_ENVIOS_PARA_EVALUAR_ACUSE) {
+                Some(valor) => {
+                    valor
+                        .parse::<u64>()
+                        .map_err(|_| ErrorDeConfiguracion::ValorInvalido {
+                            nombre: HEXCELL_ALERTAS_MINIMO_ENVIOS_PARA_EVALUAR_ACUSE,
+                            valor: valor.clone(),
+                            formato_esperado: "entero no negativo, p. ej. 5",
+                        })?
+                }
+                None => defectos_alerta.minimo_envios_para_evaluar_acuse,
+            };
+
+        let umbrales_de_alerta = crate::alertas::UmbralesDeAlerta {
+            ventana_reconexion,
+            suelo_balance_disponible: suelo_balance,
+            limite_tasa_descartes,
+            limite_caida_ratio_acuses: limite_caida_ratio,
+            minimo_envios_para_evaluar_acuse: minimo_envios_acuse,
         };
 
         Ok(Self {
@@ -904,6 +1026,7 @@ impl Configuracion {
             inferencia,
             embeddings,
             notificaciones,
+            umbrales_de_alerta,
         })
     }
 }

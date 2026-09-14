@@ -1,6 +1,6 @@
 # Bitácora de descartes
 
-> Registro de lo que se consideró y **no** se hizo. Última actualización: 2026-09-13 (D-51).
+> Registro de lo que se consideró y **no** se hizo. Última actualización: 2026-09-13 (D-52).
 
 ## Para qué sirve este documento
 
@@ -714,6 +714,33 @@ reintento/backoff local ante un fallo transitorio.**
   publicar un puerto de salud por célula al anfitrión (lo que hoy NFR-05 y A-6 tarea 17 prohíben);
   el subcomando de `hexcell-admin` solo si ese crate decidiera adoptar una pila TLS por otra razón
   independiente que ya pagara ese costo.
+
+---
+
+## D-52: Alerta de bucle de reinicios de contenedores en HEX-077-b
+
+**Descartado el:** 2026-09-13  
+**Decisión registrada en:** `docs/plan/fase-a-6-empaquetado-cli.md` (non-goals de HEX-077-b)
+
+### Qué se consideró
+
+Incluir la octava condición de alerta de la tarea 20 del plan —bucle de reinicios de cualquiera de
+los dos contenedores (núcleo o sidecar)— entre las siete condiciones que HEX-077-b entrega.
+
+### Por qué se descartó
+
+No existe ningún productor de señal para contar o persistir reinicios de contenedor en el
+repositorio: ni `crates/hexcell` ni el sidecar cuentan ni persisten reinicios, y la política de
+reinicio de Docker no es observable por la aplicación. Construir uno aquí violaría el non-goal de
+HEX-077-b («no añadir ningún productor de señal que no exista ya»). Leer el estado de reinicio de
+Docker o persistir conteos de arranque es un problema distinto que merece su propio blueprint.
+
+### Qué tendría que cambiar para reabrirlo
+
+Que una tarea futura decida construir un observador de reinicios de contenedor (por ejemplo, un
+contador persistido en volumen que el entrypoint del contenedor incrementa en cada arranque, o una
+integración con la Docker API del anfitrión). Esa tarea definiría la señal, su ubicación y su
+coste; HEX-077-b entonces la consumiría como las demás.
 
 ---
 
