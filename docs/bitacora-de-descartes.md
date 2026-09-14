@@ -1,6 +1,6 @@
 # Bitácora de descartes
 
-> Registro de lo que se consideró y **no** se hizo. Última actualización: 2026-09-13 (D-48).
+> Registro de lo que se consideró y **no** se hizo. Última actualización: 2026-09-13 (D-51).
 
 ## Para qué sirve este documento
 
@@ -79,6 +79,7 @@ se apoya en un principio de diseño, no.
 | [D-43](#d-43) | Extraer a `abrirRecursosDeArranque` el cableado de `main()` posterior al buzón | Reabrible si cambia un hecho del árbol |
 | [D-44](#d-44) | Liberar los recursos ya abiertos cuando el arranque falla a mitad de camino | Reabrible si cambia un hecho del proyecto |
 | [D-45](#d-45) | Convertir la clasificación del acuse de entrega/lectura en un mensaje IPC (`acuse_envio` u otro) | Reabrible si aparece un consumidor fuera del proceso |
+| [D-51](#d-51) | Vigilancia externa: subcomando de hexcell-admin, binario/crate nuevo, ping gateado a la salud de la célula, y reintento/backoff local | Principio de diseño, no reabrir |
 
 ---
 
@@ -660,6 +661,43 @@ copiar `sessions.db`, `knowledge_live.db` y el almacén de identidad del adaptad
 * **Por qué se descartó:** dos volúmenes nombrados distintos de Docker viven en el **mismo sistema de archivos del anfitrión**, así que su número de dispositivo coincide siempre. Medido el 2026-09-13 sobre dos volúmenes recién creados: ambos devuelven dispositivo `31` con inodos distintos (`20349905` y `20349970`). La aserción, por lo tanto, no podía pasar nunca: era una **guarda invertida**, roja incluso con el aislamiento intacto, y así se comportó en la primera corrida real del script en vivo, que reportó `FALLA` en AC-8 mientras AC-6 demostraba con marcadores reales que los volúmenes sí estaban aislados. El discriminante correcto es el par **dispositivo:inodo** (`stat -c %d:%i`), que es la identidad de archivo de POSIX; con él las once aserciones pasan.
 * **Registro normativo:** `deploy/verificar_aislamiento.sh` (bloque AC-8).
 * **Qué tendría que cambiar para reabrirlo:** *reabrible solo si los volúmenes de una célula pasaran a residir en sistemas de archivos separados* (por ejemplo, un dispositivo de bloque dedicado por célula). En ese escenario el número de dispositivo volvería a discriminar, pero seguiría siendo redundante frente al par dispositivo:inodo, que es correcto en ambos casos.
+
+---
+
+### D-51
+
+**Vigilancia externa (dead-man's switch, HEX-077-d): implementarla como subcomando de
+`hexcell-admin`, como binario/crate Rust nuevo, gatear el ping a la salud de la célula, y darle
+reintento/backoff local ante un fallo transitorio.**
+
+* **Descartado:** 2026-09-13 (HEX-077-d).
+* **Por qué se descartó:** son cuatro alternativas distintas, agrupadas bajo un solo número siguiendo
+  el precedente de D-28, porque las cuatro se estudiaron y rechazaron en el mismo diseño y ninguna
+  sobrevive sola. (1) **Subcomando de `hexcell-admin`**: la URL de healthchecks.io es `https`, y
+  `crates/hexcell-admin/src/docker/transporte.rs` es un cliente HTTP/1.1 escrito a mano sobre
+  `UnixStream`, documentado explícitamente "sin bollard, sin hyper y sin tokio"; hablar `https` desde
+  ahí exigiría meter una pila TLS completa (rustls + hyper-rustls + tokio + hyper) en el único crate
+  cuyo punto de diseño es casi-cero dependencias. (2) **Binario o crate nuevo**: es estrictamente un
+  superconjunto del costo anterior más un miembro de workspace nuevo, sin ninguna ventaja a cambio.
+  (3) **Gatear el ping a la salud de la célula**: `deploy/cell.compose.yml` no publica ningún puerto y
+  `HEXCELL_DIRECCION_SALUD` vive dentro de la red Docker propia de cada célula; alcanzarla desde un
+  cron del anfitrión exigiría publicar un puerto o usar `docker exec`, debilitando el aislamiento por
+  célula que ancla NFR-05 y la tarea 17 de la etapa A-6. Además, el propósito de este vigilante es
+  probar que el ANFITRIÓN está vivo, no las células: mezclar ambas cosas volvería la ausencia de
+  ping ambigua entre "el anfitrión murió" y "una célula está caída". (4) **Reintento o backoff
+  local**: la tolerancia a un traspié transitorio es responsabilidad del período de gracia del
+  servicio externo; un reintento local permitiría que un anfitrión degradado siguiera pareciendo sano
+  al cruzar el límite del intervalo de 5 minutos del cron, que es exactamente la ventana que la
+  alarma debe cubrir. El diseño elegido —un script `deploy/*.sh` disparado por un cron por-servidor,
+  sin reintento— es el único que comparte el destino del propio anfitrión que atestigua (fate-sharing):
+  si el anfitrión muere, el cron muere con él, y esa ausencia ES la alarma.
+* **Registro normativo:** `deploy/ping_de_vigilancia_externa.sh`, `deploy/verificar_ping_de_vigilancia.sh`,
+  `docs/runbook-vigilancia-externa.md`.
+* **Qué tendría que cambiar para reabrirlo:** *principio de diseño, no reabrir por defecto.* El
+  gateo a salud de célula solo sería reabrible si una tarea futura decidiera deliberadamente
+  publicar un puerto de salud por célula al anfitrión (lo que hoy NFR-05 y A-6 tarea 17 prohíben);
+  el subcomando de `hexcell-admin` solo si ese crate decidiera adoptar una pila TLS por otra razón
+  independiente que ya pagara ese costo.
 
 ---
 

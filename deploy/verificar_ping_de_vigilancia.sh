@@ -175,25 +175,39 @@ caso_un_solo_ping() {
 }
 
 # caso_falla_cerrada_sin_url <ruta-emisor>
-#   Sin la variable de entorno, el emisor debe salir distinto de 0 y no emitir
-#   NINGUNA petición (fail-closed, sin URL de respaldo).
+#   Sin la variable de entorno, el emisor debe salir distinto de 0 y no debe
+#   invocar curl EN ABSOLUTO (fail-closed, sin URL de respaldo). Se intercepta
+#   curl con un binario falso puesto delante en el PATH: así el caso no depende
+#   de si el sumidero local recibió o no la petición, ni de si una URL de
+#   respaldo embebida resuelve contra una red real. Si el emisor llega a
+#   invocar curl sin la variable definida, hay una URL por omisión en algún
+#   lado y eso, por sí solo, ya es la falla que este caso debe anclar.
 caso_falla_cerrada_sin_url() {
     local emisor="$1"
-    levantar_sumidero_local || return 1
     local ok=1
 
-    env -u HEXCELL_URL_PING_VIGILANCIA bash "$emisor"
+    local bin_falso="$GUARD_TMP/bin_falla_cerrada"
+    mkdir -p "$bin_falso"
+    local marcador="$GUARD_TMP/curl_invocado_falla_cerrada"
+    rm -f "$marcador"
+    cat > "$bin_falso/curl" <<EOF
+#!/usr/bin/env bash
+echo "\$@" > "$marcador"
+exit 0
+EOF
+    chmod +x "$bin_falso/curl"
+
+    env -u HEXCELL_URL_PING_VIGILANCIA PATH="$bin_falso:$PATH" bash "$emisor"
     local estado=$?
 
     if [ "$estado" -eq 0 ]; then
         echo "FALLA: caso_falla_cerrada_sin_url -> el emisor salió 0 sin URL (debió fallar cerrado)"
         ok=0
     fi
-    if [ "$(leer_contador)" -ne 0 ]; then
-        echo "FALLA: caso_falla_cerrada_sin_url -> el sumidero registró $(leer_contador) petición(es) sin URL (debió ser 0)"
+    if [ -f "$marcador" ]; then
+        echo "FALLA: caso_falla_cerrada_sin_url -> el emisor invocó curl sin URL definida (URL de respaldo o por omisión)"
         ok=0
     fi
-    detener_sumidero
     [ "$ok" -eq 1 ] && return 0 || return 1
 }
 
@@ -289,11 +303,24 @@ fi
 echo "Modo --autoprueba: cada propiedad anclada, una por vez, debe ser detectada al romperse."
 TOTAL=0; ACIERTOS=0
 
+# exigir_mutacion_aplicada <copia>
+#   Si el sed de la mutación no cambió nada (patrón desactualizado respecto del
+#   emisor real), la copia es idéntica al original y cualquier caso que "pase"
+#   contra ella no prueba nada: aborta la autoprueba entera en vez de reportar
+#   un falso PASA/FALLA silencioso.
+exigir_mutacion_aplicada() {
+    if diff -q "$EMISOR_REAL" "$1" >/dev/null 2>&1; then
+        echo "FALLA: la mutación en [$1] no modificó nada; el patrón de sed quedó desactualizado" >&2
+        exit 1
+    fi
+}
+
 # 1) Doble ping: el emisor mutado emite dos GET; caso_un_solo_ping debe ponerse rojo.
 COPIA="$GUARD_TMP/emisor.doble.sh"
 cp "$EMISOR_REAL" "$COPIA"
 # Duplicar la llamada a emitir_ping dentro de main.
 sed -i -E 's/^(\s*)emitir_ping "\$url"$/\1emitir_ping "$url"\n\1emitir_ping "$url"/' "$COPIA"
+exigir_mutacion_aplicada "$COPIA"
 if ! caso_un_solo_ping "$COPIA" >/dev/null 2>&1; then
     echo "PASA: doble ping -> el guardia falla como debe"
     ACIERTOS=$((ACIERTOS + 1))
@@ -307,6 +334,7 @@ TOTAL=$((TOTAL + 1))
 COPIA="$GUARD_TMP/emisor.respaldo.sh"
 cp "$EMISOR_REAL" "$COPIA"
 sed -i -E 's#\$\{HEXCELL_URL_PING_VIGILANCIA:-\}#${HEXCELL_URL_PING_VIGILANCIA:-https://hc-ping.com/HEX-077-d-ficticio}#' "$COPIA"
+exigir_mutacion_aplicada "$COPIA"
 if ! caso_falla_cerrada_sin_url "$COPIA" >/dev/null 2>&1; then
     echo "PASA: URL de respaldo embebida -> caso_falla_cerrada_sin_url falla como debe"
     ACIERTOS=$((ACIERTOS + 1))
@@ -326,7 +354,8 @@ TOTAL=$((TOTAL + 1))
 # 3) "|| true" que traga el estado de curl; caso_no_enmascara_fallo debe ponerse rojo.
 COPIA="$GUARD_TMP/emisor.silencia.sh"
 cp "$EMISOR_REAL" "$COPIA"
-sed -i -E 's#^(\s*)curl --silent --show-error --fail --max-time 60 "\$url"$#\1curl --silent --show-error --fail --max-time 60 "$url" || true#' "$COPIA"
+sed -i -E 's#^(\s*)curl --silent --show-error --fail --max-time 60 "\$url" >/dev/null$#\1curl --silent --show-error --fail --max-time 60 "$url" >/dev/null || true#' "$COPIA"
+exigir_mutacion_aplicada "$COPIA"
 if ! caso_no_enmascara_fallo "$COPIA" >/dev/null 2>&1; then
     echo "PASA: '|| true' que traga curl -> caso_no_enmascara_fallo falla como debe"
     ACIERTOS=$((ACIERTOS + 1))

@@ -166,3 +166,21 @@ jobs:
       # todavía un guardia.
       - name: Autoprueba de mutación del guardia de aislamiento
         run: bash deploy/verificar_aislamiento_estatica.sh --autoprueba
+
+  guardas-vigilancia-externa:
+    name: Guardas de despliegue — vigilancia externa (HEX-077-d)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # AC-1/AC-2: cuatro casos contra un sumidero HTTP local en 127.0.0.1 (sin
+      # DNS, sin salir del loopback, sin cuenta de healthchecks.io real): un
+      # solo GET saliente, fail-closed sin URL, sin enmascarar un fallo de
+      # curl, e higiene del secreto en las superficies per-célula.
+      - name: Verificar el emisor del ping de vigilancia externa
+        run: bash deploy/verificar_ping_de_vigilancia.sh
+
+      # Prueba de mutación. Un guardia que nunca se vio fallar no es todavía
+      # un guardia.
+      - name: Autoprueba de mutación del guardia de vigilancia externa
+        run: bash deploy/verificar_ping_de_vigilancia.sh --autoprueba
