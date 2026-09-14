@@ -1,0 +1,62 @@
+{
+  "commands": [
+    {
+      "command": "cargo fmt --check",
+      "duration_s": 0.277,
+      "exit_code": 0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "test \"$(cargo tree -p hexcell-core --edges normal | wc -l)\" -eq 1",
+      "duration_s": 0.04,
+      "exit_code": 0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "git diff --quiet main...HEAD -- Cargo.toml Cargo.lock 'crates/*/Cargo.toml'",
+      "duration_s": 0.003,
+      "exit_code": 0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "cargo clippy --workspace -- -D warnings",
+      "duration_s": 0.589,
+      "exit_code": 0,
+      "output_excerpt": "-storage v0.1.0 (/home/gary/dev/hexcell/worktrees/HEX-077-a/crates/hexcell-storage)\n    Checking hexcell-canal-whatsmeow v0.1.0 (/home/gary/dev/hexcell/worktrees/HEX-077-a/crates/hexcell-canal-whatsmeow)\n    Checking hexcell-canal-contrato v0.1.0 (/home/gary/dev/hexcell/worktrees/HEX-077-a/crates/hexcell-canal-contrato)\n    Checking hexcell-canal-simulado v0.1.0 (/home/gary/dev/hexcell/worktrees/HEX-077-a/crates/hexcell-canal-simulado)\n    Checking hexcell v0.1.0 (/home/gary/dev/hexcell/worktrees/HEX-077-a/crates/hexcell)\n    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.52s"
+    },
+    {
+      "command": "cargo test -p hexcell-core",
+      "duration_s": 0.342,
+      "exit_code": 0,
+      "output_excerpt": "_no ... ok\n\ntest result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n   Doc-tests hexcell_core\n\nrunning 1 test\ntest crates/hexcell-core/src/canal.rs - canal::MensajeSaliente (line 177) ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n\nrunning 1 test\ntest crates/hexcell-core/src/canal.rs - canal::MensajeSaliente (line 172) - compile fail ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s\n\nall doctests ran in 0.11s; merged doctests compilation took 0.09s"
+    },
+    {
+      "command": "cargo test -p hexcell --test notificaciones",
+      "duration_s": 0.494,
+      "exit_code": 0,
+      "output_excerpt": "aciones-541549bc1dadf458)\n\nrunning 6 tests\ntest el_sumidero_simulado_captura_una_notificacion_sin_red ... ok\ntest el_sumidero_simulado_que_falla_devuelve_err_y_no_captura_nada ... ok\ntest el_payload_admite_instante_conversacion_y_componente_y_rondan_intactos ... ok\ntest el_selector_de_celula_elige_simulado_sin_configuracion_y_telegram_con_ella ... ok\ntest el_notificador_telegram_mapea_un_estado_no_2xx_a_error ... ok\ntest el_notificador_telegram_postea_a_sendmessage_con_el_codigo_en_el_cuerpo ... ok\n\ntest result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s"
+    },
+    {
+      "command": "cargo test -p hexcell --test configuracion",
+      "duration_s": 0.178,
+      "exit_code": 0,
+      "output_excerpt": "sin_variables_de_entorno ... ok\ntest la_configuracion_gcra_se_puede_configurar_por_variables_de_entorno ... ok\ntest la_ventana_de_deduplicacion_por_defecto_es_una_hora_sin_la_variable_de_entorno ... ok\ntest la_ventana_de_deduplicacion_se_puede_configurar_por_variable_de_entorno ... ok\ntest presupuesto_inicial_unidades_por_defecto_y_desde_la_fuente ... ok\ntest el_binario_no_vincula_nada_si_la_configuracion_es_invalida ... ok\ntest el_binario_termina_antes_de_escuchar_si_falta_la_ruta_de_datos ... ok\n\ntest result: ok. 20 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s"
+    },
+    {
+      "command": "cargo test --workspace",
+      "duration_s": 13.219,
+      "exit_code": 0,
+      "output_excerpt": "measured; 0 filtered out; finished in 0.00s\n\n\nrunning 1 test\ntest crates/hexcell-core/src/canal.rs - canal::MensajeSaliente (line 172) - compile fail ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s\n\nall doctests ran in 0.11s; merged doctests compilation took 0.09s\n   Doc-tests hexcell_meta\n\nrunning 0 tests\n\ntest result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n   Doc-tests hexcell_storage\n\nrunning 0 tests\n\ntest result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s"
+    },
+    {
+      "command": "! grep -rniE 'jid|telefono|phone_number' crates/hexcell-core/src/notificacion.rs",
+      "duration_s": 0.002,
+      "exit_code": 0,
+      "output_excerpt": ""
+    }
+  ],
+  "executed_at": "2026-09-14T00:58:06Z",
+  "overall_result": "passed",
+  "summary": "Rebased onto main 5550cdd and re-verified: 9/9 contract commands exit 0, including the hexcell-core zero-dependency and JID guards.",
+  "task_id": "HEX-077-a"
+}

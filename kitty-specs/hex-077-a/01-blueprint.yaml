@@ -1,0 +1,97 @@
+task_id: HEX-077-a
+summary: "Notification port trait and value types in hexcell-core (std-only); fake sink, static selection enum and HTTP-to-Telegram sink in crates/hexcell, reusing the workspace hyper/rustls stack."
+affected_files:
+  - crates/hexcell-core/src/notificacion.rs
+  - crates/hexcell-core/src/lib.rs
+  - crates/hexcell/src/notificacion.rs
+  - crates/hexcell/src/notificador_telegram.rs
+  - crates/hexcell/src/lib.rs
+  - crates/hexcell/src/configuracion.rs
+  - crates/hexcell/tests/notificaciones.rs
+  - crates/hexcell/tests/configuracion.rs
+symbols:
+  - "hexcell_core::notificacion::CodigoDeNotificacion (opaque String newtype; nuevo/como_str, mirrors IdConversacion). NOT an enum of the eight alert codes."
+  - "hexcell_core::notificacion::ComponenteDeCelula (closed enum Nucleo|Sidecar; answers 'which container looped' for the sibling restart-loop alert)."
+  - "hexcell_core::notificacion::ValorDeDato (closed enum Texto(String)|Instante(SystemTime)|Conversacion(IdConversacion)|Componente(ComponenteDeCelula)): kinds of DATA, never kinds of alert."
+  - "hexcell_core::notificacion::DatoDeNotificacion (struct clave:String + valor:ValorDeDato)."
+  - "hexcell_core::notificacion::Notificacion (struct codigo + datos:Vec<DatoDeNotificacion>, with nueva/con_dato builder)."
+  - "hexcell_core::notificacion::SumideroDeNotificaciones (port trait; type Error + fn notificar(&self, Notificacion) -> impl Future<Output=Result<(),Self::Error>> + Send)."
+  - "hexcell::notificacion::SumideroSimulado (fake sink; Arc<Mutex<Vec<Notificacion>>>, nuevo/que_falla/notificaciones/cantidad; holds NO HTTP client field)."
+  - "hexcell::notificacion::ErrorDeNotificacion (unified error for the static selection enum)."
+  - "hexcell::notificacion::SumideroDeCelula (static selection enum Simulado|Telegram + desde_configuracion; mirrors ProveedorDeEmbeddingsDeCelula)."
+  - "hexcell::notificador_telegram::ConfiguracionDeTelegram (url_base, token, id_chat, timeout; mirrors ConfiguracionDeInferencia)."
+  - "hexcell::notificador_telegram::NotificadorTelegram (outbound HTTPS POST to {url_base}/bot{token}/sendMessage)."
+  - "hexcell::notificador_telegram::ErrorDeTelegram"
+  - "hexcell::configuracion::Configuracion.notificaciones: Option<ConfiguracionDeTelegram>"
+  - "hexcell::configuracion HEXCELL_TELEGRAM_BOT_TOKEN / HEXCELL_TELEGRAM_CHAT_ID / HEXCELL_TELEGRAM_URL_BASE constants"
+dependencies:
+  - "crates/hexcell-core/src/inferencia.rs (port precedent: trait + value types, std-only, -> impl Future + Send)"
+  - "crates/hexcell-core/src/canal.rs (precedent for closed enums and for expira_en: SystemTime)"
+  - "crates/hexcell-core/src/identidad.rs (IdConversacion: opaque, never a transport identifier)"
+  - "crates/hexcell/src/embeddings.rs (precedent: fake provider + static selection enum in one ordinary non-test module)"
+  - "crates/hexcell/src/proveedor_openai.rs (precedent: hyper-util legacy Client + hyper-rustls https_or_http connector, built inline at lines 108-141)"
+  - "crates/hexcell/tests/proveedor_openai.rs (precedent: offline loopback TcpListener stub server, no network)"
+  - "crates/hexcell/tests/configuracion.rs (precedent: FuenteEnMemoria seam, no process-env mutation)"
+  - "docs/plan/fase-a-6-empaquetado-cli.md lines 304-350 (task 20, FR-14)"
+test_scenarios:
+  - statement: "The fake sink captures exactly one notification carrying its code, in-process, with no outbound network call (the literal requirement of plan task 20, lines 333-335)."
+    covers:
+      - AC-1
+  - statement: "The fake sink built with que_falla returns Err from notificar, so the failure path of the port is exercised and not only the happy path."
+    covers:
+      - AC-1
+  - statement: "A Notificacion can carry an expiry instant (ValorDeDato::Instante), an affected contact as IdConversacion (ValorDeDato::Conversacion) and the looping container (ValorDeDato::Componente), and all three round-trip out of the fake sink unchanged: this is the guard that HEX-077-b can be built on this payload."
+    covers:
+      - AC-1
+  - statement: "SumideroDeCelula::desde_configuracion yields Simulado when no Telegram token is configured and Telegram when it is, so the HTTP implementation is reachable only behind configuration."
+    covers:
+      - AC-1
+  - statement: "Configuracion::desde_fuente over FuenteEnMemoria: token absent yields notificaciones=None; token present without chat id yields ErrorDeConfiguracion; token plus chat id yields Some with the default url_base https://api.telegram.org."
+    covers:
+      - AC-1
+  - statement: "NotificadorTelegram against an offline loopback TcpListener stub posts to /bot<token>/sendMessage with the code in the JSON body and maps a non-2xx status to Err; no live credentials and no external network."
+    covers:
+      - AC-1
+  - statement: "Guard, mutation-provable: cargo tree -p hexcell-core --edges normal prints exactly one line; adding any dependency to hexcell-core turns it red."
+  - statement: "Guard, mutation-provable: git diff --quiet main...HEAD over every Cargo manifest and Cargo.lock; adding a third-party crate anywhere turns it red."
+strategy:
+  - step: 1
+    action: "Value Objects and port declaration. Write crates/hexcell-core/src/notificacion.rs using only std (String, SystemTime, Vec) plus crate::identidad::IdConversacion, and register it in lib.rs. The trait returns -> impl Future<Output = Result<(), Self::Error>> + Send, never async fn, exactly as crate::inferencia and crate::canal do, because async_fn_in_trait is an error under the project clippy gate. Document in the module header WHY the trait lives here and the Telegram adapter does not."
+    files:
+      - crates/hexcell-core/src/notificacion.rs
+      - crates/hexcell-core/src/lib.rs
+  - step: 2
+    action: "Application Service, fake sink and static selection. Write crates/hexcell/src/notificacion.rs with SumideroSimulado (captures into Arc<Mutex<Vec<Notificacion>>>, plus a que_falla constructor for the failure path), ErrorDeNotificacion, and the SumideroDeCelula selection enum whose notificar is an async block matching over the two arms. Mirror crates/hexcell/src/embeddings.rs. The trait is not dyn-compatible, so this enum IS the runtime-selection mechanism; there is no Box<dyn>."
+    files:
+      - crates/hexcell/src/notificacion.rs
+      - crates/hexcell/src/lib.rs
+  - step: 3
+    action: "Outbound adapter. Write crates/hexcell/src/notificador_telegram.rs: ConfiguracionDeTelegram plus NotificadorTelegram, building the rustls root store, HttpsConnectorBuilder with https_or_http and enable_http1, and the hyper-util legacy Client exactly as ProveedorOpenAi::nuevo does (lines 108-141). POST {url_base}/bot{token}/sendMessage with a serde_json body; 2xx is success, anything else is ErrorDeTelegram. The token is never written to a log line, a Debug impl or an error message."
+    files:
+      - crates/hexcell/src/notificador_telegram.rs
+      - crates/hexcell/src/lib.rs
+  - step: 4
+    action: "Validator and configuration seam. Extend crates/hexcell/src/configuracion.rs with the three HEXCELL_TELEGRAM_* constants and an optional notificaciones section parsed inside Configuracion::desde_fuente, following the shape of the existing inferencia block (lines 593-691). Selection keys off HEXCELL_TELEGRAM_BOT_TOKEN presence (not url_base, diverging from the inferencia precedent on purpose so the operator never has to set a URL they do not care about); HEXCELL_TELEGRAM_CHAT_ID is then obligatory and HEXCELL_TELEGRAM_URL_BASE is optional with default https://api.telegram.org so the loopback test can override it."
+    files:
+      - crates/hexcell/src/configuracion.rs
+  - step: 5
+    action: "Tests. Add crates/hexcell/tests/notificaciones.rs covering the fake sink happy path and failure path, the three payload shapes the sibling needs, the selection enum, and the loopback Telegram stub reusing the offline TcpListener harness from tests/proveedor_openai.rs. Extend crates/hexcell/tests/configuracion.rs with the three FuenteEnMemoria config cases. No test touches the network or the process environment."
+    files:
+      - crates/hexcell/tests/notificaciones.rs
+      - crates/hexcell/tests/configuracion.rs
+risks:
+  - "DESIGN DECISION recorded here: the trait goes in hexcell-core, both implementations in crates/hexcell. This follows the ProveedorDeInferencia / ProveedorDeEmbeddings precedent, NOT the ChannelAdapter one. ChannelAdapter earned its own crates (hexcell-canal-simulado, -whatsmeow, -contrato) because FR-12 makes two adapters coexist in production in different cells and demands cross-adapter contract tests. Notifications have one real sink plus a test double, which is exactly the inference/embeddings shape: port in core, ProveedorOpenAi and ProveedorDeEmbeddingsSimulado both inside crates/hexcell. Inventing two new crates here would be generality this workspace deliberately avoids."
+  - "NO NEW THIRD-PARTY DEPENDENCY. Verified against crates/hexcell/Cargo.toml: hyper (client), hyper-util (client-legacy), http-body-util, bytes, hyper-rustls, rustls, webpki-roots, serde and serde_json are already declared for the LLM provider (HEX-044, adr-0012). The contract therefore forbids editing any Cargo.toml or Cargo.lock at all, which makes the no-new-dependency invariant provable by a diff guard rather than by trust."
+  - "The port trait is NOT dyn-compatible: returning -> impl Future + Send is forced by the project clippy gate (async_fn_in_trait is denied), and canal.rs, inferencia.rs and embeddings.rs all pay the same price. HEX-077-b must consume the sink generically or through the concrete SumideroDeCelula enum; if the sibling assumes Box<dyn SumideroDeNotificaciones>, it will not compile."
+  - "MISMATCH with a spec invariant, recorded not corrected: the spec says the token must never travel in per-cell config FILES, but crates/hexcell/src/configuracion.rs has no file source at all -- every value arrives through the FuenteDeConfiguracion env port, whose only production implementation EntornoDelProceso is the single caller of std::env::var. The invariant therefore holds structurally at the Rust layer. The only per-cell surface that could leak the token is deploy/celula.env.ejemplo and deploy/cell.compose.yml, which this task does not touch."
+  - "SCOPE BOUNDARY handed to HEX-077-b: this child does NOT wire the sink into crates/hexcell/src/main.rs, and does NOT add HEXCELL_TELEGRAM_* passthrough to deploy/cell.compose.yml or a placeholder to deploy/celula.env.ejemplo. Nothing consumes a notification until the sibling implements the eight conditions, and constructing an unused sink in the composition root would trip the -D warnings gate. Consequence the human must know: until HEX-077-b lands, the Telegram path is unreachable in a deployed cell by design."
+  - "The zero-dependency criterion of hexcell-core is NOT enforced anywhere in .github/workflows/ci.yml -- there is no cargo tree gate; today it rests on the empty [dependencies] table and on review. This contract adds the check to verify.commands so the implementer cannot break it silently, but making it a permanent CI gate is a separate task and is deliberately out of scope here."
+  - "ValorDeDato is a closed enum on purpose, following the ResultadoEnvio rationale in canal.rs: consumers and tests can match without a wildcard arm, so adding a variant is a compile error rather than a silent gap. If HEX-077-b discovers a fifth data kind it needs, it will have to amend hexcell-core and fix every match -- that cost is accepted knowingly, in exchange for the guarantee."
+  - "Deliberately NOT added, per discard D-09 cited in crates/hexcell-core/src/inferencia.rs: no severity field, no threshold, no retry or backoff policy, no dedup window on the port. Writing those signatures before a real consumer exists is the speculative-compatibility mistake D-09 already records. HEX-077-b adds what it can prove it needs."
+  - "CodigoDeNotificacion is an opaque newtype and NOT an enum of the eight alert codes. Declaring those variants here would implement the sibling's scope (AC-2..AC-10, AC-14) inside this child and is explicitly forbidden by the contract."
+  - "adr-0024 checked directly: it forbids INBOUND HTTP endpoints and live queries of the hot sessions.db, and never mentions outbound calls. The outbound Telegram POST that plan task 20 prescribes is therefore not in conflict, and NO new adr is required for this child. If the implementer finds a reason to need one, the next free number is 0034 (adr-0033 is the last in docs/adr/README.md) and it must stop and escalate rather than write one silently."
+  - "docs/bitacora-de-descartes.md was searched for notificacion, Telegram, alerta, HTTP client and observabilidad: no relevant entry exists, so no discard is being reopened and this child introduces no new discard to log."
+  - "Payload carries IdConversacion only, never a raw JID or phone number, per adr-0010 and the opaque-identifier rule of adr-0019. A lexical grep guard is in verify.commands; identidad.rs itself warns that such a lexical proof is necessary but not sufficient, so review must also read the payload semantically."
+  - "MERGE-CONFLICT EXPOSURE: four other worktrees are live right now (ai/HEX-072, ai/HEX-074, ai/HEX-074-b, ai/HEX-076). Two files in the touch list are broad-surface and shared -- crates/hexcell/src/configuracion.rs (949 lines) and crates/hexcell/src/lib.rs. Changes here are append-only (new constants, one new struct field, two new pub mod lines) to keep the conflict surface minimal."
+  - "The external delegate fleet is down (opencode_go weekly credits exhausted, 2026-09-13), so implementation runs on an internal model. Every verify command is local and offline: the loopback stub binds 127.0.0.1:0 and no command reaches the network or needs credentials."
+  - "No prior failed task overlaps these files: quorum analyze failure-lookup returned null and .ai/tasks/failed/ is empty."

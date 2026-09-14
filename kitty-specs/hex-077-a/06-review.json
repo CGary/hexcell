@@ -1,0 +1,24 @@
+{
+  "task_id": "HEX-077-a",
+  "summary": "Notification port and Telegram sink match spec/contract exactly; deterministic gate clean, no scope creep, token never leaks on any failure path.",
+  "verdict": "approve",
+  "contract_compliance": true,
+  "forbidden_files_touched": [],
+  "unrequested_refactor": false,
+  "missing_tests": [
+    "notificador_telegram.rs: TiempoAgotado and ErrorDeTransporte (connection-refused) branches are implemented but never exercised by a test; only the 2xx and non-2xx-status branches are tested. Not a contract gap (blueprint's own test_scenarios list did not call for it) and not blocking, but a regression in the tokio::time::timeout wiring would go undetected."
+  ],
+  "functional_risk": "low",
+  "notes": [
+    "contract-check ok=true; not_checked: forbid.behaviors (manual read confirms none violated: no dependency added, no alert-code enum, no threshold, no severity/retry/backoff field, no inbound endpoint, no sessions.db touch, no main.rs/deploy wiring, no adr/bitacora entry, no lint silenced, no AI attribution).",
+    "acceptance-coverage: AC-1 fully covered by blueprint test_scenarios; both legacy items (build/test-green, Spanish-only) hold structurally and by inspection.",
+    "Diff is exactly the 8 touch-listed files, 814 insertions, 0 deletions; per-class caps respected (hexcell-core 129/280, tests 272/420, configuracion.rs 41/130); no forbidden path touched.",
+    "Payload verified to serve HEX-077-b: ValorDeDato::Instante (ban expiry), ValorDeDato::Conversacion(IdConversacion) (affected contact), ValorDeDato::Componente(Nucleo|Sidecar) (which container looped) all present and round-trip intact through the fake sink test.",
+    "Token-leak check done by hand, not just by the grep guard: read hyper-util 0.1.20's Client::Error (client.rs) -- its Display/Debug carry only an ErrorKind enum (Canceled/ChannelClosed/Connect/...) plus source, never the request URI, so a connect/transport failure cannot leak the token embedded in the sendMessage URL. ConfiguracionDeTelegram and NotificadorTelegram both hand-redact the token field in their Debug impls, and a test explicitly asserts format!(\"{error:?}\") excludes the token on a 401.",
+    "Guard audit, per explicit instruction to hunt vacuous guards: none found. The two Cargo-manifest/lockfile guards (cargo tree line count; git diff --quiet) both diff against main...HEAD, not the working tree, so they stay live post-commit -- they do not reproduce the known dead-guard shape (grep over an empty working-tree diff) recorded in project memory. The 6 notificaciones.rs tests and 3 configuracion.rs cases each assert a value that changes with the code path exercised (state transitions None->error->Some, matches! on the selector enum, exact string/byte content), none is a constant-discriminant or lossy-format-collapse assertion.",
+    "Scope check confirmed both ways: the diff does not implement any of the eight alert conditions, per-cell metrics, or the dead-man's switch (HEX-077-b/c/d untouched), and it deliberately does NOT wire SumideroDeCelula into crates/hexcell/src/main.rs nor add HEXCELL_TELEGRAM_* to deploy/cell.compose.yml or deploy/celula.env.ejemplo -- correct per this child's contract, not an omission.",
+    "Commit 1749d62 message read directly: Spanish throughout, conventional-commit prefix, no Co-Authored-By or Generated-with line.",
+    "07-trace.json only records a 'blueprint' attempt, no 'execute' attempt entry, despite the implementation being present and committed -- likely a trace-writing gap in this run, not a functional defect; flagged for awareness, not scored against this diff."
+  ],
+  "fix_tasks": []
+}

@@ -1,0 +1,31 @@
+{
+  "attempts": [
+    {
+      "phase": "blueprint",
+      "result": "passed",
+      "duration_s": 0,
+      "notes": "blueprint+contract written; declared risk medium == calculated medium, no divergence event"
+    }
+  ],
+  "context_overflows": [],
+  "execution_mode": "worktree_edit",
+  "started_at": "2026-09-13T22:13:23Z",
+  "summary": "Notification port trait and value types in hexcell-core (std-only); fake sink, static selection enum and HTTP-to-Telegram sink in crates/hexcell, reusing the workspace hyper/rustls stack.",
+  "task_id": "HEX-077-a",
+  "total_cost_usd": 0,
+  "violations": [],
+  "events": [
+    {
+      "event": "risk_level_calculated",
+      "level": "medium",
+      "reasons": [
+        "file_count_high: 8"
+      ],
+      "signals": {
+        "files_count": 8,
+        "symbols_count": 0,
+        "sensitive_matches": []
+      }
+    }
+  ]
+}

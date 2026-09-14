@@ -1,0 +1,110 @@
+task_id: HEX-077-a
+summary: "Notification port trait and value types in hexcell-core (std-only); fake sink, static selection enum and HTTP-to-Telegram sink in crates/hexcell, reusing the workspace hyper/rustls stack."
+goal: "Define a notification port (Rust trait) carrying a code plus a typed payload, with an in-process fake sink for tests and an outbound HTTP-to-Telegram implementation selected only by configuration. The payload must already admit an expiry instant, an IdConversacion and a cell component, so that sibling HEX-077-b can build the eight alert conditions on it without amending the port. No alert condition, no metric and no dead-man's switch is implemented here."
+read:
+  - .ai/tasks/active/HEX-077-a/00-spec.yaml
+  - .ai/tasks/active/HEX-077-a/01-blueprint.yaml
+  - crates/hexcell-core/src/inferencia.rs
+  - crates/hexcell-core/src/canal.rs
+  - crates/hexcell-core/src/identidad.rs
+  - crates/hexcell-core/src/lib.rs
+  - crates/hexcell-core/Cargo.toml
+  - crates/hexcell/src/embeddings.rs
+  - crates/hexcell/src/inferencia.rs
+  - crates/hexcell/src/proveedor_openai.rs
+  - crates/hexcell/src/configuracion.rs
+  - crates/hexcell/src/lib.rs
+  - crates/hexcell/Cargo.toml
+  - crates/hexcell/tests/proveedor_openai.rs
+  - crates/hexcell/tests/configuracion.rs
+  - docs/plan/fase-a-6-empaquetado-cli.md
+  - docs/adr/adr-0002-estructura-workspace.md
+  - docs/adr/adr-0010-puerto-de-canal.md
+  - CLAUDE.md
+touch:
+  - crates/hexcell-core/src/notificacion.rs
+  - crates/hexcell-core/src/lib.rs
+  - crates/hexcell/src/notificacion.rs
+  - crates/hexcell/src/notificador_telegram.rs
+  - crates/hexcell/src/lib.rs
+  - crates/hexcell/src/configuracion.rs
+  - crates/hexcell/tests/notificaciones.rs
+  - crates/hexcell/tests/configuracion.rs
+forbid:
+  files:
+    - Cargo.toml
+    - Cargo.lock
+    - crates/hexcell-core/Cargo.toml
+    - crates/hexcell/Cargo.toml
+    - crates/hexcell-storage/Cargo.toml
+    - crates/hexcell-admin/Cargo.toml
+    - crates/hexcell-meta/**
+    - crates/hexcell/src/main.rs
+    - crates/hexcell/src/metricas.rs
+    - crates/hexcell/src/registro.rs
+    - crates/hexcell-canal-simulado/**
+    - crates/hexcell-canal-whatsmeow/**
+    - crates/hexcell-canal-contrato/**
+    - deploy/**
+    - sidecar/**
+    - docs/**
+    - .github/workflows/ci.yml
+    - rust-toolchain.toml
+    - .ai/tasks/active/HEX-077-a/00-spec.yaml
+    - .ai/tasks/active/HEX-077-b/**
+    - .ai/tasks/active/HEX-077-c/**
+    - .ai/tasks/active/HEX-077-d/**
+    - .ai/tasks/active/HEX-076-new-spec/**
+    - .ai/tasks/active/HEX-074/**
+    - .ai/tasks/active/HEX-074-a/**
+    - .ai/tasks/active/HEX-074-b/**
+    - .ai/tasks/active/HEX-072/**
+  behaviors:
+    - "Do not add any dependency to crates/hexcell-core. Its [dependencies] table stays empty; that is an acceptance criterion of the project (adr-0002), not an oversight."
+    - "Do not add any new third-party crate anywhere in the workspace. Every HTTP and serialization crate needed is already declared in crates/hexcell/Cargo.toml (hyper, hyper-util, http-body-util, bytes, hyper-rustls, rustls, webpki-roots, serde, serde_json). No manifest and no lockfile may change."
+    - "Do not implement, name or enumerate any of the eight alert conditions (temporary ban, session unlinked, sidecar not reconnected, restart loop, LLM balance exhausted, anomalous GCRA discard rate, unsolicited send discarded, anomalous ack-ratio drop). CodigoDeNotificacion stays an opaque newtype; it must NOT become an enum of those codes. They belong to HEX-077-b."
+    - "Do not implement per-cell metrics or their series (HEX-077-c), and do not implement the dead-man's switch or any healthchecks.io ping (HEX-077-d)."
+    - "Do not pick, hardcode or default any threshold, rate, ratio or alert window. Thresholds belong to the sibling conditions."
+    - "Do not add a severity field, retry policy, backoff, dedup window or any other field to the port that has no consumer in this task. Discard D-09 already records that writing a signature ahead of a real consumer is not a compatibility mitigation."
+    - "Do not expose any inbound HTTP endpoint, route, listener or /metrics surface in production code (adr-0024). The only network behavior added is one OUTBOUND POST from NotificadorTelegram. A loopback TcpListener inside crates/hexcell/tests/ is a test stub and is permitted."
+    - "Do not query the hot sessions.db and do not touch the storage layer at all (adr-0024)."
+    - "Do not place the Telegram bot token in any versioned file, any default value, any Debug or Display impl, any error message or any log line. It arrives only through the FuenteDeConfiguracion env port."
+    - "Do not put a raw JID, phone number or any transport identifier in the notification payload. A contact travels as hexcell_core::identidad::IdConversacion (adr-0010, adr-0019)."
+    - "Do not wire the sink into crates/hexcell/src/main.rs, and do not add HEXCELL_TELEGRAM_* to the deploy templates. That wiring belongs to HEX-077-b, which has the first real consumer."
+    - "Do not write an adr and do not add an entry to docs/bitacora-de-descartes.md. If the design turns out to need either, STOP and escalate to the human instead of writing one silently."
+    - "Do not use async fn inside the port trait. Return -> impl Future<Output = ...> + Send, as crate::canal, crate::inferencia and crate::embeddings already do, because async_fn_in_trait is denied by the clippy gate."
+    - "Do not silence any lint. No #[allow(...)], no #[expect(...)], no cfg-gating to dodge -D warnings."
+    - "Do not write English identifiers, comments, doc comments, log messages or commit messages. All repository content is in Spanish."
+    - "Do not add AI attribution lines (Co-Authored-By, Generated with) to any commit message; CLAUDE.md forbids them."
+    - "Do not introduce jitter, warm-up protocols, proxies, VPNs or IP rotation. Observability shortens reaction time; it does not prevent a ban."
+    - "Do not modify or delete any existing test to make a new one pass, and do not weaken an existing assertion."
+    - "Do not run git merge, and do not touch any sibling or other live task directory under .ai/tasks/."
+verify:
+  commands:
+    - cargo fmt --check
+    - test "$(cargo tree -p hexcell-core --edges normal | wc -l)" -eq 1
+    - git diff --quiet main...HEAD -- Cargo.toml Cargo.lock 'crates/*/Cargo.toml'
+    - cargo clippy --workspace -- -D warnings
+    - cargo test -p hexcell-core
+    - cargo test -p hexcell --test notificaciones
+    - cargo test -p hexcell --test configuracion
+    - cargo test --workspace
+    - "! grep -rniE 'jid|telefono|phone_number' crates/hexcell-core/src/notificacion.rs"
+acceptance:
+  human_gate: true
+limits:
+  max_files_changed: 8
+  max_diff_lines: 1250
+  per_class:
+    - glob: crates/hexcell-core/**
+      max_diff_lines: 280
+    - glob: crates/hexcell/tests/**
+      max_diff_lines: 420
+    - glob: crates/hexcell/src/configuracion.rs
+      max_diff_lines: 130
+execution:
+  mode: worktree_edit
+  branch: ai/HEX-077-a
+retry_policy:
+  max_attempts: 2
+  escalate_after: 2

@@ -1,0 +1,33 @@
+task_id: HEX-077-a
+summary: Notification port (trait) with a fake sink for tests and an HTTP-to-Telegram implementation behind configuration; no live credentials required.
+goal: 'Subset of HEX-077: Notification port (trait) with a fake sink for tests and an HTTP-to-Telegram implementation behind configuration; no live credentials required.'
+invariants:
+    - The fake sink implementation never performs an outbound network call; it captures notifications in-process, for use by tests.
+    - The HTTP-to-Telegram implementation is selected only via configuration; no acceptance criterion or test requires a real Telegram bot or live credentials.
+    - The Telegram bot token travels only by environment variable, never in per-cell config files (HEX-064/HEX-065 precedent).
+    - A notification's shape is a code (identifying which alert condition it represents) plus a payload; this task defines that shape only, it does not define or implement any of the eight concrete alert conditions.
+    - crates/hexcell-core keeps zero external dependencies; any code that requires an HTTP-client dependency (the Telegram implementation) lives outside hexcell-core. Whether the trait itself lives in hexcell-core is a deliberate design decision to be made and recorded, not assumed.
+acceptance:
+    - id: AC-1
+      statement: A notification port (trait/interface) exists with an HTTP-to-Telegram implementation behind configuration and a fake sink implementation used in tests, with no acceptance criterion requiring a real Telegram bot or live credentials.
+      given: a notification port defined with a code-plus-payload notification shape
+      when: a caller emits a notification through the fake sink in a test, or through the HTTP-to-Telegram implementation when configured
+      then: the fake sink captures the notification in-process with no outbound network call, and the Telegram implementation is only reachable behind configuration, with no test depending on live credentials
+    - cargo fmt --check, cargo clippy --workspace -- -D warnings, cargo build --workspace, and cargo test --workspace remain green; cd sidecar && go build ./... && go vet ./... && go test ./... -count=1 remain green.
+    - All new identifiers, comments, log messages, and commit messages are written in Spanish, matching repository convention.
+non_goals:
+    - Do not implement any of the eight concrete alert conditions (temporary-ban-detected, channel-session-unlinked, sidecar-not-reconnected-for-over-5-minutes, restart-loop, LLM-balance-exhausted-or-degraded-mode, anomalous-GCRA-discard-rate, unsolicited-send-discarded, anomalous-drop-in-delivery-ack-ratio) or their acceptance criteria (AC-2..AC-10, AC-14); those belong to sibling task HEX-077-b.
+    - Do not implement per-cell metrics computation or delivery (reconnections-per-hour, inbound-silence-window, latency-to-ack) or their acceptance criteria (AC-11, AC-12); those belong to sibling task HEX-077-c.
+    - Do not implement the dead-man's switch / healthchecks.io ping mechanism or its acceptance criterion (AC-13); that belongs to sibling task HEX-077-d.
+    - Do not implement a metrics dashboard or panel; that belongs to stage B-3.
+    - Do not pick or hardcode any threshold value; thresholds belong to the alert/metric conditions implemented by sibling tasks.
+    - Do not require a real Telegram bot, real bot token, or real healthchecks.io account for any test in this task.
+    - Do not introduce bulk-sender folklore (jitter, warm-up protocols), proxies, VPNs, or IP rotation.
+constraints:
+    - Trace to docs/PRD.md FR-14; normative source is docs/plan/fase-a-6-empaquetado-cli.md lines 304-350 (task 20 of stage A-6). This is the first of four child tasks splitting that task (HEX-077-a..d).
+    - The Telegram bot token is supplied only via environment variable, never in per-cell config files, per the HEX-064/HEX-065 precedent. Never version .env*.
+    - crates/hexcell-core keeps zero external dependencies (verifiable with cargo tree -p hexcell-core); any new HTTP-client-dependent code lives outside hexcell-core.
+    - All new identifiers, comments, log messages, and commit messages are written in Spanish; artifact field values stay in concise English.
+depends_on: []
+parent_task: HEX-077
+risk: medium

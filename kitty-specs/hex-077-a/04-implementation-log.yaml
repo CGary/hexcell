@@ -1,0 +1,27 @@
+task_id: HEX-077-a
+summary: Implemented notification port in hexcell-core plus fake sink, static selector, and Telegram HTTP sink in crates/hexcell.
+entries:
+  - changed_files:
+      - crates/hexcell-core/src/notificacion.rs
+      - crates/hexcell-core/src/lib.rs
+    notes:
+      - Added SumideroDeNotificaciones trait (std-only, -> impl Future + Send) and value types (CodigoDeNotificacion, ComponenteDeCelula, ValorDeDato, DatoDeNotificacion, Notificacion).
+      - Registered notificacion module in hexcell-core lib.rs, alphabetically ordered.
+  - changed_files:
+      - crates/hexcell/src/notificacion.rs
+      - crates/hexcell/src/notificador_telegram.rs
+      - crates/hexcell/src/lib.rs
+    notes:
+      - Added SumideroSimulado fake sink (Arc<Mutex<Vec<Notificacion>>>, que_falla constructor) and SumideroDeCelula static selection enum, mirroring embeddings.rs precedent.
+      - Added NotificadorTelegram HTTP sink reusing the hyper-util/hyper-rustls client pattern from proveedor_openai.rs; token redacted from Debug and never logged.
+      - Registered both new modules in hexcell lib.rs, alphabetically ordered.
+  - changed_files:
+      - crates/hexcell/src/configuracion.rs
+    notes:
+      - Added three constants (HEXCELL_TELEGRAM_BOT_TOKEN, HEXCELL_TELEGRAM_CHAT_ID, HEXCELL_TELEGRAM_URL_BASE), default url and timeout constants, an optional notificaciones field on Configuracion, and an append-only parsing block keyed on bot token presence.
+  - changed_files:
+      - crates/hexcell/tests/notificaciones.rs
+      - crates/hexcell/tests/configuracion.rs
+    notes:
+      - Added fake sink happy-path and failure-path tests, a payload round-trip test covering Instante/Conversacion/Componente, a selector test, and two Telegram tests against an offline loopback TcpListener stub (success and non-2xx mapping, token redaction check).
+      - Extended configuracion.rs tests with three cases (no token, token without chat id, full config with default and overridden url_base).
