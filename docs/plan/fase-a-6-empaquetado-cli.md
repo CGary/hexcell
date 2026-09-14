@@ -187,6 +187,7 @@ Las entradas conservan su numeración; esta sección es la autoridad sobre el or
 * Actualización 2026-09-13: 10-b cerrada (HEX-074-b) con el analizador y los subcomandos desplazados a 10-c (HEX-074-c). 20 dividida: 20-a (HEX-077-a), 20-c (HEX-077-c) y 20-d (HEX-077-d) cerradas; 20-b (HEX-077-b) pendiente. La cadena restante: 6 → 16 → 10-c → 11 → 22 → 12 → 13 → 14 → 15 → 18 → 20-b → 23 → 21 → 19.
 * Actualización 2026-09-13: 6 cerrada (HEX-078) con el reparto de memoria 48m/32m, CPU 0.5/0.25 y nofile 1024 —los tres PROVISIONALES hasta la medición de la tarea 16— y el guardia `deploy/verificar_limites.sh` (probado por mutación, en CI). La cadena restante: 16 → 10-c → 11 → 22 → 12 → 13 → 14 → 15 → 18 → 20-b → 23 → 21 → 19.
 * Actualización 2026-09-14: 10-c cerrada (HEX-074-c) y con ella la tarea 10 completa: analizador de argumentos a mano sobre `std::env::args`, los seis subcomandos `cell` con validación, modo de simulación sin efectos laterales y `src/main.rs` cableado —ya no imprime el talón de A-1—, sobre el contrato de códigos de salida de 10-b. Registrados `adr-0036` (gramática, tabla de desenlaces y modo de simulación) y D-53 (descarte de `clap`, `argh`, `pico-args` y `structopt`). La persistencia del estado del plano de control, la idempotencia, la reconciliación contra Docker y el registro de sustituciones de `cell status` siguen diferidos a las tareas 11 a 15. La cadena restante: 16 → 11 → 22 → 12 → 13 → 14 → 15 → 18 → 20-b → 23 → 21 → 19.
+* Actualización 2026-09-14: 20-b cerrada (HEX-077-b) y con ella la tarea 20 completa; la octava condición (bucle de reinicio) queda diferida en D-54 y `adr-0037`, no pendiente en la cadena. La cadena restante: 16 → 11 → 22 → 12 → 13 → 14 → 15 → 18 → 23 → 21 → 19.
 
 ---
 
@@ -392,9 +393,10 @@ Las entradas conservan su numeración; esta sección es la autoridad sobre el or
     `HEXCELL_TELEGRAM_CHAT_ID`, `HEXCELL_TELEGRAM_URL_BASE`), sin cablear en `main.rs` ni en la
     composición. 20-c (HEX-077-c, cerrada): latencia hasta el acuse como cuarta clave del productor de
     métricas del sidecar (`adr-0035`). 20-d (HEX-077-d, cerrada): dead-man's switch. 20-b (HEX-077-b,
-    pendiente): las condiciones de alerta y su cableado —bucle de reinicio separado en su propia
-    re-especificación—; hasta que cierre, ninguna de las ocho condiciones dispara y la ruta Telegram no
-    es alcanzable en una célula desplegada.
+    cerrada el 2026-09-14): siete de las ocho condiciones de alerta cableadas sobre señales existentes
+    (`crates/hexcell/src/alertas.rs`), sumidero Telegram construido en `main.rs` y variables
+    `HEXCELL_TELEGRAM_*` pasadas por la composición; la octava —bucle de reinicio— queda diferida en
+    D-54 y `adr-0037`. Con 20-b cierra la tarea 20 completa.
 21. **Escribir el runbook de operación** (0,5 días). Qué comando usar en cada situación, qué efecto
     tiene y cómo verificar que salió bien. Incluye `cell rebind` con su remisión explícita al
     runbook de baneo de la etapa A-7, que es donde se decide **si procede** sustituir el número;

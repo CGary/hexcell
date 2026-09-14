@@ -78,7 +78,7 @@ Este método garantiza de manera matemática que la Autoridad Certificadora (Let
 
 ## 💻 Manual de Operación de la CLI de Administración
 
-Estado (2026-09-10): estos subcomandos están planificados en la etapa A-6 (tareas 9-14) y todavía no existen en `hexcell-admin`.
+Estado (2026-09-14): la gramática de los seis subcomandos `cell` existe en `hexcell-admin` desde HEX-074-c (tarea 10 de A-6), con validación de argumentos y modo `--simular`; sin `--simular` cada subcomando devuelve todavía `NoImplementadoTodavia` (código 3), porque las operaciones reales contra Docker llegan con las tareas 11-15.
 
 La suite de administración central compila como un binario nativo que interactúa directamente con el socket Unix de Docker (`/var/run/docker.sock`). En la Fase B interactúa además con la API local de administración en memoria de Caddy (`http://localhost:2019`).
 
