@@ -188,6 +188,7 @@ Las entradas conservan su numeración; esta sección es la autoridad sobre el or
 * Actualización 2026-09-13: 6 cerrada (HEX-078) con el reparto de memoria 48m/32m, CPU 0.5/0.25 y nofile 1024 —los tres PROVISIONALES hasta la medición de la tarea 16— y el guardia `deploy/verificar_limites.sh` (probado por mutación, en CI). La cadena restante: 16 → 10-c → 11 → 22 → 12 → 13 → 14 → 15 → 18 → 20-b → 23 → 21 → 19.
 * Actualización 2026-09-14: 10-c cerrada (HEX-074-c) y con ella la tarea 10 completa: analizador de argumentos a mano sobre `std::env::args`, los seis subcomandos `cell` con validación, modo de simulación sin efectos laterales y `src/main.rs` cableado —ya no imprime el talón de A-1—, sobre el contrato de códigos de salida de 10-b. Registrados `adr-0036` (gramática, tabla de desenlaces y modo de simulación) y D-53 (descarte de `clap`, `argh`, `pico-args` y `structopt`). La persistencia del estado del plano de control, la idempotencia, la reconciliación contra Docker y el registro de sustituciones de `cell status` siguen diferidos a las tareas 11 a 15. La cadena restante: 16 → 11 → 22 → 12 → 13 → 14 → 15 → 18 → 20-b → 23 → 21 → 19.
 * Actualización 2026-09-14: 20-b cerrada (HEX-077-b) y con ella la tarea 20 completa; la octava condición (bucle de reinicio) queda diferida en D-54 y `adr-0037`, no pendiente en la cadena. La cadena restante: 16 → 11 → 22 → 12 → 13 → 14 → 15 → 18 → 23 → 21 → 19.
+* Actualización 2026-09-19: 16 cerrada (HEX-079) con el instrumento en vivo `deploy/medir_memoria_y_imagenes.sh`; la corrida manual real y el registro de los números quedan diferidos (AC-6), en la sección de valores de referencia de `docs/plantilla-celula.md`. La cadena restante: 11 → 22 → 12 → 13 → 14 → 15 → 18 → 23 → 21 → 19.
 
 ---
 
@@ -309,6 +310,15 @@ Las entradas conservan su numeración; esta sección es la autoridad sobre el or
     `crates/hexcell/tests/carga.rs`, más el peso de ambas imágenes. `rss_linea_base` no se reutiliza
     (mide solo el núcleo con adaptador simulado). No se añade compuerta de tamaño en CI (decisión de
     HEX-067).
+
+    **Cerrada el 2026-09-19 con HEX-079**: instrumento de medición en vivo
+    `deploy/medir_memoria_y_imagenes.sh`, que levanta la célula compuesta de la tarea 5 con el
+    adaptador whatsmeow bajo los límites de la tarea 6, lee la memoria agregada de ambos contenedores
+    desde cgroup v2 en reposo y bajo un generador declarado, y mide ambas imágenes con `docker image
+    inspect`. `carga.rs` no se reutiliza ni se modifica como generador externo (limitación declarada
+    en el script y descarte registrado como D-55); la cifra bajo carga es una cota inferior. La
+    sección «Valores de referencia de memoria y tamaño de imágenes» de `docs/plantilla-celula.md`
+    queda lista y vacía para la corrida manual posterior (AC-6). `rss_linea_base` no se toca.
 17. **Escribir la prueba de aislamiento** (1 día). Levantar dos células y demostrar que ninguna puede
     leer ni escribir el volumen de la otra ni alcanzar su red, ni siquiera conociendo la ruta.
 

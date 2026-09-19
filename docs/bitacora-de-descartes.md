@@ -1,6 +1,6 @@
 # Bitácora de descartes
 
-> Registro de lo que se consideró y **no** se hizo. Última actualización: 2026-09-14 (D-54).
+> Registro de lo que se consideró y **no** se hizo. Última actualización: 2026-09-19 (D-55).
 
 ## Para qué sirve este documento
 
@@ -88,6 +88,7 @@ se apoya en un principio de diseño, no.
 | [D-52](#d-52) | Forma explícita `soft`/`hard` de `ulimits.nofile` y comprobación de "campo presente" en el guardia de límites de recursos (HEX-078) | Principio de diseño, no reabrir |
 | [D-53](#d-53) | Bibliotecas externas de análisis de argumentos para `hexcell-admin` (`clap`, `argh`, `pico-args`, `structopt`) | Principio de diseño, no reabrir |
 | [D-54](#d-54) | Alerta de bucle de reinicios de contenedores dentro de HEX-077-b, sin productor de señal que la alimente | Reabrir si se construye un observador de reinicios |
+| [D-55](#d-55) | Reutilizar `crates/hexcell/tests/carga.rs` como generador externo de carga contra la célula compuesta en vivo (HEX-079) | Reabrible si cambia un hecho del árbol |
 
 ---
 
@@ -809,6 +810,32 @@ Que una tarea futura decida construir un observador de reinicios de contenedor (
 contador persistido en volumen que el entrypoint del contenedor incrementa en cada arranque, o una
 integración con la Docker API del anfitrión). Esa tarea definiría la señal, su ubicación y su
 coste; HEX-077-b entonces la consumiría como las demás.
+
+### D-55
+
+**Reutilizar `crates/hexcell/tests/carga.rs` como generador externo de carga contra la célula
+compuesta en vivo (HEX-079, tarea 16 de la etapa A-6).**
+
+* **Descartado:** 2026-09-19 (HEX-079).
+* **Por qué se descartó:** el criterio de aceptación revisado de la tarea 16 pedía medir bajo la
+  carga de `carga.rs`, pero el arnés no puede servir como generador externo sin modificarlo, y el
+  spec de HEX-079 prohíbe modificarlo (non-goal explícito). Cuatro motivos independientes,
+  verificados sobre el archivo: (1) construye el `Motor` en-proceso y no tiene ningún cliente de
+  red ni de IPC que apuntar contra una célula viva; (2) conduce `AdaptadorSimulado`, el adaptador
+  simulado, lo que contradice la exigencia de medir la célula compuesta con el adaptador whatsmeow;
+  (3) usa `RelojDePrueba`, un reloj falso, para hacer determinista la admisión GCRA, y en un
+  contenedor en marcha no existe un reloj falso; (4) mide la memoria residente del proceso
+  (`leer_vm_rss_kb`) leyendo el archivo de estado del proceso en /proc, exactamente la fuente que
+  el invariante central de HEX-079 prohíbe. En su lugar, `deploy/medir_memoria_y_imagenes.sh`
+  declara la limitación (bloque LIMITACION) y genera la carga con un contenedor auxiliar efímero
+  alpine:3 unido al espacio de nombres de red del núcleo; la cifra bajo carga es una cota inferior,
+  no el peor caso.
+* **Registro normativo:** `deploy/medir_memoria_y_imagenes.sh`, `docs/plantilla-celula.md`
+  (valores de referencia), `docs/plan/fase-a-6-empaquetado-cli.md` (tarea 16).
+* **Qué tendría que cambiar para reabrirlo:** que exista un arnés de carga que sea un cliente de
+  red o de IPC capaz de inyectar eventos a una célula viva (sin reloj falso y sin medir vía /proc);
+  entonces el generador sustituto pasaría a ser la alternativa descartada y la medición bajo carga
+  real podría reemplazar a la cota inferior.
 
 ---
 
