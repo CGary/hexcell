@@ -130,9 +130,16 @@ Este comando no existe en la Fase B: nace de la operación del canal propio y no
 
 ### 5. Configuración por célula como archivos
 
-Estado (2026-09-10): planificado en la etapa A-6, tarea 22.
+Entregado el 2026-09-19 con HEX-081 (tarea 22 de A-6).
 
-La configuración de cada célula vive en **archivos versionables en git**: valores por defecto compartidos más *overlays* por célula que los superponen. Los archivos contienen **solo parámetros no secretos**; todo secreto sigue viajando por variables de entorno. `hexcell-admin` los renderiza al entorno de la plantilla de arranque de la célula: el binario de la célula **no gana un segundo lector de configuración**. Una clave desconocida o un valor inválido **aborta el arranque**.
+La configuración de cada célula vive en **archivos versionables en git**: `deploy/celula.defecto.env.ejemplo` contiene los valores compartidos y `deploy/celula.superposicion.env.ejemplo` muestra un *overlay* por célula. Se renderizan con:
+
+```bash
+hexcell-admin config render --defecto deploy/celula.defecto.env.ejemplo \
+  --superposicion deploy/celula.superposicion.env.ejemplo --salida celula.env
+```
+
+Los archivos contienen **solo parámetros no secretos**; todo secreto sigue viajando por variables de entorno. Una clave desconocida o un valor inválido falla cerrado y no crea ni modifica la salida. Los overlays con valores reales son datos del cliente y se versionan únicamente en el repositorio privado del operador; este repositorio contiene solo ejemplos con marcadores. `hexcell-admin` renderiza el entorno de la plantilla de arranque: el binario de la célula **no gana un segundo lector de configuración**. `--simular` valida y muestra el número de claves sin escribir.
 
 ### 6. Composición de la célula
 

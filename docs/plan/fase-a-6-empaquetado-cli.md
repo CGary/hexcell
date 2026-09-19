@@ -419,6 +419,8 @@ Las entradas conservan su numeración; esta sección es la autoridad sobre el or
     `docs/runbook-operacion.md` NO se crea en HEX-078.
 22. **Configuración por célula como archivos** (1 día). Implementar la gestión de configuración basada en archivos (valores por defecto compartidos y superposiciones o overlays por célula) con validación de fallo cerrado al arrancar (concretando la tarea 8 sin editarla), gestionada de forma centralizada por `hexcell-admin` y versionable en git.
 
+    **Cerrada el 2026-09-19 con HEX-081.**
+
     **Criterio de aceptación (revisado 2026-09-10):** Los archivos contienen solo parámetros no
     secretos; todo secreto sigue viajando por variable de entorno (HEX-064/HEX-065). `hexcell-admin`
     renderiza los archivos al entorno de la plantilla de la tarea 8: el binario de la célula no gana

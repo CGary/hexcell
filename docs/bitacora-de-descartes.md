@@ -89,6 +89,7 @@ se apoya en un principio de diseño, no.
 | [D-53](#d-53) | Bibliotecas externas de análisis de argumentos para `hexcell-admin` (`clap`, `argh`, `pico-args`, `structopt`) | Principio de diseño, no reabrir |
 | [D-54](#d-54) | Alerta de bucle de reinicios de contenedores dentro de HEX-077-b, sin productor de señal que la alimente | Reabrir si se construye un observador de reinicios |
 | [D-55](#d-55) | Reutilizar `crates/hexcell/tests/carga.rs` como generador externo de carga contra la célula compuesta en vivo (HEX-079) | Reabrible si cambia un hecho del árbol |
+| D-55 | Parser externo para la configuración de células | Principio de diseño, no reabrir |
 
 ---
 
@@ -836,6 +837,29 @@ compuesta en vivo (HEX-079, tarea 16 de la etapa A-6).**
   red o de IPC capaz de inyectar eventos a una célula viva (sin reloj falso y sin medir vía /proc);
   entonces el generador sustituto pasaría a ser la alternativa descartada y la medición bajo carga
   real podría reemplazar a la cota inferior.
+
+---
+
+## D-55
+
+**Parser externo para la configuración de células.**
+
+**Descartado el:** 2026-09-19
+
+### Qué se consideró
+
+Usar TOML, YAML u otra biblioteca externa para leer los archivos de configuración de las células.
+
+### Por qué se descartó
+
+El contrato requiere el formato KEY=VALUE y el árbol ya decidió mantener manual el análisis de
+argumentos. Añadir otro parser aumentaría dependencias para una gramática deliberadamente pequeña,
+sin aportar validación que el esquema cerrado no pueda expresar.
+
+### Qué tendría que cambiar para reabrirlo
+
+Que la configuración dejara de ser KEY=VALUE y exigiera una estructura anidada cuya complejidad
+justificase una dependencia, con una revisión explícita del contrato y del presupuesto de dependencias.
 
 ---
 

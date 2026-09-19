@@ -204,3 +204,9 @@ jobs:
       # un guardia.
       - name: Autoprueba de mutación del guardia de límites
         run: bash deploy/verificar_limites.sh --autoprueba
+
+      - name: Verificar renderizado de configuración por célula
+        run: bash deploy/verificar_renderizado_configuracion.sh
+
+      - name: Autoprueba de mutación del guardia de configuración
+        run: bash deploy/verificar_renderizado_configuracion.sh --autoprueba

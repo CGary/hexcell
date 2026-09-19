@@ -14,7 +14,7 @@
 
 use std::io::Write;
 
-use crate::argumentos::{ErrorDeArgumentos, Invocacion, Subcomando, TEXTO_DE_USO};
+use crate::argumentos::{Comando, ErrorDeArgumentos, Invocacion, Subcomando, TEXTO_DE_USO};
 use crate::codigo_de_salida::CodigoDeSalida;
 use crate::estado_de_celula::EstadoDeCelula;
 use crate::salida::Salida;
@@ -32,11 +32,11 @@ use crate::salida::Salida;
 /// reloj y ninguna asa de red: esa es la propiedad que hace que «no hay efecto lateral»
 /// sea una consecuencia de la firma y no del resultado de una revisión de código.
 pub fn ejecutar<S: Write, D: Write>(
-    resultado: Result<Invocacion, ErrorDeArgumentos>,
+    resultado: Result<Comando, ErrorDeArgumentos>,
     salida: &mut Salida<S, D>,
 ) -> CodigoDeSalida {
-    let invocacion = match resultado {
-        Ok(invocacion) => invocacion,
+    let comando = match resultado {
+        Ok(comando) => comando,
         Err(error) => {
             if salida.diagnostico(&format!("{error}")).is_err() {
                 return CodigoDeSalida::Fallo;
@@ -48,6 +48,13 @@ pub fn ejecutar<S: Write, D: Write>(
         }
     };
 
+    if let Comando::ConfigRender(invocacion) = comando {
+        return ejecutar_renderizado(invocacion, salida);
+    }
+    let invocacion = match comando {
+        Comando::Cell(invocacion) => invocacion,
+        Comando::ConfigRender(_) => unreachable!(),
+    };
     if invocacion.simular() {
         let linea = linea_de_simulacion(&invocacion);
         match salida.linea(&linea) {
@@ -60,6 +67,69 @@ pub fn ejecutar<S: Write, D: Write>(
             Err(_) => CodigoDeSalida::Fallo,
         }
     }
+}
+
+fn ejecutar_renderizado<S: Write, D: Write>(
+    invocacion: crate::argumentos::InvocacionRenderizado,
+    salida: &mut Salida<S, D>,
+) -> CodigoDeSalida {
+    let defecto = match std::fs::read_to_string(invocacion.defecto()) {
+        Ok(texto) => texto,
+        Err(error) => {
+            return diagnosticar_fallo(
+                salida,
+                &format!("no se pudo leer el archivo de defecto: {error}"),
+            );
+        }
+    };
+    let superposicion = match std::fs::read_to_string(invocacion.superposicion()) {
+        Ok(texto) => texto,
+        Err(error) => {
+            return diagnosticar_fallo(
+                salida,
+                &format!("no se pudo leer el archivo de superposición: {error}"),
+            );
+        }
+    };
+    let defecto = match crate::renderizado_configuracion::analizar_env(&defecto) {
+        Ok(v) => v,
+        Err(e) => return diagnosticar_fallo(salida, &e.to_string()),
+    };
+    let superposicion = match crate::renderizado_configuracion::analizar_env(&superposicion) {
+        Ok(v) => v,
+        Err(e) => return diagnosticar_fallo(salida, &e.to_string()),
+    };
+    let combinado = match crate::renderizado_configuracion::combinar(defecto, superposicion) {
+        Ok(v) => v,
+        Err(e) => return diagnosticar_fallo(salida, &e.to_string()),
+    };
+    if invocacion.simular() {
+        return match salida.linea(&format!(
+            "simulación: configuración renderizada con {} claves",
+            combinado.len()
+        )) {
+            Ok(()) => CodigoDeSalida::Exito,
+            Err(_) => CodigoDeSalida::Fallo,
+        };
+    }
+    match std::fs::write(
+        invocacion.salida(),
+        crate::renderizado_configuracion::serializar(&combinado),
+    ) {
+        Ok(()) => CodigoDeSalida::Exito,
+        Err(error) => diagnosticar_fallo(
+            salida,
+            &format!("no se pudo escribir la configuración renderizada: {error}"),
+        ),
+    }
+}
+
+fn diagnosticar_fallo<S: Write, D: Write>(
+    salida: &mut Salida<S, D>,
+    mensaje: &str,
+) -> CodigoDeSalida {
+    let _ = salida.diagnostico(mensaje);
+    CodigoDeSalida::Fallo
 }
 
 /// Línea en español que describe la acción planificada de una invocación en modo de
