@@ -2,9 +2,11 @@
 //!
 //! Módulo interno de `hexcell-admin` que habla la API del motor Docker por su socket Unix usando un
 //! cliente HTTP/1.1 síncrono escrito a mano sobre [`std::os::unix::net::UnixStream`]: sin bollard,
-//! sin hyper y sin tokio. Expone arranque de contenedor (crear + iniciar), parada con margen de
-//! gracia de 30 segundos (`t=30`, nunca un bucle de espera y matar en el cliente), inspección,
-//! eliminación de contenedor y eliminación de volumen, cada una con un error tipado.
+//! sin hyper y sin tokio. Expone arranque de contenedor (crear + iniciar, con o sin red y `Cmd`
+//! explícitos), arranque de un contenedor ya creado, parada con margen de gracia de 30 segundos
+//! (`t=30`, nunca un bucle de espera y matar en el cliente) y parada sin plazo explícito, espera
+//! del código de salida, inspección, eliminación de contenedor y eliminación de volumen, cada una
+//! con un error tipado.
 //!
 //! # Límite de alcance
 //!
@@ -18,6 +20,6 @@ mod cliente;
 mod error;
 mod transporte;
 
-pub use cliente::{ClienteDocker, ResultadoDeArranque};
+pub use cliente::{ClienteDocker, OpcionesDeContenedor, ResultadoDeArranque};
 pub use error::ErrorDeClienteDocker;
 pub use transporte::{ConexionDocker, RespuestaHttp};

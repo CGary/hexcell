@@ -1,6 +1,6 @@
 # Bitácora de descartes
 
-> Registro de lo que se consideró y **no** se hizo. Última actualización: 2026-09-21 (D-56).
+> Registro de lo que se consideró y **no** se hizo. Última actualización: 2026-09-21 (D-57).
 
 ## Para qué sirve este documento
 
@@ -90,6 +90,7 @@ se apoya en un principio de diseño, no.
 | [D-54](#d-54) | Alerta de bucle de reinicios de contenedores dentro de HEX-077-b, sin productor de señal que la alimente | Reabrir si se construye un observador de reinicios |
 | [D-55](#d-55) | Reutilizar `crates/hexcell/tests/carga.rs` como generador externo de carga contra la célula compuesta en vivo (HEX-079) | Reabrible si cambia un hecho del árbol |
 | [D-56](#d-56) | Parser externo para la configuración de células | Principio de diseño, no reabrir |
+| [D-57](#d-57) | `hexcell-admin` abre una conexión IPC directa con el sidecar | Reabrir si el protocolo IPC admite un canal de control separado o multiplexación |
 
 ---
 
@@ -859,6 +860,29 @@ sin aportar validación que el esquema cerrado no pueda expresar.
 
 Que la configuración dejara de ser KEY=VALUE y exigiera una estructura anidada cuya complejidad
 justificase una dependencia, con una revisión explícita del contrato y del presupuesto de dependencias.
+
+---
+
+### D-57: Conexión IPC directa desde `hexcell-admin`
+
+**Descartado el:** 2026-09-19  
+**Decisión registrada en:** HEX-080
+
+### Qué se consideró
+
+Abrir desde `hexcell-admin` una conexión IPC directa con el sidecar para controlar la pausa de
+una célula.
+
+### Por qué se descartó
+
+El protocolo IPC admite una sola conexión activa: una conexión nueva relevaría la conexión del
+núcleo y expulsaría al consumidor correcto. Además, cruzar la frontera del volumen desde el
+anfitrión repite la alternativa de vigilancia externa descartada en D-51 (3). El ciclo de vida
+debe operar únicamente sobre Docker.
+
+### Qué tendría que cambiar para reabrirlo
+
+Que el protocolo IPC admita un canal de control separado o multiplexación de conexiones.
 
 ---
 

@@ -1,4 +1,5 @@
-//! Cliente del demonio de Docker: las cinco operaciones de esta tarea.
+//! Cliente del demonio de Docker: las cinco operaciones de HEX-074-b más las que añadió la
+//! orquestación de `cell pause`/`cell unpause`.
 //!
 //! [`ClienteDocker`] traduce cada operación a una o dos llamadas HTTP/1.1 contra el socket Unix,
 //! usando [`super::transporte::ConexionDocker`], y despacha el código de estado de forma explícita:
@@ -37,6 +38,15 @@ pub enum ResultadoDeArranque {
         /// Identificador del contenedor, leído del cuerpo 201 de creación.
         id_contenedor: String,
     },
+}
+
+/// Opciones de creación de un contenedor auxiliar.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OpcionesDeContenedor {
+    /// Red Docker a la que se conecta el contenedor.
+    pub red: String,
+    /// Comando y argumentos que ejecuta el contenedor.
+    pub cmd: Vec<String>,
 }
 
 /// Cliente del demonio de Docker sobre su socket Unix.
@@ -93,11 +103,104 @@ impl ClienteDocker {
     }
 
     /// Detiene un contenedor pidiendo al demonio un margen de gracia de 30 segundos (`t=30`).
+    ///
+    /// **Reemplazada** por [`Self::detener_contenedor_sin_plazo`] desde HEX-080 (2026-09-21): tras
+    /// esa tarea no le queda ningún llamador en `src/`. Se conserva intacta, junto con su prueba,
+    /// porque es API que entregó HEX-074-b. Seguimiento de la tarea 15, que toca el cliente por
+    /// derecho propio: fundir ambas en una sola operación con plazo opcional y mover la prueba.
     pub fn detener_contenedor(&self, id: &str) -> Result<(), ErrorDeClienteDocker> {
         let ruta = format!("/containers/{id}/stop?t={SEGUNDOS_DE_GRACIA}");
         let mut conexion = self.conectar()?;
         let respuesta = conexion.enviar("POST", &ruta, None)?;
         comprobar_exito(&respuesta)
+    }
+
+    /// Detiene un contenedor **sin** fijar ningún plazo desde la CLI.
+    ///
+    /// La petición sale como `POST /containers/{id}/stop`, sin el parámetro `t`, de modo que el
+    /// plazo de gracia lo decide una sola fuente: el `stop_grace_period` que la plantilla de
+    /// célula declara para cada contenedor. Es la operación que usa `cell pause` para los dos
+    /// contenedores, sidecar incluido: el sidecar también se detiene CON gracia, porque tiene que
+    /// cerrar su websocket saliente y dejar su almacén consistente.
+    ///
+    /// [`Self::detener_contenedor`] se conserva intacta, con su `t=30`, porque es la operación que
+    /// entregó HEX-074-b y su prueba fija la ruta exacta.
+    pub fn detener_contenedor_sin_plazo(&self, id: &str) -> Result<(), ErrorDeClienteDocker> {
+        let ruta = format!("/containers/{id}/stop");
+        let mut conexion = self.conectar()?;
+        let respuesta = conexion.enviar("POST", &ruta, None)?;
+        comprobar_exito(&respuesta)
+    }
+
+    /// Inicia un contenedor que ya existe.
+    pub fn iniciar_contenedor(&self, id: &str) -> Result<(), ErrorDeClienteDocker> {
+        let ruta = format!("/containers/{id}/start");
+        let mut conexion = self.conectar()?;
+        let respuesta = conexion.enviar("POST", &ruta, None)?;
+        comprobar_exito(&respuesta)
+    }
+
+    /// Crea e inicia un contenedor con su red y comando explícitos.
+    ///
+    /// Si la creación devuelve 201 pero el arranque falla, el contenedor YA existe en el demonio:
+    /// antes de propagar el error del arranque se emite su `DELETE` en el mejor esfuerzo, para que
+    /// ningún camino de fallo deje una sonda huérfana. El error que se devuelve sigue siendo el
+    /// del arranque, nunca el de esa limpieza.
+    pub fn crear_e_iniciar_contenedor_con_opciones(
+        &self,
+        imagen: &str,
+        opciones: OpcionesDeContenedor,
+    ) -> Result<ResultadoDeArranque, ErrorDeClienteDocker> {
+        let cuerpo = serde_json::json!({
+            "Image": imagen,
+            "HostConfig": { "NetworkMode": opciones.red },
+            "Cmd": opciones.cmd,
+        })
+        .to_string();
+        let respuesta_de_creacion = {
+            let mut conexion = self.conectar()?;
+            conexion.enviar("POST", "/containers/create", Some(&cuerpo))?
+        };
+        let id_contenedor = extraer_id_de_creacion(&respuesta_de_creacion)?;
+        let ruta = format!("/containers/{id_contenedor}/start");
+        let respuesta = match self
+            .conectar()
+            .and_then(|mut conexion| conexion.enviar("POST", &ruta, None))
+        {
+            Ok(respuesta) => respuesta,
+            Err(error) => {
+                let _ = self.eliminar_contenedor(&id_contenedor);
+                return Err(error);
+            }
+        };
+        match respuesta.estado {
+            204 => Ok(ResultadoDeArranque::Iniciado { id_contenedor }),
+            304 => Ok(ResultadoDeArranque::YaEnEjecucion { id_contenedor }),
+            _ => {
+                let error = clasificar_estado(&respuesta);
+                let _ = self.eliminar_contenedor(&id_contenedor);
+                Err(error)
+            }
+        }
+    }
+
+    /// Espera a que Docker termine el contenedor y devuelve su código de salida.
+    pub fn esperar_contenedor(&self, id: &str) -> Result<i64, ErrorDeClienteDocker> {
+        let ruta = format!("/containers/{id}/wait");
+        let mut conexion = self.conectar()?;
+        let respuesta = conexion.enviar("POST", &ruta, None)?;
+        comprobar_exito(&respuesta)?;
+        let valor: serde_json::Value = serde_json::from_slice(&respuesta.cuerpo).map_err(|_| {
+            ErrorDeClienteDocker::RespuestaMalformada {
+                motivo: "el cuerpo de espera no es JSON válido".to_string(),
+            }
+        })?;
+        valor
+            .get("StatusCode")
+            .and_then(serde_json::Value::as_i64)
+            .ok_or_else(|| ErrorDeClienteDocker::RespuestaMalformada {
+                motivo: "el cuerpo de espera no lleva StatusCode".to_string(),
+            })
     }
 
     /// Inspecciona un contenedor y devuelve el cuerpo JSON interpretado.
