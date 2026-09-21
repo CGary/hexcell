@@ -1,11 +1,12 @@
 //! Dominio de análisis de argumentos de la CLI `hexcell-admin`.
 //!
 //! Tercera de tres hijas de la tarea 10 de la etapa A-6. Fija la gramática cerrada de la
-//! línea de comandos: el único grupo de nivel superior es `cell`, los seis subcomandos
-//! (`pause`, `unpause`, `terminate`, `rebind`, `list`, `status`), las opciones admitidas
-//! por cada uno y el modo de simulación (`--simular`). Las hermanas HEX-074-a y HEX-074-b
-//! entregaron el agregado de estado de célula, los códigos de salida y los sumideros
-//! tipados; esta tarea los consume sin modificarlos.
+//! línea de comandos: el grupo `cell` con sus seis subcomandos (`pause`, `unpause`,
+//! `terminate`, `rebind`, `list`, `status`), las opciones admitidas por cada uno y el modo
+//! de simulación (`--simular`). Las hermanas HEX-074-a y HEX-074-b entregaron el agregado
+//! de estado de célula, los códigos de salida y los sumideros tipados; esta tarea los
+//! consume sin modificarlos. HEX-081 añade el segundo grupo `config render`, aditivo y
+//! sin gramática compartida con `cell`.
 //!
 //! El analizador es una función pura sobre una porción de argumentos: nunca lee `std::env`
 //! por sí misma, de modo que el crate de pruebas externo puede ejercitarlo con un
@@ -84,6 +85,71 @@ pub struct Invocacion {
     confirmar: bool,
 }
 
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub enum Comando {
+    Cell(Invocacion),
+    ConfigRender(InvocacionRenderizado),
+}
+
+impl Comando {
+    /// El subcomando de `cell`, o `None` para `config render`: el grupo `config` no
+    /// tiene subcomandos de `Subcomando`, así que devolver una variante inventada
+    /// (como `Listar`) sería mentirle a cualquier llamante que lea este accesor.
+    pub fn subcomando(&self) -> Option<Subcomando> {
+        match self {
+            Self::Cell(i) => Some(i.subcomando),
+            Self::ConfigRender(_) => None,
+        }
+    }
+    pub fn id(&self) -> Option<&str> {
+        match self {
+            Self::Cell(i) => i.id(),
+            Self::ConfigRender(_) => None,
+        }
+    }
+    pub fn motivo(&self) -> Option<&str> {
+        match self {
+            Self::Cell(i) => i.motivo(),
+            Self::ConfigRender(_) => None,
+        }
+    }
+    pub fn simular(&self) -> bool {
+        match self {
+            Self::Cell(i) => i.simular(),
+            Self::ConfigRender(i) => i.simular(),
+        }
+    }
+    pub fn confirmar(&self) -> bool {
+        match self {
+            Self::Cell(i) => i.confirmar(),
+            Self::ConfigRender(_) => false,
+        }
+    }
+}
+
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct InvocacionRenderizado {
+    defecto: String,
+    superposicion: String,
+    salida: String,
+    simular: bool,
+}
+
+impl InvocacionRenderizado {
+    pub fn defecto(&self) -> &str {
+        &self.defecto
+    }
+    pub fn superposicion(&self) -> &str {
+        &self.superposicion
+    }
+    pub fn salida(&self) -> &str {
+        &self.salida
+    }
+    pub fn simular(&self) -> bool {
+        self.simular
+    }
+}
+
 impl Invocacion {
     /// El subcomando reconocido.
     pub fn subcomando(&self) -> Subcomando {
@@ -115,10 +181,14 @@ impl Invocacion {
 pub enum ErrorDeArgumentos {
     /// No se aportó ningún argumento tras el nombre del programa.
     SinSubcomando,
-    /// El grupo de nivel superior no es `cell`.
-    GrupoDesconocido { grupo: String },
+    /// El grupo de nivel superior no es `cell` ni `config`.
+    GrupoDesconocido {
+        grupo: String,
+    },
     /// Tras `cell` no vino ningún nombre de subcomando conocido.
-    SubcomandoDesconocido { nombre: String },
+    SubcomandoDesconocido {
+        nombre: String,
+    },
     /// Apareció una opción `--...` que el subcomando no admite.
     OpcionDesconocida {
         subcomando: Subcomando,
@@ -149,6 +219,9 @@ pub enum ErrorDeArgumentos {
         subcomando: Subcomando,
         argumento: String,
     },
+    ConfiguracionInvalida {
+        mensaje: String,
+    },
 }
 
 impl fmt::Display for ErrorDeArgumentos {
@@ -159,7 +232,7 @@ impl fmt::Display for ErrorDeArgumentos {
             }
             ErrorDeArgumentos::GrupoDesconocido { grupo } => write!(
                 f,
-                "grupo desconocido: «{grupo}» (el único grupo admitido es «cell»)"
+                "grupo desconocido: «{grupo}» (los grupos admitidos son «cell» y «config»)"
             ),
             ErrorDeArgumentos::SubcomandoDesconocido { nombre } => write!(
                 f,
@@ -199,6 +272,7 @@ impl fmt::Display for ErrorDeArgumentos {
                 "argumento posicional sobrante para «{}»: «{argumento}»",
                 subcomando.nombre_en_cli()
             ),
+            ErrorDeArgumentos::ConfiguracionInvalida { mensaje } => f.write_str(mensaje),
         }
     }
 }
@@ -220,21 +294,28 @@ Subcomandos:
   status      --id <cell_id>                Mostrar el estado de una célula.
 
 Opciones comunes:
-  --simular                                   Reportar la acción sin ejecutarla.";
+  --simular                                   Reportar la acción sin ejecutarla.
+
+Uso: hexcell-admin config render --defecto <ruta> --superposicion <ruta> --salida <ruta> [--simular]
+  Renderizar la configuración de una célula fusionando un archivo de valores
+  compartidos y uno de superposición contra el esquema cerrado.";
 
 /// Analiza una porción de argumentos y produce una [`Invocacion`] validada o un
 /// [`ErrorDeArgumentos`] con la forma del rechazo.
 ///
 /// Función pura sobre la porción de argumentos que recibe: nunca lee `std::env` por sí
 /// misma. El único punto del proceso que recoge los argumentos del sistema operativo es
-/// `src/main.rs`. La gramática cerrada (único grupo `cell`, seis subcomandos, reglas de
+/// `src/main.rs`. La gramática cerrada (grupo `cell` con sus seis subcomandos, reglas de
 /// `--id`/`--motivo`/`--confirmar`/`--simular`, ambas ortografías `--clave valor` y
 /// `--clave=valor`) vive documentada en `adr-0036`.
-pub fn analizar(argumentos: &[String]) -> Result<Invocacion, ErrorDeArgumentos> {
+pub fn analizar(argumentos: &[String]) -> Result<Comando, ErrorDeArgumentos> {
     if argumentos.is_empty() {
         return Err(ErrorDeArgumentos::SinSubcomando);
     }
     let grupo = &argumentos[0];
+    if grupo == "config" {
+        return analizar_configuracion(&argumentos[1..]);
+    }
     if grupo != "cell" {
         return Err(ErrorDeArgumentos::GrupoDesconocido {
             grupo: grupo.clone(),
@@ -257,7 +338,82 @@ pub fn analizar(argumentos: &[String]) -> Result<Invocacion, ErrorDeArgumentos> 
         }
     };
     let opciones = extraer_opciones(subcomando, &argumentos[2..])?;
-    validar_opciones(subcomando, &opciones)
+    validar_opciones(subcomando, &opciones).map(Comando::Cell)
+}
+
+fn analizar_configuracion(argumentos: &[String]) -> Result<Comando, ErrorDeArgumentos> {
+    if argumentos.first().map(String::as_str) != Some("render") {
+        return Err(config_error(
+            "subcomando de configuración desconocido; se esperaba «render»",
+        ));
+    }
+    let mut defecto = None;
+    let mut superposicion = None;
+    let mut salida = None;
+    let mut simular = false;
+    let mut i = 1;
+    while i < argumentos.len() {
+        let arg = &argumentos[i];
+        if arg == "--simular" {
+            if simular {
+                return Err(config_error("opción repetida: --simular"));
+            }
+            simular = true;
+            i += 1;
+            continue;
+        }
+        let (opcion, inline) = arg
+            .split_once('=')
+            .map_or((arg.as_str(), None), |(a, v)| (a, Some(v)));
+        let destino = match opcion {
+            "--defecto" => &mut defecto,
+            "--superposicion" => &mut superposicion,
+            "--salida" => &mut salida,
+            _ => {
+                return Err(config_error(&format!(
+                    "opción desconocida para «config render»: «{arg}»"
+                )));
+            }
+        };
+        if destino.is_some() {
+            return Err(config_error(&format!("opción repetida: «{opcion}»")));
+        }
+        let valor = match inline {
+            Some(v) if !v.is_empty() => v.to_string(),
+            Some(_) => return Err(config_error(&format!("falta el valor de «{opcion}»"))),
+            None => {
+                let v = argumentos
+                    .get(i + 1)
+                    .ok_or_else(|| config_error(&format!("falta el valor de «{opcion}»")))?;
+                if v.is_empty() {
+                    return Err(config_error(&format!("falta el valor de «{opcion}»")));
+                }
+                i += 1;
+                v.clone()
+            }
+        };
+        *destino = Some(valor);
+        i += 1;
+    }
+    let requerido = |v: Option<String>, n: &str| {
+        v.ok_or_else(|| {
+            config_error(&format!(
+                "falta la opción obligatoria «{n}» para «config render»"
+            ))
+        })
+    };
+    Ok(Comando::ConfigRender(InvocacionRenderizado {
+        defecto: requerido(defecto, "--defecto")?,
+        superposicion: requerido(superposicion, "--superposicion")?,
+        salida: requerido(salida, "--salida")?,
+        simular,
+    }))
+}
+
+fn config_error(mensaje: &str) -> ErrorDeArgumentos {
+    ErrorDeArgumentos::ConfiguracionInvalida {
+        mensaje: mensaje.to_string(),
+    }
 }
 
 struct OpcionesRecogidas {

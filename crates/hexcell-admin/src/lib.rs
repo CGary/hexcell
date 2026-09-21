@@ -16,5 +16,7 @@ pub mod argumentos;
 pub mod codigo_de_salida;
 pub mod comandos;
 pub mod docker;
+pub mod esquema_configuracion;
 pub mod estado_de_celula;
+pub mod renderizado_configuracion;
 pub mod salida;
