@@ -1,0 +1,197 @@
+task_id: HEX-081
+summary: >-
+  hexcell-admin gains "config render": merges defaults+overlay KEY=VALUE files against an
+  allow-list, writes the cell env file, fails closed on unknown/invalid keys.
+affected_files:
+  - crates/hexcell-admin/src/argumentos.rs
+  - crates/hexcell-admin/src/comandos.rs
+  - crates/hexcell-admin/src/lib.rs
+  - crates/hexcell-admin/src/codigo_de_salida.rs
+  - crates/hexcell-admin/src/salida.rs
+  - crates/hexcell-admin/src/esquema_configuracion.rs
+  - crates/hexcell-admin/src/renderizado_configuracion.rs
+  - crates/hexcell-admin/tests/argumentos.rs
+  - crates/hexcell-admin/tests/comandos.rs
+  - crates/hexcell-admin/tests/renderizado_configuracion.rs
+  - crates/hexcell-admin/tests/esquema_configuracion.rs
+  - deploy/celula.env.ejemplo
+  - deploy/celula.defecto.env.ejemplo
+  - deploy/celula.superposicion.env.ejemplo
+  - deploy/verificar_renderizado_configuracion.sh
+  - deploy/cell.compose.yml
+  - crates/hexcell/src/configuracion.rs
+  - .github/workflows/ci.yml
+  - README.md
+  - docs/plan/fase-a-6-empaquetado-cli.md
+  - docs/adr/README.md
+  - docs/adr/adr-0038-segundo-grupo-config-render-en-hexcell-admin.md
+  - docs/bitacora-de-descartes.md
+symbols:
+  - argumentos::analizar
+  - argumentos::Comando
+  - argumentos::InvocacionRenderizado
+  - argumentos::ErrorDeArgumentosConfig
+  - comandos::ejecutar
+  - esquema_configuracion::ESQUEMA_PERMITIDO
+  - esquema_configuracion::validar_clave
+  - renderizado_configuracion::analizar_env
+  - renderizado_configuracion::combinar
+  - renderizado_configuracion::serializar
+  - renderizado_configuracion::ErrorDeRenderizado
+dependencies:
+  - crates/hexcell-admin/src/codigo_de_salida.rs
+  - crates/hexcell-admin/src/salida.rs
+  - crates/hexcell-admin/src/estado_de_celula.rs
+  - crates/hexcell/src/configuracion.rs
+  - deploy/celula.env.ejemplo
+  - deploy/cell.compose.yml
+  - docs/plantilla-celula.md
+test_scenarios:
+  - statement: >-
+      Merging a valid shared-defaults file and a valid per-cell overlay produces one KEY=VALUE
+      output file where the overlay's value wins for a key present in both, and a key absent from
+      the overlay keeps the defaults' value; process exits 0.
+    covers: [AC-1]
+  - statement: >-
+      An overlay containing one key outside the allow-list schema aborts the render: non-zero
+      exit, an error naming the offending key on the diagnostic sink, and no output file is
+      created or overwritten (a pre-existing output file at that path is left untouched).
+    covers: [AC-2]
+  - statement: >-
+      An overlay containing a known key whose value fails that key's validator aborts the render:
+      non-zero exit, an error naming the offending key, no output file written.
+    covers: [AC-3]
+  - statement: >-
+      The same unknown-key and invalid-value checks apply to the DEFAULTS file, not only the
+      overlay: an unknown key or invalid value in deploy/celula.defecto.env.ejemplo also aborts
+      the render, proving the allow-list runs uniformly on both inputs.
+    covers: [AC-2, AC-3]
+  - statement: >-
+      Rendering the shipped deploy/celula.defecto.env.ejemplo and deploy/celula.superposicion.env.ejemplo
+      end to end exits 0 and produces every allow-listed key with valid values, documented as the
+      smoke check.
+    covers: [AC-4]
+  - statement: >-
+      deploy/verificar_renderizado_configuracion.sh's --autoprueba mode mutates a scratch copy of
+      the overlay with one unknown key and, separately, one invalid value for a known key, and
+      confirms the render fails closed (non-zero exit, no output file) on each mutated copy,
+      printing one PASA/FALLA line per case; the script exits 0 only if every mutation was caught.
+    covers: [AC-5]
+  - statement: >-
+      A defaults file that alone covers every allow-listed key, combined with an overlay that
+      overrides only a handful of per-cell keys, still renders a complete environment file using
+      the defaults' values for every key the overlay does not mention.
+    covers: [AC-1]
+  - statement: >-
+      Passing --simular to "config render" validates both files and reports the resulting key
+      count on the standard sink without writing the output file, matching the no-side-effect
+      precedent the six cell subcommands already establish; a subsequent invocation without
+      --simular still writes it.
+  - statement: >-
+      cargo tree -p hexcell-core continues to report zero external dependencies; this task never
+      touches that crate.
+strategy:
+  - step: 1
+    action: >-
+      Define the allow-list schema in a new esquema_configuracion.rs: enumerate the 21 non-secret
+      HEXCELL_* keys already documented in deploy/celula.env.ejemplo (identifiers HEXCELL_ID_CELULA,
+      HEXCELL_RED_CELULA, HEXCELL_VOLUMEN_CELULA, HEXCELL_IMAGEN_NUCLEO, HEXCELL_IMAGEN_SIDECAR;
+      sidecar HEXCELL_VENTANA_ZONA, HEXCELL_TELEFONO_CELULA; resource limits
+      HEXCELL_{NUCLEO,SIDECAR}_LIMITE_{MEMORIA,CPUS,NOFILE}; Telegram HEXCELL_TELEGRAM_CHAT_ID,
+      HEXCELL_TELEGRAM_URL_BASE, HEXCELL_TELEGRAM_TIMEOUT_MS; and the five HEXCELL_ALERTAS_*
+      thresholds), each with a hand-written validator (regex/parse, no new dependency).
+      Deliberately EXCLUDE the three credential-shaped keys HEXCELL_INFERENCIA_API_KEY,
+      HEXCELL_EMBEDDINGS_API_KEY and HEXCELL_TELEGRAM_BOT_TOKEN from the allow-list, so that their
+      presence in either input file is itself an "unknown key" fail-closed case, enforcing the
+      spec's secrets invariant structurally rather than by convention. HEXCELL_VENTANA_ZONA gets a
+      lightweight structural check (non-empty, ASCII, contains a "/"), not full IANA-database
+      validation, since no timezone crate may be added.
+    files:
+      - crates/hexcell-admin/src/esquema_configuracion.rs
+      - crates/hexcell-admin/tests/esquema_configuracion.rs
+  - step: 2
+    action: >-
+      Implement renderizado_configuracion.rs as pure domain logic with no file I/O: parse
+      KEY=VALUE text (skip blank lines and #-comments, matching celula.env.ejemplo's own style),
+      combine two parsed maps with overlay-wins-per-key semantics, validate every resulting key
+      against esquema_configuracion's allow-list, and serialize the validated map back to
+      KEY=VALUE text in a stable (sorted) key order. A typed ErrorDeRenderizado names the
+      offending key and the reason (desconocida vs valor invalido), mirroring
+      ErrorDeArgumentos's typed-rejection style so comandos.rs can format it uniformly.
+    files:
+      - crates/hexcell-admin/src/renderizado_configuracion.rs
+      - crates/hexcell-admin/tests/renderizado_configuracion.rs
+  - step: 3
+    action: >-
+      Extend argumentos.rs's analizar(): today it hard-rejects any grupo other than "cell"
+      (adr-0036). Add a second top-level group "config" with one subcommand "render" and three
+      required flags --defecto, --superposicion, --salida (both "--clave valor" and
+      "--clave=valor" spellings, same duplicate/missing-value rejections as --id/--motivo) plus
+      the existing --simular flag. Wrap the parse result in a new enclosing type (e.g.
+      Comando::Cell(Invocacion) / Comando::ConfigRender(InvocacionRenderizado)) so main.rs's
+      single call site keeps threading one Result through unchanged in shape; this is a change to
+      analizar()'s already-shipped public signature, so tests/argumentos.rs's existing cases need
+      mechanical (not just additive) updates to the new wrapper type.
+    files:
+      - crates/hexcell-admin/src/argumentos.rs
+      - crates/hexcell-admin/tests/argumentos.rs
+  - step: 4
+    action: >-
+      Extend comandos.rs's ejecutar() to dispatch Comando::ConfigRender to a thin orchestration
+      function: read the two input files from disk (I/O lives only here, at the edge), call
+      renderizado_configuracion's pure combine/validate/serialize, and on success write the output
+      file (or, under --simular, skip the write and report the merged key count on the standard
+      sink instead, writing nothing). Map a validation failure to CodigoDeSalida::Fallo (never
+      UsoIncorrecto - the invocation itself was well-formed) with the offending key named on the
+      diagnostic sink, and success to CodigoDeSalida::Exito. Unlike the six cell subcommands,
+      config render is never NoImplementadoTodavia: this task delivers real behavior, not a
+      skeleton.
+    files:
+      - crates/hexcell-admin/src/comandos.rs
+      - crates/hexcell-admin/src/lib.rs
+      - crates/hexcell-admin/tests/comandos.rs
+  - step: 5
+    action: >-
+      Add deploy/celula.defecto.env.ejemplo (all 21 allow-listed keys, safe placeholder values,
+      commented like celula.env.ejemplo) and deploy/celula.superposicion.env.ejemplo (overrides
+      only the genuinely per-cell keys: HEXCELL_ID_CELULA, HEXCELL_RED_CELULA,
+      HEXCELL_VOLUMEN_CELULA, HEXCELL_VENTANA_ZONA, HEXCELL_TELEFONO_CELULA). Both are ADDITIVE:
+      deploy/celula.env.ejemplo is read but not modified or replaced, so the existing
+      mutation-tested guards (verificar_limites.sh, verificar_senales.sh,
+      verificar_aislamiento_estatica.sh, verificar_endurecimiento.sh) that sed-parse it keep
+      working unchanged. deploy/cell.compose.yml is read-only context, never touched.
+    files:
+      - deploy/celula.defecto.env.ejemplo
+      - deploy/celula.superposicion.env.ejemplo
+  - step: 6
+    action: >-
+      Write deploy/verificar_renderizado_configuracion.sh following the verificar_limites.sh
+      precedent's two-mode shape (normal mode runs the built hexcell-admin config render against
+      the two example files and asserts exit 0 plus a well-formed output; --autoprueba copies the
+      overlay to a scratch dir, corrupts it with one unknown key and, separately, one invalid
+      value for a known key, one mutation at a time, and asserts the guard fails closed - non-zero
+      exit AND no output file - on each, printing PASA/FALLA per case and confirming the mutation
+      actually changed the file before trusting a FALLA). This guard needs only the built
+      hexcell-admin binary plus bash/sed - no docker compose or PyYAML - so it stays fast enough
+      for verify.commands. Wire it into .github/workflows/ci.yml as two steps mirroring the
+      verificar_limites.sh steps (normal mode, then --autoprueba).
+    files:
+      - deploy/verificar_renderizado_configuracion.sh
+      - .github/workflows/ci.yml
+  - step: 7
+    action: >-
+      Update docs: replace README.md's "planificado (2026-09-10)" status line in section 5
+      ("Configuración por célula como archivos", ~line 131-135) with the delivered mechanism, the
+      two example file names and the exact "hexcell-admin config render" invocation; close plan
+      task 22 in docs/plan/fase-a-6-empaquetado-cli.md with a "Cerrada el 2026-09-19 con HEX-081"
+      note matching task 20-b's closing style; add a new ADR extending adr-0036 with the second
+      top-level group and its exit-code mapping, and a docs/adr/README.md row. Read
+      docs/adr/README.md and docs/bitacora-de-descartes.md from disk AT IMPLEMENT TIME for the
+      genuinely free ADR/D number - this blueprint's adr-0038 filename is a best guess as of
+      2026-09-19 and may already be stale from HEX-079/HEX-080 running in parallel; never
+      hardcode, never edit an existing entry, rename the file if the guessed number collided.
+    files:
+      - README.md
+      - docs/plan/fase-a-6-empaquetado-cli.md
+      - docs/adr/README.md
+      - docs/adr/adr-0038-segundo-grupo-config-render-en-hexcell-admin.md

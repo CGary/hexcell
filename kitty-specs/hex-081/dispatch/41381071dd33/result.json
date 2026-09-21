@@ -1,0 +1,42 @@
+{
+  "schema_version": "fleet-dispatch-result/v1",
+  "dispatch_id": "41381071dd33",
+  "task_id": "HEX-081",
+  "agent": "opencode_go",
+  "model": "opencode-go/gpt-5.6-luna",
+  "phase": "execute",
+  "started_at": "2026-09-19T17:08:53Z",
+  "ended_at": "2026-09-19T17:11:47Z",
+  "duration_s": 174.104630018,
+  "exit_code": 0,
+  "timed_out": false,
+  "killed": false,
+  "outcome": {
+    "class": "attempt",
+    "noop": false,
+    "cause": null,
+    "blocked": null
+  },
+  "diff": {
+    "empty": false,
+    "indeterminate": false,
+    "files_changed": 14,
+    "insertions": 526,
+    "deletions": 11
+  },
+  "forensic_ref": "refs/fleet/HEX-081/attempt-1-opencode-go-gpt-5.6-luna",
+  "baseline_commit": "acf0ec3404a14ffc273bf58a8d80ba19bb1e54cd",
+  "applied": true,
+  "usage": {
+    "source": "none",
+    "tokens_in": null,
+    "tokens_out": null,
+    "requests": null
+  },
+  "notes_path": "dispatch/41381071dd33/notes.txt",
+  "trace_events": [
+    "dispatch_started",
+    "dispatch_finished"
+  ],
+  "reset_error": null
+}

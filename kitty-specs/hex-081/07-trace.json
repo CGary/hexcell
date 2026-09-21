@@ -1,0 +1,115 @@
+{
+  "attempts": [
+    {
+      "duration_s": 0,
+      "notes": "blueprint+contract written; declared risk low, calculated medium (file_count_high: 23) - divergence recorded, human declared risk stands per authority rule",
+      "phase": "blueprint",
+      "result": "passed"
+    },
+    {
+      "duration_s": 174.104630018,
+      "model": "opencode-go/gpt-5.6-luna",
+      "notes": "{\"type\":\"step_start\",\"timestamp\":1789837737098,\"sessionID\":\"ses_f455b8f46ffesaxxPX0qjUSruQ\",\"part\":{\"id\":\"prt_0baa47c87001a593NXTtKzJYim\",\"messageID\":\"msg_0baa471b1001VHcvk7h4UpXtTt\",\"sessionID\":\"ses_f455b8f46ffesaxxPX0qjUSruQ\",\"snapshot\":\"2518341065d94f4bc34f45658c8ab0b40f0d0ac4\",\"type\":\"step-start\"}} {\"type\":\"tool_use\",\"timestamp\":1789837739686,\"sessionID\":\"ses_f455b8f46ffesaxxPX0qjUSruQ\",\"part\":{\"type\":\"tool\",\"tool\":\"grep\",\"callID\":\"call_l8DjJ2oeSu3DK1IIyMfCs8Kz\",\"state\":{\"status\":\"completed\",\"input\":{\"pattern\":\"HEXELL|HEXCELL_\",\"path\":\"/home/gary/dev/hexcell/worktrees/HEX-081/deploy/celula.env.ejemplo\",\"include\":\"celula.env.ejemplo\"},\"output\":\"Found 29 matches\\n/home/gary/dev/hexcell/worktrees/HEX-081/deploy/celula.env.ejemplo:\\n  Line 20: # El volumen de datos de la célula (HEXCELL_VOLUMEN_CELULA, definido más abajo)\\n\\n  Line 34: # plantilla cruda y resuelta. HEXCELL_VOLUMEN_CELULA es, por construcción, el\\n\\n  Line 41: HEXCELL_ID_CELULA=piloto-01\\n\\n  Line 46: HEXCELL_RED_CELULA=hexcell-piloto-01-red\\n\\n  Line 47: HEXCELL_VOLUMEN_CELULA=hexcell-piloto-01-datos\\n\\n  Line 52: HEXCELL_IMAGEN_NUCLEO=hexcell-nucleo:local\\n\\n  Line 53: HEXCELL_IMAGEN_SIDECAR=hexcell-sidecar:local\\n\\n  Line 60: HEXCELL_VENTANA_ZONA=America/Argentina/Buenos_Aires\\n\\n  Line 65: HEXCELL_TELEFONO_CELULA=reemplazar-con-numero-real\\n\\n  Line 70: # HEXCELL_INFERENCIA_URL_BASE está presente). Se inyecta desde el entorno.\\n\\n  Line 71: HEXCELL_INFERENCIA_API_KEY=reemplazar-con-clave-real\\n\\n  Line 74: # HEXCELL_EMBEDDINGS_URL_BASE está presente). Se inyecta desde el entorno.\\n\\n  Line 75: HEXCELL_EMBEDDINGS_API_KEY=reemplazar-con-clave-real\\n\\n  Line 89: HEXCELL_NUCLEO_LIMITE_MEMORIA=48m\\n\\n  Line 90: HEXCELL_NUCLEO_LIMITE_CPUS=0.5\\n\\n  Line 91: HEXCELL_SIDECAR_LIMITE_MEMORIA=32m\\n\\n  Line 92: HEXCELL_SIDECAR_LIMITE_CPUS=0.25\\n\\n  Line 101: HEXCELL_NUCLEO_LIMITE_NOFILE=1024\\n\\n  Line 102: HEXCELL_SIDECAR_LIMITE_NOFILE=1024\\n\\n  Line 109: HEXCELL_TELEGRAM_BOT_TOKEN=reemplazar-con-token-r...",
+      "phase": "execute",
+      "result": "passed"
+    }
+  ],
+  "context_overflows": [],
+  "events": [
+    {
+      "event": "risk_level_calculated",
+      "level": "medium",
+      "reasons": [
+        "file_count_high: 23"
+      ],
+      "signals": {
+        "files_count": 23,
+        "sensitive_matches": [],
+        "symbols_count": 0
+      }
+    },
+    {
+      "calculated": "medium",
+      "declared": "low",
+      "event": "risk_level_divergence",
+      "reasons": [
+        "file_count_high: 23"
+      ]
+    },
+    {
+      "bundle_hash": "41381071dd336f8c95fbf4e6d27178b3898489b87fa8581247f7947c239d1072",
+      "dispatch_id": "41381071dd33",
+      "ts": "2026-09-19T17:08:53Z",
+      "type": "dispatch_started"
+    },
+    {
+      "applied": true,
+      "cause": null,
+      "diff_stat": {
+        "deletions": 11,
+        "empty": false,
+        "files_changed": 14,
+        "indeterminate": false,
+        "insertions": 526
+      },
+      "dispatch_id": "41381071dd33",
+      "forensic_ref": "refs/fleet/HEX-081/attempt-1-opencode-go-gpt-5.6-luna",
+      "noop": false,
+      "outcome_class": "attempt",
+      "ts": "2026-09-19T17:11:47Z",
+      "type": "dispatch_finished",
+      "usage_source": "none"
+    },
+    {
+      "blocked": "",
+      "candidate": {
+        "agent": "opencode_go",
+        "level": 1,
+        "model": "opencode-go/deepseek-v4-flash"
+      },
+      "dispatch_id": "",
+      "inputs_snapshot": {
+        "complexity_band": "M",
+        "control": {
+          "disabled": [
+            {
+              "at": "2026-09-09T16:46:15Z",
+              "by": "human",
+              "reason": "Antigravity/Gemini subscription retired 2026-09-09 (human decision); propagated from quorum",
+              "target": "agy"
+            },
+            {
+              "at": "2026-09-09T16:46:15Z",
+              "by": "human",
+              "reason": "Antigravity/Gemini subscription retired 2026-09-09 (human decision); propagated from quorum",
+              "target": "agy_edit"
+            }
+          ],
+          "updated_at": "2026-09-09T16:46:15Z"
+        },
+        "exclusions": null,
+        "hashes": {
+          "agents_yaml": "ea0f730316f5ee07d999731405e39b6d5a2b8040b6222489976f447ac2b8f450",
+          "config_yaml": "959b1fc9182793ab6c2a8510f82f49724db816b46ddb6ab7aa9fa8f1fb2f890e",
+          "routing_yaml": "8c3b821b2d603e67dc1c220721291fbb5130799d88712d0deaa4b90bbf5479cc"
+        },
+        "incumbent_family": "opencode-go",
+        "level": 1,
+        "phase": "review",
+        "risk": "low",
+        "router_version": "fleet-route/v1"
+      },
+      "reasons": null,
+      "reroute_budget": 1,
+      "review_family_degraded": false,
+      "ts": "2026-09-21T15:22:46Z",
+      "type": "routing_decision"
+    }
+  ],
+  "execution_mode": "worktree_edit",
+  "started_at": "2026-09-19T13:02:00Z",
+  "summary": "hexcell-admin gains config render: merges defaults+overlay KEY=VALUE files against an allow-list, writes the cell env file, fails closed on unknown/invalid keys.",
+  "task_id": "HEX-081",
+  "total_cost_usd": 0,
+  "violations": []
+}

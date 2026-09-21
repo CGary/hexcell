@@ -1,0 +1,43 @@
+task_id: HEX-081
+summary: Applied 06-review.json fix_tasks (F1-F5) plus review-flagged missing tests.
+entries:
+  - changed_files:
+      - path: .github/workflows/ci.yml
+    notes:
+      - "F1: added Rust toolchain, cargo cache and 'cargo build -p hexcell-admin' steps to job guardas-limites before the config-render guard steps, so the guard can genuinely pass in CI."
+  - changed_files:
+      - path: crates/hexcell-admin/src/esquema_configuracion.rs
+    notes:
+      - "F2: validar_memoria now splits on the last char (chars().next_back()) instead of a byte index, so a multibyte final char returns Err instead of panicking."
+      - "F3: HEXCELL_ALERTAS_SUELO_BALANCE_DISPONIBLE now validated with a new entero_con_signo (i64) helper instead of decimal_no_negativo, matching crates/hexcell/src/configuracion.rs:958. HEXCELL_ALERTAS_LIMITE_TASA_DESCARTES kept on decimal_no_negativo, untouched."
+  - changed_files:
+      - path: crates/hexcell-admin/src/argumentos.rs
+    notes:
+      - "F4: Comando::subcomando() now returns Option<Subcomando> (None for ConfigRender) instead of the false Subcomando::Listar mirror value."
+      - "Also corrected the now-inaccurate GrupoDesconocido message/doc ('unico grupo cell') and extended TEXTO_DE_USO with the config render usage line."
+  - changed_files:
+      - path: crates/hexcell-admin/tests/argumentos.rs
+    notes:
+      - "Mechanical updates for the Option<Subcomando> signature change; updated the pinned GrupoDesconocido error string."
+      - "Added review-flagged missing tests: config render parsing (missing/repeated/unknown flag, empty inline value), and that a valid render command returns subcomando() == None."
+  - changed_files:
+      - path: crates/hexcell-admin/tests/esquema_configuracion.rs
+    notes:
+      - "Added tests pinning F2 (multibyte memory value does not panic) and F3 (suelo de balance accepts negative i64, rejects decimal)."
+  - changed_files:
+      - path: crates/hexcell-admin/tests/renderizado_configuracion.rs
+    notes:
+      - "Added review-flagged missing tests: --simular writes nothing, unknown key in the DEFAULTS file (not just the overlay) aborts, and a Rust-level end-to-end render of the two shipped deploy/ example files."
+  - changed_files:
+      - path: deploy/verificar_renderizado_configuracion.sh
+    notes:
+      - "chmod 755 to match sibling guards (mode-only change, no content diff)."
+  - changed_files:
+      - path: docs/bitacora-de-descartes.md
+    notes:
+      - "F5: renumbered this task's entry from D-55 (collides with HEX-079 on main) to D-56; fixed the index row to the [D-56](#d-56) anchor form and the heading to '### D-56: titulo' matching neighbours; updated 'Ultima actualizacion' to 2026-09-21 (D-56)."
+  - changed_files:
+      - path: docs/adr/adr-0038-segundo-grupo-config-render-en-hexcell-admin.md
+    notes:
+      - "Optional cleanup: added 'Extiende adr-0036' line, a short Contexto section, and a Consecuencias section referencing D-56."
+verify_pending: false

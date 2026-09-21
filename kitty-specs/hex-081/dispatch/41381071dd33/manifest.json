@@ -1,0 +1,85 @@
+{
+  "task_id": "HEX-081",
+  "bundle_hash": "41381071dd336f8c95fbf4e6d27178b3898489b87fa8581247f7947c239d1072",
+  "files": [
+    ".ai/tasks/active/HEX-081-new-spec/00-spec.yaml",
+    ".ai/tasks/active/HEX-081-new-spec/01-blueprint.yaml",
+    ".github/workflows/ci.yml",
+    "CONTRIBUTING.md",
+    "README.md",
+    "crates/hexcell-admin/src/argumentos.rs",
+    "crates/hexcell-admin/src/codigo_de_salida.rs",
+    "crates/hexcell-admin/src/comandos.rs",
+    "crates/hexcell-admin/src/estado_de_celula.rs",
+    "crates/hexcell-admin/src/lib.rs",
+    "crates/hexcell-admin/src/main.rs",
+    "crates/hexcell-admin/src/salida.rs",
+    "crates/hexcell-admin/tests/argumentos.rs",
+    "crates/hexcell-admin/tests/comandos.rs",
+    "crates/hexcell-admin/tests/comun/mod.rs"
+  ],
+  "protocol_version": "fleet-bundle-protocol/v2",
+  "created_at": "2026-09-19T17:08:47Z",
+  "dropped": [
+    {
+      "component": "code_slice",
+      "path": "docs/plantilla-celula.md",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "docs/plan/fase-a-6-empaquetado-cli.md",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "docs/bitacora-de-descartes.md",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "docs/adr/adr-0036-contrato-de-analisis-de-argumentos-y-modo-de-simulacion.md",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "docs/adr/adr-0034-contrato-de-codigos-de-salida-y-sumideros-de-salida.md",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "docs/adr/README.md",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "docs/STATUS.md",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "deploy/verificar_senales.sh",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "deploy/verificar_limites.sh",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "deploy/celula.env.ejemplo",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "deploy/cell.compose.yml",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "crates/hexcell/src/configuracion.rs",
+      "reason": "bundle exceeded max_bytes budget"
+    }
+  ]
+}

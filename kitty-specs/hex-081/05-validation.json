@@ -1,0 +1,38 @@
+{
+  "commands": [
+    {
+      "command": "cargo fmt --check",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "(sin salida)"
+    },
+    {
+      "command": "cargo build -p hexcell-admin",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "   Compiling hexcell-admin v0.1.0 (/home/gary/dev/hexcell/worktrees/HEX-081/crates/hexcell-admin)\n    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.13s\n"
+    },
+    {
+      "command": "cargo test -p hexcell-admin",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "o_de_produccion_no_contiene_tokens_prohibidos ... ok\n\ntest result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n     Running tests/renderizado_configuracion.rs (target/debug/deps/renderizado_configuracion-1d6f0547aebf019a)\n\nrunning 11 tests\ntest analizar_env_ignora_comentarios_y_lineas_en_blanco ... ok\ntest ac2_clave_desconocida_en_la_superposicion_aborta_sin_escribir_salida ... ok\ntest analizar_env_rechaza_clave_desconocida ... ok\ntest ac3_valor_invalido_para_clave_conocida_aborta_sin_escribir_salida ... ok\ntest ac2_no_sobrescribe_una_salida_preexistente_ante_clave_desconocida ... ok\ntest ac1_la_superposicion_prevalece_sobre_el_defecto_en_la_clave_compartida ... ok\ntest clave_desconocida_en_el_archivo_de_defecto_tambien_aborta_sin_escribir_salida ... ok\ntest serializar_produce_una_linea_key_igual_valor_por_clave ... ok\ntest combinar_hace_ganar_la_superposicion_por_clave ... ok\ntest simular_no_escribe_el_archivo_de_salida ... ok\ntest los_archivos_de_ejemplo_publicados_renderizan_end_to_end ... ok\n\ntest result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n     Running tests/salida.rs (target/debug/deps/salida-d90216fc60fde9a7)\n\nrunning 6 tests\ntest el_constructor_de_produccion_se_puede_invocar ... ok\ntest los_mensajes_escritos_son_el_literal_exacto_en_espanol ... ok\ntest un_diagnostico_llega_solo_al_bufer_de_diagnostico ... ok\ntest una_escritura_de_diagnostico_fallida_se_devuelve_como_error_sin_entrar_en_panico ... ok\ntest una_escritura_estandar_fallida_se_devuelve_como_error_sin_entrar_en_panico ... ok\ntest una_linea_estandar_llega_solo_al_bufer_estandar ... ok\n\ntest result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n   Doc-tests hexcell_admin\n\nrunning 0 tests\n\ntest result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n"
+    },
+    {
+      "command": "cargo clippy -p hexcell-admin -- -D warnings",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "    Checking hexcell-admin v0.1.0 (/home/gary/dev/hexcell/worktrees/HEX-081/crates/hexcell-admin)\n    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.12s\n"
+    },
+    {
+      "command": "bash deploy/verificar_renderizado_configuracion.sh --autoprueba",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "PASA: renderizado normal\nPASA: mutación clave-desconocida rechazada\nPASA: mutación valor-invalido rechazada\n"
+    }
+  ],
+  "executed_at": "2026-09-21T02:00:00Z",
+  "overall_result": "passed",
+  "summary": "Los cinco comandos terminan en 0 tras el rebase sobre main; las cuatro guardas preexistentes tambien pasan.",
+  "task_id": "HEX-081"
+}

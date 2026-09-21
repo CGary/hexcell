@@ -1,0 +1,157 @@
+task_id: HEX-081
+summary: >-
+  hexcell-admin gains a "config render" top-level group that merges a defaults+overlay KEY=VALUE
+  pair against a hand-written allow-list and fails closed on any unknown key or invalid value.
+goal: >-
+  Deliver plan task 22 of stage A-6 (docs/plan/fase-a-6-empaquetado-cli.md): a shared defaults
+  file plus a per-cell overlay, both KEY=VALUE (.env style), merged with overlay-wins-per-key
+  semantics into the environment file the existing deploy/cell.compose.yml template consumes.
+  Validation runs against a hand-written allow-list of non-secret HEXCELL_* keys before anything
+  is written: an unknown key or an invalid value aborts with a non-zero exit and writes no output
+  file. crates/hexcell gains no second configuration reader. No new crate dependency anywhere in
+  the workspace. All identifiers, comments, docs and commit messages in Spanish.
+read:
+  - .ai/tasks/active/HEX-081-new-spec/00-spec.yaml
+  - .ai/tasks/active/HEX-081-new-spec/01-blueprint.yaml
+  - crates/hexcell-admin/src/argumentos.rs
+  - crates/hexcell-admin/src/comandos.rs
+  - crates/hexcell-admin/src/codigo_de_salida.rs
+  - crates/hexcell-admin/src/salida.rs
+  - crates/hexcell-admin/src/estado_de_celula.rs
+  - crates/hexcell-admin/src/lib.rs
+  - crates/hexcell-admin/src/main.rs
+  - crates/hexcell-admin/tests/argumentos.rs
+  - crates/hexcell-admin/tests/comandos.rs
+  - crates/hexcell-admin/tests/comun/mod.rs
+  - crates/hexcell/src/configuracion.rs
+  - deploy/celula.env.ejemplo
+  - deploy/cell.compose.yml
+  - deploy/verificar_limites.sh
+  - deploy/verificar_senales.sh
+  - docs/plantilla-celula.md
+  - docs/plan/fase-a-6-empaquetado-cli.md
+  - docs/adr/README.md
+  - docs/adr/adr-0034-contrato-de-codigos-de-salida-y-sumideros-de-salida.md
+  - docs/adr/adr-0036-contrato-de-analisis-de-argumentos-y-modo-de-simulacion.md
+  - docs/bitacora-de-descartes.md
+  - docs/STATUS.md
+  - README.md
+  - CONTRIBUTING.md
+  - .github/workflows/ci.yml
+touch:
+  - crates/hexcell-admin/src/argumentos.rs
+  - crates/hexcell-admin/src/comandos.rs
+  - crates/hexcell-admin/src/lib.rs
+  - crates/hexcell-admin/src/esquema_configuracion.rs
+  - crates/hexcell-admin/src/renderizado_configuracion.rs
+  - crates/hexcell-admin/tests/argumentos.rs
+  - crates/hexcell-admin/tests/comandos.rs
+  - crates/hexcell-admin/tests/renderizado_configuracion.rs
+  - crates/hexcell-admin/tests/esquema_configuracion.rs
+  - deploy/celula.defecto.env.ejemplo
+  - deploy/celula.superposicion.env.ejemplo
+  - deploy/verificar_renderizado_configuracion.sh
+  - .github/workflows/ci.yml
+  - README.md
+  - docs/plan/fase-a-6-empaquetado-cli.md
+  - docs/adr/README.md
+  - docs/adr/adr-0038-segundo-grupo-config-render-en-hexcell-admin.md
+  - docs/bitacora-de-descartes.md
+forbid:
+  files:
+    - crates/hexcell-admin/src/codigo_de_salida.rs
+    - crates/hexcell-admin/src/salida.rs
+    - crates/hexcell-admin/src/estado_de_celula.rs
+    - crates/hexcell-admin/src/main.rs
+    - crates/hexcell-admin/Cargo.toml
+    - crates/hexcell-core/Cargo.toml
+    - crates/hexcell/src/configuracion.rs
+    - crates/hexcell/src/main.rs
+    - deploy/celula.env.ejemplo
+    - deploy/cell.compose.yml
+    - deploy/verificar_limites.sh
+    - deploy/verificar_senales.sh
+    - deploy/verificar_aislamiento_estatica.sh
+    - deploy/verificar_endurecimiento.sh
+    - Cargo.lock
+    - docs/STATUS.md
+    - docs/adr/adr-0036-contrato-de-analisis-de-argumentos-y-modo-de-simulacion.md
+  behaviors:
+    - >-
+      Do NOT add a new crate dependency anywhere in the workspace (adr-0036/D-53 already discarded
+      clap, argh, pico-args and structopt for this exact parser). The KEY=VALUE parsing, the
+      allow-list validation and the render logic are hand-written, following
+      crates/hexcell-admin/src/argumentos.rs's precedent.
+    - >-
+      Do NOT let HEXCELL_INFERENCIA_API_KEY, HEXCELL_EMBEDDINGS_API_KEY or
+      HEXCELL_TELEGRAM_BOT_TOKEN appear in the allow-list schema, in either example file, or in
+      any rendered output. Their presence in a defaults or overlay input file must be rejected as
+      an unknown/disallowed key, never silently passed through.
+    - >-
+      Do NOT give crates/hexcell (or any other cell-binary crate) a second configuration reader.
+      configuracion.rs stays the binary's only source of truth for its own env vars; this task
+      only produces a file that ends up interpolated by docker compose, never read directly by
+      the Rust binary.
+    - >-
+      Do NOT modify deploy/cell.compose.yml. The stage-8 template stays intact; this task only
+      produces the environment file consumed alongside it.
+    - >-
+      Do NOT modify deploy/celula.env.ejemplo. The two new example files
+      (celula.defecto.env.ejemplo, celula.superposicion.env.ejemplo) are ADDITIVE; the existing
+      mutation-tested guards (verificar_limites.sh, verificar_senales.sh,
+      verificar_aislamiento_estatica.sh, verificar_endurecimiento.sh) sed-parse
+      celula.env.ejemplo verbatim and must keep passing unmodified.
+    - >-
+      Do NOT commit or produce a real piloto-01 or piloto-02 overlay file. Both new deploy/ files
+      are generic examples/templates, not production data.
+    - >-
+      Do NOT write an output environment file to a tracked path by default, and do NOT version any
+      rendered output, *.db, *.db-wal, *.db-shm or .env* file. The render subcommand's own tests
+      write only to a temp directory.
+    - >-
+      Do NOT let a validation failure (unknown key or invalid value) write, truncate or leave a
+      partial output file at the requested --salida path, whether or not one already existed
+      there before the run; the file at that path must be byte-for-byte unchanged on failure.
+    - >-
+      Do NOT map a validation failure (unknown key, invalid value) to CodigoDeSalida::UsoIncorrecto.
+      The CLI invocation itself was well-formed; the content of the input files was not. Use
+      CodigoDeSalida::Fallo for that case, reserving UsoIncorrecto for malformed CLI arguments,
+      per the existing four-way contract in codigo_de_salida.rs (adr-0034/adr-0036).
+    - >-
+      Do NOT change ErrorDeArgumentos's existing variants, Subcomando's six existing variants, or
+      any existing cell-subcommand behavior. The new "config" group is additive alongside "cell",
+      not a replacement; mechanical updates to tests/argumentos.rs and tests/comandos.rs to unwrap
+      the new enclosing result type are allowed, logic changes to the six cell subcommands are not.
+    - >-
+      Do NOT assume adr-0038 or the D-number in this contract are free. Re-read docs/adr/README.md
+      and docs/bitacora-de-descartes.md from disk at implementation time (HEX-079 and HEX-080 may
+      be running in parallel) and use the genuinely next-free numbers; rename the ADR file
+      accordingly. Never edit or renumber an existing ADR or D-NN entry.
+    - >-
+      Do NOT invent a real IANA timezone database check for HEXCELL_VENTANA_ZONA; a lightweight
+      structural validator (non-empty, ASCII, contains "/") is sufficient and must not be
+      oversold in docs as full IANA validation.
+    - >-
+      Do NOT write English identifiers, comments, log/error messages, docs or commit messages.
+      Conventional commits in Spanish, no AI attribution.
+verify:
+  commands:
+    - cargo fmt --check
+    - cargo build -p hexcell-admin
+    - cargo test -p hexcell-admin
+    - cargo clippy -p hexcell-admin -- -D warnings
+    - bash deploy/verificar_renderizado_configuracion.sh --autoprueba
+acceptance:
+  human_gate: true
+limits:
+  max_files_changed: 20
+  max_diff_lines: 2800
+  per_class:
+    - glob: "deploy/verificar_renderizado_configuracion.sh"
+      max_diff_lines: 420
+execution:
+  mode: worktree_edit
+  branch: ai/HEX-081
+retry_policy:
+  max_attempts: 2
+  escalate_after: 1

@@ -1,0 +1,72 @@
+task_id: HEX-081
+summary: Add hexcell-admin subcommand to render per-cell config files (shared defaults + overlay) into the cell.compose.yml env, fail-closed on unknown/invalid keys.
+goal: >
+  Implement file-based configuration management for cells (plan task 22 of stage
+  A-6): a shared defaults file plus a per-cell overlay file, both in KEY=VALUE
+  (.env style) format, versionable in git. hexcell-admin gains a rendering
+  subcommand that merges defaults and overlay (overlay wins key by key),
+  validates every key against an allow-list schema of known non-secret
+  parameters, and writes the resulting environment file consumed by the
+  existing cell.compose.yml template from plan task 8. Validation runs before
+  anything is brought up: an unknown key or an invalid value aborts with a
+  non-zero exit and no output file is written. The cell binary gains no second
+  configuration reader.
+invariants:
+  - Only non-secret parameters may appear in the defaults file, the overlay file, or the rendered output; no secret is ever written to a file on disk.
+  - Every secret continues to travel exclusively through environment variables per the HEX-064/HEX-065 boundary; that path is not modified.
+  - The overlay's value for a given key always supersedes the shared defaults' value for that same key; keys absent from the overlay keep the defaults' value.
+  - An overlay or defaults file containing a key outside the allow-list schema, or a value that fails that key's validation rule, aborts the render with a non-zero exit code and writes no output file (fail-closed).
+  - The render's output format matches the environment shape crates/hexcell and deploy/cell.compose.yml already consume from deploy/celula.env.ejemplo; crates/hexcell gains no second configuration reader.
+  - deploy/cell.compose.yml is not modified by this task; the render only produces the environment file consumed alongside it.
+acceptance:
+  - id: AC-1
+    statement: Rendering a valid shared-defaults file plus a valid per-cell overlay produces a single merged KEY=VALUE environment file where overlay keys take precedence.
+    given: a shared defaults file and a per-cell overlay file, both containing only allow-listed keys with valid values, and one key present in both
+    when: the hexcell-admin render subcommand runs against both files
+    then: the output file contains every key from the union of both files, with the overlay's value winning for the key present in both, and exits 0
+  - id: AC-2
+    statement: An overlay with an unknown key aborts the render before any output is written.
+    given: a valid shared defaults file and an overlay file containing one key not present in the allow-list schema
+    when: the hexcell-admin render subcommand runs
+    then: the process exits non-zero, prints an error naming the offending key, and no output environment file is created or overwritten
+  - id: AC-3
+    statement: An overlay with an invalid value for a known key aborts the render before any output is written.
+    given: a valid shared defaults file and an overlay file containing a known key whose value fails that key's validation rule
+    when: the hexcell-admin render subcommand runs
+    then: the process exits non-zero, prints an error naming the offending key, and no output environment file is created or overwritten
+  - id: AC-4
+    statement: The delivered example/template defaults and overlay files (not real piloto-01/piloto-02 overlays, which are out of scope) render successfully end to end as a documented smoke check.
+    given: the shared example defaults file and an example per-cell overlay file shipped under deploy/
+    when: the hexcell-admin render subcommand runs against them
+    then: it exits 0 and produces a valid environment file consumable by deploy/cell.compose.yml's existing variables
+  - id: AC-6
+    statement: >
+      The allow-list treats as SECRET only credentials (the two API keys and the Telegram bot
+      token), which keep travelling by environment variable per HEX-064/HEX-065. HEXCELL_TELEGRAM_CHAT_ID
+      and HEXCELL_TELEFONO_CELULA are operational identifiers, not credentials, and are allow-listed as
+      non-secret (they already sit outside the "Secretos" section of deploy/celula.env.ejemplo). The README
+      section states that overlays holding REAL values are customer data and are versioned only in the
+      operator's private repository; only examples with placeholders enter the hexcell repository.
+    given: the allow-list schema and the README section delivered by this task
+    when: they are inspected
+    then: the two identifiers are non-secret allow-listed keys, no credential key is allow-listed, and the README carries the private-overlay-repository statement
+  - id: AC-5
+    statement: A guard script under deploy/ exercises the fail-closed validation mechanically, tested by mutation and wired into CI, following the existing precedent of deploy/verificar_*.sh.
+  - The README section "Configuración por célula como archivos" (currently marked "planificado", stage A-6 task 22) is updated to describe the delivered mechanism, its file locations, and the render subcommand's fail-closed behavior, replacing the "planificado" status line.
+  - This task traces to plan task 22 of stage A-6 (docs/plan/fase-a-6-empaquetado-cli.md) and carries no FR of its own by explicit product decision (acceptance criterion revised 2026-09-10); this absence of an FR reference is expected and is not a spec gap.
+  - "cargo build --workspace, cargo test --workspace, cargo fmt --check, and cargo clippy --workspace -- -D warnings all pass with the new subcommand and guard in place."
+risk: low
+non_goals:
+  - Do not change how secrets are supplied; the environment-variable path from HEX-064/HEX-065 is documented as the boundary but not modified.
+  - Do not produce or commit real production overlay files for piloto-01 or piloto-02; deliver example/template files only.
+  - Do not modify deploy/cell.compose.yml; the stage-8 template stays intact.
+  - Do not add a second configuration reader to crates/hexcell or any other cell-binary crate.
+  - Do not add a new parser dependency (TOML/YAML/etc.); the file format stays KEY=VALUE (.env style), consistent with deploy/celula.env.ejemplo.
+constraints:
+  - The renderer is a subcommand of hexcell-admin (crates/hexcell-admin), built on the hand-written argument parser delivered by HEX-074-c; no new CLI-parsing dependency is introduced.
+  - crates/hexcell-core keeps zero external dependencies; this task does not touch that crate.
+  - Any new dependency anywhere in the workspace needs explicit justification against the precedent in adr-0036 and D-53 (clap, argh, pico-args, structopt already discarded); hand-written parsing/validation is preferred.
+  - All repository content (docs, identifiers, comments, commit messages) is in Spanish, per CLAUDE.md; commit messages follow conventional-commit form with no AI attribution.
+  - Never version *.db, *.db-wal, *.db-shm, or .env* files.
+  - The new guard script under deploy/ must be tested by mutation and wired into CI, matching the pattern of deploy/verificar_limites.sh, verificar_senales.sh, verificar_aislamiento_estatica.sh, and verificar_endurecimiento.sh.
+  - Delivery lanes are limited to crates/hexcell-admin, deploy/ (config files and their guard), and the README section "Configuración por célula como archivos" (~line 131).
