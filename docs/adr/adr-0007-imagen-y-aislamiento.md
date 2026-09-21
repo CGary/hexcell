@@ -165,3 +165,20 @@ registran en `docs/bitacora-de-descartes.md` y en los comentarios de la plantill
   aislamiento por célula).
 * `docs/plan/fase-a-6-empaquetado-cli.md`, tareas 4, 5, 6, 8 y 16 (medición pendiente).
 * `docs/bitacora-de-descartes.md`, D-52 (técnicas descartadas del guardia de límites).
+## Nota del 2026-09-21: estado tras el cierre de la tarea 16
+
+La tarea 16 del plan de A-6 cerró el 2026-09-19 con HEX-079, pero entregó el **instrumento**
+(`deploy/medir_memoria_y_imagenes.sh`), no la medida. Dos consecuencias para la sección c):
+
+* **Los puntos 8, 9 y 10 siguen PROVISIONALES.** Nada en HEX-079 los ratifica ni los ajusta; la
+  corrida manual que llena la tabla de `docs/plantilla-celula.md` (AC-6 de HEX-079) sigue pendiente.
+* **Ni siquiera esa corrida los ratificará.** El generador de carga del instrumento golpea el
+  listener de salud del núcleo y no ejercita la admisión GCRA, el pipeline de inferencia ni la ruta
+  whatsmeow (D-55): su cifra bajo carga es una **cota inferior**, no el peor caso. Sirve para
+  detectar un reparto demasiado ajustado en reposo, no para confirmar que 48/32 MB bastan bajo
+  tráfico real.
+
+La ratificación del reparto queda ligada a la decisión pendiente «Prueba de carga sostenida y techo
+de células por servidor» de `docs/STATUS.md`, que exige tráfico real sobre la célula compuesta.
+Hasta entonces, donde este documento dice "pendiente de la tarea 16" debe leerse "pendiente de esa
+prueba".
