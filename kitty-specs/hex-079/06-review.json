@@ -1,0 +1,28 @@
+{
+  "task_id": "HEX-079",
+  "summary": "Live cgroup v2 measurement script satisfies AC-1..AC-6; deterministic gate clean; hand read finds no vacuous guards.",
+  "verdict": "approve",
+  "contract_compliance": true,
+  "forbidden_files_touched": [],
+  "unrequested_refactor": false,
+  "missing_tests": [],
+  "functional_risk": "low",
+  "notes": [
+    "contract-check ok=true; not_checked: forbid.behaviors (expected, no automated behavior-level checker exists)",
+    "acceptance-coverage status=pass; all AC-1..AC-6 covered, no gaps",
+    "05-validation.json overall_result=passed; all 12 verify commands exit 0",
+    "Hand-verified the two startup log patterns the script waits on actually exist in source: crates/hexcell/src/main.rs:319 prints 'hexcell: canal configurado: whatsmeow' unconditionally on entering the Whatsmeow branch (before IPC/pairing), and sidecar/main.go:30 defines eventoArranque='sidecar.arrancado' logged via slog JSON with field key 'evento' (sidecar/internal/registro/registro.go), so the wait pattern is not vacuous.",
+    "Verified cgroup read is genuine: memory.current and anon(memory.stat) are read from /sys/fs/cgroup located by full container id (supports both systemd and cgroupfs drivers), never /proc; both containers' figures are summed for the aggregate; anon and memory.current are kept as separate labelled figures per spec.",
+    "Verified cold start: HEXCELL_ID_CELULA/RED_CELULA/VOLUMEN_CELULA are given a per-run unique suffix and the compose volumes/networks blocks are non-external (name: ${VAR}), so docker compose up creates a fresh empty volume and network each run; EXIT trap tears down compose, volume, network and the load auxiliary container.",
+    "Verified load generator: ephemeral alpine:3 container joined via --network container:<nucleo>, no host port published, bounded duration (20s sampling window inside a 30s generator lifetime so the peak sample is taken while the generator is still running); LIMITACION block in the script header and in docs/plantilla-celula.md names carga.rs, gives the four rejection reasons, and states the under-load figure is a lower bound, not worst case.",
+    "Verified both image sizes are read via 'docker image inspect --format {{.Size}}' for HEXCELL_IMAGEN_NUCLEO and HEXCELL_IMAGEN_SIDECAR, each failing explicitly (never 0/empty) if absent or non-numeric.",
+    "Verified no CI wiring (script not referenced in .github/workflows/ci.yml) and no --autoprueba mode, per HEX-067 and the spec's forbid.behaviors.",
+    "Verified crates/hexcell/tests/carga.rs and rss_linea_base.rs are untouched in the diff (file list confirms only the 5 declared touch-list files changed).",
+    "Verified docs: docs/plantilla-celula.md adds an empty 'Valores de referencia' table explicitly marked pending a manual run plus the LIMITACION note; docs/plan/fase-a-6-empaquetado-cli.md closes task 16 with HEX-079 and defers AC-6; README.md adds one sentence naming the new script; docs/bitacora-de-descartes.md adds D-55 (max prior was D-54, no reuse/reorder) with reason and reopening condition, same commit as the discard.",
+    "Verified docs/STATUS.md and docs/adr/** are untouched, matching the spec's forbid list and CLAUDE.md's rule that closing a plan task is not a STATUS decision.",
+    "Verified the single commit (8216a1a) is a conventional 'feat(deploy):' message in Spanish with no Co-Authored-By/Generated-with/Claude-Session line.",
+    "Per-class diff caps: script 460/460 (at cap, not exceeded), plantilla-celula.md +27/-1, bitacora +28/-1, plan +10/-0, README +1/-1; all within per_class and global (5 files <= 6, 529 lines <= 700) limits.",
+    "AC-6 correctly treated as deferred, not flagged as a gap, per explicit spec instruction; no fabricated measurement numbers appear anywhere in the diff."
+  ],
+  "fix_tasks": []
+}

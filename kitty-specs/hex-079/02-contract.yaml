@@ -1,0 +1,263 @@
+task_id: HEX-079
+summary: "Ship deploy/medir_memoria_y_imagenes.sh: live manual measurement of the composed cell's cgroup v2 memory and both image sizes. Empty reference-values table. carga.rs untouched. No CI gate."
+goal: >-
+  Deliver the MEASUREMENT INSTRUMENT for task 16 of docs/plan/fase-a-6-empaquetado-cli.md, not the
+  measured numbers. The script cold-starts the composed cell of deploy/cell.compose.yml (whatsmeow
+  adapter, task-6 cgroup limits) from an empty named volume, reads memory.current and memory.stat
+  from each container's own cgroup v2 directory under the host's /sys/fs/cgroup sysfs tree (NEVER
+  from /proc, and never via docker exec, which is impossible because both final images delete
+  /bin/sh and /bin/busybox), reports the two-container aggregate at rest and under load keeping
+  `anon` and `memory.current` separately labelled, reads both image sizes with docker image
+  inspect, and prints an explicit LIMITACION block explaining why crates/hexcell/tests/carga.rs
+  cannot be reused as an external generator and why the under-load figure is a lower bound.
+read:
+  - .ai/tasks/active/HEX-079-new-spec/00-spec.yaml
+  - .ai/tasks/active/HEX-079-new-spec/01-blueprint.yaml
+  - docs/plan/fase-a-6-empaquetado-cli.md
+  - docs/PRD.md
+  - README.md
+  - deploy/cell.compose.yml
+  - deploy/celula.env.ejemplo
+  - deploy/verificar_aislamiento.sh
+  - deploy/verificar_apagado_ordenado.sh
+  - deploy/verificar_limites.sh
+  - docs/plantilla-celula.md
+  - docs/adr/adr-0007-imagen-y-aislamiento.md
+  - docs/protocolo-ipc-nucleo-sidecar.md
+  - docs/bitacora-de-descartes.md
+  - crates/hexcell/tests/carga.rs
+  - crates/hexcell/tests/rss_linea_base.rs
+  - crates/hexcell/src/salud.rs
+  - Dockerfile
+  - sidecar/Dockerfile
+  - .github/workflows/ci.yml
+  - kitty-specs/hex-076/02-contract.yaml
+touch:
+  - deploy/medir_memoria_y_imagenes.sh
+  - docs/plantilla-celula.md
+  - README.md
+  - docs/plan/fase-a-6-empaquetado-cli.md
+  - docs/bitacora-de-descartes.md
+forbid:
+  files:
+    - "crates/**"
+    - "sidecar/**"
+    - Cargo.toml
+    - Cargo.lock
+    - rust-toolchain.toml
+    - Dockerfile
+    - ".dockerignore"
+    - deploy/cell.compose.yml
+    - deploy/celula.env.ejemplo
+    - deploy/verificar_aislamiento.sh
+    - deploy/verificar_aislamiento_estatica.sh
+    - deploy/verificar_limites.sh
+    - deploy/verificar_endurecimiento.sh
+    - deploy/verificar_apagado_ordenado.sh
+    - deploy/verificar_senales.sh
+    - deploy/ping_de_vigilancia_externa.sh
+    - deploy/verificar_ping_de_vigilancia.sh
+    - ".github/workflows/**"
+    - "docs/adr/**"
+    - docs/STATUS.md
+    - docs/PRD.md
+    - docs/protocolo-ipc-nucleo-sidecar.md
+    - "*.env"
+    - ".env*"
+    - "*.db"
+    - "*.db-wal"
+    - "*.db-shm"
+    - "kitty-specs/**"
+    - ".ai/**"
+  behaviors:
+    - "NEVER modify crates/hexcell/tests/carga.rs. Its reuse as an external generator was evaluated and rejected on four verified grounds (in-process Motor with no network/IPC client; AdaptadorSimulado not whatsmeow; RelojDePrueba fake clock; measures via /proc/self/status). AC-3's fallback branch is the operative one: declare the limitation, do not make carga.rs embeddable, and do not alter its semantics as a side effect."
+    - "NEVER modify or reuse crates/hexcell/tests/rss_linea_base.rs. It continues to measure only the core with the simulated adapter and is out of scope entirely."
+    - "NEVER read memory from the host's /proc (no /proc/meminfo, no /proc/<pid>/status, no VmRSS, no /proc/<pid>/smaps). Memory comes exclusively from each container's own cgroup v2 directory: memory.current and memory.stat. Do not substitute `docker stats` for the raw cgroup read; the spec explicitly rejects docker stats defaults that may proxy through /proc."
+    - "Do NOT use `docker exec` against the nucleo or sidecar containers to read cgroup files. Verified impossible: Dockerfile:125-126 and sidecar/Dockerfile:269-270 run `apk del --no-network busybox-binsh && rm -f /bin/sh /bin/busybox`, leaving no shell and no applet in either final image. Read the cgroup tree from the host's /sys/fs/cgroup, or from an ephemeral alpine:3 auxiliary container, per finding D-48."
+    - "Do NOT copy the claim from kitty-specs/hex-076/02-contract.yaml that busybox utilities are present in the alpine:3 final images. That statement is stale and false against current main; the busybox removal happens after the FROM line it cites."
+    - "The script must locate each container's cgroup directory by its FULL docker id rather than hardcoding one layout, so both the systemd driver (system.slice/docker-<id>.scope) and the cgroupfs driver (docker/<id>) work. If the directory, memory.current, or memory.stat is missing, empty or non-numeric, exit non-zero with an explicit FALLA line. NEVER print 0, an empty value, or a host-wide figure as though it were a measurement."
+    - "Report `anon` (from memory.stat, the RSS-equivalent) and `memory.current` (total charge, including page cache) as SEPARATE, clearly labelled figures for the aggregate. Do not collapse them into one number called RSS: memory.current alone overstates against the 80 MB NFR-01 ceiling and anon alone understates cgroup pressure."
+    - "The script must print an explicit LIMITACION block naming crates/hexcell/tests/carga.rs, the reasons it cannot be reused unmodified, the substitute generator actually used, and the statement that the under-load figure is a LOWER BOUND and not a worst case, because the substitute exercises the HTTP listener, tokio runtime and allocator but not GCRA admission, not the inference pipeline, not the knowledge engine and not the sidecar's whatsmeow path."
+    - "Load must be applied from an ephemeral alpine:3 auxiliary container joined to the core's network namespace (--network container:<nucleo>). NEVER publish a host port from the measured cell, even temporarily; that would break the HEX-076 isolation invariant that no service publishes a port to the host."
+    - "The load and readiness steps must NOT assert HTTP 200 from /health/ready. A cold-started cell is unpaired and legitimately not ready; gating on 200 would make the script fail for the expected state instead of for a real defect."
+    - "The script must cold-start from a freshly created, EMPTY named volume on every run, using a per-run unique suffix for HEXCELL_ID_CELULA, HEXCELL_RED_CELULA and HEXCELL_VOLUMEN_CELULA derived from deploy/celula.env.ejemplo, exactly as deploy/verificar_aislamiento.sh does. Never reuse or pre-seed a volume. Register a cleanup EXIT trap that tears down compose, the volume and the network."
+    - "Do NOT wire deploy/medir_memoria_y_imagenes.sh into .github/workflows/ci.yml, into verify.commands, or into any other script. It needs a live Docker daemon and minutes of runtime, and HEX-067 repealed the CI size gate. It is manual, exactly like deploy/verificar_aislamiento.sh and deploy/verificar_apagado_ordenado.sh."
+    - "Do NOT add a CI gate, threshold, or pass/fail assertion on any measured memory figure or image size. This script is an INSTRUMENT, not a guard: its only mechanical assertions are preconditions (docker present, cgroup v2 present, containers up, cgroup values numeric, images present), and those must each be genuinely falsifiable."
+    - "Do NOT implement an --autoprueba mutation self-test mode. That mode belongs to the mechanical CI guards (deploy/verificar_aislamiento_estatica.sh, deploy/verificar_limites.sh), not to a live manual instrument; deploy/verificar_aislamiento.sh sets the precedent of omitting it."
+    - "Do NOT invent, estimate, guess or record any measured number anywhere. The reference-values section in docs/plantilla-celula.md ships as an EMPTY table explicitly marked as pending a manual run. A fabricated reference value is worse than an absent one."
+    - "Do NOT write or amend an ADR. adr-0007 declares the 48/32 MB split PROVISIONAL pending this task, but this task delivers only the instrument; a lower-bound measurement cannot ratify those values, and docs/adr/** is forbidden."
+    - "Do NOT add an entry to docs/STATUS.md. Closing a plan task decides nothing and belongs in docs/plan/fase-a-6-empaquetado-cli.md; STATUS.md records decisions only."
+    - "Log the rejected reuse of carga.rs as an external generator in docs/bitacora-de-descartes.md in this SAME commit, with its reason and its reopening condition, using a sequential D-NN read FROM DISK at implement time. The current real maximum is D-54, but re-check it: parallel sibling tasks may have advanced it. Never reuse or reorder a number."
+    - "Do NOT add a new third-party tool or dependency. Use bash, standard POSIX utilities, the docker CLI, and the alpine:3 image already used by deploy/verificar_aislamiento.sh and deploy/verificar_apagado_ordenado.sh."
+    - "Never version *.db, *.db-wal, *.db-shm or .env* artifacts the script produces at runtime; keep every runtime artifact inside the per-run docker volume or a mktemp path, and clean it up in the EXIT trap."
+    - "Every new line of prose, identifiers, comments and script output is in Spanish, matching the repository language rule, including the script header, the LIMITACION block, the report, the docs section, the README sentence, the plan note and the bitacora entry."
+    - "Never include an AI attribution line (Co-Authored-By, Generated with, Claude-Session, or any equivalent) in any commit message this task produces; CLAUDE.md forbids it and prior tasks have had it slip past review."
+verify:
+  commands:
+    - |
+      set -u
+      # 1. El instrumento existe, es ejecutable y es sintacticamente valido.
+      test -f deploy/medir_memoria_y_imagenes.sh \
+        || { echo "FALLA: deploy/medir_memoria_y_imagenes.sh no existe"; exit 1; }
+      test -x deploy/medir_memoria_y_imagenes.sh \
+        || { echo "FALLA: deploy/medir_memoria_y_imagenes.sh no es ejecutable"; exit 1; }
+      bash -n deploy/medir_memoria_y_imagenes.sh \
+        || { echo "FALLA: deploy/medir_memoria_y_imagenes.sh no pasa bash -n"; exit 1; }
+      echo "OK: el instrumento existe, es ejecutable y su sintaxis es valida"
+    - |
+      set -u
+      # 2. AC-2: la memoria sale de cgroup v2, NUNCA de /proc del anfitrion.
+      for clave in 'memory.current' 'memory.stat' '/sys/fs/cgroup'; do
+        grep -qF -- "$clave" deploy/medir_memoria_y_imagenes.sh \
+          || { echo "FALLA: el script no referencia [$clave]; la lectura debe venir de cgroup v2"; exit 1; }
+      done
+      grep -qF -- 'anon' deploy/medir_memoria_y_imagenes.sh \
+        || { echo "FALLA: el script no lee la clave anon de memory.stat (el equivalente a RSS)"; exit 1; }
+      for prohibido in '/proc/meminfo' '/proc/self/status' 'VmRSS' 'smaps'; do
+        if grep -qF -- "$prohibido" deploy/medir_memoria_y_imagenes.sh; then
+          echo "FALLA: el script lee [$prohibido]; la memoria NUNCA sale de /proc del anfitrion"
+          exit 1
+        fi
+      done
+      echo "OK: la memoria se lee de cgroup v2 (memory.current + anon de memory.stat) y no de /proc"
+    - |
+      set -u
+      # 3. AC-2: docker exec contra nucleo/sidecar es imposible (ambas imagenes
+      # borran /bin/sh y /bin/busybox). El script no debe intentarlo.
+      if grep -qE 'docker[[:space:]]+(compose[[:space:]]+)?exec' deploy/medir_memoria_y_imagenes.sh; then
+        echo "FALLA: el script usa docker exec; las imagenes finales no tienen shell (Dockerfile:125-126, sidecar/Dockerfile:269-270)"
+        exit 1
+      fi
+      echo "OK: el script no depende de docker exec contra las imagenes endurecidas"
+    - |
+      set -u
+      # 4. AC-3: carga.rs y rss_linea_base quedan intactos contra el merge-base.
+      BASE_REF=$(git merge-base main HEAD 2>/dev/null || echo main)
+      for intocable in crates/hexcell/tests/carga.rs crates/hexcell/tests/rss_linea_base.rs; do
+        if ! git diff --quiet --no-color "$BASE_REF"...HEAD -- "$intocable"; then
+          echo "FALLA: $intocable fue modificado; el spec lo prohibe explicitamente"
+          exit 1
+        fi
+        if ! git diff --quiet --no-color -- "$intocable"; then
+          echo "FALLA: $intocable tiene cambios sin commitear; el spec lo prohibe explicitamente"
+          exit 1
+        fi
+      done
+      echo "OK: carga.rs y rss_linea_base.rs intactos (comprobado main...HEAD y arbol de trabajo)"
+    - |
+      set -u
+      # 5. AC-3: la limitacion del generador esta DECLARADA de forma explicita,
+      # nombrando carga.rs y diciendo que la cifra bajo carga es una cota inferior.
+      grep -qF -- 'LIMITACION' deploy/medir_memoria_y_imagenes.sh \
+        || grep -qF -- 'LIMITACIÓN' deploy/medir_memoria_y_imagenes.sh \
+        || { echo "FALLA: el script no declara un bloque LIMITACION (AC-3)"; exit 1; }
+      grep -qF -- 'carga.rs' deploy/medir_memoria_y_imagenes.sh \
+        || { echo "FALLA: la declaracion de limitacion no nombra crates/hexcell/tests/carga.rs"; exit 1; }
+      grep -qiE 'cota inferior' deploy/medir_memoria_y_imagenes.sh \
+        || { echo "FALLA: el script no declara que la cifra bajo carga es una cota inferior, no el peor caso"; exit 1; }
+      echo "OK: la limitacion del generador esta declarada y justificada (AC-3)"
+    - |
+      set -u
+      # 6. AC-1/AC-4: se mide la celula COMPUESTA de la tarea 5 y AMBAS imagenes.
+      grep -qF -- 'deploy/cell.compose.yml' deploy/medir_memoria_y_imagenes.sh \
+        || { echo "FALLA: el script no usa deploy/cell.compose.yml (celula compuesta de la tarea 5)"; exit 1; }
+      grep -qF -- 'docker image inspect' deploy/medir_memoria_y_imagenes.sh \
+        || { echo "FALLA: el script no lee el peso de las imagenes con docker image inspect (AC-4)"; exit 1; }
+      for img in HEXCELL_IMAGEN_NUCLEO HEXCELL_IMAGEN_SIDECAR; do
+        grep -qF -- "$img" deploy/medir_memoria_y_imagenes.sh \
+          || { echo "FALLA: el script no mide la imagen $img; AC-4 exige AMBAS"; exit 1; }
+      done
+      for lim in HEXCELL_NUCLEO_LIMITE_MEMORIA HEXCELL_SIDECAR_LIMITE_MEMORIA; do
+        grep -qF -- "$lim" deploy/medir_memoria_y_imagenes.sh \
+          || { echo "FALLA: el script no declara el limite de cgroup $lim bajo el que midio"; exit 1; }
+      done
+      echo "OK: mide la celula compuesta bajo los limites de la tarea 6 y ambas imagenes"
+    - |
+      set -u
+      # 7. Arranque en frio: volumen y red de un solo uso, con limpieza. Un
+      # volumen reutilizado no prueba nada.
+      grep -qF -- 'HEXCELL_VOLUMEN_CELULA' deploy/medir_memoria_y_imagenes.sh \
+        || { echo "FALLA: el script no parametriza HEXCELL_VOLUMEN_CELULA; el arranque en frio no esta garantizado"; exit 1; }
+      grep -qE 'trap .* EXIT' deploy/medir_memoria_y_imagenes.sh \
+        || { echo "FALLA: el script no registra una trampa EXIT de limpieza"; exit 1; }
+      echo "OK: arranque en frio desde volumen de un solo uso, con limpieza registrada"
+    - |
+      set -u
+      # 8. Sin compuerta en CI (decision de HEX-067) y sin modo --autoprueba.
+      if grep -qF -- 'medir_memoria_y_imagenes' .github/workflows/ci.yml; then
+        echo "FALLA: el instrumento en vivo no debe invocarse desde CI (HEX-067 derogo la compuerta de tamano)"
+        exit 1
+      fi
+      if grep -qF -- '--autoprueba' deploy/medir_memoria_y_imagenes.sh; then
+        echo "FALLA: --autoprueba es exclusivo de los guardias mecanicos, no de un instrumento en vivo"
+        exit 1
+      fi
+      echo "OK: sin compuerta en CI y sin modo de autoprueba"
+    - |
+      set -u
+      # 9. AC-5: la seccion de valores de referencia existe y NO trae numeros
+      # inventados; queda marcada como pendiente de una corrida manual.
+      grep -qiE 'valores de referencia' docs/plantilla-celula.md \
+        || { echo "FALLA: docs/plantilla-celula.md no tiene la seccion de valores de referencia (AC-5)"; exit 1; }
+      grep -qF -- 'medir_memoria_y_imagenes.sh' docs/plantilla-celula.md \
+        || { echo "FALLA: la seccion de valores de referencia no nombra el script que los produce"; exit 1; }
+      grep -qiE 'pendiente' docs/plantilla-celula.md \
+        || { echo "FALLA: la seccion no se declara pendiente de una corrida manual; un valor inventado es peor que uno ausente"; exit 1; }
+      echo "OK: seccion de valores de referencia presente, sin numeros, marcada como pendiente"
+    - |
+      set -u
+      # 10. Trazabilidad: plan, README y bitacora.
+      grep -qF -- 'HEX-079' docs/plan/fase-a-6-empaquetado-cli.md \
+        || { echo "FALLA: la tarea 16 del plan no anota su cierre con HEX-079"; exit 1; }
+      grep -qF -- 'medir_memoria_y_imagenes.sh' README.md \
+        || { echo "FALLA: README.md no nombra el script nuevo, rompiendo la convencion de deploy/"; exit 1; }
+      grep -qF -- 'carga.rs' docs/bitacora-de-descartes.md \
+        || { echo "FALLA: el descarte de carga.rs como generador externo no quedo en la bitacora"; exit 1; }
+      echo "OK: plan, README y bitacora anotados"
+    - |
+      set -u
+      # 11. Numeracion de la bitacora: el D-NN nuevo es estrictamente mayor que
+      # el maximo previo, y ningun numero se repite.
+      MAXIMO=$(grep -oE '^### D-[0-9]+' docs/bitacora-de-descartes.md | grep -oE '[0-9]+' | sort -n | tail -1)
+      test -n "$MAXIMO" || { echo "FALLA: no se pudo leer el maximo D-NN de la bitacora"; exit 1; }
+      test "$MAXIMO" -ge 55 \
+        || { echo "FALLA: el maximo D-NN es D-$MAXIMO; esta tarea debe anadir una entrada por encima de D-54"; exit 1; }
+      DUPLICADOS=$(grep -oE '^### D-[0-9]+' docs/bitacora-de-descartes.md | sort | uniq -d)
+      test -z "$DUPLICADOS" \
+        || { echo "FALLA: numeros D-NN duplicados en la bitacora: $DUPLICADOS"; exit 1; }
+      echo "OK: bitacora con numeracion secuencial sin reutilizar (maximo D-$MAXIMO)"
+    - |
+      set -u
+      # 12. Higiene: no se versiona ninguna base de datos ni archivo de entorno,
+      # y ningun commit lleva linea de atribucion de IA.
+      BASE_REF=$(git merge-base main HEAD 2>/dev/null || echo main)
+      SUCIOS=$(git diff --name-only "$BASE_REF"...HEAD | grep -E '\.(db|db-wal|db-shm)$|(^|/)\.env' || true)
+      test -z "$SUCIOS" \
+        || { echo "FALLA: la tarea versiona archivos prohibidos: $SUCIOS"; exit 1; }
+      ATRIBUCION=$(git log --format='%B' "$BASE_REF"..HEAD | grep -iE 'co-authored-by|generated with|claude-session' || true)
+      test -z "$ATRIBUCION" \
+        || { echo "FALLA: un commit lleva linea de atribucion de IA, prohibida por CLAUDE.md: $ATRIBUCION"; exit 1; }
+      echo "OK: sin bases de datos ni .env versionados, y sin atribucion de IA en los commits"
+  target_s: 40
+acceptance:
+  human_gate: true
+limits:
+  max_files_changed: 6
+  max_diff_lines: 700
+  per_class:
+    - glob: "deploy/medir_memoria_y_imagenes.sh"
+      max_diff_lines: 460
+    - glob: "docs/plantilla-celula.md"
+      max_diff_lines: 95
+    - glob: "docs/bitacora-de-descartes.md"
+      max_diff_lines: 70
+    - glob: "docs/plan/fase-a-6-empaquetado-cli.md"
+      max_diff_lines: 30
+    - glob: "README.md"
+      max_diff_lines: 20
+execution:
+  mode: worktree_edit
+  branch: ai/HEX-079
+retry_policy:
+  max_attempts: 3
+  escalate_after: 2

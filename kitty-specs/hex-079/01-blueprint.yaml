@@ -1,0 +1,253 @@
+task_id: HEX-079
+summary: "Live manual instrument measuring the composed cell's cgroup v2 memory at rest and under a declared substitute load, plus both image sizes. Empty reference-values table in docs. No CI gate."
+affected_files:
+  - deploy/medir_memoria_y_imagenes.sh
+  - docs/plantilla-celula.md
+  - README.md
+  - docs/plan/fase-a-6-empaquetado-cli.md
+  - docs/bitacora-de-descartes.md
+symbols:
+  - "deploy/medir_memoria_y_imagenes.sh::comprobar_precondiciones"
+  - "deploy/medir_memoria_y_imagenes.sh::preparar_entorno_efimero"
+  - "deploy/medir_memoria_y_imagenes.sh::localizar_cgroup_v2"
+  - "deploy/medir_memoria_y_imagenes.sh::leer_memoria_cgroup"
+  - "deploy/medir_memoria_y_imagenes.sh::generar_carga"
+  - "deploy/medir_memoria_y_imagenes.sh::medir_tamano_imagen"
+  - "deploy/medir_memoria_y_imagenes.sh::informar"
+  - "deploy/medir_memoria_y_imagenes.sh::limpiar"
+  - "docs/plantilla-celula.md::Valores de referencia de memoria y tamano de imagenes"
+  - "docs/bitacora-de-descartes.md::D-NN (descarte de carga.rs como generador externo)"
+dependencies:
+  - deploy/cell.compose.yml
+  - deploy/celula.env.ejemplo
+  - deploy/verificar_aislamiento.sh
+  - deploy/verificar_apagado_ordenado.sh
+  - deploy/verificar_limites.sh
+  - crates/hexcell/tests/carga.rs
+  - crates/hexcell/tests/rss_linea_base.rs
+  - crates/hexcell/src/salud.rs
+  - docs/adr/adr-0007-imagen-y-aislamiento.md
+  - docs/protocolo-ipc-nucleo-sidecar.md
+  - Dockerfile
+  - sidecar/Dockerfile
+test_scenarios:
+  - statement: >-
+      The script cold-starts the composed cell from deploy/cell.compose.yml with a per-run unique
+      id/network/volume suffix derived from deploy/celula.env.ejemplo, so both containers begin from
+      a freshly created EMPTY named volume, exactly as deploy/verificar_aislamiento.sh and
+      deploy/verificar_apagado_ordenado.sh do. A reused or pre-seeded volume proves nothing.
+    covers:
+      - AC-1
+  - statement: >-
+      The cell runs with HEXCELL_CANAL=whatsmeow (already hardcoded in deploy/cell.compose.yml) and
+      with mem_limit/cpus/ulimits resolved from HEXCELL_NUCLEO_LIMITE_MEMORIA and
+      HEXCELL_SIDECAR_LIMITE_MEMORIA; the script echoes the resolved limits it actually ran under so
+      a recorded figure is never orphaned from the ceiling it was measured against.
+    covers:
+      - AC-1
+  - statement: >-
+      For each container, the script resolves the container's own cgroup v2 directory from its full
+      docker id and reads memory.current plus the anon/file/sock/slab keys of memory.stat, then
+      reports the two-container aggregate. It reports anon (true RSS) and memory.current (total
+      charge incl. page cache) as SEPARATE labelled figures, never conflating them under the word
+      RSS.
+    covers:
+      - AC-2
+  - statement: >-
+      The script never reads host /proc for memory, and never relies on `docker stats` default
+      output; a mutation replacing the cgroup read with a /proc read must be visible as a
+      contract/verify failure.
+    covers:
+      - AC-2
+  - statement: >-
+      If the cgroup directory cannot be located, or memory.current is absent, empty, or
+      non-numeric, the script exits non-zero with an explicit FALLA line. It NEVER prints 0 or an
+      empty figure as if it were a measurement; a zero that could mean "not measured" is a vacuous
+      result.
+    covers:
+      - AC-2
+  - statement: >-
+      The script takes the at-rest reading only after both containers have settled (bounded wait on
+      a known startup signal, not an unbounded sleep), and takes the under-load reading while the
+      generator is still running, not after it stops.
+    covers:
+      - AC-2
+  - statement: >-
+      The script does NOT invoke crates/hexcell/tests/carga.rs and does not modify it. It prints an
+      explicit LIMITACION block naming carga.rs, the four reasons it cannot serve as an external
+      generator, the substitute generator actually used, and the fact that the under-load figure is
+      a LOWER BOUND rather than a worst case.
+    covers:
+      - AC-3
+  - statement: >-
+      Load is applied from an ephemeral alpine:3 auxiliary container joined to the core's network
+      namespace (--network container:<nucleo>), issuing a bounded concurrent burst of HTTP GETs at
+      the health listener on 0.0.0.0:8081. No host port is ever published, preserving the HEX-076
+      isolation invariant.
+    covers:
+      - AC-3
+  - statement: >-
+      The load step never asserts HTTP 200 from /health/ready: a cold-started, unpaired cell is
+      legitimately not ready, and gating on 200 would make the script fail for the expected state
+      rather than for a real defect.
+    covers:
+      - AC-3
+  - statement: >-
+      The script reads each image's size with `docker image inspect --format '{{.Size}}'` for
+      HEXCELL_IMAGEN_NUCLEO and HEXCELL_IMAGEN_SIDECAR, and fails explicitly if an image is absent
+      instead of reporting an empty or zero size.
+    covers:
+      - AC-4
+  - statement: >-
+      docs/plantilla-celula.md gains a reference-values section with an empty, clearly-marked table
+      (memory at rest, memory under load, both image sizes, date, commit, host) plus the same
+      LIMITACION note, so the later manual run has a defined place to write into.
+    covers:
+      - AC-5
+  - statement: >-
+      The reference-values section is shipped WITHOUT invented numbers and states that it is
+      pending a manual run; no CI job and no verify.command invokes the live script, matching how
+      deploy/verificar_aislamiento.sh and deploy/verificar_apagado_ordenado.sh were handled.
+    covers:
+      - AC-5
+      - AC-6
+strategy:
+  - step: 1
+    action: >-
+      Write the Spanish header block of deploy/medir_memoria_y_imagenes.sh following the prose
+      convention of deploy/verificar_aislamiento.sh: what it measures, why it is NOT a mechanical
+      guard and never enters CI (HEX-067 repealed the size gate), the USO and DEPENDENCIAS
+      sections, and the LIMITACION block for AC-3.
+    files:
+      - deploy/medir_memoria_y_imagenes.sh
+  - step: 2
+    action: >-
+      Implement preconditions and ephemeral environment (Validator role): docker + docker compose
+      present, cgroup v2 present (stat -fc %T /sys/fs/cgroup = cgroup2fs), deploy/celula.env.ejemplo
+      present, both images present. Derive a per-run env file with unique HEXCELL_ID_CELULA,
+      HEXCELL_RED_CELULA and HEXCELL_VOLUMEN_CELULA, and register a `limpiar` EXIT trap that tears
+      down compose, the volume and the network, exactly as deploy/verificar_aislamiento.sh does.
+    files:
+      - deploy/medir_memoria_y_imagenes.sh
+  - step: 3
+    action: >-
+      Implement localizar_cgroup_v2 and leer_memoria_cgroup (Application Service): resolve the full
+      container id via docker inspect, find the container's cgroup directory under /sys/fs/cgroup
+      (systemd driver `system.slice/docker-<id>.scope`, cgroupfs driver `docker/<id>`, located by
+      search on the id so both drivers work), and read memory.current and memory.stat. Fail loudly
+      when the directory or the value is missing, empty or non-numeric.
+    files:
+      - deploy/medir_memoria_y_imagenes.sh
+  - step: 4
+    action: >-
+      Implement generar_carga: an ephemeral alpine:3 container joined with
+      `--network container:<nucleo>` running a bounded, parallel busybox-wget burst against the
+      health listener for a fixed duration, while the parent script samples the cgroup of both
+      containers. Take the peak sample, not a single instantaneous read.
+    files:
+      - deploy/medir_memoria_y_imagenes.sh
+  - step: 5
+    action: >-
+      Implement medir_tamano_imagen and informar: read both image sizes via docker image inspect,
+      then print one consolidated Spanish report with the resolved cgroup limits, at-rest and
+      under-load aggregates (anon and memory.current kept distinct), both image sizes, and the
+      LIMITACION block, in a shape that can be pasted straight into the docs table.
+    files:
+      - deploy/medir_memoria_y_imagenes.sh
+  - step: 6
+    action: >-
+      Add the reference-values section to docs/plantilla-celula.md with the empty table and the
+      LIMITACION note, and add the README sentence naming the new script alongside the other
+      deploy/verificar_* scripts (README line 139 already announces these values as pending task 16).
+    files:
+      - docs/plantilla-celula.md
+      - README.md
+  - step: 7
+    action: >-
+      Record the discard of carga.rs-as-external-generator in docs/bitacora-de-descartes.md with a
+      sequential D-NN read FROM DISK at implement time (current real maximum is D-54, but re-check:
+      parallel sibling tasks may have advanced it), including its reason and its reopening
+      condition, and annotate the closure of task 16 in docs/plan/fase-a-6-empaquetado-cli.md with
+      HEX-079.
+    files:
+      - docs/bitacora-de-descartes.md
+      - docs/plan/fase-a-6-empaquetado-cli.md
+risks:
+  - >-
+    BLOCKING-STYLE MISMATCH WITH THE SPEC'S OWN WORDING (verified, must not be silently ignored):
+    AC-2 and the task brief both suggest reading cgroup v2 "inside the container or via docker
+    exec". That is IMPOSSIBLE against this repo's images. Dockerfile:125-126 and
+    sidecar/Dockerfile:269-270 both run `apk del --no-network busybox-binsh && rm -f /bin/sh
+    /bin/busybox`, so neither final image contains a shell, `cat`, or any applet; the only
+    executable is the static ENTRYPOINT. `docker exec <c> cat /sys/fs/cgroup/memory.current` cannot
+    run. The blueprint therefore reads the container's cgroup v2 directory from the HOST's
+    /sys/fs/cgroup sysfs tree. This still satisfies the invariant as written: cgroup2fs is NOT
+    /proc, and the figures are the kernel's per-container cgroup accounting, not a host-wide or
+    /proc-derived estimate. Verified on this host: driver systemd, cgroup v2, files world-readable
+    (-r--r--r--), read successfully as an unprivileged user, memory.stat exposing anon/file/sock/slab.
+  - >-
+    AC-3 RESOLVED AGAINST REUSE, ON FOUR INDEPENDENT GROUNDS: crates/hexcell/tests/carga.rs cannot
+    serve as an external generator without modification. (1) It constructs `Motor` IN-PROCESS and
+    has no network or IPC client whatsoever. (2) It drives `AdaptadorSimulado`, the SIMULATED
+    adapter, which directly contradicts this task's "composed cell with whatsmeow" requirement.
+    (3) It uses `RelojDePrueba`, a fake clock, to make GCRA admission deterministic; there is no
+    fake clock in a running container. (4) It measures via `/proc/self/status` (`leer_vm_rss_kb`),
+    the exact host-/proc source this spec's first invariant forbids. AC-3's fallback branch is
+    therefore the operative one, and the script must DECLARE the limitation, not paper over it.
+  - >-
+    NO IN-BAND INGRESS EXISTS FOR A COMPOSED CELL, which is why the substitute generator is only a
+    lower bound. docs/protocolo-ipc-nucleo-sidecar.md section 2 establishes that the SIDECAR is the
+    IPC server and the CORE is the client, so no external process can inject an `evento_entrante`
+    into a running cell without impersonating or replacing the sidecar - which would destroy the
+    "composed cell with the whatsmeow adapter" premise. The only genuine inbound path is a real
+    WhatsApp message over the sidecar's outbound websocket, which needs a real paired device and is
+    not scriptable or mergeable. Hence load is applied at the health listener.
+  - >-
+    THE SUBSTITUTE LOAD IS SHALLOW AND MUST BE LABELLED AS SUCH. crates/hexcell/src/preparacion.rs
+    `evaluar_preparacion` is an in-memory state evaluation, so hammering /health/ready exercises the
+    HTTP listener, the tokio runtime, connection churn and the allocator, but NOT GCRA admission,
+    NOT the inference pipeline, NOT the knowledge engine, and NOT the sidecar's whatsmeow path. The
+    under-load aggregate is a LOWER BOUND on real channel load, never a worst case. The script and
+    the docs section must both say so in those words.
+  - >-
+    CONSEQUENCE FOR adr-0007 THAT THE HUMAN SHOULD SEE: adr-0007-imagen-y-aislamiento.md lines
+    84-95 declare the 48 MB core + 32 MB sidecar split, the 0.5/0.25 CPU split, and nofile=1024 all
+    "PROVISIONAL pendiente de la tarea 16" - this task. Because the instrument can only produce a
+    lower bound (previous risk), a run of this script does NOT by itself justify ratifying or
+    relaxing those provisional values. This is a scope observation, not a blocker: the spec's AC-6
+    defers the run entirely, and the spec never claims to resolve adr-0007. No ADR is written or
+    amended by this task.
+  - >-
+    "RSS" IS AMBIGUOUS ON CGROUP V2 AND MUST NOT BE COLLAPSED. `memory.current` includes page cache
+    and kernel memory; the RSS-equivalent is `anon` from `memory.stat`. Reporting memory.current
+    alone as "RSS agregado" would overstate the figure against the 80 MB NFR-01 ceiling, and
+    reporting anon alone would understate the cgroup pressure that triggers OOM. The script reports
+    BOTH, separately labelled. This is the "guarda vacua por formato de salida" failure mode applied
+    to a measurement: a single number whose meaning is ambiguous is not a measurement.
+  - >-
+    THIS SCRIPT IS AN INSTRUMENT, NOT A GUARD, and the distinction must survive q-analyze. Per
+    HEX-067 there is no CI size gate, so the script makes NO pass/fail assertion about the measured
+    values. Its only mechanical assertions are preconditions (docker present, cgroup v2 present,
+    containers up, cgroup files readable and numeric, images present) - each of which is genuinely
+    falsifiable by mutation. The spec's "provable by mutation" invariant binds those preconditions,
+    not the numbers.
+  - >-
+    STALE PRECEDENT IN A PRIOR CONTRACT: kitty-specs/hex-076/02-contract.yaml asserts the live
+    script may use "busybox utilities already present in the alpine:3 final images (Dockerfile:43,
+    sidecar/Dockerfile:156)". That statement is FALSE against current main - the busybox removal at
+    Dockerfile:125 happens after the FROM at line 43. Do not copy that assumption forward; the
+    ephemeral-auxiliary-container pattern (finding D-48) is the prescribed way to get a shell.
+  - >-
+    NUMBERING HAZARD: docs/bitacora-de-descartes.md's real current maximum is D-54 ("Alerta de bucle
+    de reinicios de contenedores en HEX-077-b"), and docs/adr/ tops out at adr-0037. Sibling tasks
+    running in parallel can consume D-55 before this task merges, so the implementer must re-read
+    the maximum FROM DISK at implement time rather than trusting this blueprint's number.
+  - >-
+    No prior failed task overlaps these files: `quorum analyze failure-lookup` over the affected
+    files returned null. The HSME advisory read returned only unrelated entries from the `quorum`
+    framework project (top similarity 0.016), so no semantic precedent applies.
+  - >-
+    ENVIRONMENT PORTABILITY: rootless Docker places container cgroups under a user slice rather
+    than system.slice, and a non-systemd driver uses `docker/<id>`. The locate step must search by
+    the full container id instead of hardcoding one layout, and must fail with an explicit FALLA
+    when it finds nothing - never fall back to a host-wide or /proc figure.

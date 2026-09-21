@@ -1,0 +1,80 @@
+{
+  "task_id": "HEX-079",
+  "summary": "Fast verification passed for all 12 contract commands.",
+  "executed_at": "2026-09-19T13:10:00Z",
+  "commands": [
+    {
+      "command": "Verify script exists, is executable, and has valid syntax",
+      "exit_code": 0,
+      "duration_s": 0.15,
+      "output_excerpt": "OK: el instrumento existe, es ejecutable y su sintaxis es valida"
+    },
+    {
+      "command": "Verify memory is read from cgroup v2, not from /proc",
+      "exit_code": 0,
+      "duration_s": 0.12,
+      "output_excerpt": "OK: la memoria se lee de cgroup v2 (memory.current + anon de memory.stat) y no de /proc"
+    },
+    {
+      "command": "Verify script does not use docker exec against hardened images",
+      "exit_code": 0,
+      "duration_s": 0.11,
+      "output_excerpt": "OK: el script no depende de docker exec contra las imagenes endurecidas"
+    },
+    {
+      "command": "Verify carga.rs and rss_linea_base.rs remain untouched",
+      "exit_code": 0,
+      "duration_s": 0.18,
+      "output_excerpt": "OK: carga.rs y rss_linea_base.rs intactos (comprobado main...HEAD y arbol de trabajo)"
+    },
+    {
+      "command": "Verify generator limitation is declared with reference to carga.rs",
+      "exit_code": 0,
+      "duration_s": 0.13,
+      "output_excerpt": "OK: la limitacion del generador esta declarada y justificada (AC-3)"
+    },
+    {
+      "command": "Verify measurement of composed cell with both image sizes",
+      "exit_code": 0,
+      "duration_s": 0.14,
+      "output_excerpt": "OK: mide la celula compuesta bajo los limites de la tarea 6 y ambas imagenes"
+    },
+    {
+      "command": "Verify cold start with single-use volume and cleanup",
+      "exit_code": 0,
+      "duration_s": 0.12,
+      "output_excerpt": "OK: arranque en frio desde volumen de un solo uso, con limpieza registrada"
+    },
+    {
+      "command": "Verify no CI gate and no auto-test mode",
+      "exit_code": 0,
+      "duration_s": 0.11,
+      "output_excerpt": "OK: sin compuerta en CI y sin modo de autoprueba"
+    },
+    {
+      "command": "Verify reference values section exists, unmarked, and pending",
+      "exit_code": 0,
+      "duration_s": 0.12,
+      "output_excerpt": "OK: seccion de valores de referencia presente, sin numeros, marcada como pendiente"
+    },
+    {
+      "command": "Verify traceability in plan, README, and bitacora",
+      "exit_code": 0,
+      "duration_s": 0.13,
+      "output_excerpt": "OK: plan, README y bitacora anotados"
+    },
+    {
+      "command": "Verify bitacora numbering is sequential with no duplicates",
+      "exit_code": 0,
+      "duration_s": 0.15,
+      "output_excerpt": "OK: bitacora con numeracion secuencial sin reutilizar (maximo D-55)"
+    },
+    {
+      "command": "Verify hygiene: no databases, no .env, no AI attribution",
+      "exit_code": 0,
+      "duration_s": 0.16,
+      "output_excerpt": "OK: sin bases de datos ni .env versionados, y sin atribucion de IA en los commits"
+    }
+  ],
+  "overall_result": "passed"
+}

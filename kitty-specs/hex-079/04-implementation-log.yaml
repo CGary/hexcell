@@ -1,0 +1,3 @@
+entries: []
+summary: 'Ship deploy/medir_memoria_y_imagenes.sh: live manual measurement of the composed cell''s cgroup v2 memory and both image sizes. Empty reference-values table. carga.rs untouched. No CI gate.'
+task_id: HEX-079
