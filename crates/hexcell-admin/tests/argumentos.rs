@@ -55,7 +55,7 @@ fn subcomando_para(nombre: &str) -> Subcomando {
         "status" => analizar(&args(&["cell", "status", "--id", "c1"])).unwrap(),
         otro => panic!("nombre no reconocido: {otro}"),
     };
-    match invocacion.subcomando() {
+    match invocacion.subcomando().unwrap() {
         Subcomando::Pausar => Subcomando::Pausar,
         Subcomando::Reanudar => Subcomando::Reanudar,
         Subcomando::Retirar => Subcomando::Retirar,
@@ -223,7 +223,7 @@ fn ambas_ortografias_y_validas_completas() {
     assert!(i2.confirmar());
 
     let p = analizar(&args(&["cell", "pause", "--id", "c1", "--simular"])).unwrap();
-    assert_eq!(p.subcomando(), Subcomando::Pausar);
+    assert_eq!(p.subcomando(), Some(Subcomando::Pausar));
     assert_eq!(p.id(), Some("c1"));
     assert!(p.simular());
     assert!(!p.confirmar());
@@ -239,12 +239,12 @@ fn ambas_ortografias_y_validas_completas() {
         "--simular",
     ]))
     .unwrap();
-    assert_eq!(r.subcomando(), Subcomando::Reemparejar);
+    assert_eq!(r.subcomando(), Some(Subcomando::Reemparejar));
     assert_eq!(r.motivo(), Some("baneo"));
     assert!(r.simular());
 
     let l = analizar(&args(&["cell", "list"])).unwrap();
-    assert_eq!(l.subcomando(), Subcomando::Listar);
+    assert_eq!(l.subcomando(), Some(Subcomando::Listar));
     assert_eq!(l.id(), None);
     assert!(!l.simular());
     assert!(!l.confirmar());
@@ -261,7 +261,7 @@ fn mensajes_de_error_son_literales_en_espanol() {
             grupo: "server".to_string()
         }
         .to_string(),
-        "grupo desconocido: «server» (el único grupo admitido es «cell»)"
+        "grupo desconocido: «server» (los grupos admitidos son «cell» y «config»)"
     );
     assert_eq!(
         ErrorDeArgumentos::SubcomandoDesconocido {
@@ -271,4 +271,107 @@ fn mensajes_de_error_son_literales_en_espanol() {
         "subcomando desconocido: «restart» (subcomandos admitidos: pause, unpause, terminate, \
          rebind, list, status)"
     );
+}
+
+#[test]
+fn config_render_exige_las_tres_opciones_obligatorias() {
+    assert!(
+        analizar(&args(&[
+            "config",
+            "render",
+            "--superposicion",
+            "s",
+            "--salida",
+            "o"
+        ]))
+        .is_err(),
+        "sin --defecto debe rechazarse"
+    );
+    assert!(
+        analizar(&args(&[
+            "config",
+            "render",
+            "--defecto",
+            "d",
+            "--salida",
+            "o"
+        ]))
+        .is_err(),
+        "sin --superposicion debe rechazarse"
+    );
+    assert!(
+        analizar(&args(&[
+            "config",
+            "render",
+            "--defecto",
+            "d",
+            "--superposicion",
+            "s"
+        ]))
+        .is_err(),
+        "sin --salida debe rechazarse"
+    );
+}
+
+#[test]
+fn config_render_rechaza_opcion_repetida() {
+    let resultado = analizar(&args(&[
+        "config",
+        "render",
+        "--defecto",
+        "d",
+        "--defecto",
+        "d2",
+        "--superposicion",
+        "s",
+        "--salida",
+        "o",
+    ]));
+    assert!(resultado.is_err());
+}
+
+#[test]
+fn config_render_rechaza_opcion_desconocida() {
+    let resultado = analizar(&args(&[
+        "config",
+        "render",
+        "--defecto",
+        "d",
+        "--superposicion",
+        "s",
+        "--salida",
+        "o",
+        "--no-existe",
+    ]));
+    assert!(resultado.is_err());
+}
+
+#[test]
+fn config_render_rechaza_valor_inline_vacio() {
+    let resultado = analizar(&args(&[
+        "config",
+        "render",
+        "--defecto=",
+        "--superposicion",
+        "s",
+        "--salida",
+        "o",
+    ]));
+    assert!(resultado.is_err());
+}
+
+#[test]
+fn config_render_valido_no_devuelve_subcomando_de_cell() {
+    let comando = analizar(&args(&[
+        "config",
+        "render",
+        "--defecto",
+        "d",
+        "--superposicion",
+        "s",
+        "--salida",
+        "o",
+    ]))
+    .unwrap();
+    assert_eq!(comando.subcomando(), None);
 }

@@ -84,3 +84,20 @@ fn clave_generica_rechaza_espacios() {
     assert!(validar_clave("HEXCELL_ID_CELULA", "celula-ejemplo").is_ok());
     assert!(validar_clave("HEXCELL_ID_CELULA", "celula con espacios").is_err());
 }
+
+#[test]
+fn limite_de_memoria_con_ultimo_caracter_multibyte_no_hace_panico() {
+    // Reproduce en vivo con HEXCELL_NUCLEO_LIMITE_MEMORIA=48é: el corte por índice de byte
+    // entraba en pánico en medio de un carácter multibyte. Debe devolver Err, no panic.
+    let resultado = validar_clave("HEXCELL_NUCLEO_LIMITE_MEMORIA", "48é");
+    assert!(resultado.is_err());
+}
+
+#[test]
+fn suelo_de_balance_disponible_coincide_con_lo_que_acepta_la_celula() {
+    // crates/hexcell/src/configuracion.rs:958 parsea HEXCELL_ALERTAS_SUELO_BALANCE_DISPONIBLE
+    // como i64: acepta enteros negativos y rechaza decimales.
+    assert!(validar_clave("HEXCELL_ALERTAS_SUELO_BALANCE_DISPONIBLE", "0").is_ok());
+    assert!(validar_clave("HEXCELL_ALERTAS_SUELO_BALANCE_DISPONIBLE", "-100").is_ok());
+    assert!(validar_clave("HEXCELL_ALERTAS_SUELO_BALANCE_DISPONIBLE", "0.5").is_err());
+}

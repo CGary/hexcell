@@ -52,9 +52,8 @@ pub fn validar_clave(clave: &str, valor: &str) -> Result<(), String> {
         {
             entero_positivo(valor)
         }
-        "HEXCELL_ALERTAS_SUELO_BALANCE_DISPONIBLE" | "HEXCELL_ALERTAS_LIMITE_TASA_DESCARTES" => {
-            decimal_no_negativo(valor)
-        }
+        "HEXCELL_ALERTAS_SUELO_BALANCE_DISPONIBLE" => entero_con_signo(valor),
+        "HEXCELL_ALERTAS_LIMITE_TASA_DESCARTES" => decimal_no_negativo(valor),
         "HEXCELL_ALERTAS_LIMITE_CAIDA_RATIO_ACUSES" => valor
             .parse::<f64>()
             .ok()
@@ -92,9 +91,21 @@ fn decimal_no_negativo(v: &str) -> Result<(), String> {
         .map(|_| ())
         .ok_or_else(|| "debe ser un decimal no negativo".to_string())
 }
+fn entero_con_signo(v: &str) -> Result<(), String> {
+    v.parse::<i64>()
+        .map(|_| ())
+        .map_err(|_| "debe ser un entero, p. ej. 0 o -100".to_string())
+}
 fn validar_memoria(v: &str) -> Result<(), String> {
-    let (numero, sufijo) = v.split_at(v.len().saturating_sub(1));
-    if numero.parse::<u64>().ok().filter(|n| *n > 0).is_some() && matches!(sufijo, "k" | "m" | "g")
+    // El corte se hace por CARÁCTER, no por índice de byte: `v.len() - 1` cae en medio de un
+    // carácter multibyte (p. ej. una tilde) y `split_at` entra en pánico. Ver D-56.
+    let mut caracteres = v.chars();
+    let sufijo = match caracteres.next_back() {
+        Some(c) => c,
+        None => return Err("debe ser una cantidad de memoria como 48m".to_string()),
+    };
+    let numero = caracteres.as_str();
+    if numero.parse::<u64>().ok().filter(|n| *n > 0).is_some() && matches!(sufijo, 'k' | 'm' | 'g')
     {
         Ok(())
     } else {

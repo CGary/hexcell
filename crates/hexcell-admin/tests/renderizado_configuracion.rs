@@ -215,3 +215,98 @@ fn ac3_valor_invalido_para_clave_conocida_aborta_sin_escribir_salida() {
         "no debe crearse el archivo de salida"
     );
 }
+
+#[test]
+fn simular_no_escribe_el_archivo_de_salida() {
+    let dir = DirectorioTemporal::nuevo("simular");
+    let defecto = escribir(
+        &dir,
+        "defecto.env",
+        "HEXCELL_ID_CELULA=celula-defecto\nHEXCELL_RED_CELULA=red-defecto\n",
+    );
+    let superposicion = escribir(&dir, "superposicion.env", "HEXCELL_ID_CELULA=celula-01\n");
+    let salida_ruta = dir.ruta().join("render.env");
+
+    let argumentos = args(&[
+        "config",
+        "render",
+        "--defecto",
+        defecto.to_str().unwrap(),
+        "--superposicion",
+        superposicion.to_str().unwrap(),
+        "--salida",
+        salida_ruta.to_str().unwrap(),
+        "--simular",
+    ]);
+    let resultado = analizar(&argumentos);
+    let mut bufer_estandar: Vec<u8> = Vec::new();
+    let mut bufer_diagnostico: Vec<u8> = Vec::new();
+    let codigo = {
+        let mut salida = Salida::nueva(&mut bufer_estandar, &mut bufer_diagnostico);
+        ejecutar(resultado, &mut salida)
+    };
+    let estandar = String::from_utf8(bufer_estandar).expect("UTF-8 en el estándar");
+
+    assert_eq!(codigo, CodigoDeSalida::Exito);
+    assert!(
+        estandar.contains("2 claves"),
+        "línea de simulación: {estandar}"
+    );
+    assert!(
+        !salida_ruta.exists(),
+        "--simular no debe crear el archivo de salida"
+    );
+}
+
+#[test]
+fn clave_desconocida_en_el_archivo_de_defecto_tambien_aborta_sin_escribir_salida() {
+    let dir = DirectorioTemporal::nuevo("defecto-desconocida");
+    let defecto = escribir(
+        &dir,
+        "defecto.env",
+        "HEXCELL_ID_CELULA=celula-defecto\nHEXCELL_CLAVE_INVENTADA=valor\n",
+    );
+    let superposicion = escribir(&dir, "superposicion.env", "HEXCELL_ID_CELULA=celula-01\n");
+    let salida_ruta = dir.ruta().join("render.env");
+
+    let (codigo, diagnostico) = ejecutar_render(&defecto, &superposicion, &salida_ruta);
+
+    assert_eq!(codigo, CodigoDeSalida::Fallo);
+    assert!(
+        diagnostico.contains("HEXCELL_CLAVE_INVENTADA"),
+        "diagnóstico: {diagnostico}"
+    );
+    assert!(
+        !salida_ruta.exists(),
+        "no debe crearse el archivo de salida"
+    );
+}
+
+#[test]
+fn los_archivos_de_ejemplo_publicados_renderizan_end_to_end() {
+    // Cubre a nivel Rust lo que hasta ahora sólo cubría el guardia de shell
+    // deploy/verificar_renderizado_configuracion.sh (AC-4).
+    let dir = DirectorioTemporal::nuevo("ejemplos-publicados");
+    let raiz = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let defecto = raiz.join("deploy/celula.defecto.env.ejemplo");
+    let superposicion = raiz.join("deploy/celula.superposicion.env.ejemplo");
+    assert!(defecto.exists(), "falta {}", defecto.display());
+    assert!(superposicion.exists(), "falta {}", superposicion.display());
+    let salida_ruta = dir.ruta().join("render.env");
+
+    let (codigo, diagnostico) = ejecutar_render(&defecto, &superposicion, &salida_ruta);
+
+    assert_eq!(codigo, CodigoDeSalida::Exito, "diagnóstico: {diagnostico}");
+    let contenido = std::fs::read_to_string(&salida_ruta).expect("la salida debe existir");
+    assert!(!contenido.is_empty());
+    for secreto in [
+        "HEXCELL_INFERENCIA_API_KEY",
+        "HEXCELL_EMBEDDINGS_API_KEY",
+        "HEXCELL_TELEGRAM_BOT_TOKEN",
+    ] {
+        assert!(
+            !contenido.contains(secreto),
+            "«{secreto}» no debe aparecer en la salida renderizada"
+        );
+    }
+}

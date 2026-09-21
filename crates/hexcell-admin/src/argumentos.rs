@@ -1,11 +1,12 @@
 //! Dominio de análisis de argumentos de la CLI `hexcell-admin`.
 //!
 //! Tercera de tres hijas de la tarea 10 de la etapa A-6. Fija la gramática cerrada de la
-//! línea de comandos: el único grupo de nivel superior es `cell`, los seis subcomandos
-//! (`pause`, `unpause`, `terminate`, `rebind`, `list`, `status`), las opciones admitidas
-//! por cada uno y el modo de simulación (`--simular`). Las hermanas HEX-074-a y HEX-074-b
-//! entregaron el agregado de estado de célula, los códigos de salida y los sumideros
-//! tipados; esta tarea los consume sin modificarlos.
+//! línea de comandos: el grupo `cell` con sus seis subcomandos (`pause`, `unpause`,
+//! `terminate`, `rebind`, `list`, `status`), las opciones admitidas por cada uno y el modo
+//! de simulación (`--simular`). Las hermanas HEX-074-a y HEX-074-b entregaron el agregado
+//! de estado de célula, los códigos de salida y los sumideros tipados; esta tarea los
+//! consume sin modificarlos. HEX-081 añade el segundo grupo `config render`, aditivo y
+//! sin gramática compartida con `cell`.
 //!
 //! El analizador es una función pura sobre una porción de argumentos: nunca lee `std::env`
 //! por sí misma, de modo que el crate de pruebas externo puede ejercitarlo con un
@@ -91,10 +92,13 @@ pub enum Comando {
 }
 
 impl Comando {
-    pub fn subcomando(&self) -> Subcomando {
+    /// El subcomando de `cell`, o `None` para `config render`: el grupo `config` no
+    /// tiene subcomandos de `Subcomando`, así que devolver una variante inventada
+    /// (como `Listar`) sería mentirle a cualquier llamante que lea este accesor.
+    pub fn subcomando(&self) -> Option<Subcomando> {
         match self {
-            Self::Cell(i) => i.subcomando,
-            Self::ConfigRender(_) => Subcomando::Listar,
+            Self::Cell(i) => Some(i.subcomando),
+            Self::ConfigRender(_) => None,
         }
     }
     pub fn id(&self) -> Option<&str> {
@@ -177,7 +181,7 @@ impl Invocacion {
 pub enum ErrorDeArgumentos {
     /// No se aportó ningún argumento tras el nombre del programa.
     SinSubcomando,
-    /// El grupo de nivel superior no es `cell`.
+    /// El grupo de nivel superior no es `cell` ni `config`.
     GrupoDesconocido {
         grupo: String,
     },
@@ -228,7 +232,7 @@ impl fmt::Display for ErrorDeArgumentos {
             }
             ErrorDeArgumentos::GrupoDesconocido { grupo } => write!(
                 f,
-                "grupo desconocido: «{grupo}» (el único grupo admitido es «cell»)"
+                "grupo desconocido: «{grupo}» (los grupos admitidos son «cell» y «config»)"
             ),
             ErrorDeArgumentos::SubcomandoDesconocido { nombre } => write!(
                 f,
@@ -290,14 +294,18 @@ Subcomandos:
   status      --id <cell_id>                Mostrar el estado de una célula.
 
 Opciones comunes:
-  --simular                                   Reportar la acción sin ejecutarla.";
+  --simular                                   Reportar la acción sin ejecutarla.
+
+Uso: hexcell-admin config render --defecto <ruta> --superposicion <ruta> --salida <ruta> [--simular]
+  Renderizar la configuración de una célula fusionando un archivo de valores
+  compartidos y uno de superposición contra el esquema cerrado.";
 
 /// Analiza una porción de argumentos y produce una [`Invocacion`] validada o un
 /// [`ErrorDeArgumentos`] con la forma del rechazo.
 ///
 /// Función pura sobre la porción de argumentos que recibe: nunca lee `std::env` por sí
 /// misma. El único punto del proceso que recoge los argumentos del sistema operativo es
-/// `src/main.rs`. La gramática cerrada (único grupo `cell`, seis subcomandos, reglas de
+/// `src/main.rs`. La gramática cerrada (grupo `cell` con sus seis subcomandos, reglas de
 /// `--id`/`--motivo`/`--confirmar`/`--simular`, ambas ortografías `--clave valor` y
 /// `--clave=valor`) vive documentada en `adr-0036`.
 pub fn analizar(argumentos: &[String]) -> Result<Comando, ErrorDeArgumentos> {

@@ -1,6 +1,6 @@
 # Bitácora de descartes
 
-> Registro de lo que se consideró y **no** se hizo. Última actualización: 2026-09-19 (D-55).
+> Registro de lo que se consideró y **no** se hizo. Última actualización: 2026-09-21 (D-56).
 
 ## Para qué sirve este documento
 
@@ -89,7 +89,7 @@ se apoya en un principio de diseño, no.
 | [D-53](#d-53) | Bibliotecas externas de análisis de argumentos para `hexcell-admin` (`clap`, `argh`, `pico-args`, `structopt`) | Principio de diseño, no reabrir |
 | [D-54](#d-54) | Alerta de bucle de reinicios de contenedores dentro de HEX-077-b, sin productor de señal que la alimente | Reabrir si se construye un observador de reinicios |
 | [D-55](#d-55) | Reutilizar `crates/hexcell/tests/carga.rs` como generador externo de carga contra la célula compuesta en vivo (HEX-079) | Reabrible si cambia un hecho del árbol |
-| D-55 | Parser externo para la configuración de células | Principio de diseño, no reabrir |
+| [D-56](#d-56) | Parser externo para la configuración de células | Principio de diseño, no reabrir |
 
 ---
 
@@ -840,11 +840,10 @@ compuesta en vivo (HEX-079, tarea 16 de la etapa A-6).**
 
 ---
 
-## D-55
+### D-56: Parser externo para la configuración de células
 
-**Parser externo para la configuración de células.**
-
-**Descartado el:** 2026-09-19
+**Descartado el:** 2026-09-19  
+**Decisión registrada en:** `docs/adr/adr-0038-segundo-grupo-config-render-en-hexcell-admin.md`
 
 ### Qué se consideró
 
