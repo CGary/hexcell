@@ -78,7 +78,7 @@ Este método garantiza de manera matemática que la Autoridad Certificadora (Let
 
 ## 💻 Manual de Operación de la CLI de Administración
 
-Estado (2026-09-14): la gramática de los seis subcomandos `cell` existe en `hexcell-admin` desde HEX-074-c (tarea 10 de A-6), con validación de argumentos y modo `--simular`; sin `--simular` cada subcomando devuelve todavía `NoImplementadoTodavia` (código 3), porque las operaciones reales contra Docker llegan con las tareas 11-15.
+Estado (2026-09-14): la gramática de los seis subcomandos `cell` existe en `hexcell-admin` desde HEX-074-c (tarea 10 de A-6), con validación de argumentos y modo `--simular`; sin `--simular` cada subcomando devuelve todavía `NoImplementadoTodavia` (código 3), porque las operaciones reales contra Docker llegan con las tareas 11-15. Actualización 2026-09-21: `cell pause` y `cell unpause` son reales desde HEX-080 (tarea 11); `cell terminate`, `cell rebind`, `cell list` y `cell status` siguen devolviendo `NoImplementadoTodavia` sin `--simular` hasta las tareas 12-14.
 
 La suite de administración central compila como un binario nativo que interactúa directamente con el socket Unix de Docker (`/var/run/docker.sock`). En la Fase B interactúa además con la API local de administración en memoria de Caddy (`http://localhost:2019`).
 
@@ -90,7 +90,7 @@ Garantiza la liberación inmediata de RAM y CPU en el hardware local sin inyecta
 ./hexcell-admin cell pause --id <cell_id>
 ```
 
-*Mecanismo Interno (Fase A):* detiene el sidecar, con lo que el websocket saliente se cierra y la entrada de mensajes cesa por construcción; a continuación envía una señal `SIGTERM` al contenedor del núcleo con un margen de 30 segundos para drenar lecturas RAG en vuelo y hacer flush del WAL a disco. No interviene Caddy.
+*Mecanismo Interno (Fase A):* detiene el sidecar, con lo que el websocket saliente se cierra y la entrada de mensajes cesa por construcción; a continuación envía una señal `SIGTERM` al contenedor del núcleo con un margen de 30 segundos para drenar lecturas RAG en vuelo y hacer flush del WAL a disco. No interviene Caddy. Desde HEX-080 (2026-09-21) la CLI pide la parada sin plazo propio: el margen de 30 segundos lo fija el `stop_grace_period` de `deploy/cell.compose.yml`, única fuente de verdad de la gracia.
 
 *Mecanismo Interno (Fase B):* aplica un parche en Caddy para sustituir el `reverse_proxy` por un `static_response_handler` (HTTP 200 instantáneo) y solo después emite el `SIGTERM`, evitando cualquier 502 hacia Meta. Requiere el parámetro `--domain cliente1.midominio.com`.
 
@@ -130,7 +130,7 @@ Este comando no existe en la Fase B: nace de la operación del canal propio y no
 
 ### 5. Configuración por célula como archivos
 
-Entregado el 2026-09-19 con HEX-081 (tarea 22 de A-6).
+Entregado el 2026-09-21 con HEX-081 (tarea 22 de A-6; `adr-0038` fechado el 2026-09-19).
 
 La configuración de cada célula vive en **archivos versionables en git**: `deploy/celula.defecto.env.ejemplo` contiene los valores compartidos y `deploy/celula.superposicion.env.ejemplo` muestra un *overlay* por célula. Se renderizan con:
 
