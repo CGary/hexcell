@@ -1,4 +1,5 @@
-//! Cliente del demonio de Docker: las cinco operaciones de esta tarea.
+//! Cliente del demonio de Docker: las cinco operaciones de HEX-074-b más las que añadió la
+//! orquestación de `cell pause`/`cell unpause`.
 //!
 //! [`ClienteDocker`] traduce cada operación a una o dos llamadas HTTP/1.1 contra el socket Unix,
 //! usando [`super::transporte::ConexionDocker`], y despacha el código de estado de forma explícita:
@@ -109,6 +110,23 @@ impl ClienteDocker {
         comprobar_exito(&respuesta)
     }
 
+    /// Detiene un contenedor **sin** fijar ningún plazo desde la CLI.
+    ///
+    /// La petición sale como `POST /containers/{id}/stop`, sin el parámetro `t`, de modo que el
+    /// plazo de gracia lo decide una sola fuente: el `stop_grace_period` que la plantilla de
+    /// célula declara para cada contenedor. Es la operación que usa `cell pause` para los dos
+    /// contenedores, sidecar incluido: el sidecar también se detiene CON gracia, porque tiene que
+    /// cerrar su websocket saliente y dejar su almacén consistente.
+    ///
+    /// [`Self::detener_contenedor`] se conserva intacta, con su `t=30`, porque es la operación que
+    /// entregó HEX-074-b y su prueba fija la ruta exacta.
+    pub fn detener_contenedor_sin_plazo(&self, id: &str) -> Result<(), ErrorDeClienteDocker> {
+        let ruta = format!("/containers/{id}/stop");
+        let mut conexion = self.conectar()?;
+        let respuesta = conexion.enviar("POST", &ruta, None)?;
+        comprobar_exito(&respuesta)
+    }
+
     /// Inicia un contenedor que ya existe.
     pub fn iniciar_contenedor(&self, id: &str) -> Result<(), ErrorDeClienteDocker> {
         let ruta = format!("/containers/{id}/start");
@@ -118,6 +136,11 @@ impl ClienteDocker {
     }
 
     /// Crea e inicia un contenedor con su red y comando explícitos.
+    ///
+    /// Si la creación devuelve 201 pero el arranque falla, el contenedor YA existe en el demonio:
+    /// antes de propagar el error del arranque se emite su `DELETE` en el mejor esfuerzo, para que
+    /// ningún camino de fallo deje una sonda huérfana. El error que se devuelve sigue siendo el
+    /// del arranque, nunca el de esa limpieza.
     pub fn crear_e_iniciar_contenedor_con_opciones(
         &self,
         imagen: &str,
@@ -135,12 +158,24 @@ impl ClienteDocker {
         };
         let id_contenedor = extraer_id_de_creacion(&respuesta_de_creacion)?;
         let ruta = format!("/containers/{id_contenedor}/start");
-        let mut conexion = self.conectar()?;
-        let respuesta = conexion.enviar("POST", &ruta, None)?;
+        let respuesta = match self
+            .conectar()
+            .and_then(|mut conexion| conexion.enviar("POST", &ruta, None))
+        {
+            Ok(respuesta) => respuesta,
+            Err(error) => {
+                let _ = self.eliminar_contenedor(&id_contenedor);
+                return Err(error);
+            }
+        };
         match respuesta.estado {
             204 => Ok(ResultadoDeArranque::Iniciado { id_contenedor }),
             304 => Ok(ResultadoDeArranque::YaEnEjecucion { id_contenedor }),
-            _ => Err(clasificar_estado(&respuesta)),
+            _ => {
+                let error = clasificar_estado(&respuesta);
+                let _ = self.eliminar_contenedor(&id_contenedor);
+                Err(error)
+            }
         }
     }
 

@@ -252,8 +252,8 @@ fn ejecutar_con_efectos_con(
 ) -> (CodigoDeSalida, String, String) {
     let resultado = analizar(&args(snippet));
     let datos = DatosDeSondeo {
-        imagen: "alpine:3".to_string(),
-        limite_segundos: 60,
+        imagen: "sonda-de-prueba:1".to_string(),
+        limite_segundos: 45,
     };
     let mut bufer_estandar: Vec<u8> = Vec::new();
     let mut bufer_diagnostico: Vec<u8> = Vec::new();
@@ -300,7 +300,10 @@ fn ejecutar_con_efectos_despacha_pausar_a_ciclo_de_vida() {
 fn ejecutar_con_efectos_despacha_reanudar_a_ciclo_de_vida() {
     let servidor = ServidorDockerFalso::nuevo("efectos-reanudar");
     let ruta = servidor.ruta();
-    let hilo = std::thread::spawn(move || {
+    // El fin del guion viaja por un canal leído con `recv_timeout`, no por un `join` ciego: una
+    // petición que falte pone el test rojo dentro del límite en vez de colgarlo.
+    let (emisor, receptor) = std::sync::mpsc::channel();
+    let _hilo = std::thread::spawn(move || {
         servidor.atender(Guion::SinCuerpo {
             estado: 204,
             razon: "No Content",
@@ -312,7 +315,7 @@ fn ejecutar_con_efectos_despacha_reanudar_a_ciclo_de_vida() {
         servidor.atender(Guion::ConCuerpo {
             estado: 200,
             razon: "OK",
-            cuerpo: br#"{"NetworkSettings":{"Networks":{"hexcell-c1-red":{"NetworkID":"n1"}}},"Config":{"Env":["HEXCELL_DIRECCION_SALUD=0.0.0.0:8081"]}}"#,
+            cuerpo: br#"{"NetworkSettings":{"Networks":{"red-del-operador":{"NetworkID":"n1"}}},"Config":{"Env":["HEXCELL_DIRECCION_SALUD=0.0.0.0:9099"]}}"#,
         });
         servidor.atender(Guion::ConCuerpo {
             estado: 201,
@@ -332,6 +335,7 @@ fn ejecutar_con_efectos_despacha_reanudar_a_ciclo_de_vida() {
             estado: 204,
             razon: "No Content",
         }); // eliminar sonda
+        let _ = emisor.send(());
     });
 
     let cliente = ClienteDocker::nuevo(ruta);
@@ -342,7 +346,9 @@ fn ejecutar_con_efectos_despacha_reanudar_a_ciclo_de_vida() {
     assert_eq!(estandar, "cell unpause completado para «c1»\n");
     assert!(diagnostico.is_empty(), "diagnóstico vacío: {diagnostico:?}");
 
-    hilo.join().unwrap();
+    receptor
+        .recv_timeout(std::time::Duration::from_secs(10))
+        .expect("el demonio falso debía haber atendido las siete peticiones dentro del límite");
 }
 
 /// AC-6: `cell terminate`, `cell rebind`, `cell list` y `cell status` siguen devolviendo

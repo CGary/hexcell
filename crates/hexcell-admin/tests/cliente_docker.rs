@@ -498,3 +498,61 @@ fn esperar_contenedor_propaga_un_codigo_de_salida_distinto_de_cero() {
 
     hilo.join().unwrap();
 }
+
+/// Si la creación devuelve 201 pero el arranque falla, el contenedor recién creado NO se queda
+/// huérfano: el cliente emite su `DELETE` en el mejor esfuerzo antes de propagar el error, que
+/// sigue siendo el del arranque (500 del demonio) y no el de la limpieza.
+#[test]
+fn crear_e_iniciar_con_opciones_elimina_el_contenedor_si_falla_el_arranque() {
+    let servidor = ServidorDockerFalso::nuevo("crear-arranque-falla");
+    let ruta = servidor.ruta();
+    let (emisor, receptor) = std::sync::mpsc::channel();
+    let _hilo = std::thread::spawn(move || {
+        let _ = emisor.send(servidor.atender(Guion::ConCuerpo {
+            estado: 201,
+            razon: "Created",
+            cuerpo: br#"{"Id":"sonda1","Warnings":[]}"#,
+        }));
+        let _ = emisor.send(servidor.atender(Guion::SinCuerpo {
+            estado: 500,
+            razon: "Internal Server Error",
+        }));
+        let _ = emisor.send(servidor.atender(Guion::SinCuerpo {
+            estado: 204,
+            razon: "No Content",
+        }));
+    });
+
+    let cliente = ClienteDocker::nuevo(ruta);
+    let opciones = OpcionesDeContenedor {
+        red: "red-del-operador".to_string(),
+        cmd: vec![
+            "/bin/sh".to_string(),
+            "-c".to_string(),
+            "exit 1".to_string(),
+        ],
+    };
+    let resultado = cliente.crear_e_iniciar_contenedor_con_opciones("sonda-de-prueba:1", opciones);
+
+    match resultado {
+        Err(ErrorDeClienteDocker::ErrorDelDaemon { estado: 500, .. }) => {}
+        otro => panic!("se esperaba el 500 del arranque propagado, se obtuvo {otro:?}"),
+    }
+
+    let cota = std::time::Duration::from_secs(10);
+    let mut secuencia = Vec::new();
+    for _ in 0..3 {
+        let peticion = receptor
+            .recv_timeout(cota)
+            .expect("el DELETE del contenedor huérfano debe llegar dentro del límite");
+        secuencia.push(format!("{} {}", peticion.metodo, peticion.objetivo));
+    }
+    assert_eq!(
+        secuencia,
+        vec![
+            "POST /containers/create".to_string(),
+            "POST /containers/sonda1/start".to_string(),
+            "DELETE /containers/sonda1".to_string(),
+        ]
+    );
+}

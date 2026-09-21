@@ -10,6 +10,18 @@ pub const CADENCIA_DE_SONDEO_MS: u64 = 100;
 pub const LIMITE_DE_SONDEO_S: u64 = 60;
 /// Imagen mínima que contiene el intérprete y `wget`.
 pub const IMAGEN_DE_SONDA_POR_OMISION: &str = "alpine:3";
+/// Holgura que se concede al cliente Docker por encima del límite de la sonda.
+pub const HOLGURA_DEL_CLIENTE_DOCKER_S: u64 = 10;
+/// Tiempo límite de lectura del cliente Docker que atiende `POST /containers/{id}/wait`.
+///
+/// Esa llamada bloquea durante TODA la vida de la sonda, así que el límite del cliente tiene que
+/// ser estrictamente mayor que el de la sonda: con uno menor la espera abortaría con
+/// `TiempoDeEsperaAgotado` antes de conocer el veredicto real y `cell unpause` fallaría por una
+/// razón inventada. La aserción de abajo convierte esa relación en una condición de compilación:
+/// si alguien invierte el signo de la holgura, el crate deja de compilar.
+pub const TIEMPO_LIMITE_DEL_CLIENTE_DOCKER_S: u64 =
+    LIMITE_DE_SONDEO_S + HOLGURA_DEL_CLIENTE_DOCKER_S;
+const _: () = assert!(TIEMPO_LIMITE_DEL_CLIENTE_DOCKER_S > LIMITE_DE_SONDEO_S);
 
 /// Nombres Docker derivados de la identidad de la célula.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -89,13 +101,20 @@ impl From<ErrorDeClienteDocker> for ErrorDeCicloDeVida {
     }
 }
 
-/// Detiene primero el sidecar y después el núcleo.
+/// Detiene primero el sidecar y después el núcleo, sin fijar el plazo desde la CLI.
+///
+/// Ninguna de las dos paradas envía el parámetro `t`: el plazo de gracia lo fija el
+/// `stop_grace_period` de la plantilla de célula, que queda como única fuente de verdad. El
+/// sidecar se detiene CON gracia igual que el núcleo, porque tiene que cerrar su websocket
+/// saliente y dejar su almacén consistente. El invariante de que nada sale durante la pausa lo
+/// sostiene el ORDEN, no ninguna bandera de estado: sin sidecar no queda canal por el que el
+/// núcleo pueda enviar mientras drena.
 pub fn pausar(
     cliente: &ClienteDocker,
     nombres: &NombresDeCelula,
 ) -> Result<(), ErrorDeCicloDeVida> {
-    cliente.detener_contenedor(&nombres.sidecar)?;
-    cliente.detener_contenedor(&nombres.nucleo)?;
+    cliente.detener_contenedor_sin_plazo(&nombres.sidecar)?;
+    cliente.detener_contenedor_sin_plazo(&nombres.nucleo)?;
     Ok(())
 }
 
@@ -183,8 +202,26 @@ pub fn guion_de_sonda(url: &str) -> Vec<String> {
 
 fn guion_de_sonda_con_limite(url: &str, limite_segundos: u64) -> Vec<String> {
     let intentos = limite_segundos.saturating_mul(1000 / CADENCIA_DE_SONDEO_MS);
+    let espera = cadencia_en_segundos(CADENCIA_DE_SONDEO_MS);
     let guion = format!(
-        "i=0; while [ \"$i\" -lt {intentos} ]; do if wget -q -O /dev/null \"{url}\"; then exit 0; fi; i=$((i+1)); sleep 0.1; done; exit 1"
+        "i=0; while [ \"$i\" -lt {intentos} ]; do if wget -q -O /dev/null \"{url}\"; then exit 0; fi; i=$((i+1)); sleep {espera}; done; exit 1"
     );
     vec!["/bin/sh".to_string(), "-c".to_string(), guion]
+}
+
+/// Traduce la cadencia en milisegundos al argumento decimal que entiende el `sleep` de BusyBox,
+/// que no admite milisegundos.
+///
+/// Es lo que hace de [`CADENCIA_DE_SONDEO_MS`] la ÚNICA fuente de la cadencia: el número de
+/// iteraciones y la espera de cada una salen de la misma constante, de modo que no pueden
+/// separarse en silencio. No usa coma flotante y no colapsa dos cadencias distintas en el mismo
+/// texto: 100 ms da `0.1` y 200 ms da `0.2`.
+fn cadencia_en_segundos(milisegundos: u64) -> String {
+    let enteros = milisegundos / 1000;
+    let resto = milisegundos % 1000;
+    if resto == 0 {
+        return enteros.to_string();
+    }
+    let fraccion = format!("{resto:03}");
+    format!("{enteros}.{}", fraccion.trim_end_matches('0'))
 }
