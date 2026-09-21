@@ -1,0 +1,56 @@
+{
+  "commands": [
+    {
+      "command": "bash -c 'test -z \"$(grep -rnE \"^use .*UnixStream|UnixStream::connect\\(\" crates/hexcell-admin/src --include=*.rs | grep -v docker/transporte.rs)\"'",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "sin salida (guarda de grep vacia = OK)"
+    },
+    {
+      "command": "bash -c 'test -z \"$(grep -rnE \"^[[:space:]]*use (tokio|bollard|hyper)(::|;| )\" crates/hexcell-admin/src --include=*.rs)\"'",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "sin salida (guarda de grep vacia = OK)"
+    },
+    {
+      "command": "bash -c 'test -z \"$(grep -rnE \"orden_pausa_de_envio|acuse_pausa_de_envio|sidecar\\.sock|HEXCELL_SOCKET_IPC\" crates/hexcell-admin --include=*.rs)\"'",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "sin salida (guarda de grep vacia = OK)"
+    },
+    {
+      "command": "bash -c 'test -z \"$(grep -rnE \"CADENCIA_DE_SONDEO|MILISEGUNDOS_DE_SONDEO\" crates/hexcell-admin/tests --include=*.rs)\"'",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "sin salida (guarda de grep vacia = OK)"
+    },
+    {
+      "command": "bash -c 'test -z \"$(git diff main...HEAD -- Cargo.toml Cargo.lock crates/hexcell-admin/Cargo.toml)\"'",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "sin salida (guarda de grep vacia = OK)"
+    },
+    {
+      "command": "cargo fmt --check",
+      "duration_s": 0.29,
+      "exit_code": 0,
+      "output_excerpt": "sin salida (guarda de grep vacia = OK)"
+    },
+    {
+      "command": "cargo clippy --workspace -- -D warnings",
+      "duration_s": 0.2,
+      "exit_code": 0,
+      "output_excerpt": "Checking hexcell-admin v0.1.0 (/home/gary/dev/hexcell/worktrees/HEX-080/crates/hexcell-admin)\n    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.13s"
+    },
+    {
+      "command": "cargo test -p hexcell-admin",
+      "duration_s": 0.58,
+      "exit_code": 0,
+      "output_excerpt": "     Running tests/comandos.rs (target/debug/deps/comandos-e3150fad653db273)\n     Running tests/esquema_configuracion.rs (target/debug/deps/esquema_configuracion-28e35b361d3b6b25)\n     Running tests/estado_de_celula.rs (target/debug/deps/estado_de_celula-7ec7e4fade0f7103)\n     Running tests/renderizado_configuracion.rs (target/debug/deps/renderizado_configuracion-1d6f0547aebf019a)\n     Running tests/salida.rs (target/debug/deps/salida-d90216fc60fde9a7)\n   Doc-tests hexcell_admin"
+    }
+  ],
+  "executed_at": "2026-09-21T00:00:00Z",
+  "overall_result": "passed",
+  "summary": "Ocho comandos en 0 sobre a204b26; los cuatro commits compilan uno a uno.",
+  "task_id": "HEX-080"
+}

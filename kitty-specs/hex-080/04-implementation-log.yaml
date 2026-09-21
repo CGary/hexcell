@@ -1,0 +1,48 @@
+task_id: HEX-080
+summary: Fourth pass rebasing the approved branch onto main after HEX-081 landed, resolving the D-56 number collision and the comandos.rs semantic merge.
+entries:
+  - changed_files:
+      - crates/hexcell-admin/src/ciclo_de_vida.rs
+      - crates/hexcell-admin/src/docker/cliente.rs
+      - crates/hexcell-admin/src/docker/mod.rs
+      - crates/hexcell-admin/src/main.rs
+      - crates/hexcell-admin/tests/ciclo_de_vida.rs
+      - crates/hexcell-admin/tests/cliente_docker.rs
+      - crates/hexcell-admin/tests/comandos.rs
+    notes:
+      - 'Human decision: cell pause now issues POST /containers/{id}/stop with no t argument, so the template stop_grace_period is the single source of truth.'
+      - 'Contract conflict resolved without breaking it: detener_contenedor keeps t=30 untouched (HEX-074-b API, pinned by an existing test that may not change); pausar consumes a new sibling operation detener_contenedor_sin_plazo on the same endpoint.'
+      - 'Test fixtures no longer equal production defaults: network red-del-operador, port 9099, image sonda-de-prueba:1, limit 45 s. Hardcoding 8081, deriving the network from --id, or ignoring image/limit now turns a test red.'
+      - The probe Cmd is asserted as an exact literal written by the test, and the sleep argument is derived from CADENCIA_DE_SONDEO_MS so the constant is the single source of the cadence.
+      - Sidecar stop failure is asserted as the exact ErrorDelDaemon with status 500, not as any Docker error.
+      - Recorded requests now travel over an mpsc channel read with recv_timeout instead of a blind join, so a missing DELETE fails the test inside the bound instead of hanging it.
+      - 'Defect fixed: crear_e_iniciar_contenedor_con_opciones issues a best-effort DELETE when create returns 201 but start fails, so no orphan probe is left behind.'
+      - 'Defect fixed: TIEMPO_LIMITE_DEL_CLIENTE_DOCKER_S with a const assertion pins the Docker client read limit strictly above LIMITE_DE_SONDEO_S; inverting the margin no longer compiles.'
+      - 'Tautological test removed: the EstadoDeCelula transition-table assertion proved a property of HEX-074-c, not of this task. The Suspendida clause moved to plan task 14 by human decision.'
+      - 'Plan annotation NOT applied: docs/plan/fase-a-6-empaquetado-cli.md is in forbid.files and absent from touch.'
+      - The single new --all-targets lint is gone; only the 7 pre-existing RIESGO-4 lints remain.
+    verify_pending: true
+  - changed_files:
+      - crates/hexcell-admin/tests/ciclo_de_vida.rs
+      - crates/hexcell-admin/tests/cliente_docker.rs
+      - crates/hexcell-admin/tests/comandos.rs
+    notes:
+      - 'fix_task camino-de-fallo-de-ejecutar-con-efectos: new test ejecutar_con_efectos_reporta_fallo_con_diagnostico_cuando_la_sonda_agota_el_limite drives the dispatch through the ciclo_de_vida Err branch with cell unpause and a probe that exits 1.'
+      - 'The test asserts all three properties together: exit result Fallo, empty standard sink, and the diagnostic sink equal to the full error text, written out literally so no mutation can move both sides at once.'
+      - 'Mutation proof, each verified as a real file change before running: M21a (Err(_) => Exito) turns that test red on left: Exito / right: Fallo; M21b (Err(_) => Fallo with no diagnostic) turns it red on left: "" / right: the limit message; a third check (diagnostic written to salida.linea) turns the empty-stdout assertion red. No other test reacts, so the guard is exactly where the defect is.'
+      - 'Budget: tests/** was at 699 of 700 lines, so repeated SinCuerpo fixtures were compacted into a one-line sin_cuerpo(estado, razon) helper in the three test files, the seven-request unpause script became a shared guion_de_reanudacion helper in comandos.rs, and two Cmd vectors collapsed to one line. tests/** stays at 699, total diff 1136 of 1550, 10 files of 10.'
+      - No src/ file changed in this pass; M16b stays accepted as an equivalent mutant under the fake-daemon harness.
+    verify_pending: true
+  - changed_files:
+      - crates/hexcell-admin/src/comandos.rs
+      - docs/bitacora-de-descartes.md
+    notes:
+      - 'Rebased ai/HEX-080 onto main at 109c70e. Two real conflicts: crates/hexcell-admin/src/comandos.rs and docs/bitacora-de-descartes.md. The remaining three commits replayed cleanly.'
+      - 'Bitacora number collision: main claimed D-56 for HEX-081 (external config parser). Our entry was renumbered to D-57, read from disk on main as the highest existing number in both the index table and the section headers. No other branch or worktree existed to claim it.'
+      - 'Renumber moved three places together: index table row, the full section, and the header line. Main existing entries are byte-identical; the only line removed from main is the header, intentionally bumped from (D-56) to (D-57).'
+      - 'No spurious cross-reference created: the D-56 mentions in docs/plan/fase-a-6-empaquetado-cli.md still point at the HEX-081 entry, which is correct.'
+      - 'Semantic merge break found and fixed: HEX-081 changed argumentos::analizar to return Comando instead of Invocacion, so ejecutar_con_efectos no longer compiled. It now takes Comando and delegates the ConfigRender variant to ejecutar, which routes it to ejecutar_renderizado. The config group does not touch Docker.'
+      - 'Both sides of the dispatch survive: HEX-081 config render and our cell pause/unpause.'
+      - 'Mutation proof re-run after the rebase. Swapping the sidecar/core stop order in ciclo_de_vida::pausar turned pausar_detiene_ambos_contenedores_en_orden_y_sin_plazo_explicito RED (and pausar_propaga_el_error_del_sidecar_sin_intentar_el_nucleo). Flipping the Err arm of ejecutar_con_efectos to Exito turned ejecutar_con_efectos_reporta_fallo_con_diagnostico_cuando_la_sonda_agota_el_limite RED. Each mutation was asserted to have actually applied before running, and each revert returned the suite to green.'
+      - 'All eight verify.commands exit 0. Budgets against the new main: 10 files, 1142/1550 total, src 417/700, tests 699/700, bitacora 26/70.'
+    verify_pending: true

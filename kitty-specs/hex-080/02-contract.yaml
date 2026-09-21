@@ -1,0 +1,274 @@
+task_id: HEX-080
+summary: >-
+  cell pause/unpause solo sobre Docker dentro de crates/hexcell-admin: orden sidecar->nucleo con
+  gracia de 30 s y sonda de preparacion en contenedor hermano. Cero IPC, cero dependencias nuevas.
+goal: >-
+  Dar comportamiento real a los subcomandos cell pause y cell unpause de hexcell-admin, hoy detenidos
+  en NoImplementadoTodavia, operando EXCLUSIVAMENTE sobre el socket Unix del demonio de Docker tal y
+  como fija la prosa normativa del plan de la etapa A-6 en su linea 33. Un modulo nuevo
+  src/ciclo_de_vida.rs orquesta las dos operaciones sobre el cliente Docker ya entregado por
+  HEX-074-b: pausar detiene el contenedor del sidecar -cerrando su websocket saliente- y DESPUES el
+  del nucleo con los 30 s de gracia que detener_contenedor ya pide con t=30, llevando el
+  CicloDeVidaDeCelula a Suspendida; reanudar arranca ambos contenedores, inspecciona el nucleo para
+  obtener la red de la celula y el puerto de HEXCELL_DIRECCION_SALUD, lanza una sonda hermana DENTRO
+  de esa red cuyo Cmd sondea GET /health/ready cada 100 ms hasta el primer 200 OK o hasta agotar el
+  limite, espera su codigo de salida y devuelve 0 solo tras ese 200 OK, o un codigo distinto de 0 con
+  un mensaje explicito que nombra el limite excedido. El cliente Docker gana exactamente CUATRO
+  operaciones que hoy no existen: arrancar un contenedor YA CREADO, crear un contenedor con
+  HostConfig.NetworkMode y Cmd, esperar su codigo de salida, y detener un contenedor SIN plazo
+  explicito. El invariante de que ninguna respuesta
+  pendiente sale durante la pausa lo sostiene el drenaje sin envio del nucleo entregado en la etapa
+  A-2: esta CLI solo garantiza el ORDEN. No se abre ninguna conexion IPC, no se nombra
+  orden_pausa_de_envio, no se anade ninguna dependencia y el descarte de la alternativa IPC se
+  registra como D-57 en la bitacora, en el mismo commit y sin ADR.
+read:
+  - .ai/tasks/active/HEX-080-new-spec/00-spec.yaml
+  - .ai/tasks/active/HEX-080-new-spec/01-blueprint.yaml
+  - CLAUDE.md
+  - crates/hexcell-admin/Cargo.toml
+  - crates/hexcell-admin/src/argumentos.rs
+  - crates/hexcell-admin/src/codigo_de_salida.rs
+  - crates/hexcell-admin/src/salida.rs
+  - crates/hexcell-admin/src/estado_de_celula.rs
+  - crates/hexcell-admin/src/docker/error.rs
+  - crates/hexcell-admin/src/docker/transporte.rs
+  - crates/hexcell-admin/tests/comun/mod.rs
+  - crates/hexcell-admin/tests/cliente_docker.rs
+  - crates/hexcell/src/configuracion.rs
+  - deploy/cell.compose.yml
+  - deploy/celula.env.ejemplo
+  - Dockerfile
+  - sidecar/Dockerfile
+  - docs/plan/fase-a-6-empaquetado-cli.md
+  - docs/adr/adr-0036-contrato-de-analisis-de-argumentos-y-modo-de-simulacion.md
+  - docs/bitacora-de-descartes.md
+  - README.md
+touch:
+  - crates/hexcell-admin/src/ciclo_de_vida.rs
+  - crates/hexcell-admin/src/comandos.rs
+  - crates/hexcell-admin/src/docker/cliente.rs
+  - crates/hexcell-admin/src/docker/mod.rs
+  - crates/hexcell-admin/src/lib.rs
+  - crates/hexcell-admin/src/main.rs
+  - crates/hexcell-admin/tests/ciclo_de_vida.rs
+  - crates/hexcell-admin/tests/cliente_docker.rs
+  - crates/hexcell-admin/tests/comandos.rs
+  - docs/bitacora-de-descartes.md
+forbid:
+  files:
+    - Cargo.toml
+    - Cargo.lock
+    - crates/hexcell-admin/Cargo.toml
+    - crates/hexcell-admin/src/argumentos.rs
+    - crates/hexcell-admin/src/codigo_de_salida.rs
+    - crates/hexcell-admin/src/salida.rs
+    - crates/hexcell-admin/src/estado_de_celula.rs
+    - crates/hexcell-admin/src/docker/error.rs
+    - crates/hexcell-admin/src/docker/transporte.rs
+    - crates/hexcell-admin/tests/comun/mod.rs
+    - crates/hexcell-admin/tests/argumentos.rs
+    - crates/hexcell-admin/tests/codigo_de_salida.rs
+    - crates/hexcell-admin/tests/salida.rs
+    - crates/hexcell-admin/tests/estado_de_celula.rs
+    - crates/hexcell-core/**
+    - crates/hexcell/**
+    - crates/hexcell-storage/**
+    - crates/hexcell-canal-simulado/**
+    - crates/hexcell-canal-contrato/**
+    - crates/hexcell-canal-whatsmeow/**
+    - crates/hexcell-meta/**
+    - sidecar/**
+    - deploy/**
+    - Dockerfile
+    - docs/PRD.md
+    - docs/STATUS.md
+    - docs/adr/**
+    - docs/plan/fase-a-6-empaquetado-cli.md
+    - docs/protocolo-ipc-nucleo-sidecar.md
+    - docs/plantilla-celula.md
+    - README.md
+    - .github/workflows/ci.yml
+  behaviors:
+    - >-
+      PROHIBIDO ABSOLUTO abrir una conexion IPC desde hexcell-admin hacia el nucleo o el sidecar, en
+      cualquier forma. No se escribe un cliente IPC, no se lee ni se escribe el socket
+      /var/lib/hexcell/ipc/sidecar.sock, no se declara ningun tipo de trama del protocolo wire-6 y no
+      aparecen en ningun archivo del crate las cadenas orden_pausa_de_envio, acuse_pausa_de_envio,
+      sidecar.sock ni HEXCELL_SOCKET_IPC. Este es el unico fallo que esta tarea existe para impedir:
+      el protocolo admite UNA sola conexion activa y releva a la anterior al conectar una nueva
+      (sidecar/internal/servidor/manejo.go:66-112), de modo que un cliente de la CLI expulsaria al
+      nucleo de su propio sidecar. Fuera de alcance POR PLAN, no diferido. Un contenedor hermano que
+      hable IPC tampoco vale. std::os::unix::net::UnixStream se usa unicamente dentro de
+      src/docker/transporte.rs, que aqui no se toca.
+    - >-
+      PROHIBIDO anadir cualquier dependencia a cualquier crate y PROHIBIDO modificar cualquier
+      Cargo.toml o Cargo.lock. hexcell-admin se queda exactamente en serde + serde_json;
+      hexcell-core conserva sus cero dependencias externas, que son un criterio de aceptacion del
+      proyecto. Nada de tokio, bollard, hyper, reqwest, ureq, curl ni ninguna pila HTTP o asincrona:
+      el transporte sigue siendo el cliente HTTP/1.1 sincrono escrito a mano sobre UnixStream.
+    - >-
+      El ORDEN de la pausa es normativo y es la unica garantia que aporta esta CLI: primero
+      detener_contenedor del contenedor del sidecar, DESPUES el del nucleo, nunca al reves y nunca en
+      paralelo. Si la parada del sidecar falla, el error se propaga de inmediato y la parada del
+      nucleo NO se intenta. PROHIBIDO implementar el invariante de "ninguna respuesta pendiente sale
+      durante la pausa" en esta CLI: lo sostiene el drenaje sin envio del nucleo entregado en la etapa
+      A-2, y reimplementarlo aqui seria duplicar una garantia que ya existe en el lugar correcto.
+    - >-
+      PROHIBIDO tocar detener_contenedor. La gracia de 30 s ya vive ahi como t=30 y el SIGTERM llega
+      por el STOPSIGNAL anclado en ambas imagenes por HEX-075. NO se anade un parametro signal a la
+      peticion de parada: hacerlo romperia la asercion de
+      crates/hexcell-admin/tests/cliente_docker.rs:72 sobre la ruta exacta
+      /containers/abc123/stop?t=30, y el spec exige que todos los tests existentes pasen sin
+      modificar. PROHIBIDO tambien implementar la espera de la gracia con un bucle de sleep seguido de
+      una llamada a matar en el cliente.
+    - >-
+      El sondeo de preparacion se emite SIEMPRE desde un contenedor hermano dentro de la red de la
+      celula, NUNCA desde el proceso anfitrion de hexcell-admin. PROHIBIDO abrir un TcpStream, un
+      socket HTTP o cualquier conexion de red desde el proceso de la CLI hacia /health/ready, y
+      PROHIBIDO publicar un puerto o usar docker exec para alcanzarla: ambas cosas debilitarian el
+      aislamiento por celula que ancla NFR-05 y repiten lo que D-51 (3) ya rechazo. El bucle de 100 ms
+      vive DENTRO del Cmd del contenedor de sonda; el proceso de la CLI solo espera su codigo de
+      salida.
+    - >-
+      La direccion objetivo del sondeo se OBTIENE, no se inventa. El puerto se lee de la variable
+      HEXCELL_DIRECCION_SALUD dentro de Config.Env de la inspeccion del contenedor del nucleo, y el
+      nombre de la red se lee de la clave de NetworkSettings.Networks de esa misma inspeccion.
+      PROHIBIDO codificar 8081 como literal en el camino de produccion y PROHIBIDO derivar el nombre
+      de la red del --id: la plantilla la nombra hexcell-{id}-red mientras los contenedores se llaman
+      {id}-nucleo, y HEXCELL_RED_CELULA es una variable libre del operador. Los nombres de contenedor
+      SI se derivan del --id como {id}-nucleo y {id}-sidecar, porque deploy/cell.compose.yml los fija
+      asi en container_name.
+    - >-
+      La imagen de la sonda es una constante con nombre, sobreescribible por variable de entorno,
+      nunca un literal enterrado en el cuerpo de una funcion. NO puede ser ninguna de las dos imagenes
+      de la celula: ambos Dockerfiles borran el shell a proposito (apk del --no-network busybox-binsh
+      y rm -f /bin/sh /bin/busybox) como parte del endurecimiento de HEX-070, asi que un Cmd con bucle
+      no se puede ejecutar en ellas. Cuando el demonio responde 404 al crear la sonda, el mensaje de
+      error debe NOMBRAR la imagen ausente y decir que hay que traerla, no degradar a un "el recurso
+      no existe" generico.
+    - >-
+      El cliente Docker que atiende esperar_contenedor se construye con
+      ClienteDocker::con_tiempo_limite y un limite ESTRICTAMENTE MAYOR que el limite de sondeo, nunca
+      con ClienteDocker::nuevo, cuyo limite por omision de 30 s es MENOR que el de la sonda.
+      POST /containers/{id}/wait bloquea durante toda la vida de la sonda: con el limite por omision
+      la operacion abortaria con TiempoDeEsperaAgotado antes de conocer el veredicto real y cell
+      unpause fallaria por una razon inventada.
+    - >-
+      El contenedor de sonda se elimina SIEMPRE, tambien por el camino de fallo y tambien cuando la
+      espera devuelve un codigo distinto de 0. PROHIBIDO confiar la limpieza a HostConfig.AutoRemove:
+      compite con la lectura de /wait y puede dejar la espera sin respuesta.
+    - >-
+      Se anaden al cliente Docker EXACTAMENTE cuatro operaciones -arrancar un contenedor ya creado,
+      crear un contenedor con HostConfig.NetworkMode y Cmd, esperar su codigo de salida, y detener un
+      contenedor SIN plazo explicito-, cada una con el mismo despacho explicito de codigos de estado
+      que ya usan las cinco existentes. La cuarta fue ratificada por decision humana del 2026-09-21:
+      usa el MISMO endpoint POST /containers/{id}/stop que detener_contenedor, solo que sin el
+      parametro t, para que rija el stop_grace_period de la plantilla como unica fuente de verdad.
+      El limite de esta clausula existia para impedir endpoints de OTRAS tareas, no una segunda forma
+      del mismo endpoint. detener_contenedor (con t=30) queda sin llamadores en src/ tras esta tarea
+      y NO se toca -ni ella ni su prueba, que son de HEX-074-b-, salvo un comentario que la declara
+      reemplazada por la variante sin plazo. Seguimiento para la tarea 15, que toca el cliente por
+      derecho propio: fundir ambas en una sola operacion con plazo opcional y mover la prueba.
+      PROHIBIDO escribir GET /volumes/{nombre}, obtencion de registros, construccion o descarga de
+      imagenes, o cualquier otra operacion: pertenecen a cell terminate y a tareas posteriores.
+      crear_e_iniciar_contenedor, detener_contenedor, inspeccionar_contenedor, eliminar_contenedor y
+      eliminar_volumen se consumen SIN modificar.
+    - >-
+      comandos::ejecutar conserva su firma y su cuerpo actuales: el despacho con efectos entra por una
+      funcion NUEVA. Asi los tests que hoy ejercitan ejecutar siguen valiendo sin cambiar una linea y
+      se conserva la propiedad que documenta adr-0036, que el modo --simular no puede tener efecto
+      lateral porque la firma no admite ningun ClienteDocker, ninguna ruta, ningun reloj y ninguna asa
+      de red. En modo --simular NO se construye ningun ClienteDocker ni se abre ningun socket.
+      PROHIBIDO reabrir o enmendar adr-0036.
+    - >-
+      PROHIBIDO anadir una quinta variante a CodigoDeSalida. El fallo de preparacion y el limite de
+      tiempo agotado se traducen a Fallo (1), que ya es distinto de cero; anadir una variante romperia
+      crates/hexcell-admin/tests/codigo_de_salida.rs, que el spec exige que pase sin modificar.
+      PROHIBIDO igualmente redefinir, extender o debilitar Salida, EstadoDeCelula, TransicionInvalida,
+      CicloDeVidaDeCelula, ErrorDeClienteDocker o cualquier cosa de src/docker/transporte.rs y
+      src/docker/error.rs: el error del ciclo de vida es un tipo NUEVO que envuelve
+      ErrorDeClienteDocker.
+    - >-
+      El test de la cadencia escribe el literal 100 POR SU CUENTA y NO importa la constante de
+      produccion. Si el test tomara CADENCIA_DE_SONDEO_MS del codigo bajo prueba, una mutacion moveria
+      los dos lados a la vez y la asercion no probaria nada: seria tautologica contra su propio
+      referente. Ningun archivo bajo crates/hexcell-admin/tests/ nombra CADENCIA_DE_SONDEO ni
+      MILISEGUNDOS_DE_SONDEO.
+    - >-
+      El orden de AC-1 se asierta sobre la SECUENCIA de peticiones que devuelve el demonio falso -que
+      la parada del sidecar ocupa una posicion anterior a la del nucleo-, nunca con dos aserciones
+      independientes de presencia, que pasarian igual con el orden invertido. Una guarda que no puede
+      ponerse roja al invertir el orden no es una guarda.
+    - >-
+      PROHIBIDO modificar o borrar cualquier test existente, y PROHIBIDO tocar
+      crates/hexcell-admin/tests/comun/mod.rs: el demonio falso ya sabe atender una secuencia de
+      peticiones invocando atender una vez por peticion desde el hilo que lo sirve, y los guiones
+      ConCuerpo, SinCuerpo y Troceado cubren 200, 201, 204 y 304. tests/comandos.rs y
+      tests/cliente_docker.rs solo GANAN tests nuevos.
+    - >-
+      PROHIBIDO implementar la persistencia del plano de control (esquema, migracion o almacen SQLite
+      de EstadoDeCelula), la reconciliacion del estado guardado contra docker inspect, la idempotencia
+      o reanudacion tras fallo parcial, y los subcomandos cell terminate, cell rebind, cell list y
+      cell status. Los cuatro siguen devolviendo NoImplementadoTodavia (3). La pausa de envio
+      (orden_pausa_de_envio) pertenece a cell rebind, tarea 13 del plan asignada a la tarea 24.
+    - >-
+      PROHIBIDO anadir una prueba de integracion contra un demonio Docker real, contra un contenedor
+      real o contra la red. TODA la verificacion de esta tarea corre sobre el demonio falso de
+      tests/comun/mod.rs sobre un socket Unix temporal. Una prueba que necesite docker instalado no
+      corre en CI y no es evidencia.
+    - >-
+      Ningun camino de produccion puede terminar en panic, unwrap, expect, indexado fuera de rango ni
+      std::process::exit; el perfil de release fija panic = "abort" y un panico no deja mensaje
+      utilizable. Los fallos son valores que se convierten en codigos de salida. La salida legible va
+      SOLO al sumidero estandar y los diagnosticos SOLO al de diagnostico, a traves de Salida: nada de
+      println!, eprintln!, print! ni write! contra los flujos del proceso.
+    - >-
+      El descarte "hexcell-admin abre conexion IPC directa con el sidecar" se registra como entrada
+      nueva en docs/bitacora-de-descartes.md EN EL MISMO COMMIT que lo hace, con su fila en la tabla
+      indice, con las dos razones (el protocolo admite una sola conexion activa y relevaria al nucleo;
+      cruzar la frontera del volumen desde el anfitrion repite lo que D-51 (3) rechazo) y con la
+      condicion de reapertura "el protocolo IPC admite un canal de control separado o multiplexacion
+      de conexiones". El numero D-NN se RELEE DEL DISCO justo antes de escribir -D-54 es la ultima
+      entrada conocida; el numero realmente usado fue D-57 tras releer el disco, porque la tarea 22 corre en
+      paralelo y puede reclamarlo-. Ninguna entrada existente se edita, renumera ni borra. NO nace
+      ningun ADR en esta tarea, y en particular esto NO es una erosion de NFR-05: un socket 0600 de
+      uid 10001 alcanzable desde el anfitrion solo como root es la frontera de aislamiento
+      FUNCIONANDO.
+    - >-
+      Todos los identificadores, comentarios, comentarios de documentacion, mensajes al operador y
+      texto de documentacion se escriben en espanol, como fija CLAUDE.md; solo los nombres de cable de
+      la CLI (cell, pause, unpause, terminate, rebind, list, status) y la bandera --id se quedan como
+      los fijan docs/PRD.md y README.md. El mensaje de commit es un commit convencional en espanol SIN
+      ninguna linea de atribucion de IA de ningun tipo: ni Co-Authored-By, ni Generated with, ni
+      Claude-Session. Las fechas que se escriban en codigo o documentacion son absolutas
+      (2026-09-19), nunca relativas.
+verify:
+  commands:
+    - 'bash -c ''test -z "$(grep -rnE "^use .*UnixStream|UnixStream::connect\(" crates/hexcell-admin/src --include=*.rs | grep -v docker/transporte.rs)"'''
+    - 'bash -c ''test -z "$(grep -rnE "^[[:space:]]*use (tokio|bollard|hyper)(::|;| )" crates/hexcell-admin/src --include=*.rs)"'''
+    - 'bash -c ''test -z "$(grep -rnE "orden_pausa_de_envio|acuse_pausa_de_envio|sidecar\.sock|HEXCELL_SOCKET_IPC" crates/hexcell-admin --include=*.rs)"'''
+    - 'bash -c ''test -z "$(grep -rnE "CADENCIA_DE_SONDEO|MILISEGUNDOS_DE_SONDEO" crates/hexcell-admin/tests --include=*.rs)"'''
+    - 'bash -c ''test -z "$(git diff main...HEAD -- Cargo.toml Cargo.lock crates/hexcell-admin/Cargo.toml)"'''
+    - cargo fmt --check
+    - cargo clippy --workspace -- -D warnings
+    - cargo test -p hexcell-admin
+  target_s: 60
+acceptance:
+  bdd_suite: 'cargo build --workspace && cargo test --workspace && cargo clippy --workspace -- -D warnings'
+  human_gate: true
+limits:
+  max_files_changed: 10
+  max_diff_lines: 1550
+  per_class:
+    - glob: crates/hexcell-admin/src/**
+      max_diff_lines: 700
+    - glob: crates/hexcell-admin/tests/**
+      max_diff_lines: 700
+    - glob: docs/bitacora-de-descartes.md
+      max_diff_lines: 70
+execution:
+  mode: worktree_edit
+  branch: ai/HEX-080
+retry_policy:
+  max_attempts: 2
+  escalate_after: 2

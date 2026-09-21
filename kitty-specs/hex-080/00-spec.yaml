@@ -1,0 +1,85 @@
+task_id: HEX-080
+summary: "Implement `cell pause`/`cell unpause` in hexcell-admin: Docker-only stop order (sidecar before core, no explicit t) and sibling-container readiness polling. Risk high."
+goal: >
+  Give the hexcell-admin CLI real behavior for the `cell pause` and `cell unpause`
+  subcommands, replacing their current NoImplementadoTodavia stub, entirely over
+  Docker (plan fase-a-6-empaquetado-cli.md, item 11, and the normative prose at
+  line 33: lifecycle commands operate only on containers, never on an IPC
+  connection to the core). `cell pause` stops the sidecar container first, which
+  closes its outbound whatsmeow websocket, then sends SIGTERM to the core
+  container without sending an explicit t, so the template's stop_grace_period is
+  the single source of truth. Revised 2026-09-21: the in-memory transition to
+  Suspendida moved to plan task 14, which creates the control-plane store. The "nothing pending goes out during a pause" invariant is
+  upheld by the core's own drenaje-sin-envio behavior already delivered in stage
+  A-2; this task does not send or await any IPC order. `cell unpause` starts both
+  containers and polls GET /health/ready every 100ms, issued from a sibling
+  container inside the cell's own Docker network (never from the host process
+  running hexcell-admin) against the fixed HEXCELL_DIRECCION_SALUD address, until
+  the first 200 OK or a time limit is reached. Exit code is 0 only after that 200
+  OK; on timeout the process exits non-zero with an explicit error message naming
+  the exceeded limit.
+invariants:
+  - No outbound message leaves the cell while it is paused. This is upheld by the ORDER (with the sidecar stopped there is no channel left through which the core could send while it drains) plus the core's existing drenaje-sin-envio behavior (stage A-2), never by a state flag and never by an action this task takes.
+  - "cell pause always stops the sidecar container before the core container, never the reverse."
+  - cell pause stops the core container WITHOUT sending an explicit t, so the grace period comes from the template's stop_grace_period (30s) as the single source of truth, and the sidecar is stopped with grace too, before the core is signalled.
+  - cell unpause returns exit code 0 only after observing an HTTP 200 OK from /health/ready.
+  - cell unpause returns a non-zero exit code with an explicit error message when the readiness time limit is reached without a 200 OK.
+  - The readiness probe is issued from a sibling container inside the cell's own Docker network, never from the host process running hexcell-admin.
+  - The readiness probe target address comes from HEXCELL_DIRECCION_SALUD as fixed by the cell startup template (plan task 8), never hardcoded or recomputed.
+  - Neither cell pause nor cell unpause opens any direct IPC connection from hexcell-admin to the core or the sidecar.
+non_goals:
+  - Sending, awaiting, or referencing orden_pausa_de_envio/acuse_pausa_de_envio (wire-6 IPC order/ack, HEX-071) from hexcell-admin — closed as out of scope by plan for this command, not deferred. That order belongs to cell rebind (plan task 13, assigned to plan task 24); this task never opens a CLI-to-core IPC connection because the protocol admits exactly one active connection and evicts the previous one on a new connect (docs/protocolo-ipc-nucleo-sidecar.md, line ~137).
+  - Control-plane state persistence (SQLite store, schema, migration) for EstadoDeCelula — deferred to whichever A-6 task decides it, per the note already on plan task 10.
+  - cell terminate, cell rebind, cell list, cell status subcommands (plan tasks 12, 13, and any listing/status command) — out of scope for this task.
+  - Any change under sidecar/ or to docs/protocolo-ipc-nucleo-sidecar.md.
+  - Any change to container/compose templates or to the definition of HEXCELL_DIRECCION_SALUD itself (crates/hexcell/src/configuracion.rs, deploy/cell.compose.yml, the plan task 8 template) — consumed as-is, not modified.
+  - A real-container integration test exercising an actual Docker daemon end to end — deferred; verification for this task is over the simulated Docker mode / test double only.
+acceptance:
+  - id: AC-1
+    statement: cell pause stops the sidecar container strictly before the core container.
+    given: a running cell (EnEjecucion) with a simulated Docker client
+    when: the operator runs cell pause
+    then: the simulated Docker client records the sidecar stop call ordered strictly before the core stop call
+  - id: AC-2
+    statement: cell pause leaves both containers in Docker state exited, the sidecar fully stopped before the core is signalled, and never fixes the stop timeout from the CLI.
+    given: a running cell with a simulated Docker client that records every stop request, its ordering and whether a t argument was sent
+    when: the operator runs cell pause
+    then: >-
+      the simulated Docker client observes a stop request for the sidecar that completes before any
+      request reaches the core, both stop requests are issued WITHOUT an explicit t argument so that the
+      template's stop_grace_period is the single source of truth, and both containers end in exited (never
+      paused). Revised 2026-09-21 by human decision: the previous clause 'the in-memory state transitions
+      to Suspendida' is MOVED to plan task 14, which is the first task that needs the control-plane store
+      (cell status crosses it with Docker and /health/ready) and therefore the one that creates it. The
+      sidecar is stopped WITH grace, not immediately: it must close the websocket and leave its store
+      consistent. The 'nothing leaves during a pause' invariant is guaranteed by the ORDER, not by a state
+      flag: with no sidecar there is no channel through which the core could send while it drains.
+  - id: AC-3
+    statement: cell pause never opens an IPC connection and never references orden_pausa_de_envio or acuse_pausa_de_envio.
+    given: a running cell with a simulated Docker client and no IPC transport wired into the pause path
+    when: the operator runs cell pause
+    then: the pause command completes using only Docker stop calls, with no IPC client constructed or invoked
+  - id: AC-4
+    statement: cell unpause polls /health/ready every 100 ms from a sibling container against HEXCELL_DIRECCION_SALUD and exits 0 on the first 200 OK.
+    given: a simulated readiness endpoint that returns non-200 responses for a few polls and then 200 OK, and a simulated Docker client that starts both containers and can run a sibling probe container
+    when: the operator runs cell unpause
+    then: the process exits with code 0 only after the simulated 200 OK response, the polling calls are spaced at the documented 100 ms cadence, and every poll is issued from the sibling container path, never directly from the host process
+  - id: AC-5
+    statement: cell unpause fails with a non-zero exit code and an explicit error message when the readiness time limit is exceeded.
+    given: a simulated readiness endpoint that never returns 200 OK within the configured time limit
+    when: the operator runs cell unpause
+    then: the process exits with a non-zero code and stderr contains an explicit, human-readable timeout message naming the exceeded limit
+  - id: AC-6
+    statement: cell pause and cell unpause are wired into the existing argument parser and dispatch without touching the other four cell subcommands.
+    given: the current comandos.rs dispatch table, which returns NoImplementadoTodavia for all six cell subcommands
+    when: cell pause and cell unpause are invoked
+    then: they no longer hit the NoImplementadoTodavia branch, while cell terminate, cell rebind, cell list, and cell status still do
+  - Existing unit tests for hexcell-admin (argumentos, codigo_de_salida, salida, estado_de_celula, docker client) continue to pass unmodified.
+  - cargo build --workspace, cargo test -p hexcell-admin, cargo fmt --check, and cargo clippy --workspace -- -D warnings all pass.
+risk: high
+constraints:
+  - Touch only crates/hexcell-admin (and its existing docker/ submodule); no changes under sidecar/, docs/protocolo-ipc-nucleo-sidecar.md, deploy/, or crates/hexcell/src/configuracion.rs.
+  - No new external runtime dependencies beyond what crates/hexcell-admin already declares; in particular, no IPC client dependency is added for this task.
+  - Verification is unit-level over the simulated Docker mode / test double; no real-container integration test is added by this task.
+  - All new/edited identifiers, comments, and doc text are written in Spanish, per repository convention.
+  - This task records bitacora entry D-57 (D-55 was taken by HEX-079 and D-56 by HEX-081; the number was re-read from disk at commit time) for the discarded alternative "hexcell-admin opens a direct IPC connection to the sidecar", with reopening condition that the IPC protocol admits a separate control channel or connection multiplexing; no ADR is filed by this task.

@@ -1,0 +1,282 @@
+task_id: HEX-080
+summary: >-
+  cell pause/unpause en hexcell-admin solo sobre Docker: parada sidecar->nucleo sin plazo explicito y
+  sonda de preparacion en contenedor hermano. Sin IPC.
+affected_files:
+  - crates/hexcell-admin/src/ciclo_de_vida.rs
+  - crates/hexcell-admin/src/comandos.rs
+  - crates/hexcell-admin/src/docker/cliente.rs
+  - crates/hexcell-admin/src/docker/mod.rs
+  - crates/hexcell-admin/src/lib.rs
+  - crates/hexcell-admin/src/main.rs
+  - crates/hexcell-admin/tests/ciclo_de_vida.rs
+  - crates/hexcell-admin/tests/cliente_docker.rs
+  - crates/hexcell-admin/tests/comandos.rs
+  - docs/bitacora-de-descartes.md
+symbols:
+  - hexcell_admin::ciclo_de_vida::pausar
+  - hexcell_admin::ciclo_de_vida::reanudar
+  - hexcell_admin::ciclo_de_vida::NombresDeCelula
+  - hexcell_admin::ciclo_de_vida::DatosDeSondeo
+  - hexcell_admin::ciclo_de_vida::ErrorDeCicloDeVida
+  - hexcell_admin::ciclo_de_vida::CADENCIA_DE_SONDEO_MS
+  - hexcell_admin::ciclo_de_vida::LIMITE_DE_SONDEO_S
+  - hexcell_admin::ciclo_de_vida::IMAGEN_DE_SONDA_POR_OMISION
+  - hexcell_admin::ciclo_de_vida::guion_de_sonda
+  - hexcell_admin::docker::ClienteDocker::iniciar_contenedor
+  - hexcell_admin::docker::ClienteDocker::crear_e_iniciar_contenedor_con_opciones
+  - hexcell_admin::docker::ClienteDocker::esperar_contenedor
+  - hexcell_admin::docker::OpcionesDeContenedor
+  - hexcell_admin::comandos::ejecutar_con_efectos
+dependencies:
+  - crates/hexcell-admin/src/argumentos.rs
+  - crates/hexcell-admin/src/codigo_de_salida.rs
+  - crates/hexcell-admin/src/salida.rs
+  - crates/hexcell-admin/src/estado_de_celula.rs
+  - crates/hexcell-admin/src/docker/error.rs
+  - crates/hexcell-admin/src/docker/transporte.rs
+  - crates/hexcell-admin/tests/comun/mod.rs
+  - deploy/cell.compose.yml
+  - crates/hexcell/src/configuracion.rs
+test_scenarios:
+  - statement: >-
+      pausar contra el demonio falso registra la peticion de parada del contenedor sidecar
+      estrictamente antes que la del contenedor nucleo; el orden se comprueba sobre la secuencia de
+      peticiones recibidas, no sobre dos aserciones independientes.
+    covers:
+      - AC-1
+  - statement: >-
+      la peticion de parada del contenedor nucleo llega como POST /containers/{id}-nucleo/stop PELADO,
+      SIN parametro t (revision del 2026-09-21 por decision humana): el vehiculo del SIGTERM sigue
+      siendo el STOPSIGNAL de ambas imagenes (HEX-075), pero la gracia la fija el stop_grace_period de
+      la plantilla, unica fuente de verdad. La transicion de EnEjecucion a Suspendida YA NO pertenece a
+      esta tarea: se traslado a la tarea 14 del plan, que es la primera que necesita el almacen del
+      plano de control y por tanto la que lo crea.
+    covers:
+      - AC-2
+  - statement: >-
+      pausar completa habiendo emitido exactamente dos peticiones, ambas de parada, sin abrir
+      ninguna otra conexion; la firma de pausar no admite ningun asa de IPC, y las guardas mecanicas
+      G1 y G3 comprueban que ningun archivo del crate importa UnixStream fuera de docker/transporte.rs
+      ni nombra orden_pausa_de_envio, acuse_pausa_de_envio, sidecar.sock ni HEXCELL_SOCKET_IPC.
+    covers:
+      - AC-3
+  - statement: >-
+      reanudar arranca los dos contenedores existentes, inspecciona el nucleo para obtener la red de
+      la celula y el puerto de HEXCELL_DIRECCION_SALUD, crea la sonda hermana en esa red con un Cmd
+      que contiene la cadencia de 100 ms y la URL http://{id}-nucleo:{puerto}/health/ready, espera su
+      codigo de salida y devuelve Exito (0) solo cuando ese codigo es 0. El test escribe el literal
+      100 por su cuenta y no importa CADENCIA_DE_SONDEO_MS.
+    covers:
+      - AC-4
+  - statement: >-
+      cuando el contenedor de sonda termina con codigo distinto de 0 (nunca hubo 200 OK dentro del
+      limite), reanudar devuelve un codigo de salida distinto de 0 y el sumidero de diagnostico lleva
+      un mensaje en espanol que nombra el limite de tiempo excedido en segundos.
+    covers:
+      - AC-5
+  - statement: >-
+      ejecutar_con_efectos despacha Pausar y Reanudar a ciclo_de_vida, mientras Retirar, Reemparejar,
+      Listar y Estado siguen devolviendo NoImplementadoTodavia (3); el modo --simular y los errores de
+      analisis siguen resolviendose por comandos::ejecutar sin construir ningun ClienteDocker.
+    covers:
+      - AC-6
+  - statement: >-
+      las cuatro operaciones nuevas del cliente Docker se ejercitan contra el demonio falso:
+      iniciar_contenedor emite POST /containers/{id}/start y acepta 204 y 304;
+      crear_e_iniciar_contenedor_con_opciones envia HostConfig.NetworkMode y Cmd en el cuerpo de
+      creacion; esperar_contenedor emite POST /containers/{id}/wait y lee StatusCode del cuerpo 200.
+  - statement: >-
+      los tests existentes de argumentos, codigo_de_salida, salida, estado_de_celula y cliente_docker
+      siguen pasando sin una sola linea modificada, y tests/comun/mod.rs no se toca.
+strategy:
+  - step: 1
+    action: >-
+      Ampliar el cliente Docker (rol: adaptador de infraestructura) con las cuatro operaciones que la
+      tarea necesita y que hoy no existen. iniciar_contenedor(id) emite POST
+      /containers/{id}/start sobre un contenedor YA CREADO -crear_e_iniciar_contenedor solo sabe
+      crear uno nuevo desde una imagen, que no es lo que hace unpause-, aceptando 204 y 304.
+      crear_e_iniciar_contenedor_con_opciones(imagen, OpcionesDeContenedor) anade al cuerpo de
+      creacion HostConfig.NetworkMode y Cmd, sin lo cual la sonda no puede vivir dentro de la red de
+      la celula ni ejecutar el bucle. esperar_contenedor(id) emite POST /containers/{id}/wait y
+      devuelve el StatusCode del cuerpo 200. La cuarta operacion identificada en el primer pase, GET
+      /volumes/{n}, NO se escribe: pertenece a cell terminate, fuera de alcance. detener_contenedor,
+      inspeccionar_contenedor y eliminar_contenedor se consumen SIN modificar.
+    files:
+      - crates/hexcell-admin/src/docker/cliente.rs
+      - crates/hexcell-admin/src/docker/mod.rs
+  - step: 2
+    action: >-
+      Crear el modulo ciclo_de_vida (rol: servicio de aplicacion; orquesta, no contiene dominio) con
+      NombresDeCelula, que deriva del --id los dos nombres de contenedor tal y como los fija
+      deploy/cell.compose.yml (container_name ${HEXCELL_ID_CELULA}-nucleo y -sidecar), su error
+      tipado ErrorDeCicloDeVida, y las dos constantes de sondeo CADENCIA_DE_SONDEO_MS = 100 y
+      LIMITE_DE_SONDEO_S. El nombre de la RED no se deriva del --id: la plantilla la nombra
+      hexcell-{id}-red mientras los contenedores se llaman {id}-nucleo, asi que adivinarla seria un
+      supuesto no verificable.
+    files:
+      - crates/hexcell-admin/src/ciclo_de_vida.rs
+      - crates/hexcell-admin/src/lib.rs
+  - step: 3
+    action: >-
+      Escribir ciclo_de_vida::pausar(cliente, nombres) -> detener_contenedor(sidecar) y DESPUES
+      detener_contenedor(nucleo), con propagacion inmediata del error del primero para que un fallo
+      al cerrar el websocket nunca deje seguir a la parada del nucleo. El orden es normativo y es la
+      unica garantia que aporta esta CLI: el invariante de que ninguna respuesta pendiente sale
+      durante la pausa lo sostiene el drenaje sin envio del nucleo entregado en la etapa A-2, no esta
+      funcion. La gracia la fija el stop_grace_period de la plantilla (revision 2026-09-21); el CLI usa
+      STOPSIGNAL de ambas imagenes (HEX-075); no se anade un parametro signal a la peticion.
+    files:
+      - crates/hexcell-admin/src/ciclo_de_vida.rs
+  - step: 4
+    action: >-
+      Escribir ciclo_de_vida::reanudar(cliente, nombres, DatosDeSondeo) en cinco pasos:
+      (a) iniciar_contenedor de nucleo y sidecar; (b) inspeccionar_contenedor(nucleo) y leer de UNA
+      sola respuesta las tres cosas que hacen falta -la clave de NetworkSettings.Networks como red de
+      la celula, el puerto de la variable HEXCELL_DIRECCION_SALUD dentro de Config.Env, y la
+      existencia del contenedor-; (c) crear_e_iniciar_contenedor_con_opciones de la sonda en esa red
+      con guion_de_sonda como Cmd; (d) esperar_contenedor de la sonda; (e) eliminar_contenedor de la
+      sonda SIEMPRE, tambien en el camino de fallo. Exito (0) si y solo si el StatusCode de la sonda
+      es 0.
+    files:
+      - crates/hexcell-admin/src/ciclo_de_vida.rs
+  - step: 5
+    action: >-
+      Escribir guion_de_sonda(url) como funcion pura que devuelve el Cmd del contenedor hermano: un
+      bucle /bin/sh que sondea la URL con wget, sale 0 al primer 200 OK y sale distinto de 0 al
+      agotar el numero de iteraciones, durmiendo la cadencia entre intentos. El bucle de 100 ms vive
+      AQUI, dentro del Cmd, y no en el proceso de la CLI: esa es la consecuencia directa de que el
+      sondeo se emita desde el hermano y nunca desde el anfitrion. La imagen de la sonda es
+      IMAGEN_DE_SONDA_POR_OMISION, sobreescribible por entorno, porque NINGUNA de las dos imagenes de
+      la celula puede hospedarla (ver RIESGO-1).
+    files:
+      - crates/hexcell-admin/src/ciclo_de_vida.rs
+  - step: 6
+    action: >-
+      Anadir comandos::ejecutar_con_efectos, que recibe ademas el ClienteDocker y los datos de
+      sondeo, resuelve --simular y los errores de analisis delegando en el ejecutar ya existente,
+      despacha Pausar y Reanudar a ciclo_de_vida y deja caer los otros cuatro subcomandos en
+      NoImplementadoTodavia. comandos::ejecutar se conserva INTACTO con su firma actual, de modo que
+      los tests que hoy lo ejercitan siguen valiendo sin cambiar una linea y la propiedad "sin efecto
+      lateral por la firma" que documenta adr-0036 se conserva para el modo simulacion. El fallo de
+      preparacion se traduce a CodigoDeSalida::Fallo (1): no se anade una quinta variante al
+      enumerado, que romperia tests/codigo_de_salida.rs.
+    files:
+      - crates/hexcell-admin/src/comandos.rs
+  - step: 7
+    action: >-
+      Cablear src/main.rs para construir el ClienteDocker sobre la ruta del socket Unix del demonio y
+      llamar a ejecutar_con_efectos. El cliente que atiende esperar_contenedor debe construirse con
+      con_tiempo_limite y un limite ESTRICTAMENTE MAYOR que el limite de sondeo, no con nuevo(), cuyo
+      limite por omision de 30 s es menor que el de la sonda (ver RIESGO-2).
+    files:
+      - crates/hexcell-admin/src/main.rs
+  - step: 8
+    action: >-
+      Escribir tests/ciclo_de_vida.rs con los seis criterios, cada uno levantando su propio demonio
+      falso de tests/comun/mod.rs y atendiendo la secuencia exacta de peticiones en un hilo aparte.
+      El orden de AC-1 se asierta sobre la SECUENCIA devuelta, no con dos aserciones sueltas. El
+      literal 100 de AC-4 se escribe en el test, nunca se importa de produccion. Ampliar
+      tests/cliente_docker.rs con las cuatro operaciones nuevas y tests/comandos.rs con AC-6, sin
+      modificar ni un test existente y sin tocar tests/comun/mod.rs.
+    files:
+      - crates/hexcell-admin/tests/ciclo_de_vida.rs
+      - crates/hexcell-admin/tests/cliente_docker.rs
+      - crates/hexcell-admin/tests/comandos.rs
+  - step: 9
+    action: >-
+      Registrar la entrada D-57 en docs/bitacora-de-descartes.md, en el MISMO commit que hace el
+      descarte, con su fila en la tabla indice: "hexcell-admin abre conexion IPC directa con el
+      sidecar", descartado por dos razones -el protocolo admite una sola conexion activa y relevaria
+      al nucleo (sidecar/internal/servidor/manejo.go:66-112,
+      docs/protocolo-ipc-nucleo-sidecar.md:~137), y cruzar la frontera del volumen desde el anfitrion
+      repite lo que D-51 (3) ya rechazo-, con condicion de reapertura "el protocolo IPC admite un
+      canal de control separado o multiplexacion de conexiones". NO nace ningun ADR aqui. El numero
+      D-NN se relee del disco antes de escribir.
+    files:
+      - docs/bitacora-de-descartes.md
+risks:
+  - >-
+    RIESGO-11 (anadido por el orquestador el 2026-09-21, tras el fallo de verify): la guarda de clippy
+    del contrato pedia `cargo clippy -p hexcell-admin --all-targets -- -D warnings`, que es MAS
+    ESTRICTA que la compuerta de CI y por tanto insatisfacible: `main` limpio ya la rompe con siete
+    lints preexistentes en crates/hexcell-admin/tests (match innecesario, drop sobre un tipo sin Drop,
+    cuatro needless_borrow y un collapsible_if), y en todo el espacio de trabajo son 38. CI corre
+    `cargo clippy --workspace -- -D warnings`, SIN --all-targets, que es lo unico que alguien honra.
+    Decision humana del 2026-09-21: la guarda del contrato se alinea con CI (verificada verde sobre
+    main). Lintear las pruebas con --all-targets queda como TAREA MECANICA APARTE que limpie los 38
+    lints y active la bandera en .github/workflows/ci.yml en el mismo commit; no es un descarte y no
+    va a la bitacora. Consecuencia que el implementador debe asumir: el codigo de prueba nuevo no
+    queda linteado por la guarda, asi que su calidad depende de la revision, no de la compuerta.
+  - >-
+    RIESGO-1 (el mayor): NINGUNA de las dos imagenes de la celula puede hospedar la sonda. Ambos
+    Dockerfiles borran el shell a proposito como parte del endurecimiento de HEX-070 (Dockerfile:83-84
+    y sidecar/Dockerfile:114-115 ejecutan `apk del --no-network busybox-binsh && rm -f /bin/sh
+    /bin/busybox`), de modo que un Cmd con bucle no puede ejecutarse en ellas. La sonda necesita una
+    TERCERA imagen con shell; el diseno usa alpine:3 por omision, que es la imagen base de las dos
+    etapas finales y por tanto ya esta en el disco de cualquier anfitrion que haya construido la
+    celula. Consecuencias que el implementador debe respetar: la imagen es una constante
+    sobreescribible por entorno, nunca un literal enterrado; si falta, el demonio responde 404 al
+    crear y el CLI debe traducirlo a un mensaje explicito que nombre la imagen ausente en vez de un
+    "recurso no existe" generico. deploy/ esta fuera de alcance, asi que esta dependencia operativa
+    NO queda declarada en la plantilla de compose: es material para el seguimiento de la tarea 8 del
+    plan y se deja anotado aqui, no resuelto.
+  - >-
+    RIESGO-2: ConexionDocker fija los tiempos limite de lectura y escritura al construirse y
+    ClienteDocker::nuevo usa 30 s (crates/hexcell-admin/src/docker/cliente.rs:52-56), que es MENOR que
+    el limite de sondeo. POST /containers/{id}/wait bloquea durante toda la vida de la sonda, asi que
+    un cliente construido con nuevo() abortaria con TiempoDeEsperaAgotado antes de conocer el veredicto
+    real y cell unpause fallaria por una razon inventada. El cliente que atiende la espera se
+    construye con con_tiempo_limite y un margen estrictamente mayor que LIMITE_DE_SONDEO_S.
+  - >-
+    RIESGO-3 (REVISADO el 2026-09-21 por decision humana; el enunciado anterior describia el estado
+    previo): AC-2 ya no pide una parada con t=30 ni la transicion a Suspendida. cell pause llama a una
+    operacion hermana nueva, detener_contenedor_sin_plazo, que emite POST /containers/{id}/stop sin
+    parametro alguno, para los DOS contenedores; asi la gracia la fija el stop_grace_period de la
+    plantilla (30 s en ambos servicios) como unica fuente de verdad, y no queda un 30 codificado en el
+    CLI que pueda divergir de ella. detener_contenedor (con t=30) y su prueba, ambas de HEX-074-b, se
+    conservan byte a byte y solo reciben un comentario que las declara reemplazadas; fundir las dos en
+    una sola operacion con plazo opcional es seguimiento de la tarea 15, que toca el cliente por
+    derecho propio. AC-2 se asierta sobre la secuencia literal completa de peticiones.
+  - >-
+    RIESGO-4: la cadencia de "cada 100 ms" NO es observable desde una prueba unitaria bajo el diseno
+    de contenedor hermano, porque el bucle vive dentro del Cmd de la sonda y el demonio simulado solo
+    lo registra como cadena. Si el test importara CADENCIA_DE_SONDEO_MS de produccion, la asercion
+    movería los dos lados a la vez y no probaria nada. El test escribe el literal 100 por su cuenta;
+    la guarda G4 comprueba que ningun archivo de tests/ nombra la constante de produccion.
+  - >-
+    RIESGO-5: la divergencia risk_level_divergence de 07-trace.json (declarado high / calculado
+    medium) es ESPERADA y aceptada por el humano, no un defecto a corregir. El puntuador solo cuenta
+    archivos y no ve que el camino de fallo de la sonda cruza cuatro operaciones del demonio, tres de
+    ellas escritas en esta tarea.
+  - >-
+    RIESGO-6: README.md:81 afirma que sin --simular cada subcomando cell devuelve todavia
+    NoImplementadoTodavia porque las operaciones reales llegan con las tareas 11-15. Esa frase queda
+    FALSA al cerrar esta tarea. Siguiendo el precedente de HEX-074-c -que prohibio explicitamente
+    refrescar la nota de estado del README y dejo el cierre del plan a un commit de documentacion
+    aparte, visible en el historial como "docs: reflejar el cierre de 20-b y la gramatica real de la
+    CLI"-, README.md y docs/plan/fase-a-6-empaquetado-cli.md quedan PROHIBIDOS aqui y su
+    desactualizacion es deliberada, no un olvido. Es trabajo de seguimiento para el humano.
+  - >-
+    RIESGO-7: el guion de la sonda asume que el sleep de BusyBox admite fracciones de segundo para
+    dormir la cadencia de 100 ms. El supuesto se sostiene por lectura y NO se ejercita en ninguna
+    prueba de esta tarea, porque el spec difiere a otra tarea toda verificacion contra un demonio
+    Docker real. Si resultara falso, el sondeo correria mas lento que lo documentado sin que ninguna
+    prueba se ponga roja.
+  - >-
+    RIESGO-8: el nombre de la red de la celula NO se puede derivar del --id. La plantilla la nombra
+    hexcell-{id}-red (deploy/celula.env.ejemplo:46) mientras los contenedores se llaman {id}-nucleo,
+    y ademas HEXCELL_RED_CELULA es una variable libre que el operador puede cambiar. Por eso la red se
+    LEE de NetworkSettings.Networks en la inspeccion del contenedor del nucleo, no se adivina; lo
+    mismo vale para el puerto, que se lee de HEXCELL_DIRECCION_SALUD dentro de Config.Env y satisface
+    el invariante de "nunca recomputado".
+  - >-
+    RIESGO-9: D-54 es la ultima entrada en disco de docs/bitacora-de-descartes.md (2026-09-14), asi
+    que D-57 es el numero libre realmente usado (D-55 lo tomo HEX-079 y D-56 HEX-081), PERO la tarea 22 del plan corre en paralelo en otra sesion y
+    puede reclamarlo primero. El numero se relee del disco inmediatamente antes de escribir; ninguna
+    entrada existente se edita, renumera ni borra.
+  - >-
+    RIESGO-10: no hay tareas fallidas previas que solapen estos archivos (quorum analyze
+    failure-lookup devuelve null y .ai/tasks/failed/ esta vacio), y el lector semantico HSME devolvio
+    0 resultados. Es decir: esta tarea no tiene precedente de fallo del que aprender, lo que no
+    significa que sea segura, sino que no hay senal historica en ninguna direccion.
