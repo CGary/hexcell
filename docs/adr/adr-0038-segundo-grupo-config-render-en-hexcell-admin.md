@@ -32,5 +32,6 @@ Positivas: la validación de configuración corre antes del arranque de la célu
 renderizado, no en el arranque»); el esquema cerrado es el único punto que decide qué clave es
 segura de exponer. Costos: el esquema de `crates/hexcell-admin/src/esquema_configuracion.rs` debe
 mantenerse alineado a mano con lo que `crates/hexcell/src/configuracion.rs` realmente parsea; un
-desalineamiento entre ambos reabre exactamente el defecto que corrige este mismo ciclo de revisión
-(ver `D-56`).
+desalineamiento entre ambos reabre exactamente el defecto que corrige este mismo ciclo de revisión:
+el render aceptaba un decimal para `HEXCELL_ALERTAS_SUELO_BALANCE_DISPONIBLE` que la célula rechaza
+al arrancar por parsearlo como `i64`.

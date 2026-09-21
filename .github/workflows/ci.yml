@@ -208,8 +208,7 @@ jobs:
       # AC-5: el guardia de renderizado de configuración invoca el binario
       # hexcell-admin (deploy/verificar_renderizado_configuracion.sh no compila
       # nada por sí mismo). Sin el toolchain y este build, el guardia muere con
-      # "FALLA: no existe el binario" en cada corrida y nunca puede pasar; ver
-      # D-56 en docs/bitacora-de-descartes.md.
+      # "FALLA: no existe el binario" en cada corrida y nunca puede pasar.
       - name: Instalar el toolchain fijado en rust-toolchain.toml
         uses: dtolnay/rust-toolchain@stable
 

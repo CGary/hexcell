@@ -98,7 +98,7 @@ fn entero_con_signo(v: &str) -> Result<(), String> {
 }
 fn validar_memoria(v: &str) -> Result<(), String> {
     // El corte se hace por CARÁCTER, no por índice de byte: `v.len() - 1` cae en medio de un
-    // carácter multibyte (p. ej. una tilde) y `split_at` entra en pánico. Ver D-56.
+    // carácter multibyte (p. ej. una tilde) y `split_at` entra en pánico.
     let mut caracteres = v.chars();
     let sufijo = match caracteres.next_back() {
         Some(c) => c,
