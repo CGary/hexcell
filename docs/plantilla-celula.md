@@ -63,3 +63,29 @@ las aísla es la red de célula—, así que no se parametriza.
   plantilla. Nunca va en `deploy/celula.env.ejemplo` ni en este archivo — un
   cron por célula convertiría un anfitrión con N células en N pings idénticos
   hacia el mismo servicio externo. Ver `docs/runbook-vigilancia-externa.md`.
+
+## Valores de referencia de memoria y tamaño de imágenes
+
+Pendiente de una corrida manual: esta tabla está **vacía a propósito**; no se
+inventan números. La llena el operador tras ejecutar
+`deploy/medir_memoria_y_imagenes.sh` contra contenedores reales (HEX-079,
+tarea 16 de la etapa A-6). El script imprime un informe transcribible
+directamente aquí, con la fecha, el commit y el host de la corrida.
+
+| Medición | Valor | Fecha | Commit | Host |
+| --- | --- | --- | --- | --- |
+| Memoria en reposo — `anon` agregado (núcleo+sidecar, cgroup v2) | pendiente | — | — | — |
+| Memoria en reposo — `memory.current` agregado (incluye caché de página) | pendiente | — | — | — |
+| Memoria bajo carga — `anon` agregado, pico | pendiente | — | — | — |
+| Memoria bajo carga — `memory.current` agregado, pico | pendiente | — | — | — |
+| Tamaño de la imagen del núcleo (`HEXCELL_IMAGEN_NUCLEO`) | pendiente | — | — | — |
+| Tamaño de la imagen del sidecar (`HEXCELL_IMAGEN_SIDECAR`) | pendiente | — | — | — |
+
+**LIMITACIÓN del generador de carga (AC-3 de HEX-079):** la cifra bajo carga
+es una **cota inferior**, no el peor caso. `crates/hexcell/tests/carga.rs` no
+se reutiliza como generador externo (no se modifica; cuatro razones en la
+cabecera del script), y el sustituto golpea el listener de salud del núcleo:
+ejercita el listener HTTP, el runtime tokio y el asignador, pero **no** la
+admisión GCRA, **no** el pipeline de inferencia, **no** el motor de
+conocimiento y **no** la ruta whatsmeow del sidecar. Un valor bajo carga no
+ratifica por sí solo los valores provisionales de `adr-0007`.
