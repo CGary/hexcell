@@ -361,18 +361,18 @@ fn ya_en_ejecucion_ante_un_304() {
     assert_eq!(iniciar.objetivo, "/containers/abc123/start");
 }
 
+/// Respuesta sin cuerpo del demonio falso, en una línea.
+fn sin_cuerpo(estado: u16, razon: &'static str) -> Guion {
+    Guion::SinCuerpo { estado, razon }
+}
+
 /// `iniciar_contenedor` arranca un contenedor YA CREADO con una sola petición
 /// `POST /containers/{id}/start`, sin pasar por `/containers/create`.
 #[test]
 fn iniciar_contenedor_emite_post_start_y_acepta_204() {
     let servidor = ServidorDockerFalso::nuevo("iniciar-204");
     let ruta = servidor.ruta();
-    let hilo = std::thread::spawn(move || {
-        servidor.atender(Guion::SinCuerpo {
-            estado: 204,
-            razon: "No Content",
-        })
-    });
+    let hilo = std::thread::spawn(move || servidor.atender(sin_cuerpo(204, "No Content")));
 
     let cliente = ClienteDocker::nuevo(ruta);
     cliente.iniciar_contenedor("abc123").unwrap();
@@ -387,12 +387,7 @@ fn iniciar_contenedor_emite_post_start_y_acepta_204() {
 fn iniciar_contenedor_acepta_304() {
     let servidor = ServidorDockerFalso::nuevo("iniciar-304");
     let ruta = servidor.ruta();
-    let hilo = std::thread::spawn(move || {
-        servidor.atender(Guion::SinCuerpo {
-            estado: 304,
-            razon: "Not Modified",
-        })
-    });
+    let hilo = std::thread::spawn(move || servidor.atender(sin_cuerpo(304, "Not Modified")));
 
     let cliente = ClienteDocker::nuevo(ruta);
     let resultado = cliente.iniciar_contenedor("abc123");
@@ -417,21 +412,14 @@ fn crear_e_iniciar_contenedor_con_opciones_envia_red_y_cmd() {
             razon: "Created",
             cuerpo: br#"{"Id":"sonda1","Warnings":[]}"#,
         });
-        let iniciar = servidor.atender(Guion::SinCuerpo {
-            estado: 204,
-            razon: "No Content",
-        });
+        let iniciar = servidor.atender(sin_cuerpo(204, "No Content"));
         (crear, iniciar)
     });
 
     let cliente = ClienteDocker::nuevo(ruta);
     let opciones = OpcionesDeContenedor {
         red: "hexcell-c1-red".to_string(),
-        cmd: vec![
-            "/bin/sh".to_string(),
-            "-c".to_string(),
-            "echo hola".to_string(),
-        ],
+        cmd: vec!["/bin/sh".into(), "-c".into(), "echo hola".into()],
     };
     let resultado = cliente
         .crear_e_iniciar_contenedor_con_opciones("alpine:3", opciones)
@@ -513,24 +501,14 @@ fn crear_e_iniciar_con_opciones_elimina_el_contenedor_si_falla_el_arranque() {
             razon: "Created",
             cuerpo: br#"{"Id":"sonda1","Warnings":[]}"#,
         }));
-        let _ = emisor.send(servidor.atender(Guion::SinCuerpo {
-            estado: 500,
-            razon: "Internal Server Error",
-        }));
-        let _ = emisor.send(servidor.atender(Guion::SinCuerpo {
-            estado: 204,
-            razon: "No Content",
-        }));
+        let _ = emisor.send(servidor.atender(sin_cuerpo(500, "Internal Server Error")));
+        let _ = emisor.send(servidor.atender(sin_cuerpo(204, "No Content")));
     });
 
     let cliente = ClienteDocker::nuevo(ruta);
     let opciones = OpcionesDeContenedor {
         red: "red-del-operador".to_string(),
-        cmd: vec![
-            "/bin/sh".to_string(),
-            "-c".to_string(),
-            "exit 1".to_string(),
-        ],
+        cmd: vec!["/bin/sh".into(), "-c".into(), "exit 1".into()],
     };
     let resultado = cliente.crear_e_iniciar_contenedor_con_opciones("sonda-de-prueba:1", opciones);
 

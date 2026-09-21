@@ -33,11 +33,8 @@ const RED_DEL_ACCESORIO: &str = "red-del-operador";
 const IMAGEN_DEL_ACCESORIO: &str = "sonda-de-prueba:1";
 const LIMITE_DEL_ACCESORIO: u64 = 45;
 
-fn respuesta_204() -> Guion {
-    Guion::SinCuerpo {
-        estado: 204,
-        razon: "No Content",
-    }
+fn sin_cuerpo(estado: u16, razon: &'static str) -> Guion {
+    Guion::SinCuerpo { estado, razon }
 }
 
 fn datos_de_sondeo() -> DatosDeSondeo {
@@ -63,21 +60,21 @@ fn servir_reanudacion(
     emisor: &Sender<PeticionRecibida>,
     codigo_de_espera: &'static [u8],
 ) {
-    let _ = emisor.send(servidor.atender(respuesta_204())); // iniciar núcleo
-    let _ = emisor.send(servidor.atender(respuesta_204())); // iniciar sidecar
+    let _ = emisor.send(servidor.atender(sin_cuerpo(204, "No Content"))); // iniciar núcleo
+    let _ = emisor.send(servidor.atender(sin_cuerpo(204, "No Content"))); // iniciar sidecar
     let _ = emisor.send(servidor.atender(inspeccion_del_nucleo()));
     let _ = emisor.send(servidor.atender(Guion::ConCuerpo {
         estado: 201,
         razon: "Created",
         cuerpo: br#"{"Id":"sonda1","Warnings":[]}"#,
     }));
-    let _ = emisor.send(servidor.atender(respuesta_204())); // iniciar sonda
+    let _ = emisor.send(servidor.atender(sin_cuerpo(204, "No Content"))); // iniciar sonda
     let _ = emisor.send(servidor.atender(Guion::ConCuerpo {
         estado: 200,
         razon: "OK",
         cuerpo: codigo_de_espera,
     }));
-    let _ = emisor.send(servidor.atender(respuesta_204())); // eliminar sonda
+    let _ = emisor.send(servidor.atender(sin_cuerpo(204, "No Content"))); // eliminar sonda
 }
 
 fn recibir(receptor: &Receiver<PeticionRecibida>) -> PeticionRecibida {
@@ -103,8 +100,8 @@ fn pausar_detiene_ambos_contenedores_en_orden_y_sin_plazo_explicito() {
     let nombres = NombresDeCelula::nueva("c1");
     let (emisor, receptor) = std::sync::mpsc::channel();
     let _hilo = std::thread::spawn(move || {
-        let _ = emisor.send(servidor.atender(respuesta_204()));
-        let _ = emisor.send(servidor.atender(respuesta_204()));
+        let _ = emisor.send(servidor.atender(sin_cuerpo(204, "No Content")));
+        let _ = emisor.send(servidor.atender(sin_cuerpo(204, "No Content")));
     });
 
     let cliente = ClienteDocker::nuevo(ruta);
@@ -140,10 +137,7 @@ fn pausar_propaga_el_error_del_sidecar_sin_intentar_el_nucleo() {
     let nombres = NombresDeCelula::nueva("c1");
     let (emisor, receptor) = std::sync::mpsc::channel();
     let _hilo = std::thread::spawn(move || {
-        let _ = emisor.send(servidor.atender(Guion::SinCuerpo {
-            estado: 500,
-            razon: "Internal Server Error",
-        }));
+        let _ = emisor.send(servidor.atender(sin_cuerpo(500, "Internal Server Error")));
     });
 
     let cliente = ClienteDocker::nuevo(ruta);
@@ -285,13 +279,10 @@ fn reanudar_nombra_la_imagen_ausente_ante_un_404_al_crear_la_sonda() {
     let ruta = servidor.ruta();
     let nombres = NombresDeCelula::nueva("c1");
     let _hilo = std::thread::spawn(move || {
-        servidor.atender(respuesta_204()); // iniciar núcleo
-        servidor.atender(respuesta_204()); // iniciar sidecar
+        servidor.atender(sin_cuerpo(204, "No Content")); // iniciar núcleo
+        servidor.atender(sin_cuerpo(204, "No Content")); // iniciar sidecar
         servidor.atender(inspeccion_del_nucleo());
-        servidor.atender(Guion::SinCuerpo {
-            estado: 404,
-            razon: "Not Found",
-        });
+        servidor.atender(sin_cuerpo(404, "Not Found"));
     });
 
     let cliente = ClienteDocker::nuevo(ruta);

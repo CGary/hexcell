@@ -266,6 +266,53 @@ fn ejecutar_con_efectos_con(
     (codigo, estandar, diagnostico)
 }
 
+/// Respuesta sin cuerpo del demonio falso, en una línea.
+fn sin_cuerpo(estado: u16, razon: &'static str) -> Guion {
+    Guion::SinCuerpo { estado, razon }
+}
+
+/// Sirve en otro hilo las siete peticiones de una reanudación —arrancada del núcleo, arrancada
+/// del sidecar, inspección, creación de la sonda, arrancada de la sonda, espera de su código de
+/// salida y borrado— y avisa por el canal al terminar. `veredicto` es el cuerpo de `/wait`:
+/// `StatusCode: 0` es el primer 200 OK de `/health/ready` y cualquier otro código es el límite
+/// agotado. El borrado se sirve en los dos casos porque `reanudar` limpia también al fallar.
+fn guion_de_reanudacion(
+    servidor: ServidorDockerFalso,
+    veredicto: &'static [u8],
+) -> std::sync::mpsc::Receiver<()> {
+    let (emisor, receptor) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        servidor.atender(sin_cuerpo(204, "No Content")); // iniciar núcleo
+        servidor.atender(sin_cuerpo(204, "No Content")); // iniciar sidecar
+        servidor.atender(Guion::ConCuerpo {
+            estado: 200,
+            razon: "OK",
+            cuerpo: br#"{"NetworkSettings":{"Networks":{"red-del-operador":{"NetworkID":"n1"}}},"Config":{"Env":["HEXCELL_DIRECCION_SALUD=0.0.0.0:9099"]}}"#,
+        });
+        servidor.atender(Guion::ConCuerpo {
+            estado: 201,
+            razon: "Created",
+            cuerpo: br#"{"Id":"sonda1","Warnings":[]}"#,
+        });
+        servidor.atender(sin_cuerpo(204, "No Content")); // iniciar sonda
+        servidor.atender(Guion::ConCuerpo {
+            estado: 200,
+            razon: "OK",
+            cuerpo: veredicto,
+        });
+        servidor.atender(sin_cuerpo(204, "No Content")); // eliminar sonda
+        let _ = emisor.send(());
+    });
+    receptor
+}
+
+/// Cota finita: una petición que falte pone el test rojo en vez de colgarlo.
+fn esperar_guion(receptor: &std::sync::mpsc::Receiver<()>) {
+    receptor
+        .recv_timeout(std::time::Duration::from_secs(10))
+        .expect("el demonio falso debía haber atendido las siete peticiones dentro del límite");
+}
+
 /// AC-6: `ejecutar_con_efectos` despacha `cell pause` a `ciclo_de_vida::pausar`: ya no cae en el
 /// brazo `NoImplementadoTodavia` que `ejecutar` sigue usando para la CLI sin efectos.
 #[test]
@@ -273,14 +320,8 @@ fn ejecutar_con_efectos_despacha_pausar_a_ciclo_de_vida() {
     let servidor = ServidorDockerFalso::nuevo("efectos-pausar");
     let ruta = servidor.ruta();
     let hilo = std::thread::spawn(move || {
-        servidor.atender(Guion::SinCuerpo {
-            estado: 204,
-            razon: "No Content",
-        });
-        servidor.atender(Guion::SinCuerpo {
-            estado: 204,
-            razon: "No Content",
-        });
+        servidor.atender(sin_cuerpo(204, "No Content"));
+        servidor.atender(sin_cuerpo(204, "No Content"));
     });
 
     let cliente = ClienteDocker::nuevo(ruta);
@@ -300,43 +341,7 @@ fn ejecutar_con_efectos_despacha_pausar_a_ciclo_de_vida() {
 fn ejecutar_con_efectos_despacha_reanudar_a_ciclo_de_vida() {
     let servidor = ServidorDockerFalso::nuevo("efectos-reanudar");
     let ruta = servidor.ruta();
-    // El fin del guion viaja por un canal leído con `recv_timeout`, no por un `join` ciego: una
-    // petición que falte pone el test rojo dentro del límite en vez de colgarlo.
-    let (emisor, receptor) = std::sync::mpsc::channel();
-    let _hilo = std::thread::spawn(move || {
-        servidor.atender(Guion::SinCuerpo {
-            estado: 204,
-            razon: "No Content",
-        }); // iniciar núcleo
-        servidor.atender(Guion::SinCuerpo {
-            estado: 204,
-            razon: "No Content",
-        }); // iniciar sidecar
-        servidor.atender(Guion::ConCuerpo {
-            estado: 200,
-            razon: "OK",
-            cuerpo: br#"{"NetworkSettings":{"Networks":{"red-del-operador":{"NetworkID":"n1"}}},"Config":{"Env":["HEXCELL_DIRECCION_SALUD=0.0.0.0:9099"]}}"#,
-        });
-        servidor.atender(Guion::ConCuerpo {
-            estado: 201,
-            razon: "Created",
-            cuerpo: br#"{"Id":"sonda1","Warnings":[]}"#,
-        });
-        servidor.atender(Guion::SinCuerpo {
-            estado: 204,
-            razon: "No Content",
-        }); // iniciar sonda
-        servidor.atender(Guion::ConCuerpo {
-            estado: 200,
-            razon: "OK",
-            cuerpo: br#"{"StatusCode":0}"#,
-        });
-        servidor.atender(Guion::SinCuerpo {
-            estado: 204,
-            razon: "No Content",
-        }); // eliminar sonda
-        let _ = emisor.send(());
-    });
+    let receptor = guion_de_reanudacion(servidor, br#"{"StatusCode":0}"#);
 
     let cliente = ClienteDocker::nuevo(ruta);
     let (codigo, estandar, diagnostico) =
@@ -346,9 +351,7 @@ fn ejecutar_con_efectos_despacha_reanudar_a_ciclo_de_vida() {
     assert_eq!(estandar, "cell unpause completado para «c1»\n");
     assert!(diagnostico.is_empty(), "diagnóstico vacío: {diagnostico:?}");
 
-    receptor
-        .recv_timeout(std::time::Duration::from_secs(10))
-        .expect("el demonio falso debía haber atendido las siete peticiones dentro del límite");
+    esperar_guion(&receptor);
 }
 
 /// AC-6: `cell terminate`, `cell rebind`, `cell list` y `cell status` siguen devolviendo
@@ -422,4 +425,32 @@ fn ejecutar_con_efectos_resuelve_simular_y_errores_de_analisis_sin_construir_cli
     assert_eq!(codigo, CodigoDeSalida::UsoIncorrecto);
     assert!(estandar.is_empty());
     assert!(diagnostico.contains("Uso:"));
+}
+
+/// AC-5: el camino `Err` de `ejecutar_con_efectos`, el que fija el código de salida del proceso.
+///
+/// Con la sonda agotando su límite, el despacho tiene que hacer las TRES cosas a la vez: código
+/// distinto de cero, sumidero estándar VACÍO y el mensaje del error por el de diagnóstico. Cada
+/// una sola deja viva una mutación distinta: con sólo el código sobrevive un despacho que se
+/// traga el diagnóstico; con sólo el mensaje sobrevive uno que lo escribe y aun así devuelve
+/// `Exito`, es decir `cell unpause` respondiendo 0 con la célula no disponible. El texto se
+/// escribe entero aquí, sin importar el `Display`, para que una mutación no mueva los dos lados.
+#[test]
+fn ejecutar_con_efectos_reporta_fallo_con_diagnostico_cuando_la_sonda_agota_el_limite() {
+    let servidor = ServidorDockerFalso::nuevo("efectos-reanudar-limite");
+    let ruta = servidor.ruta();
+    let receptor = guion_de_reanudacion(servidor, br#"{"StatusCode":1}"#);
+
+    let cliente = ClienteDocker::nuevo(ruta);
+    let (codigo, estandar, diagnostico) =
+        ejecutar_con_efectos_con(&["cell", "unpause", "--id", "c1"], &cliente);
+
+    assert_eq!(codigo, CodigoDeSalida::Fallo, "diag: {diagnostico:?}");
+    assert!(estandar.is_empty(), "estándar vacío: {estandar:?}");
+    assert_eq!(
+        diagnostico,
+        "la célula no alcanzó /health/ready: se agotó el límite de 45 segundos\n"
+    );
+
+    esperar_guion(&receptor);
 }
