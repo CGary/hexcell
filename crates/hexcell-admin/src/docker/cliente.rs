@@ -103,6 +103,11 @@ impl ClienteDocker {
     }
 
     /// Detiene un contenedor pidiendo al demonio un margen de gracia de 30 segundos (`t=30`).
+    ///
+    /// **Reemplazada** por [`Self::detener_contenedor_sin_plazo`] desde HEX-080 (2026-09-21): tras
+    /// esa tarea no le queda ningún llamador en `src/`. Se conserva intacta, junto con su prueba,
+    /// porque es API que entregó HEX-074-b. Seguimiento de la tarea 15, que toca el cliente por
+    /// derecho propio: fundir ambas en una sola operación con plazo opcional y mover la prueba.
     pub fn detener_contenedor(&self, id: &str) -> Result<(), ErrorDeClienteDocker> {
         let ruta = format!("/containers/{id}/stop?t={SEGUNDOS_DE_GRACIA}");
         let mut conexion = self.conectar()?;
