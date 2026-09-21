@@ -39,6 +39,15 @@ pub enum ResultadoDeArranque {
     },
 }
 
+/// Opciones de creación de un contenedor auxiliar.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OpcionesDeContenedor {
+    /// Red Docker a la que se conecta el contenedor.
+    pub red: String,
+    /// Comando y argumentos que ejecuta el contenedor.
+    pub cmd: Vec<String>,
+}
+
 /// Cliente del demonio de Docker sobre su socket Unix.
 pub struct ClienteDocker {
     ruta_socket: PathBuf,
@@ -98,6 +107,60 @@ impl ClienteDocker {
         let mut conexion = self.conectar()?;
         let respuesta = conexion.enviar("POST", &ruta, None)?;
         comprobar_exito(&respuesta)
+    }
+
+    /// Inicia un contenedor que ya existe.
+    pub fn iniciar_contenedor(&self, id: &str) -> Result<(), ErrorDeClienteDocker> {
+        let ruta = format!("/containers/{id}/start");
+        let mut conexion = self.conectar()?;
+        let respuesta = conexion.enviar("POST", &ruta, None)?;
+        comprobar_exito(&respuesta)
+    }
+
+    /// Crea e inicia un contenedor con su red y comando explícitos.
+    pub fn crear_e_iniciar_contenedor_con_opciones(
+        &self,
+        imagen: &str,
+        opciones: OpcionesDeContenedor,
+    ) -> Result<ResultadoDeArranque, ErrorDeClienteDocker> {
+        let cuerpo = serde_json::json!({
+            "Image": imagen,
+            "HostConfig": { "NetworkMode": opciones.red },
+            "Cmd": opciones.cmd,
+        })
+        .to_string();
+        let respuesta_de_creacion = {
+            let mut conexion = self.conectar()?;
+            conexion.enviar("POST", "/containers/create", Some(&cuerpo))?
+        };
+        let id_contenedor = extraer_id_de_creacion(&respuesta_de_creacion)?;
+        let ruta = format!("/containers/{id_contenedor}/start");
+        let mut conexion = self.conectar()?;
+        let respuesta = conexion.enviar("POST", &ruta, None)?;
+        match respuesta.estado {
+            204 => Ok(ResultadoDeArranque::Iniciado { id_contenedor }),
+            304 => Ok(ResultadoDeArranque::YaEnEjecucion { id_contenedor }),
+            _ => Err(clasificar_estado(&respuesta)),
+        }
+    }
+
+    /// Espera a que Docker termine el contenedor y devuelve su código de salida.
+    pub fn esperar_contenedor(&self, id: &str) -> Result<i64, ErrorDeClienteDocker> {
+        let ruta = format!("/containers/{id}/wait");
+        let mut conexion = self.conectar()?;
+        let respuesta = conexion.enviar("POST", &ruta, None)?;
+        comprobar_exito(&respuesta)?;
+        let valor: serde_json::Value = serde_json::from_slice(&respuesta.cuerpo).map_err(|_| {
+            ErrorDeClienteDocker::RespuestaMalformada {
+                motivo: "el cuerpo de espera no es JSON válido".to_string(),
+            }
+        })?;
+        valor
+            .get("StatusCode")
+            .and_then(serde_json::Value::as_i64)
+            .ok_or_else(|| ErrorDeClienteDocker::RespuestaMalformada {
+                motivo: "el cuerpo de espera no lleva StatusCode".to_string(),
+            })
     }
 
     /// Inspecciona un contenedor y devuelve el cuerpo JSON interpretado.

@@ -10,7 +10,9 @@ mod comun;
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::time::Duration;
 
-use hexcell_admin::docker::{ClienteDocker, ErrorDeClienteDocker, ResultadoDeArranque};
+use hexcell_admin::docker::{
+    ClienteDocker, ErrorDeClienteDocker, OpcionesDeContenedor, ResultadoDeArranque,
+};
 
 use comun::{Guion, ServidorDockerFalso, ruta_socket_sin_vincular};
 
@@ -357,4 +359,142 @@ fn ya_en_ejecucion_ante_un_304() {
     let (crear, iniciar) = hilo.join().unwrap();
     assert_eq!(crear.objetivo, "/containers/create");
     assert_eq!(iniciar.objetivo, "/containers/abc123/start");
+}
+
+/// `iniciar_contenedor` arranca un contenedor YA CREADO con una sola petición
+/// `POST /containers/{id}/start`, sin pasar por `/containers/create`.
+#[test]
+fn iniciar_contenedor_emite_post_start_y_acepta_204() {
+    let servidor = ServidorDockerFalso::nuevo("iniciar-204");
+    let ruta = servidor.ruta();
+    let hilo = std::thread::spawn(move || {
+        servidor.atender(Guion::SinCuerpo {
+            estado: 204,
+            razon: "No Content",
+        })
+    });
+
+    let cliente = ClienteDocker::nuevo(ruta);
+    cliente.iniciar_contenedor("abc123").unwrap();
+
+    let peticion = hilo.join().unwrap();
+    assert_eq!(peticion.metodo, "POST");
+    assert_eq!(peticion.objetivo, "/containers/abc123/start");
+}
+
+/// `iniciar_contenedor` acepta un 304: el contenedor ya estaba en ejecución.
+#[test]
+fn iniciar_contenedor_acepta_304() {
+    let servidor = ServidorDockerFalso::nuevo("iniciar-304");
+    let ruta = servidor.ruta();
+    let hilo = std::thread::spawn(move || {
+        servidor.atender(Guion::SinCuerpo {
+            estado: 304,
+            razon: "Not Modified",
+        })
+    });
+
+    let cliente = ClienteDocker::nuevo(ruta);
+    let resultado = cliente.iniciar_contenedor("abc123");
+    assert!(
+        resultado.is_ok(),
+        "un 304 no debe ser un error: {resultado:?}"
+    );
+
+    hilo.join().unwrap();
+}
+
+/// `crear_e_iniciar_contenedor_con_opciones` añade `HostConfig.NetworkMode` y `Cmd` al cuerpo de
+/// creación, que es lo que hace falta para que la sonda hermana viva dentro de la red de la
+/// célula y ejecute su bucle de sondeo.
+#[test]
+fn crear_e_iniciar_contenedor_con_opciones_envia_red_y_cmd() {
+    let servidor = ServidorDockerFalso::nuevo("crear-con-opciones");
+    let ruta = servidor.ruta();
+    let hilo = std::thread::spawn(move || {
+        let crear = servidor.atender(Guion::ConCuerpo {
+            estado: 201,
+            razon: "Created",
+            cuerpo: br#"{"Id":"sonda1","Warnings":[]}"#,
+        });
+        let iniciar = servidor.atender(Guion::SinCuerpo {
+            estado: 204,
+            razon: "No Content",
+        });
+        (crear, iniciar)
+    });
+
+    let cliente = ClienteDocker::nuevo(ruta);
+    let opciones = OpcionesDeContenedor {
+        red: "hexcell-c1-red".to_string(),
+        cmd: vec![
+            "/bin/sh".to_string(),
+            "-c".to_string(),
+            "echo hola".to_string(),
+        ],
+    };
+    let resultado = cliente
+        .crear_e_iniciar_contenedor_con_opciones("alpine:3", opciones)
+        .unwrap();
+
+    assert_eq!(
+        resultado,
+        ResultadoDeArranque::Iniciado {
+            id_contenedor: "sonda1".to_string()
+        }
+    );
+
+    let (crear, iniciar) = hilo.join().unwrap();
+    assert_eq!(crear.objetivo, "/containers/create");
+    let cuerpo: serde_json::Value = serde_json::from_slice(&crear.cuerpo).unwrap();
+    assert_eq!(cuerpo["Image"], "alpine:3");
+    assert_eq!(cuerpo["HostConfig"]["NetworkMode"], "hexcell-c1-red");
+    assert_eq!(
+        cuerpo["Cmd"],
+        serde_json::json!(["/bin/sh", "-c", "echo hola"])
+    );
+    assert_eq!(iniciar.objetivo, "/containers/sonda1/start");
+}
+
+/// `esperar_contenedor` emite `POST /containers/{id}/wait` y lee `StatusCode` del cuerpo 200.
+#[test]
+fn esperar_contenedor_lee_el_codigo_de_salida_del_cuerpo() {
+    let servidor = ServidorDockerFalso::nuevo("esperar");
+    let ruta = servidor.ruta();
+    let hilo = std::thread::spawn(move || {
+        servidor.atender(Guion::ConCuerpo {
+            estado: 200,
+            razon: "OK",
+            cuerpo: br#"{"StatusCode":0}"#,
+        })
+    });
+
+    let cliente = ClienteDocker::nuevo(ruta);
+    let codigo = cliente.esperar_contenedor("sonda1").unwrap();
+    assert_eq!(codigo, 0);
+
+    let peticion = hilo.join().unwrap();
+    assert_eq!(peticion.metodo, "POST");
+    assert_eq!(peticion.objetivo, "/containers/sonda1/wait");
+}
+
+/// `esperar_contenedor` propaga un código de salida distinto de 0 sin traducirlo a error: quien
+/// decide si eso es un fallo es la capa de ciclo de vida, no el cliente Docker.
+#[test]
+fn esperar_contenedor_propaga_un_codigo_de_salida_distinto_de_cero() {
+    let servidor = ServidorDockerFalso::nuevo("esperar-no-cero");
+    let ruta = servidor.ruta();
+    let hilo = std::thread::spawn(move || {
+        servidor.atender(Guion::ConCuerpo {
+            estado: 200,
+            razon: "OK",
+            cuerpo: br#"{"StatusCode":137}"#,
+        })
+    });
+
+    let cliente = ClienteDocker::nuevo(ruta);
+    let codigo = cliente.esperar_contenedor("sonda1").unwrap();
+    assert_eq!(codigo, 137);
+
+    hilo.join().unwrap();
 }

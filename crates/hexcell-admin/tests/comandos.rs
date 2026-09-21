@@ -1,17 +1,23 @@
-//! Pruebas externas del servicio de aplicación `comandos::ejecutar`.
+//! Pruebas externas del servicio de aplicación `comandos::ejecutar` y `comandos::ejecutar_con_efectos`.
 //!
 //! Crate externo que solo ve la API pública de `hexcell-admin`. Cada prueba inyecta dos
 //! búferes en memoria en `Salida::nueva` y aserta el código de salida, los bytes exactos
 //! de cada sumidero y la vacuidad del otro. Ningún `match` sobre `Subcomando` tiene brazo
 //! comodín.
 
+mod comun;
+
 use std::io::Write;
 
 use hexcell_admin::argumentos::{Subcomando, analizar};
+use hexcell_admin::ciclo_de_vida::DatosDeSondeo;
 use hexcell_admin::codigo_de_salida::CodigoDeSalida;
-use hexcell_admin::comandos::{ejecutar, estado_objetivo};
+use hexcell_admin::comandos::{ejecutar, ejecutar_con_efectos, estado_objetivo};
+use hexcell_admin::docker::ClienteDocker;
 use hexcell_admin::estado_de_celula::EstadoDeCelula;
 use hexcell_admin::salida::Salida;
+
+use comun::{Guion, ServidorDockerFalso, ruta_socket_sin_vincular};
 
 fn args(snippet: &[&str]) -> Vec<String> {
     snippet.iter().map(|s| (*s).to_string()).collect()
@@ -238,4 +244,176 @@ fn un_escritor_que_falla_en_diagnostico_con_error_de_analisis_devuelve_fallo() {
     let mut salida = Salida::nueva(Vec::<u8>::new(), EscritorQueFalla);
     let resultado = analizar(&args(&[]));
     assert_eq!(ejecutar(resultado, &mut salida), CodigoDeSalida::Fallo);
+}
+
+fn ejecutar_con_efectos_con(
+    snippet: &[&str],
+    cliente: &ClienteDocker,
+) -> (CodigoDeSalida, String, String) {
+    let resultado = analizar(&args(snippet));
+    let datos = DatosDeSondeo {
+        imagen: "alpine:3".to_string(),
+        limite_segundos: 60,
+    };
+    let mut bufer_estandar: Vec<u8> = Vec::new();
+    let mut bufer_diagnostico: Vec<u8> = Vec::new();
+    let codigo = {
+        let mut salida = Salida::nueva(&mut bufer_estandar, &mut bufer_diagnostico);
+        ejecutar_con_efectos(resultado, &mut salida, cliente, datos)
+    };
+    let estandar = String::from_utf8(bufer_estandar).expect("UTF-8 en el estándar");
+    let diagnostico = String::from_utf8(bufer_diagnostico).expect("UTF-8 en el diagnóstico");
+    (codigo, estandar, diagnostico)
+}
+
+/// AC-6: `ejecutar_con_efectos` despacha `cell pause` a `ciclo_de_vida::pausar`: ya no cae en el
+/// brazo `NoImplementadoTodavia` que `ejecutar` sigue usando para la CLI sin efectos.
+#[test]
+fn ejecutar_con_efectos_despacha_pausar_a_ciclo_de_vida() {
+    let servidor = ServidorDockerFalso::nuevo("efectos-pausar");
+    let ruta = servidor.ruta();
+    let hilo = std::thread::spawn(move || {
+        servidor.atender(Guion::SinCuerpo {
+            estado: 204,
+            razon: "No Content",
+        });
+        servidor.atender(Guion::SinCuerpo {
+            estado: 204,
+            razon: "No Content",
+        });
+    });
+
+    let cliente = ClienteDocker::nuevo(ruta);
+    let (codigo, estandar, diagnostico) =
+        ejecutar_con_efectos_con(&["cell", "pause", "--id", "c1"], &cliente);
+
+    assert_eq!(codigo, CodigoDeSalida::Exito);
+    assert_eq!(estandar, "cell pause completado para «c1»\n");
+    assert!(diagnostico.is_empty(), "diagnóstico vacío: {diagnostico:?}");
+
+    hilo.join().unwrap();
+}
+
+/// AC-6: `ejecutar_con_efectos` despacha `cell unpause` a `ciclo_de_vida::reanudar`, atravesando
+/// las cinco operaciones Docker de la reanudación hasta el 200 de la sonda.
+#[test]
+fn ejecutar_con_efectos_despacha_reanudar_a_ciclo_de_vida() {
+    let servidor = ServidorDockerFalso::nuevo("efectos-reanudar");
+    let ruta = servidor.ruta();
+    let hilo = std::thread::spawn(move || {
+        servidor.atender(Guion::SinCuerpo {
+            estado: 204,
+            razon: "No Content",
+        }); // iniciar núcleo
+        servidor.atender(Guion::SinCuerpo {
+            estado: 204,
+            razon: "No Content",
+        }); // iniciar sidecar
+        servidor.atender(Guion::ConCuerpo {
+            estado: 200,
+            razon: "OK",
+            cuerpo: br#"{"NetworkSettings":{"Networks":{"hexcell-c1-red":{"NetworkID":"n1"}}},"Config":{"Env":["HEXCELL_DIRECCION_SALUD=0.0.0.0:8081"]}}"#,
+        });
+        servidor.atender(Guion::ConCuerpo {
+            estado: 201,
+            razon: "Created",
+            cuerpo: br#"{"Id":"sonda1","Warnings":[]}"#,
+        });
+        servidor.atender(Guion::SinCuerpo {
+            estado: 204,
+            razon: "No Content",
+        }); // iniciar sonda
+        servidor.atender(Guion::ConCuerpo {
+            estado: 200,
+            razon: "OK",
+            cuerpo: br#"{"StatusCode":0}"#,
+        });
+        servidor.atender(Guion::SinCuerpo {
+            estado: 204,
+            razon: "No Content",
+        }); // eliminar sonda
+    });
+
+    let cliente = ClienteDocker::nuevo(ruta);
+    let (codigo, estandar, diagnostico) =
+        ejecutar_con_efectos_con(&["cell", "unpause", "--id", "c1"], &cliente);
+
+    assert_eq!(codigo, CodigoDeSalida::Exito);
+    assert_eq!(estandar, "cell unpause completado para «c1»\n");
+    assert!(diagnostico.is_empty(), "diagnóstico vacío: {diagnostico:?}");
+
+    hilo.join().unwrap();
+}
+
+/// AC-6: `cell terminate`, `cell rebind`, `cell list` y `cell status` siguen devolviendo
+/// `NoImplementadoTodavia` a través de `ejecutar_con_efectos`, sin `--simular`. El cliente
+/// apunta a un socket sin vincular a propósito: si el despacho intentara tocar Docker para
+/// cualquiera de los cuatro, la operación fallaría con `DemonioInalcanzable` (código `Fallo`) en
+/// vez de devolver `NoImplementadoTodavia`, así que el propio código de salida es la prueba de
+/// que ningún `ClienteDocker` se invocó. `cell list` es el caso señalado por HEX-080: nunca
+/// admite `--id`, así que el despacho tiene que resolverlo ANTES de exigir un identificador.
+#[test]
+fn ejecutar_con_efectos_deja_los_otros_cuatro_subcomandos_en_no_implementado_sin_tocar_docker() {
+    let ruta = ruta_socket_sin_vincular("efectos-sin-docker");
+    let cliente = ClienteDocker::nuevo(ruta);
+    let casos = [
+        (
+            &["cell", "terminate", "--id", "c1", "--confirmar"][..],
+            "terminate",
+        ),
+        (
+            &[
+                "cell",
+                "rebind",
+                "--id",
+                "c1",
+                "--motivo",
+                "x",
+                "--confirmar",
+            ][..],
+            "rebind",
+        ),
+        (&["cell", "list"][..], "list"),
+        (&["cell", "status", "--id", "c1"][..], "status"),
+    ];
+    for (snippet, nombre) in casos {
+        let (codigo, estandar, diagnostico) = ejecutar_con_efectos_con(snippet, &cliente);
+        assert_eq!(
+            codigo,
+            CodigoDeSalida::NoImplementadoTodavia,
+            "snippet {snippet:?}"
+        );
+        assert!(
+            estandar.is_empty(),
+            "estándar vacío para «{nombre}»: {estandar:?}"
+        );
+        assert!(
+            diagnostico.contains("todavía no implementado"),
+            "diagnóstico de «{nombre}»: {diagnostico:?}"
+        );
+    }
+}
+
+/// AC-6: el modo `--simular` y los errores de análisis siguen resolviéndose por
+/// `comandos::ejecutar` sin construir ningún `ClienteDocker`: el mismo socket sin vincular que
+/// haría fallar a Docker no impide ni el `Exito` de la simulación ni el `UsoIncorrecto` del
+/// análisis, porque ninguno de los dos caminos lo toca.
+#[test]
+fn ejecutar_con_efectos_resuelve_simular_y_errores_de_analisis_sin_construir_cliente_docker() {
+    let ruta = ruta_socket_sin_vincular("efectos-simular");
+    let cliente = ClienteDocker::nuevo(ruta);
+
+    let (codigo, estandar, diagnostico) =
+        ejecutar_con_efectos_con(&["cell", "pause", "--id", "c1", "--simular"], &cliente);
+    assert_eq!(codigo, CodigoDeSalida::Exito);
+    assert_eq!(
+        estandar,
+        "simulación: cell pause --id c1 -> estado objetivo: suspendida\n"
+    );
+    assert!(diagnostico.is_empty());
+
+    let (codigo, estandar, diagnostico) = ejecutar_con_efectos_con(&["cell", "restart"], &cliente);
+    assert_eq!(codigo, CodigoDeSalida::UsoIncorrecto);
+    assert!(estandar.is_empty());
+    assert!(diagnostico.contains("Uso:"));
 }

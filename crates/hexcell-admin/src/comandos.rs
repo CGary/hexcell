@@ -18,6 +18,7 @@ use crate::argumentos::{Comando, ErrorDeArgumentos, Invocacion, Subcomando, TEXT
 use crate::codigo_de_salida::CodigoDeSalida;
 use crate::estado_de_celula::EstadoDeCelula;
 use crate::salida::Salida;
+use crate::{ciclo_de_vida, docker::ClienteDocker};
 
 /// Despacha el resultado del análisis de argumentos contra los dos sumideros de salida y
 /// devuelve el código de salida del proceso.
@@ -130,6 +131,60 @@ fn diagnosticar_fallo<S: Write, D: Write>(
 ) -> CodigoDeSalida {
     let _ = salida.diagnostico(mensaje);
     CodigoDeSalida::Fallo
+}
+
+/// Ejecuta los subcomandos que ya tienen efectos Docker.
+pub fn ejecutar_con_efectos<S: Write, D: Write>(
+    resultado: Result<Comando, ErrorDeArgumentos>,
+    salida: &mut Salida<S, D>,
+    cliente: &ClienteDocker,
+    datos: ciclo_de_vida::DatosDeSondeo,
+) -> CodigoDeSalida {
+    let comando = match resultado {
+        Ok(comando) => comando,
+        Err(error) => return ejecutar(Err(error), salida),
+    };
+    if comando.simular() {
+        return ejecutar(Ok(comando), salida);
+    }
+    // El grupo `config render` no toca Docker: sus únicos efectos son de sistema de archivos y
+    // viven en `ejecutar_renderizado`. Se delega sin construir ni consumir el `ClienteDocker`.
+    let invocacion = match comando {
+        Comando::Cell(invocacion) => invocacion,
+        otro @ Comando::ConfigRender(_) => return ejecutar(Ok(otro), salida),
+    };
+    // El despacho por subcomando va ANTES de exigir `--id`: `cell list` nunca lo admite, y si el
+    // `id` se exigiera primero, `cell list` sin `--simular` devolvería `Fallo` en vez de
+    // `NoImplementadoTodavia`, rompiendo AC-6 para el único subcomando sin identificador.
+    match invocacion.subcomando() {
+        Subcomando::Retirar | Subcomando::Reemparejar | Subcomando::Listar | Subcomando::Estado => {
+            return ejecutar(Ok(Comando::Cell(invocacion)), salida);
+        }
+        Subcomando::Pausar | Subcomando::Reanudar => {}
+    }
+    let id = match invocacion.id() {
+        Some(id) => id,
+        None => return CodigoDeSalida::Fallo,
+    };
+    let nombres = ciclo_de_vida::NombresDeCelula::nueva(id);
+    let resultado = if invocacion.subcomando() == Subcomando::Pausar {
+        ciclo_de_vida::pausar(cliente, &nombres)
+    } else {
+        ciclo_de_vida::reanudar(cliente, &nombres, &datos)
+    };
+    match resultado {
+        Ok(()) => match salida.linea(&format!(
+            "cell {} completado para «{id}»",
+            invocacion.subcomando().nombre_en_cli()
+        )) {
+            Ok(()) => CodigoDeSalida::Exito,
+            Err(_) => CodigoDeSalida::Fallo,
+        },
+        Err(error) => match salida.diagnostico(&error.to_string()) {
+            Ok(()) => CodigoDeSalida::Fallo,
+            Err(_) => CodigoDeSalida::Fallo,
+        },
+    }
 }
 
 /// Línea en español que describe la acción planificada de una invocación en modo de

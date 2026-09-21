@@ -18,6 +18,6 @@ mod cliente;
 mod error;
 mod transporte;
 
-pub use cliente::{ClienteDocker, ResultadoDeArranque};
+pub use cliente::{ClienteDocker, OpcionesDeContenedor, ResultadoDeArranque};
 pub use error::ErrorDeClienteDocker;
 pub use transporte::{ConexionDocker, RespuestaHttp};

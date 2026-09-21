@@ -12,10 +12,14 @@
 //! de la etapa A-1 (`println!` de talón) desaparece aquí: el cableado real pertenece a la tarea
 //! 10-c de la etapa A-6 (HEX-074-c).
 
+use std::path::PathBuf;
 use std::process::ExitCode;
+use std::time::Duration;
 
 use hexcell_admin::argumentos;
+use hexcell_admin::ciclo_de_vida::{DatosDeSondeo, LIMITE_DE_SONDEO_S};
 use hexcell_admin::comandos;
+use hexcell_admin::docker::ClienteDocker;
 use hexcell_admin::salida::Salida;
 
 fn main() -> ExitCode {
@@ -27,6 +31,15 @@ fn main() -> ExitCode {
     };
     let resultado = argumentos::analizar(resto);
     let mut salida = Salida::estandar();
-    let codigo = comandos::ejecutar(resultado, &mut salida);
+    let necesita_docker = matches!(&resultado, Ok(invocacion) if !invocacion.simular());
+    let codigo = if necesita_docker {
+        let cliente = ClienteDocker::con_tiempo_limite(
+            PathBuf::from("/var/run/docker.sock"),
+            Duration::from_secs(LIMITE_DE_SONDEO_S + 10),
+        );
+        comandos::ejecutar_con_efectos(resultado, &mut salida, &cliente, DatosDeSondeo::default())
+    } else {
+        comandos::ejecutar(resultado, &mut salida)
+    };
     ExitCode::from(codigo)
 }

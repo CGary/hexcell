@@ -13,6 +13,7 @@
 //! `std::process::ExitCode`.
 
 pub mod argumentos;
+pub mod ciclo_de_vida;
 pub mod codigo_de_salida;
 pub mod comandos;
 pub mod docker;
