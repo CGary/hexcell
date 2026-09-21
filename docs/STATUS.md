@@ -520,7 +520,8 @@ adicional cuando aparezca un cliente que lo justifique. Ver [plan/README.md](pla
 * **Prueba de carga sostenida y techo de células por servidor** (NFR-01): convertir los 80 MB en un
   objetivo medido con límites de cgroup, y descubrir si el cuello real es la memoria o la CPU y la
   E/S. — *Bloquea escalar la cartera más allá de las primeras células.* Actualización 2026-09-21: la tarea 16 de A-6 (HEX-079, 2026-09-19) entregó el instrumento
-  `deploy/medir_memoria_y_imagenes.sh`, no la medida; la corrida manual (AC-6) sigue pendiente y su
+  `deploy/medir_memoria_y_imagenes.sh`, no la medida; la primera corrida manual (AC-6) se hizo el 2026-09-21
+  (9,0 MiB de `anon` agregado en reposo, sin dispositivo emparejado) y su
   cifra bajo carga es una cota inferior (D-55), así que el reparto provisional 48/32 MB de `adr-0007`
   sigue sin ratificar hasta esta prueba.
 * **Resultado del experimento con Meta Verified en piloto-01.** Varios usuarios del issue #810

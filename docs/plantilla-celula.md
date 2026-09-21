@@ -66,20 +66,21 @@ las aísla es la red de célula—, así que no se parametriza.
 
 ## Valores de referencia de memoria y tamaño de imágenes
 
-Pendiente de una corrida manual: esta tabla está **vacía a propósito**; no se
-inventan números. La llena el operador tras ejecutar
-`deploy/medir_memoria_y_imagenes.sh` contra contenedores reales (HEX-079,
-tarea 16 de la etapa A-6). El script imprime un informe transcribible
-directamente aquí, con la fecha, el commit y el host de la corrida.
+Primera corrida manual el 2026-09-21 (commit `5d03a19`, host `pc-gary`, Docker 29.8.1,
+cgroup v2), transcrita del informe de `deploy/medir_memoria_y_imagenes.sh` (HEX-079,
+tarea 16 de la etapa A-6) sin retocar. La célula se levantó desde volumen vacío y **sin
+dispositivo emparejado**: el sidecar no cargó ninguna sesión de WhatsApp. Cada nueva
+corrida añade una fila por medición con su fecha, commit y host; nunca se sobrescribe
+una fila anterior.
 
 | Medición | Valor | Fecha | Commit | Host |
 | --- | --- | --- | --- | --- |
-| Memoria en reposo — `anon` agregado (núcleo+sidecar, cgroup v2) | pendiente | — | — | — |
-| Memoria en reposo — `memory.current` agregado (incluye caché de página) | pendiente | — | — | — |
-| Memoria bajo carga — `anon` agregado, pico | pendiente | — | — | — |
-| Memoria bajo carga — `memory.current` agregado, pico | pendiente | — | — | — |
-| Tamaño de la imagen del núcleo (`HEXCELL_IMAGEN_NUCLEO`) | pendiente | — | — | — |
-| Tamaño de la imagen del sidecar (`HEXCELL_IMAGEN_SIDECAR`) | pendiente | — | — | — |
+| Memoria en reposo — `anon` agregado (núcleo+sidecar, cgroup v2) | 9 420 800 B (9,0 MiB) | 2026-09-21 | `5d03a19` | pc-gary |
+| Memoria en reposo — `memory.current` agregado (incluye caché de página) | 37 400 576 B (35,7 MiB) | 2026-09-21 | `5d03a19` | pc-gary |
+| Memoria bajo carga — `anon` agregado, pico (20 muestras; cota inferior) | 9 506 816 B (9,1 MiB) | 2026-09-21 | `5d03a19` | pc-gary |
+| Memoria bajo carga — `memory.current` agregado, pico (20 muestras; cota inferior) | 38 293 504 B (36,5 MiB) | 2026-09-21 | `5d03a19` | pc-gary |
+| Tamaño de la imagen del núcleo (`HEXCELL_IMAGEN_NUCLEO`) | 11 891 950 B (11,3 MiB) | 2026-09-21 | `5d03a19` | pc-gary |
+| Tamaño de la imagen del sidecar (`HEXCELL_IMAGEN_SIDECAR`) | 30 446 271 B (29,0 MiB) | 2026-09-21 | `5d03a19` | pc-gary |
 
 **LIMITACIÓN del generador de carga (AC-3 de HEX-079):** la cifra bajo carga
 es una **cota inferior**, no el peor caso. `crates/hexcell/tests/carga.rs` no

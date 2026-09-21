@@ -1,0 +1,31 @@
+=== Informe de la medición (tarea 16 A-6, HEX-079) ===
+
+Fecha: 2026-09-21  Commit: 5d03a19  Host: pc-gary
+
+Límites de cgroup bajo los que se midió (referente deploy/celula.env.ejemplo):
+  HEXCELL_NUCLEO_LIMITE_MEMORIA=48m   HEXCELL_SIDECAR_LIMITE_MEMORIA=32m
+  HEXCELL_NUCLEO_LIMITE_CPUS=0.5   HEXCELL_SIDECAR_LIMITE_CPUS=0.25
+  HEXCELL_NUCLEO_LIMITE_NOFILE=1024   HEXCELL_SIDECAR_LIMITE_NOFILE=1024
+
+Memoria en reposo (agregado núcleo+sidecar, cgroup v2):
+  anon (equivalente a RSS): 9420800 B  ( 8 MiB )
+  memory.current (incluye caché de página): 37400576 B  ( 35 MiB )
+
+Memoria bajo carga (pico de 20 muestras, agregado núcleo+sidecar, cgroup v2):
+  anon (equivalente a RSS): 9506816 B  ( 9 MiB )
+  memory.current (incluye caché de página): 38293504 B  ( 36 MiB )
+
+Tamaño de las imágenes (docker image inspect):
+  hexcell-nucleo:local: 11891950 B  ( 11 MiB )
+  hexcell-sidecar:local: 30446271 B  ( 29 MiB )
+
+LIMITACION: la cifra bajo carga es una COTA INFERIOR, no el peor caso.
+  crates/hexcell/tests/carga.rs no se reutilizó como generador externo (cuatro razones
+  en la cabecera) y no se modificó. El generador sustituto golpea /health/ready y
+  /health/live: ejercita el listener HTTP, el runtime tokio y el asignador, pero NO la
+  admisión GCRA, NO el pipeline de inferencia, NO el motor de conocimiento y NO la ruta
+  whatsmeow del sidecar. El único camino de entrada genuino es un mensaje real de
+  WhatsApp sobre el websocket saliente, que requiere un dispositivo emparejado.
+
+Transcribir estos valores a la tabla de docs/plantilla-celula.md (valores de referencia).
+

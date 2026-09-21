@@ -171,7 +171,9 @@ La tarea 16 del plan de A-6 cerró el 2026-09-19 con HEX-079, pero entregó el *
 (`deploy/medir_memoria_y_imagenes.sh`), no la medida. Dos consecuencias para la sección c):
 
 * **Los puntos 8, 9 y 10 siguen PROVISIONALES.** Nada en HEX-079 los ratifica ni los ajusta; la
-  corrida manual que llena la tabla de `docs/plantilla-celula.md` (AC-6 de HEX-079) sigue pendiente.
+  primera corrida manual (AC-6 de HEX-079, 2026-09-21, tabla en `docs/plantilla-celula.md`) dio
+  9,0 MiB de `anon` agregado en reposo, muy por debajo de los 80 MB, pero sin dispositivo
+  emparejado y sin tráfico real.
 * **Ni siquiera esa corrida los ratificará.** El generador de carga del instrumento golpea el
   listener de salud del núcleo y no ejercita la admisión GCRA, el pipeline de inferencia ni la ruta
   whatsmeow (D-55): su cifra bajo carga es una **cota inferior**, no el peor caso. Sirve para
