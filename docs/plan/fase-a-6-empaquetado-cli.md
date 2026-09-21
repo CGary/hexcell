@@ -189,6 +189,7 @@ Las entradas conservan su numeración; esta sección es la autoridad sobre el or
 * Actualización 2026-09-14: 10-c cerrada (HEX-074-c) y con ella la tarea 10 completa: analizador de argumentos a mano sobre `std::env::args`, los seis subcomandos `cell` con validación, modo de simulación sin efectos laterales y `src/main.rs` cableado —ya no imprime el talón de A-1—, sobre el contrato de códigos de salida de 10-b. Registrados `adr-0036` (gramática, tabla de desenlaces y modo de simulación) y D-53 (descarte de `clap`, `argh`, `pico-args` y `structopt`). La persistencia del estado del plano de control, la idempotencia, la reconciliación contra Docker y el registro de sustituciones de `cell status` siguen diferidos a las tareas 11 a 15. La cadena restante: 16 → 11 → 22 → 12 → 13 → 14 → 15 → 18 → 20-b → 23 → 21 → 19.
 * Actualización 2026-09-14: 20-b cerrada (HEX-077-b) y con ella la tarea 20 completa; la octava condición (bucle de reinicio) queda diferida en D-54 y `adr-0037`, no pendiente en la cadena. La cadena restante: 16 → 11 → 22 → 12 → 13 → 14 → 15 → 18 → 23 → 21 → 19.
 * Actualización 2026-09-21: 22 cerrada (HEX-081) con el grupo `config render` de `hexcell-admin` —lista blanca cerrada de claves no secretas, superposición sobre valores por defecto en KEY=VALUE y validación de fallo cerrado en el render, nunca en el arranque— más los dos archivos de ejemplo bajo `deploy/` y la guarda `deploy/verificar_renderizado_configuracion.sh` (probada por mutación, en CI). Registrados `adr-0038` (segundo grupo `config render`) y D-56 (descarte de un analizador externo para la configuración). Los secretos siguen viajando solo por variable de entorno y los overlays con valores reales son datos de cliente: en este repositorio solo entran ejemplos con marcadores. La cadena restante: 16 → 11 → 12 → 13 → 14 → 15 → 18 → 23 → 21 → 19.
+* Actualización 2026-09-21: 11 cerrada (HEX-080); ver su nota de cierre. Pendiente mecánico fuera de la cadena, sin tarea numerada: los tests del workspace no se lintean en CI (`cargo clippy --workspace` sin `--all-targets`) y con la bandera fallan 38 diagnósticos preexistentes; se limpian y se activa la bandera en `ci.yml` en el mismo commit. La cadena restante: 12 → 13 → 14 → 15 → 18 → 23 → 21 → 19.
 * Actualización 2026-09-19: 16 cerrada (HEX-079) con el instrumento en vivo `deploy/medir_memoria_y_imagenes.sh`; la corrida manual real y el registro de los números quedan diferidos (AC-6), en la sección de valores de referencia de `docs/plantilla-celula.md`. La cadena restante: 11 → 22 → 12 → 13 → 14 → 15 → 18 → 23 → 21 → 19. Nota 2026-09-21: el instrumento da una cota inferior, no el peor caso (no ejercita GCRA, inferencia ni la ruta whatsmeow, D-55); ni su corrida manual ratifica el reparto provisional 48/32 MB de `adr-0007`, que sigue provisional hasta la prueba de carga sostenida pendiente en STATUS. Primera corrida manual el 2026-09-21 (commit `5d03a19`, sin dispositivo emparejado): en reposo 9,0 MiB de `anon` y 35,7 MiB de `memory.current` agregados; imágenes de 11,3 MiB (núcleo) y 29,0 MiB (sidecar); tabla en `docs/plantilla-celula.md`.
 
 ---
@@ -268,6 +269,17 @@ Las entradas conservan su numeración; esta sección es la autoridad sobre el or
     `HEXCELL_DIRECCION_SALUD` fijado en la plantilla de la tarea 8. Se acepta cuando `cell unpause`
     devuelve 0 solo tras un 200 y devuelve un código distinto de 0 con mensaje explícito al agotar el
     límite de tiempo.
+
+    **Cerrada el 2026-09-21 con HEX-080.** `cell pause` detiene ambos contenedores con `stop` sin plazo
+    explícito (rige el `stop_grace_period` de la plantilla), sidecar primero y completamente detenido
+    antes de señalar al núcleo: el estado Docker final es `exited`, no `paused`, y la invariante «nada
+    sale durante la pausa» la garantiza ese orden. `cell unpause` arranca ambos y sondea `/health/ready`
+    cada 100 ms desde un contenedor hermano con límite de 60 s. La cláusula «el estado pasa a
+    `Suspendida`» del criterio original se **traslada a la tarea 14**, que es la que crea el almacén del
+    plano de control; sin almacén el estado es incognoscible desde un proceso que termina. La CLI no
+    abre conexión IPC con el sidecar (D-57). Deja un seguimiento para la tarea 15: el cliente Docker
+    tiene dos operaciones de parada sobre el mismo endpoint (`detener_contenedor` con `t=30`, ya sin
+    llamadores en producción, y la variante sin plazo).
 12. **Implementar `cell terminate`** (1 día). Cierre de sesión del canal desvinculando el dispositivo,
     drenaje de ambos contenedores, borrado físico de volúmenes incluidas las credenciales, y
     confirmación explícita requerida por tratarse de una operación destructiva.
@@ -299,8 +311,17 @@ Las entradas conservan su numeración; esta sección es la autoridad sobre el or
     almacén de plano de control, `docker inspect` y `/health/ready`, marca cada discrepancia con un
     código estable e incluye el historial de sustituciones. No reporta ratio de acuses ni ventana de
     silencio: eso es la tarea 20.
+
+    **Nota 2026-09-21:** hereda de la tarea 11 la cláusula «tras `cell pause` el estado de la célula
+    pasa a `Suspendida` y tras `cell unpause` vuelve a `EnEjecucion`», porque esta es la primera tarea
+    que necesita el almacén del plano de control y por tanto la que lo crea. La tabla de transiciones
+    ya existe en `crates/hexcell-admin/src/estado_de_celula.rs` (HEX-074-c); lo que falta es persistirla.
 15. **Dotar de idempotencia y recuperación a los comandos** (1 día). Reejecución segura tras un fallo
     parcial, con detección del punto en que quedó la secuencia.
+
+    **Nota 2026-09-21:** al tocar el cliente Docker, fundir `detener_contenedor` (con `t=30`, sin
+    llamadores en producción desde HEX-080) y `detener_contenedor_sin_plazo` en una sola operación con
+    plazo opcional, y trasladar la prueba correspondiente de HEX-074-b.
 16. **Medir memoria y tamaño de imágenes** (0,5 días). Consumo de la célula completa en reposo y bajo
     carga, y peso de ambas imágenes, registrados como valores de referencia.
     No se reutiliza `rss_linea_base` (mide solo el núcleo con adaptador simulado).
