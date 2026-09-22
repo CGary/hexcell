@@ -300,3 +300,344 @@ fn reanudar_nombra_la_imagen_ausente_ante_un_404_al_crear_la_sonda() {
         "el mensaje debe nombrar la imagen ausente: {mensaje}"
     );
 }
+
+// ============================================================================
+// Tests de retirar (HEX-082-b)
+// ============================================================================
+
+/// Nombre de volumen del accesorio: no derivable del --id ni del container id.
+const VOLUMEN_DE_RETIRAR: &str = "volumen-datos-celula-x7k9m2";
+
+/// Inspección del núcleo para retirar: con red, puerto de admin y volumen del accesorio.
+fn inspeccion_del_nucleo_para_retirar() -> Guion {
+    Guion::ConCuerpo {
+        estado: 200,
+        razon: "OK",
+        cuerpo: br#"{"State":{"Status":"running"},"NetworkSettings":{"Networks":{"red-de-retirar":{"NetworkID":"n1"}}},"Config":{"Env":["PATH=/usr/bin","HEXCELL_DIRECCION_ADMIN=0.0.0.0:7070"]},"Mounts":[{"Type":"volume","Name":"volumen-datos-celula-x7k9m2","Destination":"/var/lib/hexcell"}]}"#,
+    }
+}
+
+/// Inspección del sidecar para retirar: solo necesitamos que exista.
+fn inspeccion_del_sidecar() -> Guion {
+    Guion::ConCuerpo {
+        estado: 200,
+        razon: "OK",
+        cuerpo: br#"{"State":{"Status":"running"}}"#,
+    }
+}
+
+/// Sirve las peticiones de un retirar exitoso y las reenvía por el canal.
+fn servir_retirar(servidor: &ServidorDockerFalso, emisor: &Sender<PeticionRecibida>) {
+    let _ = emisor.send(servidor.atender(inspeccion_del_nucleo_para_retirar())); // inspeccionar núcleo
+    let _ = emisor.send(servidor.atender(inspeccion_del_sidecar())); // inspeccionar sidecar
+    let _ = emisor.send(servidor.atender(Guion::ConCuerpo {
+        estado: 201,
+        razon: "Created",
+        cuerpo: br#"{"Id":"sonda-cierre-1","Warnings":[]}"#,
+    })); // crear sonda de cierre
+    let _ = emisor.send(servidor.atender(sin_cuerpo(204, "No Content"))); // iniciar sonda de cierre
+    let _ = emisor.send(servidor.atender(Guion::ConCuerpo {
+        estado: 200,
+        razon: "OK",
+        cuerpo: br#"{"StatusCode":0}"#,
+    })); // esperar sonda de cierre (éxito)
+    let _ = emisor.send(servidor.atender(sin_cuerpo(204, "No Content"))); // eliminar sonda de cierre
+    let _ = emisor.send(servidor.atender(sin_cuerpo(204, "No Content"))); // detener sidecar
+    let _ = emisor.send(servidor.atender(sin_cuerpo(204, "No Content"))); // detener núcleo
+    let _ = emisor.send(servidor.atender(sin_cuerpo(204, "No Content"))); // eliminar sidecar
+    let _ = emisor.send(servidor.atender(sin_cuerpo(204, "No Content"))); // eliminar núcleo
+    let _ = emisor.send(servidor.atender(sin_cuerpo(204, "No Content"))); // eliminar volumen
+}
+
+/// AC-1: `retirar` ejecuta la secuencia completa de seis pasos en orden estricto:
+/// inspeccionar núcleo, inspeccionar sidecar, crear+iniciar+esperar+eliminar sonda de cierre,
+/// detener sidecar, detener núcleo, eliminar sidecar, eliminar núcleo, eliminar volumen.
+/// El orden se aserta sobre la SECUENCIA completa, no con aserciones de presencia independientes.
+#[test]
+fn retirar_ejecuta_la_secuencia_completa_en_orden_estricto() {
+    let servidor = ServidorDockerFalso::nuevo("retirar-exito");
+    let ruta = servidor.ruta();
+    let nombres = NombresDeCelula::nueva("c1");
+    let (emisor, receptor) = std::sync::mpsc::channel();
+    let _hilo = std::thread::spawn(move || servir_retirar(&servidor, &emisor));
+
+    let cliente = ClienteDocker::nuevo(ruta);
+    let resultado = ciclo_de_vida::retirar(&cliente, &nombres, &datos_de_sondeo());
+    assert!(resultado.is_ok(), "retirar debe tener éxito: {resultado:?}");
+    assert_eq!(
+        resultado.unwrap(),
+        VOLUMEN_DE_RETIRAR,
+        "el nombre del volumen debe venir de la inspección"
+    );
+
+    // Asertar la secuencia completa de 11 peticiones en orden.
+    assert_eq!(recibir(&receptor).objetivo, "/containers/c1-nucleo/json"); // 1. inspeccionar núcleo
+    assert_eq!(recibir(&receptor).objetivo, "/containers/c1-sidecar/json"); // 2. inspeccionar sidecar
+    let crear_sonda_de_cierre = recibir(&receptor);
+    assert_eq!(crear_sonda_de_cierre.objetivo, "/containers/create"); // 3. crear sonda de cierre
+    let cuerpo: serde_json::Value = serde_json::from_slice(&crear_sonda_de_cierre.cuerpo).unwrap();
+    assert_eq!(
+        cuerpo["Image"], "sonda-de-prueba:1",
+        "la imagen de la sonda de cierre sale de DatosDeSondeo, no de la constante por omisión"
+    );
+    assert_eq!(
+        cuerpo["HostConfig"]["NetworkMode"], "red-de-retirar",
+        "la red de la sonda de cierre sale de la inspección del núcleo, no del --id"
+    );
+    assert_eq!(
+        cuerpo["Cmd"],
+        serde_json::json!([
+            "wget",
+            "-q",
+            "-O",
+            "-",
+            "--post-data",
+            "",
+            "http://c1-nucleo:7070/admin/sesion/cierre"
+        ]),
+        "el Cmd de la sonda de cierre debe ser wget directo contra la URL de cierre, no el bucle de guion_de_sonda ni otra ruta"
+    );
+    assert_eq!(
+        recibir(&receptor).objetivo,
+        "/containers/sonda-cierre-1/start"
+    ); // 4. iniciar sonda
+    assert_eq!(
+        recibir(&receptor).objetivo,
+        "/containers/sonda-cierre-1/wait"
+    ); // 5. esperar sonda
+    let eliminar_sonda = recibir(&receptor);
+    assert_eq!(eliminar_sonda.objetivo, "/containers/sonda-cierre-1"); // 6. eliminar sonda
+    assert_eq!(eliminar_sonda.metodo, "DELETE");
+    assert_eq!(recibir(&receptor).objetivo, "/containers/c1-sidecar/stop"); // 7. detener sidecar
+    assert_eq!(recibir(&receptor).objetivo, "/containers/c1-nucleo/stop"); // 8. detener núcleo
+    let eliminar_sidecar = recibir(&receptor);
+    assert_eq!(eliminar_sidecar.objetivo, "/containers/c1-sidecar"); // 9. eliminar sidecar
+    assert_eq!(eliminar_sidecar.metodo, "DELETE");
+    let eliminar_nucleo = recibir(&receptor);
+    assert_eq!(eliminar_nucleo.objetivo, "/containers/c1-nucleo"); // 10. eliminar núcleo
+    assert_eq!(eliminar_nucleo.metodo, "DELETE");
+    let eliminar_volumen = recibir(&receptor);
+    assert_eq!(
+        eliminar_volumen.objetivo,
+        format!("/volumes/{VOLUMEN_DE_RETIRAR}")
+    ); // 11. eliminar volumen
+    assert_eq!(eliminar_volumen.metodo, "DELETE");
+}
+
+/// AC-1 (continuación): el Cmd de la sonda de cierre es el literal exacto de wget, no el bucle
+/// de guion_de_sonda. Se aserta independientemente para que una mutación que confunda ambas
+/// funciones se ponga roja.
+#[test]
+fn guion_de_cierre_de_sesion_es_el_literal_exacto_de_wget() {
+    let guion =
+        ciclo_de_vida::guion_de_cierre_de_sesion("http://c1-nucleo:7070/admin/sesion/cierre");
+
+    assert_eq!(
+        guion,
+        vec![
+            "wget",
+            "-q",
+            "-O",
+            "-",
+            "--post-data",
+            "",
+            "http://c1-nucleo:7070/admin/sesion/cierre",
+        ],
+        "el guion de cierre de sesión debe ser wget directo, sin bucle ni /bin/sh"
+    );
+}
+
+/// AC-2: `retirar` aborta con "célula no encontrada" si el núcleo no existe, sin emitir ninguna
+/// petición posterior. El recv_timeout garantiza que una petición faltante pone el test rojo en
+/// vez de colgarlo.
+#[test]
+fn retirar_aborta_con_celula_no_encontrada_si_falta_el_nucleo() {
+    let servidor = ServidorDockerFalso::nuevo("retirar-falta-nucleo");
+    let ruta = servidor.ruta();
+    let nombres = NombresDeCelula::nueva("c1");
+    let (emisor, receptor) = std::sync::mpsc::channel();
+    let _hilo = std::thread::spawn(move || {
+        let _ = emisor.send(servidor.atender(sin_cuerpo(404, "Not Found"))); // inspeccionar núcleo -> 404
+    });
+
+    let cliente = ClienteDocker::nuevo(ruta);
+    let resultado = ciclo_de_vida::retirar(&cliente, &nombres, &datos_de_sondeo());
+
+    match resultado {
+        Err(ErrorDeCicloDeVida::CelulaNoEncontrada) => {}
+        otro => panic!("se esperaba CelulaNoEncontrada, se obtuvo {otro:?}"),
+    }
+
+    // Solo una petición debe haber llegado: la inspección del núcleo.
+    let unica = recibir(&receptor);
+    assert_eq!(unica.objetivo, "/containers/c1-nucleo/json");
+
+    // Ninguna otra petición debe llegar: el timeout lo demuestra.
+    assert!(
+        receptor.recv_timeout(Duration::from_millis(100)).is_err(),
+        "no debe haber más peticiones tras el 404 del núcleo"
+    );
+}
+
+/// AC-3: `retirar` aborta con el mensaje exacto de célula pausada si el núcleo no está en
+/// ejecución, sin emitir ninguna petición posterior a la inspección.
+#[test]
+fn retirar_aborta_con_celula_pausada_si_el_nucleo_no_corre() {
+    let servidor = ServidorDockerFalso::nuevo("retirar-pausada");
+    let ruta = servidor.ruta();
+    let nombres = NombresDeCelula::nueva("c1");
+    let (emisor, receptor) = std::sync::mpsc::channel();
+    let _hilo = std::thread::spawn(move || {
+        let _ = emisor.send(servidor.atender(Guion::ConCuerpo {
+            estado: 200,
+            razon: "OK",
+            cuerpo: br#"{"State":{"Status":"exited"}}"#,
+        })); // inspeccionar núcleo -> exited
+    });
+
+    let cliente = ClienteDocker::nuevo(ruta);
+    let resultado = ciclo_de_vida::retirar(&cliente, &nombres, &datos_de_sondeo());
+
+    match resultado {
+        Err(ErrorDeCicloDeVida::CelulaPausada) => {}
+        otro => panic!("se esperaba CelulaPausada, se obtuvo {otro:?}"),
+    }
+
+    let mensaje = resultado.unwrap_err().to_string();
+    assert_eq!(
+        mensaje, "la célula está pausada: ejecute cell unpause antes de cell terminate",
+        "el mensaje debe ser el literal exacto"
+    );
+
+    // Solo una petición debe haber llegado: la inspección del núcleo.
+    let unica = recibir(&receptor);
+    assert_eq!(unica.objetivo, "/containers/c1-nucleo/json");
+
+    // Ninguna otra petición debe llegar.
+    assert!(
+        receptor.recv_timeout(Duration::from_millis(100)).is_err(),
+        "no debe haber más peticiones tras detectar núcleo pausado"
+    );
+}
+
+/// AC-2 (variante): `retirar` aborta con "célula no encontrada" si el sidecar no existe,
+/// después de inspeccionar el núcleo con éxito.
+#[test]
+fn retirar_aborta_con_celula_no_encontrada_si_falta_el_sidecar() {
+    let servidor = ServidorDockerFalso::nuevo("retirar-falta-sidecar");
+    let ruta = servidor.ruta();
+    let nombres = NombresDeCelula::nueva("c1");
+    let (emisor, receptor) = std::sync::mpsc::channel();
+    let _hilo = std::thread::spawn(move || {
+        let _ = emisor.send(servidor.atender(inspeccion_del_nucleo_para_retirar())); // núcleo OK
+        let _ = emisor.send(servidor.atender(sin_cuerpo(404, "Not Found"))); // sidecar -> 404
+    });
+
+    let cliente = ClienteDocker::nuevo(ruta);
+    let resultado = ciclo_de_vida::retirar(&cliente, &nombres, &datos_de_sondeo());
+
+    match resultado {
+        Err(ErrorDeCicloDeVida::CelulaNoEncontrada) => {}
+        otro => panic!("se esperaba CelulaNoEncontrada, se obtuvo {otro:?}"),
+    }
+
+    // Dos peticiones: inspección de núcleo y de sidecar.
+    assert_eq!(recibir(&receptor).objetivo, "/containers/c1-nucleo/json");
+    assert_eq!(recibir(&receptor).objetivo, "/containers/c1-sidecar/json");
+
+    // Ninguna otra petición.
+    assert!(
+        receptor.recv_timeout(Duration::from_millis(100)).is_err(),
+        "no debe haber más peticiones tras el 404 del sidecar"
+    );
+}
+
+/// AC-4: el nombre del volumen eliminado viene de la inspección del núcleo (Mounts[].Name),
+/// no se deriva del --id ni del container id. El volumen del accesorio tiene un nombre que no
+/// coincide con ningún patrón derivado de "c1".
+#[test]
+fn retirar_elimina_el_volumen_leido_de_la_inspeccion_no_uno_derivado_del_id() {
+    let servidor = ServidorDockerFalso::nuevo("retirar-volumen-de-inspeccion");
+    let ruta = servidor.ruta();
+    let nombres = NombresDeCelula::nueva("c1");
+    let (emisor, receptor) = std::sync::mpsc::channel();
+    let _hilo = std::thread::spawn(move || servir_retirar(&servidor, &emisor));
+
+    let cliente = ClienteDocker::nuevo(ruta);
+    let resultado = ciclo_de_vida::retirar(&cliente, &nombres, &datos_de_sondeo());
+    assert!(resultado.is_ok());
+
+    // Avanzar hasta la última petición (eliminar volumen).
+    for _ in 0..10 {
+        drop(recibir(&receptor));
+    }
+    let eliminar_volumen = recibir(&receptor);
+
+    // El nombre debe ser EXACTAMENTE el del accesorio, no "c1-datos" ni "c1-volumen" ni nada
+    // derivado del id.
+    assert_eq!(
+        eliminar_volumen.objetivo,
+        format!("/volumes/{VOLUMEN_DE_RETIRAR}"),
+        "el volumen eliminado debe ser el leído de la inspección, no uno derivado del id"
+    );
+}
+
+/// AC-5: si la sonda de cierre sale con código distinto de cero (la ruta respondió 502/504),
+/// `retirar` aborta con CierreDeSesionFallido y NO emite ninguna petición de stop, rm de
+/// contenedores de la célula, ni rm de volumen. La única eliminación posterior es la de la
+/// propia sonda de cierre.
+#[test]
+fn retirar_aborta_sin_destruir_nada_si_la_sonda_de_cierre_falla() {
+    let servidor = ServidorDockerFalso::nuevo("retirar-cierre-falla");
+    let ruta = servidor.ruta();
+    let nombres = NombresDeCelula::nueva("c1");
+    let (emisor, receptor) = std::sync::mpsc::channel();
+    let _hilo = std::thread::spawn(move || {
+        let _ = emisor.send(servidor.atender(inspeccion_del_nucleo_para_retirar())); // inspeccionar núcleo
+        let _ = emisor.send(servidor.atender(inspeccion_del_sidecar())); // inspeccionar sidecar
+        let _ = emisor.send(servidor.atender(Guion::ConCuerpo {
+            estado: 201,
+            razon: "Created",
+            cuerpo: br#"{"Id":"sonda-cierre-fallido","Warnings":[]}"#,
+        })); // crear sonda
+        let _ = emisor.send(servidor.atender(sin_cuerpo(204, "No Content"))); // iniciar sonda
+        let _ = emisor.send(servidor.atender(Guion::ConCuerpo {
+            estado: 200,
+            razon: "OK",
+            cuerpo: br#"{"StatusCode":1}"#,
+        })); // esperar sonda -> fallo
+        let _ = emisor.send(servidor.atender(sin_cuerpo(204, "No Content"))); // eliminar sonda (limpieza)
+    });
+
+    let cliente = ClienteDocker::nuevo(ruta);
+    let resultado = ciclo_de_vida::retirar(&cliente, &nombres, &datos_de_sondeo());
+
+    match &resultado {
+        Err(ErrorDeCicloDeVida::CierreDeSesionFallido { codigo }) => {
+            assert_eq!(*codigo, 1, "el código debe ser el de la sonda");
+        }
+        otro => panic!("se esperaba CierreDeSesionFallido, se obtuvo {otro:?}"),
+    }
+
+    // Verificar que solo llegaron 6 peticiones: 2 inspecciones + 4 de la sonda (create, start, wait, delete).
+    assert_eq!(recibir(&receptor).objetivo, "/containers/c1-nucleo/json");
+    assert_eq!(recibir(&receptor).objetivo, "/containers/c1-sidecar/json");
+    assert_eq!(recibir(&receptor).objetivo, "/containers/create");
+    assert_eq!(
+        recibir(&receptor).objetivo,
+        "/containers/sonda-cierre-fallido/start"
+    );
+    assert_eq!(
+        recibir(&receptor).objetivo,
+        "/containers/sonda-cierre-fallido/wait"
+    );
+    let eliminar_sonda = recibir(&receptor);
+    assert_eq!(eliminar_sonda.objetivo, "/containers/sonda-cierre-fallido");
+    assert_eq!(eliminar_sonda.metodo, "DELETE");
+
+    // Ninguna petición de stop, rm de contenedores de la célula, ni rm de volumen.
+    assert!(
+        receptor.recv_timeout(Duration::from_millis(100)).is_err(),
+        "no debe haber peticiones de stop/rm tras el fallo del cierre de sesión"
+    );
+}

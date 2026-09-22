@@ -429,36 +429,31 @@ fn ejecutar_con_efectos_despacha_reanudar_a_ciclo_de_vida() {
     esperar_guion(&receptor);
 }
 
-/// AC-6: `cell terminate` y `cell rebind` siguen devolviendo `NoImplementadoTodavia` a través de
+/// AC-6: con HEX-082 (terminate) y HEX-083 (list, status) ya fusionados, `cell rebind` es el
+/// ÚNICO subcomando que sigue devolviendo `NoImplementadoTodavia` a través de
 /// `ejecutar_con_efectos`, sin `--simular`. El cliente apunta a un socket sin vincular a
-/// propósito: si el despacho intentara tocar Docker para cualquiera de los dos, la operación
-/// fallaría con `DemonioInalcanzable` (código `Fallo`) en vez de devolver `NoImplementadoTodavia`,
-/// así que el propio código de salida es la prueba de que ningún `ClienteDocker` se invocó.
+/// propósito: si el despacho intentara tocar Docker para él, la operación fallaría con
+/// `DemonioInalcanzable` (código `Fallo`) en vez de devolver `NoImplementadoTodavia`, así que el
+/// propio código de salida es la prueba de que ningún `ClienteDocker` se invocó.
 #[test]
-fn ejecutar_con_efectos_deja_los_otros_dos_subcomandos_en_no_implementado_sin_tocar_docker() {
+fn ejecutar_con_efectos_deja_rebind_en_no_implementado_sin_tocar_docker() {
     let ruta = ruta_socket_sin_vincular("efectos-sin-docker");
     let cliente = ClienteDocker::nuevo(ruta.clone());
     let inventario = InventarioDocker::nuevo(ruta, std::time::Duration::from_secs(10));
     let almacen = AlmacenTemporal::nuevo("efectos-sin-docker");
     let ruta_almacen = almacen.texto();
-    let casos = [
-        (
-            &["cell", "terminate", "--id", "c1", "--confirmar"][..],
-            "terminate",
-        ),
-        (
-            &[
-                "cell",
-                "rebind",
-                "--id",
-                "c1",
-                "--motivo",
-                "x",
-                "--confirmar",
-            ][..],
+    let casos = [(
+        &[
+            "cell",
             "rebind",
-        ),
-    ];
+            "--id",
+            "c1",
+            "--motivo",
+            "x",
+            "--confirmar",
+        ][..],
+        "rebind",
+    )];
     for (snippet, nombre) in casos {
         let (codigo, estandar, diagnostico) =
             ejecutar_con_efectos_con(snippet, &cliente, &inventario, &ruta_almacen);
@@ -859,6 +854,225 @@ fn cell_unpause_sin_fila_da_de_alta_con_alta_implicita() {
         fila_de(&c.almacen, "c1").as_deref(),
         Some("en_ejecucion alta_implicita 1700000000000")
     );
+}
+
+// ============================================================================
+// Tests de terminate (HEX-082-b)
+// ============================================================================
+
+/// Nombre de volumen del accesorio para terminate: no derivable del --id.
+const VOLUMEN_DE_TERMINATE: &str = "volumen-datos-terminate-z8w3q5";
+
+/// Inspección del núcleo para terminate: con red, puerto de admin y volumen del accesorio.
+fn inspeccion_nucleo_para_terminate() -> Guion {
+    Guion::ConCuerpo {
+        estado: 200,
+        razon: "OK",
+        cuerpo: br#"{"State":{"Status":"running"},"NetworkSettings":{"Networks":{"red-terminate":{"NetworkID":"n1"}}},"Config":{"Env":["PATH=/usr/bin","HEXCELL_DIRECCION_ADMIN=0.0.0.0:7071"]},"Mounts":[{"Type":"volume","Name":"volumen-datos-terminate-z8w3q5","Destination":"/var/lib/hexcell"}]}"#,
+    }
+}
+
+/// Sirve las peticiones de un terminate exitoso.
+fn servir_terminate(servidor: ServidorDockerFalso) -> std::sync::mpsc::Receiver<()> {
+    let (emisor, receptor) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        servidor.atender(inspeccion_nucleo_para_terminate()); // inspeccionar núcleo
+        servidor.atender(Guion::ConCuerpo {
+            estado: 200,
+            razon: "OK",
+            cuerpo: br#"{"State":{"Status":"running"}}"#,
+        }); // inspeccionar sidecar
+        servidor.atender(Guion::ConCuerpo {
+            estado: 201,
+            razon: "Created",
+            cuerpo: br#"{"Id":"sonda-cierre","Warnings":[]}"#,
+        }); // crear sonda
+        servidor.atender(sin_cuerpo(204, "No Content")); // iniciar sonda
+        servidor.atender(Guion::ConCuerpo {
+            estado: 200,
+            razon: "OK",
+            cuerpo: br#"{"StatusCode":0}"#,
+        }); // esperar sonda
+        servidor.atender(sin_cuerpo(204, "No Content")); // eliminar sonda
+        servidor.atender(sin_cuerpo(204, "No Content")); // detener sidecar
+        servidor.atender(sin_cuerpo(204, "No Content")); // detener núcleo
+        servidor.atender(sin_cuerpo(204, "No Content")); // eliminar sidecar
+        servidor.atender(sin_cuerpo(204, "No Content")); // eliminar núcleo
+        servidor.atender(sin_cuerpo(204, "No Content")); // eliminar volumen
+        let _ = emisor.send(());
+    });
+    receptor
+}
+
+/// Sirve las peticiones de un terminate que aborta en el paso 3: la sonda de cierre de sesión
+/// responde con código de salida distinto de cero, así que ningún `stop` ni `rm` se emite
+/// después de su propia limpieza (R6).
+fn servir_terminate_con_cierre_fallido(
+    servidor: ServidorDockerFalso,
+) -> std::sync::mpsc::Receiver<()> {
+    let (emisor, receptor) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        servidor.atender(inspeccion_nucleo_para_terminate()); // inspeccionar núcleo
+        servidor.atender(Guion::ConCuerpo {
+            estado: 200,
+            razon: "OK",
+            cuerpo: br#"{"State":{"Status":"running"}}"#,
+        }); // inspeccionar sidecar
+        servidor.atender(Guion::ConCuerpo {
+            estado: 201,
+            razon: "Created",
+            cuerpo: br#"{"Id":"sonda-cierre","Warnings":[]}"#,
+        }); // crear sonda
+        servidor.atender(sin_cuerpo(204, "No Content")); // iniciar sonda
+        servidor.atender(Guion::ConCuerpo {
+            estado: 200,
+            razon: "OK",
+            cuerpo: br#"{"StatusCode":1}"#,
+        }); // esperar sonda: cierre de sesión fallido
+        servidor.atender(sin_cuerpo(204, "No Content")); // eliminar sonda (limpieza en ambos caminos)
+        let _ = emisor.send(());
+    });
+    receptor
+}
+
+/// AC-9: `cell terminate --id X --confirmar` despacha a `ciclo_de_vida::retirar` a través de
+/// `ejecutar_con_efectos`, imprimiendo las tres líneas fijas en el sumidero estándar.
+#[test]
+fn ejecutar_con_efectos_despacha_terminate_a_ciclo_de_vida() {
+    let servidor = ServidorDockerFalso::nuevo("efectos-terminate");
+    let ruta = servidor.ruta();
+    let receptor = servir_terminate(servidor);
+
+    let cliente = ClienteDocker::nuevo(ruta.clone());
+    let inventario = InventarioDocker::nuevo(ruta, std::time::Duration::from_secs(10));
+    let almacen = AlmacenTemporal::nuevo("efectos-terminate");
+    let (codigo, estandar, diagnostico) = ejecutar_con_efectos_con(
+        &["cell", "terminate", "--id", "c1", "--confirmar"],
+        &cliente,
+        &inventario,
+        &almacen.texto(),
+    );
+
+    assert_eq!(codigo, CodigoDeSalida::Exito, "diag: {diagnostico:?}");
+    assert_eq!(
+        estandar,
+        format!(
+            "sesión cerrada\ncontenedores eliminados\nvolumen {VOLUMEN_DE_TERMINATE} eliminado\n"
+        ),
+        "las tres líneas fijas en orden"
+    );
+    assert!(diagnostico.is_empty(), "diagnóstico vacío: {diagnostico:?}");
+
+    esperar_guion(&receptor);
+}
+
+/// AC-9: `cell terminate --simular` sigue resolviéndose por `comandos::ejecutar` sin construir
+/// ningún `ClienteDocker`: el socket sin vincular haría fallar a Docker, pero el modo simulación
+/// short-circuita antes de tocar nada.
+#[test]
+fn ejecutar_con_efectos_resuelve_terminate_simular_sin_construir_cliente_docker() {
+    let ruta = ruta_socket_sin_vincular("efectos-terminate-simular");
+    let cliente = ClienteDocker::nuevo(ruta.clone());
+    let inventario = InventarioDocker::nuevo(ruta, std::time::Duration::from_secs(10));
+    let almacen = AlmacenTemporal::nuevo("efectos-terminate-simular");
+
+    let (codigo, estandar, diagnostico) = ejecutar_con_efectos_con(
+        &[
+            "cell",
+            "terminate",
+            "--id",
+            "c1",
+            "--confirmar",
+            "--simular",
+        ],
+        &cliente,
+        &inventario,
+        &almacen.texto(),
+    );
+
+    assert_eq!(codigo, CodigoDeSalida::Exito);
+    assert_eq!(
+        estandar,
+        "simulación: cell terminate --id c1 -> estado objetivo: retirada\n"
+    );
+    assert!(diagnostico.is_empty());
+}
+
+/// R6 (ratificación 2026-09-22): tras el éxito de los seis pasos de `ciclo_de_vida::retirar`,
+/// `ejecutar_con_efectos` persiste `Retirada` con motivo `sesion_cerrada`. Sin fila previa en el
+/// almacén, la transición se inserta directamente con el origen vacío, igual que la alta
+/// implícita de `cell pause`/`cell unpause` pero con su propio motivo fijo.
+#[test]
+fn cell_terminate_persiste_retirada_con_motivo_sesion_cerrada() {
+    let servidor = ServidorDockerFalso::nuevo("terminate-persiste");
+    let ruta = servidor.ruta();
+    let receptor = servir_terminate(servidor);
+
+    let cliente = ClienteDocker::nuevo(ruta.clone());
+    let inventario = InventarioDocker::nuevo(ruta, std::time::Duration::from_secs(10));
+    let almacen = AlmacenTemporal::nuevo("terminate-persiste");
+    let (codigo, estandar, diagnostico) = ejecutar_con_efectos_con(
+        &["cell", "terminate", "--id", "c1", "--confirmar"],
+        &cliente,
+        &inventario,
+        &almacen.texto(),
+    );
+
+    assert_eq!(codigo, CodigoDeSalida::Exito, "diag: {diagnostico:?}");
+    assert!(!estandar.is_empty(), "las tres líneas fijas salieron");
+    assert_eq!(
+        fila_de(&almacen, "c1").as_deref(),
+        Some("retirada sesion_cerrada 1700000000000"),
+        "la fila queda en retirada con el motivo sesion_cerrada y el reloj inyectado"
+    );
+    assert_eq!(
+        transiciones_de(&almacen),
+        ["c1 >retirada sesion_cerrada 1700000000000"],
+        "sin fila previa, la transición se inserta con el origen vacío"
+    );
+
+    esperar_guion(&receptor);
+}
+
+/// R6: si el paso 3 (`POST /admin/sesion/cierre`) falla, `ciclo_de_vida::retirar` devuelve
+/// `Err` ANTES de llegar al paso 6, así que `ejecutar_con_efectos` nunca invoca
+/// `registrar_transicion`: el almacén queda idéntico byte a byte, igual que en el camino de
+/// fallo de Docker de `cell pause`/`cell unpause`.
+#[test]
+fn cell_terminate_no_toca_el_almacen_cuando_el_cierre_de_sesion_falla() {
+    let servidor = ServidorDockerFalso::nuevo("terminate-cierre-fallido");
+    let ruta = servidor.ruta();
+    let receptor = servir_terminate_con_cierre_fallido(servidor);
+
+    let cliente = ClienteDocker::nuevo(ruta.clone());
+    let inventario = InventarioDocker::nuevo(ruta, std::time::Duration::from_secs(10));
+    let almacen = AlmacenTemporal::nuevo("terminate-cierre-fallido");
+    sembrar_fila(&almacen, "c1", EstadoDeCelula::EnEjecucion);
+    let bytes_antes = almacen.bytes();
+
+    let (codigo, estandar, diagnostico) = ejecutar_con_efectos_con(
+        &["cell", "terminate", "--id", "c1", "--confirmar"],
+        &cliente,
+        &inventario,
+        &almacen.texto(),
+    );
+
+    assert_eq!(codigo, CodigoDeSalida::Fallo);
+    assert!(estandar.is_empty(), "estándar vacío: {estandar:?}");
+    assert!(!diagnostico.is_empty(), "el fallo se diagnostica");
+    assert_eq!(
+        almacen.bytes(),
+        bytes_antes,
+        "el almacén queda idéntico byte a byte cuando el cierre de sesión falla"
+    );
+    assert_eq!(
+        fila_de(&almacen, "c1").as_deref(),
+        Some("en_ejecucion sembrada 1"),
+        "la fila sembrada no se toca"
+    );
+    assert!(transiciones_de(&almacen).is_empty());
+
+    esperar_guion(&receptor);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────────────────

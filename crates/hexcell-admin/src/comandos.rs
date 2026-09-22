@@ -16,7 +16,9 @@ use std::collections::BTreeSet;
 use std::io::Write;
 use std::path::Path;
 
-use crate::almacen_plano_de_control::{AlmacenDelPlanoDeControl, MOTIVO_DE_ALTA_IMPLICITA};
+use crate::almacen_plano_de_control::{
+    AlmacenDelPlanoDeControl, MOTIVO_DE_ALTA_IMPLICITA, MOTIVO_DE_SESION_CERRADA,
+};
 use crate::argumentos::{
     Comando, ErrorDeArgumentos, Invocacion, InvocacionReporte, Subcomando, TEXTO_DE_USO,
 };
@@ -242,7 +244,7 @@ pub fn ejecutar_con_efectos<S: Write, D: Write>(
     // `id` se exigiera primero, `cell list` sin `--simular` devolvería `Fallo` en vez de
     // `NoImplementadoTodavia`, rompiendo AC-6 para el único subcomando sin identificador.
     match invocacion.subcomando() {
-        Subcomando::Retirar | Subcomando::Reemparejar => {
+        Subcomando::Reemparejar => {
             return ejecutar(Ok(Comando::Cell(invocacion)), salida);
         }
         Subcomando::Listar => {
@@ -255,18 +257,20 @@ pub fn ejecutar_con_efectos<S: Write, D: Write>(
             };
             return ejecutar_estado(salida, cliente, inventario, ruta_almacen, id, &datos);
         }
-        Subcomando::Pausar | Subcomando::Reanudar => {}
+        Subcomando::Pausar | Subcomando::Reanudar | Subcomando::Retirar => {}
     }
     let id = match invocacion.id() {
         Some(id) => id,
         None => return CodigoDeSalida::Fallo,
     };
-    let estado_objetivo = if invocacion.subcomando() == Subcomando::Pausar {
-        EstadoDeCelula::Suspendida
-    } else {
-        EstadoDeCelula::EnEjecucion
+    let estado_objetivo = match invocacion.subcomando() {
+        Subcomando::Pausar => EstadoDeCelula::Suspendida,
+        Subcomando::Retirar => EstadoDeCelula::Retirada,
+        _ => EstadoDeCelula::EnEjecucion,
     };
-    // Abrir el almacén y validar la transición ANTES de cualquier petición Docker.
+    // Abrir el almacén y validar la transición ANTES de cualquier petición Docker. Vale para los
+    // tres subcomandos que llegan aquí: `cell terminate` reutiliza el mismo camino de validación
+    // que `pause`/`unpause` en vez de duplicarlo (ratificación R6).
     let almacen = match AlmacenDelPlanoDeControl::abrir(Path::new(ruta_almacen)) {
         Ok(a) => a,
         Err(error) => {
@@ -286,6 +290,41 @@ pub fn ejecutar_con_efectos<S: Write, D: Write>(
     }
     // Sólo ahora se emiten las peticiones Docker.
     let nombres = NombresDeCelula::nueva(id);
+    // `cell terminate` tiene su propia secuencia de salida (tres líneas fijas) y no usa el
+    // formateador genérico «cell {subcomando} completado para «{id}»». Persiste `Retirada` con
+    // motivo `MOTIVO_DE_SESION_CERRADA` sólo tras el éxito del paso 6 de
+    // `ciclo_de_vida::retirar` (adr-0039, R6); sin fila previa se inserta directamente con ese
+    // motivo y el origen vacío, igual que la alta implícita de `pause`/`unpause` pero con su
+    // propio motivo.
+    if invocacion.subcomando() == Subcomando::Retirar {
+        return match ciclo_de_vida::retirar(cliente, &nombres, &datos) {
+            Ok(volumen) => {
+                if let Err(error) = almacen.registrar_transicion(
+                    id,
+                    fila_existente.as_ref().map(|f| f.estado),
+                    EstadoDeCelula::Retirada,
+                    MOTIVO_DE_SESION_CERRADA,
+                    ahora_ms,
+                ) {
+                    return diagnosticar_fallo(salida, &error.to_string());
+                }
+                if salida.linea("sesión cerrada").is_err() {
+                    return CodigoDeSalida::Fallo;
+                }
+                if salida.linea("contenedores eliminados").is_err() {
+                    return CodigoDeSalida::Fallo;
+                }
+                match salida.linea(&format!("volumen {volumen} eliminado")) {
+                    Ok(()) => CodigoDeSalida::Exito,
+                    Err(_) => CodigoDeSalida::Fallo,
+                }
+            }
+            Err(error) => match salida.diagnostico(&error.to_string()) {
+                Ok(()) => CodigoDeSalida::Fallo,
+                Err(_) => CodigoDeSalida::Fallo,
+            },
+        };
+    }
     let resultado_docker = if invocacion.subcomando() == Subcomando::Pausar {
         ciclo_de_vida::pausar(cliente, &nombres)
     } else {

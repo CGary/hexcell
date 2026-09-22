@@ -4,6 +4,13 @@ use std::fmt;
 
 use crate::docker::{ClienteDocker, ErrorDeClienteDocker, OpcionesDeContenedor};
 
+/// Ruta de montaje del volumen de datos de la célula, hardcoded en un único lugar.
+///
+/// El nombre del volumen se lee de `Mounts[].Name` de la inspección del núcleo, pero el punto de
+/// montaje es una constante: la plantilla de célula lo fija en la ruta de datos y ninguna otra
+/// ruta cuenta como volumen de datos.
+const RUTA_DE_DATOS_DE_CELULA: &str = "/var/lib/hexcell";
+
 /// Intervalo entre intentos de la sonda, en milisegundos.
 pub const CADENCIA_DE_SONDEO_MS: u64 = 100;
 /// Tiempo máximo que se concede a la sonda.
@@ -76,6 +83,12 @@ pub enum ErrorDeCicloDeVida {
     TiempoDeSondeoAgotado { limite_segundos: u64 },
     /// La imagen auxiliar no está disponible en el demonio.
     ImagenDeSondaNoEncontrada { imagen: String },
+    /// La célula no existe: falta el núcleo o el sidecar.
+    CelulaNoEncontrada,
+    /// La célula está pausada: el núcleo no está en ejecución.
+    CelulaPausada,
+    /// El cierre de sesión falló: la sonda de cierre salió con código distinto de cero.
+    CierreDeSesionFallido { codigo: i64 },
 }
 
 impl fmt::Display for ErrorDeCicloDeVida {
@@ -92,6 +105,15 @@ impl fmt::Display for ErrorDeCicloDeVida {
             Self::ImagenDeSondaNoEncontrada { imagen } => write!(
                 f,
                 "la imagen de sonda «{imagen}» no existe en Docker; hay que traerla antes de reanudar"
+            ),
+            Self::CelulaNoEncontrada => write!(f, "célula no encontrada"),
+            Self::CelulaPausada => write!(
+                f,
+                "la célula está pausada: ejecute cell unpause antes de cell terminate"
+            ),
+            Self::CierreDeSesionFallido { codigo } => write!(
+                f,
+                "el cierre de sesión falló: la sonda de cierre salió con código {codigo}"
             ),
         }
     }
@@ -117,9 +139,91 @@ pub fn pausar(
     cliente: &ClienteDocker,
     nombres: &NombresDeCelula,
 ) -> Result<(), ErrorDeCicloDeVida> {
+    detener_ambos_sin_plazo(cliente, nombres)
+}
+
+/// Detiene primero el sidecar y después el núcleo, sin fijar el plazo desde la CLI.
+///
+/// Función compartida entre `pausar` y `retirar`: el orden (sidecar primero, núcleo después) y la
+/// ausencia del parámetro `t` son invariantes de ambas operaciones. El plazo de gracia lo fija el
+/// `stop_grace_period` de la plantilla de célula, única fuente de verdad.
+fn detener_ambos_sin_plazo(
+    cliente: &ClienteDocker,
+    nombres: &NombresDeCelula,
+) -> Result<(), ErrorDeCicloDeVida> {
     cliente.detener_contenedor_sin_plazo(&nombres.sidecar)?;
     cliente.detener_contenedor_sin_plazo(&nombres.nucleo)?;
     Ok(())
+}
+
+/// Lee la red del núcleo desde su inspección: la primera clave de `NetworkSettings.Networks`.
+fn red_de_inspeccion(inspeccion: &serde_json::Value) -> Result<String, ErrorDeCicloDeVida> {
+    inspeccion
+        .pointer("/NetworkSettings/Networks")
+        .and_then(serde_json::Value::as_object)
+        .and_then(|redes| redes.keys().next())
+        .cloned()
+        .ok_or_else(|| {
+            ErrorDeCicloDeVida::Configuracion("el núcleo no declara una red".to_string())
+        })
+}
+
+/// Lee el puerto de una variable de entorno del núcleo, parametrizado por el nombre de la variable.
+///
+/// La variable se busca en `Config.Env` y se extrae el puerto tras el último `:`. Hoy se usa para
+/// `HEXCELL_DIRECCION_SALUD` (reanudar) y `HEXCELL_DIRECCION_ADMIN` (retirar).
+fn puerto_de_inspeccion(
+    inspeccion: &serde_json::Value,
+    variable: &str,
+) -> Result<String, ErrorDeCicloDeVida> {
+    let direccion = inspeccion
+        .pointer("/Config/Env")
+        .and_then(serde_json::Value::as_array)
+        .and_then(|variables| {
+            variables.iter().find_map(|variable_valor| {
+                let prefijo = format!("{variable}=");
+                variable_valor
+                    .as_str()?
+                    .strip_prefix(&prefijo)
+                    .map(str::to_string)
+            })
+        })
+        .ok_or_else(|| {
+            ErrorDeCicloDeVida::Configuracion(format!("falta {variable} en el núcleo"))
+        })?;
+    direccion
+        .rsplit_once(':')
+        .map(|(_, puerto)| puerto.to_string())
+        .filter(|puerto| !puerto.is_empty())
+        .ok_or_else(|| {
+            ErrorDeCicloDeVida::Configuracion(format!("{variable} no contiene un puerto"))
+        })
+}
+
+/// Lee el nombre del volumen de datos del núcleo desde su inspección.
+///
+/// Busca en `Mounts[]` la entrada cuyo `Destination` es la ruta de datos de la célula y devuelve
+/// su `Name`. El nombre NUNCA se deriva del `--id` ni del identificador del contenedor: viene de
+/// la propia inspección de Docker.
+fn volumen_de_inspeccion(inspeccion: &serde_json::Value) -> Result<String, ErrorDeCicloDeVida> {
+    inspeccion
+        .pointer("/Mounts")
+        .and_then(serde_json::Value::as_array)
+        .and_then(|montajes| {
+            montajes.iter().find_map(|montaje| {
+                let destino = montaje.get("Destination")?.as_str()?;
+                if destino == RUTA_DE_DATOS_DE_CELULA {
+                    montaje.get("Name")?.as_str().map(str::to_string)
+                } else {
+                    None
+                }
+            })
+        })
+        .ok_or_else(|| {
+            ErrorDeCicloDeVida::Configuracion(format!(
+                "el núcleo no monta un volumen en {RUTA_DE_DATOS_DE_CELULA}"
+            ))
+        })
 }
 
 /// Arranca la célula y espera la disponibilidad mediante un contenedor hermano.
@@ -132,39 +236,8 @@ pub fn reanudar(
     cliente.iniciar_contenedor(&nombres.sidecar)?;
 
     let inspeccion = cliente.inspeccionar_contenedor(&nombres.nucleo)?;
-    let red = inspeccion
-        .pointer("/NetworkSettings/Networks")
-        .and_then(serde_json::Value::as_object)
-        .and_then(|redes| redes.keys().next())
-        .cloned()
-        .ok_or_else(|| {
-            ErrorDeCicloDeVida::Configuracion("el núcleo no declara una red".to_string())
-        })?;
-    let direccion = inspeccion
-        .pointer("/Config/Env")
-        .and_then(serde_json::Value::as_array)
-        .and_then(|variables| {
-            variables.iter().find_map(|variable| {
-                variable
-                    .as_str()?
-                    .strip_prefix("HEXCELL_DIRECCION_SALUD=")
-                    .map(str::to_string)
-            })
-        })
-        .ok_or_else(|| {
-            ErrorDeCicloDeVida::Configuracion(
-                "falta HEXCELL_DIRECCION_SALUD en el núcleo".to_string(),
-            )
-        })?;
-    let puerto = direccion
-        .rsplit_once(':')
-        .map(|(_, puerto)| puerto)
-        .filter(|puerto| !puerto.is_empty())
-        .ok_or_else(|| {
-            ErrorDeCicloDeVida::Configuracion(
-                "HEXCELL_DIRECCION_SALUD no contiene un puerto".to_string(),
-            )
-        })?;
+    let red = red_de_inspeccion(&inspeccion)?;
+    let puerto = puerto_de_inspeccion(&inspeccion, "HEXCELL_DIRECCION_SALUD")?;
     let url = format!("http://{}:{}/health/ready", nombres.nucleo, puerto);
     let opciones = OpcionesDeContenedor {
         red,
@@ -317,4 +390,117 @@ fn cadencia_en_segundos(milisegundos: u64) -> String {
     }
     let fraccion = format!("{resto:03}");
     format!("{enteros}.{}", fraccion.trim_end_matches('0'))
+}
+
+/// Produce el comando que ejecuta el cierre de sesión dentro de la red de la célula.
+///
+/// A diferencia de [`guion_de_sonda`], este es un disparo único sin bucle: `wget -q -O - --post-data ''`
+/// contra la ruta de cierre. El código de salida de `wget` es el veredicto: 0 si la ruta respondió
+/// con 2xx, distinto de cero en caso contrario (502, 504, conexión reseteada, etc.).
+pub fn guion_de_cierre_de_sesion(url: &str) -> Vec<String> {
+    vec![
+        "wget".to_string(),
+        "-q".to_string(),
+        "-O".to_string(),
+        "-".to_string(),
+        "--post-data".to_string(),
+        "".to_string(),
+        url.to_string(),
+    ]
+}
+
+/// Retira definitivamente una célula: cierra la sesión, detiene ambos contenedores y elimina
+/// los contenedores y el volumen de datos.
+///
+/// Secuencia de seis pasos, abortando al primer fallo:
+/// 1. Inspeccionar el núcleo; si no existe, `CelulaNoEncontrada`; si no está en ejecución,
+///    `CelulaPausada`.
+/// 2. Inspeccionar el sidecar; si no existe, `CelulaNoEncontrada`.
+/// 3. Resolver red, puerto de admin y nombre del volumen desde la inspección del núcleo.
+/// 4. POST `/admin/sesion/cierre` mediante un contenedor hermano; si falla, abortar sin destruir
+///    nada (salvo la propia sonda de cierre).
+/// 5. Detener sidecar y núcleo (sin plazo explícito, rige el `stop_grace_period`).
+/// 6. Eliminar sidecar, núcleo y volumen; devolver el nombre del volumen eliminado.
+pub fn retirar(
+    cliente: &ClienteDocker,
+    nombres: &NombresDeCelula,
+    datos: &DatosDeSondeo,
+) -> Result<String, ErrorDeCicloDeVida> {
+    // Paso 1: inspeccionar el núcleo.
+    let inspeccion_nucleo = match cliente.inspeccionar_contenedor(&nombres.nucleo) {
+        Ok(inspeccion) => inspeccion,
+        Err(ErrorDeClienteDocker::NoEncontrado) => {
+            return Err(ErrorDeCicloDeVida::CelulaNoEncontrada);
+        }
+        Err(error) => return Err(error.into()),
+    };
+
+    // Verificar que el núcleo está en ejecución.
+    let estado = inspeccion_nucleo
+        .pointer("/State/Status")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| {
+            ErrorDeCicloDeVida::Configuracion("el núcleo no declara su estado".to_string())
+        })?;
+    if estado != "running" {
+        return Err(ErrorDeCicloDeVida::CelulaPausada);
+    }
+
+    // Paso 2: inspeccionar el sidecar.
+    match cliente.inspeccionar_contenedor(&nombres.sidecar) {
+        Ok(_) => {}
+        Err(ErrorDeClienteDocker::NoEncontrado) => {
+            return Err(ErrorDeCicloDeVida::CelulaNoEncontrada);
+        }
+        Err(error) => return Err(error.into()),
+    }
+
+    // Paso 3: resolver red, puerto y volumen desde la inspección del núcleo.
+    let red = red_de_inspeccion(&inspeccion_nucleo)?;
+    let puerto = puerto_de_inspeccion(&inspeccion_nucleo, "HEXCELL_DIRECCION_ADMIN")?;
+    let volumen = volumen_de_inspeccion(&inspeccion_nucleo)?;
+
+    // Paso 4: POST /admin/sesion/cierre mediante un contenedor hermano.
+    let url = format!("http://{}:{}/admin/sesion/cierre", nombres.nucleo, puerto);
+    let opciones = OpcionesDeContenedor {
+        red,
+        cmd: guion_de_cierre_de_sesion(&url),
+    };
+    let sonda = match cliente.crear_e_iniciar_contenedor_con_opciones(&datos.imagen, opciones) {
+        Ok(resultado) => match resultado {
+            crate::docker::ResultadoDeArranque::Iniciado { id_contenedor }
+            | crate::docker::ResultadoDeArranque::YaEnEjecucion { id_contenedor } => id_contenedor,
+        },
+        Err(ErrorDeClienteDocker::NoEncontrado) => {
+            return Err(ErrorDeCicloDeVida::ImagenDeSondaNoEncontrada {
+                imagen: datos.imagen.clone(),
+            });
+        }
+        Err(error) => return Err(error.into()),
+    };
+
+    // Esperar y limpiar la sonda de cierre en ambos caminos (éxito y fallo).
+    let espera = cliente.esperar_contenedor(&sonda);
+    let limpieza = cliente.eliminar_contenedor(&sonda);
+    let codigo = match (espera, limpieza) {
+        (Ok(codigo), Ok(())) => codigo,
+        (Err(error), Ok(())) => return Err(error.into()),
+        (Ok(_), Err(error)) => return Err(error.into()),
+        (Err(error), Err(_)) => return Err(error.into()),
+    };
+
+    // Si el cierre de sesión falló, abortar sin destruir nada.
+    if codigo != 0 {
+        return Err(ErrorDeCicloDeVida::CierreDeSesionFallido { codigo });
+    }
+
+    // Paso 5: detener sidecar y núcleo.
+    detener_ambos_sin_plazo(cliente, nombres)?;
+
+    // Paso 6: eliminar sidecar, núcleo y volumen.
+    cliente.eliminar_contenedor(&nombres.sidecar)?;
+    cliente.eliminar_contenedor(&nombres.nucleo)?;
+    cliente.eliminar_volumen(&volumen)?;
+
+    Ok(volumen)
 }
