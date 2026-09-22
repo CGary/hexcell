@@ -442,20 +442,18 @@ fn ejecutar_con_efectos_deja_rebind_en_no_implementado_sin_tocar_docker() {
     let inventario = InventarioDocker::nuevo(ruta, std::time::Duration::from_secs(10));
     let almacen = AlmacenTemporal::nuevo("efectos-sin-docker");
     let ruta_almacen = almacen.texto();
-    let casos = [
-        (
-            &[
-                "cell",
-                "rebind",
-                "--id",
-                "c1",
-                "--motivo",
-                "x",
-                "--confirmar",
-            ][..],
+    let casos = [(
+        &[
+            "cell",
             "rebind",
-        ),
-    ];
+            "--id",
+            "c1",
+            "--motivo",
+            "x",
+            "--confirmar",
+        ][..],
+        "rebind",
+    )];
     for (snippet, nombre) in casos {
         let (codigo, estandar, diagnostico) =
             ejecutar_con_efectos_con(snippet, &cliente, &inventario, &ruta_almacen);
@@ -856,6 +854,8 @@ fn cell_unpause_sin_fila_da_de_alta_con_alta_implicita() {
         fila_de(&c.almacen, "c1").as_deref(),
         Some("en_ejecucion alta_implicita 1700000000000")
     );
+}
+
 // ============================================================================
 // Tests de terminate (HEX-082-b)
 // ============================================================================
