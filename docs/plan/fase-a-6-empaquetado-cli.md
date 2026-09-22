@@ -327,12 +327,23 @@ Las entradas conservan su numeración; esta sección es la autoridad sobre el or
     declarado pero inerte porque la tarea 12 no está fusionada en main. La tabla `sustituciones` se
     crea pero sólo se lee; la tarea 13 (cell rebind) es la que escribe en ella. Registrados
     `adr-0039` (almacén del plano de control) y D-58 (descarte de un crate de migraciones).
+
+    **Seguimiento 2026-09-22 (HEX-083):** la revisión dejó tres asimetrías de prueba sin cerrar,
+    trasladadas a la tarea 15: la respuesta 500 de Docker sólo se prueba para el contenedor del
+    núcleo, DISC-05 no tiene el caso del par a medias (un contenedor presente y el otro ausente) y
+    DISC-03 no tiene el caso de sonda inalcanzable. El gancho `terminate → Retirada` se cablea en la
+    fusión de HEX-082 (tarea 12), no en una tarea nueva.
 15. **Dotar de idempotencia y recuperación a los comandos** (1 día). Reejecución segura tras un fallo
     parcial, con detección del punto en que quedó la secuencia.
 
     **Nota 2026-09-21:** al tocar el cliente Docker, fundir `detener_contenedor` (con `t=30`, sin
     llamadores en producción desde HEX-080) y `detener_contenedor_sin_plazo` en una sola operación con
     plazo opcional, y trasladar la prueba correspondiente de HEX-074-b.
+
+    **Nota 2026-09-22:** hereda de la tarea 14 (HEX-083) tres pruebas de ruta de fallo que faltan en
+    `cell status`: respuesta 500 de Docker también para el sidecar, DISC-05 con el par de contenedores
+    a medias y DISC-03 con la sonda inalcanzable. Son rutas de recuperación, que es lo que esta tarea
+    endurece.
 16. **Medir memoria y tamaño de imágenes** (0,5 días). Consumo de la célula completa en reposo y bajo
     carga, y peso de ambas imágenes, registrados como valores de referencia.
     No se reutiliza `rss_linea_base` (mide solo el núcleo con adaptador simulado).
