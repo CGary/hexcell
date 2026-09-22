@@ -8,6 +8,10 @@ use crate::docker::{ClienteDocker, ErrorDeClienteDocker, OpcionesDeContenedor};
 pub const CADENCIA_DE_SONDEO_MS: u64 = 100;
 /// Tiempo máximo que se concede a la sonda.
 pub const LIMITE_DE_SONDEO_S: u64 = 60;
+/// Tiempo máximo de la sonda corta que usa `cell status`: distinto de [`LIMITE_DE_SONDEO_S`]
+/// para que una consulta de estado sobre una célula detenida no bloquee al operador durante
+/// un minuto completo.
+pub const LIMITE_DE_SONDEO_DE_ESTADO_S: u64 = 5;
 /// Imagen mínima que contiene el intérprete y `wget`.
 pub const IMAGEN_DE_SONDA_POR_OMISION: &str = "alpine:3";
 /// Holgura que se concede al cliente Docker por encima del límite de la sonda.
@@ -195,12 +199,101 @@ pub fn reanudar(
     }
 }
 
+/// Veredicto corto de la sonda de disponibilidad que usa `cell status`.
+///
+/// Tres variantes sin datos: `cell status` sólo necesita saber si la célula está lista, no
+/// lista o es inalcanzable; el detalle del fallo vive en las discrepancias que el comando
+/// reporta aparte.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Disponibilidad {
+    /// La sonda confirmó `/health/ready` con código 0.
+    Listo,
+    /// La sonda se ejecutó pero agotó su límite sin confirmar disponibilidad.
+    NoListo,
+    /// La sonda no se pudo crear o ejecutar (demonio inalcanzable, imagen ausente, etc.).
+    Inalcanzable,
+}
+
+/// Sondéa la disponibilidad de la célula con un límite corto y devuelve el veredicto.
+///
+/// A diferencia de [`reanudar`], esta función no propaga errores: cualquier fallo de Docker
+/// se traduce en [`Disponibilidad::Inalcanzable`], porque `cell status` necesita un veredicto
+/// de tres estados, no un `Result`. El límite corto ([`LIMITE_DE_SONDEO_DE_ESTADO_S`]) evita
+/// que una consulta sobre una célula detenida bloquee al operador durante un minuto.
+pub fn sondear_disponibilidad(
+    cliente: &ClienteDocker,
+    nombres: &NombresDeCelula,
+    datos: &DatosDeSondeo,
+) -> Disponibilidad {
+    let inspeccion = match cliente.inspeccionar_contenedor(&nombres.nucleo) {
+        Ok(valor) => valor,
+        Err(_) => return Disponibilidad::Inalcanzable,
+    };
+    let red = match inspeccion
+        .pointer("/NetworkSettings/Networks")
+        .and_then(serde_json::Value::as_object)
+        .and_then(|redes| redes.keys().next())
+        .cloned()
+    {
+        Some(r) => r,
+        None => return Disponibilidad::Inalcanzable,
+    };
+    let direccion = match inspeccion
+        .pointer("/Config/Env")
+        .and_then(serde_json::Value::as_array)
+        .and_then(|variables| {
+            variables.iter().find_map(|variable| {
+                variable
+                    .as_str()?
+                    .strip_prefix("HEXCELL_DIRECCION_SALUD=")
+                    .map(str::to_string)
+            })
+        }) {
+        Some(d) => d,
+        None => return Disponibilidad::Inalcanzable,
+    };
+    let puerto = match direccion
+        .rsplit_once(':')
+        .map(|(_, p)| p)
+        .filter(|p| !p.is_empty())
+    {
+        Some(p) => p,
+        None => return Disponibilidad::Inalcanzable,
+    };
+    let url = format!("http://{}:{}/health/ready", nombres.nucleo, puerto);
+    let opciones = OpcionesDeContenedor {
+        red,
+        cmd: guion_de_sonda_con_limite(&url, datos.limite_segundos),
+    };
+    let sonda = match cliente.crear_e_iniciar_contenedor_con_opciones(&datos.imagen, opciones) {
+        Ok(crate::docker::ResultadoDeArranque::Iniciado { id_contenedor })
+        | Ok(crate::docker::ResultadoDeArranque::YaEnEjecucion { id_contenedor }) => id_contenedor,
+        Err(_) => return Disponibilidad::Inalcanzable,
+    };
+    let espera = cliente.esperar_contenedor(&sonda);
+    let limpieza = cliente.eliminar_contenedor(&sonda);
+    match (espera, limpieza) {
+        (Ok(codigo), _) => {
+            if codigo == 0 {
+                Disponibilidad::Listo
+            } else {
+                Disponibilidad::NoListo
+            }
+        }
+        (Err(_), _) => Disponibilidad::Inalcanzable,
+    }
+}
+
 /// Produce el comando que ejecuta la sonda dentro de la red de la célula.
 pub fn guion_de_sonda(url: &str) -> Vec<String> {
     guion_de_sonda_con_limite(url, LIMITE_DE_SONDEO_S)
 }
 
-fn guion_de_sonda_con_limite(url: &str, limite_segundos: u64) -> Vec<String> {
+/// Produce el comando que ejecuta la sonda con un límite explícito.
+///
+/// Pública para que `comandos::ejecutar_estado` pueda construir una sonda corta con
+/// [`LIMITE_DE_SONDEO_DE_ESTADO_S`] sin duplicar la plantilla.
+pub fn guion_de_sonda_con_limite(url: &str, limite_segundos: u64) -> Vec<String> {
     let intentos = limite_segundos.saturating_mul(1000 / CADENCIA_DE_SONDEO_MS);
     let espera = cadencia_en_segundos(CADENCIA_DE_SONDEO_MS);
     let guion = format!(
