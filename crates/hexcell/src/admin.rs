@@ -1,8 +1,10 @@
-//! Servidor HTTP interno de administración: `POST /admin/ingesta` y `GET /admin/ingesta`.
+//! Servidor HTTP interno de administración: `POST /admin/ingesta`, `GET /admin/ingesta` y
+//! `POST /admin/sesion/cierre`.
 //!
 //! Expone una interfaz interna, accesible únicamente desde la red local o loopback, para desencadenar
-//! la ingesta de conocimiento en segundo plano en la base en sombra (`knowledge_staging.db`) y
-//! permitir a una CLI de administración consultar el estado del trabajo mediante sondeos (polling).
+//! la ingesta de conocimiento en segundo plano en la base en sombra (`knowledge_staging.db`),
+//! permitir a una CLI de administración consultar el estado del trabajo mediante sondeos (polling),
+//! y ordenar el cierre de sesión del canal de la célula.
 //!
 //! Se ejecuta sobre su propio puerto (`HEXCELL_DIRECCION_ADMIN`), independiente del servidor de salud
 //! (`HEXCELL_DIRECCION_SALUD`), para permitir separar la exposición de ambas superficies en etapas
@@ -13,9 +15,12 @@
 //! un trabajo de ingesta corra a la vez por célula.
 
 use std::convert::Infallible;
+use std::future::Future;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::pin::Pin;
+use std::sync::{Arc, Mutex, OnceLock};
+use std::time::Duration;
 
 use bytes::Bytes;
 use http_body_util::{BodyExt, Full};
@@ -26,6 +31,7 @@ use hyper::{Method, Request, Response, StatusCode};
 use hyper_util::rt::TokioIo;
 use tokio::net::TcpListener;
 
+use hexcell_core::canal::CicloDeVidaSesion;
 use hexcell_core::fragmentacion::ConfiguracionDeFragmentacion;
 use hexcell_storage::DocumentoDeIngesta;
 
@@ -166,6 +172,8 @@ pub enum RutaAdmin {
     DispararIngesta,
     /// Petición `GET /admin/ingesta` para consultar la fase actual del trabajo.
     ConsultarEstado,
+    /// Petición `POST /admin/sesion/cierre` para ordenar el cierre de sesión del canal.
+    CerrarSesion,
     /// Ruta o método no reconocido.
     NoEncontrada,
 }
@@ -175,6 +183,7 @@ pub fn enrutar_admin(metodo: &Method, ruta: &str) -> RutaAdmin {
     match (metodo, ruta) {
         (&Method::POST, "/admin/ingesta") => RutaAdmin::DispararIngesta,
         (&Method::GET, "/admin/ingesta") => RutaAdmin::ConsultarEstado,
+        (&Method::POST, "/admin/sesion/cierre") => RutaAdmin::CerrarSesion,
         _ => RutaAdmin::NoEncontrada,
     }
 }
@@ -250,6 +259,156 @@ fn respuesta_texto(codigo: StatusCode, mensaje: &'static str) -> Response<Cuerpo
     respuesta
 }
 
+/// Plazo por omisión para esperar el acuse de cierre de sesión desde la ruta HTTP.
+///
+/// Es el valor de producción; los tests inyectan el suyo propio y nunca importan esta constante.
+pub const PLAZO_DE_CIERRE_DE_SESION: Duration = Duration::from_secs(30);
+
+/// Motivo que la ruta devuelve cuando el canal no vincula ningún dispositivo.
+///
+/// Se declara junto a la ruta, no como retorno de ningún método del trait: el sub-trait
+/// `CicloDeVidaSesion` es opcional y reservado a los adaptadores que vinculan un dispositivo
+/// (ratificación R5, 2026-09-22). El valor lo aporta la variante `SinSesion` que la raíz de
+/// composición elige en tiempo de compilación para el canal simulado.
+pub const MOTIVO_CANAL_SIN_SESION: &str = "canal_sin_sesion";
+
+/// Tipo de la caja que envuelve la operación de cierre de sesión.
+///
+/// Se extrae como alias porque el tipo completo es demasiado complejo para clippy
+/// (`type_complexity`) y porque se repite en la definición de `CierreDeSesion`.
+type CajaDeCierre =
+    Box<dyn Fn() -> Pin<Box<dyn Future<Output = Result<(), String>> + Send>> + Send + Sync>;
+
+/// Enumerado que la raíz de composición entrega a la ruta.
+///
+/// `ConSesion` se construye únicamente en la rama de whatsmeow, con una caja que devuelve el
+/// resultado de `cerrar_sesion`; `SinSesion` se construye en la rama del canal simulado, que no
+/// vincula ningún dispositivo. La distinción es la que permite a la ruta devolver 200 con motivo
+/// `canal_sin_sesion` en un caso y 200 sin motivo en el otro, sin que la ruta misma conozca el
+/// canal.
+///
+/// No es genérico sobre el tipo del adaptador: la raíz de composición borra el tipo al construir
+/// la caja, así que `SinSesion` no necesita ningún parámetro de tipo y el enum puede usarse sin
+/// anotar el adaptador subyacente.
+pub enum CierreDeSesion {
+    /// El canal vincula un dispositivo; cerrar la sesión requiere la operación real.
+    ConSesion(CajaDeCierre),
+    /// El canal no vincula ningún dispositivo; no hay sesión que cerrar.
+    SinSesion,
+}
+
+/// Versión registrada de `CierreDeSesion`, almacenada en un `OnceLock`.
+///
+/// Es el mismo tipo que `CierreDeSesion`; el alias existe para distinguir el rol: el
+/// `RegistroDeCierreDeSesion` guarda un `CerradorRegistrado`, no un `CierreDeSesion` fresco.
+pub type CerradorRegistrado = CierreDeSesion;
+
+/// Registro de cierre de sesión: `OnceLock` que la raíz de composición rellena una sola vez,
+/// después de que `servir_servicios_http` haya devuelto el futuro combinado.
+///
+/// El futuro combinado se construye **antes** de conocer el canal seleccionado, así que el
+/// cerrador no puede pasarse como argumento: se registra tarde, desde la rama del `match` sobre
+/// `CanalSeleccionado`, y la ruta lo lee a través de este `Arc`.
+pub type RegistroDeCierreDeSesion = Arc<OnceLock<CerradorRegistrado>>;
+
+impl CierreDeSesion {
+    /// Construye un `CierreDeSesion::ConSesion` a partir de un adaptador que implementa
+    /// `CicloDeVidaSesion`, borrando el tipo.
+    pub fn con_sesion<C>(adaptador: C) -> Self
+    where
+        C: CicloDeVidaSesion + Send + Sync + 'static,
+        C::Error: std::fmt::Display,
+    {
+        let adaptador = Arc::new(adaptador);
+        CierreDeSesion::ConSesion(Box::new(move || {
+            let adaptador = Arc::clone(&adaptador);
+            Box::pin(async move { adaptador.cerrar_sesion().await.map_err(|e| e.to_string()) })
+                as Pin<Box<dyn Future<Output = Result<(), String>> + Send>>
+        }))
+    }
+
+    /// Registra el cierre en el `OnceLock` dado.
+    ///
+    /// Devuelve `Err(self)` si el registro ya estaba ocupado, para que la raíz de composición
+    /// pueda decidir qué hacer; en la práctica, un segundo registro sería un defecto del código
+    /// y no un escenario recuperable.
+    pub fn registrar(self, registro: &RegistroDeCierreDeSesion) -> Result<(), Self> {
+        registro.set(self)
+    }
+}
+
+/// Servicio de aplicación puro para el cierre de sesión, bajo prueba directa.
+///
+/// Devuelve el estado HTTP y el cuerpo JSON que la ruta debe emitir, sin tocar el transporte:
+/// los tests lo invocan con un `registro` y un `plazo` inyectados, sin pasar por ningún servidor.
+pub async fn atender_cierre_de_sesion(
+    registro: &RegistroDeCierreDeSesion,
+    plazo: Duration,
+) -> (StatusCode, serde_json::Value) {
+    let cerrador = match registro.get() {
+        Some(c) => c,
+        // Sin registro: fallar cerrado. Un 200 aquí destruiría el volumen con la sesión aún
+        // vinculada; un 502 obliga al operador a investigar antes de reintentar.
+        None => {
+            return (
+                StatusCode::BAD_GATEWAY,
+                serde_json::json!({
+                    "resultado": "fallido",
+                    "motivo": "cierre de sesión no registrado en la composición"
+                }),
+            );
+        }
+    };
+
+    match cerrador {
+        CierreDeSesion::SinSesion => (
+            StatusCode::OK,
+            serde_json::json!({
+                "resultado": "completado",
+                "motivo": MOTIVO_CANAL_SIN_SESION
+            }),
+        ),
+        CierreDeSesion::ConSesion(f) => {
+            let futuro = f();
+            match tokio::time::timeout(plazo, futuro).await {
+                Ok(Ok(())) => (
+                    StatusCode::OK,
+                    serde_json::json!({ "resultado": "completado" }),
+                ),
+                Ok(Err(motivo)) => (
+                    StatusCode::BAD_GATEWAY,
+                    serde_json::json!({
+                        "resultado": "fallido",
+                        "motivo": motivo
+                    }),
+                ),
+                Err(_agotado) => (
+                    StatusCode::GATEWAY_TIMEOUT,
+                    serde_json::json!({
+                        "resultado": "ausente",
+                        "motivo": "no se recibió acuse de cierre de sesión dentro del plazo"
+                    }),
+                ),
+            }
+        }
+    }
+}
+
+/// Construye la respuesta HTTP del cierre de sesión a partir del resultado de
+/// `atender_cierre_de_sesion`.
+fn respuesta_de_cierre_de_sesion(
+    estado: StatusCode,
+    cuerpo: serde_json::Value,
+) -> Response<CuerpoDeAdmin> {
+    let mut respuesta = Response::new(Full::new(Bytes::from(cuerpo.to_string())));
+    *respuesta.status_mut() = estado;
+    respuesta.headers_mut().insert(
+        hyper::header::CONTENT_TYPE,
+        hyper::header::HeaderValue::from_static("application/json"),
+    );
+    respuesta
+}
+
 /// Acumula el cuerpo de la petición en flujo respetando el límite de bytes configurado.
 ///
 /// Son dos guardas porque un cliente puede llegar por dos caminos distintos: si declara su
@@ -277,6 +436,7 @@ pub async fn acumular_cuerpo_acotado(
 }
 
 /// Procesa una petición HTTP entrante sobre la interfaz de administración.
+#[allow(clippy::too_many_arguments)]
 pub async fn atender_peticion_de_admin<F>(
     peticion: Request<Incoming>,
     estado: &Arc<EstadoDeAdmin>,
@@ -284,6 +444,8 @@ pub async fn atender_peticion_de_admin<F>(
     ruta_datos: &Path,
     limite_cuerpo_bytes: usize,
     debe_apagar: F,
+    registro_cierre: &RegistroDeCierreDeSesion,
+    plazo_cierre: Duration,
 ) -> Response<CuerpoDeAdmin>
 where
     F: Fn() -> bool + Send + Sync + Clone + 'static,
@@ -335,11 +497,24 @@ where
             *resp.status_mut() = StatusCode::ACCEPTED;
             resp
         }
+        // POST /admin/sesion/cierre: cierre de sesión del canal.
+        //
+        // NO lleva autenticación: la frontera de seguridad es la red interna de la célula,
+        // exactamente igual que /admin/ingesta. El listener administrativo por omisión escucha
+        // en loopback (crates/hexcell/src/configuracion.rs) y la plantilla de despliegue lo
+        // abre a 0.0.0.0 únicamente dentro de la red de célula (deploy/cell.compose.yml),
+        // que es la frontera declarada.
+        RutaAdmin::CerrarSesion => {
+            let (estado_http, cuerpo) =
+                atender_cierre_de_sesion(registro_cierre, plazo_cierre).await;
+            respuesta_de_cierre_de_sesion(estado_http, cuerpo)
+        }
         RutaAdmin::NoEncontrada => respuesta_texto(StatusCode::NOT_FOUND, ""),
     }
 }
 
 /// Vincula el listener administrativo y sirve peticiones HTTP.
+#[allow(clippy::too_many_arguments)]
 pub async fn servir_admin<F>(
     direccion: SocketAddr,
     limite_cuerpo_bytes: usize,
@@ -347,6 +522,8 @@ pub async fn servir_admin<F>(
     servicio_embeddings: Arc<ServicioDeEmbeddings<ProveedorDeEmbeddingsDeCelula>>,
     ruta_datos: PathBuf,
     debe_apagar: F,
+    registro_cierre: RegistroDeCierreDeSesion,
+    plazo_cierre: Duration,
 ) -> std::io::Result<(SocketAddr, impl Future<Output = ()>)>
 where
     F: Fn() -> bool + Send + Sync + Clone + 'static,
@@ -365,6 +542,7 @@ where
             let servicio_conexion = Arc::clone(&servicio_embeddings);
             let ruta_conexion = ruta_datos.clone();
             let debe_apagar_conexion = debe_apagar.clone();
+            let registro_cierre_conexion = Arc::clone(&registro_cierre);
 
             tokio::task::spawn(async move {
                 let atendido = http1::Builder::new()
@@ -375,6 +553,7 @@ where
                             let servicio = Arc::clone(&servicio_conexion);
                             let ruta = ruta_conexion.clone();
                             let debe_apagar_fn = debe_apagar_conexion.clone();
+                            let registro = Arc::clone(&registro_cierre_conexion);
                             async move {
                                 Ok::<_, Infallible>(
                                     atender_peticion_de_admin(
@@ -384,6 +563,8 @@ where
                                         &ruta,
                                         limite_cuerpo_bytes,
                                         debe_apagar_fn,
+                                        &registro,
+                                        plazo_cierre,
                                     )
                                     .await,
                                 )
@@ -410,6 +591,13 @@ where
 /// El conteo de argumentos se admite a propósito: son las dependencias que cada listener ya
 /// exigía por separado, y agruparlas en una estructura sería un cambio de diseño de la raíz de
 /// composición, no de esta función.
+///
+/// # Registro de cierre de sesión tardío
+///
+/// El futuro combinado se construye **antes** de conocer el canal seleccionado, así que el
+/// cerrador no puede pasarse como argumento directo: la raíz de composición lo registra tarde,
+/// desde la rama del `match` sobre `CanalSeleccionado`, y la ruta lo lee a través del
+/// `RegistroDeCierreDeSesion` que se pasa aquí.
 #[allow(clippy::too_many_arguments)]
 pub async fn servir_servicios_http<F>(
     direccion_salud: SocketAddr,
@@ -420,6 +608,8 @@ pub async fn servir_servicios_http<F>(
     servicio_embeddings: Arc<ServicioDeEmbeddings<ProveedorDeEmbeddingsDeCelula>>,
     ruta_datos: PathBuf,
     debe_apagar: F,
+    registro_cierre: RegistroDeCierreDeSesion,
+    plazo_cierre: Duration,
 ) -> std::io::Result<((SocketAddr, SocketAddr), impl Future<Output = ()>)>
 where
     F: Fn() -> bool + Send + Sync + Clone + 'static,
@@ -442,6 +632,8 @@ where
         servicio_embeddings,
         ruta_datos,
         debe_apagar,
+        registro_cierre,
+        plazo_cierre,
     )
     .await
     .map_err(|error| {

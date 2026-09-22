@@ -33,6 +33,12 @@
 # bind en todas las células; lo que aísla es la red de célula—, por eso no se
 # parametriza.
 #
+# HEXCELL_DIRECCION_ADMIN se fija explícitamente a 0.0.0.0:8082 (NO loopback),
+# por la misma razón que HEXCELL_DIRECCION_SALUD: la superficie administrativa
+# completa —/admin/ingesta y /admin/sesion/cierre incluidas— debe ser alcanzable
+# desde un contenedor hermano dentro de la red de la célula. La frontera de
+# seguridad declarada ES la red de célula; el bind no loopback la hace efectiva.
+#
 # HEX-070 (tarea 5 de la etapa A-6) impone el endurecimiento en tiempo de
 # ejecución que HEX-069 dejó nombrado y no aplicado: read_only, cap_drop,
 # security_opt y un tmpfs explícito en ambos servicios. Las cuatro banderas se
@@ -62,6 +68,10 @@ services:
       HEXCELL_RUTA_DATOS: /var/lib/hexcell
       # Bind NO loopback para que un contenedor hermano sondee /health/ready.
       HEXCELL_DIRECCION_SALUD: 0.0.0.0:8081
+      # Bind NO loopback para que un contenedor hermano alcance la superficie
+      # administrativa (/admin/ingesta, /admin/sesion/cierre). La frontera de
+      # seguridad es la red de célula, no el loopback.
+      HEXCELL_DIRECCION_ADMIN: 0.0.0.0:8082
       # Canal propio: no se confía en el valor por omisión del binario
       # (`simulado`); whatsmeow es el canal por defecto y permanente (CLAUDE.md).
       HEXCELL_CANAL: whatsmeow
