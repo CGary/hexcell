@@ -144,3 +144,33 @@ Los archivos contienen **solo parámetros no secretos**; todo secreto sigue viaj
 ### 6. Composición de la célula
 
 La célula se materializa como dos contenedores —núcleo y sidecar— descritos en `deploy/cell.compose.yml`, parametrizada por célula con las variables de `deploy/celula.env.ejemplo` (nota de uso en `docs/plantilla-celula.md`). Las banderas de endurecimiento —`read_only`, `cap_drop: [ALL]`, `no-new-privileges` y el `tmpfs` de la ruta de escritura temporal— están impuestas en esa plantilla y se verifican mecánicamente con la guarda `deploy/verificar_endurecimiento.sh` (HEX-070, 2026-09-11). La propagación ordenada de `docker stop` con margen de 30 s —`STOPSIGNAL SIGTERM` en ambos Dockerfiles y `stop_grace_period` en ambos servicios— se verifica mecánicamente con `deploy/verificar_senales.sh` (probada por mutación, en CI) y en vivo, con contenedores reales, con `deploy/verificar_apagado_ordenado.sh` (manual, HEX-075, 2026-09-13). El aislamiento entre células —red y volumen propios, sin cruce de volumen ni de red, sin socket IPC ajeno y sin puertos publicados al host— se verifica mecánicamente con `deploy/verificar_aislamiento_estatica.sh` (probada por mutación, en CI) y en vivo, levantando dos células reales, con `deploy/verificar_aislamiento.sh` (manual, HEX-076, 2026-09-13). Los límites de recursos por contenedor —memoria, CPU y descriptores de archivo, parametrizados por célula con los valores de `deploy/celula.env.ejemplo`— se verifican mecánicamente sobre el YAML resuelto con `deploy/verificar_limites.sh` (probada por mutación, en CI; valores provisionales pendientes de la medición de la tarea 16 del plan de la etapa A-6). Esa medición —memoria agregada de la célula compuesta desde cgroup v2 en reposo y bajo un generador declarado, más el peso de ambas imágenes— se instrumenta en vivo con `deploy/medir_memoria_y_imagenes.sh` (manual, HEX-079, 2026-09-19); los valores de referencia se registran en `docs/plantilla-celula.md`.
+
+### 7. Estado y listado de células
+
+Entregado el 2026-09-22 con HEX-083 (tarea 14 de A-6; `adr-0039` fechado el 2026-09-22).
+
+El almacén del plano de control persiste el estado de cada célula en SQLite, con la ruta configurable mediante la variable de entorno `HEXCELL_ADMIN_ALMACEN` (valor por omisión `/var/lib/hexcell-admin/plano_de_control.db`). Si el directorio padre no existe, el comando falla con un diagnóstico claro; `hexcell-admin` nunca crea ese directorio.
+
+```bash
+hexcell-admin cell status --id <cell_id>
+```
+
+`cell status` cruza las tres fuentes (almacén, Docker, sonda de salud) y reporta el estado almacenado, el estado Docker de núcleo y sidecar, la salud (`listo`, `no_listo` o `inalcanzable`), el historial de sustituciones y los códigos de discrepancia detectados:
+
+* **DISC-01:** el almacén indica `en_ejecucion` pero un contenedor no está corriendo.
+* **DISC-02:** el almacén indica `suspendida` pero un contenedor está corriendo.
+* **DISC-03:** los contenedores corren pero `/health/ready` no confirma disponibilidad.
+* **DISC-04:** el almacén tiene una fila pero los contenedores no existen en Docker.
+* **DISC-05:** los contenedores existen en Docker pero el almacén no tiene fila.
+
+El comando sale con código 0 si no hay discrepancias, o código 1 si hay al menos una. No reporta ratio de acuses ni ventana de silencio (eso es la tarea 20).
+
+```bash
+hexcell-admin cell list
+```
+
+`cell list` imprime la unión de células del almacén y de Docker, con el estado almacenado (o `sin_fila` si la célula sólo existe en Docker) y el estado Docker de núcleo y sidecar. No sondea la salud. Sale con código 0 una vez producida la lista.
+
+Ambos comandos son de sólo lectura **por construcción**: abren la base con el descriptor de sólo lectura de SQLite, no aplican migraciones y no crean el archivo, así que un `HEXCELL_ADMIN_ALMACEN` que apunte a una ruta inexistente falla con un diagnóstico en vez de dejar una base nueva detrás de una consulta. Una discrepancia tampoco se repara: DISC-05 se reporta y la fila no se crea.
+
+Una fuente que **falla** no es una discrepancia: si `docker inspect` devuelve un error que no sea «no encontrado» —500 del demonio, socket inalcanzable, respuesta malformada—, `cell status` nombra la fuente Docker y el contenedor en el diagnóstico y sale con código 1 sin emitir ningún `DISC-0N`, porque en ese caso no se sabe si los contenedores existen.
