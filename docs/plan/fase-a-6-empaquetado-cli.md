@@ -192,6 +192,7 @@ Las entradas conservan su numeración; esta sección es la autoridad sobre el or
 * Actualización 2026-09-21: 11 cerrada (HEX-080); ver su nota de cierre. Pendiente mecánico fuera de la cadena, sin tarea numerada: los tests del workspace no se lintean en CI (`cargo clippy --workspace` sin `--all-targets`) y con la bandera fallan 38 diagnósticos preexistentes; se limpian y se activa la bandera en `ci.yml` en el mismo commit. La cadena restante: 12 → 13 → 14 → 15 → 18 → 23 → 21 → 19.
 * Actualización 2026-09-19: 16 cerrada (HEX-079) con el instrumento en vivo `deploy/medir_memoria_y_imagenes.sh`; la corrida manual real y el registro de los números quedan diferidos (AC-6), en la sección de valores de referencia de `docs/plantilla-celula.md`. La cadena restante: 11 → 22 → 12 → 13 → 14 → 15 → 18 → 23 → 21 → 19. Nota 2026-09-21: el instrumento da una cota inferior, no el peor caso (no ejercita GCRA, inferencia ni la ruta whatsmeow, D-55); ni su corrida manual ratifica el reparto provisional 48/32 MB de `adr-0007`, que sigue provisional hasta la prueba de carga sostenida pendiente en STATUS. Primera corrida manual el 2026-09-21 (commit `5d03a19`, sin dispositivo emparejado): en reposo 9,0 MiB de `anon` y 35,7 MiB de `memory.current` agregados; imágenes de 11,3 MiB (núcleo) y 29,0 MiB (sidecar); tabla en `docs/plantilla-celula.md`.
 * Actualización 2026-09-22: 14 cerrada (HEX-083) con el almacén SQLite del plano de control (`adr-0039`), la validación de transiciones antes de Docker, la persistencia sólo tras éxito, y los comandos `cell status` y `cell list` reales. **Desviación consciente del orden declarado arriba:** la restricción «14 después de 13» se apoyaba en que el historial de sustituciones de `cell status` sólo existe tras `rebind`, y la tarea 13 sigue abierta, así que 14 se cerró ANTES de 13. La desviación es legítima porque esta tarea crea la tabla `sustituciones` y sólo la LEE: un historial vacío no es una carencia de `cell status` sino el estado real de una célula que nunca fue reemparejada, y así se imprime («sustituciones: (ninguna)»). La tarea 13 es la que escribe en esa tabla y, al cerrarse, llenará el historial sin tocar el lector. El gancho `Retirada`/`sesion_cerrada` queda inerte porque la tarea 12 no está fusionada. Registrados `adr-0039` (almacén del plano de control) y D-58 (descarte de un crate de migraciones). La cadena restante: 12 → 13 → 15 → 18 → 23 → 21 → 19.
+* Actualización 2026-09-22: 23 cerrada (HEX-084) con el grupo `reporte tokens` de `hexcell-admin` —agrega la fórmula literal de la vista `consumo_por_conversacion` (migración 0004) sobre una copia `VACUUM INTO` de `sessions.db` abierta en solo lectura, con ventana opcional por `resuelta_ms` (`--desde` inclusivo, `--hasta` exclusivo) y modo `--simular`—. La alternativa de agregar los registros estructurados en vez de la copia queda registrada como no implementada en la nota de cierre de la tarea 23, no en la bitácora de descartes. La cadena restante: 12 → 13 → 15 → 18 → 21 → 19.
 
 ---
 
@@ -478,6 +479,18 @@ Las entradas conservan su numeración; esta sección es la autoridad sobre el or
     adr-0024). Agrega `consumo_por_conversacion` a total por célula y periodo; se acepta cuando el
     total coincide con la suma de conciliaciones sembradas. Trazabilidad: FR-14 (decisión de
     2026-09-10).
+
+    **Cerrada el 2026-09-22 con HEX-084.**
+
+    **Nota de cierre:** el comando `reporte tokens` de `hexcell-admin` agrega la fórmula literal
+    de la vista `consumo_por_conversacion` de la migración 0004 (monto reservado menos la
+    conciliación, sumado solo sobre reservas conciliadas) sobre una copia `VACUUM INTO` de
+    `sessions.db` producida por la ruta de respaldo de la etapa A-2 y abierta en solo lectura,
+    con ventana opcional por `resuelta_ms` (`--desde` inclusivo, `--hasta` exclusivo, fechas
+    `AAAA-MM-DD` UTC validadas a mano sin crate nuevo, por el criterio de D-53) y modo
+    `--simular`. La alternativa de agregar los registros estructurados en vez de la copia se
+    consideró y **no se implementó**: queda registrada aquí como alternativa no implementada, no
+    en la bitácora de descartes.
 24. **Extensión del protocolo IPC: tipo de cierre de sesión y orden de pausa de envío**. `cerrar_sesion` es un stub que devuelve `SinConexion` (`crates/hexcell-canal-whatsmeow/src/adaptador.rs:744-747`, `TODO(A-3)`) y el protocolo no tiene tipo de logout ni orden de pausa (solo existe el estado `pausada`). Pendiente de aceptación de A-3 ejecutado en A-6. Traza a FR-12. Criterio: nuevo tipo de mensaje documentado en `docs/protocolo-ipc-nucleo-sidecar.md` con subida de versión de cable, implementado en `sidecar/internal/ipc/mensajes.go` y `crates/hexcell-canal-whatsmeow/src/mensajes.rs`, con prueba de contrato que desvincula y otra que pausa y reanuda el envío.
 
     **Cerrada el 2026-09-11 con HEX-071**: versión de cable 6, cuatro tipos nuevos (cierre de sesión y su acuse, orden de pausa de envío y su acuse), `cerrar_sesion` implementado (`crates/hexcell-canal-whatsmeow/src/adaptador.rs:947`). El enunciado anterior describe el estado previo.

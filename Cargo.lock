@@ -170,6 +170,8 @@ dependencies = [
 name = "hexcell-admin"
 version = "0.1.0"
 dependencies = [
+ "hexcell-core",
+ "hexcell-storage",
  "rusqlite",
  "serde",
  "serde_json",

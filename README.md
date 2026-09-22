@@ -174,3 +174,25 @@ hexcell-admin cell list
 Ambos comandos son de sólo lectura **por construcción**: abren la base con el descriptor de sólo lectura de SQLite, no aplican migraciones y no crean el archivo, así que un `HEXCELL_ADMIN_ALMACEN` que apunte a una ruta inexistente falla con un diagnóstico en vez de dejar una base nueva detrás de una consulta. Una discrepancia tampoco se repara: DISC-05 se reporta y la fila no se crea.
 
 Una fuente que **falla** no es una discrepancia: si `docker inspect` devuelve un error que no sea «no encontrado» —500 del demonio, socket inalcanzable, respuesta malformada—, `cell status` nombra la fuente Docker y el contenedor en el diagnóstico y sale con código 1 sin emitir ningún `DISC-0N`, porque en ese caso no se sabe si los contenedores existen.
+
+### 8. Reporte de consumo de unidades por conversación
+
+Entregado el 2026-09-22 con HEX-084 (tarea 23 de A-6).
+
+El reporte de consumo de unidades de presupuesto por conversación se genera con:
+
+```bash
+hexcell-admin reporte tokens --celula <cell_id> --copia <ruta.db> \
+  [--desde AAAA-MM-DD] [--hasta AAAA-MM-DD] [--simular]
+```
+
+El comando **nunca abre la `sessions.db` caliente** (adr-0024): `--copia` debe apuntar a una
+copia `VACUUM INTO` ya producida por la ruta de respaldo de la etapa A-2. Una copia cuyo nombre
+sea `sessions.db`, o una ruta que termine en `-wal`/`-shm`, se rechaza como uso incorrecto con el
+mensaje *«el reporte sólo lee copias VACUUM INTO, nunca sessions.db»* antes de abrir nada. El
+periodo es UTC y acota por `resuelta_ms`: `--desde` inclusivo, `--hasta` exclusivo; sin periodo,
+el reporte cubre toda la historia. La agregación reutiliza la fórmula literal de la vista
+`consumo_por_conversacion` (migración 0004 de `sessions.db`): `monto_reservado` menos la
+conciliación, sumado solo sobre reservas conciliadas; las liberadas nunca cuentan. La salida es
+una línea por conversación `id_conversacion unidades` ordenada por identificador y una línea
+final `TOTAL <celula> <desde|inicio> <hasta|fin> <unidades>`.
