@@ -14,12 +14,15 @@
 //! retorno, el modo de simulación ni el modelo de estado de la célula (tarea 10 de la etapa A-6),
 //! ni la orquestación de `cell pause`/`cell unpause` con su sondeo de disponibilidad (tarea 11), ni
 //! la obtención de registros, la construcción o la descarga de imágenes. Todo eso es alcance de
-//! tareas posteriores que se construirán sobre este módulo.
+//! tareas posteriores que se construirán sobre este módulo. El listado de contenedores vive en
+//! `inventario`, no en `cliente`, porque `cliente` no lo exponía y esta tarea no lo modifica.
 
 mod cliente;
 mod error;
+mod inventario;
 mod transporte;
 
 pub use cliente::{ClienteDocker, OpcionesDeContenedor, ResultadoDeArranque};
 pub use error::ErrorDeClienteDocker;
+pub use inventario::{InventarioDocker, ResumenDeContenedor};
 pub use transporte::{ConexionDocker, RespuestaHttp};
