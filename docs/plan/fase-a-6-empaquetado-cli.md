@@ -362,9 +362,10 @@ Las entradas conservan su numeración; esta sección es la autoridad sobre el or
     **Seguimiento 2026-09-22:** variante de `cell terminate` para dispositivos ya baneados, donde no
     hay sesión que cerrar (el sidecar no puede contactar con el servidor de WhatsApp). La ruta de
     cierre devolvería 502 o la sonda saldría con código distinto de cero, abortando la secuencia sin
-    destruir nada. Se estudiará una variante `--forzar` o similar que omita el paso de cierre de
-    sesión cuando el dispositivo ya está baneado, sin añadir una nueva bandera al contrato existente
-    sino como extensión del comportamiento ante un fallo específico del cierre.
+    destruir nada. Se estudiará una variante forzada del cierre que omita ese paso cuando el
+    dispositivo ya está baneado, sin añadir una nueva bandera al contrato existente sino como
+    extensión del comportamiento ante un fallo específico del cierre; el mecanismo concreto queda
+    pendiente de la tarea 15.
 16. **Medir memoria y tamaño de imágenes** (0,5 días). Consumo de la célula completa en reposo y bajo
     carga, y peso de ambas imágenes, registrados como valores de referencia.
     No se reutiliza `rss_linea_base` (mide solo el núcleo con adaptador simulado).

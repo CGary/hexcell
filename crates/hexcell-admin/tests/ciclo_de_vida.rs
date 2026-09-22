@@ -373,7 +373,30 @@ fn retirar_ejecuta_la_secuencia_completa_en_orden_estricto() {
     // Asertar la secuencia completa de 11 peticiones en orden.
     assert_eq!(recibir(&receptor).objetivo, "/containers/c1-nucleo/json"); // 1. inspeccionar núcleo
     assert_eq!(recibir(&receptor).objetivo, "/containers/c1-sidecar/json"); // 2. inspeccionar sidecar
-    assert_eq!(recibir(&receptor).objetivo, "/containers/create"); // 3. crear sonda de cierre
+    let crear_sonda_de_cierre = recibir(&receptor);
+    assert_eq!(crear_sonda_de_cierre.objetivo, "/containers/create"); // 3. crear sonda de cierre
+    let cuerpo: serde_json::Value = serde_json::from_slice(&crear_sonda_de_cierre.cuerpo).unwrap();
+    assert_eq!(
+        cuerpo["Image"], "sonda-de-prueba:1",
+        "la imagen de la sonda de cierre sale de DatosDeSondeo, no de la constante por omisión"
+    );
+    assert_eq!(
+        cuerpo["HostConfig"]["NetworkMode"], "red-de-retirar",
+        "la red de la sonda de cierre sale de la inspección del núcleo, no del --id"
+    );
+    assert_eq!(
+        cuerpo["Cmd"],
+        serde_json::json!([
+            "wget",
+            "-q",
+            "-O",
+            "-",
+            "--post-data",
+            "",
+            "http://c1-nucleo:7070/admin/sesion/cierre"
+        ]),
+        "el Cmd de la sonda de cierre debe ser wget directo contra la URL de cierre, no el bucle de guion_de_sonda ni otra ruta"
+    );
     assert_eq!(
         recibir(&receptor).objetivo,
         "/containers/sonda-cierre-1/start"
