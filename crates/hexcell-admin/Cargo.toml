@@ -18,6 +18,21 @@ license.workspace = true
 [dependencies]
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
-# Motor SQLite del almacén del plano de control (tarea 14 de la etapa A-6). La misma versión
-# 0.39 que crates/hexcell-storage: la justificación del pin vive en el Cargo.toml raíz.
+# Motor SQLite compartido por dos consumidores de este crate: el almacén del plano de control
+# (tarea 14 de la etapa A-6) y la lectura en solo lectura de la copia `VACUUM INTO` de
+# `sessions.db` del comando `reporte tokens` (tarea 23, HEX-084). La versión queda fijada por la
+# tabla [workspace.dependencies] del Cargo.toml raíz (0.39, con `bundled`), la misma que
+# crates/hexcell-storage; la justificación del pin vive allí y no se toca. El lector del reporte
+# abre SIEMPRE con `SQLITE_OPEN_READ_ONLY | SQLITE_OPEN_NO_MUTEX` (ver `reporte_de_consumo.rs`):
+# este crate nunca abre la `sessions.db` caliente (adr-0024).
 rusqlite = { workspace = true }
+
+# Dependencias solo de prueba (tarea 23, HEX-084): `tests/reporte_de_consumo.rs` siembra
+# una `sessions.db` temporal con `hexcell-storage` (pools + repositorio de sesiones) y
+# produce su copia `VACUUM INTO` con `respaldar_base`, usando los tipos de dominio de
+# `hexcell-core` (IdConversacion, IdRemitente) que `hexcell-storage` no reexporta. Ninguna
+# de las dos es dependencia de producción: el binario solo importa `rusqlite`, y el esquema
+# y las migraciones de `hexcell-storage` quedan intactos.
+[dev-dependencies]
+hexcell-storage = { path = "../hexcell-storage" }
+hexcell-core = { path = "../hexcell-core" }

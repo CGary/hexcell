@@ -21,4 +21,5 @@ pub mod docker;
 pub mod esquema_configuracion;
 pub mod estado_de_celula;
 pub mod renderizado_configuracion;
+pub mod reporte_de_consumo;
 pub mod salida;

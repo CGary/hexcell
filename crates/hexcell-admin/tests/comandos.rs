@@ -62,6 +62,37 @@ fn errores_de_analisis_devuelven_uso_incorrecto_con_diagnostico_y_estandar_vacio
         (&["cell", "pause", "--id", "c1", "--id", "c2"][..], "--id"),
         (&["cell", "list", "--id", "c1"][..], "--id"),
         (&["cell", "list", "extra"][..], "extra"),
+        // Grupo `reporte tokens` (tarea 23 de la etapa A-6, HEX-084).
+        (&["reporte", "otro"][..], "tokens"),
+        (&["reporte", "tokens", "--celula", "c1"][..], "--copia"),
+        (
+            &["reporte", "tokens", "--copia", "copia.db"][..],
+            "--celula",
+        ),
+        (
+            &[
+                "reporte",
+                "tokens",
+                "--celula",
+                "c1",
+                "--copia",
+                "sessions.db",
+            ][..],
+            "nunca sessions.db",
+        ),
+        (
+            &[
+                "reporte",
+                "tokens",
+                "--celula",
+                "c1",
+                "--copia",
+                "copia.db",
+                "--desde",
+                "2026-02-30",
+            ][..],
+            "fecha inválida",
+        ),
     ];
     for (snippet, token) in casos {
         let (codigo, estandar, diagnostico) = ejecutar_con(&snippet);
@@ -827,5 +858,133 @@ fn cell_unpause_sin_fila_da_de_alta_con_alta_implicita() {
     assert_eq!(
         fila_de(&c.almacen, "c1").as_deref(),
         Some("en_ejecucion alta_implicita 1700000000000")
+    );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────────────────
+// Grupo `reporte tokens` (tarea 23 de la etapa A-6, HEX-084).
+// ─────────────────────────────────────────────────────────────────────────────────────────
+
+/// Ruta temporal de copia que no existe en disco: si un camino la abriera, devolvería
+/// `Fallo`; usarla para demostrar que el camino no la abre.
+fn ruta_de_copia_inexistente(etiqueta: &str) -> std::path::PathBuf {
+    let ruta = std::env::temp_dir().join(format!(
+        "hexcell-admin-copia-{etiqueta}-{}.db",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_file(&ruta);
+    ruta
+}
+
+/// AC-4 a nivel de despacho: `--simular` devuelve `Exito` con la línea de simulación en el
+/// estándar, sin abrir la copia —la ruta no existe en disco y la prueba pasaría a `Fallo`
+/// si algún camino la abriera— y sin diagnóstico.
+#[test]
+fn reporte_tokens_con_simular_devuelve_exito_y_linea_en_estandar() {
+    let copia = ruta_de_copia_inexistente("simular");
+    assert!(!copia.exists(), "premisa: la ruta no existe");
+    let (codigo, estandar, diagnostico) = ejecutar_con(&[
+        "reporte",
+        "tokens",
+        "--celula",
+        "piloto-01",
+        "--copia",
+        copia.to_str().unwrap(),
+        "--simular",
+    ]);
+    assert_eq!(codigo, CodigoDeSalida::Exito);
+    assert_eq!(
+        estandar,
+        format!(
+            "simulación: reporte tokens --celula piloto-01 --copia {}\n",
+            copia.display()
+        )
+    );
+    assert!(diagnostico.is_empty(), "diagnóstico vacío: {diagnostico:?}");
+}
+
+/// AC-3 a nivel de despacho: una copia llamada `sessions.db` es `UsoIncorrecto` con el
+/// mensaje exacto por diagnóstico y el estándar vacío, aunque el archivo exista con
+/// contenido basura (de haberse abierto, sería `Fallo`). El archivo vive en un directorio
+/// temporal propio para no tocar ningún `sessions.db` ajeno del directorio temporal.
+#[test]
+fn reporte_tokens_rechaza_copia_sessions_db_con_mensaje_exacto() {
+    let directorio = std::env::temp_dir().join(format!(
+        "hexcell-admin-sessions-falsa-{}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&directorio);
+    std::fs::create_dir_all(&directorio).expect("crear el directorio de la sesión falsa");
+    let copia = directorio.join("sessions.db");
+    std::fs::write(&copia, b"basura").expect("escribir la sesión falsa");
+    let (codigo, estandar, diagnostico) = ejecutar_con(&[
+        "reporte",
+        "tokens",
+        "--celula",
+        "piloto-01",
+        "--copia",
+        copia.to_str().unwrap(),
+    ]);
+    assert_eq!(codigo, CodigoDeSalida::UsoIncorrecto);
+    assert!(estandar.is_empty(), "estándar vacío: {estandar:?}");
+    assert!(
+        diagnostico.contains("el reporte sólo lee copias VACUUM INTO, nunca sessions.db"),
+        "diagnóstico: {diagnostico:?}"
+    );
+    let _ = std::fs::remove_dir_all(&directorio);
+}
+
+/// `ejecutar_con_efectos` delega `reporte tokens` a `ejecutar` sin tocar Docker, igual que
+/// `config render`: con una copia inexistente y sin `--simular` el desenlace es `Fallo`
+/// (la lectura fracasa), nunca `NoImplementadoTodavia` ni un error del cliente Docker;
+/// con `--simular` el desenlace es `Exito`. El cliente apunta a un socket sin vincular a
+/// propósito: cualquier intento de tocar Docker sería `DemonioInalcanzable`.
+#[test]
+fn ejecutar_con_efectos_delega_reporte_tokens_sin_tocar_docker() {
+    let ruta = ruta_socket_sin_vincular("efectos-reporte");
+    let cliente = ClienteDocker::nuevo(ruta.clone());
+    let inventario = InventarioDocker::nuevo(ruta, std::time::Duration::from_secs(10));
+    let almacen = AlmacenTemporal::nuevo("efectos-reporte");
+    let ruta_almacen = almacen.texto();
+    let copia = ruta_de_copia_inexistente("delegacion");
+
+    let (codigo, estandar, diagnostico) = ejecutar_con_efectos_con(
+        &[
+            "reporte",
+            "tokens",
+            "--celula",
+            "c1",
+            "--copia",
+            copia.to_str().unwrap(),
+        ],
+        &cliente,
+        &inventario,
+        &ruta_almacen,
+    );
+    assert_eq!(codigo, CodigoDeSalida::Fallo, "diag: {diagnostico:?}");
+    assert!(estandar.is_empty(), "estándar vacío: {estandar:?}");
+    assert!(
+        !diagnostico.is_empty(),
+        "diagnóstico presente: {diagnostico:?}"
+    );
+
+    let (codigo, estandar, _) = ejecutar_con_efectos_con(
+        &[
+            "reporte",
+            "tokens",
+            "--celula",
+            "c1",
+            "--copia",
+            copia.to_str().unwrap(),
+            "--simular",
+        ],
+        &cliente,
+        &inventario,
+        &ruta_almacen,
+    );
+    assert_eq!(codigo, CodigoDeSalida::Exito);
+    assert!(
+        estandar.contains("simulación: reporte tokens"),
+        "{estandar:?}"
     );
 }

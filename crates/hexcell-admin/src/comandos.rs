@@ -17,7 +17,9 @@ use std::io::Write;
 use std::path::Path;
 
 use crate::almacen_plano_de_control::{AlmacenDelPlanoDeControl, MOTIVO_DE_ALTA_IMPLICITA};
-use crate::argumentos::{Comando, ErrorDeArgumentos, Invocacion, Subcomando, TEXTO_DE_USO};
+use crate::argumentos::{
+    Comando, ErrorDeArgumentos, Invocacion, InvocacionReporte, Subcomando, TEXTO_DE_USO,
+};
 use crate::ciclo_de_vida::{
     self, DatosDeSondeo, Disponibilidad, LIMITE_DE_SONDEO_DE_ESTADO_S, NombresDeCelula,
 };
@@ -58,9 +60,12 @@ pub fn ejecutar<S: Write, D: Write>(
     if let Comando::ConfigRender(invocacion) = comando {
         return ejecutar_renderizado(invocacion, salida);
     }
+    if let Comando::ReporteTokens(invocacion) = comando {
+        return ejecutar_reporte_tokens(invocacion, salida);
+    }
     let invocacion = match comando {
         Comando::Cell(invocacion) => invocacion,
-        Comando::ConfigRender(_) => unreachable!(),
+        Comando::ConfigRender(_) | Comando::ReporteTokens(_) => unreachable!(),
     };
     if invocacion.simular() {
         let linea = linea_de_simulacion(&invocacion);
@@ -131,6 +136,73 @@ fn ejecutar_renderizado<S: Write, D: Write>(
     }
 }
 
+/// Ejecuta `reporte tokens`: con `--simular` imprime la línea de simulación y termina sin
+/// abrir la copia (AC-4); sin `--simular` lee la copia `VACUUM INTO` a través de
+/// [`crate::reporte_de_consumo::generar_reporte`], escribe una línea `id_conversacion
+/// unidades` por fila —ya ordenadas por identificador desde la consulta— y cierra con la
+/// línea `TOTAL <celula> <desde|inicio> <hasta|fin> <unidades>`.
+///
+/// La línea `TOTAL` imprime el texto **original** validado de `--desde`/`--hasta`, o las
+/// palabras literales `inicio`/`fin` cuando el operador no dio periodo: nunca valores
+/// recomputados desde los milisegundos. Cualquier error de lectura de la copia es `Fallo`
+/// (AC-6), igual que cualquier `io::Error` de los sumideros, siguiendo el idioma de
+/// `diagnosticar_fallo`.
+fn ejecutar_reporte_tokens<S: Write, D: Write>(
+    invocacion: InvocacionReporte,
+    salida: &mut Salida<S, D>,
+) -> CodigoDeSalida {
+    if invocacion.simular() {
+        return match salida.linea(&linea_de_simulacion_de_reporte(&invocacion)) {
+            Ok(()) => CodigoDeSalida::Exito,
+            Err(_) => CodigoDeSalida::Fallo,
+        };
+    }
+    let filas = match crate::reporte_de_consumo::generar_reporte(
+        std::path::Path::new(invocacion.copia()),
+        invocacion.desde_ms(),
+        invocacion.hasta_ms(),
+    ) {
+        Ok(filas) => filas,
+        Err(error) => return diagnosticar_fallo(salida, &error.to_string()),
+    };
+    let mut total: i64 = 0;
+    for (id_conversacion, unidades) in &filas {
+        total += unidades;
+        if salida
+            .linea(&format!("{id_conversacion} {unidades}"))
+            .is_err()
+        {
+            return CodigoDeSalida::Fallo;
+        }
+    }
+    let desde = invocacion.desde().unwrap_or("inicio");
+    let hasta = invocacion.hasta().unwrap_or("fin");
+    match salida.linea(&format!(
+        "TOTAL {} {desde} {hasta} {total}",
+        invocacion.celula()
+    )) {
+        Ok(()) => CodigoDeSalida::Exito,
+        Err(_) => CodigoDeSalida::Fallo,
+    }
+}
+
+/// Línea en español que describe la acción planificada del reporte en modo de simulación,
+/// con las mismas opciones que el operador escribió.
+fn linea_de_simulacion_de_reporte(invocacion: &InvocacionReporte) -> String {
+    let mut linea = format!(
+        "simulación: reporte tokens --celula {} --copia {}",
+        invocacion.celula(),
+        invocacion.copia()
+    );
+    if let Some(desde) = invocacion.desde() {
+        linea.push_str(&format!(" --desde {desde}"));
+    }
+    if let Some(hasta) = invocacion.hasta() {
+        linea.push_str(&format!(" --hasta {hasta}"));
+    }
+    linea
+}
+
 fn diagnosticar_fallo<S: Write, D: Write>(
     salida: &mut Salida<S, D>,
     mensaje: &str,
@@ -157,10 +229,14 @@ pub fn ejecutar_con_efectos<S: Write, D: Write>(
         return ejecutar(Ok(comando), salida);
     }
     // El grupo `config render` no toca Docker: sus únicos efectos son de sistema de archivos y
-    // viven en `ejecutar_renderizado`. Se delega sin construir ni consumir el `ClienteDocker`.
+    // viven en `ejecutar_renderizado`. `reporte tokens` tampoco: sus únicos efectos son de
+    // lectura de la copia VACUUM INTO y viven en `ejecutar_reporte_tokens`. Ambos se delegan
+    // sin construir ni consumir el `ClienteDocker`.
     let invocacion = match comando {
         Comando::Cell(invocacion) => invocacion,
-        otro @ Comando::ConfigRender(_) => return ejecutar(Ok(otro), salida),
+        otro @ (Comando::ConfigRender(_) | Comando::ReporteTokens(_)) => {
+            return ejecutar(Ok(otro), salida);
+        }
     };
     // El despacho por subcomando va ANTES de exigir `--id`: `cell list` nunca lo admite, y si el
     // `id` se exigiera primero, `cell list` sin `--simular` devolvería `Fallo` en vez de
