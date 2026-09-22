@@ -569,62 +569,37 @@ impl AdaptadorWhatsmeow {
     /// El error de rechazo y de plazo reutiliza [`ErrorCanalWhatsmeow::ErrorDeProtocolo`] a
     /// propósito: el crate `error` queda fuera del alcance de esta tarea y no se le añaden
     /// variantes nuevas para esta operación.
+    ///
+    /// El `motivo` se envía tal cual al sidecar en el campo `motivo` de `orden_cierre_de_sesion`
+    /// (cable v6). El trait `CicloDeVidaSesion::cerrar_sesion` no recibe motivo, así que su
+    /// implementación pasa `""`; la asa de sesión para el cierre ordenado por el operador pasa
+    /// `"cell terminate"`.
     pub async fn ordenar_cierre_de_sesion(
         &self,
         plazo: Duration,
+        motivo: &str,
     ) -> Result<(), ErrorCanalWhatsmeow> {
-        if self.escritor_compartido.lock().await.is_none() {
-            return Err(ErrorCanalWhatsmeow::SinConexion);
-        }
+        ordenar_cierre_de_sesion_interno(
+            &self.escritor_compartido,
+            &self.pendientes_de_sesion,
+            plazo,
+            motivo,
+        )
+        .await
+    }
 
-        let (tx, rx) = tokio::sync::oneshot::channel();
-        {
-            let mut pendiente = self.pendientes_de_sesion.cierre.lock().await;
-            *pendiente = Some(tx);
-        }
-
-        let orden = crate::mensajes::OrdenCierreDeSesion {
-            version: crate::mensajes::VERSION_PROTOCOLO,
-            tipo: "orden_cierre_de_sesion".to_string(),
-            motivo: String::new(),
-        };
-        let linea = serde_json::to_string(&orden).map_err(|e| {
-            ErrorCanalWhatsmeow::ErrorDeProtocolo(format!(
-                "no se pudo serializar orden_cierre_de_sesion: {e}"
-            ))
-        })?;
-
-        if let Err(e) = escribir_linea(&self.escritor_compartido, &linea).await {
-            let mut pendiente = self.pendientes_de_sesion.cierre.lock().await;
-            *pendiente = None;
-            return Err(e);
-        }
-
-        match tokio::time::timeout(plazo, rx).await {
-            Ok(Ok(acuse)) => {
-                if acuse.resultado == "completado" {
-                    Ok(())
-                } else {
-                    Err(ErrorCanalWhatsmeow::ErrorDeProtocolo(format!(
-                        "cierre de sesión rechazado por el sidecar: {}",
-                        acuse.motivo
-                    )))
-                }
-            }
-            Ok(Err(_oneshot_caido)) => {
-                let mut pendiente = self.pendientes_de_sesion.cierre.lock().await;
-                *pendiente = None;
-                Err(ErrorCanalWhatsmeow::ErrorDeProtocolo(
-                    "no se recibió acuse de cierre de sesión: la conexión terminó".to_string(),
-                ))
-            }
-            Err(_agotado) => {
-                let mut pendiente = self.pendientes_de_sesion.cierre.lock().await;
-                *pendiente = None;
-                Err(ErrorCanalWhatsmeow::ErrorDeProtocolo(
-                    "no se recibió acuse de cierre de sesión dentro del plazo".to_string(),
-                ))
-            }
+    /// Construye un asa clonable para ordenar el cierre de sesión desde fuera del adaptador.
+    ///
+    /// Se toma **antes** de que `Motor::nuevo` consuma el adaptador, siguiendo el precedente de
+    /// `contadores_de_acuse()` y `suscribir_estado_con_expiracion()`. El motivo se envía en
+    /// `orden_cierre_de_sesion` tal cual; el plazo por omisión es el mismo que el del adaptador.
+    pub fn asa_de_sesion(&self, motivo: impl Into<String>) -> AsaDeSesion {
+        AsaDeSesion {
+            escritor_compartido: Arc::clone(&self.escritor_compartido),
+            pendientes_de_sesion: Arc::clone(&self.pendientes_de_sesion),
+            receptor_estado: self.receptor_estado.clone(),
+            motivo: motivo.into(),
+            plazo: PLAZO_CIERRE_DE_SESION,
         }
     }
 
@@ -1156,11 +1131,150 @@ impl hexcell_core::canal::CicloDeVidaSesion for AdaptadorWhatsmeow {
 
     /// Cierra la sesión y desvincula el dispositivo.
     ///
-    /// Envía `orden_cierre_de_sesion` y resuelve según el acuse real del sidecar: `Ok(())` si
-    /// reporta `completado`, o un error si reporta `fallido`, si el plazo se agota o si no hay
-    /// conexión activa. Ya no devuelve `SinConexion` incondicionalmente (tarea 24 de A-6).
+    /// Envía `orden_cierre_de_sesion` con motivo vacío y resuelve según el acuse real del
+    /// sidecar: `Ok(())` si reporta `completado`, o un error si reporta `fallido`, si el plazo
+    /// se agota o si no hay conexión activa. Ya no devuelve `SinConexion` incondicionalmente
+    /// (tarea 24 de A-6).
+    ///
+    /// El motivo vacío distingue este cierre (el del sub-trait `CicloDeVidaSesion`) del cierre
+    /// ordenado por el operador a través de la asa de sesión, que lleva motivo `"cell terminate"`.
     async fn cerrar_sesion(&self) -> Result<(), Self::Error> {
-        self.ordenar_cierre_de_sesion(PLAZO_CIERRE_DE_SESION).await
+        self.ordenar_cierre_de_sesion(PLAZO_CIERRE_DE_SESION, "")
+            .await
+    }
+
+    /// Consulta el estado actual de la sesión del canal.
+    fn estado_sesion(&self) -> EstadoSesion {
+        *self.receptor_estado.borrow()
+    }
+}
+
+/// Asa clonable para ordenar el cierre de sesión desde fuera del adaptador.
+///
+/// Toma prestados los campos ya `Arc`-envueltos del adaptador (`escritor_compartido`,
+/// `pendientes_de_sesion`, `receptor_estado`) y añade su propio `motivo` y `plazo`. Se construye
+/// con [`AdaptadorWhatsmeow::asa_de_sesion`] **antes** de que `Motor::nuevo` consuma el
+/// adaptador, siguiendo el precedente de `contadores_de_acuse()` y
+/// `suscribir_estado_con_expiracion()`.
+///
+/// Implementa `CicloDeVidaSesion` para que la raíz de composición pueda registrarlo en el
+/// `CierreDeSesion::ConSesion` del listener administrativo.
+#[derive(Clone)]
+pub struct AsaDeSesion {
+    /// Extremo de escritura compartido con la conexión activa.
+    escritor_compartido:
+        Arc<tokio::sync::Mutex<Option<tokio::io::WriteHalf<tokio::net::UnixStream>>>>,
+    /// Acuses de cierre de sesión pendientes de correlación.
+    pendientes_de_sesion: Arc<PendientesDeSesion>,
+    /// Receptor del estado de sesión, para consultas.
+    receptor_estado: watch::Receiver<EstadoSesion>,
+    /// Motivo que se enviará en `orden_cierre_de_sesion`.
+    motivo: String,
+    /// Plazo para esperar el acuse.
+    plazo: Duration,
+}
+
+impl AsaDeSesion {
+    /// Ordena el cierre de sesión con el motivo que lleva el asa.
+    ///
+    /// Delega en la misma implementación que [`AdaptadorWhatsmeow::ordenar_cierre_de_sesion`]:
+    /// no se duplica el cuerpo, se reutiliza el método del adaptador a través de los campos
+    /// clonados.
+    pub async fn ordenar_cierre(&self) -> Result<(), ErrorCanalWhatsmeow> {
+        ordenar_cierre_de_sesion_interno(
+            &self.escritor_compartido,
+            &self.pendientes_de_sesion,
+            self.plazo,
+            &self.motivo,
+        )
+        .await
+    }
+}
+
+/// Implementación interna del cierre de sesión, compartida por el adaptador y su asa.
+///
+/// No es un método de ninguno de los dos porque ambos lo necesitan: el adaptador lo llama desde
+/// su `CicloDeVidaSesion::cerrar_sesion` y el asa lo llama desde su `ordenar_cierre`. Delegar
+/// aquí evita duplicar el cuerpo y garantiza que ambos caminos envían el mismo formato de cable.
+async fn ordenar_cierre_de_sesion_interno(
+    escritor_compartido: &Arc<
+        tokio::sync::Mutex<Option<tokio::io::WriteHalf<tokio::net::UnixStream>>>,
+    >,
+    pendientes_de_sesion: &Arc<PendientesDeSesion>,
+    plazo: Duration,
+    motivo: &str,
+) -> Result<(), ErrorCanalWhatsmeow> {
+    if escritor_compartido.lock().await.is_none() {
+        return Err(ErrorCanalWhatsmeow::SinConexion);
+    }
+
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    {
+        let mut pendiente = pendientes_de_sesion.cierre.lock().await;
+        *pendiente = Some(tx);
+    }
+
+    let orden = crate::mensajes::OrdenCierreDeSesion {
+        version: crate::mensajes::VERSION_PROTOCOLO,
+        tipo: "orden_cierre_de_sesion".to_string(),
+        motivo: motivo.to_string(),
+    };
+    let linea = serde_json::to_string(&orden).map_err(|e| {
+        ErrorCanalWhatsmeow::ErrorDeProtocolo(format!(
+            "no se pudo serializar orden_cierre_de_sesion: {e}"
+        ))
+    })?;
+
+    if let Err(e) = escribir_linea(escritor_compartido, &linea).await {
+        let mut pendiente = pendientes_de_sesion.cierre.lock().await;
+        *pendiente = None;
+        return Err(e);
+    }
+
+    match tokio::time::timeout(plazo, rx).await {
+        Ok(Ok(acuse)) => {
+            if acuse.resultado == "completado" {
+                Ok(())
+            } else {
+                Err(ErrorCanalWhatsmeow::ErrorDeProtocolo(format!(
+                    "cierre de sesión rechazado por el sidecar: {}",
+                    acuse.motivo
+                )))
+            }
+        }
+        Ok(Err(_oneshot_caido)) => {
+            let mut pendiente = pendientes_de_sesion.cierre.lock().await;
+            *pendiente = None;
+            Err(ErrorCanalWhatsmeow::ErrorDeProtocolo(
+                "no se recibió acuse de cierre de sesión: la conexión terminó".to_string(),
+            ))
+        }
+        Err(_agotado) => {
+            let mut pendiente = pendientes_de_sesion.cierre.lock().await;
+            *pendiente = None;
+            Err(ErrorCanalWhatsmeow::ErrorDeProtocolo(
+                "no se recibió acuse de cierre de sesión dentro del plazo".to_string(),
+            ))
+        }
+    }
+}
+
+impl hexcell_core::canal::CicloDeVidaSesion for AsaDeSesion {
+    type Error = ErrorCanalWhatsmeow;
+
+    /// Inicia el emparejamiento.
+    ///
+    /// El asa no tiene acceso al canal de emparejamiento del adaptador; este método es un
+    /// stub que refleja la limitación. La raíz de composición no lo usa: solo se invoca
+    /// `cerrar_sesion` desde la ruta administrativa.
+    async fn iniciar_emparejamiento(&self) -> Result<Emparejamiento, Self::Error> {
+        // Stub: el asa no expone el canal de emparejamiento del adaptador.
+        Err(ErrorCanalWhatsmeow::SinConexion)
+    }
+
+    /// Cierra la sesión con el motivo que el asa lleva.
+    async fn cerrar_sesion(&self) -> Result<(), Self::Error> {
+        self.ordenar_cierre().await
     }
 
     /// Consulta el estado actual de la sesión del canal.

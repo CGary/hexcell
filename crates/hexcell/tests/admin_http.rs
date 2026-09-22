@@ -1,10 +1,10 @@
-//! Pruebas HTTP crudas del listener administrativo de la célula (`POST /admin/ingesta` y `GET /admin/ingesta`).
+//! Pruebas HTTP crudas del listener administrativo de la célula (`POST /admin/ingesta`, `GET /admin/ingesta` y `POST /admin/sesion/cierre`).
 //!
 //! Verifican la activación en segundo plano del flujo de ingesta de conocimiento en sombra,
 //! la compuerta de exclusión mutua 409 Conflict, la consulta síncrona de fase, la limitación
 //! de cuerpo 413 Payload Too Large por los dos caminos que el servidor distingue (longitud
 //! declarada y cuerpo troceado), la independencia de sockets entre salud y administración,
-//! y el mapeo unitario de desenlaces.
+//! el mapeo unitario de desenlaces, y el cierre de sesión del canal (HEX-082-a).
 
 mod comun;
 
@@ -16,13 +16,16 @@ use comun::{
     peticion_http_cruda, peticion_http_post_cruda, peticion_http_post_cruda_con_cabeceras,
 };
 use hexcell::admin::{
-    EstadoDeAdmin, FaseDeIngesta, MOTIVO_DE_TERMINACION_ANORMAL, RutaAdmin, enrutar_admin,
+    CierreDeSesion, EstadoDeAdmin, FaseDeIngesta, MOTIVO_DE_TERMINACION_ANORMAL,
+    RegistroDeCierreDeSesion, RutaAdmin, atender_cierre_de_sesion, enrutar_admin,
     respuesta_de_fase, supervisar_ingesta,
 };
 use hexcell::configuracion::{Configuracion, ErrorDeConfiguracion, FuenteEnMemoria};
 use hexcell::ingesta::{DesenlaceDeIngesta, ResumenDeIngesta};
+use hexcell_core::canal::{CicloDeVidaSesion, Emparejamiento, EstadoSesion};
 use http_body_util::BodyExt;
 use hyper::Method;
+use std::sync::Arc;
 
 /// Servidor TCP que acepta conexiones y jamás contesta nada.
 ///
@@ -418,5 +421,184 @@ async fn tarea_en_panico_deja_fase_terminal_y_readmite_un_nuevo_trabajo() {
     assert!(
         estado.intentar_iniciar(),
         "un POST posterior debe ser admitido, no responder 409 para siempre"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Pruebas de cierre de sesión (HEX-082-a)
+// ---------------------------------------------------------------------------
+
+/// Error de prueba para el doble de `CicloDeVidaSesion`.
+#[derive(Debug)]
+struct ErrorDePrueba(String);
+
+impl std::fmt::Display for ErrorDePrueba {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl std::error::Error for ErrorDePrueba {}
+
+/// Doble de `CicloDeVidaSesion` para las pruebas de cierre de sesión.
+///
+/// Permite inyectar el resultado de `cerrar_sesion` y el estado de sesión, sin depender de
+/// ningún adaptador real.
+struct DobleCicloDeVida {
+    resultado: Arc<tokio::sync::Mutex<Option<Result<(), ErrorDePrueba>>>>,
+    estado: EstadoSesion,
+}
+
+impl DobleCicloDeVida {
+    fn nuevo(resultado: Result<(), String>) -> Self {
+        Self {
+            resultado: Arc::new(tokio::sync::Mutex::new(Some(
+                resultado.map_err(ErrorDePrueba),
+            ))),
+            estado: EstadoSesion::Activa,
+        }
+    }
+
+    fn que_nunca_responde() -> Self {
+        Self {
+            resultado: Arc::new(tokio::sync::Mutex::new(None)),
+            estado: EstadoSesion::Activa,
+        }
+    }
+}
+
+impl CicloDeVidaSesion for DobleCicloDeVida {
+    type Error = ErrorDePrueba;
+
+    async fn iniciar_emparejamiento(&self) -> Result<Emparejamiento, Self::Error> {
+        Err(ErrorDePrueba("no implementado en el doble".to_string()))
+    }
+
+    async fn cerrar_sesion(&self) -> Result<(), Self::Error> {
+        let resultado = {
+            let mut guard = self.resultado.lock().await;
+            guard.take()
+        };
+        match resultado {
+            Some(resultado) => resultado,
+            None => {
+                // Nunca resuelve: se queda colgado para siempre.
+                std::future::pending::<Result<(), ErrorDePrueba>>().await
+            }
+        }
+    }
+
+    fn estado_sesion(&self) -> EstadoSesion {
+        self.estado
+    }
+}
+
+#[test]
+fn enrutar_admin_post_sesion_cierre_es_cerrar_sesion() {
+    assert_eq!(
+        enrutar_admin(&Method::POST, "/admin/sesion/cierre"),
+        RutaAdmin::CerrarSesion
+    );
+    // GET sobre la misma ruta no existe: solo POST.
+    assert_eq!(
+        enrutar_admin(&Method::GET, "/admin/sesion/cierre"),
+        RutaAdmin::NoEncontrada
+    );
+    // PUT tampoco.
+    assert_eq!(
+        enrutar_admin(&Method::PUT, "/admin/sesion/cierre"),
+        RutaAdmin::NoEncontrada
+    );
+    // Las rutas existentes siguen mapeando igual.
+    assert_eq!(
+        enrutar_admin(&Method::POST, "/admin/ingesta"),
+        RutaAdmin::DispararIngesta
+    );
+    assert_eq!(
+        enrutar_admin(&Method::GET, "/admin/ingesta"),
+        RutaAdmin::ConsultarEstado
+    );
+}
+
+#[tokio::test]
+async fn cierre_de_sesion_sin_sesion_devuelve_200_con_motivo() {
+    let registro: RegistroDeCierreDeSesion = Arc::new(std::sync::OnceLock::new());
+    let _ = CierreDeSesion::SinSesion.registrar(&registro);
+
+    let (estado, cuerpo) = atender_cierre_de_sesion(&registro, Duration::from_secs(1)).await;
+    assert_eq!(estado, hyper::StatusCode::OK);
+    assert_eq!(cuerpo["resultado"], "completado");
+    // Literal fijado a propósito (no importa la constante de producción): esta guarda debe
+    // ponerse roja si alguien cambia el valor de MOTIVO_CANAL_SIN_SESION, no seguir verde
+    // porque ambos lados se movieron juntos.
+    assert_eq!(cuerpo["motivo"], "canal_sin_sesion");
+}
+
+#[tokio::test]
+async fn cierre_de_sesion_con_sesion_ok_devuelve_200_sin_motivo() {
+    let registro: RegistroDeCierreDeSesion = Arc::new(std::sync::OnceLock::new());
+    let doble = DobleCicloDeVida::nuevo(Ok(()));
+    let _ = CierreDeSesion::con_sesion(doble).registrar(&registro);
+
+    let (estado, cuerpo) = atender_cierre_de_sesion(&registro, Duration::from_secs(1)).await;
+    assert_eq!(estado, hyper::StatusCode::OK);
+    assert_eq!(cuerpo["resultado"], "completado");
+    // El campo `motivo` NO debe estar presente en el 200 de ConSesion-Ok.
+    assert!(
+        cuerpo.get("motivo").is_none(),
+        "el 200 de ConSesion-Ok no debe llevar campo motivo: {cuerpo}"
+    );
+}
+
+#[tokio::test]
+async fn cierre_de_sesion_con_sesion_error_devuelve_502_con_motivo_real() {
+    let registro: RegistroDeCierreDeSesion = Arc::new(std::sync::OnceLock::new());
+    // Motivo distintivo que no aparece en ningún otro lugar del código de producción.
+    let motivo_fixture = "error-de-prueba-distintivo-abc123xyz";
+    let doble = DobleCicloDeVida::nuevo(Err(motivo_fixture.to_string()));
+    let _ = CierreDeSesion::con_sesion(doble).registrar(&registro);
+
+    let (estado, cuerpo) = atender_cierre_de_sesion(&registro, Duration::from_secs(1)).await;
+    assert_eq!(estado, hyper::StatusCode::BAD_GATEWAY);
+    assert_eq!(cuerpo["resultado"], "fallido");
+    assert_eq!(cuerpo["motivo"], motivo_fixture);
+}
+
+#[tokio::test]
+async fn cierre_de_sesion_con_sesion_que_nunca_responde_devuelve_504() {
+    let registro: RegistroDeCierreDeSesion = Arc::new(std::sync::OnceLock::new());
+    let doble = DobleCicloDeVida::que_nunca_responde();
+    let _ = CierreDeSesion::con_sesion(doble).registrar(&registro);
+
+    // Plazo corto inyectado por el test, nunca la constante de producción.
+    let (estado, cuerpo) = atender_cierre_de_sesion(&registro, Duration::from_millis(50)).await;
+    assert_eq!(estado, hyper::StatusCode::GATEWAY_TIMEOUT);
+    assert_eq!(cuerpo["resultado"], "ausente");
+}
+
+#[tokio::test]
+async fn cierre_de_sesion_sin_registro_devuelve_502() {
+    let registro: RegistroDeCierreDeSesion = Arc::new(std::sync::OnceLock::new());
+    // No se registra nada: el OnceLock queda vacío.
+
+    let (estado, cuerpo) = atender_cierre_de_sesion(&registro, Duration::from_secs(1)).await;
+    assert_eq!(estado, hyper::StatusCode::BAD_GATEWAY);
+    assert_eq!(cuerpo["resultado"], "fallido");
+}
+
+#[test]
+fn cierre_de_sesion_canal_simulado_responde_200_con_motivo() {
+    // Prueba end-to-end sobre el binario real con el canal simulado.
+    let directorio = DirectorioTemporal::nuevo("admin-cierre-simulado");
+    let binario = lanzar_binario_con_ruta_de_datos(directorio.ruta());
+
+    let respuesta = peticion_http_post_cruda(&binario.direccion_admin, "/admin/sesion/cierre", "");
+    assert!(
+        respuesta.starts_with("HTTP/1.1 200"),
+        "el canal simulado debe responder 200 al cierre de sesión: {respuesta}"
+    );
+    assert!(
+        respuesta.contains("canal_sin_sesion"),
+        "la respuesta debe llevar el motivo canal_sin_sesion: {respuesta}"
     );
 }
