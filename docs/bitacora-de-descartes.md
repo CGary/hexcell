@@ -1,6 +1,6 @@
 # Bitácora de descartes
 
-> Registro de lo que se consideró y **no** se hizo. Última actualización: 2026-09-21 (D-57).
+> Registro de lo que se consideró y **no** se hizo. Última actualización: 2026-09-22 (D-58).
 
 ## Para qué sirve este documento
 
@@ -883,6 +883,32 @@ debe operar únicamente sobre Docker.
 ### Qué tendría que cambiar para reabrirlo
 
 Que el protocolo IPC admita un canal de control separado o multiplexación de conexiones.
+
+---
+
+### D-58: Crate de migraciones para el almacén del plano de control
+
+**Descartado el:** 2026-09-22  
+**Decisión registrada en:** adr-0039
+
+### Qué se consideró
+
+Incorporar un crate de migraciones (como `refinery` o la macro `migrate!` de `sqlx`) para gestionar el esquema
+del almacén del plano de control.
+
+### Por qué se descartó
+
+SQLite ya guarda un entero de 32 bits en la cabecera del archivo, `user_version`, que ninguna otra
+parte del motor usa y que cambia dentro de la misma transacción que el esquema. Un crate de
+migraciones añadiría una tabla de versiones que duplica exactamente ese dato, con la diferencia de
+que la tabla puede quedar desincronizada del esquema y la cabecera no. El patrón de `include_str!`
+más `PRAGMA user_version` en la misma transacción, ya establecido en `crates/hexcell-storage`, es
+suficiente y evita una dependencia nueva.
+
+### Qué tendría que cambiar para reabrirlo
+
+Que el esquema del plano de control crezca hasta requerir migraciones condicionales complejas
+(múltiples ramas, rollback automático), lo cual no es el caso actual.
 
 ---
 

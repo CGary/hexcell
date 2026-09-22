@@ -18,3 +18,6 @@ license.workspace = true
 [dependencies]
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
+# Motor SQLite del almacén del plano de control (tarea 14 de la etapa A-6). La misma versión
+# 0.39 que crates/hexcell-storage: la justificación del pin vive en el Cargo.toml raíz.
+rusqlite = { workspace = true }

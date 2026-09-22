@@ -13,8 +13,10 @@
 
 use std::io::{BufRead, BufReader, Read, Write};
 use std::os::unix::net::{UnixListener, UnixStream};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::mpsc::{Receiver, RecvTimeoutError};
+use std::time::Duration;
 
 /// Distingue dos sockets creados por el mismo proceso: `process::id()` solo separa procesos.
 static SECUENCIA: AtomicUsize = AtomicUsize::new(0);
@@ -105,6 +107,136 @@ pub fn ruta_socket_sin_vincular(etiqueta: &str) -> PathBuf {
         "hexcell-docker-{etiqueta}-{}-{secuencia}",
         std::process::id()
     ))
+}
+
+/// Ruta temporal única para un directorio que a propósito **no existe**, con el mismo patrón de
+/// `temp_dir()` + `process::id()` + [`SECUENCIA`] que [`ServidorDockerFalso::nuevo`]. Un literal
+/// fijo como `/tmp/algo-12345` puede existir de verdad en la máquina que corre la prueba, y
+/// entonces la guarda que exige el rechazo pasa por el motivo equivocado.
+pub fn ruta_directorio_inexistente(etiqueta: &str) -> PathBuf {
+    let secuencia = SECUENCIA.fetch_add(1, Ordering::Relaxed);
+    std::env::temp_dir().join(format!(
+        "hexcell-sin-directorio-{etiqueta}-{}-{secuencia}",
+        std::process::id()
+    ))
+}
+
+/// Archivo temporal de base de datos que se borra al salir de alcance.
+///
+/// El archivo NO se crea aquí: la prueba decide si lo crea, lo deja ausente o lo siembra. El
+/// `Drop` borra el principal y sus anexos `-wal` y `-shm`, igual que [`ServidorDockerFalso`]
+/// borra su socket; si no, una sola corrida deja decenas de archivos en el directorio temporal.
+pub struct AlmacenTemporal {
+    ruta: PathBuf,
+}
+
+impl AlmacenTemporal {
+    /// Reserva una ruta `.db` única para esta prueba.
+    pub fn nuevo(etiqueta: &str) -> Self {
+        let secuencia = SECUENCIA.fetch_add(1, Ordering::Relaxed);
+        let ruta = std::env::temp_dir().join(format!(
+            "hexcell-db-{etiqueta}-{}-{secuencia}.db",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_file(&ruta);
+        Self { ruta }
+    }
+
+    /// Ruta del archivo, para pasársela al almacén bajo prueba.
+    pub fn ruta(&self) -> &Path {
+        &self.ruta
+    }
+
+    /// La misma ruta como texto, que es la forma en la que la recibe `ejecutar_con_efectos`.
+    pub fn texto(&self) -> String {
+        self.ruta.to_string_lossy().into_owned()
+    }
+
+    /// Contenido completo del archivo, o `None` si todavía no existe. Compararlo byte a byte es
+    /// la guarda más fuerte de «no se escribió»: no depende de la granularidad del `mtime`.
+    pub fn bytes(&self) -> Option<Vec<u8>> {
+        std::fs::read(&self.ruta).ok()
+    }
+
+    /// Marca de tiempo de modificación del archivo.
+    pub fn modificado(&self) -> std::time::SystemTime {
+        std::fs::metadata(&self.ruta)
+            .expect("el archivo del almacén debía existir")
+            .modified()
+            .expect("el sistema de archivos debía exponer la marca de modificación")
+    }
+}
+
+impl Drop for AlmacenTemporal {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.ruta);
+        for anexo in ["-wal", "-shm"] {
+            let mut ruta = self.ruta.clone().into_os_string();
+            ruta.push(anexo);
+            let _ = std::fs::remove_file(PathBuf::from(ruta));
+        }
+    }
+}
+
+/// Cota finita de espera de una petición: una que falte pone la prueba roja, no colgada.
+pub const LIMITE_DE_RECEPCION: Duration = Duration::from_secs(10);
+
+/// Margen de silencio con el que se afirma que NO llegó ninguna petición.
+pub const MARGEN_DE_SILENCIO: Duration = Duration::from_millis(750);
+
+/// Atiende en un hilo aparte la lista de guiones, en orden, y reenvía por el canal cada petición.
+///
+/// Devuelve el receptor y no el `JoinHandle` a propósito: toda espera pasa por `recv_timeout`,
+/// así que una petición que producción deja de emitir pone la prueba roja dentro del límite en
+/// lugar de dejarla colgada en un `join` que nunca vuelve.
+pub fn servir_guiones(
+    servidor: ServidorDockerFalso,
+    guiones: Vec<Guion>,
+) -> Receiver<PeticionRecibida> {
+    let (emisor, receptor) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        for guion in guiones {
+            let peticion = servidor.atender(guion);
+            if emisor.send(peticion).is_err() {
+                break;
+            }
+        }
+    });
+    receptor
+}
+
+/// Lee la siguiente petición atendida con una cota finita.
+pub fn recibir(receptor: &Receiver<PeticionRecibida>) -> PeticionRecibida {
+    receptor
+        .recv_timeout(LIMITE_DE_RECEPCION)
+        .expect("el demonio falso debía haber atendido otra petición dentro del límite")
+}
+
+/// Lee las siguientes `cuantas` peticiones y las devuelve como `«MÉTODO objetivo»`, para
+/// comparar la secuencia ENTERA de un golpe en vez de ir campo a campo.
+pub fn secuencia_recibida(receptor: &Receiver<PeticionRecibida>, cuantas: usize) -> Vec<String> {
+    (0..cuantas)
+        .map(|_| {
+            let peticion = recibir(receptor);
+            format!("{} {}", peticion.metodo, peticion.objetivo)
+        })
+        .collect()
+}
+
+/// Exige que NO llegara ninguna petición más: la forma observable de «cero peticiones Docker».
+/// El socket está vinculado y hay un guion pendiente, así que si producción conectara, la
+/// petición llegaría por el canal. Un código de salida por sí solo no prueba nada de esto.
+pub fn exigir_silencio(receptor: &Receiver<PeticionRecibida>) {
+    match receptor.recv_timeout(MARGEN_DE_SILENCIO) {
+        Err(RecvTimeoutError::Timeout) => {}
+        Err(RecvTimeoutError::Disconnected) => panic!(
+            "el demonio falso agotó sus guiones: no queda ninguno pendiente con el que observar el silencio"
+        ),
+        Ok(peticion) => panic!(
+            "se esperaban CERO peticiones Docker y llegó «{} {}»",
+            peticion.metodo, peticion.objetivo
+        ),
+    }
 }
 
 /// Lee la línea de petición, las cabeceras y el cuerpo (por Content-Length) de una conexión.

@@ -191,6 +191,7 @@ Las entradas conservan su numeración; esta sección es la autoridad sobre el or
 * Actualización 2026-09-21: 22 cerrada (HEX-081) con el grupo `config render` de `hexcell-admin` —lista blanca cerrada de claves no secretas, superposición sobre valores por defecto en KEY=VALUE y validación de fallo cerrado en el render, nunca en el arranque— más los dos archivos de ejemplo bajo `deploy/` y la guarda `deploy/verificar_renderizado_configuracion.sh` (probada por mutación, en CI). Registrados `adr-0038` (segundo grupo `config render`) y D-56 (descarte de un analizador externo para la configuración). Los secretos siguen viajando solo por variable de entorno y los overlays con valores reales son datos de cliente: en este repositorio solo entran ejemplos con marcadores. La cadena restante: 16 → 11 → 12 → 13 → 14 → 15 → 18 → 23 → 21 → 19.
 * Actualización 2026-09-21: 11 cerrada (HEX-080); ver su nota de cierre. Pendiente mecánico fuera de la cadena, sin tarea numerada: los tests del workspace no se lintean en CI (`cargo clippy --workspace` sin `--all-targets`) y con la bandera fallan 38 diagnósticos preexistentes; se limpian y se activa la bandera en `ci.yml` en el mismo commit. La cadena restante: 12 → 13 → 14 → 15 → 18 → 23 → 21 → 19.
 * Actualización 2026-09-19: 16 cerrada (HEX-079) con el instrumento en vivo `deploy/medir_memoria_y_imagenes.sh`; la corrida manual real y el registro de los números quedan diferidos (AC-6), en la sección de valores de referencia de `docs/plantilla-celula.md`. La cadena restante: 11 → 22 → 12 → 13 → 14 → 15 → 18 → 23 → 21 → 19. Nota 2026-09-21: el instrumento da una cota inferior, no el peor caso (no ejercita GCRA, inferencia ni la ruta whatsmeow, D-55); ni su corrida manual ratifica el reparto provisional 48/32 MB de `adr-0007`, que sigue provisional hasta la prueba de carga sostenida pendiente en STATUS. Primera corrida manual el 2026-09-21 (commit `5d03a19`, sin dispositivo emparejado): en reposo 9,0 MiB de `anon` y 35,7 MiB de `memory.current` agregados; imágenes de 11,3 MiB (núcleo) y 29,0 MiB (sidecar); tabla en `docs/plantilla-celula.md`.
+* Actualización 2026-09-22: 14 cerrada (HEX-083) con el almacén SQLite del plano de control (`adr-0039`), la validación de transiciones antes de Docker, la persistencia sólo tras éxito, y los comandos `cell status` y `cell list` reales. **Desviación consciente del orden declarado arriba:** la restricción «14 después de 13» se apoyaba en que el historial de sustituciones de `cell status` sólo existe tras `rebind`, y la tarea 13 sigue abierta, así que 14 se cerró ANTES de 13. La desviación es legítima porque esta tarea crea la tabla `sustituciones` y sólo la LEE: un historial vacío no es una carencia de `cell status` sino el estado real de una célula que nunca fue reemparejada, y así se imprime («sustituciones: (ninguna)»). La tarea 13 es la que escribe en esa tabla y, al cerrarse, llenará el historial sin tocar el lector. El gancho `Retirada`/`sesion_cerrada` queda inerte porque la tarea 12 no está fusionada. Registrados `adr-0039` (almacén del plano de control) y D-58 (descarte de un crate de migraciones). La cadena restante: 12 → 13 → 15 → 18 → 23 → 21 → 19.
 
 ---
 
@@ -316,6 +317,16 @@ Las entradas conservan su numeración; esta sección es la autoridad sobre el or
     pasa a `Suspendida` y tras `cell unpause` vuelve a `EnEjecucion`», porque esta es la primera tarea
     que necesita el almacén del plano de control y por tanto la que lo crea. La tabla de transiciones
     ya existe en `crates/hexcell-admin/src/estado_de_celula.rs` (HEX-074-c); lo que falta es persistirla.
+
+    **Cerrada el 2026-09-22 con HEX-083.** Almacén SQLite del plano de control con migración
+    versionada por `PRAGMA user_version` (`adr-0039`), ruta configurable por variable de entorno
+    `HEXCELL_ADMIN_ALMACEN`, validación de transiciones antes de Docker y persistencia sólo tras
+    éxito. `cell status` cruza las tres fuentes (almacén, Docker, sonda de salud) y reporta los
+    cinco códigos de discrepancia (DISC-01 a DISC-05). `cell list` imprime la unión de células del
+    almacén y de Docker. El gancho de transición `Retirada` con motivo `sesion_cerrada` queda
+    declarado pero inerte porque la tarea 12 no está fusionada en main. La tabla `sustituciones` se
+    crea pero sólo se lee; la tarea 13 (cell rebind) es la que escribe en ella. Registrados
+    `adr-0039` (almacén del plano de control) y D-58 (descarte de un crate de migraciones).
 15. **Dotar de idempotencia y recuperación a los comandos** (1 día). Reejecución segura tras un fallo
     parcial, con detección del punto en que quedó la secuencia.
 

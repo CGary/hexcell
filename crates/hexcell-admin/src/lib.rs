@@ -12,6 +12,7 @@
 //! `CodigoDeSalida` que el proceso devuelve al sistema operativo a través de
 //! `std::process::ExitCode`.
 
+pub mod almacen_plano_de_control;
 pub mod argumentos;
 pub mod ciclo_de_vida;
 pub mod codigo_de_salida;
