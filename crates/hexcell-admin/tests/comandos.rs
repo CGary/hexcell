@@ -9,9 +9,7 @@ mod comun;
 
 use std::io::Write;
 
-use hexcell_admin::almacen_plano_de_control::{
-    AlmacenDelPlanoDeControl, MOTIVO_DE_ALTA_IMPLICITA, etiqueta_persistida,
-};
+use hexcell_admin::almacen_plano_de_control::{AlmacenDelPlanoDeControl, etiqueta_persistida};
 use hexcell_admin::argumentos::{Subcomando, analizar};
 use hexcell_admin::ciclo_de_vida::DatosDeSondeo;
 use hexcell_admin::codigo_de_salida::CodigoDeSalida;
