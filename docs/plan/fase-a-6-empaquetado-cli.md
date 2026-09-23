@@ -348,6 +348,14 @@ Las entradas conservan su numeración; esta sección es la autoridad sobre el or
     HEX-085-b (CLI y pruebas). Prueba de humo en Docker real con una célula de canal simulado
     arrancada desde volumen vacío: checksums de `sessions.db`, `knowledge_live.db` y
     `adapter_identity.db` idénticos antes y después.
+
+    **Seguimiento 2026-09-23 (revisión de HEX-085):** la prueba de humo en Docker real (AC-17 del
+    padre) se ejecutó en la sesión de orquestación con un archivo de superposición de compose fuera
+    de `deploy/` y su evidencia vive en el registro de esa sesión, no en `05-validation.json` de
+    HEX-085-a ni de HEX-085-b, que sólo recogen fmt, clippy y test. Los topes del contrato se
+    elevaron durante la revisión (HEX-085-a de 1800 a 2400 líneas, HEX-085-b de 2450 a 4600) sin
+    ratificación humana explícita. El contenedor hermano que borra `sqlstore.db` usa la imagen de
+    sonda (`HEXCELL_IMAGEN_SONDA`, `alpine:3` por omisión), no la imagen de la célula.
 14. **Implementar `cell list` y `cell status`** (0,5 días). Se acepta cuando `cell status` cruza el
     almacén de plano de control, `docker inspect` y `/health/ready`, marca cada discrepancia con un
     código estable e incluye el historial de sustituciones. No reporta ratio de acuses ni ventana de
@@ -394,6 +402,11 @@ Las entradas conservan su numeración; esta sección es la autoridad sobre el or
     dispositivo ya está baneado, sin añadir una nueva bandera al contrato existente sino como
     extensión del comportamiento ante un fallo específico del cierre; el mecanismo concreto queda
     pendiente de la tarea 15.
+
+    **Nota 2026-09-23:** hereda de HEX-085 (tarea 13) la ruta de salida de una reanudación de
+    `cell rebind` que encuentra la sesión ya emparejada (`ya_emparejada`), registrada como pendiente
+    en STATUS.md el 2026-09-22 y asignada a esta tarea: se decide y se cablea aquí, y esa entrada
+    pasa a Definido en el mismo commit.
 16. **Medir memoria y tamaño de imágenes** (0,5 días). Consumo de la célula completa en reposo y bajo
     carga, y peso de ambas imágenes, registrados como valores de referencia.
     No se reutiliza `rss_linea_base` (mide solo el núcleo con adaptador simulado).
@@ -453,6 +466,13 @@ Las entradas conservan su numeración; esta sección es la autoridad sobre el or
     (una imagen sin `USER` y un núcleo `--read-only` sin su volumen de datos), y borra todo lo que
     crea aunque falle a mitad. Se ejecuta en CI contra las referencias recién cargadas y de forma
     local sin argumentos.
+
+    **Seguimiento 2026-09-23 (revisión de HEX-086):** el trabajo `imagenes` corrió y pasó en GitHub
+    Actions en los dos merges que lo estrenaron (a3c8816, run 35870395884; 7d3e48d, run
+    35870705816); la sesión que lo escribió cerró antes de verlo. El tope de líneas del script se
+    elevó de 280 a 300 durante la revisión. El arranque en frío del sidecar exige
+    `HEXCELL_VENTANA_ZONA` (requerida desde HEX-033), excepción documentada en
+    `deploy/verificar_imagenes.sh` a la formulación «sin variables extra» del criterio.
 19. **Montar el canary de biblioteca y el despliegue escalonado** (1 día). Alta de una **célula
     centinela** propia, con número propio de HexCell y sin ningún cliente encima, que corre la
     versión candidata de whatsmeow durante **72 horas** antes de que la actualización toque a nadie
