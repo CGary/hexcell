@@ -70,7 +70,10 @@ FALLAS=0
 verificar_usuario_no_root() {
     local imagen="$1"
     local usuario
-    usuario="$(docker image inspect --format '{{.Config.User}}' "$imagen" 2>/dev/null)"
+    if ! usuario="$(docker image inspect --format '{{.Config.User}}' "$imagen" 2>/dev/null)"; then
+        echo "FALLA: [$imagen] no existe o no se pudo inspeccionar"
+        return 1
+    fi
     if [ "$usuario" != "10001:10001" ]; then
         echo "FALLA: [$imagen] .Config.User es [${usuario}] y debe ser exactamente 10001:10001"
         return 1
@@ -92,8 +95,15 @@ caso_usuario_rechaza_imagen_root() {
         return 1
     fi
     IMAGENES_DESCARTABLES="$IMAGENES_DESCARTABLES $imagen_raiz"
-    if verificar_usuario_no_root "$imagen_raiz" >/dev/null 2>&1; then
+    local salida
+    if salida="$(verificar_usuario_no_root "$imagen_raiz" 2>&1)"; then
         echo "FALLA: el guardia de usuario aceptó una imagen FROM alpine:3 sin USER"
+        return 1
+    fi
+    # El rechazo debe ser por el usuario vacío de ESA imagen, no por una
+    # imagen ausente o un inspect roto: si no, la autoprueba pasa en vacío.
+    if [ "$salida" != "FALLA: [$imagen_raiz] .Config.User es [] y debe ser exactamente 10001:10001" ]; then
+        echo "FALLA: el guardia de usuario rechazó la imagen raíz por otro motivo: ${salida}"
         return 1
     fi
     echo "OK: el guardia de usuario rechazó una imagen sin USER (autoprueba)"
@@ -198,6 +208,12 @@ caso_arranque_en_frio_nucleo_sin_volumen_falla() {
     fi
     local codigo
     codigo="$(docker inspect --format '{{.State.ExitCode}}' "$contenedor" 2>/dev/null)"
+    # El contenedor debe haber existido y muerto con código distinto de 0: si
+    # nunca arrancó (imagen ausente, run fallido) la autoprueba pasa en vacío.
+    if [ -z "$codigo" ] || [ "$codigo" = "0" ]; then
+        echo "FALLA: el núcleo sin volumen no llegó a arrancar y morir (ExitCode=[${codigo}])"
+        return 1
+    fi
     echo "OK: el guardia de arranque rechazó el núcleo --read-only sin volumen (ExitCode=$codigo, autoprueba)"
     return 0
 }
