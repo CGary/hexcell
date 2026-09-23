@@ -223,3 +223,92 @@ jobs:
 
       - name: Autoprueba de mutación del guardia de configuración
         run: bash deploy/verificar_renderizado_configuracion.sh --autoprueba
+
+  # HEX-086 (tarea 18 de A-6): integración de la construcción de las imágenes
+  # en la CI. Sin `needs:` a propósito: no depende de ningún otro trabajo y
+  # corre en paralelo con rust/go/guardas-*.
+  #
+  # Construye las dos imágenes de la célula con los MISMOS contextos y
+  # Dockerfiles que deploy/cell.compose.yml resuelve (contexto `.` +
+  # ./Dockerfile para el núcleo; contexto ./sidecar + ./sidecar/Dockerfile
+  # para el sidecar) y las etiqueta con el SHA corto de 12 caracteres y con
+  # la versión de [workspace.package] leída de Cargo.toml en tiempo de
+  # ejecución — nunca un literal en el YAML.
+  #
+  # La publicación en un registro sigue siendo una decisión Pendiente de
+  # STATUS.md: este trabajo construye con push:false y load:true (las
+  # imágenes quedan SOLO en el runner) y no contiene ningún paso de login ni
+  # credencial de registro. El guardia deploy/verificar_imagenes.sh recibe
+  # las referencias exactas recién construidas y verifica que ninguna de las
+  # dos imágenes corre como root ni arranca sin rootfs de solo lectura
+  # (criterio de esta etapa, docs/plan/fase-a-6-empaquetado-cli.md línea 547,
+  # que hasta hoy no tenía comprobación mecánica).
+  imagenes:
+    name: Imágenes — construir, etiquetar y verificar sin publicar (HEX-086)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Instalar buildx
+        uses: docker/setup-buildx-action@v3
+
+      # AC-3: la versión se lee de [workspace.package] en Cargo.toml con un
+      # paso de shell (sed sobre el bloque de la tabla, primera línea
+      # `version`), nunca como literal del YAML. El SHA corto son los 12
+      # primeros caracteres de GITHUB_SHA. Ambas variables viajan por
+      # $GITHUB_ENV a los pasos de build-push.
+      - name: Leer versión del workspace y SHA corto
+        run: |
+          version="$(sed -n '/^\[workspace\.package\]/,/^\[/p' Cargo.toml \
+            | grep -m1 '^version' \
+            | sed -E 's/^version[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/')"
+          if [ -z "$version" ]; then
+            echo "FALLA: no se pudo leer la versión de [workspace.package] en Cargo.toml" >&2
+            exit 1
+          fi
+          sha12="${GITHUB_SHA:0:12}"
+          echo "VERSION=${version}" >> "$GITHUB_ENV"
+          echo "SHA12=${sha12}" >> "$GITHUB_ENV"
+          echo "construyendo con etiquetas: versión ${version}, sha ${sha12}"
+
+      # AC-2: contexto y dockerfile del núcleo, idénticos a la sección
+      # `build` del servicio `nucleo` de deploy/cell.compose.yml (el contexto
+      # `..` de la plantilla, relativo a deploy/, ES la raíz del repositorio).
+      # Cada imagen usa su propio scope de caché gha para que la caché de una
+      # no desaloje la de la otra en corridas sucesivas.
+      - name: Construir y etiquetar hexcell-nucleo
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          push: false
+          load: true
+          tags: |
+            hexcell-nucleo:${{ env.SHA12 }}
+            hexcell-nucleo:${{ env.VERSION }}
+          cache-from: type=gha,scope=nucleo
+          cache-to: type=gha,mode=max,scope=nucleo
+
+      # AC-2: mismo criterio para el sidecar (contexto `../sidecar` de la
+      # plantilla = ./sidecar desde la raíz).
+      - name: Construir y etiquetar hexcell-sidecar
+        uses: docker/build-push-action@v6
+        with:
+          context: ./sidecar
+          file: ./sidecar/Dockerfile
+          push: false
+          load: true
+          tags: |
+            hexcell-sidecar:${{ env.SHA12 }}
+            hexcell-sidecar:${{ env.VERSION }}
+          cache-from: type=gha,scope=sidecar
+          cache-to: type=gha,mode=max,scope=sidecar
+
+      # AC-4..AC-9: el guardia recibe las referencias EXACTAS que este
+      # trabajo acaba de construir y cargar, sin reconstruir nada: usuario
+      # 10001:10001 en ambas imágenes, arranque en frío endurecido del núcleo
+      # (solo él: /health/live no necesita al sidecar, crates/hexcell/src/
+      # salud.rs) y del sidecar, con sus dos casos negativos (una imagen sin
+      # USER y un núcleo --read-only sin volumen de datos).
+      - name: Guardia de imágenes — usuario no root y arranque en frío de solo lectura
+        run: bash deploy/verificar_imagenes.sh hexcell-nucleo:${{ env.SHA12 }} hexcell-sidecar:${{ env.SHA12 }}
