@@ -498,6 +498,14 @@ async fn iniciar_emparejamiento_con_plazo_agotado_devuelve_sin_acuse_y_no_bloque
         _ => panic!("se esperaba EmparejamientoSinAcuse, obtenido: {err:?}"),
     }
 
+    // El plazo agotado debe limpiar el slot pendiente: si no lo limpia, el próximo código o
+    // acuse huérfano se enruta al receptor ya soltado de este intento (falla el `send` en
+    // silencio) en vez de descartarse con el aviso «huérfano recibido».
+    assert!(
+        !adaptador.emparejamiento_pendiente_ocupado().await,
+        "el slot de emparejamiento pendiente debe quedar libre tras el plazo agotado"
+    );
+
     // Código huérfano posterior: no debe pánicar.
     sidecar
         .enviar_codigo_emparejamiento("qr", "qr-huerfano-post-plazo", 0)

@@ -667,6 +667,17 @@ impl AdaptadorWhatsmeow {
         }
     }
 
+    /// Indica si el slot compartido de emparejamiento pendiente sigue ocupado.
+    ///
+    /// Expuesta para que las pruebas de integración puedan observar, desde fuera del módulo, que
+    /// [`Self::iniciar_emparejamiento_con`] y [`Self::ordenar_emparejamiento`] limpian el slot al
+    /// resolver (código, acuse, canal cerrado o plazo agotado): un slot que sigue ocupado tras
+    /// resolver dejaría el próximo código o acuse huérfano mal enrutado a un receptor ya soltado,
+    /// en vez de descartarlo con el aviso `huérfano recibido`.
+    pub async fn emparejamiento_pendiente_ocupado(&self) -> bool {
+        self.emparejamiento_pendiente.lock().await.is_some()
+    }
+
     /// Ordena pausar o reanudar el envío saliente al sidecar y espera el acuse.
     ///
     /// Espeja [`Self::ordenar_respaldo_sqlstore`]: devuelve el acuse crudo del sidecar, sin

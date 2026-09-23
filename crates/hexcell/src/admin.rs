@@ -321,7 +321,7 @@ pub const MOTIVO_CANAL_SIN_SESION: &str = "canal_sin_sesion";
 /// sidecar.
 pub const MOTIVO_SIN_CONEXION: &str = "sin_conexion";
 
-/// Motivo de fallo cuando el sidecar reporta que la sesión yabb emparejada.
+/// Motivo de fallo cuando el sidecar reporta que la sesión ya está emparejada.
 ///
 /// Literal fijado por el contrato HTTP (D2): `POST /admin/sesion/emparejamiento` lo devuelve
 /// cuando el acuse del sidecar lleva el texto `ya_emparejado` (la raíz de composición traduce el
@@ -493,117 +493,6 @@ impl SesionDeCanal {
     }
 }
 
-/// Construye un [`SesionDeCanal::ConSesion`] con las cuatro operaciones enlazadas a un asa de
-/// sesión `AsaDeSesion`, borrando el tipo.
-///
-/// Esta función vive fuera de `impl SesionDeCanal` porque [`AsaDeSesion`] es un tipo concreto
-/// del crate `hexcell-canal-whatsmeow` y `admin.rs` no lo nombra (permanece canal-agnostic); la
-/// invoca la raíz de composición en `main.rs`. Las cuatro operaciones se construyen a partir de
-/// clones del asa; el asa ya porta el `receptor_estado`, así que `estado` simplemente lo presta.
-///
-/// El mapeo de los resultados del asa a los tipos de valor de las rutas (Aplicado, Fallido{motivo},
-/// Codigo{metodo,valor,expira_en_ms}, ya_emparejada) vive aquí, en la composición: `admin.rs` solo
-/// maneja los tipos de valor y nunca nombre `ErrorCanalWhatsmeow` ni `AsaDeSesion`.
-#[allow(clippy::too_many_arguments)]
-pub fn construir_sesion_de_canal(
-    asa: hexcell_canal_whatsmeow::AsaDeSesion,
-    plazo_pausa: Duration,
-    plazo_emparejamiento: Duration,
-) -> SesionDeCanal {
-    let asa_cerrar = Arc::new(asa.clone());
-    let asa_pausa = Arc::new(asa.clone());
-    let asa_emparejar = Arc::new(asa.clone());
-    let asa_estado = Arc::new(asa);
-
-    SesionDeCanal::ConSesion(OperacionesDeSesion {
-        cerrar: Box::new(move || {
-            let asa = Arc::clone(&asa_cerrar);
-            Box::pin(async move { asa.ordenar_cierre().await.map_err(|e| e.to_string()) })
-        }),
-        pausar_envio: Box::new(move |accion| {
-            let asa = Arc::clone(&asa_pausa);
-            Box::pin(async move {
-                let accion_cable = match accion {
-                    AccionDePausa::Pausar => "pausar",
-                    AccionDePausa::Reanudar => "reanudar",
-                };
-                match asa.ordenar_pausa_de_envio(accion_cable, plazo_pausa).await {
-                    Ok(acuse) if acuse.resultado == "aplicado" => DesenlaceDePausa::Aplicado,
-                    Ok(acuse) => DesenlaceDePausa::Fallido {
-                        motivo: if acuse.motivo.is_empty() {
-                            acuse.resultado
-                        } else {
-                            acuse.motivo
-                        },
-                    },
-                    Err(hexcell_canal_whatsmeow::ErrorCanalWhatsmeow::SinConexion) => {
-                        DesenlaceDePausa::Fallido {
-                            motivo: MOTIVO_SIN_CONEXION.to_string(),
-                        }
-                    }
-                    Err(e) => DesenlaceDePausa::Fallido {
-                        motivo: e.to_string(),
-                    },
-                }
-            })
-        }),
-        emparejar: Box::new(move |metodo, plazo| {
-            let asa = Arc::clone(&asa_emparejar);
-            // Ignora el plazo inyectado por la ruta: usa el plazo fijo de composición.
-            let _ = plazo;
-            Box::pin(async move {
-                let metodo_emp = match metodo {
-                    MetodoSolicitado::Qr => hexcell_canal_whatsmeow::MetodoDeEmparejamiento::Qr,
-                    MetodoSolicitado::CodigoDeVinculacion => {
-                        hexcell_canal_whatsmeow::MetodoDeEmparejamiento::CodigoDeVinculacion
-                    }
-                };
-                match asa
-                    .iniciar_emparejamiento_con(metodo_emp, plazo_emparejamiento)
-                    .await
-                {
-                    Ok(hexcell_canal_whatsmeow::InicioDeEmparejamiento::Codigo(codigo)) => {
-                        DesenlaceDeEmparejamiento::Codigo {
-                            metodo: codigo.metodo,
-                            valor: codigo.valor,
-                            expira_en_ms: codigo.expira_en_ms,
-                        }
-                    }
-                    Ok(hexcell_canal_whatsmeow::InicioDeEmparejamiento::Acuse(acuse)) => {
-                        if acuse.resultado == "fallido"
-                            && acuse.motivo == "canal: la sesión ya está emparejada"
-                        {
-                            DesenlaceDeEmparejamiento::Fallido {
-                                motivo: MOTIVO_YA_EMPAREJADA.to_string(),
-                            }
-                        } else {
-                            DesenlaceDeEmparejamiento::Fallido {
-                                motivo: if acuse.motivo.is_empty() {
-                                    acuse.resultado
-                                } else {
-                                    acuse.motivo
-                                },
-                            }
-                        }
-                    }
-                    Err(hexcell_canal_whatsmeow::ErrorCanalWhatsmeow::SinConexion) => {
-                        DesenlaceDeEmparejamiento::Fallido {
-                            motivo: MOTIVO_SIN_CONEXION.to_string(),
-                        }
-                    }
-                    Err(e) => DesenlaceDeEmparejamiento::Fallido {
-                        motivo: e.to_string(),
-                    },
-                }
-            })
-        }),
-        estado: Box::new(move || {
-            let asa = Arc::clone(&asa_estado);
-            Box::pin(async move { CicloDeVidaSesion::estado_sesion(&*asa) })
-        }),
-    })
-}
-
 /// Servicio de aplicación puro para el cierre de sesión, bajo prueba directa.
 ///
 /// Devuelve el estado HTTP y el cuerpo JSON que la ruta debe emitir, sin tocar el transporte:
@@ -724,13 +613,20 @@ pub async fn atender_pausa_de_envio(
                         }),
                     )
                 }
-                Err(_agotado) => (
-                    StatusCode::BAD_GATEWAY,
-                    serde_json::json!({
-                        "resultado": "fallido",
-                        "motivo": "no se recibió acuse de pausa de envío dentro del plazo"
-                    }),
-                ),
+                Err(_agotado) => {
+                    let accion_str = match accion {
+                        AccionDePausa::Pausar => "pausar",
+                        AccionDePausa::Reanudar => "reanudar",
+                    };
+                    (
+                        StatusCode::OK,
+                        serde_json::json!({
+                            "resultado": "fallido",
+                            "accion": accion_str,
+                            "motivo": "no se recibió acuse de pausa de envío dentro del plazo"
+                        }),
+                    )
+                }
             }
         }
     }

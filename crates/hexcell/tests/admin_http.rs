@@ -12,23 +12,27 @@ use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::time::Duration;
 
 use comun::{
-    DirectorioTemporal, lanzar_binario_con_ruta_de_datos, lanzar_binario_con_variables,
-    peticion_http_cruda, peticion_http_post_cruda, peticion_http_post_cruda_con_cabeceras,
+    DirectorioTemporal, abrir_persistencia, lanzar_binario_con_ruta_de_datos,
+    lanzar_binario_con_variables, peticion_http_cruda, peticion_http_post_cruda,
+    peticion_http_post_cruda_con_cabeceras,
 };
 use hexcell::admin::{
     AccionDePausa, DesenlaceDeEmparejamiento, DesenlaceDePausa, EstadoDeAdmin, FaseDeIngesta,
-    MOTIVO_DE_TERMINACION_ANORMAL, MetodoSolicitado, OperacionesDeSesion, RegistroDeSesion,
-    RutaAdmin, SesionDeCanal, atender_cierre_de_sesion, atender_consulta_de_sesion,
-    atender_emparejamiento, atender_pausa_de_envio, enrutar_admin, respuesta_de_fase,
-    supervisar_ingesta,
+    MOTIVO_DE_TERMINACION_ANORMAL, MetodoSolicitado, OperacionesDeSesion, PlazosDeSesion,
+    RegistroDeSesion, RutaAdmin, SesionDeCanal, atender_cierre_de_sesion,
+    atender_consulta_de_sesion, atender_emparejamiento, atender_pausa_de_envio, enrutar_admin,
+    respuesta_de_fase, servir_admin, supervisar_ingesta,
 };
 use hexcell::configuracion::{Configuracion, ErrorDeConfiguracion, FuenteEnMemoria};
+use hexcell::embeddings::{
+    ProveedorDeEmbeddingsDeCelula, ProveedorDeEmbeddingsSimulado, ServicioDeEmbeddings,
+};
 use hexcell::ingesta::{DesenlaceDeIngesta, ResumenDeIngesta};
 use hexcell_core::canal::{CicloDeVidaSesion, Emparejamiento, EstadoSesion};
 use http_body_util::BodyExt;
 use hyper::Method;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
 
 /// Servidor TCP que acepta conexiones y jamás contesta nada.
 ///
@@ -656,6 +660,46 @@ fn sesion_de_espia(
     )
 }
 
+/// Levanta el servidor administrativo real, en proceso, con la `sesion` dada ya registrada.
+///
+/// A diferencia de `lanzar_binario_con_ruta_de_datos` (que lanza el binario completo como
+/// subproceso y siempre registra `SinSesion` en el canal simulado), esta ayuda deja inyectar un
+/// `SesionDeCanal::ConSesion` espía **dentro** del mismo proceso de test: es la única forma de
+/// observar, desde fuera de `admin.rs`, que una petición HTTP 400 nunca llegó a invocar la
+/// operación real. El futuro devuelto se debe `tokio::spawn`-ear por quien llama; el directorio
+/// temporal se debe mantener vivo mientras el servidor esté en pie.
+async fn admin_en_proceso_con_sesion(
+    sesion: SesionDeCanal,
+) -> (
+    String,
+    DirectorioTemporal,
+    impl std::future::Future<Output = ()>,
+) {
+    let directorio = DirectorioTemporal::nuevo("admin-espia-en-proceso");
+    let (_pools, repositorio) = abrir_persistencia(directorio.ruta());
+    let estado = Arc::new(EstadoDeAdmin::nuevo());
+    let proveedor = ProveedorDeEmbeddingsDeCelula::Simulado(ProveedorDeEmbeddingsSimulado::nuevo());
+    let servicio = Arc::new(ServicioDeEmbeddings::nuevo(proveedor, repositorio));
+
+    let registro: RegistroDeSesion = Arc::new(std::sync::OnceLock::new());
+    let _ = sesion.registrar(&registro);
+
+    let (direccion, futuro) = servir_admin(
+        "127.0.0.1:0".parse().expect("dirección local válida"),
+        1024 * 1024,
+        estado,
+        servicio,
+        directorio.ruta().to_path_buf(),
+        || false,
+        registro,
+        PlazosDeSesion::por_omision(),
+    )
+    .await
+    .expect("vincular el listener administrativo en proceso del test");
+
+    (direccion.to_string(), directorio, futuro)
+}
+
 #[tokio::test]
 async fn pausa_de_envio_sin_sesion_devuelve_200_canal_sin_sesion() {
     let registro: RegistroDeSesion = Arc::new(std::sync::OnceLock::new());
@@ -713,39 +757,100 @@ async fn pausa_de_envio_con_sesion_fallido_devuelve_200_fallido_con_motivo_real(
     assert_eq!(contador.load(Ordering::SeqCst), 1);
 }
 
-#[test]
-fn pausa_de_envio_invalida_o_sin_json_devuelve_400_sin_invocar_operacion() {
-    let directorio = DirectorioTemporal::nuevo("admin-pausa-400");
-    let binario = lanzar_binario_con_ruta_de_datos(directorio.ruta());
+/// D2: el plazo agotado de la pausa de envío responde 200 fallido, nunca 5xx — el 5xx queda
+/// reservado a un fallo del propio listener (registro vacío), no a que el sidecar tarde.
+#[tokio::test]
+async fn pausa_de_envio_que_nunca_resuelve_con_plazo_corto_devuelve_200_fallido() {
+    let registro: RegistroDeSesion = Arc::new(std::sync::OnceLock::new());
+    let sesion = SesionDeCanal::ConSesion(OperacionesDeSesion {
+        cerrar: Box::new(|| Box::pin(async move { Ok(()) })),
+        // Pausa que nunca resuelve.
+        pausar_envio: Box::new(|_accion| {
+            Box::pin(async move { std::future::pending::<DesenlaceDePausa>().await })
+        }),
+        emparejar: Box::new(|_metodo, _plazo| {
+            Box::pin(async move {
+                DesenlaceDeEmparejamiento::Fallido {
+                    motivo: String::new(),
+                }
+            })
+        }),
+        estado: Box::new(|| Box::pin(async move { EstadoSesion::Activa })),
+    });
+    let _ = sesion.registrar(&registro);
 
-    // Acción inválida ("detener").
-    let resp = peticion_http_post_cruda(
-        &binario.direccion_admin,
-        "/admin/envio/pausa",
-        r#"{"accion":"detener"}"#,
+    // Plazo corto de prueba (50 ms), nunca la constante de producción (30 s).
+    let inicio = std::time::Instant::now();
+    let (estado, cuerpo) =
+        atender_pausa_de_envio(&registro, AccionDePausa::Pausar, Duration::from_millis(50)).await;
+    let transcurrido = inicio.elapsed();
+    assert_eq!(
+        estado,
+        hyper::StatusCode::OK,
+        "un plazo agotado no es un fallo del listener; debe responder 200: {cuerpo}"
     );
+    assert_eq!(cuerpo["resultado"], "fallido");
+    assert_eq!(cuerpo["accion"], "pausar");
+    assert!(!cuerpo["motivo"].as_str().unwrap_or_default().is_empty());
+    assert!(
+        transcurrido < Duration::from_secs(1),
+        "la prueba debe completarse en menos de un segundo, tomó {transcurrido:?}"
+    );
+}
+
+#[tokio::test]
+async fn pausa_de_envio_invalida_o_sin_json_devuelve_400_sin_invocar_operacion() {
+    let (sesion, contador, _) = sesion_de_espia(
+        DesenlaceDePausa::Aplicado,
+        DesenlaceDeEmparejamiento::Fallido {
+            motivo: String::new(),
+        },
+        EstadoSesion::Activa,
+    );
+    let (direccion, _directorio, futuro) = admin_en_proceso_con_sesion(sesion).await;
+    tokio::spawn(futuro);
+
+    // La petición cruda bloquea el hilo del sistema operativo que la ejecuta: en un runtime
+    // `current_thread` (el único que este crate habilita) hay que descargarla en el pool de
+    // bloqueo para que el servidor espía, corriendo como tarea aparte del mismo runtime, pueda
+    // seguir avanzando mientras el test espera la respuesta.
+    let d = direccion.clone();
+    let resp = tokio::task::spawn_blocking(move || {
+        peticion_http_post_cruda(&d, "/admin/envio/pausa", r#"{"accion":"detener"}"#)
+    })
+    .await
+    .expect("la petición 400 (acción inválida) no debe entrar en pánico");
     assert!(
         resp.starts_with("HTTP/1.1 400"),
         "acción inválida debe responder 400: {resp}"
     );
 
-    // Campo accion ausente.
-    let resp = peticion_http_post_cruda(
-        &binario.direccion_admin,
-        "/admin/envio/pausa",
-        r#"{"otro":"valor"}"#,
-    );
+    let d = direccion.clone();
+    let resp = tokio::task::spawn_blocking(move || {
+        peticion_http_post_cruda(&d, "/admin/envio/pausa", r#"{"otro":"valor"}"#)
+    })
+    .await
+    .expect("la petición 400 (accion ausente) no debe entrar en pánico");
     assert!(
         resp.starts_with("HTTP/1.1 400"),
         "accion ausente debe responder 400: {resp}"
     );
 
-    // Cuerpo que no es JSON.
-    let resp =
-        peticion_http_post_cruda(&binario.direccion_admin, "/admin/envio/pausa", "no-es-json");
+    let d = direccion.clone();
+    let resp = tokio::task::spawn_blocking(move || {
+        peticion_http_post_cruda(&d, "/admin/envio/pausa", "no-es-json")
+    })
+    .await
+    .expect("la petición 400 (cuerpo no JSON) no debe entrar en pánico");
     assert!(
         resp.starts_with("HTTP/1.1 400"),
         "cuerpo no JSON debe responder 400: {resp}"
+    );
+
+    assert_eq!(
+        contador.load(Ordering::SeqCst),
+        0,
+        "ninguno de los tres 400 debe haber invocado la operación de pausa espía"
     );
 }
 
@@ -767,7 +872,8 @@ async fn emparejamiento_sin_sesion_devuelve_200_canal_sin_sesion() {
 #[tokio::test]
 async fn emparejamiento_con_codigo_devuelve_200_codigo_con_valores() {
     let registro: RegistroDeSesion = Arc::new(std::sync::OnceLock::new());
-    let sesion = SesionDeCanal::ConSesion(operaciones_espia_codigo());
+    let (operaciones, metodo_recibido) = operaciones_espia_codigo();
+    let sesion = SesionDeCanal::ConSesion(operaciones);
     let _ = sesion.registrar(&registro);
 
     let (estado, cuerpo) = atender_emparejamiento(
@@ -781,13 +887,25 @@ async fn emparejamiento_con_codigo_devuelve_200_codigo_con_valores() {
     assert_eq!(cuerpo["metodo"], "codigo_de_vinculacion");
     assert_eq!(cuerpo["valor"], "ABCD-EFGH");
     assert_eq!(cuerpo["expira_en_ms"], 1234567);
+    assert_eq!(
+        *metodo_recibido
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner),
+        Some(MetodoSolicitado::CodigoDeVinculacion),
+        "la operación espía debe recibir exactamente el método pedido en la petición"
+    );
 }
 
-fn operaciones_espia_codigo() -> OperacionesDeSesion {
-    OperacionesDeSesion {
+/// Además de la operación espía, devuelve el método que la operación `emparejar` recibió: la
+/// ruta debe pasar el método pedido tal cual, sin traducirlo ni perderlo en el camino.
+fn operaciones_espia_codigo() -> (OperacionesDeSesion, Arc<Mutex<Option<MetodoSolicitado>>>) {
+    let metodo_recibido = Arc::new(Mutex::new(None));
+    let mr = Arc::clone(&metodo_recibido);
+    let operaciones = OperacionesDeSesion {
         cerrar: Box::new(|| Box::pin(async move { Ok(()) })),
         pausar_envio: Box::new(|_| Box::pin(async move { DesenlaceDePausa::Aplicado })),
-        emparejar: Box::new(|_metodo, _plazo| {
+        emparejar: Box::new(move |metodo, _plazo| {
+            *mr.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = Some(metodo);
             Box::pin(async move {
                 DesenlaceDeEmparejamiento::Codigo {
                     metodo: "codigo_de_vinculacion".to_string(),
@@ -797,7 +915,8 @@ fn operaciones_espia_codigo() -> OperacionesDeSesion {
             })
         }),
         estado: Box::new(|| Box::pin(async move { EstadoSesion::Activa })),
-    }
+    };
+    (operaciones, metodo_recibido)
 }
 
 #[tokio::test]
@@ -824,42 +943,57 @@ async fn emparejamiento_con_fallido_sin_conexion_devuelve_200_fallido() {
     assert_eq!(cuerpo["motivo"], "sin_conexion");
 }
 
-#[test]
-fn emparejamiento_invalido_o_sin_json_devuelve_400_sin_invocar_operacion() {
-    let directorio = DirectorioTemporal::nuevo("admin-emp-400");
-    let binario = lanzar_binario_con_ruta_de_datos(directorio.ruta());
-
-    // Método inválido ("sms").
-    let resp = peticion_http_post_cruda(
-        &binario.direccion_admin,
-        "/admin/sesion/emparejamiento",
-        r#"{"metodo":"sms"}"#,
+#[tokio::test]
+async fn emparejamiento_invalido_o_sin_json_devuelve_400_sin_invocar_operacion() {
+    let (sesion, _, contador) = sesion_de_espia(
+        DesenlaceDePausa::Aplicado,
+        DesenlaceDeEmparejamiento::Fallido {
+            motivo: String::new(),
+        },
+        EstadoSesion::Activa,
     );
+    let (direccion, _directorio, futuro) = admin_en_proceso_con_sesion(sesion).await;
+    tokio::spawn(futuro);
+
+    // Igual que en la prueba de pausa: la petición cruda es bloqueante y este runtime es
+    // `current_thread`, así que se descarga en el pool de bloqueo.
+    let d = direccion.clone();
+    let resp = tokio::task::spawn_blocking(move || {
+        peticion_http_post_cruda(&d, "/admin/sesion/emparejamiento", r#"{"metodo":"sms"}"#)
+    })
+    .await
+    .expect("la petición 400 (método inválido) no debe entrar en pánico");
     assert!(
         resp.starts_with("HTTP/1.1 400"),
         "método inválido debe responder 400: {resp}"
     );
 
-    // Campo metodo ausente.
-    let resp = peticion_http_post_cruda(
-        &binario.direccion_admin,
-        "/admin/sesion/emparejamiento",
-        r#"{"otro":"valor"}"#,
-    );
+    let d = direccion.clone();
+    let resp = tokio::task::spawn_blocking(move || {
+        peticion_http_post_cruda(&d, "/admin/sesion/emparejamiento", r#"{"otro":"valor"}"#)
+    })
+    .await
+    .expect("la petición 400 (metodo ausente) no debe entrar en pánico");
     assert!(
         resp.starts_with("HTTP/1.1 400"),
         "metodo ausente debe responder 400: {resp}"
     );
 
-    // Cuerpo que no es JSON.
-    let resp = peticion_http_post_cruda(
-        &binario.direccion_admin,
-        "/admin/sesion/emparejamiento",
-        "no-es-json",
-    );
+    let d = direccion.clone();
+    let resp = tokio::task::spawn_blocking(move || {
+        peticion_http_post_cruda(&d, "/admin/sesion/emparejamiento", "no-es-json")
+    })
+    .await
+    .expect("la petición 400 (cuerpo no JSON) no debe entrar en pánico");
     assert!(
         resp.starts_with("HTTP/1.1 400"),
         "cuerpo no JSON debe responder 400: {resp}"
+    );
+
+    assert_eq!(
+        contador.load(Ordering::SeqCst),
+        0,
+        "ninguno de los tres 400 debe haber invocado la operación de emparejamiento espía"
     );
 }
 

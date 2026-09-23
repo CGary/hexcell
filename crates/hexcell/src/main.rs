@@ -45,11 +45,12 @@
 
 use std::process::ExitCode;
 use std::sync::Arc;
-use std::time::SystemTime;
+use std::time::{Duration, SystemTime};
 
 use hexcell::admin::{
-    EstadoDeAdmin, PlazosDeSesion, RegistroDeSesion, SesionDeCanal, construir_sesion_de_canal,
-    servir_servicios_http,
+    AccionDePausa, DesenlaceDeEmparejamiento, DesenlaceDePausa, EstadoDeAdmin, MOTIVO_SIN_CONEXION,
+    MOTIVO_YA_EMPAREJADA, MetodoSolicitado, OperacionesDeSesion, PlazosDeSesion, RegistroDeSesion,
+    SesionDeCanal, servir_servicios_http,
 };
 use hexcell::alertas::EmisorDeAlertas;
 use hexcell::apagado::Apagado;
@@ -75,7 +76,11 @@ use hexcell::proveedor_openai::ProveedorOpenAi;
 use hexcell::registro::{self, EntradaDeRegistro, NivelDeRegistro};
 use hexcell::salud::EstadoDeSalud;
 use hexcell_canal_simulado::{AdaptadorSimulado, RelojDelSistema};
-use hexcell_canal_whatsmeow::{AdaptadorWhatsmeow, Retroceso};
+use hexcell_canal_whatsmeow::{
+    AdaptadorWhatsmeow, AsaDeSesion, ErrorCanalWhatsmeow, InicioDeEmparejamiento,
+    MetodoDeEmparejamiento, Retroceso,
+};
+use hexcell_core::canal::CicloDeVidaSesion;
 use hexcell_core::identidad::IdDeduplicacion;
 use hexcell_storage::{
     AlmacenDeIdentidad, GestorDePools, RepositorioDeSesiones, ResumenDePuntoDeControl,
@@ -84,6 +89,114 @@ use hexcell_storage::{
 /// Contacto sintético que recibe el evento de arranque cuando
 /// `HEXCELL_EVENTO_SIMULADO_DE_ARRANQUE` está presente.
 const CONTACTO_DEL_EVENTO_DE_ARRANQUE: &str = "arranque-simulado";
+
+/// Construye un [`SesionDeCanal::ConSesion`] con las cuatro operaciones enlazadas a un asa de
+/// sesión `AsaDeSesion`, borrando el tipo.
+///
+/// Esta función vive en `main.rs`, y no en `admin.rs`, porque [`AsaDeSesion`] es un tipo concreto
+/// del crate `hexcell-canal-whatsmeow` y `admin.rs` permanece canal-agnostic (el contrato HTTP,
+/// D2, lo exige): la raíz de composición es el único lugar del binario que nombra
+/// `hexcell_canal_whatsmeow`. Las cuatro operaciones se construyen a partir de clones del asa; el
+/// asa ya porta el `receptor_estado`, así que `estado` simplemente lo presta.
+///
+/// El mapeo de los resultados del asa a los tipos de valor de las rutas (Aplicado, Fallido{motivo},
+/// Codigo{metodo,valor,expira_en_ms}, ya_emparejada) vive aquí, en la composición: `admin.rs` solo
+/// maneja los tipos de valor y nunca nombra `ErrorCanalWhatsmeow` ni `AsaDeSesion`.
+#[allow(clippy::too_many_arguments)]
+fn construir_sesion_de_canal(
+    asa: AsaDeSesion,
+    plazo_pausa: Duration,
+    plazo_emparejamiento: Duration,
+) -> SesionDeCanal {
+    let asa_cerrar = Arc::new(asa.clone());
+    let asa_pausa = Arc::new(asa.clone());
+    let asa_emparejar = Arc::new(asa.clone());
+    let asa_estado = Arc::new(asa);
+
+    SesionDeCanal::ConSesion(OperacionesDeSesion {
+        cerrar: Box::new(move || {
+            let asa = Arc::clone(&asa_cerrar);
+            Box::pin(async move { asa.ordenar_cierre().await.map_err(|e| e.to_string()) })
+        }),
+        pausar_envio: Box::new(move |accion| {
+            let asa = Arc::clone(&asa_pausa);
+            Box::pin(async move {
+                let accion_cable = match accion {
+                    AccionDePausa::Pausar => "pausar",
+                    AccionDePausa::Reanudar => "reanudar",
+                };
+                match asa.ordenar_pausa_de_envio(accion_cable, plazo_pausa).await {
+                    Ok(acuse) if acuse.resultado == "aplicado" => DesenlaceDePausa::Aplicado,
+                    Ok(acuse) => DesenlaceDePausa::Fallido {
+                        motivo: if acuse.motivo.is_empty() {
+                            acuse.resultado
+                        } else {
+                            acuse.motivo
+                        },
+                    },
+                    Err(ErrorCanalWhatsmeow::SinConexion) => DesenlaceDePausa::Fallido {
+                        motivo: MOTIVO_SIN_CONEXION.to_string(),
+                    },
+                    Err(e) => DesenlaceDePausa::Fallido {
+                        motivo: e.to_string(),
+                    },
+                }
+            })
+        }),
+        emparejar: Box::new(move |metodo, plazo| {
+            let asa = Arc::clone(&asa_emparejar);
+            // Ignora el plazo inyectado por la ruta: usa el plazo fijo de composición.
+            let _ = plazo;
+            Box::pin(async move {
+                let metodo_emp = match metodo {
+                    MetodoSolicitado::Qr => MetodoDeEmparejamiento::Qr,
+                    MetodoSolicitado::CodigoDeVinculacion => {
+                        MetodoDeEmparejamiento::CodigoDeVinculacion
+                    }
+                };
+                match asa
+                    .iniciar_emparejamiento_con(metodo_emp, plazo_emparejamiento)
+                    .await
+                {
+                    Ok(InicioDeEmparejamiento::Codigo(codigo)) => {
+                        DesenlaceDeEmparejamiento::Codigo {
+                            metodo: codigo.metodo,
+                            valor: codigo.valor,
+                            expira_en_ms: codigo.expira_en_ms,
+                        }
+                    }
+                    Ok(InicioDeEmparejamiento::Acuse(acuse)) => {
+                        if acuse.resultado == "fallido"
+                            && acuse.motivo == "canal: la sesión ya está emparejada"
+                        {
+                            DesenlaceDeEmparejamiento::Fallido {
+                                motivo: MOTIVO_YA_EMPAREJADA.to_string(),
+                            }
+                        } else {
+                            DesenlaceDeEmparejamiento::Fallido {
+                                motivo: if acuse.motivo.is_empty() {
+                                    acuse.resultado
+                                } else {
+                                    acuse.motivo
+                                },
+                            }
+                        }
+                    }
+                    Err(ErrorCanalWhatsmeow::SinConexion) => DesenlaceDeEmparejamiento::Fallido {
+                        motivo: MOTIVO_SIN_CONEXION.to_string(),
+                    },
+                    Err(e) => DesenlaceDeEmparejamiento::Fallido {
+                        motivo: e.to_string(),
+                    },
+                }
+            })
+        }),
+        estado: Box::new(move || {
+            let asa = Arc::clone(&asa_estado);
+            Box::pin(async move { CicloDeVidaSesion::estado_sesion(&*asa) })
+        }),
+    })
+}
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> ExitCode {
@@ -438,4 +551,124 @@ fn emitir_punto_de_control(resumen: ResumenDePuntoDeControl) {
             resumen.ocupado, resumen.tamano_wal_de_sesiones_bytes
         )),
     );
+}
+
+/// `construir_sesion_de_canal` es privada a este binario (el contrato la fija en `main.rs`, no en
+/// `admin.rs`), así que su prueba directa vive aquí, en un módulo `#[cfg(test)]`, y no en
+/// `crates/hexcell/tests/`: la cara de biblioteca (`lib.rs`) no la reexporta.
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use hexcell::admin::{MetodoSolicitado, atender_emparejamiento};
+    use hexcell_canal_whatsmeow::mensajes::{
+        AcuseEmparejamiento, OrdenEmparejar, Saludo, VERSION_PROTOCOLO,
+    };
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+    use tokio::net::UnixListener;
+
+    /// Socket unix de un solo uso para el sidecar falso de esta prueba: se limpia con el `Drop`.
+    struct SocketDeSidecarFalso {
+        ruta: std::path::PathBuf,
+    }
+
+    impl SocketDeSidecarFalso {
+        fn nueva(etiqueta: &str) -> Self {
+            let mut ruta = std::env::temp_dir();
+            ruta.push(format!(
+                "hexcell-main-test-{etiqueta}-{}",
+                std::process::id()
+            ));
+            let _ = std::fs::remove_file(&ruta);
+            Self { ruta }
+        }
+    }
+
+    impl Drop for SocketDeSidecarFalso {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_file(&self.ruta);
+        }
+    }
+
+    /// La traducción `ya_emparejada` (D2) vive en `construir_sesion_de_canal`, en la composición:
+    /// esta prueba maneja un sidecar falso mínimo que responde con el texto exacto del sidecar
+    /// real (`sidecar/internal/canal/emparejamiento.go:34`) y confirma que la ruta de sesión
+    /// termina devolviendo el literal fijado por el contrato, no el texto crudo del acuse.
+    #[tokio::test]
+    async fn construir_sesion_de_canal_traduce_ya_emparejada_hasta_la_ruta() {
+        let socket = SocketDeSidecarFalso::nueva("ya-emparejada");
+        let listener =
+            UnixListener::bind(&socket.ruta).expect("vincular el socket unix falso del test");
+
+        let (adaptador, _receptor_eventos) = AdaptadorWhatsmeow::nuevo(
+            socket.ruta.clone(),
+            "celula-test",
+            8,
+            Retroceso::nuevo(Duration::from_millis(10), 2, Duration::from_millis(10)),
+        );
+        adaptador.arrancar();
+
+        let (flujo, _) = listener
+            .accept()
+            .await
+            .expect("aceptar la conexión del núcleo");
+        let (lectura, mut escritura) = tokio::io::split(flujo);
+        let mut lectura = BufReader::new(lectura);
+
+        let mut linea_saludo = String::new();
+        lectura
+            .read_line(&mut linea_saludo)
+            .await
+            .expect("leer el saludo del núcleo");
+
+        let saludo = Saludo {
+            version: VERSION_PROTOCOLO,
+            tipo: "saludo".to_string(),
+            emisor: "sidecar".to_string(),
+            id_celula: "celula-test".to_string(),
+        };
+        escritura
+            .write_all(format!("{}\n", serde_json::to_string(&saludo).unwrap()).as_bytes())
+            .await
+            .expect("enviar el saludo del sidecar falso");
+
+        let asa = adaptador.asa_de_sesion("cell terminate");
+        let sesion = construir_sesion_de_canal(asa, Duration::from_secs(5), Duration::from_secs(5));
+        let registro: RegistroDeSesion = Arc::new(std::sync::OnceLock::new());
+        let _ = sesion.registrar(&registro);
+
+        let tarea = tokio::spawn(async move {
+            atender_emparejamiento(&registro, MetodoSolicitado::Qr, Duration::from_secs(5)).await
+        });
+
+        let mut linea_orden = String::new();
+        lectura
+            .read_line(&mut linea_orden)
+            .await
+            .expect("leer la orden de emparejar");
+        let orden: OrdenEmparejar =
+            serde_json::from_str(linea_orden.trim_end()).expect("parsear la orden de emparejar");
+        assert_eq!(orden.tipo, "orden_emparejar");
+
+        let acuse = AcuseEmparejamiento {
+            version: VERSION_PROTOCOLO,
+            tipo: "acuse_emparejamiento".to_string(),
+            resultado: "fallido".to_string(),
+            motivo: "canal: la sesión ya está emparejada".to_string(),
+        };
+        escritura
+            .write_all(format!("{}\n", serde_json::to_string(&acuse).unwrap()).as_bytes())
+            .await
+            .expect("enviar el acuse fallido del sidecar falso");
+
+        let (estado, cuerpo) = tarea
+            .await
+            .expect("la tarea de la ruta no debe entrar en pánico");
+        assert_eq!(estado, hyper::StatusCode::OK);
+        assert_eq!(cuerpo["resultado"], "fallido");
+        assert_eq!(
+            cuerpo["motivo"], "ya_emparejada",
+            "el acuse fallido con el texto exacto del sidecar debe traducirse al literal fijado \
+             por el contrato, no viajar crudo: {cuerpo}"
+        );
+    }
 }
