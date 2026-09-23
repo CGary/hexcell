@@ -194,6 +194,7 @@ Las entradas conservan su numeración; esta sección es la autoridad sobre el or
 * Actualización 2026-09-22: 14 cerrada (HEX-083) con el almacén SQLite del plano de control (`adr-0039`), la validación de transiciones antes de Docker, la persistencia sólo tras éxito, y los comandos `cell status` y `cell list` reales. **Desviación consciente del orden declarado arriba:** la restricción «14 después de 13» se apoyaba en que el historial de sustituciones de `cell status` sólo existe tras `rebind`, y la tarea 13 sigue abierta, así que 14 se cerró ANTES de 13. La desviación es legítima porque esta tarea crea la tabla `sustituciones` y sólo la LEE: un historial vacío no es una carencia de `cell status` sino el estado real de una célula que nunca fue reemparejada, y así se imprime («sustituciones: (ninguna)»). La tarea 13 es la que escribe en esa tabla y, al cerrarse, llenará el historial sin tocar el lector. El gancho `Retirada`/`sesion_cerrada` queda inerte porque la tarea 12 no está fusionada. Registrados `adr-0039` (almacén del plano de control) y D-58 (descarte de un crate de migraciones). La cadena restante: 12 → 13 → 15 → 18 → 23 → 21 → 19.
 * Actualización 2026-09-22: 23 cerrada (HEX-084) con el grupo `reporte tokens` de `hexcell-admin` —agrega la fórmula literal de la vista `consumo_por_conversacion` (migración 0004) sobre una copia `VACUUM INTO` de `sessions.db` abierta en solo lectura, con ventana opcional por `resuelta_ms` (`--desde` inclusivo, `--hasta` exclusivo) y modo `--simular`—. La alternativa de agregar los registros estructurados en vez de la copia queda registrada como no implementada en la nota de cierre de la tarea 23, no en la bitácora de descartes. La cadena restante: 12 → 13 → 15 → 18 → 21 → 19.
 * Actualización 2026-09-22: 12 cerrada (HEX-082) con la CLI de `cell terminate` —secuencia destructiva de seis pasos con cierre de sesión mediante contenedor hermano—, dividida en dos hijos: HEX-082-a (ruta del núcleo `POST /admin/sesion/cierre`) y HEX-082-b (CLI y pruebas). Con la tarea 14 (HEX-083) ya fusionada, el gancho `Retirada`/`sesion_cerrada` deja de estar inerte: `cell terminate` persiste esa transición contra el almacén del plano de control (ver el párrafo de cierre de la tarea 12). La cadena restante, con 12, 14 y 23 ya cerradas: 13 → 15 → 18 → 21 → 19.
+* Actualización 2026-09-22: 18 cerrada (HEX-086) con el trabajo `imagenes` de la CI construyendo y etiquetando ambas imágenes sin publicar (`push:false`, `load:true`; la decisión del registro sigue pendiente en STATUS.md) y la guarda `deploy/verificar_imagenes.sh` comprobando el usuario no root y el arranque en frío endurecido, con sus dos autopruebas negativas. Ver la nota de cierre de la tarea 18. La cadena restante, con 12, 14, 18 y 23 ya cerradas: 13 → 15 → 21 → 19.
 
 ---
 
@@ -406,6 +407,25 @@ Las entradas conservan su numeración; esta sección es la autoridad sobre el or
     etiquetado por versión y por commit, y publicación en el registro elegido.
     * Guarda en CI que falla si la imagen corre como root o sin rootfs de solo lectura (criterio ya
       enunciado en esta etapa, hoy sin comprobación mecánica).
+
+    **Nota 2026-09-22:** la publicación en un registro sigue siendo una decisión pendiente de
+    STATUS.md (GHCR, registro propio u otro), así que esta tarea construye y etiqueta sin publicar.
+    Una vez decidido el destino, publicar es un cambio de una línea: `push:true` en los dos pasos de
+    `docker/build-push-action@v6` del trabajo `imagenes` más un paso de login contra el registro
+    elegido. No es un descarte: el plan sigue previendo la publicación («etiquetado por versión y por
+    commit, y publicación en el registro elegido»); solo queda bloqueada por la decisión de destino.
+
+    **Cerrada el 2026-09-22 con HEX-086.** El trabajo `imagenes` de `.github/workflows/ci.yml`
+    construye `hexcell-nucleo` (contexto `.`, `./Dockerfile`) y `hexcell-sidecar` (contexto
+    `./sidecar`, `./sidecar/Dockerfile`) con `docker/build-push-action@v6`, caché `type=gha` con
+    `mode=max` y scope distinto por imagen, y los etiqueta con el SHA corto de 12 caracteres y con la
+    versión de `[workspace.package]` leída de `Cargo.toml` en tiempo de ejecución; `push:false` y
+    `load:true` (nada sale del runner). La guarda `deploy/verificar_imagenes.sh` cierra la
+    comprobación mecánica del criterio de esta etapa —usuario `10001:10001` no root en ambas
+    imágenes y arranque en frío endurecido de ambos contenedores— con sus dos autopruebas negativas
+    (una imagen sin `USER` y un núcleo `--read-only` sin su volumen de datos), y borra todo lo que
+    crea aunque falle a mitad. Se ejecuta en CI contra las referencias recién cargadas y de forma
+    local sin argumentos.
 19. **Montar el canary de biblioteca y el despliegue escalonado** (1 día). Alta de una **célula
     centinela** propia, con número propio de HexCell y sin ningún cliente encima, que corre la
     versión candidata de whatsmeow durante **72 horas** antes de que la actualización toque a nadie
