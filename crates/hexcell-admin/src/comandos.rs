@@ -20,10 +20,12 @@ use crate::almacen_plano_de_control::{
     AlmacenDelPlanoDeControl, MOTIVO_DE_ALTA_IMPLICITA, MOTIVO_DE_SESION_CERRADA,
 };
 use crate::argumentos::{
-    Comando, ErrorDeArgumentos, Invocacion, InvocacionReporte, Subcomando, TEXTO_DE_USO,
+    Comando, ErrorDeArgumentos, Invocacion, InvocacionReporte, MetodoDeEmparejamiento, Subcomando,
+    TEXTO_DE_USO,
 };
 use crate::ciclo_de_vida::{
-    self, DatosDeSondeo, Disponibilidad, LIMITE_DE_SONDEO_DE_ESTADO_S, NombresDeCelula,
+    self, DatosDeSondeo, DesenlaceDeSolicitudDeEmparejamiento, Disponibilidad,
+    LIMITE_DE_SONDEO_DE_ESTADO_S, NombresDeCelula,
 };
 use crate::codigo_de_salida::CodigoDeSalida;
 use crate::docker::{ClienteDocker, ErrorDeClienteDocker, InventarioDocker};
@@ -245,7 +247,15 @@ pub fn ejecutar_con_efectos<S: Write, D: Write>(
     // `NoImplementadoTodavia`, rompiendo AC-6 para el único subcomando sin identificador.
     match invocacion.subcomando() {
         Subcomando::Reemparejar => {
-            return ejecutar(Ok(Comando::Cell(invocacion)), salida);
+            return ejecutar_reemparejamiento(
+                invocacion,
+                salida,
+                cliente,
+                ruta_almacen,
+                ahora_ms,
+                datos,
+                ciclo_de_vida::PlazosDeReemparejamiento::por_omision(),
+            );
         }
         Subcomando::Listar => {
             return ejecutar_listado(salida, inventario, ruta_almacen);
@@ -356,6 +366,221 @@ pub fn ejecutar_con_efectos<S: Write, D: Write>(
             }
         }
         Err(error) => diagnosticar_fallo(salida, &error.to_string()),
+    }
+}
+
+/// Orquesta la secuencia de diez pasos de `cell rebind` (decisión D5 del plan de A-6).
+///
+/// Paso 1: abre el almacén del plano de control y lee la fila de la célula. Con esa fila decide el
+/// punto de entrada de la secuencia:
+///
+/// * sin fila o `EnEjecución` → secuencia completa, empezando por los pasos 2-4 (preparar);
+/// * `Reemparejando` → reanuda en el paso 8 (emparejamiento), tras resolver los datos de la célula;
+/// * `Suspendida` → `Fallo` con «ejecute cell unpause antes de cell rebind»;
+/// * cualquier otro estado → `Fallo` con el error de la transición ilegal hacia `Reemparejando`.
+///
+/// Ninguna petición Docker se emite antes de esta validación. Las transiciones se persisten sólo
+/// después de que la operación que representan tenga éxito (nunca persistir-e-intentar). El código
+/// de salida queda en 0/1/2; el 3 (`NoImplementadoTodavia`) es inalcanzable para `cell rebind` por
+/// este camino.
+pub fn ejecutar_reemparejamiento<S: Write, D: Write>(
+    invocacion: Invocacion,
+    salida: &mut Salida<S, D>,
+    cliente: &ClienteDocker,
+    ruta_almacen: &str,
+    ahora_ms: i64,
+    datos: DatosDeSondeo,
+    plazos: ciclo_de_vida::PlazosDeReemparejamiento,
+) -> CodigoDeSalida {
+    let id = match invocacion.id() {
+        Some(id) => id.to_string(),
+        None => {
+            return diagnosticar_fallo(salida, "falta --id para cell rebind");
+        }
+    };
+    let metodo = invocacion.metodo().unwrap_or(MetodoDeEmparejamiento::Qr);
+    let motivo = match invocacion.motivo() {
+        Some(motivo) => motivo.to_string(),
+        None => {
+            return diagnosticar_fallo(salida, "falta --motivo para cell rebind");
+        }
+    };
+    let nombres = NombresDeCelula::nueva(&id);
+    let imagen = datos.imagen.clone();
+
+    // Paso 1: abrir el almacén y leer la fila ANTES de cualquier petición Docker.
+    let almacen = match AlmacenDelPlanoDeControl::abrir(Path::new(ruta_almacen)) {
+        Ok(a) => a,
+        Err(error) => return diagnosticar_fallo(salida, &error.to_string()),
+    };
+    let fila = match almacen.leer_estado(&id) {
+        Ok(fila) => fila,
+        Err(error) => return diagnosticar_fallo(salida, &error.to_string()),
+    };
+
+    // Decidir punto de entrada según el estado actual.
+    let estado_actual = fila.as_ref().map(|f| f.estado);
+    match estado_actual {
+        Some(EstadoDeCelula::Suspendida) => {
+            return diagnosticar_fallo(
+                salida,
+                "la célula está suspendida: ejecute cell unpause antes de cell rebind",
+            );
+        }
+        Some(EstadoDeCelula::Reemparejando) => {}
+        Some(otra) if otra != EstadoDeCelula::EnEjecucion => {
+            let transicion = otra.transitar(EstadoDeCelula::Reemparejando);
+            return match transicion {
+                // La tabla de transiciones de `EstadoDeCelula` nunca admite este destino desde
+                // aquí (ni `Aprovisionada` ni `Retirada` permiten `Reemparejando`), pero esta
+                // rama no puede afirmarlo con un panic: un cambio futuro en la tabla debe caer en
+                // un diagnóstico, no en un abort del proceso (perfil `release` con
+                // `panic = "abort"`).
+                Ok(_) => diagnosticar_fallo(
+                    salida,
+                    "estado inesperado: se esperaba que la transición fuera rechazada",
+                ),
+                Err(error) => diagnosticar_fallo(salida, &error.to_string()),
+            };
+        }
+        _ => {} // None o EnEjecucion: secuencia completa.
+    }
+
+    // Resolver los datos de la célula (red, puerto, volumen) inspeccionando el núcleo.
+    let datos_de_celula =
+        match ciclo_de_vida::resolver_datos_de_celula_para_rebind(cliente, &nombres) {
+            Ok(datos) => datos,
+            Err(error) => return diagnosticar_fallo(salida, &error.to_string()),
+        };
+
+    // Para el resume desde Reemparejando no validamos que el núcleo esté corriendo: la célula
+    // puede estar en un estado intermedio. Para la secuencia completa, el núcleo debe estar
+    // corriendo, y `preparar_reemparejamiento` lo verifica de nuevo.
+    let desde_estado = estado_actual;
+
+    // Pasos 2-4: preparar reemparejamiento (sólo si partimos de EnEjecución o sin fila).
+    let en_secuencia_completa = matches!(estado_actual, None | Some(EstadoDeCelula::EnEjecucion));
+    let aviso_de_cierre = if en_secuencia_completa {
+        match ciclo_de_vida::preparar_reemparejamiento(
+            cliente,
+            &nombres,
+            &datos_de_celula,
+            &imagen,
+            ciclo_de_vida::LIMITE_DE_EMPAREJAMIENTO_SONDA_S,
+        ) {
+            Ok(aviso) => aviso,
+            Err(error) => return diagnosticar_fallo(salida, &error.to_string()),
+        }
+    } else {
+        None
+    };
+    // Si el cierre de sesión falló, es una advertencia: se escribe por diagnóstico y se continúa.
+    if let Some(aviso) = &aviso_de_cierre {
+        let _ = salida.diagnostico(aviso);
+    }
+
+    // Pasos 5-6-7: persistir EnEjecución → Reemparejando, descartar sqlstore y rearrancar.
+    if en_secuencia_completa {
+        // Paso 5: persistir la transición DESPUÉS de que los pasos 2-4 hayan tenido éxito.
+        if let Err(error) = almacen.registrar_transicion(
+            &id,
+            desde_estado,
+            EstadoDeCelula::Reemparejando,
+            &motivo,
+            ahora_ms,
+        ) {
+            return diagnosticar_fallo(salida, &error.to_string());
+        }
+        // Pasos 6-7: descartar sqlstore y rearrancar el sidecar con pausa reintentada.
+        if let Err(error) = ciclo_de_vida::descartar_sqlstore_y_rearrancar(
+            cliente,
+            &nombres,
+            &datos_de_celula,
+            &imagen,
+            &plazos,
+            ciclo_de_vida::LIMITE_DE_EMPAREJAMIENTO_SONDA_S,
+        ) {
+            return diagnosticar_fallo(salida, &error.to_string());
+        }
+    }
+
+    // Paso 8: solicitar emparejamiento.
+    match ciclo_de_vida::solicitar_emparejamiento(
+        cliente,
+        &nombres,
+        &datos_de_celula,
+        metodo.nombre_de_cable(),
+        &imagen,
+        &plazos,
+        ciclo_de_vida::LIMITE_DE_EMPAREJAMIENTO_SONDA_S,
+    ) {
+        Ok(DesenlaceDeSolicitudDeEmparejamiento::Codigo {
+            valor,
+            expira_en_ms,
+        }) => {
+            // Línea de emparejamiento por salida estándar (AC-12): nombra el método que el
+            // OPERADOR eligió (--metodo), no el que el núcleo decida ecoar en la respuesta.
+            if salida
+                .linea(&format!(
+                    "emparejamiento {}: {}",
+                    metodo.nombre_de_cable(),
+                    valor
+                ))
+                .is_err()
+            {
+                return CodigoDeSalida::Fallo;
+            }
+            // Nota de renderizado gráfico (AC-12, misma redacción que emparejar.rs:243).
+            if salida
+                .linea(
+                    "Nota: el renderizado gráfico no está integrado; puede visualizar esta cadena con un renderizador QR externo.",
+                )
+                .is_err()
+            {
+                return CodigoDeSalida::Fallo;
+            }
+            // Paso 9: esperar confirmación.
+            if let Err(error) = ciclo_de_vida::esperar_confirmacion(
+                cliente,
+                &nombres,
+                &datos_de_celula,
+                expira_en_ms,
+                ahora_ms,
+                &imagen,
+                &plazos,
+                ciclo_de_vida::LIMITE_DE_EMPAREJAMIENTO_SONDA_S,
+            ) {
+                return diagnosticar_fallo(salida, &error.to_string());
+            }
+        }
+        Ok(DesenlaceDeSolicitudDeEmparejamiento::CanalSinSesion) => {
+            // canal_sin_sesion omite el paso 9 y va directo al paso 10.
+        }
+        Err(error) => {
+            return diagnosticar_fallo(salida, &error.to_string());
+        }
+    }
+
+    // Paso 10: reanudar envío.
+    if let Err(error) = ciclo_de_vida::reanudar_envio(
+        cliente,
+        &nombres,
+        &datos_de_celula,
+        &imagen,
+        ciclo_de_vida::LIMITE_DE_EMPAREJAMIENTO_SONDA_S,
+    ) {
+        return diagnosticar_fallo(salida, &error.to_string());
+    }
+
+    // Persistir Reemparejando → EnEjecución + fila de sustituciones en UNA transacción.
+    if let Err(error) = almacen.confirmar_reemparejamiento(&id, &motivo, ahora_ms) {
+        return diagnosticar_fallo(salida, &error.to_string());
+    }
+
+    // Línea de completitud por salida estándar.
+    match salida.linea(&format!("cell rebind completado para «{id}»")) {
+        Ok(()) => CodigoDeSalida::Exito,
+        Err(_) => CodigoDeSalida::Fallo,
     }
 }
 

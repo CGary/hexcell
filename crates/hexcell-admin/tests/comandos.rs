@@ -9,9 +9,7 @@ mod comun;
 
 use std::io::Write;
 
-use hexcell_admin::almacen_plano_de_control::{
-    AlmacenDelPlanoDeControl, MOTIVO_DE_ALTA_IMPLICITA, etiqueta_persistida,
-};
+use hexcell_admin::almacen_plano_de_control::{AlmacenDelPlanoDeControl, etiqueta_persistida};
 use hexcell_admin::argumentos::{Subcomando, analizar};
 use hexcell_admin::ciclo_de_vida::DatosDeSondeo;
 use hexcell_admin::codigo_de_salida::CodigoDeSalida;
@@ -429,48 +427,51 @@ fn ejecutar_con_efectos_despacha_reanudar_a_ciclo_de_vida() {
     esperar_guion(&receptor);
 }
 
-/// AC-6: con HEX-082 (terminate) y HEX-083 (list, status) ya fusionados, `cell rebind` es el
-/// ÚNICO subcomando que sigue devolviendo `NoImplementadoTodavia` a través de
-/// `ejecutar_con_efectos`, sin `--simular`. El cliente apunta a un socket sin vincular a
-/// propósito: si el despacho intentara tocar Docker para él, la operación fallaría con
-/// `DemonioInalcanzable` (código `Fallo`) en vez de devolver `NoImplementadoTodavia`, así que el
-/// propio código de salida es la prueba de que ningún `ClienteDocker` se invocó.
+/// AC-7 (HEX-085-b): `cell rebind` ya no devuelve `NoImplementadoTodavia`; se despacha al camino
+/// real. Con una fila en `Suspendida` y un socket sin vincular (Docker inalcanzable a
+/// propósito), el comando termina en `Fallo` con el diagnóstico de célula suspendida y SIN
+/// emitir ninguna petición Docker, probando que la validación del estado inicial ocurre antes
+/// de cualquier interacción con el demonio.
 #[test]
-fn ejecutar_con_efectos_deja_rebind_en_no_implementado_sin_tocar_docker() {
-    let ruta = ruta_socket_sin_vincular("efectos-sin-docker");
+fn ejecutar_con_efectos_despacha_rebind_y_falla_antes_de_docker_cuando_esta_suspendida() {
+    let ruta = ruta_socket_sin_vincular("rebind-suspendida");
     let cliente = ClienteDocker::nuevo(ruta.clone());
     let inventario = InventarioDocker::nuevo(ruta, std::time::Duration::from_secs(10));
-    let almacen = AlmacenTemporal::nuevo("efectos-sin-docker");
+    let almacen = AlmacenTemporal::nuevo("rebind-suspendida");
     let ruta_almacen = almacen.texto();
-    let casos = [(
-        &[
-            "cell",
-            "rebind",
-            "--id",
-            "c1",
-            "--motivo",
-            "x",
-            "--confirmar",
-        ][..],
-        "rebind",
-    )];
-    for (snippet, nombre) in casos {
-        let (codigo, estandar, diagnostico) =
-            ejecutar_con_efectos_con(snippet, &cliente, &inventario, &ruta_almacen);
-        assert_eq!(
-            codigo,
-            CodigoDeSalida::NoImplementadoTodavia,
-            "snippet {snippet:?}"
-        );
-        assert!(
-            estandar.is_empty(),
-            "estándar vacío para «{nombre}»: {estandar:?}"
-        );
-        assert!(
-            diagnostico.contains("todavía no implementado"),
-            "diagnóstico de «{nombre}»: {diagnostico:?}"
-        );
+
+    // Sembrar una fila en `Suspendida`.
+    {
+        let a = AlmacenDelPlanoDeControl::abrir(std::path::Path::new(&ruta_almacen)).unwrap();
+        a.registrar_transicion("c1", None, EstadoDeCelula::Suspendida, "prueba", 1000)
+            .unwrap();
     }
+
+    let snippet = &[
+        "cell",
+        "rebind",
+        "--id",
+        "c1",
+        "--motivo",
+        "sustitución de número",
+        "--confirmar",
+    ][..];
+    let (codigo, estandar, diagnostico) =
+        ejecutar_con_efectos_con(snippet, &cliente, &inventario, &ruta_almacen);
+
+    assert_eq!(
+        codigo,
+        CodigoDeSalida::Fallo,
+        "una célula suspendida debe fallar, no devolver NoImplementadoTodavia"
+    );
+    assert!(
+        estandar.is_empty(),
+        "estándar debe quedar vacío en el fallo: {estandar:?}"
+    );
+    assert!(
+        diagnostico.contains("ejecute cell unpause antes de cell rebind"),
+        "diagnóstico debe nombrar el estado suspendido: {diagnostico:?}"
+    );
 }
 
 /// AC-6: el modo `--simular` y los errores de análisis siguen resolviéndose por

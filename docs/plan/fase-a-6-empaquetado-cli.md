@@ -195,6 +195,7 @@ Las entradas conservan su numeración; esta sección es la autoridad sobre el or
 * Actualización 2026-09-22: 23 cerrada (HEX-084) con el grupo `reporte tokens` de `hexcell-admin` —agrega la fórmula literal de la vista `consumo_por_conversacion` (migración 0004) sobre una copia `VACUUM INTO` de `sessions.db` abierta en solo lectura, con ventana opcional por `resuelta_ms` (`--desde` inclusivo, `--hasta` exclusivo) y modo `--simular`—. La alternativa de agregar los registros estructurados en vez de la copia queda registrada como no implementada en la nota de cierre de la tarea 23, no en la bitácora de descartes. La cadena restante: 12 → 13 → 15 → 18 → 21 → 19.
 * Actualización 2026-09-22: 12 cerrada (HEX-082) con la CLI de `cell terminate` —secuencia destructiva de seis pasos con cierre de sesión mediante contenedor hermano—, dividida en dos hijos: HEX-082-a (ruta del núcleo `POST /admin/sesion/cierre`) y HEX-082-b (CLI y pruebas). Con la tarea 14 (HEX-083) ya fusionada, el gancho `Retirada`/`sesion_cerrada` deja de estar inerte: `cell terminate` persiste esa transición contra el almacén del plano de control (ver el párrafo de cierre de la tarea 12). La cadena restante, con 12, 14 y 23 ya cerradas: 13 → 15 → 18 → 21 → 19.
 * Actualización 2026-09-22: 18 cerrada (HEX-086) con el trabajo `imagenes` de la CI construyendo y etiquetando ambas imágenes sin publicar (`push:false`, `load:true`; la decisión del registro sigue pendiente en STATUS.md) y la guarda `deploy/verificar_imagenes.sh` comprobando el usuario no root y el arranque en frío endurecido, con sus dos autopruebas negativas. Ver la nota de cierre de la tarea 18. La cadena restante, con 12, 14, 18 y 23 ya cerradas: 13 → 15 → 21 → 19.
+* Actualización 2026-09-22: 13 cerrada (HEX-085) con `cell rebind` real sobre Docker; ver su nota y su párrafo de cierre. La cadena restante, con 12, 13, 14, 18 y 23 ya cerradas: 15 → 21 → 19.
 
 ---
 
@@ -321,6 +322,32 @@ Las entradas conservan su numeración; esta sección es la autoridad sobre el or
     orden IPC de la tarea 24. Conservación verificada por checksum de `sessions.db`,
     `knowledge_live.db` y `adapter_identity.db`; el destino de `identidad.db` y `outbox.db` del
     sidecar queda declarado explícitamente en la tarea (conservar o regenerar).
+
+    **Nota 2026-09-22.** La anotación auditable de la sustitución NO guarda el número anterior ni
+    ningún identificador de transporte: `adr-0039` fija que el almacén del plano de control sólo
+    guarda el id de célula, y `sessions.db` nunca guarda identificadores crudos; la fila de
+    `sustituciones` lleva id de célula, motivo (`--motivo`) y fecha absoluta en milisegundos. El
+    cierre de sesión previo al descarte es **a mejor esfuerzo**: un `fallido` se escribe en stderr y
+    la secuencia continúa, porque tras un baneo el cierre suele fallar. Destino declarado de las
+    bases del sidecar: se descarta sólo `sqlstore.db` (con su `-wal` y `-shm`) y se **conservan**
+    `identidad.db` (grafo de contactos con la lista STOP, separado a propósito del dispositivo) y
+    `outbox.db` (envíos debidos). Una célula que quedó en `Reemparejando` por un fallo o por un
+    código expirado se **reanuda** con el mismo `cell rebind`, que salta directamente al
+    emparejamiento. Limitación conocida: la reanudación tras un `reanudar` fallido, o tras un fallo
+    entre la persistencia de `Reemparejando` y el arranque del sidecar (pasos 5 a 7), reentra en el
+    paso de emparejamiento y puede recibir `ya_emparejada`, que termina en `Fallo`; no hay todavía
+    ruta de recuperación definida (decisión pendiente en STATUS).
+
+    **Cerrada el 2026-09-22 con HEX-085.** `cell rebind --id <id> --motivo <texto> --confirmar
+    [--metodo qr|codigo_de_vinculacion]` ejecuta la secuencia fija sobre Docker —pausa de envío,
+    cierre de sesión a mejor esfuerzo, persistencia de `Reemparejando`, descarte del `sqlstore`
+    mediante contenedor hermano, reinicio del sidecar con la pausa reaplicada, emparejamiento,
+    sondeo de la sesión hasta `activa`, reanudación del envío y persistencia de `EnEjecucion` con
+    motivo `emparejamiento_confirmado` más la fila de `sustituciones`—, dividida en dos hijos:
+    HEX-085-a (rutas de sesión del núcleo y emparejamiento real en el adaptador whatsmeow) y
+    HEX-085-b (CLI y pruebas). Prueba de humo en Docker real con una célula de canal simulado
+    arrancada desde volumen vacío: checksums de `sessions.db`, `knowledge_live.db` y
+    `adapter_identity.db` idénticos antes y después.
 14. **Implementar `cell list` y `cell status`** (0,5 días). Se acepta cuando `cell status` cruza el
     almacén de plano de control, `docker inspect` y `/health/ready`, marca cada discrepancia con un
     código estable e incluye el historial de sustituciones. No reporta ratio de acuses ni ventana de
