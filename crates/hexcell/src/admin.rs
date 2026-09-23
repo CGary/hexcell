@@ -443,7 +443,7 @@ impl SesionDeCanal {
     /// Las operaciones `cerrar` y `estado` se delegan en el valor; `pausar_envio` y `emparejar`
     /// devuelven [`DesenlaceDePausa::Fallido`] / [`DesenlaceDeEmparejamiento::Fallido`] con
     /// `sin_conexion`, ya que el trait `CicloDeVidaSesion` no expone esas operaciones. La raíz de
-    /// composición real usa [`construir_sesion_de_canal`] (que recibe un `AsaDeSesion` completo)
+    /// composición real (`construir_sesion_de_canal` en `main.rs`, con el asa del adaptador del canal) la usa
     /// para las cuatro operaciones; este constructor es para los tests de cierre de sesión.
     pub fn con_sesion<C>(valor: C) -> Self
     where
