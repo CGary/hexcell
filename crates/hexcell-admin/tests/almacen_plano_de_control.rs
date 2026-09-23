@@ -407,6 +407,60 @@ fn confirmar_reemparejamiento_escribe_tres_filas_atomicas() {
     assert_eq!(sustituciones[0].registrado_ms, 5000);
 }
 
+/// AC-14 (blueprint, HEX-085-b): si la inserción en `sustituciones` falla, TODA la transacción de
+/// `confirmar_reemparejamiento` revierte: la fila de `celulas` queda en `Reemparejando` (no pasa a
+/// `EnEjecucion`) y no se añade la transición de confirmación. Se fuerza el fallo eliminando la
+/// tabla `sustituciones` desde una conexión aparte antes de llamar a la función bajo prueba, así
+/// que el fallo es real (el motor SQLite lo rechaza), no simulado.
+#[test]
+fn confirmar_reemparejamiento_revierte_si_falla_la_insercion_en_sustituciones() {
+    let temporal = AlmacenTemporal::nuevo("conf-reemp-rollback");
+    let a = AlmacenDelPlanoDeControl::abrir(temporal.ruta()).unwrap();
+
+    a.registrar_transicion(
+        "c1",
+        Some(EstadoDeCelula::EnEjecucion),
+        EstadoDeCelula::Reemparejando,
+        "baneo-permanente",
+        1000,
+    )
+    .unwrap();
+
+    // Forzar el fallo de la tercera escritura desde una conexión aparte: dejar la tabla
+    // `sustituciones` ausente mientras `celulas` y `transiciones` siguen intactas.
+    rusqlite::Connection::open(temporal.ruta())
+        .unwrap()
+        .execute_batch("DROP TABLE sustituciones;")
+        .unwrap();
+
+    let error = a
+        .confirmar_reemparejamiento("c1", "baneo-permanente", 5000)
+        .err()
+        .expect("la inserción en una tabla ausente debe fallar");
+    assert!(
+        matches!(error, ErrorDeAlmacenDePlano::Sqlite { .. }),
+        "se esperaba el rechazo tipado de SQLite: {error:?}"
+    );
+
+    let fila = a.leer_estado("c1").unwrap().unwrap();
+    assert_eq!(
+        fila.estado,
+        EstadoDeCelula::Reemparejando,
+        "la transacción debe haber revertido: la fila sigue en Reemparejando"
+    );
+    assert_eq!(
+        fila.motivo, "baneo-permanente",
+        "el motivo tampoco cambió: quedó el de la transición original"
+    );
+
+    drop(a);
+    assert_eq!(
+        transiciones(&lector(&temporal)),
+        ["c1 en_ejecucion>reemparejando baneo-permanente 1000"],
+        "no debe haberse añadido la transición de confirmación tras el rollback"
+    );
+}
+
 /// AC-15 (HEX-085-b): la tabla `sustituciones` guarda exactamente las columnas `id`, `id_celula`,
 /// `motivo`, `registrado_ms`, y ninguna de ellas contiene un número de teléfono ni un valor de
 /// emparejamiento.

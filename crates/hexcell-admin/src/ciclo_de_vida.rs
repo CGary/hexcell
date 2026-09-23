@@ -58,7 +58,7 @@ const _: () = assert!(LIMITE_DE_EMPAREJAMIENTO_SONDA_S < TIEMPO_LIMITE_DEL_CLIEN
 /// La cadencia y losintentos sólo se usan para contar iteraciones: los tests los fijan en
 /// valores minúsculos (1 ms, 2 intentos) y nunca duermen segundos; producción usa
 /// [`Self::por_omision`] (2 s, 30, 30, 120 s).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PlazosDeReemparejamiento {
     /// Intervalo entre reintentos, en milisegundos.
     pub cadencia_ms: u64,
@@ -1065,13 +1065,33 @@ pub fn descartar_sqlstore_y_rearrancar(
     }
 }
 
+/// Desenlace de [`solicitar_emparejamiento`] que SÍ puede llegar al llamador.
+///
+/// A diferencia de [`DesenlaceDeEmparejamiento`] (el desenlace crudo de la respuesta HTTP), este
+/// tipo no admite `Fallido`: dentro de `solicitar_emparejamiento` un `fallido` con motivo
+/// `sin_conexion` reintenta hasta agotar el presupuesto y cualquier otro motivo aborta de
+/// inmediato con `Err`, así que `Fallido` nunca sobrevive hasta el `Ok` de la función. Angostar el
+/// tipo de retorno evita que el llamador tenga que escribir una rama de `match` que el compilador
+/// no puede demostrar viva, y evita el par `unreachable!()`/rama muerta que eso producía.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub enum DesenlaceDeSolicitudDeEmparejamiento {
+    /// `{"resultado":"codigo","valor":"...","expira_en_ms":N}`. El `metodo` NO viaja aquí: el
+    /// llamador ya sabe cuál pidió y debe reportar ESE, no el que el núcleo decida ecoar (D5.8).
+    Codigo { valor: String, expira_en_ms: i64 },
+    /// `{"resultado":"canal_sin_sesion"}`.
+    CanalSinSesion,
+}
+
 /// Fase «solicitar emparejamiento» (paso 8 de D5): envía `POST /admin/sesion/emparejamiento` con el
 /// método elegido, reintentando mientras la respuesta sea `sin_conexion`.
 ///
-/// * `codigo` → devuelve [`DesenlaceDeEmparejamiento::Codigo`] con el valor y la expiración.
-/// * `canal_sin_sesion` → devuelve [`DesenlaceDeEmparejamiento::CanalSinSesion`] (el llamador
-///   omite el paso 9).
-/// * cualquier otro `fallido` → [`ErrorDeCicloDeVida::EmparejamientoFallido`].
+/// * `codigo` → devuelve [`DesenlaceDeSolicitudDeEmparejamiento::Codigo`] con el valor y la
+///   expiración.
+/// * `canal_sin_sesion` → devuelve [`DesenlaceDeSolicitudDeEmparejamiento::CanalSinSesion`] (el
+///   llamador omite el paso 9).
+/// * `fallido` con motivo `sin_conexion` → reintenta hasta agotar `intentos_de_emparejamiento`.
+/// * cualquier otro `fallido` → [`ErrorDeCicloDeVida::EmparejamientoFallido`] de inmediato, SIN
+///   reintentar.
 pub fn solicitar_emparejamiento(
     cliente: &ClienteDocker,
     nombres: &NombresDeCelula,
@@ -1080,7 +1100,7 @@ pub fn solicitar_emparejamiento(
     imagen: &str,
     plazos: &PlazosDeReemparejamiento,
     limite_http: u64,
-) -> Result<DesenlaceDeEmparejamiento, ErrorDeCicloDeVida> {
+) -> Result<DesenlaceDeSolicitudDeEmparejamiento, ErrorDeCicloDeVida> {
     let url = format!(
         "http://{}:{}/admin/sesion/emparejamiento",
         nombres.nucleo, datos.puerto_admin
@@ -1096,9 +1116,18 @@ pub fn solicitar_emparejamiento(
             &datos.red,
         )?;
         match desenlace_de_emparejamiento(&respuesta)? {
-            desenlace @ (DesenlaceDeEmparejamiento::Codigo { .. }
-            | DesenlaceDeEmparejamiento::CanalSinSesion) => {
-                return Ok(desenlace);
+            DesenlaceDeEmparejamiento::Codigo {
+                valor,
+                expira_en_ms,
+                ..
+            } => {
+                return Ok(DesenlaceDeSolicitudDeEmparejamiento::Codigo {
+                    valor,
+                    expira_en_ms,
+                });
+            }
+            DesenlaceDeEmparejamiento::CanalSinSesion => {
+                return Ok(DesenlaceDeSolicitudDeEmparejamiento::CanalSinSesion);
             }
             DesenlaceDeEmparejamiento::Fallido { motivo } if motivo == "sin_conexion" => {
                 ultimo_fallido = Some(motivo);

@@ -9,9 +9,10 @@
 mod comun;
 
 use hexcell_admin::almacen_plano_de_control::AlmacenDelPlanoDeControl;
-use hexcell_admin::argumentos::{MetodoDeEmparejamiento, analizar};
+use hexcell_admin::argumentos::{Comando, MetodoDeEmparejamiento, analizar};
+use hexcell_admin::ciclo_de_vida::{DatosDeSondeo, PlazosDeReemparejamiento};
 use hexcell_admin::codigo_de_salida::CodigoDeSalida;
-use hexcell_admin::comandos::ejecutar_con_efectos;
+use hexcell_admin::comandos::ejecutar_reemparejamiento;
 use hexcell_admin::docker::{ClienteDocker, InventarioDocker};
 use hexcell_admin::estado_de_celula::EstadoDeCelula;
 use hexcell_admin::salida::Salida;
@@ -44,7 +45,7 @@ fn static_bytes_from_str(s: &str) -> &'static [u8] {
     static_bytes(s.to_string())
 }
 
-/// Contenedor de pausa: id esperado para la respucción de creación.
+/// Contenedor de pausa: id esperado para la respuesta de creación.
 fn sin_cuerpo(estado: u16, razon: &'static str) -> Guion {
     Guion::SinCuerpo { estado, razon }
 }
@@ -133,7 +134,21 @@ fn servir_contenedor_sin_logs(guiones: &mut Vec<Guion>, contador: &mut usize) ->
     id
 }
 
-/// Ejecuta `ejecutar_con_efectos` con los sumideros inyectados y devuelve (código, estándar, diagnóstico).
+/// Plazos de reemparejamiento inyectados en TODAS las pruebas de este archivo: cadencia de 1 ms
+/// y topes chicos, para que ningún reintento duerma segundos reales. `ejecutar_con_efectos` fija
+/// `PlazosDeReemparejamiento::por_omision()` (cadencia de 2 s) para producción y su firma no se
+/// toca (contrato), así que las pruebas llaman a `ejecutar_reemparejamiento` directamente para
+/// poder inyectar estos plazos.
+const PLAZOS_DE_PRUEBA: PlazosDeReemparejamiento = PlazosDeReemparejamiento {
+    cadencia_ms: 1,
+    intentos_de_pausa: 3,
+    intentos_de_emparejamiento: 3,
+    tope_de_confirmacion_s: 1,
+};
+
+/// Ejecuta `ejecutar_reemparejamiento` (no `ejecutar_con_efectos`) con los plazos de prueba
+/// inyectados y devuelve el código de salida. `inventario` no se usa: se conserva en la firma
+/// para no tocar las siete llamadas existentes de este archivo.
 fn ejecutar_rebind<S: Write, D: Write>(
     argumento: &[&str],
     cliente: &ClienteDocker,
@@ -142,18 +157,44 @@ fn ejecutar_rebind<S: Write, D: Write>(
     ahora_ms: i64,
     salida: &mut Salida<S, D>,
 ) -> CodigoDeSalida {
-    let invocacion = analizar(&argumento.iter().map(|s| s.to_string()).collect::<Vec<_>>());
-    ejecutar_con_efectos(
+    let _ = inventario;
+    ejecutar_rebind_con_plazos(
+        argumento,
+        cliente,
+        ruta_almacen,
+        ahora_ms,
+        salida,
+        PLAZOS_DE_PRUEBA,
+    )
+}
+
+/// Variante de [`ejecutar_rebind`] con plazos explícitos, para las pruebas de reintento/expiración
+/// que necesitan contar sondas o ventanas de presupuesto distintas de las de prueba por omisión.
+fn ejecutar_rebind_con_plazos<S: Write, D: Write>(
+    argumento: &[&str],
+    cliente: &ClienteDocker,
+    ruta_almacen: &str,
+    ahora_ms: i64,
+    salida: &mut Salida<S, D>,
+    plazos: PlazosDeReemparejamiento,
+) -> CodigoDeSalida {
+    let comando = analizar(&argumento.iter().map(|s| s.to_string()).collect::<Vec<_>>())
+        .expect("los argumentos de cell rebind del test deben analizar sin error");
+    let invocacion = match comando {
+        Comando::Cell(invocacion) => invocacion,
+        _ => panic!("se esperaba Comando::Cell para cell rebind"),
+    };
+    ejecutar_reemparejamiento(
         invocacion,
         salida,
         cliente,
-        inventario,
         ruta_almacen,
         ahora_ms,
-        hexcell_admin::ciclo_de_vida::DatosDeSondeo {
+        DatosDeSondeo {
             imagen: IMAGEN_DEL_ACCESORIO.to_string(),
             limite_segundos: 45,
         },
+        plazos,
     )
 }
 
@@ -876,9 +917,11 @@ fn codigo_expirado_deja_la_fila_reemparejando_y_sin_sustituciones() {
         &mut contador,
         br#"{"resultado":"codigo","metodo":"qr","valor":"QR-EXP","expira_en_ms":1000}"#,
     );
-    // Estado: nunca reporta `activa`, para agotar el presupuesto de confirmación.
-    // Con plazos pequeños (1 ms, 2 intentos) basta con un par de respuestas.
-    servir_sonda_http(&mut guiones, &mut contador, br#"{"estado":"reconectando"}"#);
+    // Estado: nunca reporta `activa`. `expira_en_ms` ya quedó en el pasado frente a `ahora_ms`,
+    // así que el presupuesto (`expira_en_ms - ahora_ms`, saturado a 0) es 0 y
+    // `esperar_confirmacion` hace UN solo intento (el `.max(1)` de intentos mínimos) antes de
+    // agotarse: basta UNA única respuesta. El caso con VARIAS sondas de estado antes de agotarse
+    // vive en `presupuesto_de_confirmacion_se_agota_tras_varias_sondas_de_estado`, más abajo.
     servir_sonda_http(&mut guiones, &mut contador, br#"{"estado":"reconectando"}"#);
 
     let total_peticiones = guiones.len();
@@ -1142,4 +1185,687 @@ fn sustituciones_no_almacena_ni_telefono_ni_valor_de_emparejamiento() {
     assert_ne!(sustituciones[0].motivo, "QR-SECRETO-VALUE");
     assert_ne!(sustituciones[0].motivo, "+34600123456");
     assert_eq!(sustituciones[0].motivo, "sustitución por baneo");
+}
+
+/// Siembra una fila `Reemparejando` para que la secuencia entre directo al paso 8 (resume), sin
+/// las peticiones de pausa/cierre/rm/stop/start de los pasos 2-7. Comparten esta fase todas las
+/// pruebas nuevas de emparejamiento/reanudar/presupuesto de esta sección: repetir el happy path
+/// completo por cada motivo de fallo infla el archivo sin ejercitar código distinto.
+fn sembrar_reemparejando(ruta_almacen: &str) {
+    let a = AlmacenDelPlanoDeControl::abrir(std::path::Path::new(ruta_almacen)).unwrap();
+    a.registrar_transicion(
+        "c1",
+        Some(EstadoDeCelula::EnEjecucion),
+        EstadoDeCelula::Reemparejando,
+        "sustitución por baneo",
+        1000,
+    )
+    .unwrap();
+}
+
+/// AC-8 (invariante de persistencia): una pausa `fallido` en el paso 3 (dentro de
+/// `preparar_reemparejamiento`, ANTES del paso 5 que persiste `Reemparejando`) termina en `Fallo`
+/// sin persistir ninguna fila y sin emitir ninguna petición destructiva (cierre, stop, rm). Mata
+/// la mutación M3 (mover el paso 5 antes de la sonda de pausa): con esa mutación la fila quedaría
+/// en `Reemparejando` en vez de ausente.
+#[test]
+fn pausa_fallida_en_el_paso_3_no_persiste_ni_hace_nada_destructivo() {
+    let servidor = ServidorDockerFalso::nuevo("rebind-pausa-fallida");
+    let ruta = servidor.ruta();
+    let cliente = ClienteDocker::nuevo(ruta.clone());
+    let inventario = InventarioDocker::nuevo(ruta.clone(), std::time::Duration::from_secs(70));
+    let almacen = AlmacenTemporal::nuevo("rebind-pausa-fallida");
+    let ruta_almacen = almacen.texto();
+
+    let mut guiones: Vec<Guion> = Vec::new();
+    let mut contador = 0usize;
+    guiones.push(inspeccion_del_nucleo());
+    guiones.push(inspeccion_del_sidecar());
+    guiones.push(inspeccion_del_nucleo()); // preparar_reemparejamiento
+    servir_sonda_http(
+        &mut guiones,
+        &mut contador,
+        br#"{"resultado":"fallido","accion":"pausar","motivo":"cola_llena"}"#,
+    );
+
+    let total_peticiones = guiones.len();
+    guiones.push(sin_cuerpo(204, "No Content")); // nunca debe servirse: prueba exigir_silencio.
+    let receptor = servir_guiones(servidor, guiones);
+
+    let argumento = vec![
+        "cell",
+        "rebind",
+        "--id",
+        "c1",
+        "--motivo",
+        "sustitución por baneo",
+        "--confirmar",
+    ];
+
+    let mut estandar_buf: Vec<u8> = Vec::new();
+    let mut diagnostico_buf: Vec<u8> = Vec::new();
+    let mut salida = Salida::nueva(&mut estandar_buf, &mut diagnostico_buf);
+
+    let ahora_ms = 1_700_000_000_000i64;
+    let codigo = ejecutar_rebind(
+        &argumento,
+        &cliente,
+        &inventario,
+        &ruta_almacen,
+        ahora_ms,
+        &mut salida,
+    );
+
+    assert_eq!(codigo, CodigoDeSalida::Fallo);
+    let diagnostico = String::from_utf8(diagnostico_buf).unwrap();
+    assert!(
+        diagnostico.contains("cola_llena"),
+        "diagnóstico: {diagnostico}"
+    );
+
+    let recibidas = secuencia_recibida(&receptor, total_peticiones);
+    assert_eq!(recibidas.len(), total_peticiones);
+    exigir_silencio(&receptor);
+
+    let a =
+        AlmacenDelPlanoDeControl::abrir_solo_lectura(std::path::Path::new(&ruta_almacen)).unwrap();
+    assert!(
+        a.leer_estado("c1").unwrap().is_none(),
+        "no debe haber fila: la pausa falló antes del paso 5 que persiste"
+    );
+}
+
+/// AC-9 end-to-end: la sonda de cierre que sale con código distinto de cero escribe UNA línea por
+/// diagnóstico y la secuencia entera sigue hasta `Exito`. Mata la cobertura vacía que sólo probaba
+/// el `aviso` a nivel de función: aquí se comprueba que ese aviso realmente llega al sumidero de
+/// diagnóstico de `ejecutar_reemparejamiento` y que la secuencia no se detiene ahí.
+#[test]
+fn cierre_fallido_emite_un_aviso_por_diagnostico_y_continua_hasta_exito() {
+    let servidor = ServidorDockerFalso::nuevo("rebind-cierre-fallido");
+    let ruta = servidor.ruta();
+    let cliente = ClienteDocker::nuevo(ruta.clone());
+    let inventario = InventarioDocker::nuevo(ruta.clone(), std::time::Duration::from_secs(70));
+    let almacen = AlmacenTemporal::nuevo("rebind-cierre-fallido");
+    let ruta_almacen = almacen.texto();
+
+    let mut guiones: Vec<Guion> = Vec::new();
+    let mut contador = 0usize;
+    guiones.push(inspeccion_del_nucleo());
+    guiones.push(inspeccion_del_sidecar());
+    guiones.push(inspeccion_del_nucleo()); // preparar_reemparejamiento
+    servir_sonda_http(
+        &mut guiones,
+        &mut contador,
+        br#"{"resultado":"aplicado","accion":"pausar"}"#,
+    );
+    // Sonda de cierre: sale con código 1 en vez de 0 (sin logs, el código lo lleva `wait`).
+    let id_cierre = id_de_sonda(contador);
+    guiones.push(Guion::ConCuerpo {
+        estado: 201,
+        razon: "Created",
+        cuerpo: static_bytes_from_str(&format!(r#"{{"Id":"{id_cierre}","Warnings":[]}}"#)),
+    });
+    guiones.push(sin_cuerpo(204, "No Content"));
+    guiones.push(Guion::ConCuerpo {
+        estado: 200,
+        razon: "OK",
+        cuerpo: br#"{"StatusCode":1}"#,
+    });
+    guiones.push(sin_cuerpo(204, "No Content"));
+    contador += 1;
+    guiones.push(sin_cuerpo(204, "No Content")); // stop sidecar
+    servir_contenedor_sin_logs(&mut guiones, &mut contador); // rm
+    guiones.push(sin_cuerpo(204, "No Content")); // start sidecar
+    servir_sonda_http(
+        &mut guiones,
+        &mut contador,
+        br#"{"resultado":"aplicado","accion":"pausar"}"#,
+    );
+    servir_sonda_http(
+        &mut guiones,
+        &mut contador,
+        br#"{"resultado":"codigo","metodo":"qr","valor":"QR-CIERRE","expira_en_ms":1700000000000}"#,
+    );
+    servir_sonda_http(&mut guiones, &mut contador, br#"{"estado":"activa"}"#);
+    servir_sonda_http(
+        &mut guiones,
+        &mut contador,
+        br#"{"resultado":"aplicado","accion":"reanudar"}"#,
+    );
+
+    let receptor = servir_guiones(servidor, guiones);
+
+    let argumento = vec![
+        "cell",
+        "rebind",
+        "--id",
+        "c1",
+        "--motivo",
+        "sustitución por baneo",
+        "--confirmar",
+    ];
+
+    let mut estandar_buf: Vec<u8> = Vec::new();
+    let mut diagnostico_buf: Vec<u8> = Vec::new();
+    let mut salida = Salida::nueva(&mut estandar_buf, &mut diagnostico_buf);
+
+    let ahora_ms = 1_700_000_000_000i64;
+    let codigo = ejecutar_rebind(
+        &argumento,
+        &cliente,
+        &inventario,
+        &ruta_almacen,
+        ahora_ms,
+        &mut salida,
+    );
+
+    assert_eq!(
+        codigo,
+        CodigoDeSalida::Exito,
+        "un cierre fallido no debe abortar la secuencia"
+    );
+
+    let diagnostico = String::from_utf8(diagnostico_buf).unwrap();
+    assert!(
+        diagnostico.contains("el cierre de sesión devolvió código 1"),
+        "el aviso de cierre debe llegar al sumidero de diagnóstico: {diagnostico}"
+    );
+
+    drop(receptor);
+    let a =
+        AlmacenDelPlanoDeControl::abrir_solo_lectura(std::path::Path::new(&ruta_almacen)).unwrap();
+    let fila = a.leer_estado("c1").unwrap().unwrap();
+    assert_eq!(fila.estado, EstadoDeCelula::EnEjecucion);
+}
+
+/// AC-12: un `fallido` de emparejamiento con un motivo DISTINTO de `sin_conexion` (p. ej.
+/// `ya_emparejada`) termina en `Fallo`, deja la fila en `Reemparejando` y NO escribe ninguna fila
+/// de `sustituciones`. Mata la mutación M9 (reintentar sobre cualquier motivo) a nivel de
+/// secuencia completa: con esa mutación se emitiría una segunda sonda que este test no programó.
+#[test]
+fn resume_con_emparejamiento_fallido_por_otro_motivo_no_reintenta_ni_persiste() {
+    let servidor = ServidorDockerFalso::nuevo("rebind-otro-motivo");
+    let ruta = servidor.ruta();
+    let cliente = ClienteDocker::nuevo(ruta.clone());
+    let inventario = InventarioDocker::nuevo(ruta.clone(), std::time::Duration::from_secs(70));
+    let almacen = AlmacenTemporal::nuevo("rebind-otro-motivo");
+    let ruta_almacen = almacen.texto();
+    sembrar_reemparejando(&ruta_almacen);
+
+    let mut guiones: Vec<Guion> = Vec::new();
+    let mut contador = 0usize;
+    guiones.push(inspeccion_del_nucleo());
+    guiones.push(inspeccion_del_sidecar());
+    servir_sonda_http(
+        &mut guiones,
+        &mut contador,
+        br#"{"resultado":"fallido","motivo":"ya_emparejada"}"#,
+    );
+
+    let total_peticiones = guiones.len();
+    guiones.push(sin_cuerpo(204, "No Content")); // nunca debe servirse: prueba exigir_silencio.
+    let receptor = servir_guiones(servidor, guiones);
+
+    let argumento = vec![
+        "cell",
+        "rebind",
+        "--id",
+        "c1",
+        "--motivo",
+        "sustitución por baneo",
+        "--confirmar",
+    ];
+
+    let mut estandar_buf: Vec<u8> = Vec::new();
+    let mut diagnostico_buf: Vec<u8> = Vec::new();
+    let mut salida = Salida::nueva(&mut estandar_buf, &mut diagnostico_buf);
+
+    let ahora_ms = 1_700_000_000_000i64;
+    let codigo = ejecutar_rebind(
+        &argumento,
+        &cliente,
+        &inventario,
+        &ruta_almacen,
+        ahora_ms,
+        &mut salida,
+    );
+
+    assert_eq!(codigo, CodigoDeSalida::Fallo);
+    let diagnostico = String::from_utf8(diagnostico_buf).unwrap();
+    assert!(
+        diagnostico.contains("ya_emparejada"),
+        "diagnóstico: {diagnostico}"
+    );
+
+    let recibidas = secuencia_recibida(&receptor, total_peticiones);
+    assert_eq!(recibidas.len(), total_peticiones);
+    exigir_silencio(&receptor);
+
+    let a =
+        AlmacenDelPlanoDeControl::abrir_solo_lectura(std::path::Path::new(&ruta_almacen)).unwrap();
+    let fila = a.leer_estado("c1").unwrap().unwrap();
+    assert_eq!(fila.estado, EstadoDeCelula::Reemparejando);
+    assert!(a.leer_sustituciones("c1").unwrap().is_empty());
+}
+
+/// AC-12: dos `sin_conexion` seguidos en el paso 8 reintentan y el tercer intento (con `codigo`)
+/// tiene éxito. Mata la mutación M9 desde el lado que SÍ debe reintentar, a nivel de secuencia
+/// completa (con el almacén y `ejecutar_reemparejamiento`, no la función aislada).
+#[test]
+fn resume_con_emparejamiento_sin_conexion_dos_veces_luego_codigo() {
+    let servidor = ServidorDockerFalso::nuevo("rebind-sin-conexion-dos-veces");
+    let ruta = servidor.ruta();
+    let cliente = ClienteDocker::nuevo(ruta.clone());
+    let inventario = InventarioDocker::nuevo(ruta.clone(), std::time::Duration::from_secs(70));
+    let almacen = AlmacenTemporal::nuevo("rebind-sin-conexion-dos-veces");
+    let ruta_almacen = almacen.texto();
+    sembrar_reemparejando(&ruta_almacen);
+
+    let mut guiones: Vec<Guion> = Vec::new();
+    let mut contador = 0usize;
+    guiones.push(inspeccion_del_nucleo());
+    guiones.push(inspeccion_del_sidecar());
+    servir_sonda_http(
+        &mut guiones,
+        &mut contador,
+        br#"{"resultado":"fallido","motivo":"sin_conexion"}"#,
+    );
+    servir_sonda_http(
+        &mut guiones,
+        &mut contador,
+        br#"{"resultado":"fallido","motivo":"sin_conexion"}"#,
+    );
+    servir_sonda_http(
+        &mut guiones,
+        &mut contador,
+        br#"{"resultado":"codigo","metodo":"qr","valor":"QR-TERCERO","expira_en_ms":1700000000000}"#,
+    );
+    servir_sonda_http(&mut guiones, &mut contador, br#"{"estado":"activa"}"#);
+    servir_sonda_http(
+        &mut guiones,
+        &mut contador,
+        br#"{"resultado":"aplicado","accion":"reanudar"}"#,
+    );
+
+    let total_peticiones = guiones.len();
+    let receptor = servir_guiones(servidor, guiones);
+
+    let argumento = vec![
+        "cell",
+        "rebind",
+        "--id",
+        "c1",
+        "--motivo",
+        "sustitución por baneo",
+        "--confirmar",
+    ];
+
+    let mut estandar_buf: Vec<u8> = Vec::new();
+    let mut diagnostico_buf: Vec<u8> = Vec::new();
+    let mut salida = Salida::nueva(&mut estandar_buf, &mut diagnostico_buf);
+
+    let ahora_ms = 1_700_000_000_000i64;
+    let codigo = ejecutar_rebind(
+        &argumento,
+        &cliente,
+        &inventario,
+        &ruta_almacen,
+        ahora_ms,
+        &mut salida,
+    );
+
+    assert_eq!(
+        codigo,
+        CodigoDeSalida::Exito,
+        "dos sin_conexion y un tercer intento exitoso deben terminar en Exito"
+    );
+    let _ = secuencia_recibida(&receptor, total_peticiones);
+
+    let a =
+        AlmacenDelPlanoDeControl::abrir_solo_lectura(std::path::Path::new(&ruta_almacen)).unwrap();
+    let fila = a.leer_estado("c1").unwrap().unwrap();
+    assert_eq!(fila.estado, EstadoDeCelula::EnEjecucion);
+    assert_eq!(a.leer_sustituciones("c1").unwrap().len(), 1);
+}
+
+/// AC-14: una `reanudar` que responde `fallido` en el paso 10 termina en `Fallo`, deja la fila en
+/// `Reemparejando` y NO escribe ninguna fila de `sustituciones` (la confirmación es una única
+/// transacción posterior a `reanudar_envio`). Mata la mutación M8 (tratar `reanudar` fallido como
+/// éxito) a nivel de secuencia completa.
+#[test]
+fn resume_con_reanudar_fallido_deja_la_fila_reemparejando_y_sin_sustituciones() {
+    let servidor = ServidorDockerFalso::nuevo("rebind-reanudar-fallido");
+    let ruta = servidor.ruta();
+    let cliente = ClienteDocker::nuevo(ruta.clone());
+    let inventario = InventarioDocker::nuevo(ruta.clone(), std::time::Duration::from_secs(70));
+    let almacen = AlmacenTemporal::nuevo("rebind-reanudar-fallido");
+    let ruta_almacen = almacen.texto();
+    sembrar_reemparejando(&ruta_almacen);
+
+    let mut guiones: Vec<Guion> = Vec::new();
+    let mut contador = 0usize;
+    guiones.push(inspeccion_del_nucleo());
+    guiones.push(inspeccion_del_sidecar());
+    servir_sonda_http(
+        &mut guiones,
+        &mut contador,
+        br#"{"resultado":"codigo","metodo":"qr","valor":"QR-REANUDAR","expira_en_ms":1700000000000}"#,
+    );
+    servir_sonda_http(&mut guiones, &mut contador, br#"{"estado":"activa"}"#);
+    servir_sonda_http(
+        &mut guiones,
+        &mut contador,
+        br#"{"resultado":"fallido","accion":"reanudar","motivo":"error_interno"}"#,
+    );
+
+    let total_peticiones = guiones.len();
+    guiones.push(sin_cuerpo(204, "No Content")); // nunca debe servirse: prueba exigir_silencio.
+    let receptor = servir_guiones(servidor, guiones);
+
+    let argumento = vec![
+        "cell",
+        "rebind",
+        "--id",
+        "c1",
+        "--motivo",
+        "sustitución por baneo",
+        "--confirmar",
+    ];
+
+    let mut estandar_buf: Vec<u8> = Vec::new();
+    let mut diagnostico_buf: Vec<u8> = Vec::new();
+    let mut salida = Salida::nueva(&mut estandar_buf, &mut diagnostico_buf);
+
+    let ahora_ms = 1_700_000_000_000i64;
+    let codigo = ejecutar_rebind(
+        &argumento,
+        &cliente,
+        &inventario,
+        &ruta_almacen,
+        ahora_ms,
+        &mut salida,
+    );
+
+    assert_eq!(codigo, CodigoDeSalida::Fallo);
+    let diagnostico = String::from_utf8(diagnostico_buf).unwrap();
+    assert!(
+        diagnostico.contains("error_interno"),
+        "diagnóstico: {diagnostico}"
+    );
+
+    let recibidas = secuencia_recibida(&receptor, total_peticiones);
+    assert_eq!(recibidas.len(), total_peticiones);
+    exigir_silencio(&receptor);
+
+    let a =
+        AlmacenDelPlanoDeControl::abrir_solo_lectura(std::path::Path::new(&ruta_almacen)).unwrap();
+    let fila = a.leer_estado("c1").unwrap().unwrap();
+    assert_eq!(fila.estado, EstadoDeCelula::Reemparejando);
+    assert!(a.leer_sustituciones("c1").unwrap().is_empty());
+}
+
+/// AC-13: el presupuesto de confirmación se agota tras VARIAS sondas de estado (no una única, que
+/// es lo único que cubría el archivo antes de este arreglo): con una ventana de varios
+/// milisegundos entre `expira_en_ms` y `ahora_ms` y la cadencia de prueba de 1 ms, caben varios
+/// intentos antes de agotarse.
+#[test]
+fn presupuesto_de_confirmacion_se_agota_tras_varias_sondas_de_estado() {
+    let servidor = ServidorDockerFalso::nuevo("rebind-presupuesto-varias");
+    let ruta = servidor.ruta();
+    let cliente = ClienteDocker::nuevo(ruta.clone());
+    let inventario = InventarioDocker::nuevo(ruta.clone(), std::time::Duration::from_secs(70));
+    let almacen = AlmacenTemporal::nuevo("rebind-presupuesto-varias");
+    let ruta_almacen = almacen.texto();
+    sembrar_reemparejando(&ruta_almacen);
+
+    let ahora_ms = 1_700_000_000_000i64;
+    let sondas_de_estado_esperadas = 4i64;
+    let expira_en_ms = ahora_ms + sondas_de_estado_esperadas; // cadencia de prueba: 1 ms.
+
+    let mut guiones: Vec<Guion> = Vec::new();
+    let mut contador = 0usize;
+    guiones.push(inspeccion_del_nucleo());
+    guiones.push(inspeccion_del_sidecar());
+    servir_sonda_http(
+        &mut guiones,
+        &mut contador,
+        static_bytes(format!(
+            r#"{{"resultado":"codigo","metodo":"qr","valor":"QR-BUDGET","expira_en_ms":{expira_en_ms}}}"#
+        )),
+    );
+    for _ in 0..sondas_de_estado_esperadas {
+        servir_sonda_http(&mut guiones, &mut contador, br#"{"estado":"reconectando"}"#);
+    }
+
+    let total_peticiones = guiones.len();
+    guiones.push(sin_cuerpo(204, "No Content")); // nunca debe servirse: prueba exigir_silencio.
+    let receptor = servir_guiones(servidor, guiones);
+
+    let argumento = vec![
+        "cell",
+        "rebind",
+        "--id",
+        "c1",
+        "--motivo",
+        "sustitución por baneo",
+        "--confirmar",
+    ];
+
+    let mut estandar_buf: Vec<u8> = Vec::new();
+    let mut diagnostico_buf: Vec<u8> = Vec::new();
+    let mut salida = Salida::nueva(&mut estandar_buf, &mut diagnostico_buf);
+
+    let codigo = ejecutar_rebind(
+        &argumento,
+        &cliente,
+        &inventario,
+        &ruta_almacen,
+        ahora_ms,
+        &mut salida,
+    );
+
+    assert_eq!(codigo, CodigoDeSalida::Fallo);
+    let diagnostico = String::from_utf8(diagnostico_buf).unwrap();
+    assert!(diagnostico.contains("código expirado; repita cell rebind"));
+
+    let recibidas = secuencia_recibida(&receptor, total_peticiones);
+    let creaciones = recibidas
+        .iter()
+        .filter(|l| l.as_str() == "POST /containers/create")
+        .count();
+    assert_eq!(
+        creaciones,
+        1 + sondas_de_estado_esperadas as usize,
+        "1 sonda de emparejamiento + {sondas_de_estado_esperadas} sondas de estado"
+    );
+    exigir_silencio(&receptor);
+}
+
+/// AC-11: el paso 7 (pausa de envío reintentada tras el rm) reintenta cuando la respuesta es
+/// `sin_conexion` y tiene éxito en el segundo intento, sin abortar la secuencia completa. Mata la
+/// falsa cobertura de "nunca se ejerce el reintento del paso 7" a nivel de secuencia completa.
+#[test]
+fn paso_7_pausa_reintenta_una_vez_tras_sin_conexion_y_continua_hasta_exito() {
+    let servidor = ServidorDockerFalso::nuevo("rebind-retry-pausa-paso7");
+    let ruta = servidor.ruta();
+    let cliente = ClienteDocker::nuevo(ruta.clone());
+    let inventario = InventarioDocker::nuevo(ruta.clone(), std::time::Duration::from_secs(70));
+    let almacen = AlmacenTemporal::nuevo("rebind-retry-pausa-paso7");
+    let ruta_almacen = almacen.texto();
+
+    let mut guiones: Vec<Guion> = Vec::new();
+    let mut contador = 0usize;
+
+    guiones.push(inspeccion_del_nucleo());
+    guiones.push(inspeccion_del_sidecar());
+    guiones.push(inspeccion_del_nucleo()); // preparar_reemparejamiento
+    servir_sonda_http(
+        &mut guiones,
+        &mut contador,
+        br#"{"resultado":"aplicado","accion":"pausar"}"#,
+    );
+    servir_contenedor_sin_logs(&mut guiones, &mut contador); // cierre
+    guiones.push(sin_cuerpo(204, "No Content")); // stop sidecar
+    servir_contenedor_sin_logs(&mut guiones, &mut contador); // rm
+    guiones.push(sin_cuerpo(204, "No Content")); // start sidecar
+    // Paso 7: primer intento sin_conexion, segundo aplicado.
+    servir_sonda_http(
+        &mut guiones,
+        &mut contador,
+        br#"{"resultado":"fallido","accion":"pausar","motivo":"sin_conexion"}"#,
+    );
+    servir_sonda_http(
+        &mut guiones,
+        &mut contador,
+        br#"{"resultado":"aplicado","accion":"pausar"}"#,
+    );
+    servir_sonda_http(
+        &mut guiones,
+        &mut contador,
+        br#"{"resultado":"codigo","metodo":"qr","valor":"QR-RETRY7","expira_en_ms":1700000000000}"#,
+    );
+    servir_sonda_http(&mut guiones, &mut contador, br#"{"estado":"activa"}"#);
+    servir_sonda_http(
+        &mut guiones,
+        &mut contador,
+        br#"{"resultado":"aplicado","accion":"reanudar"}"#,
+    );
+
+    let total_peticiones = guiones.len();
+    guiones.push(sin_cuerpo(204, "No Content")); // nunca debe servirse: prueba exigir_silencio.
+    let receptor = servir_guiones(servidor, guiones);
+
+    let argumento = vec![
+        "cell",
+        "rebind",
+        "--id",
+        "c1",
+        "--motivo",
+        "sustitución por baneo",
+        "--confirmar",
+    ];
+
+    let mut estandar_buf: Vec<u8> = Vec::new();
+    let mut diagnostico_buf: Vec<u8> = Vec::new();
+    let mut salida = Salida::nueva(&mut estandar_buf, &mut diagnostico_buf);
+
+    let ahora_ms = 1_700_000_000_000i64;
+    let codigo = ejecutar_rebind(
+        &argumento,
+        &cliente,
+        &inventario,
+        &ruta_almacen,
+        ahora_ms,
+        &mut salida,
+    );
+
+    assert_eq!(
+        codigo,
+        CodigoDeSalida::Exito,
+        "la pausa reintentada del paso 7 debe terminar en Exito"
+    );
+
+    let recibidas = secuencia_recibida(&receptor, total_peticiones);
+    let creaciones = recibidas
+        .iter()
+        .filter(|l| l.as_str() == "POST /containers/create")
+        .count();
+    // pausa(1) + cierre(1) + rm(1) + pausa-retry(2) + pairing(1) + estado(1) + reanudar(1) = 8.
+    assert_eq!(creaciones, 8);
+    exigir_silencio(&receptor);
+
+    let a =
+        AlmacenDelPlanoDeControl::abrir_solo_lectura(std::path::Path::new(&ruta_almacen)).unwrap();
+    let fila = a.leer_estado("c1").unwrap().unwrap();
+    assert_eq!(fila.estado, EstadoDeCelula::EnEjecucion);
+}
+
+/// M5/AC-12/AC-6: la línea de emparejamiento por salida estándar nombra el método que el OPERADOR
+/// eligió con `--metodo`, no el que el núcleo decida ecoar en la respuesta (aquí el núcleo ecoa
+/// una cadena vacía, simulando un core que no lo declara). El cuerpo `--post-data` de la sonda
+/// también lleva el método elegido, nunca `qr` a secas. Mata la mutación M5 (mandar siempre
+/// `{"metodo":"qr"}`) y el hallazgo de producción de imprimir el campo ecoado.
+#[test]
+fn resume_con_codigo_de_vinculacion_nombra_el_metodo_elegido_no_el_ecoado() {
+    let servidor = ServidorDockerFalso::nuevo("rebind-metodo-elegido");
+    let ruta = servidor.ruta();
+    let cliente = ClienteDocker::nuevo(ruta.clone());
+    let inventario = InventarioDocker::nuevo(ruta.clone(), std::time::Duration::from_secs(70));
+    let almacen = AlmacenTemporal::nuevo("rebind-metodo-elegido");
+    let ruta_almacen = almacen.texto();
+    sembrar_reemparejando(&ruta_almacen);
+
+    let mut guiones: Vec<Guion> = Vec::new();
+    let mut contador = 0usize;
+    guiones.push(inspeccion_del_nucleo());
+    guiones.push(inspeccion_del_sidecar());
+    // El núcleo ecoa "metodo":"" — un core que no lo declara — para distinguir «lo elegido» de
+    // «lo recibido».
+    servir_sonda_http(
+        &mut guiones,
+        &mut contador,
+        br#"{"resultado":"codigo","metodo":"","valor":"CODE-ELEGIDO","expira_en_ms":1700000000000}"#,
+    );
+    servir_sonda_http(&mut guiones, &mut contador, br#"{"estado":"activa"}"#);
+    servir_sonda_http(
+        &mut guiones,
+        &mut contador,
+        br#"{"resultado":"aplicado","accion":"reanudar"}"#,
+    );
+
+    let receptor = servir_guiones(servidor, guiones);
+
+    let argumento = vec![
+        "cell",
+        "rebind",
+        "--id",
+        "c1",
+        "--motivo",
+        "sustitución por baneo",
+        "--confirmar",
+        "--metodo",
+        "codigo_de_vinculacion",
+    ];
+
+    let mut estandar_buf: Vec<u8> = Vec::new();
+    let mut diagnostico_buf: Vec<u8> = Vec::new();
+    let mut salida = Salida::nueva(&mut estandar_buf, &mut diagnostico_buf);
+
+    let ahora_ms = 1_700_000_000_000i64;
+    let codigo = ejecutar_rebind(
+        &argumento,
+        &cliente,
+        &inventario,
+        &ruta_almacen,
+        ahora_ms,
+        &mut salida,
+    );
+    assert_eq!(codigo, CodigoDeSalida::Exito);
+
+    recibir(&receptor); // inspección núcleo
+    recibir(&receptor); // inspección sidecar
+    let crear_pairing = recibir(&receptor);
+    let cuerpo: serde_json::Value = serde_json::from_slice(&crear_pairing.cuerpo).unwrap();
+    assert_eq!(
+        cuerpo["Cmd"],
+        serde_json::json!([
+            "wget",
+            "-q",
+            "-O",
+            "-",
+            "-T",
+            "40",
+            "--post-data",
+            r#"{"metodo":"codigo_de_vinculacion"}"#,
+            "http://c1-nucleo:5080/admin/sesion/emparejamiento"
+        ]),
+        "el cuerpo debe llevar el método elegido, no «qr»"
+    );
+    drop(receptor);
+
+    let texto_estandar = String::from_utf8(estandar_buf).unwrap();
+    assert!(
+        texto_estandar.contains("emparejamiento codigo_de_vinculacion: CODE-ELEGIDO"),
+        "la línea debe nombrar el método ELEGIDO, no el ecoado (vacío): {texto_estandar}"
+    );
 }

@@ -24,8 +24,8 @@ use crate::argumentos::{
     TEXTO_DE_USO,
 };
 use crate::ciclo_de_vida::{
-    self, DatosDeSondeo, DesenlaceDeEmparejamiento, Disponibilidad, LIMITE_DE_SONDEO_DE_ESTADO_S,
-    NombresDeCelula,
+    self, DatosDeSondeo, DesenlaceDeSolicitudDeEmparejamiento, Disponibilidad,
+    LIMITE_DE_SONDEO_DE_ESTADO_S, NombresDeCelula,
 };
 use crate::codigo_de_salida::CodigoDeSalida;
 use crate::docker::{ClienteDocker, ErrorDeClienteDocker, InventarioDocker};
@@ -431,7 +431,15 @@ pub fn ejecutar_reemparejamiento<S: Write, D: Write>(
         Some(otra) if otra != EstadoDeCelula::EnEjecucion => {
             let transicion = otra.transitar(EstadoDeCelula::Reemparejando);
             return match transicion {
-                Ok(_) => unreachable!(),
+                // La tabla de transiciones de `EstadoDeCelula` nunca admite este destino desde
+                // aquí (ni `Aprovisionada` ni `Retirada` permiten `Reemparejando`), pero esta
+                // rama no puede afirmarlo con un panic: un cambio futuro en la tabla debe caer en
+                // un diagnóstico, no en un abort del proceso (perfil `release` con
+                // `panic = "abort"`).
+                Ok(_) => diagnosticar_fallo(
+                    salida,
+                    "estado inesperado: se esperaba que la transición fuera rechazada",
+                ),
                 Err(error) => diagnosticar_fallo(salida, &error.to_string()),
             };
         }
@@ -506,14 +514,18 @@ pub fn ejecutar_reemparejamiento<S: Write, D: Write>(
         &plazos,
         ciclo_de_vida::LIMITE_DE_EMPAREJAMIENTO_SONDA_S,
     ) {
-        Ok(DesenlaceDeEmparejamiento::Codigo {
-            metodo: metodo_recibido,
+        Ok(DesenlaceDeSolicitudDeEmparejamiento::Codigo {
             valor,
             expira_en_ms,
         }) => {
-            // Línea de emparejamiento por salida estándar (AC-12).
+            // Línea de emparejamiento por salida estándar (AC-12): nombra el método que el
+            // OPERADOR eligió (--metodo), no el que el núcleo decida ecoar en la respuesta.
             if salida
-                .linea(&format!("emparejamiento {}: {}", metodo_recibido, valor))
+                .linea(&format!(
+                    "emparejamiento {}: {}",
+                    metodo.nombre_de_cable(),
+                    valor
+                ))
                 .is_err()
             {
                 return CodigoDeSalida::Fallo;
@@ -541,11 +553,8 @@ pub fn ejecutar_reemparejamiento<S: Write, D: Write>(
                 return diagnosticar_fallo(salida, &error.to_string());
             }
         }
-        Ok(DesenlaceDeEmparejamiento::CanalSinSesion) => {
+        Ok(DesenlaceDeSolicitudDeEmparejamiento::CanalSinSesion) => {
             // canal_sin_sesion omite el paso 9 y va directo al paso 10.
-        }
-        Ok(DesenlaceDeEmparejamiento::Fallido { motivo }) => {
-            return diagnosticar_fallo(salida, &format!("emparejamiento fallido: {motivo}"));
         }
         Err(error) => {
             return diagnosticar_fallo(salida, &error.to_string());

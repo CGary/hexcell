@@ -921,6 +921,12 @@ fn preparar_reemparejamiento_avisa_cuando_cierre_falla_pero_continua() {
         "un cierre con código 1 debe generar un aviso"
     );
     assert!(aviso.unwrap().contains("código 1"));
+
+    // Consumir las 9 peticiones (inspección + sonda de pausa + sonda de cierre) para confirmar
+    // que la fase no se detuvo antes de tiempo pese al código 1 del cierre.
+    for _ in 0..9 {
+        recibir(&receptor);
+    }
 }
 
 /// `guion_de_peticion_http` produce el literal exacto de `wget` de disparo único con cuerpo JSON.
@@ -963,5 +969,264 @@ fn guion_de_peticion_http_sin_cuerpo_omite_post_data() {
             "40".to_string(),
             "http://c1-nucleo:7070/admin/sesion".to_string(),
         ]
+    );
+}
+
+// ============================================================================
+// `cell rebind` — pasos 7, 8 y 10 de D5 a nivel de función (HEX-085-b, fixes de revisión).
+//
+// Estas pruebas ejercitan directamente `descartar_sqlstore_y_rearrancar`, `solicitar_emparejamiento`
+// y `reanudar_envio` en vez de la secuencia completa: son más chicas, más rápidas y apuntan
+// exactamente a la condición de reintento/motivo que las mutaciones M5, M8 y M9 movían.
+// ============================================================================
+
+/// Datos de célula compartidos por las pruebas de esta sección.
+fn datos_de_rebind() -> ciclo_de_vida::DatosDeCelulaParaRebind {
+    ciclo_de_vida::DatosDeCelulaParaRebind {
+        red: "red-de-rebind".to_string(),
+        puerto_admin: "7070".to_string(),
+        volumen: "vol-rebind".to_string(),
+    }
+}
+
+/// Envía la secuencia completa de una sonda HTTP (create, start, wait, logs, delete) con el
+/// cuerpo de respuesta dado.
+fn enviar_sonda_http(
+    servidor: &ServidorDockerFalso,
+    emisor: &Sender<PeticionRecibida>,
+    id: &str,
+    respuesta: &'static [u8],
+) {
+    let cuerpo_creado: &'static str =
+        Box::leak(format!(r#"{{"Id":"{id}","Warnings":[]}}"#).into_boxed_str());
+    let _ = emisor.send(servidor.atender(Guion::ConCuerpo {
+        estado: 201,
+        razon: "Created",
+        cuerpo: cuerpo_creado.as_bytes(),
+    }));
+    let _ = emisor.send(servidor.atender(sin_cuerpo(204, "No Content")));
+    let _ = emisor.send(servidor.atender(Guion::ConCuerpo {
+        estado: 200,
+        razon: "OK",
+        cuerpo: br#"{"StatusCode":0}"#,
+    }));
+    let _ = emisor.send(servidor.atender(guion_de_logs(respuesta)));
+    let _ = emisor.send(servidor.atender(sin_cuerpo(204, "No Content")));
+}
+
+/// AC-12/D5.8: `solicitar_emparejamiento` reintenta SÓLO mientras el motivo sea `sin_conexion`
+/// (un fallo así, segundo intento con éxito) y el cuerpo de CADA intento lleva el método que el
+/// llamador eligió, aunque el eligió `codigo_de_vinculacion` en vez del `qr` por omisión. Mata la
+/// mutación M9 (reintentar sobre cualquier motivo) desde el lado que SÍ debe reintentar, y M5
+/// (mandar siempre `{"metodo":"qr"}`) desde el lado del cuerpo enviado.
+#[test]
+fn solicitar_emparejamiento_reintenta_sin_conexion_y_envia_el_metodo_elegido() {
+    let servidor = ServidorDockerFalso::nuevo("solicitar-reintento");
+    let ruta = servidor.ruta();
+    let nombres = NombresDeCelula::nueva("c1");
+    let (emisor, receptor) = std::sync::mpsc::channel();
+    let _hilo = std::thread::spawn(move || {
+        enviar_sonda_http(
+            &servidor,
+            &emisor,
+            "sonda-0",
+            br#"{"resultado":"fallido","motivo":"sin_conexion"}"#,
+        );
+        enviar_sonda_http(
+            &servidor,
+            &emisor,
+            "sonda-1",
+            br#"{"resultado":"codigo","metodo":"codigo_de_vinculacion","valor":"CODE-1","expira_en_ms":5000}"#,
+        );
+    });
+
+    let cliente = ClienteDocker::nuevo(ruta);
+    let resultado = ciclo_de_vida::solicitar_emparejamiento(
+        &cliente,
+        &nombres,
+        &datos_de_rebind(),
+        "codigo_de_vinculacion",
+        IMAGEN_DEL_ACCESORIO,
+        &plazos_de_rebind(),
+        40,
+    );
+
+    match resultado {
+        Ok(ciclo_de_vida::DesenlaceDeSolicitudDeEmparejamiento::Codigo {
+            valor,
+            expira_en_ms,
+        }) => {
+            assert_eq!(valor, "CODE-1");
+            assert_eq!(expira_en_ms, 5000);
+        }
+        otro => panic!("se esperaba Codigo tras un sin_conexion, se obtuvo {otro:?}"),
+    }
+
+    for numero in 0..2 {
+        let crear = recibir(&receptor);
+        assert_eq!(crear.objetivo, "/containers/create");
+        let cuerpo: serde_json::Value = serde_json::from_slice(&crear.cuerpo).unwrap();
+        assert_eq!(
+            cuerpo["Cmd"][7],
+            serde_json::json!(r#"{"metodo":"codigo_de_vinculacion"}"#),
+            "el intento {numero} debe llevar el método elegido, no «qr»"
+        );
+        for _ in 0..4 {
+            recibir(&receptor);
+        }
+    }
+    assert!(
+        receptor.recv_timeout(Duration::from_millis(100)).is_err(),
+        "no debe haber una cuarta sonda tras el éxito del tercer intento"
+    );
+}
+
+/// AC-12/D5.8: un `fallido` con un motivo DISTINTO de `sin_conexion` (p. ej. `ya_emparejada`)
+/// termina en `Err` de inmediato, SIN reintentar. Mata la mutación M9 desde el lado que NO debe
+/// reintentar: con la mutación, esta prueba enviaría una segunda sonda que el demonio falso no
+/// tiene programada y el `recv_timeout` final se pondría en `Ok`, no en `Err`.
+#[test]
+fn solicitar_emparejamiento_no_reintenta_con_otro_motivo() {
+    let servidor = ServidorDockerFalso::nuevo("solicitar-otro-motivo");
+    let ruta = servidor.ruta();
+    let nombres = NombresDeCelula::nueva("c1");
+    let (emisor, receptor) = std::sync::mpsc::channel();
+    let _hilo = std::thread::spawn(move || {
+        enviar_sonda_http(
+            &servidor,
+            &emisor,
+            "sonda-0",
+            br#"{"resultado":"fallido","motivo":"ya_emparejada"}"#,
+        );
+    });
+
+    let cliente = ClienteDocker::nuevo(ruta);
+    let resultado = ciclo_de_vida::solicitar_emparejamiento(
+        &cliente,
+        &nombres,
+        &datos_de_rebind(),
+        "qr",
+        IMAGEN_DEL_ACCESORIO,
+        &plazos_de_rebind(),
+        40,
+    );
+
+    match resultado {
+        Err(ErrorDeCicloDeVida::EmparejamientoFallido { motivo }) => {
+            assert_eq!(motivo, "ya_emparejada");
+        }
+        otro => panic!("se esperaba EmparejamientoFallido, se obtuvo {otro:?}"),
+    }
+
+    for _ in 0..5 {
+        recibir(&receptor);
+    }
+    assert!(
+        receptor.recv_timeout(Duration::from_millis(100)).is_err(),
+        "no debe reintentar cuando el motivo no es sin_conexion"
+    );
+}
+
+/// D5.10: `reanudar_envio` propaga un `fallido` como error tipado en vez de tratarlo como éxito.
+/// Mata la mutación M8 (tratar `reanudar` fallido como éxito).
+#[test]
+fn reanudar_envio_falla_si_la_respuesta_es_fallido() {
+    let servidor = ServidorDockerFalso::nuevo("reanudar-envio-fallido");
+    let ruta = servidor.ruta();
+    let nombres = NombresDeCelula::nueva("c1");
+    let (emisor, receptor) = std::sync::mpsc::channel();
+    let _hilo = std::thread::spawn(move || {
+        enviar_sonda_http(
+            &servidor,
+            &emisor,
+            "sonda-0",
+            br#"{"resultado":"fallido","accion":"reanudar","motivo":"error_interno"}"#,
+        );
+    });
+
+    let cliente = ClienteDocker::nuevo(ruta);
+    let resultado = ciclo_de_vida::reanudar_envio(
+        &cliente,
+        &nombres,
+        &datos_de_rebind(),
+        IMAGEN_DEL_ACCESORIO,
+        40,
+    );
+
+    match resultado {
+        Err(ErrorDeCicloDeVida::PausaDeEnvioFallida { motivo }) => {
+            assert_eq!(motivo, "error_interno");
+        }
+        otro => panic!("se esperaba PausaDeEnvioFallida, se obtuvo {otro:?}"),
+    }
+    for _ in 0..5 {
+        recibir(&receptor);
+    }
+}
+
+/// AC-11/D5.7: `descartar_sqlstore_y_rearrancar` reintenta la pausa de envío tras el rm mientras el
+/// motivo sea `sin_conexion`, y se detiene apenas la respuesta cambia. Usa `plazos_de_rebind()`
+/// (2 intentos de pausa), que hasta esta prueba nunca se invocaba.
+#[test]
+fn descartar_sqlstore_y_rearrancar_reintenta_la_pausa_tras_sin_conexion() {
+    let servidor = ServidorDockerFalso::nuevo("descartar-reintento-pausa");
+    let ruta = servidor.ruta();
+    let nombres = NombresDeCelula::nueva("c1");
+    let (emisor, receptor) = std::sync::mpsc::channel();
+    let _hilo = std::thread::spawn(move || {
+        // Paso 6a: detener el sidecar.
+        let _ = emisor.send(servidor.atender(sin_cuerpo(204, "No Content")));
+        // Paso 6b: rm sibling (sin logs).
+        let _ = emisor.send(servidor.atender(Guion::ConCuerpo {
+            estado: 201,
+            razon: "Created",
+            cuerpo: br#"{"Id":"sonda-rm","Warnings":[]}"#,
+        }));
+        let _ = emisor.send(servidor.atender(sin_cuerpo(204, "No Content")));
+        let _ = emisor.send(servidor.atender(Guion::ConCuerpo {
+            estado: 200,
+            razon: "OK",
+            cuerpo: br#"{"StatusCode":0}"#,
+        }));
+        let _ = emisor.send(servidor.atender(sin_cuerpo(204, "No Content")));
+        // Paso 7a: rearrancar el sidecar.
+        let _ = emisor.send(servidor.atender(sin_cuerpo(204, "No Content")));
+        // Paso 7b: pausa con un fallo sin_conexion y un éxito.
+        enviar_sonda_http(
+            &servidor,
+            &emisor,
+            "sonda-pausa-0",
+            br#"{"resultado":"fallido","accion":"pausar","motivo":"sin_conexion"}"#,
+        );
+        enviar_sonda_http(
+            &servidor,
+            &emisor,
+            "sonda-pausa-1",
+            br#"{"resultado":"aplicado","accion":"pausar"}"#,
+        );
+    });
+
+    let cliente = ClienteDocker::nuevo(ruta);
+    ciclo_de_vida::descartar_sqlstore_y_rearrancar(
+        &cliente,
+        &nombres,
+        &datos_de_rebind(),
+        IMAGEN_DEL_ACCESORIO,
+        &plazos_de_rebind(),
+        40,
+    )
+    .expect("debe tener éxito en el segundo intento de pausa");
+
+    // stop, rm(4), start = 6 peticiones antes de las sondas de pausa.
+    for _ in 0..6 {
+        recibir(&receptor);
+    }
+    // Dos sondas de pausa (5 peticiones cada una): la reintentada y la exitosa.
+    for _ in 0..10 {
+        recibir(&receptor);
+    }
+    assert!(
+        receptor.recv_timeout(Duration::from_millis(100)).is_err(),
+        "no debe haber una tercera sonda de pausa tras el éxito"
     );
 }
