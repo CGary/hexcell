@@ -48,7 +48,7 @@ use std::sync::Arc;
 use std::time::SystemTime;
 
 use hexcell::admin::{
-    CierreDeSesion, EstadoDeAdmin, PLAZO_DE_CIERRE_DE_SESION, RegistroDeCierreDeSesion,
+    EstadoDeAdmin, PlazosDeSesion, RegistroDeSesion, SesionDeCanal, construir_sesion_de_canal,
     servir_servicios_http,
 };
 use hexcell::alertas::EmisorDeAlertas;
@@ -230,7 +230,8 @@ async fn main() -> ExitCode {
     // El registro de cierre de sesión se crea aquí y se pasa al futuro combinado; la raíz de
     // composición lo rellena tarde, desde la rama del `match` sobre `CanalSeleccionado`, porque
     // el futuro se construye antes de conocer el canal.
-    let registro_cierre: RegistroDeCierreDeSesion = std::sync::Arc::new(std::sync::OnceLock::new());
+    let registro_sesion: RegistroDeSesion = std::sync::Arc::new(std::sync::OnceLock::new());
+    let plazos = PlazosDeSesion::por_omision();
     let ((direccion_salud, direccion_admin), servidores_http) = match servir_servicios_http(
         configuracion.direccion_salud,
         estado_de_salud,
@@ -240,8 +241,8 @@ async fn main() -> ExitCode {
         servicio_embeddings,
         configuracion.ruta_datos.clone(),
         debe_apagar,
-        Arc::clone(&registro_cierre),
-        PLAZO_DE_CIERRE_DE_SESION,
+        Arc::clone(&registro_sesion),
+        plazos,
     )
     .await
     {
@@ -287,11 +288,12 @@ async fn main() -> ExitCode {
                 Arc::clone(&almacen_de_identidad),
             );
 
-            // El canal simulado no vincula ningún dispositivo: no hay sesión que cerrar.
+            // El canal simulado no vincula ningún dispositivo: no hay sesión que operar.
             // La política ratificada (R5, 2026-09-22) es «no hay sesión = completado», con
             // motivo `canal_sin_sesion`. El adaptador simulado no implementa
-            // `CicloDeVidaSesion` a propósito.
-            let _ = CierreDeSesion::SinSesion.registrar(&registro_cierre);
+            // `CicloDeVidaSesion` a propósito. Todas las rutas de sesión devuelven
+            // canal_sin_sesion.
+            let _ = SesionDeCanal::SinSesion.registrar(&registro_sesion);
 
             if let Some(contenido) = configuracion.evento_simulado_de_arranque.clone() {
                 // Único lugar de `crates/hexcell/src/` donde se construye un `IdDeduplicacion`:
@@ -341,13 +343,17 @@ async fn main() -> ExitCode {
             );
             adaptador.arrancar();
 
-            // Asa de sesión para el cierre: se toma ANTES de que `Motor::nuevo` consuma el
-            // adaptador, siguiendo el precedente de `contadores_de_acuse()` y
+            // Asa de sesión: se toma ANTES de que `Motor::nuevo` consuma el adaptador,
+            // siguiendo el precedente de `contadores_de_acuse()` y
             // `suscribir_estado_con_expiracion()`. El motivo «cell terminate» identifica el
             // cierre ordenado por el operador, distinguiéndolo del cierre por trait (motivo
-            // vacío) que usa el sub-trait `CicloDeVidaSesion`.
+            // vacío) que usa el sub-trait `CicloDeVidaSesion`. De esta misma asa se construyen
+            // las cuatro operaciones de sesión (cerrar, pausar_envio, emparejar, estado) que
+            // las rutas administrativas consumen a través de `RegistroDeSesion`, sin construir
+            // un segundo adaptador.
             let asa = adaptador.asa_de_sesion("cell terminate");
-            let _ = CierreDeSesion::con_sesion(asa).registrar(&registro_cierre);
+            let sesion = construir_sesion_de_canal(asa, plazos.pausa, plazos.emparejamiento);
+            let _ = sesion.registrar(&registro_sesion);
 
             let mut receptor_estado_alertas = adaptador.suscribir_estado_con_expiracion();
             let contadores = adaptador.contadores_de_acuse().clone();

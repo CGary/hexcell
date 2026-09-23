@@ -16,9 +16,11 @@ use comun::{
     peticion_http_cruda, peticion_http_post_cruda, peticion_http_post_cruda_con_cabeceras,
 };
 use hexcell::admin::{
-    CierreDeSesion, EstadoDeAdmin, FaseDeIngesta, MOTIVO_DE_TERMINACION_ANORMAL,
-    RegistroDeCierreDeSesion, RutaAdmin, atender_cierre_de_sesion, enrutar_admin,
-    respuesta_de_fase, supervisar_ingesta,
+    AccionDePausa, DesenlaceDeEmparejamiento, DesenlaceDePausa, EstadoDeAdmin, FaseDeIngesta,
+    MOTIVO_DE_TERMINACION_ANORMAL, MetodoSolicitado, OperacionesDeSesion, RegistroDeSesion,
+    RutaAdmin, SesionDeCanal, atender_cierre_de_sesion, atender_consulta_de_sesion,
+    atender_emparejamiento, atender_pausa_de_envio, enrutar_admin, respuesta_de_fase,
+    supervisar_ingesta,
 };
 use hexcell::configuracion::{Configuracion, ErrorDeConfiguracion, FuenteEnMemoria};
 use hexcell::ingesta::{DesenlaceDeIngesta, ResumenDeIngesta};
@@ -26,6 +28,7 @@ use hexcell_core::canal::{CicloDeVidaSesion, Emparejamiento, EstadoSesion};
 use http_body_util::BodyExt;
 use hyper::Method;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 /// Servidor TCP que acepta conexiones y jamás contesta nada.
 ///
@@ -444,6 +447,7 @@ impl std::error::Error for ErrorDePrueba {}
 ///
 /// Permite inyectar el resultado de `cerrar_sesion` y el estado de sesión, sin depender de
 /// ningún adaptador real.
+#[derive(Clone)]
 struct DobleCicloDeVida {
     resultado: Arc<tokio::sync::Mutex<Option<Result<(), ErrorDePrueba>>>>,
     estado: EstadoSesion,
@@ -522,8 +526,8 @@ fn enrutar_admin_post_sesion_cierre_es_cerrar_sesion() {
 
 #[tokio::test]
 async fn cierre_de_sesion_sin_sesion_devuelve_200_con_motivo() {
-    let registro: RegistroDeCierreDeSesion = Arc::new(std::sync::OnceLock::new());
-    let _ = CierreDeSesion::SinSesion.registrar(&registro);
+    let registro: RegistroDeSesion = Arc::new(std::sync::OnceLock::new());
+    let _ = SesionDeCanal::SinSesion.registrar(&registro);
 
     let (estado, cuerpo) = atender_cierre_de_sesion(&registro, Duration::from_secs(1)).await;
     assert_eq!(estado, hyper::StatusCode::OK);
@@ -536,9 +540,9 @@ async fn cierre_de_sesion_sin_sesion_devuelve_200_con_motivo() {
 
 #[tokio::test]
 async fn cierre_de_sesion_con_sesion_ok_devuelve_200_sin_motivo() {
-    let registro: RegistroDeCierreDeSesion = Arc::new(std::sync::OnceLock::new());
+    let registro: RegistroDeSesion = Arc::new(std::sync::OnceLock::new());
     let doble = DobleCicloDeVida::nuevo(Ok(()));
-    let _ = CierreDeSesion::con_sesion(doble).registrar(&registro);
+    let _ = SesionDeCanal::con_sesion(doble).registrar(&registro);
 
     let (estado, cuerpo) = atender_cierre_de_sesion(&registro, Duration::from_secs(1)).await;
     assert_eq!(estado, hyper::StatusCode::OK);
@@ -552,11 +556,11 @@ async fn cierre_de_sesion_con_sesion_ok_devuelve_200_sin_motivo() {
 
 #[tokio::test]
 async fn cierre_de_sesion_con_sesion_error_devuelve_502_con_motivo_real() {
-    let registro: RegistroDeCierreDeSesion = Arc::new(std::sync::OnceLock::new());
+    let registro: RegistroDeSesion = Arc::new(std::sync::OnceLock::new());
     // Motivo distintivo que no aparece en ningún otro lugar del código de producción.
     let motivo_fixture = "error-de-prueba-distintivo-abc123xyz";
     let doble = DobleCicloDeVida::nuevo(Err(motivo_fixture.to_string()));
-    let _ = CierreDeSesion::con_sesion(doble).registrar(&registro);
+    let _ = SesionDeCanal::con_sesion(doble).registrar(&registro);
 
     let (estado, cuerpo) = atender_cierre_de_sesion(&registro, Duration::from_secs(1)).await;
     assert_eq!(estado, hyper::StatusCode::BAD_GATEWAY);
@@ -566,9 +570,9 @@ async fn cierre_de_sesion_con_sesion_error_devuelve_502_con_motivo_real() {
 
 #[tokio::test]
 async fn cierre_de_sesion_con_sesion_que_nunca_responde_devuelve_504() {
-    let registro: RegistroDeCierreDeSesion = Arc::new(std::sync::OnceLock::new());
+    let registro: RegistroDeSesion = Arc::new(std::sync::OnceLock::new());
     let doble = DobleCicloDeVida::que_nunca_responde();
-    let _ = CierreDeSesion::con_sesion(doble).registrar(&registro);
+    let _ = SesionDeCanal::con_sesion(doble).registrar(&registro);
 
     // Plazo corto inyectado por el test, nunca la constante de producción.
     let (estado, cuerpo) = atender_cierre_de_sesion(&registro, Duration::from_millis(50)).await;
@@ -578,7 +582,7 @@ async fn cierre_de_sesion_con_sesion_que_nunca_responde_devuelve_504() {
 
 #[tokio::test]
 async fn cierre_de_sesion_sin_registro_devuelve_502() {
-    let registro: RegistroDeCierreDeSesion = Arc::new(std::sync::OnceLock::new());
+    let registro: RegistroDeSesion = Arc::new(std::sync::OnceLock::new());
     // No se registra nada: el OnceLock queda vacío.
 
     let (estado, cuerpo) = atender_cierre_de_sesion(&registro, Duration::from_secs(1)).await;
@@ -601,4 +605,475 @@ fn cierre_de_sesion_canal_simulado_responde_200_con_motivo() {
         respuesta.contains("canal_sin_sesion"),
         "la respuesta debe llevar el motivo canal_sin_sesion: {respuesta}"
     );
+}
+
+// ---------------------------------------------------------------------------
+// Pruebas unitarias de las tres rutas de sesión (HEX-085-a)
+// ---------------------------------------------------------------------------
+
+/// Construye un `SesionDeCanal::ConSesion` con operaciones espía bajo control del test.
+///
+/// `pausa_devuelve`, `emparejar_devuelve` y `estado_devuelve` fijan el resultado de cada
+/// operación; `contador_de_pausa` y `contador_de_emparejamiento` cuentan las invocaciones (para
+/// afirmar que un 400 no invoca la operación). Todas las operaciones devuelven en microsegundos
+/// (sin dormir), deterministas para el test.
+fn sesion_de_espia(
+    pausa_devuelve: DesenlaceDePausa,
+    emparejar_devuelve: DesenlaceDeEmparejamiento,
+    estado_devuelve: EstadoSesion,
+) -> (SesionDeCanal, Arc<AtomicUsize>, Arc<AtomicUsize>) {
+    let contador_pausa = Arc::new(AtomicUsize::new(0));
+    let contador_emparejamiento = Arc::new(AtomicUsize::new(0));
+
+    let cp = Arc::clone(&contador_pausa);
+    let ce = Arc::clone(&contador_emparejamiento);
+    let pausa = pausa_devuelve;
+    let empa = emparejar_devuelve;
+    let estado = estado_devuelve;
+
+    let operaciones = OperacionesDeSesion {
+        cerrar: Box::new(|| Box::pin(async move { Ok(()) })),
+        pausar_envio: Box::new(move |_accion| {
+            cp.fetch_add(1, Ordering::SeqCst);
+            let r = pausa.clone();
+            Box::pin(async move { r })
+        }),
+        emparejar: Box::new(move |_metodo, _plazo| {
+            ce.fetch_add(1, Ordering::SeqCst);
+            let r = empa.clone();
+            Box::pin(async move { r })
+        }),
+        estado: Box::new(move || {
+            let e = estado;
+            Box::pin(async move { e })
+        }),
+    };
+
+    (
+        SesionDeCanal::ConSesion(operaciones),
+        contador_pausa,
+        contador_emparejamiento,
+    )
+}
+
+#[tokio::test]
+async fn pausa_de_envio_sin_sesion_devuelve_200_canal_sin_sesion() {
+    let registro: RegistroDeSesion = Arc::new(std::sync::OnceLock::new());
+    let _ = SesionDeCanal::SinSesion.registrar(&registro);
+
+    for accion in [AccionDePausa::Pausar, AccionDePausa::Reanudar] {
+        let (estado, cuerpo) =
+            atender_pausa_de_envio(&registro, accion, Duration::from_secs(1)).await;
+        assert_eq!(estado, hyper::StatusCode::OK);
+        assert_eq!(cuerpo["resultado"], "canal_sin_sesion");
+    }
+}
+
+#[tokio::test]
+async fn pausa_de_envio_con_sesion_aplicado_devuelve_200_aplicado_con_accion() {
+    let registro: RegistroDeSesion = Arc::new(std::sync::OnceLock::new());
+    let (sesion, contador, _) = sesion_de_espia(
+        DesenlaceDePausa::Aplicado,
+        DesenlaceDeEmparejamiento::Fallido {
+            motivo: String::new(),
+        },
+        EstadoSesion::Activa,
+    );
+    let _ = sesion.registrar(&registro);
+
+    let (estado, cuerpo) =
+        atender_pausa_de_envio(&registro, AccionDePausa::Pausar, Duration::from_secs(1)).await;
+    assert_eq!(estado, hyper::StatusCode::OK);
+    assert_eq!(cuerpo["resultado"], "aplicado");
+    assert_eq!(cuerpo["accion"], "pausar");
+    assert_eq!(contador.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn pausa_de_envio_con_sesion_fallido_devuelve_200_fallido_con_motivo_real() {
+    let registro: RegistroDeSesion = Arc::new(std::sync::OnceLock::new());
+    let motivo_distintivo = "motivo-distintivo-pausa-7q".to_string();
+    let (sesion, contador, _) = sesion_de_espia(
+        DesenlaceDePausa::Fallido {
+            motivo: motivo_distintivo.clone(),
+        },
+        DesenlaceDeEmparejamiento::Fallido {
+            motivo: String::new(),
+        },
+        EstadoSesion::Activa,
+    );
+    let _ = sesion.registrar(&registro);
+
+    let (estado, cuerpo) =
+        atender_pausa_de_envio(&registro, AccionDePausa::Pausar, Duration::from_secs(1)).await;
+    assert_eq!(estado, hyper::StatusCode::OK);
+    assert_eq!(cuerpo["resultado"], "fallido");
+    assert_eq!(cuerpo["accion"], "pausar");
+    assert_eq!(cuerpo["motivo"], motivo_distintivo);
+    assert_eq!(contador.load(Ordering::SeqCst), 1);
+}
+
+#[test]
+fn pausa_de_envio_invalida_o_sin_json_devuelve_400_sin_invocar_operacion() {
+    let directorio = DirectorioTemporal::nuevo("admin-pausa-400");
+    let binario = lanzar_binario_con_ruta_de_datos(directorio.ruta());
+
+    // Acción inválida ("detener").
+    let resp = peticion_http_post_cruda(
+        &binario.direccion_admin,
+        "/admin/envio/pausa",
+        r#"{"accion":"detener"}"#,
+    );
+    assert!(
+        resp.starts_with("HTTP/1.1 400"),
+        "acción inválida debe responder 400: {resp}"
+    );
+
+    // Campo accion ausente.
+    let resp = peticion_http_post_cruda(
+        &binario.direccion_admin,
+        "/admin/envio/pausa",
+        r#"{"otro":"valor"}"#,
+    );
+    assert!(
+        resp.starts_with("HTTP/1.1 400"),
+        "accion ausente debe responder 400: {resp}"
+    );
+
+    // Cuerpo que no es JSON.
+    let resp =
+        peticion_http_post_cruda(&binario.direccion_admin, "/admin/envio/pausa", "no-es-json");
+    assert!(
+        resp.starts_with("HTTP/1.1 400"),
+        "cuerpo no JSON debe responder 400: {resp}"
+    );
+}
+
+#[tokio::test]
+async fn emparejamiento_sin_sesion_devuelve_200_canal_sin_sesion() {
+    let registro: RegistroDeSesion = Arc::new(std::sync::OnceLock::new());
+    let _ = SesionDeCanal::SinSesion.registrar(&registro);
+
+    let (estado, cuerpo) = atender_emparejamiento(
+        &registro,
+        MetodoSolicitado::CodigoDeVinculacion,
+        Duration::from_secs(1),
+    )
+    .await;
+    assert_eq!(estado, hyper::StatusCode::OK);
+    assert_eq!(cuerpo["resultado"], "canal_sin_sesion");
+}
+
+#[tokio::test]
+async fn emparejamiento_con_codigo_devuelve_200_codigo_con_valores() {
+    let registro: RegistroDeSesion = Arc::new(std::sync::OnceLock::new());
+    let sesion = SesionDeCanal::ConSesion(operaciones_espia_codigo());
+    let _ = sesion.registrar(&registro);
+
+    let (estado, cuerpo) = atender_emparejamiento(
+        &registro,
+        MetodoSolicitado::CodigoDeVinculacion,
+        Duration::from_secs(1),
+    )
+    .await;
+    assert_eq!(estado, hyper::StatusCode::OK);
+    assert_eq!(cuerpo["resultado"], "codigo");
+    assert_eq!(cuerpo["metodo"], "codigo_de_vinculacion");
+    assert_eq!(cuerpo["valor"], "ABCD-EFGH");
+    assert_eq!(cuerpo["expira_en_ms"], 1234567);
+}
+
+fn operaciones_espia_codigo() -> OperacionesDeSesion {
+    OperacionesDeSesion {
+        cerrar: Box::new(|| Box::pin(async move { Ok(()) })),
+        pausar_envio: Box::new(|_| Box::pin(async move { DesenlaceDePausa::Aplicado })),
+        emparejar: Box::new(|_metodo, _plazo| {
+            Box::pin(async move {
+                DesenlaceDeEmparejamiento::Codigo {
+                    metodo: "codigo_de_vinculacion".to_string(),
+                    valor: "ABCD-EFGH".to_string(),
+                    expira_en_ms: 1234567,
+                }
+            })
+        }),
+        estado: Box::new(|| Box::pin(async move { EstadoSesion::Activa })),
+    }
+}
+
+#[tokio::test]
+async fn emparejamiento_con_fallido_sin_conexion_devuelve_200_fallido() {
+    let registro: RegistroDeSesion = Arc::new(std::sync::OnceLock::new());
+    let sesion = SesionDeCanal::ConSesion(OperacionesDeSesion {
+        cerrar: Box::new(|| Box::pin(async move { Ok(()) })),
+        pausar_envio: Box::new(|_| Box::pin(async move { DesenlaceDePausa::Aplicado })),
+        emparejar: Box::new(|_metodo, _plazo| {
+            Box::pin(async move {
+                DesenlaceDeEmparejamiento::Fallido {
+                    motivo: "sin_conexion".to_string(),
+                }
+            })
+        }),
+        estado: Box::new(|| Box::pin(async move { EstadoSesion::Activa })),
+    });
+    let _ = sesion.registrar(&registro);
+
+    let (estado, cuerpo) =
+        atender_emparejamiento(&registro, MetodoSolicitado::Qr, Duration::from_secs(1)).await;
+    assert_eq!(estado, hyper::StatusCode::OK);
+    assert_eq!(cuerpo["resultado"], "fallido");
+    assert_eq!(cuerpo["motivo"], "sin_conexion");
+}
+
+#[test]
+fn emparejamiento_invalido_o_sin_json_devuelve_400_sin_invocar_operacion() {
+    let directorio = DirectorioTemporal::nuevo("admin-emp-400");
+    let binario = lanzar_binario_con_ruta_de_datos(directorio.ruta());
+
+    // Método inválido ("sms").
+    let resp = peticion_http_post_cruda(
+        &binario.direccion_admin,
+        "/admin/sesion/emparejamiento",
+        r#"{"metodo":"sms"}"#,
+    );
+    assert!(
+        resp.starts_with("HTTP/1.1 400"),
+        "método inválido debe responder 400: {resp}"
+    );
+
+    // Campo metodo ausente.
+    let resp = peticion_http_post_cruda(
+        &binario.direccion_admin,
+        "/admin/sesion/emparejamiento",
+        r#"{"otro":"valor"}"#,
+    );
+    assert!(
+        resp.starts_with("HTTP/1.1 400"),
+        "metodo ausente debe responder 400: {resp}"
+    );
+
+    // Cuerpo que no es JSON.
+    let resp = peticion_http_post_cruda(
+        &binario.direccion_admin,
+        "/admin/sesion/emparejamiento",
+        "no-es-json",
+    );
+    assert!(
+        resp.starts_with("HTTP/1.1 400"),
+        "cuerpo no JSON debe responder 400: {resp}"
+    );
+}
+
+#[tokio::test]
+async fn emparejamiento_que_nunca_resuelve_con_plazo_corto_devuelve_200_fallido() {
+    let registro: RegistroDeSesion = Arc::new(std::sync::OnceLock::new());
+    let sesion = SesionDeCanal::ConSesion(OperacionesDeSesion {
+        cerrar: Box::new(|| Box::pin(async move { Ok(()) })),
+        pausar_envio: Box::new(|_| Box::pin(async move { DesenlaceDePausa::Aplicado })),
+        // Emparejamiento que nunca resuelve.
+        emparejar: Box::new(|_metodo, _plazo| {
+            Box::pin(async move { std::future::pending::<DesenlaceDeEmparejamiento>().await })
+        }),
+        estado: Box::new(|| Box::pin(async move { EstadoSesion::Activa })),
+    });
+    let _ = sesion.registrar(&registro);
+
+    // Plazo corto de prueba (50 ms), nunca la constante de producción (30 s).
+    let inicio = std::time::Instant::now();
+    let (estado, cuerpo) =
+        atender_emparejamiento(&registro, MetodoSolicitado::Qr, Duration::from_millis(50)).await;
+    let transcurrido = inicio.elapsed();
+    assert_eq!(estado, hyper::StatusCode::OK);
+    assert_eq!(cuerpo["resultado"], "fallido");
+    assert!(!cuerpo["motivo"].as_str().unwrap_or_default().is_empty());
+    assert!(
+        transcurrido < Duration::from_secs(1),
+        "la prueba debe completarse en menos de un segundo, tomó {transcurrido:?}"
+    );
+}
+
+#[tokio::test]
+async fn consulta_sesion_sin_sesion_devuelve_200_canal_sin_sesion() {
+    let registro: RegistroDeSesion = Arc::new(std::sync::OnceLock::new());
+    let _ = SesionDeCanal::SinSesion.registrar(&registro);
+
+    let (estado, cuerpo) = atender_consulta_de_sesion(&registro, Duration::from_secs(1)).await;
+    assert_eq!(estado, hyper::StatusCode::OK);
+    assert_eq!(cuerpo["estado"], "canal_sin_sesion");
+}
+
+#[tokio::test]
+async fn consulta_sesion_con_sesion_devuelve_cuatro_estados_distintos() {
+    for (esperado, estado) in [
+        ("activa", EstadoSesion::Activa),
+        ("reconectando", EstadoSesion::Reconectando),
+        ("desvinculada", EstadoSesion::Desvinculada),
+        ("pausada", EstadoSesion::Pausada),
+    ] {
+        let registro: RegistroDeSesion = Arc::new(std::sync::OnceLock::new());
+        let (sesion, _, _) = sesion_de_espia(
+            DesenlaceDePausa::Aplicado,
+            DesenlaceDeEmparejamiento::Fallido {
+                motivo: String::new(),
+            },
+            estado,
+        );
+        let _ = sesion.registrar(&registro);
+
+        let (estado_http, cuerpo) =
+            atender_consulta_de_sesion(&registro, Duration::from_secs(1)).await;
+        assert_eq!(estado_http, hyper::StatusCode::OK);
+        assert_eq!(
+            cuerpo["estado"], esperado,
+            "el estado {estado:?} debe reportarse como «{esperado}»"
+        );
+    }
+}
+
+#[test]
+fn enrutar_admin_mapea_tres_nuevas_rutas_y_las_demas_siguen_igual() {
+    assert_eq!(
+        enrutar_admin(&Method::POST, "/admin/envio/pausa"),
+        RutaAdmin::PausarEnvio
+    );
+    assert_eq!(
+        enrutar_admin(&Method::POST, "/admin/sesion/emparejamiento"),
+        RutaAdmin::IniciarEmparejamiento
+    );
+    assert_eq!(
+        enrutar_admin(&Method::GET, "/admin/sesion"),
+        RutaAdmin::ConsultarSesion
+    );
+    // Rutas que NO deben mapear:
+    assert_eq!(
+        enrutar_admin(&Method::GET, "/admin/envio/pausa"),
+        RutaAdmin::NoEncontrada
+    );
+    assert_eq!(
+        enrutar_admin(&Method::GET, "/admin/sesion/emparejamiento"),
+        RutaAdmin::NoEncontrada
+    );
+    assert_eq!(
+        enrutar_admin(&Method::POST, "/admin/sesion"),
+        RutaAdmin::NoEncontrada
+    );
+    // Las rutas existentes de ingesta y cierre no cambian.
+    assert_eq!(
+        enrutar_admin(&Method::POST, "/admin/ingesta"),
+        RutaAdmin::DispararIngesta
+    );
+    assert_eq!(
+        enrutar_admin(&Method::GET, "/admin/ingesta"),
+        RutaAdmin::ConsultarEstado
+    );
+    assert_eq!(
+        enrutar_admin(&Method::POST, "/admin/sesion/cierre"),
+        RutaAdmin::CerrarSesion
+    );
+    assert_eq!(
+        enrutar_admin(&Method::GET, "/admin/sesion/cierre"),
+        RutaAdmin::NoEncontrada
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Pruebas de integración con el binario real (HEX-085-a)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn binario_simulado_tres_rutas_sesion_devuelven_canal_sin_sesion() {
+    // A través del binario real en el canal simulado: todas las rutas de sesión devuelven
+    // canal_sin_sesion, probando que están conectadas en servir_admin y que la rama simulado
+    // registra SinSesion.
+    let directorio = DirectorioTemporal::nuevo("admin-sesion-simulado");
+    let binario = lanzar_binario_con_ruta_de_datos(directorio.ruta());
+
+    let resp_pausa = peticion_http_post_cruda(
+        &binario.direccion_admin,
+        "/admin/envio/pausa",
+        r#"{"accion":"pausar"}"#,
+    );
+    assert!(
+        resp_pausa.starts_with("HTTP/1.1 200"),
+        "pausa en simulado debe responder 200: {resp_pausa}"
+    );
+    assert!(
+        resp_pausa.contains("canal_sin_sesion"),
+        "pausa en simulado debe devolver canal_sin_sesion: {resp_pausa}"
+    );
+
+    let resp_emp = peticion_http_post_cruda(
+        &binario.direccion_admin,
+        "/admin/sesion/emparejamiento",
+        r#"{"metodo":"codigo_de_vinculacion"}"#,
+    );
+    assert!(
+        resp_emp.starts_with("HTTP/1.1 200"),
+        "emparejamiento en simulado debe responder 200: {resp_emp}"
+    );
+    assert!(
+        resp_emp.contains("canal_sin_sesion"),
+        "emparejamiento en simulado debe devolver canal_sin_sesion: {resp_emp}"
+    );
+
+    let resp_estado = peticion_http_cruda(&binario.direccion_admin, "/admin/sesion");
+    assert!(
+        resp_estado.starts_with("HTTP/1.1 200"),
+        "consulta en simulado debe responder 200: {resp_estado}"
+    );
+    assert!(
+        resp_estado.contains("canal_sin_sesion"),
+        "consulta en simulado debe devolver canal_sin_sesion: {resp_estado}"
+    );
+}
+
+#[test]
+fn binario_whatsmeow_sin_sidecar_pausa_fallida_y_estado_reconectando() {
+    // A través del binario real en canal whatsmeow sin sidecar escuchando en el socket: la pausa
+    // falla con motivo sin_conexion y el estado de sesión es reconectando. Es la única prueba que
+    // cubre el mapeo main.rs ErrorCanalWhatsmeow::SinConexion -> "sin_conexion".
+    let dir_socket = DirectorioTemporal::nuevo("admin-whatsmeow-sin-sidecar");
+    let ruta_socket = dir_socket.ruta().join("sidecar.sock");
+    let dir_datos = DirectorioTemporal::nuevo("admin-whatsmeow-sin-sidecar-datos");
+
+    let mut binario = lanzar_binario_con_variables(
+        dir_datos.ruta(),
+        &[
+            ("HEXCELL_CANAL", "whatsmeow"),
+            ("HEXCELL_SOCKET_IPC", &ruta_socket.to_string_lossy()),
+        ],
+    );
+
+    // Dar tiempo al binario a arrancar e intentar conectar (fallará, pero el estado queda definido).
+    std::thread::sleep(Duration::from_millis(500));
+
+    let resp_pausa = peticion_http_post_cruda(
+        &binario.direccion_admin,
+        "/admin/envio/pausa",
+        r#"{"accion":"pausar"}"#,
+    );
+    assert!(
+        resp_pausa.starts_with("HTTP/1.1 200"),
+        "pausa sin sidecar debe responder 200: {resp_pausa}"
+    );
+    assert!(
+        resp_pausa.contains("\"resultado\":\"fallido\""),
+        "pausa sin sidecar debe ser fallido: {resp_pausa}"
+    );
+    assert!(
+        resp_pausa.contains("\"motivo\":\"sin_conexion\""),
+        "pausa sin sidecar debe devolver sin_conexion: {resp_pausa}"
+    );
+
+    let resp_estado = peticion_http_cruda(&binario.direccion_admin, "/admin/sesion");
+    assert!(
+        resp_estado.starts_with("HTTP/1.1 200"),
+        "consulta sin sidecar debe responder 200: {resp_estado}"
+    );
+    assert!(
+        resp_estado.contains("\"estado\":\"reconectando\""),
+        "consulta sin sidecar debe devolver reconectando: {resp_estado}"
+    );
+
+    binario.enviar_sigterm();
+    let _ = binario.esperar_salida(Duration::from_secs(5));
 }

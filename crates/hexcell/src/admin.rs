@@ -172,6 +172,12 @@ pub enum RutaAdmin {
     DispararIngesta,
     /// Petición `GET /admin/ingesta` para consultar la fase actual del trabajo.
     ConsultarEstado,
+    /// Petición `POST /admin/envio/pausa` para pausar o reanudar el envío saliente.
+    PausarEnvio,
+    /// Petición `POST /admin/sesion/emparejamiento` para iniciar el emparejamiento del dispositivo.
+    IniciarEmparejamiento,
+    /// Petición `GET /admin/sesion` para consultar el estado de sesión del canal.
+    ConsultarSesion,
     /// Petición `POST /admin/sesion/cierre` para ordenar el cierre de sesión del canal.
     CerrarSesion,
     /// Ruta o método no reconocido.
@@ -183,9 +189,24 @@ pub fn enrutar_admin(metodo: &Method, ruta: &str) -> RutaAdmin {
     match (metodo, ruta) {
         (&Method::POST, "/admin/ingesta") => RutaAdmin::DispararIngesta,
         (&Method::GET, "/admin/ingesta") => RutaAdmin::ConsultarEstado,
+        (&Method::POST, "/admin/envio/pausa") => RutaAdmin::PausarEnvio,
+        (&Method::POST, "/admin/sesion/emparejamiento") => RutaAdmin::IniciarEmparejamiento,
+        (&Method::GET, "/admin/sesion") => RutaAdmin::ConsultarSesion,
         (&Method::POST, "/admin/sesion/cierre") => RutaAdmin::CerrarSesion,
         _ => RutaAdmin::NoEncontrada,
     }
+}
+
+/// DTO de entrada para la pausa de envío: `{"accion": "pausar" | "reanudar"}`.
+#[derive(Clone, Debug, serde::Deserialize)]
+pub struct PausarEnvioEntrante {
+    pub accion: String,
+}
+
+/// DTO de entrada para el emparejamiento: `{"metodo": "qr" | "codigo_de_vinculacion"}`.
+#[derive(Clone, Debug, serde::Deserialize)]
+pub struct EmparejamientoEntrante {
+    pub metodo: String,
 }
 
 /// DTO de entrada para deserializar el cuerpo JSON del POST de ingesta.
@@ -259,10 +280,31 @@ fn respuesta_texto(codigo: StatusCode, mensaje: &'static str) -> Response<Cuerpo
     respuesta
 }
 
-/// Plazo por omisión para esperar el acuse de cierre de sesión desde la ruta HTTP.
+/// Plazos de producción para las operaciones de sesión, en un solo struct para que la raíz de
+/// composición los pase juntos y los tests inyecten los suyos.
 ///
-/// Es el valor de producción; los tests inyectan el suyo propio y nunca importan esta constante.
-pub const PLAZO_DE_CIERRE_DE_SESION: Duration = Duration::from_secs(30);
+/// Los valores por omisión son los de producción; los tests inyectan los suyos propios y nunca
+/// importan esta constante (cierre y emparejamiento: 30 s; pausa: 30 s, operacional inmediato).
+#[derive(Clone, Copy, Debug)]
+pub struct PlazosDeSesion {
+    /// Plazo para esperar el acuse de cierre de sesión.
+    pub cierre: Duration,
+    /// Plazo para esperar el acuse de la pausa/reanudación de envío.
+    pub pausa: Duration,
+    /// Plazo para esperar el código de emparejamiento.
+    pub emparejamiento: Duration,
+}
+
+impl PlazosDeSesion {
+    /// Plazos por omisión para producción (30 s en todas las operaciones).
+    pub fn por_omision() -> Self {
+        Self {
+            cierre: Duration::from_secs(30),
+            pausa: Duration::from_secs(30),
+            emparejamiento: Duration::from_secs(30),
+        }
+    }
+}
 
 /// Motivo que la ruta devuelve cuando el canal no vincula ningún dispositivo.
 ///
@@ -272,81 +314,310 @@ pub const PLAZO_DE_CIERRE_DE_SESION: Duration = Duration::from_secs(30);
 /// composición elige en tiempo de compilación para el canal simulado.
 pub const MOTIVO_CANAL_SIN_SESION: &str = "canal_sin_sesion";
 
-/// Tipo de la caja que envuelve la operación de cierre de sesión.
+/// Motivo de fallo cuando el adaptador reporta «sin conexión activa al sidecar».
 ///
-/// Se extrae como alias porque el tipo completo es demasiado complejo para clippy
-/// (`type_complexity`) y porque se repite en la definición de `CierreDeSesion`.
+/// Literal fijado por el contrato HTTP (D2): `POST /admin/sesion/emparejamiento` y
+/// `POST /admin/envio/pausa` lo devuelven como `motivo` cuando el canal no puede alcanzar el
+/// sidecar.
+pub const MOTIVO_SIN_CONEXION: &str = "sin_conexion";
+
+/// Motivo de fallo cuando el sidecar reporta que la sesión yabb emparejada.
+///
+/// Literal fijado por el contrato HTTP (D2): `POST /admin/sesion/emparejamiento` lo devuelve
+/// cuando el acuse del sidecar lleva el texto `ya_emparejado` (la raíz de composición traduce el
+/// texto exacto del sidecar a este literal).
+pub const MOTIVO_YA_EMPAREJADA: &str = "ya_emparejada";
+
+// ---------------------------------------------------------------------------
+// Tipos de valor de las rutas de sesión
+// ---------------------------------------------------------------------------
+
+/// Acción admitida por `POST /admin/envio/pausa`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AccionDePausa {
+    Pausar,
+    Reanudar,
+}
+
+/// Método de emparejamiento solicitado por `POST /admin/sesion/emparejamiento`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MetodoSolicitado {
+    Qr,
+    CodigoDeVinculacion,
+}
+
+/// Resultado de una operación de pausa de envío.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum DesenlaceDePausa {
+    /// El sidecar aplicó la acción.
+    Aplicado,
+    /// El sidecar rechazó la acción con un motivo.
+    Fallido { motivo: String },
+}
+
+/// Resultado de una operación de emparejamiento.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum DesenlaceDeEmparejamiento {
+    /// Se recibió un código válido.
+    Codigo {
+        metodo: String,
+        valor: String,
+        expira_en_ms: i64,
+    },
+    /// El emparejamiento falló con un motivo.
+    Fallido { motivo: String },
+}
+
+// ---------------------------------------------------------------------------
+// Operaciones de sesión (cuatro operaciones tipadas)
+// ---------------------------------------------------------------------------
+
+/// Tipo de caja para la operación de cierre de sesión: sin argumentos, devuelve resultado + motivo.
 type CajaDeCierre =
     Box<dyn Fn() -> Pin<Box<dyn Future<Output = Result<(), String>> + Send>> + Send + Sync>;
 
-/// Enumerado que la raíz de composición entrega a la ruta.
+/// Tipo de caja para la operación de pausa de envío.
+type CajaDePausaDeEnvio = Box<
+    dyn Fn(AccionDePausa) -> Pin<Box<dyn Future<Output = DesenlaceDePausa> + Send>> + Send + Sync,
+>;
+
+/// Tipo de caja para la operación de emparejamiento.
+type CajaDeEmparejamiento = Box<
+    dyn Fn(
+            MetodoSolicitado,
+            Duration,
+        ) -> Pin<Box<dyn Future<Output = DesenlaceDeEmparejamiento> + Send>>
+        + Send
+        + Sync,
+>;
+
+/// Tipo de caja para la operación de consulta de estado de sesión.
+type CajaDeEstadoSesion = Box<
+    dyn Fn() -> Pin<Box<dyn Future<Output = hexcell_core::canal::EstadoSesion> + Send>>
+        + Send
+        + Sync,
+>;
+
+/// Las cuatro operaciones de sesión, tipadas y borradas: el enum `SesionDeCanal` envuelve este
+/// struct para la variante `ConSesion`. Cada campo es una caja que devuelve un futuro, todas con
+/// los parámetros y tipos de resultado necesarios.
+pub struct OperacionesDeSesion {
+    /// Cierra la sesión: sin plazo externo (la caja lo fija internamente), devuelve motivo en error.
+    pub cerrar: CajaDeCierre,
+    /// Pausa o reanuda el envío, recibe la acción y el plazo, devuelve el desenlace.
+    pub pausar_envio: CajaDePausaDeEnvio,
+    /// Inicia el emparejamiento, recibe el método y el plazo, devuelve el desenlace.
+    pub emparejar: CajaDeEmparejamiento,
+    /// Consulta el estado actual de la sesión, devuelve el valor del puerto.
+    pub estado: CajaDeEstadoSesion,
+}
+
+/// Enumerado que la raíz de composición entrega a las rutas de sesión.
 ///
-/// `ConSesion` se construye únicamente en la rama de whatsmeow, con una caja que devuelve el
-/// resultado de `cerrar_sesion`; `SinSesion` se construye en la rama del canal simulado, que no
-/// vincula ningún dispositivo. La distinción es la que permite a la ruta devolver 200 con motivo
-/// `canal_sin_sesion` en un caso y 200 sin motivo en el otro, sin que la ruta misma conozca el
-/// canal.
+/// `ConSesion` se construye únicamente en la rama de whatsmeow, con las cuatro operaciones; `SinSesion`
+/// se construye en la rama del canal simulado, que no vincula ningún dispositivo. La distinción es
+/// la que permite a las rutas devolver `canal_sin_sesion`, sin que las rutas mismas conozcan el canal.
 ///
 /// No es genérico sobre el tipo del adaptador: la raíz de composición borra el tipo al construir
-/// la caja, así que `SinSesion` no necesita ningún parámetro de tipo y el enum puede usarse sin
+/// las cajas, así que `SinSesion` no necesita ningún parámetro de tipo y el enum puede usarse sin
 /// anotar el adaptador subyacente.
-pub enum CierreDeSesion {
-    /// El canal vincula un dispositivo; cerrar la sesión requiere la operación real.
-    ConSesion(CajaDeCierre),
-    /// El canal no vincula ningún dispositivo; no hay sesión que cerrar.
+pub enum SesionDeCanal {
+    /// El canal vincula un dispositivo; las operaciones reales están disponibles.
+    ConSesion(OperacionesDeSesion),
+    /// El canal no vincula ningún dispositivo; no hay sesión que operar.
     SinSesion,
 }
 
-/// Versión registrada de `CierreDeSesion`, almacenada en un `OnceLock`.
+/// Registro de sesión: `OnceLock` que la raíz de composición rellena una sola vez, después de que
+/// `servir_servicios_http` haya devuelto el futuro combinado.
 ///
-/// Es el mismo tipo que `CierreDeSesion`; el alias existe para distinguir el rol: el
-/// `RegistroDeCierreDeSesion` guarda un `CerradorRegistrado`, no un `CierreDeSesion` fresco.
-pub type CerradorRegistrado = CierreDeSesion;
+/// El futuro combinado se construye **antes** de conocer el canal seleccionado, así que la sesión
+/// no puede pasarse como argumento: se registra tarde, desde la rama del `match` sobre
+/// `CanalSeleccionado`, y las rutas la leen a través de este `Arc`.
+pub type RegistroDeSesion = Arc<OnceLock<SesionDeCanal>>;
 
-/// Registro de cierre de sesión: `OnceLock` que la raíz de composición rellena una sola vez,
-/// después de que `servir_servicios_http` haya devuelto el futuro combinado.
-///
-/// El futuro combinado se construye **antes** de conocer el canal seleccionado, así que el
-/// cerrador no puede pasarse como argumento: se registra tarde, desde la rama del `match` sobre
-/// `CanalSeleccionado`, y la ruta lo lee a través de este `Arc`.
-pub type RegistroDeCierreDeSesion = Arc<OnceLock<CerradorRegistrado>>;
-
-impl CierreDeSesion {
-    /// Construye un `CierreDeSesion::ConSesion` a partir de un adaptador que implementa
+impl SesionDeCanal {
+    /// Construye un `SesionDeCanal::ConSesion` a partir de un valor que implementa
     /// `CicloDeVidaSesion`, borrando el tipo.
-    pub fn con_sesion<C>(adaptador: C) -> Self
+    ///
+    /// Las operaciones `cerrar` y `estado` se delegan en el valor; `pausar_envio` y `emparejar`
+    /// devuelven [`DesenlaceDePausa::Fallido`] / [`DesenlaceDeEmparejamiento::Fallido`] con
+    /// `sin_conexion`, ya que el trait `CicloDeVidaSesion` no expone esas operaciones. La raíz de
+    /// composición real usa [`construir_sesion_de_canal`] (que recibe un `AsaDeSesion` completo)
+    /// para las cuatro operaciones; este constructor es para los tests de cierre de sesión.
+    pub fn con_sesion<C>(valor: C) -> Self
     where
-        C: CicloDeVidaSesion + Send + Sync + 'static,
+        C: CicloDeVidaSesion + Send + Sync + Clone + 'static,
         C::Error: std::fmt::Display,
     {
-        let adaptador = Arc::new(adaptador);
-        CierreDeSesion::ConSesion(Box::new(move || {
-            let adaptador = Arc::clone(&adaptador);
-            Box::pin(async move { adaptador.cerrar_sesion().await.map_err(|e| e.to_string()) })
-                as Pin<Box<dyn Future<Output = Result<(), String>> + Send>>
-        }))
+        let valor_cerrar = Arc::new(valor.clone());
+        let valor_estado = Arc::new(valor);
+
+        SesionDeCanal::ConSesion(OperacionesDeSesion {
+            cerrar: Box::new(move || {
+                let v = Arc::clone(&valor_cerrar);
+                Box::pin(async move {
+                    CicloDeVidaSesion::cerrar_sesion(&*v)
+                        .await
+                        .map_err(|e| e.to_string())
+                })
+            }),
+            pausar_envio: Box::new(move |_accion| {
+                Box::pin(async move {
+                    DesenlaceDePausa::Fallido {
+                        motivo: MOTIVO_SIN_CONEXION.to_string(),
+                    }
+                })
+            }),
+            emparejar: Box::new(move |_metodo, _plazo| {
+                Box::pin(async move {
+                    DesenlaceDeEmparejamiento::Fallido {
+                        motivo: MOTIVO_SIN_CONEXION.to_string(),
+                    }
+                })
+            }),
+            estado: Box::new(move || {
+                let v = Arc::clone(&valor_estado);
+                Box::pin(async move { CicloDeVidaSesion::estado_sesion(&*v) })
+            }),
+        })
     }
 
-    /// Registra el cierre en el `OnceLock` dado.
+    /// Registra la sesión en el `OnceLock` dado.
     ///
     /// Devuelve `Err(self)` si el registro ya estaba ocupado, para que la raíz de composición
     /// pueda decidir qué hacer; en la práctica, un segundo registro sería un defecto del código
     /// y no un escenario recuperable.
-    pub fn registrar(self, registro: &RegistroDeCierreDeSesion) -> Result<(), Self> {
+    pub fn registrar(self, registro: &RegistroDeSesion) -> Result<(), Self> {
         registro.set(self)
     }
+}
+
+/// Construye un [`SesionDeCanal::ConSesion`] con las cuatro operaciones enlazadas a un asa de
+/// sesión `AsaDeSesion`, borrando el tipo.
+///
+/// Esta función vive fuera de `impl SesionDeCanal` porque [`AsaDeSesion`] es un tipo concreto
+/// del crate `hexcell-canal-whatsmeow` y `admin.rs` no lo nombra (permanece canal-agnostic); la
+/// invoca la raíz de composición en `main.rs`. Las cuatro operaciones se construyen a partir de
+/// clones del asa; el asa ya porta el `receptor_estado`, así que `estado` simplemente lo presta.
+///
+/// El mapeo de los resultados del asa a los tipos de valor de las rutas (Aplicado, Fallido{motivo},
+/// Codigo{metodo,valor,expira_en_ms}, ya_emparejada) vive aquí, en la composición: `admin.rs` solo
+/// maneja los tipos de valor y nunca nombre `ErrorCanalWhatsmeow` ni `AsaDeSesion`.
+#[allow(clippy::too_many_arguments)]
+pub fn construir_sesion_de_canal(
+    asa: hexcell_canal_whatsmeow::AsaDeSesion,
+    plazo_pausa: Duration,
+    plazo_emparejamiento: Duration,
+) -> SesionDeCanal {
+    let asa_cerrar = Arc::new(asa.clone());
+    let asa_pausa = Arc::new(asa.clone());
+    let asa_emparejar = Arc::new(asa.clone());
+    let asa_estado = Arc::new(asa);
+
+    SesionDeCanal::ConSesion(OperacionesDeSesion {
+        cerrar: Box::new(move || {
+            let asa = Arc::clone(&asa_cerrar);
+            Box::pin(async move { asa.ordenar_cierre().await.map_err(|e| e.to_string()) })
+        }),
+        pausar_envio: Box::new(move |accion| {
+            let asa = Arc::clone(&asa_pausa);
+            Box::pin(async move {
+                let accion_cable = match accion {
+                    AccionDePausa::Pausar => "pausar",
+                    AccionDePausa::Reanudar => "reanudar",
+                };
+                match asa.ordenar_pausa_de_envio(accion_cable, plazo_pausa).await {
+                    Ok(acuse) if acuse.resultado == "aplicado" => DesenlaceDePausa::Aplicado,
+                    Ok(acuse) => DesenlaceDePausa::Fallido {
+                        motivo: if acuse.motivo.is_empty() {
+                            acuse.resultado
+                        } else {
+                            acuse.motivo
+                        },
+                    },
+                    Err(hexcell_canal_whatsmeow::ErrorCanalWhatsmeow::SinConexion) => {
+                        DesenlaceDePausa::Fallido {
+                            motivo: MOTIVO_SIN_CONEXION.to_string(),
+                        }
+                    }
+                    Err(e) => DesenlaceDePausa::Fallido {
+                        motivo: e.to_string(),
+                    },
+                }
+            })
+        }),
+        emparejar: Box::new(move |metodo, plazo| {
+            let asa = Arc::clone(&asa_emparejar);
+            // Ignora el plazo inyectado por la ruta: usa el plazo fijo de composición.
+            let _ = plazo;
+            Box::pin(async move {
+                let metodo_emp = match metodo {
+                    MetodoSolicitado::Qr => hexcell_canal_whatsmeow::MetodoDeEmparejamiento::Qr,
+                    MetodoSolicitado::CodigoDeVinculacion => {
+                        hexcell_canal_whatsmeow::MetodoDeEmparejamiento::CodigoDeVinculacion
+                    }
+                };
+                match asa
+                    .iniciar_emparejamiento_con(metodo_emp, plazo_emparejamiento)
+                    .await
+                {
+                    Ok(hexcell_canal_whatsmeow::InicioDeEmparejamiento::Codigo(codigo)) => {
+                        DesenlaceDeEmparejamiento::Codigo {
+                            metodo: codigo.metodo,
+                            valor: codigo.valor,
+                            expira_en_ms: codigo.expira_en_ms,
+                        }
+                    }
+                    Ok(hexcell_canal_whatsmeow::InicioDeEmparejamiento::Acuse(acuse)) => {
+                        if acuse.resultado == "fallido"
+                            && acuse.motivo == "canal: la sesión ya está emparejada"
+                        {
+                            DesenlaceDeEmparejamiento::Fallido {
+                                motivo: MOTIVO_YA_EMPAREJADA.to_string(),
+                            }
+                        } else {
+                            DesenlaceDeEmparejamiento::Fallido {
+                                motivo: if acuse.motivo.is_empty() {
+                                    acuse.resultado
+                                } else {
+                                    acuse.motivo
+                                },
+                            }
+                        }
+                    }
+                    Err(hexcell_canal_whatsmeow::ErrorCanalWhatsmeow::SinConexion) => {
+                        DesenlaceDeEmparejamiento::Fallido {
+                            motivo: MOTIVO_SIN_CONEXION.to_string(),
+                        }
+                    }
+                    Err(e) => DesenlaceDeEmparejamiento::Fallido {
+                        motivo: e.to_string(),
+                    },
+                }
+            })
+        }),
+        estado: Box::new(move || {
+            let asa = Arc::clone(&asa_estado);
+            Box::pin(async move { CicloDeVidaSesion::estado_sesion(&*asa) })
+        }),
+    })
 }
 
 /// Servicio de aplicación puro para el cierre de sesión, bajo prueba directa.
 ///
 /// Devuelve el estado HTTP y el cuerpo JSON que la ruta debe emitir, sin tocar el transporte:
 /// los tests lo invocan con un `registro` y un `plazo` inyectados, sin pasar por ningún servidor.
+///
+/// El contrato de alambre del cierre de sesión no cambia con la generalización del registro
+/// (HEX-082): SinSesion → 200 completado + motivo canal_sin_sesion; ConSesion ok → 200;
+/// ConSesion fallido → 502 con el motivo real; plazo agotado → 504; sin registrar → 502.
 pub async fn atender_cierre_de_sesion(
-    registro: &RegistroDeCierreDeSesion,
+    registro: &RegistroDeSesion,
     plazo: Duration,
 ) -> (StatusCode, serde_json::Value) {
-    let cerrador = match registro.get() {
-        Some(c) => c,
+    let sesion = match registro.get() {
+        Some(s) => s,
         // Sin registro: fallar cerrado. Un 200 aquí destruiría el volumen con la sesión aún
         // vinculada; un 502 obliga al operador a investigar antes de reintentar.
         None => {
@@ -360,16 +631,16 @@ pub async fn atender_cierre_de_sesion(
         }
     };
 
-    match cerrador {
-        CierreDeSesion::SinSesion => (
+    match sesion {
+        SesionDeCanal::SinSesion => (
             StatusCode::OK,
             serde_json::json!({
                 "resultado": "completado",
                 "motivo": MOTIVO_CANAL_SIN_SESION
             }),
         ),
-        CierreDeSesion::ConSesion(f) => {
-            let futuro = f();
+        SesionDeCanal::ConSesion(operaciones) => {
+            let futuro = (operaciones.cerrar)();
             match tokio::time::timeout(plazo, futuro).await {
                 Ok(Ok(())) => (
                     StatusCode::OK,
@@ -394,12 +665,185 @@ pub async fn atender_cierre_de_sesion(
     }
 }
 
-/// Construye la respuesta HTTP del cierre de sesión a partir del resultado de
-/// `atender_cierre_de_sesion`.
-fn respuesta_de_cierre_de_sesion(
-    estado: StatusCode,
-    cuerpo: serde_json::Value,
-) -> Response<CuerpoDeAdmin> {
+/// Servicio de aplicación puro para la pausa/reanudación de envío, bajo prueba directa.
+///
+/// `accion` ya fue validada por la ruta (Pausar o Reanudar); `plazo` lo inyecta la ruta.
+/// SinSesion → 200 resultado canal_sin_sesion; ConSesion → ejecuta la operación y traduce su
+/// desenlace (Aplicado → 200 resultado aplicado + accion; Fallido → 200 resultado fallido + accion
+/// + motivo); sin registrar → 502 fallido (fallar cerrado).
+pub async fn atender_pausa_de_envio(
+    registro: &RegistroDeSesion,
+    accion: AccionDePausa,
+    plazo: Duration,
+) -> (StatusCode, serde_json::Value) {
+    let sesion = match registro.get() {
+        Some(s) => s,
+        None => {
+            return (
+                StatusCode::BAD_GATEWAY,
+                serde_json::json!({
+                    "resultado": "fallido",
+                    "motivo": "pausa de envío no registrada en la composición"
+                }),
+            );
+        }
+    };
+
+    match sesion {
+        SesionDeCanal::SinSesion => (
+            StatusCode::OK,
+            serde_json::json!({ "resultado": MOTIVO_CANAL_SIN_SESION }),
+        ),
+        SesionDeCanal::ConSesion(operaciones) => {
+            let futuro = (operaciones.pausar_envio)(accion);
+            match tokio::time::timeout(plazo, futuro).await {
+                Ok(DesenlaceDePausa::Aplicado) => {
+                    let accion_str = match accion {
+                        AccionDePausa::Pausar => "pausar",
+                        AccionDePausa::Reanudar => "reanudar",
+                    };
+                    (
+                        StatusCode::OK,
+                        serde_json::json!({
+                            "resultado": "aplicado",
+                            "accion": accion_str,
+                        }),
+                    )
+                }
+                Ok(DesenlaceDePausa::Fallido { motivo }) => {
+                    let accion_str = match accion {
+                        AccionDePausa::Pausar => "pausar",
+                        AccionDePausa::Reanudar => "reanudar",
+                    };
+                    (
+                        StatusCode::OK,
+                        serde_json::json!({
+                            "resultado": "fallido",
+                            "accion": accion_str,
+                            "motivo": motivo,
+                        }),
+                    )
+                }
+                Err(_agotado) => (
+                    StatusCode::BAD_GATEWAY,
+                    serde_json::json!({
+                        "resultado": "fallido",
+                        "motivo": "no se recibió acuse de pausa de envío dentro del plazo"
+                    }),
+                ),
+            }
+        }
+    }
+}
+
+/// Servicio de aplicación puro para el emparejamiento, bajo prueba directa.
+///
+/// `metodo` ya fue validada por la ruta (Qr o CodigoDeVinculacion); `plazo` lo inyecta la ruta.
+/// SinSesion → 200 resultado canal_sin_sesion; ConSesion → ejecuta la operación y traduce su
+/// desenlace (Codigo → 200 resultado codigo + metodo + valor + expira_en_ms; Fallido → 200
+/// resultado fallido + motivo); sin registrar → 502 fallido (fallar cerrado). Si el plazo se
+/// agota, la operación interna resuelve con Fallido{plazo}.
+pub async fn atender_emparejamiento(
+    registro: &RegistroDeSesion,
+    metodo: MetodoSolicitado,
+    plazo: Duration,
+) -> (StatusCode, serde_json::Value) {
+    let sesion = match registro.get() {
+        Some(s) => s,
+        None => {
+            return (
+                StatusCode::BAD_GATEWAY,
+                serde_json::json!({
+                    "resultado": "fallido",
+                    "motivo": "emparejamiento no registrado en la composición"
+                }),
+            );
+        }
+    };
+
+    match sesion {
+        SesionDeCanal::SinSesion => (
+            StatusCode::OK,
+            serde_json::json!({ "resultado": MOTIVO_CANAL_SIN_SESION }),
+        ),
+        SesionDeCanal::ConSesion(operaciones) => {
+            let futuro = (operaciones.emparejar)(metodo, plazo);
+            match tokio::time::timeout(plazo, futuro).await {
+                Ok(DesenlaceDeEmparejamiento::Codigo {
+                    metodo,
+                    valor,
+                    expira_en_ms,
+                }) => (
+                    StatusCode::OK,
+                    serde_json::json!({
+                        "resultado": "codigo",
+                        "metodo": metodo,
+                        "valor": valor,
+                        "expira_en_ms": expira_en_ms,
+                    }),
+                ),
+                Ok(DesenlaceDeEmparejamiento::Fallido { motivo }) => (
+                    StatusCode::OK,
+                    serde_json::json!({
+                        "resultado": "fallido",
+                        "motivo": motivo,
+                    }),
+                ),
+                Err(_agotado) => (
+                    StatusCode::OK,
+                    serde_json::json!({
+                        "resultado": "fallido",
+                        "motivo": "no se recibió código de emparejamiento dentro del plazo"
+                    }),
+                ),
+            }
+        }
+    }
+}
+
+/// Servicio de aplicación puro para la consulta de estado de sesión, bajo prueba directa.
+///
+/// SinSesion → 200 estado canal_sin_sesion; ConSesion → consulta la operación `estado` y traduce
+/// el valor del puerto a los cuatro literales; sin registrar → 502 fallido (fallar cerrado).
+pub async fn atender_consulta_de_sesion(
+    registro: &RegistroDeSesion,
+    plazo: Duration,
+) -> (StatusCode, serde_json::Value) {
+    let _ = plazo; // La consulta es síncrona; el plazo se mantiene en la firma por uniformidad.
+    let sesion = match registro.get() {
+        Some(s) => s,
+        None => {
+            return (
+                StatusCode::BAD_GATEWAY,
+                serde_json::json!({
+                    "resultado": "fallido",
+                    "motivo": "consulta de sesión no registrada en la composición"
+                }),
+            );
+        }
+    };
+
+    match sesion {
+        SesionDeCanal::SinSesion => (
+            StatusCode::OK,
+            serde_json::json!({ "estado": MOTIVO_CANAL_SIN_SESION }),
+        ),
+        SesionDeCanal::ConSesion(operaciones) => {
+            let futuro = (operaciones.estado)();
+            let estado = futuro.await;
+            let estado_str = match estado {
+                hexcell_core::canal::EstadoSesion::Activa => "activa",
+                hexcell_core::canal::EstadoSesion::Reconectando => "reconectando",
+                hexcell_core::canal::EstadoSesion::Desvinculada => "desvinculada",
+                hexcell_core::canal::EstadoSesion::Pausada => "pausada",
+            };
+            (StatusCode::OK, serde_json::json!({ "estado": estado_str }))
+        }
+    }
+}
+
+/// Construye una respuesta HTTP JSON genérica (estado y cuerpo dados).
+fn respuesta_json(estado: StatusCode, cuerpo: serde_json::Value) -> Response<CuerpoDeAdmin> {
     let mut respuesta = Response::new(Full::new(Bytes::from(cuerpo.to_string())));
     *respuesta.status_mut() = estado;
     respuesta.headers_mut().insert(
@@ -444,8 +888,8 @@ pub async fn atender_peticion_de_admin<F>(
     ruta_datos: &Path,
     limite_cuerpo_bytes: usize,
     debe_apagar: F,
-    registro_cierre: &RegistroDeCierreDeSesion,
-    plazo_cierre: Duration,
+    registro_sesion: &RegistroDeSesion,
+    plazos: &PlazosDeSesion,
 ) -> Response<CuerpoDeAdmin>
 where
     F: Fn() -> bool + Send + Sync + Clone + 'static,
@@ -497,17 +941,103 @@ where
             *resp.status_mut() = StatusCode::ACCEPTED;
             resp
         }
+        // POST /admin/envio/pausa: pausa o reanudación del envío saliente.
+        //
+        // NO lleva autenticación: la frontera de seguridad es la red interna de la célula,
+        // exactamente igual que /admin/ingesta. El cuerpo se analiza como JSON sin importar el
+        // Content-Type (busybox wget --post-data envía x-www-form-urlencoded). Una acción inválida,
+        // ausente o un cuerpo que no es JSON se resuelve con 400 ANTES de invocar ninguna operación.
+        RutaAdmin::PausarEnvio => {
+            let bytes = match acumular_cuerpo_acotado(peticion, limite_cuerpo_bytes).await {
+                Ok(b) => b,
+                Err(codigo) => return respuesta_texto(codigo, "cuerpo demasiado grande"),
+            };
+
+            let pausa: PausarEnvioEntrante = match serde_json::from_slice(&bytes) {
+                Ok(p) => p,
+                Err(_) => {
+                    return respuesta_json(
+                        StatusCode::BAD_REQUEST,
+                        serde_json::json!({ "resultado": "fallido", "motivo": "cuerpo JSON inválido" }),
+                    );
+                }
+            };
+
+            let accion = match pausa.accion.as_str() {
+                "pausar" => AccionDePausa::Pausar,
+                "reanudar" => AccionDePausa::Reanudar,
+                _ => {
+                    return respuesta_json(
+                        StatusCode::BAD_REQUEST,
+                        serde_json::json!({ "resultado": "fallido", "motivo": "acción inválida" }),
+                    );
+                }
+            };
+
+            let (estado_http, cuerpo) =
+                atender_pausa_de_envio(registro_sesion, accion, plazos.pausa).await;
+            respuesta_json(estado_http, cuerpo)
+        }
+        // POST /admin/sesion/emparejamiento: inicio del emparejamiento del dispositivo.
+        //
+        // NO lleva autenticación: la frontera de seguridad es la red interna de la célula.
+        // El cuerpo se analiza como JSON sin importar el Content-Type. Un método inválido o ausente
+        // se resuelve con 400 ANTES de invocar ninguna operación. El plazo de espera del código es
+        // `PlazosDeSesion.emparejamiento` (30 s); si se agota, la operación resuelve con
+        // Fallido{plazo} y la ruta contesta 200 fallido.
+        RutaAdmin::IniciarEmparejamiento => {
+            let bytes = match acumular_cuerpo_acotado(peticion, limite_cuerpo_bytes).await {
+                Ok(b) => b,
+                Err(codigo) => return respuesta_texto(codigo, "cuerpo demasiado grande"),
+            };
+
+            let empa: EmparejamientoEntrante = match serde_json::from_slice(&bytes) {
+                Ok(e) => e,
+                Err(_) => {
+                    return respuesta_json(
+                        StatusCode::BAD_REQUEST,
+                        serde_json::json!({ "resultado": "fallido", "motivo": "cuerpo JSON inválido" }),
+                    );
+                }
+            };
+
+            let metodo = match empa.metodo.as_str() {
+                "qr" => MetodoSolicitado::Qr,
+                "codigo_de_vinculacion" => MetodoSolicitado::CodigoDeVinculacion,
+                _ => {
+                    return respuesta_json(
+                        StatusCode::BAD_REQUEST,
+                        serde_json::json!({ "resultado": "fallido", "motivo": "método inválido" }),
+                    );
+                }
+            };
+
+            let (estado_http, cuerpo) =
+                atender_emparejamiento(registro_sesion, metodo, plazos.emparejamiento).await;
+            respuesta_json(estado_http, cuerpo)
+        }
+        // GET /admin/sesion: consulta del estado de sesión del canal.
+        //
+        // NO lleva autenticación: la frontera de seguridad es la red interna de la célula. No lleva
+        // cuerpo; la respuesta es uno de los cuatro literales del puerto o canal_sin_sesion.
+        RutaAdmin::ConsultarSesion => {
+            let (estado_http, cuerpo) =
+                atender_consulta_de_sesion(registro_sesion, plazos.cierre).await;
+            respuesta_json(estado_http, cuerpo)
+        }
         // POST /admin/sesion/cierre: cierre de sesión del canal.
         //
         // NO lleva autenticación: la frontera de seguridad es la red interna de la célula,
         // exactamente igual que /admin/ingesta. El listener administrativo por omisión escucha
         // en loopback (crates/hexcell/src/configuracion.rs) y la plantilla de despliegue lo
         // abre a 0.0.0.0 únicamente dentro de la red de célula (deploy/cell.compose.yml),
-        // que es la frontera declarada.
+        // que es la frontera declarada. El contrato de alambre del cierre no cambia (HEX-082):
+        // SinSesion → 200 completado + motivo canal_sin_sesion; ConSesion ok → 200; ConSesion
+        // fallido → 502 con el motivo real; plazo → 504; sin registrar → 502.
         RutaAdmin::CerrarSesion => {
             let (estado_http, cuerpo) =
-                atender_cierre_de_sesion(registro_cierre, plazo_cierre).await;
-            respuesta_de_cierre_de_sesion(estado_http, cuerpo)
+                atender_cierre_de_sesion(registro_sesion, plazos.cierre).await;
+            respuesta_json(estado_http, cuerpo)
         }
         RutaAdmin::NoEncontrada => respuesta_texto(StatusCode::NOT_FOUND, ""),
     }
@@ -522,8 +1052,8 @@ pub async fn servir_admin<F>(
     servicio_embeddings: Arc<ServicioDeEmbeddings<ProveedorDeEmbeddingsDeCelula>>,
     ruta_datos: PathBuf,
     debe_apagar: F,
-    registro_cierre: RegistroDeCierreDeSesion,
-    plazo_cierre: Duration,
+    registro_sesion: RegistroDeSesion,
+    plazos: PlazosDeSesion,
 ) -> std::io::Result<(SocketAddr, impl Future<Output = ()>)>
 where
     F: Fn() -> bool + Send + Sync + Clone + 'static,
@@ -542,7 +1072,7 @@ where
             let servicio_conexion = Arc::clone(&servicio_embeddings);
             let ruta_conexion = ruta_datos.clone();
             let debe_apagar_conexion = debe_apagar.clone();
-            let registro_cierre_conexion = Arc::clone(&registro_cierre);
+            let registro_sesion_conexion = Arc::clone(&registro_sesion);
 
             tokio::task::spawn(async move {
                 let atendido = http1::Builder::new()
@@ -553,7 +1083,8 @@ where
                             let servicio = Arc::clone(&servicio_conexion);
                             let ruta = ruta_conexion.clone();
                             let debe_apagar_fn = debe_apagar_conexion.clone();
-                            let registro = Arc::clone(&registro_cierre_conexion);
+                            let registro = Arc::clone(&registro_sesion_conexion);
+                            let plazos = plazos;
                             async move {
                                 Ok::<_, Infallible>(
                                     atender_peticion_de_admin(
@@ -564,7 +1095,7 @@ where
                                         limite_cuerpo_bytes,
                                         debe_apagar_fn,
                                         &registro,
-                                        plazo_cierre,
+                                        &plazos,
                                     )
                                     .await,
                                 )
@@ -592,12 +1123,12 @@ where
 /// exigía por separado, y agruparlas en una estructura sería un cambio de diseño de la raíz de
 /// composición, no de esta función.
 ///
-/// # Registro de cierre de sesión tardío
+/// # Registro de sesión tardío
 ///
 /// El futuro combinado se construye **antes** de conocer el canal seleccionado, así que el
-/// cerrador no puede pasarse como argumento directo: la raíz de composición lo registra tarde,
-/// desde la rama del `match` sobre `CanalSeleccionado`, y la ruta lo lee a través del
-/// `RegistroDeCierreDeSesion` que se pasa aquí.
+/// registro no puede pasarse como argumento directo: la raíz de composición lo registra tarde,
+/// desde la rama del `match` sobre `CanalSeleccionado`, y las rutas lo leen a través del
+/// `RegistroDeSesion` que se pasa aquí.
 #[allow(clippy::too_many_arguments)]
 pub async fn servir_servicios_http<F>(
     direccion_salud: SocketAddr,
@@ -608,8 +1139,8 @@ pub async fn servir_servicios_http<F>(
     servicio_embeddings: Arc<ServicioDeEmbeddings<ProveedorDeEmbeddingsDeCelula>>,
     ruta_datos: PathBuf,
     debe_apagar: F,
-    registro_cierre: RegistroDeCierreDeSesion,
-    plazo_cierre: Duration,
+    registro_sesion: RegistroDeSesion,
+    plazos: PlazosDeSesion,
 ) -> std::io::Result<((SocketAddr, SocketAddr), impl Future<Output = ()>)>
 where
     F: Fn() -> bool + Send + Sync + Clone + 'static,
@@ -632,8 +1163,8 @@ where
         servicio_embeddings,
         ruta_datos,
         debe_apagar,
-        registro_cierre,
-        plazo_cierre,
+        registro_sesion,
+        plazos,
     )
     .await
     .map_err(|error| {
