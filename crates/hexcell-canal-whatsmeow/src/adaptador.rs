@@ -205,6 +205,36 @@ pub(crate) enum EventoDeEmparejamiento {
     Acuse(crate::mensajes::AcuseEmparejamiento),
 }
 
+/// Método de emparejamiento admitido por el protocolo.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum MetodoDeEmparejamiento {
+    Qr,
+    CodigoDeVinculacion,
+}
+
+impl MetodoDeEmparejamiento {
+    /// Nombre de cable del método, según la sección 6 del protocolo.
+    pub fn nombre_de_cable(&self) -> &'static str {
+        match self {
+            Self::Qr => "qr",
+            Self::CodigoDeVinculacion => "codigo_de_vinculacion",
+        }
+    }
+}
+
+/// Primer evento de emparejamiento que llega desde el sidecar: un código o un acuse.
+///
+/// `iniciar_emparejamiento_con` resuelve con el primero que llegue, sin bloquear después el bucle
+/// de lectura: al devolver, el receptor se suelta y el bucle simplemente falla en `send` para los
+/// códigos huérfanos posteriores, mientras que el acuse terminal hace `take()` del slot.
+#[derive(Debug)]
+pub enum InicioDeEmparejamiento {
+    /// Código (QR o vinculación) recibido antes que ningún acuse.
+    Codigo(crate::mensajes::CodigoEmparejamiento),
+    /// Acuse recibido antes que ningún código: resultado terminal anticipado.
+    Acuse(crate::mensajes::AcuseEmparejamiento),
+}
+
 /// Plazo por omisión para el cierre de sesión.
 ///
 /// El trait `CicloDeVidaSesion::cerrar_sesion` no recibe plazo, así que se fija uno generoso:
@@ -454,6 +484,37 @@ impl AdaptadorWhatsmeow {
         }
     }
 
+    /// Inicia el emparejamiento con un método y plazo dados y resuelve con el primer evento.
+    ///
+    /// Envía `orden_emparejar` con el método indicado y espera **ya sea** el primer
+    /// `codigo_emparejamiento` **o** el primer `acuse_emparejamiento` que llegue, resolviendo con
+    /// [`InicioDeEmparejamiento::Codigo`] o [`InicioDeEmparejamiento::Acuse`] respectivamente.
+    /// Al devolver, el receptor usado internamente se suelta: los códigos posteriores fallan en
+    /// `send` (el bucle de lectura los descarta silenciosamente) y el acuse terminal hace
+    /// `take()` del slot, de modo que el bucle de lectura nunca se bloquea tras el retorno.
+    ///
+    /// Devuelve [`ErrorCanalWhatsmeow::SinConexion`] si no hay conexión activa (sin escribir nada),
+    /// o [`ErrorCanalWhatsmeow::EmparejamientoSinAcuse`] si el plazo se agota o el canal se cierra
+    /// sin haber recibido ningún evento.
+    ///
+    /// El slot compartido (`emparejamiento_pendiente`) se registra antes de enviar la orden para
+    /// evitar carreras; se limpia al resolver o al agotar el plazo. El parámetro `manejador` del
+    /// método [`Self::ordenar_emparejamiento`] **no** se invoca: esta función devuelve directamente
+    /// el primer código, no lo procesa.
+    pub async fn iniciar_emparejamiento_con(
+        &self,
+        metodo: MetodoDeEmparejamiento,
+        plazo: Duration,
+    ) -> Result<InicioDeEmparejamiento, ErrorCanalWhatsmeow> {
+        iniciar_emparejamiento_con_interno(
+            &self.escritor_compartido,
+            &self.emparejamiento_pendiente,
+            metodo.nombre_de_cable(),
+            plazo,
+        )
+        .await
+    }
+
     /// Ordena un respaldo del sqlstore al sidecar y espera el acuse correspondiente.
     ///
     /// Registra el canal de respuesta por `identificador_de_ronda` antes de enviar la orden
@@ -593,69 +654,107 @@ impl AdaptadorWhatsmeow {
     /// Se toma **antes** de que `Motor::nuevo` consuma el adaptador, siguiendo el precedente de
     /// `contadores_de_acuse()` y `suscribir_estado_con_expiracion()`. El motivo se envía en
     /// `orden_cierre_de_sesion` tal cual; el plazo por omisión es el mismo que el del adaptador.
+    /// El slot de emparejamiento pendiente se clona para que el asa pueda iniciar emparejamientos
+    /// y recibir códigos sin bloquear el bucle de lectura del adaptador.
     pub fn asa_de_sesion(&self, motivo: impl Into<String>) -> AsaDeSesion {
         AsaDeSesion {
             escritor_compartido: Arc::clone(&self.escritor_compartido),
             pendientes_de_sesion: Arc::clone(&self.pendientes_de_sesion),
+            emparejamiento_pendiente: Arc::clone(&self.emparejamiento_pendiente),
             receptor_estado: self.receptor_estado.clone(),
             motivo: motivo.into(),
             plazo: PLAZO_CIERRE_DE_SESION,
         }
     }
 
+    /// Indica si el slot compartido de emparejamiento pendiente sigue ocupado.
+    ///
+    /// Expuesta para que las pruebas de integración puedan observar, desde fuera del módulo, que
+    /// [`Self::iniciar_emparejamiento_con`] y [`Self::ordenar_emparejamiento`] limpian el slot al
+    /// resolver (código, acuse, canal cerrado o plazo agotado): un slot que sigue ocupado tras
+    /// resolver dejaría el próximo código o acuse huérfano mal enrutado a un receptor ya soltado,
+    /// en vez de descartarlo con el aviso `huérfano recibido`.
+    pub async fn emparejamiento_pendiente_ocupado(&self) -> bool {
+        self.emparejamiento_pendiente.lock().await.is_some()
+    }
+
     /// Ordena pausar o reanudar el envío saliente al sidecar y espera el acuse.
     ///
     /// Espeja [`Self::ordenar_respaldo_sqlstore`]: devuelve el acuse crudo del sidecar, sin
     /// interpretar su `resultado` (el llamante decide). Igual que el cierre de sesión, no hay
-    /// clave de ronda; la correlación es un `oneshot` único.
+    /// clave de ronda; la correlación es un `oneshot` único. La asa de sesión comparte esta
+    /// implementación a través de [`ordenar_pausa_de_envio_interno`].
     pub async fn ordenar_pausa_de_envio(
         &self,
         accion: &str,
         plazo: Duration,
     ) -> Result<crate::mensajes::AcusePausaDeEnvio, ErrorCanalWhatsmeow> {
-        if self.escritor_compartido.lock().await.is_none() {
-            return Err(ErrorCanalWhatsmeow::SinConexion);
-        }
+        ordenar_pausa_de_envio_interno(
+            &self.escritor_compartido,
+            &self.pendientes_de_sesion,
+            accion,
+            plazo,
+        )
+        .await
+    }
+}
 
-        let (tx, rx) = tokio::sync::oneshot::channel();
-        {
-            let mut pendiente = self.pendientes_de_sesion.pausa.lock().await;
-            *pendiente = Some(tx);
-        }
+/// Implementación compartida de la pausa/reanudación de envío, usada por el adaptador y su asa.
+///
+/// El cuerpo de [`AdaptadorWhatsmeow::ordenar_pausa_de_envio`] se extrajo aquí para que
+/// [`AsaDeSesion::ordenar_pausa_de_envio`] no lo duplique: ambas comparten el mismo extremo de
+/// escritura y el mismo mapa de pendientes, y cualquier cambio de formato de cable o de
+/// correlación se aplica en un solo lugar.
+async fn ordenar_pausa_de_envio_interno(
+    escritor_compartido: &Arc<
+        tokio::sync::Mutex<Option<tokio::io::WriteHalf<tokio::net::UnixStream>>>,
+    >,
+    pendientes_de_sesion: &Arc<PendientesDeSesion>,
+    accion: &str,
+    plazo: Duration,
+) -> Result<crate::mensajes::AcusePausaDeEnvio, ErrorCanalWhatsmeow> {
+    if escritor_compartido.lock().await.is_none() {
+        return Err(ErrorCanalWhatsmeow::SinConexion);
+    }
 
-        let orden = crate::mensajes::OrdenPausaDeEnvio {
-            version: crate::mensajes::VERSION_PROTOCOLO,
-            tipo: "orden_pausa_de_envio".to_string(),
-            accion: accion.to_string(),
-        };
-        let linea = serde_json::to_string(&orden).map_err(|e| {
-            ErrorCanalWhatsmeow::ErrorDeProtocolo(format!(
-                "no se pudo serializar orden_pausa_de_envio: {e}"
-            ))
-        })?;
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    {
+        let mut pendiente = pendientes_de_sesion.pausa.lock().await;
+        *pendiente = Some(tx);
+    }
 
-        if let Err(e) = escribir_linea(&self.escritor_compartido, &linea).await {
-            let mut pendiente = self.pendientes_de_sesion.pausa.lock().await;
+    let orden = crate::mensajes::OrdenPausaDeEnvio {
+        version: crate::mensajes::VERSION_PROTOCOLO,
+        tipo: "orden_pausa_de_envio".to_string(),
+        accion: accion.to_string(),
+    };
+    let linea = serde_json::to_string(&orden).map_err(|e| {
+        ErrorCanalWhatsmeow::ErrorDeProtocolo(format!(
+            "no se pudo serializar orden_pausa_de_envio: {e}"
+        ))
+    })?;
+
+    if let Err(e) = escribir_linea(escritor_compartido, &linea).await {
+        let mut pendiente = pendientes_de_sesion.pausa.lock().await;
+        *pendiente = None;
+        return Err(e);
+    }
+
+    match tokio::time::timeout(plazo, rx).await {
+        Ok(Ok(acuse)) => Ok(acuse),
+        Ok(Err(_oneshot_caido)) => {
+            let mut pendiente = pendientes_de_sesion.pausa.lock().await;
             *pendiente = None;
-            return Err(e);
+            Err(ErrorCanalWhatsmeow::ErrorDeProtocolo(
+                "no se recibió acuse de pausa de envío: la conexión terminó".to_string(),
+            ))
         }
-
-        match tokio::time::timeout(plazo, rx).await {
-            Ok(Ok(acuse)) => Ok(acuse),
-            Ok(Err(_oneshot_caido)) => {
-                let mut pendiente = self.pendientes_de_sesion.pausa.lock().await;
-                *pendiente = None;
-                Err(ErrorCanalWhatsmeow::ErrorDeProtocolo(
-                    "no se recibió acuse de pausa de envío: la conexión terminó".to_string(),
-                ))
-            }
-            Err(_agotado) => {
-                let mut pendiente = self.pendientes_de_sesion.pausa.lock().await;
-                *pendiente = None;
-                Err(ErrorCanalWhatsmeow::ErrorDeProtocolo(
-                    "no se recibió acuse de pausa de envío dentro del plazo".to_string(),
-                ))
-            }
+        Err(_agotado) => {
+            let mut pendiente = pendientes_de_sesion.pausa.lock().await;
+            *pendiente = None;
+            Err(ErrorCanalWhatsmeow::ErrorDeProtocolo(
+                "no se recibió acuse de pausa de envío dentro del plazo".to_string(),
+            ))
         }
     }
 }
@@ -679,6 +778,74 @@ async fn escribir_linea(
         Ok(())
     } else {
         Err(ErrorCanalWhatsmeow::SinConexion)
+    }
+}
+
+/// Implementación compartida de `iniciar_emparejamiento_con` para el adaptador y su asa.
+///
+/// Registra el canal de eventos antes de enviar la orden para evitar carreras, espera el primer
+/// evento dentro de `plazo`, y devuelve [`InicioDeEmparejamiento::Codigo`] si llega un código
+/// primero o [`InicioDeEmparejamiento::Acuse`] si llega un acuse antes que cualquier código.
+/// Al resolver (éxito, plazo o canal cerrado) el receptor se limpia o se suelta, por lo que el
+/// bucle de lectura nunca se bloquea después.
+///
+/// Sin conexión activa devuelve `SinConexion` sin escribir nada. Si el plazo se agota o el canal
+/// se cierra sin eventos devuelve `EmparejamientoSinAcuse`.
+async fn iniciar_emparejamiento_con_interno(
+    escritor_compartido: &Arc<
+        tokio::sync::Mutex<Option<tokio::io::WriteHalf<tokio::net::UnixStream>>>,
+    >,
+    emparejamiento_pendiente: &Arc<
+        tokio::sync::Mutex<Option<mpsc::Sender<EventoDeEmparejamiento>>>,
+    >,
+    metodo: &str,
+    plazo: Duration,
+) -> Result<InicioDeEmparejamiento, ErrorCanalWhatsmeow> {
+    if escritor_compartido.lock().await.is_none() {
+        return Err(ErrorCanalWhatsmeow::SinConexion);
+    }
+
+    let (tx, mut rx) = mpsc::channel(32);
+    {
+        let mut pendiente = emparejamiento_pendiente.lock().await;
+        *pendiente = Some(tx);
+    }
+
+    let orden = crate::mensajes::OrdenEmparejar {
+        version: crate::mensajes::VERSION_PROTOCOLO,
+        tipo: "orden_emparejar".to_string(),
+        metodo: metodo.to_string(),
+    };
+
+    if let Err(e) = crate::conexion::enviar_orden_emparejar(escritor_compartido, &orden).await {
+        let mut pendiente = emparejamiento_pendiente.lock().await;
+        *pendiente = None;
+        return Err(e);
+    }
+
+    let limite = tokio::time::Instant::now() + plazo;
+    // Espera el primer evento: código o acuse. No es un bucle real — cada rama resuelve — pero la
+    // estructura de match es más clara que un `if let` anidado para el timeout.
+    match tokio::time::timeout_at(limite, rx.recv()).await {
+        Ok(Some(EventoDeEmparejamiento::Codigo(codigo))) => {
+            // Código llegó primero: resolver con él. El receptor se suelta al retornar; el bucle de
+            // lectura fallará en los `send` posteriores (códigos huérfanos) y el acuse terminal hará
+            // `take()` del slot.
+            Ok(InicioDeEmparejamiento::Codigo(codigo))
+        }
+        Ok(Some(EventoDeEmparejamiento::Acuse(acuse))) => Ok(InicioDeEmparejamiento::Acuse(acuse)),
+        Ok(None) => {
+            // El canal se cerró sin eventos: limpiar el slot.
+            let mut pendiente = emparejamiento_pendiente.lock().await;
+            *pendiente = None;
+            Err(ErrorCanalWhatsmeow::EmparejamientoSinAcuse)
+        }
+        Err(_agotado) => {
+            // Plazo agotado sin eventos: limpiar el slot.
+            let mut pendiente = emparejamiento_pendiente.lock().await;
+            *pendiente = None;
+            Err(ErrorCanalWhatsmeow::EmparejamientoSinAcuse)
+        }
     }
 }
 
@@ -1120,13 +1287,28 @@ impl ChannelAdapter for AdaptadorWhatsmeow {
 impl hexcell_core::canal::CicloDeVidaSesion for AdaptadorWhatsmeow {
     type Error = ErrorCanalWhatsmeow;
 
-    /// Inicia el emparejamiento enviando una orden al sidecar.
+    /// Inicia el emparejamiento con el método QR y el plazo por omisión.
     ///
-    /// La implementación completa llega con la integración del emparejamiento; por ahora se
-    /// devuelve un error de «sin conexión» si no hay conexión activa.
+    /// Delega en [`Self::iniciar_emparejamiento_con`] con [`MetodoDeEmparejamiento::Qr`] y el
+    /// [`PLAZO_CIERRE_DE_SESION`] (30 s), mapeando el primer código recibido a la variante
+    /// [`Emparejamiento::CodigoQr`] y cualquier acuse a [`ErrorDeProtocolo`] con su motivo.
     async fn iniciar_emparejamiento(&self) -> Result<Emparejamiento, Self::Error> {
-        // TODO(A-3): implementar cuando el cable de emparejamiento esté completo.
-        Err(ErrorCanalWhatsmeow::SinConexion)
+        match self
+            .iniciar_emparejamiento_con(MetodoDeEmparejamiento::Qr, PLAZO_CIERRE_DE_SESION)
+            .await?
+        {
+            InicioDeEmparejamiento::Codigo(codigo) => Ok(Emparejamiento::CodigoQr(codigo.valor)),
+            InicioDeEmparejamiento::Acuse(acuse) => {
+                Err(ErrorCanalWhatsmeow::ErrorDeProtocolo(format!(
+                    "emparejamiento finalizado con acuse: {}",
+                    if acuse.motivo.is_empty() {
+                        acuse.resultado.clone()
+                    } else {
+                        acuse.motivo.clone()
+                    }
+                )))
+            }
+        }
     }
 
     /// Cierra la sesión y desvincula el dispositivo.
@@ -1152,20 +1334,25 @@ impl hexcell_core::canal::CicloDeVidaSesion for AdaptadorWhatsmeow {
 /// Asa clonable para ordenar el cierre de sesión desde fuera del adaptador.
 ///
 /// Toma prestados los campos ya `Arc`-envueltos del adaptador (`escritor_compartido`,
-/// `pendientes_de_sesion`, `receptor_estado`) y añade su propio `motivo` y `plazo`. Se construye
-/// con [`AdaptadorWhatsmeow::asa_de_sesion`] **antes** de que `Motor::nuevo` consuma el
-/// adaptador, siguiendo el precedente de `contadores_de_acuse()` y
+/// `pendientes_de_sesion`, `emparejamiento_pendiente`, `receptor_estado`) y añade su propio
+/// `motivo` y `plazo`. Se construye con [`AdaptadorWhatsmeow::asa_de_sesion`] **antes** de que
+/// `Motor::nuevo` consuma el adaptador, siguiendo el precedente de `contadores_de_acuse()` y
 /// `suscribir_estado_con_expiracion()`.
 ///
 /// Implementa `CicloDeVidaSesion` para que la raíz de composición pueda registrarlo en el
-/// `CierreDeSesion::ConSesion` del listener administrativo.
+/// `SesionDeCanal::ConSesion` del listener administrativo. Además expone
+/// [`AsaDeSesion::iniciar_emparejamiento_con`] y [`AsaDeSesion::ordenar_pausa_de_envio`] para que
+/// las rutas administrativas operen la sesión a través del mismo asa sin construir un segundo
+/// adaptador.
 #[derive(Clone)]
 pub struct AsaDeSesion {
     /// Extremo de escritura compartido con la conexión activa.
     escritor_compartido:
         Arc<tokio::sync::Mutex<Option<tokio::io::WriteHalf<tokio::net::UnixStream>>>>,
-    /// Acuses de cierre de sesión pendientes de correlación.
+    /// Acuses de cierre de sesión y de pausa de envío pendientes de correlación.
     pendientes_de_sesion: Arc<PendientesDeSesion>,
+    /// Canal de eventos de emparejamiento en curso, compartido con el adaptador.
+    emparejamiento_pendiente: Arc<tokio::sync::Mutex<Option<mpsc::Sender<EventoDeEmparejamiento>>>>,
     /// Receptor del estado de sesión, para consultas.
     receptor_estado: watch::Receiver<EstadoSesion>,
     /// Motivo que se enviará en `orden_cierre_de_sesion`.
@@ -1186,6 +1373,40 @@ impl AsaDeSesion {
             &self.pendientes_de_sesion,
             self.plazo,
             &self.motivo,
+        )
+        .await
+    }
+
+    /// Inicia el emparejamiento con un método y plazo dados, delegando en la implementación
+    /// compartida con el adaptador.
+    ///
+    /// Comparte el slot `emparejamiento_pendiente` con el adaptador: los códigos rotativos que
+    /// llegan tras el retorno se descartan sin bloquear el bucle de lectura.
+    pub async fn iniciar_emparejamiento_con(
+        &self,
+        metodo: MetodoDeEmparejamiento,
+        plazo: Duration,
+    ) -> Result<InicioDeEmparejamiento, ErrorCanalWhatsmeow> {
+        iniciar_emparejamiento_con_interno(
+            &self.escritor_compartido,
+            &self.emparejamiento_pendiente,
+            metodo.nombre_de_cable(),
+            plazo,
+        )
+        .await
+    }
+
+    /// Ordena pausar o reanudar el envío saliente, compartiendo implementación con el adaptador.
+    pub async fn ordenar_pausa_de_envio(
+        &self,
+        accion: &str,
+        plazo: Duration,
+    ) -> Result<crate::mensajes::AcusePausaDeEnvio, ErrorCanalWhatsmeow> {
+        ordenar_pausa_de_envio_interno(
+            &self.escritor_compartido,
+            &self.pendientes_de_sesion,
+            accion,
+            plazo,
         )
         .await
     }
@@ -1262,14 +1483,29 @@ async fn ordenar_cierre_de_sesion_interno(
 impl hexcell_core::canal::CicloDeVidaSesion for AsaDeSesion {
     type Error = ErrorCanalWhatsmeow;
 
-    /// Inicia el emparejamiento.
+    /// Inicia el emparejamiento con el método QR y el plazo por omisión.
     ///
-    /// El asa no tiene acceso al canal de emparejamiento del adaptador; este método es un
-    /// stub que refleja la limitación. La raíz de composición no lo usa: solo se invoca
-    /// `cerrar_sesion` desde la ruta administrativa.
+    /// Delega en [`Self::iniciar_emparejamiento_con`] con [`MetodoDeEmparejamiento::Qr`] y el
+    /// plazo propio del asa, mapeando el primer código recibido a [`Emparejamiento::CodigoQr`] y
+    /// cualquier acuse a [`ErrorDeProtocolo`] con su motivo. El método QR es el que exige el
+    /// contrato HTTP cuando el llamante no especifica otro.
     async fn iniciar_emparejamiento(&self) -> Result<Emparejamiento, Self::Error> {
-        // Stub: el asa no expone el canal de emparejamiento del adaptador.
-        Err(ErrorCanalWhatsmeow::SinConexion)
+        match self
+            .iniciar_emparejamiento_con(MetodoDeEmparejamiento::Qr, self.plazo)
+            .await?
+        {
+            InicioDeEmparejamiento::Codigo(codigo) => Ok(Emparejamiento::CodigoQr(codigo.valor)),
+            InicioDeEmparejamiento::Acuse(acuse) => {
+                Err(ErrorCanalWhatsmeow::ErrorDeProtocolo(format!(
+                    "emparejamiento finalizado con acuse: {}",
+                    if acuse.motivo.is_empty() {
+                        acuse.resultado.clone()
+                    } else {
+                        acuse.motivo.clone()
+                    }
+                )))
+            }
+        }
     }
 
     /// Cierra la sesión con el motivo que el asa lleva.

@@ -26,7 +26,9 @@ pub mod error;
 pub mod mensajes;
 pub mod reconexion;
 
-pub use adaptador::AdaptadorWhatsmeow;
+pub use adaptador::{
+    AdaptadorWhatsmeow, AsaDeSesion, InicioDeEmparejamiento, MetodoDeEmparejamiento,
+};
 pub use error::ErrorCanalWhatsmeow;
 pub use mensajes::VERSION_PROTOCOLO;
 pub use reconexion::Retroceso;
