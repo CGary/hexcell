@@ -1,8 +1,16 @@
 //! Operaciones Docker del ciclo de vida de una célula.
+//!
+//! Además de `pausar`, `reanudar` y `retirar` (tareas 11 y 12), este módulo aloja desde HEX-085-b
+//! los servicios de la secuencia de `cell rebind` (tarea 13 de A-6): los tipos de valor que
+//! representan las respuestas de las rutas administrativas del núcleo, el guión de petición HTTP
+//! (`wget` de disparo único), la consulta por contenedor hermano (crear, iniciar, esperar, leer
+//! registros, eliminar siempre) y los servicios de fase que la tarea 15 de `comandos.rs` compone.
 
 use std::fmt;
 
-use crate::docker::{ClienteDocker, ErrorDeClienteDocker, OpcionesDeContenedor};
+use crate::docker::{
+    ClienteDocker, ErrorDeClienteDocker, OpcionesDeContenedor, ResultadoDeArranque,
+};
 
 /// Ruta de montaje del volumen de datos de la célula, hardcoded en un único lugar.
 ///
@@ -33,6 +41,47 @@ pub const HOLGURA_DEL_CLIENTE_DOCKER_S: u64 = 10;
 pub const TIEMPO_LIMITE_DEL_CLIENTE_DOCKER_S: u64 =
     LIMITE_DE_SONDEO_S + HOLGURA_DEL_CLIENTE_DOCKER_S;
 const _: () = assert!(TIEMPO_LIMITE_DEL_CLIENTE_DOCKER_S > LIMITE_DE_SONDEO_S);
+
+/// Límite de segundos que la sonda de emparejamiento se queda esperando la respuesta del núcleo.
+///
+/// `POST /containers/{id}/wait` bloquea durante TODA la vida de la sonda, así que el `-T` de
+/// `wget` debe ser lo bastante alto para que la sonda vea el 200 del núcleo (cuya ruta de
+/// emparejamiento espera hasta 30 s) pero lo bastante bajo para que el cliente no se quede
+/// bloqueado si el núcleo no responde. Producción: 40 s. Las pruebas inyectan 1 s.
+pub const LIMITE_DE_EMPAREJAMIENTO_SONDA_S: u64 = 40;
+const _: () = assert!(LIMITE_DE_EMPAREJAMIENTO_SONDA_S > 30);
+const _: () = assert!(LIMITE_DE_EMPAREJAMIENTO_SONDA_S < TIEMPO_LIMITE_DEL_CLIENTE_DOCKER_S);
+
+/// Plazos configurables de la secuencia de `cell rebind`, inyectados para que los bucles de
+/// reintento sean deterministas en las pruebas (cadencia en milisegundos, no en segundos).
+///
+/// La cadencia y losintentos sólo se usan para contar iteraciones: los tests los fijan en
+/// valores minúsculos (1 ms, 2 intentos) y nunca duermen segundos; producción usa
+/// [`Self::por_omision`] (2 s, 30, 30, 120 s).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PlazosDeReemparejamiento {
+    /// Intervalo entre reintentos, en milisegundos.
+    pub cadencia_ms: u64,
+    /// Número máximo de intentos de la sonda de pausa en el arranque posterior al rm.
+    pub intentos_de_pausa: u64,
+    /// Número máximo de intentos de la sonda de emparejamiento.
+    pub intentos_de_emparejamiento: u64,
+    /// Tope del presupuesto de confirmación de emparejamiento, en segundos.
+    pub tope_de_confirmacion_s: u64,
+}
+
+impl PlazosDeReemparejamiento {
+    /// Valores por omisión de producción: cadencia de 2 s, pausa y emparejamiento con hasta 30
+    /// reintentos cada uno (60 s a 2 s), y tope de confirmación de 120 s.
+    pub fn por_omision() -> Self {
+        Self {
+            cadencia_ms: 2000,
+            intentos_de_pausa: 30,
+            intentos_de_emparejamiento: 30,
+            tope_de_confirmacion_s: 120,
+        }
+    }
+}
 
 /// Nombres Docker derivados de la identidad de la célula.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -89,6 +138,21 @@ pub enum ErrorDeCicloDeVida {
     CelulaPausada,
     /// El cierre de sesión falló: la sonda de cierre salió con código distinto de cero.
     CierreDeSesionFallido { codigo: i64 },
+    /// `POST /admin/envio/pausa` respondió `fallido` antes del paso destructivo (tarea 13, D5.3).
+    PausaDeEnvioFallida { motivo: String },
+    /// `POST /admin/sesion/emparejamiento` respondió `fallido` con un motivo distinto de
+    /// `sin_conexion` (tarea 13, D5.8).
+    EmparejamientoFallido { motivo: String },
+    /// El código de emparejamiento expiró antes de que la sesión llegara a `activa` (tarea 13,
+    /// D5.9). La célula queda en `Reemparejando` para reanudar.
+    CodigoExpirado,
+    /// No se pudo descartar `sqlstore.db` mediante el contenedor hermano (tarea 13, D5.6).
+    DescarteDeSqlstoreFallido { motivo: String },
+    /// El cuerpo de la sonda hermana no es JSON válido o no tiene los campos esperados.
+    CuerpoDeSondaIlegible { motivo: String },
+    /// El núcleo de la célula no está en ejecución al iniciar `cell rebind` desde un estado
+    /// distinto de `Reemparejando` (no aplicable al resume, que lo gestiona el llamador).
+    NucleoNoCorriendo,
 }
 
 impl fmt::Display for ErrorDeCicloDeVida {
@@ -115,6 +179,27 @@ impl fmt::Display for ErrorDeCicloDeVida {
                 f,
                 "el cierre de sesión falló: la sonda de cierre salió con código {codigo}"
             ),
+            Self::PausaDeEnvioFallida { motivo } => {
+                write!(f, "la pausa de envío falló: {motivo}")
+            }
+            Self::EmparejamientoFallido { motivo } => {
+                write!(f, "el emparejamiento falló: {motivo}")
+            }
+            Self::CodigoExpirado => {
+                write!(f, "código expirado; repita cell rebind")
+            }
+            Self::DescarteDeSqlstoreFallido { motivo } => {
+                write!(f, "no se pudo descartar sqlstore.db: {motivo}")
+            }
+            Self::CuerpoDeSondaIlegible { motivo } => {
+                write!(f, "no se pudo leer la respuesta de la sonda: {motivo}")
+            }
+            Self::NucleoNoCorriendo => {
+                write!(
+                    f,
+                    "el núcleo de la célula no está en ejecución; «cell rebind» exige un núcleo activo"
+                )
+            }
         }
     }
 }
@@ -503,4 +588,607 @@ pub fn retirar(
     cliente.eliminar_volumen(&volumen)?;
 
     Ok(volumen)
+}
+
+// ============================================================================
+// Tipos de valor y helpers para `cell rebind` (tarea 13 de A-6, HEX-085-b).
+// ============================================================================
+
+/// Información resuelta de los contenedores de una célula para las sondas HTTP de `cell rebind`:
+/// red, puerto de admin y nombre del volumen de datos, todos leídos de la inspección del núcleo.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DatosDeCelulaParaRebind {
+    /// Red Docker a la que se conectan las sondas hermanas.
+    pub red: String,
+    /// Puerto de la escucha administrativa del núcleo, leído de `HEXCELL_DIRECCION_ADMIN`.
+    pub puerto_admin: String,
+    /// Nombre del volumen de datos, leído de `Mounts[].Name` del núcleo.
+    pub volumen: String,
+}
+
+/// Resuelve la red, el puerto de admin y el volumen de datos de una célula inspeccionando el núcleo
+/// y verificando que el sidecar existe. Es el helper compartido de los pasos 2-3 de D5.
+///
+/// Devuelve [`ErrorDeCicloDeVida::CelulaNoEncontrada`] si falta el núcleo o el sidecar, y
+/// [`ErrorDeCicloDeVida::NucleoNoCorriendo`] si el núcleo no está en ejecución (el rebind desde
+/// `EnEjecución` lo exige; el resume desde `Reemparejando` lo gestiona el llamador).
+pub fn resolver_datos_de_celula_para_rebind(
+    cliente: &ClienteDocker,
+    nombres: &NombresDeCelula,
+) -> Result<DatosDeCelulaParaRebind, ErrorDeCicloDeVida> {
+    let inspeccion_nucleo = match cliente.inspeccionar_contenedor(&nombres.nucleo) {
+        Ok(inspeccion) => inspeccion,
+        Err(ErrorDeClienteDocker::NoEncontrado) => {
+            return Err(ErrorDeCicloDeVida::CelulaNoEncontrada);
+        }
+        Err(error) => return Err(error.into()),
+    };
+    match cliente.inspeccionar_contenedor(&nombres.sidecar) {
+        Ok(_) => {}
+        Err(ErrorDeClienteDocker::NoEncontrado) => {
+            return Err(ErrorDeCicloDeVida::CelulaNoEncontrada);
+        }
+        Err(error) => return Err(error.into()),
+    }
+    let red = red_de_inspeccion(&inspeccion_nucleo)?;
+    let puerto_admin = puerto_de_inspeccion(&inspeccion_nucleo, "HEXCELL_DIRECCION_ADMIN")?;
+    let volumen = volumen_de_inspeccion(&inspeccion_nucleo)?;
+    Ok(DatosDeCelulaParaRebind {
+        red,
+        puerto_admin,
+        volumen,
+    })
+}
+
+/// Comando de disparo único que ejecuta una petición HTTP desde un contenedor hermano.
+///
+/// A diferencia de [`guion_de_sonda_con_limite`] (bucle con `sleep`), este es un único
+/// `wget -q -O - -T <limite>` con `--post-data <cuerpo>` opcional: la sonda se limita a leer una
+/// respuesta y devolverla por su salida estándar. El código de salida de `wget` es el veredicto
+/// sólo cuando el llamador decide consumirlo (p. ej., la sonda de cierre de sesión); para las
+/// sondas que leen cuerpo, el código es 0 si el núcleo respondió 2xx.
+///
+/// `limite` es el `-T` de `wget` en segundos. Debe estar por encima del plazo de la ruta del
+/// núcleo (30 s para emparejamiento) y por debajo del tiempo límite del cliente Docker.
+pub fn guion_de_peticion_http(url: &str, cuerpo: Option<&str>, limite: u64) -> Vec<String> {
+    let limite = limite.to_string();
+    match cuerpo {
+        Some(cuerpo) => vec![
+            "wget".to_string(),
+            "-q".to_string(),
+            "-O".to_string(),
+            "-".to_string(),
+            "-T".to_string(),
+            limite,
+            "--post-data".to_string(),
+            cuerpo.to_string(),
+            url.to_string(),
+        ],
+        None => vec![
+            "wget".to_string(),
+            "-q".to_string(),
+            "-O".to_string(),
+            "-".to_string(),
+            "-T".to_string(),
+            limite,
+            url.to_string(),
+        ],
+    }
+}
+
+/// Crea un contenedor hermano, lo inicia, espera su código de salida, lee su salida estándar y lo
+/// elimina siempre (también si el arranque o la espera fallan). Devuelve los bytes de salida
+/// estándar para que el los analice el llamador.
+///
+/// La eliminación se ejecuta siempre, también en los caminos de error, para que ninguna sonda
+/// quede huérfana en el demonio.
+fn consultar_por_hermano(
+    cliente: &ClienteDocker,
+    _nombres: &NombresDeCelula,
+    imagen: &str,
+    cmd: Vec<String>,
+    red: &str,
+) -> Result<Vec<u8>, ErrorDeCicloDeVida> {
+    let opciones = OpcionesDeContenedor {
+        red: red.to_string(),
+        cmd,
+    };
+    let sonda = match cliente.crear_e_iniciar_contenedor_con_opciones(imagen, opciones) {
+        Ok(ResultadoDeArranque::Iniciado { id_contenedor })
+        | Ok(ResultadoDeArranque::YaEnEjecucion { id_contenedor }) => id_contenedor,
+        Err(ErrorDeClienteDocker::NoEncontrado) => {
+            return Err(ErrorDeCicloDeVida::ImagenDeSondaNoEncontrada {
+                imagen: imagen.to_string(),
+            });
+        }
+        Err(error) => return Err(error.into()),
+    };
+    let espera = cliente.esperar_contenedor(&sonda);
+    let lectura = cliente.leer_salida_estandar(&sonda);
+    let limpieza = cliente.eliminar_contenedor(&sonda);
+    if let Err(error) = limpieza {
+        return Err(error.into());
+    }
+    if let Err(error) = espera {
+        return Err(error.into());
+    }
+    lectura.map_err(ErrorDeCicloDeVida::from)
+}
+
+/// Desenlace de `POST /admin/envio/pausa` (D2).
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub enum DesenlaceDePausa {
+    /// `{"resultado":"aplicado","accion":"pausar"|"reanudar"}`.
+    Aplicado { accion: String },
+    /// `{"resultado":"fallido","accion":"...","motivo":"..."}`.
+    Fallido { motivo: String },
+    /// `{"resultado":"canal_sin_sesion"}`.
+    CanalSinSesion,
+}
+
+/// Parsea la respuesta JSON de `POST /admin/envio/pausa` a un [`DesenlaceDePausa`].
+fn desenlace_de_pausa(desde: &[u8]) -> Result<DesenlaceDePausa, ErrorDeCicloDeVida> {
+    let valor: serde_json::Value =
+        serde_json::from_slice(desde).map_err(|_| ErrorDeCicloDeVida::CuerpoDeSondaIlegible {
+            motivo: "la respuesta de pausa no es JSON válido".to_string(),
+        })?;
+    let resultado = valor
+        .get("resultado")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| ErrorDeCicloDeVida::CuerpoDeSondaIlegible {
+            motivo: "la respuesta de pausa no lleva resultado".to_string(),
+        })?;
+    match resultado {
+        "aplicado" => {
+            let accion = valor
+                .get("accion")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            Ok(DesenlaceDePausa::Aplicado { accion })
+        }
+        "fallido" => {
+            let motivo = valor
+                .get("motivo")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            Ok(DesenlaceDePausa::Fallido { motivo })
+        }
+        "canal_sin_sesion" => Ok(DesenlaceDePausa::CanalSinSesion),
+        otro => Err(ErrorDeCicloDeVida::CuerpoDeSondaIlegible {
+            motivo: format!("resultado de pausa inesperado: {otro}"),
+        }),
+    }
+}
+
+/// Desenlace de `POST /admin/sesion/emparejamiento` (D2).
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub enum DesenlaceDeEmparejamiento {
+    /// `{"resultado":"codigo","metodo":"qr"|"codigo_de_vinculacion","valor":"...","expira_en_ms":N}`.
+    Codigo {
+        metodo: String,
+        valor: String,
+        expira_en_ms: i64,
+    },
+    /// `{"resultado":"fallido","motivo":"sin_conexion"|"ya_emparejada"|...}`.
+    Fallido { motivo: String },
+    /// `{"resultado":"canal_sin_sesion"}`.
+    CanalSinSesion,
+}
+
+/// Parsea la respuesta JSON de `POST /admin/sesion/emparejamiento` a un [`DesenlaceDeEmparejamiento`].
+fn desenlace_de_emparejamiento(
+    desde: &[u8],
+) -> Result<DesenlaceDeEmparejamiento, ErrorDeCicloDeVida> {
+    let valor: serde_json::Value =
+        serde_json::from_slice(desde).map_err(|_| ErrorDeCicloDeVida::CuerpoDeSondaIlegible {
+            motivo: "la respuesta de emparejamiento no es JSON válido".to_string(),
+        })?;
+    let resultado = valor
+        .get("resultado")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| ErrorDeCicloDeVida::CuerpoDeSondaIlegible {
+            motivo: "la respuesta de emparejamiento no lleva resultado".to_string(),
+        })?;
+    match resultado {
+        "codigo" => {
+            let metodo = valor
+                .get("metodo")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let valor_codigo = valor
+                .get("valor")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let expira_en_ms = valor
+                .get("expira_en_ms")
+                .and_then(|v| v.as_i64())
+                .unwrap_or(0);
+            Ok(DesenlaceDeEmparejamiento::Codigo {
+                metodo,
+                valor: valor_codigo,
+                expira_en_ms,
+            })
+        }
+        "fallido" => {
+            let motivo = valor
+                .get("motivo")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            Ok(DesenlaceDeEmparejamiento::Fallido { motivo })
+        }
+        "canal_sin_sesion" => Ok(DesenlaceDeEmparejamiento::CanalSinSesion),
+        otro => Err(ErrorDeCicloDeVida::CuerpoDeSondaIlegible {
+            motivo: format!("resultado de emparejamiento inesperado: {otro}"),
+        }),
+    }
+}
+
+/// Estado de sesión devuelto por `GET /admin/sesion` (D2).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum EstadoDeSesion {
+    Activa,
+    Reconectando,
+    Desvinculada,
+    Pausada,
+    CanalSinSesion,
+}
+
+impl EstadoDeSesion {
+    /// ¿Es el estado `activa`?
+    pub fn es_activa(self) -> bool {
+        matches!(self, Self::Activa)
+    }
+}
+
+/// Parsea la respuesta JSON de `GET /admin/sesion` a un [`EstadoDeSesion`].
+fn estado_de_sesion(desde: &[u8]) -> Result<EstadoDeSesion, ErrorDeCicloDeVida> {
+    let valor: serde_json::Value =
+        serde_json::from_slice(desde).map_err(|_| ErrorDeCicloDeVida::CuerpoDeSondaIlegible {
+            motivo: "la respuesta de sesión no es JSON válido".to_string(),
+        })?;
+    let estado = valor
+        .get("estado")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| ErrorDeCicloDeVida::CuerpoDeSondaIlegible {
+            motivo: "la respuesta de sesión no lleva estado".to_string(),
+        })?;
+    match estado {
+        "activa" => Ok(EstadoDeSesion::Activa),
+        "reconectando" => Ok(EstadoDeSesion::Reconectando),
+        "desvinculada" => Ok(EstadoDeSesion::Desvinculada),
+        "pausada" => Ok(EstadoDeSesion::Pausada),
+        "canal_sin_sesion" => Ok(EstadoDeSesion::CanalSinSesion),
+        otro => Err(ErrorDeCicloDeVida::CuerpoDeSondaIlegible {
+            motivo: format!("estado de sesión inesperado: {otro}"),
+        }),
+    }
+}
+
+// ============================================================================
+// Servicios de fase de `cell rebind` (tarea 13 de A-6, HEX-085-b).
+//
+// Cada función corresponde a una fase de la secuencia D5 documentada en el plan. La orquestación
+// que las compone en el orden correcto, maneja reanudación desde `Reemparejando` y decide cuándo
+// persistir transiciones vive en `comandos::ejecutar_reemparejamiento`.
+// ============================================================================
+
+/// Fase «preparar reemparejamiento» (pasos 2-4 de D5): resuelve los datos de la célula, verifica
+/// que el núcleo está corriendo, envía `POST /admin/envio/pausa pausar` y, si tiene éxito, intenta
+/// el cierre de sesión como mejor esfuerzo.
+///
+/// Devuelve una advertencia de cierre de sesión (cadena no vacía) cuando el cierre falla, para que
+/// el llamador la escriba por diagnóstico sin abortar la secuencia.
+///
+/// Contrato de fallo:
+/// * `fallido` en la pausa → [`ErrorDeCicloDeVida::PausaDeEnvioFallida`] y la secuencia aborta.
+/// * `canal_sin_sesion` en la pausa → éxito (no hay nada que cerrar).
+/// * núcleo no corriendo → [`ErrorDeCicloDeVida::NucleoNoCorriendo`].
+pub fn preparar_reemparejamiento(
+    cliente: &ClienteDocker,
+    nombres: &NombresDeCelula,
+    datos: &DatosDeCelulaParaRebind,
+    imagen: &str,
+    limite_http: u64,
+) -> Result<Option<String>, ErrorDeCicloDeVida> {
+    // Verificar que el núcleo está en ejecución.
+    let inspeccion_nucleo = match cliente.inspeccionar_contenedor(&nombres.nucleo) {
+        Ok(inspeccion) => inspeccion,
+        Err(ErrorDeClienteDocker::NoEncontrado) => {
+            return Err(ErrorDeCicloDeVida::CelulaNoEncontrada);
+        }
+        Err(error) => return Err(error.into()),
+    };
+    let estado = inspeccion_nucleo
+        .pointer("/State/Status")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| {
+            ErrorDeCicloDeVida::Configuracion("el núcleo no declara su estado".to_string())
+        })?;
+    if estado != "running" {
+        return Err(ErrorDeCicloDeVida::NucleoNoCorriendo);
+    }
+
+    // Paso 3: POST /admin/envio/pausa {"accion":"pausar"}.
+    let url_pausa = format!(
+        "http://{}:{}/admin/envio/pausa",
+        nombres.nucleo, datos.puerto_admin
+    );
+    let cuerpo_pausa = serde_json::json!({ "accion": "pausar" }).to_string();
+    let respuesta_pausa = consultar_por_hermano(
+        cliente,
+        nombres,
+        imagen,
+        guion_de_peticion_http(&url_pausa, Some(&cuerpo_pausa), limite_http),
+        &datos.red,
+    )?;
+    match desenlace_de_pausa(&respuesta_pausa)? {
+        DesenlaceDePausa::Aplicado { .. } => {}
+        DesenlaceDePausa::Fallido { motivo } => {
+            return Err(ErrorDeCicloDeVida::PausaDeEnvioFallida { motivo });
+        }
+        DesenlaceDePausa::CanalSinSesion => {}
+    }
+
+    // Paso 4: POST /admin/sesion/cierre como mejor esfuerzo.
+    let url_cierre = format!(
+        "http://{}:{}/admin/sesion/cierre",
+        nombres.nucleo, datos.puerto_admin
+    );
+    let opciones = OpcionesDeContenedor {
+        red: datos.red.clone(),
+        cmd: guion_de_cierre_de_sesion(&url_cierre),
+    };
+    let sonda_de_cierre = match cliente.crear_e_iniciar_contenedor_con_opciones(imagen, opciones) {
+        Ok(ResultadoDeArranque::Iniciado { id_contenedor })
+        | Ok(ResultadoDeArranque::YaEnEjecucion { id_contenedor }) => id_contenedor,
+        Err(ErrorDeClienteDocker::NoEncontrado) => {
+            return Err(ErrorDeCicloDeVida::ImagenDeSondaNoEncontrada {
+                imagen: imagen.to_string(),
+            });
+        }
+        Err(error) => return Err(error.into()),
+    };
+    let espera_cierre = cliente.esperar_contenedor(&sonda_de_cierre);
+    let limpieza_cierre = cliente.eliminar_contenedor(&sonda_de_cierre);
+    let codigo_cierre = match (espera_cierre, limpieza_cierre) {
+        (Ok(codigo), Ok(())) => codigo,
+        (Err(error), _) => return Err(error.into()),
+        (Ok(_), Err(error)) => return Err(error.into()),
+    };
+    let aviso = if codigo_cierre == 0 {
+        None
+    } else {
+        Some(format!(
+            "aviso: el cierre de sesión devolvió código {codigo_cierre}; se continúa igual"
+        ))
+    };
+    Ok(aviso)
+}
+
+/// Fase «descartar sqlstore y rearrancar» (pasos 6-7 de D5): detiene el sidecar sin plazo,
+/// ejecuta un contenedor hermano con el volumen montado que borra `sqlstore.db`, rearranca el
+/// sidecar y reenvía la pausa de envío reintentando mientras la respuesta sea `sin_conexion`.
+pub fn descartar_sqlstore_y_rearrancar(
+    cliente: &ClienteDocker,
+    nombres: &NombresDeCelula,
+    datos: &DatosDeCelulaParaRebind,
+    imagen: &str,
+    plazos: &PlazosDeReemparejamiento,
+    limite_http: u64,
+) -> Result<(), ErrorDeCicloDeVida> {
+    // Paso 6a: detener el sidecar sin plazo.
+    cliente.detener_contenedor_sin_plazo(&nombres.sidecar)?;
+
+    // Paso 6b: contenedor hermano con el volumen montado que borra sólo sqlstore.db.
+    let cmd_rm = vec![
+        "rm".to_string(),
+        "-f".to_string(),
+        format!("{}/sqlstore.db", RUTA_DE_DATOS_DE_CELULA),
+        format!("{}/sqlstore.db-wal", RUTA_DE_DATOS_DE_CELULA),
+        format!("{}/sqlstore.db-shm", RUTA_DE_DATOS_DE_CELULA),
+    ];
+    let opciones_rm = OpcionesDeContenedor {
+        red: "none".to_string(),
+        cmd: cmd_rm,
+    };
+    let sonda_rm = match cliente.crear_e_iniciar_contenedor_con_volumen(
+        imagen,
+        opciones_rm,
+        &datos.volumen,
+        RUTA_DE_DATOS_DE_CELULA,
+    ) {
+        Ok(ResultadoDeArranque::Iniciado { id_contenedor })
+        | Ok(ResultadoDeArranque::YaEnEjecucion { id_contenedor }) => id_contenedor,
+        Err(ErrorDeClienteDocker::NoEncontrado) => {
+            return Err(ErrorDeCicloDeVida::ImagenDeSondaNoEncontrada {
+                imagen: imagen.to_string(),
+            });
+        }
+        Err(error) => return Err(error.into()),
+    };
+    let espera_rm = cliente.esperar_contenedor(&sonda_rm);
+    let limpieza_rm = cliente.eliminar_contenedor(&sonda_rm);
+    match (espera_rm, limpieza_rm) {
+        (Ok(0), Ok(())) => {}
+        (Ok(codigo), Ok(())) => {
+            return Err(ErrorDeCicloDeVida::DescarteDeSqlstoreFallido {
+                motivo: format!("el rm devolvió código {codigo}"),
+            });
+        }
+        (Err(error), _) => return Err(error.into()),
+        (Ok(_), Err(error)) => return Err(error.into()),
+    }
+
+    // Paso 7a: rearrancar el sidecar.
+    cliente.iniciar_contenedor(&nombres.sidecar)?;
+
+    // Paso 7b: reenviar POST /admin/envio/pausa pausar reintentando mientras sin_conexion.
+    let url_pausa = format!(
+        "http://{}:{}/admin/envio/pausa",
+        nombres.nucleo, datos.puerto_admin
+    );
+    let cuerpo_pausa = serde_json::json!({ "accion": "pausar" }).to_string();
+    let mut ultimo_resultado = None;
+    for intento in 0..plazos.intentos_de_pausa {
+        let respuesta = consultar_por_hermano(
+            cliente,
+            nombres,
+            imagen,
+            guion_de_peticion_http(&url_pausa, Some(&cuerpo_pausa), limite_http),
+            &datos.red,
+        )?;
+        match desenlace_de_pausa(&respuesta)? {
+            desenlace @ (DesenlaceDePausa::Aplicado { .. } | DesenlaceDePausa::CanalSinSesion) => {
+                ultimo_resultado = Some(desenlace);
+                break;
+            }
+            DesenlaceDePausa::Fallido { motivo } if motivo == "sin_conexion" => {
+                if intento + 1 < plazos.intentos_de_pausa {
+                    std::thread::sleep(std::time::Duration::from_millis(plazos.cadencia_ms));
+                }
+            }
+            DesenlaceDePausa::Fallido { motivo } => {
+                return Err(ErrorDeCicloDeVida::PausaDeEnvioFallida { motivo });
+            }
+        }
+    }
+    match ultimo_resultado {
+        Some(_) => Ok(()),
+        None => Err(ErrorDeCicloDeVida::PausaDeEnvioFallida {
+            motivo: "sin_conexion: se agotaron los reintentos de la pausa de envío".to_string(),
+        }),
+    }
+}
+
+/// Fase «solicitar emparejamiento» (paso 8 de D5): envía `POST /admin/sesion/emparejamiento` con el
+/// método elegido, reintentando mientras la respuesta sea `sin_conexion`.
+///
+/// * `codigo` → devuelve [`DesenlaceDeEmparejamiento::Codigo`] con el valor y la expiración.
+/// * `canal_sin_sesion` → devuelve [`DesenlaceDeEmparejamiento::CanalSinSesion`] (el llamador
+///   omite el paso 9).
+/// * cualquier otro `fallido` → [`ErrorDeCicloDeVida::EmparejamientoFallido`].
+pub fn solicitar_emparejamiento(
+    cliente: &ClienteDocker,
+    nombres: &NombresDeCelula,
+    datos: &DatosDeCelulaParaRebind,
+    metodo: &str,
+    imagen: &str,
+    plazos: &PlazosDeReemparejamiento,
+    limite_http: u64,
+) -> Result<DesenlaceDeEmparejamiento, ErrorDeCicloDeVida> {
+    let url = format!(
+        "http://{}:{}/admin/sesion/emparejamiento",
+        nombres.nucleo, datos.puerto_admin
+    );
+    let cuerpo = serde_json::json!({ "metodo": metodo }).to_string();
+    let mut ultimo_fallido = None;
+    for intento in 0..plazos.intentos_de_emparejamiento {
+        let respuesta = consultar_por_hermano(
+            cliente,
+            nombres,
+            imagen,
+            guion_de_peticion_http(&url, Some(&cuerpo), limite_http),
+            &datos.red,
+        )?;
+        match desenlace_de_emparejamiento(&respuesta)? {
+            desenlace @ (DesenlaceDeEmparejamiento::Codigo { .. }
+            | DesenlaceDeEmparejamiento::CanalSinSesion) => {
+                return Ok(desenlace);
+            }
+            DesenlaceDeEmparejamiento::Fallido { motivo } if motivo == "sin_conexion" => {
+                ultimo_fallido = Some(motivo);
+                if intento + 1 < plazos.intentos_de_emparejamiento {
+                    std::thread::sleep(std::time::Duration::from_millis(plazos.cadencia_ms));
+                }
+            }
+            DesenlaceDeEmparejamiento::Fallido { motivo } => {
+                return Err(ErrorDeCicloDeVida::EmparejamientoFallido { motivo });
+            }
+        }
+    }
+    Err(ErrorDeCicloDeVida::EmparejamientoFallido {
+        motivo: ultimo_fallido.unwrap_or_else(|| {
+            "sin_conexion: se agotaron los reintentos de emparejamiento".to_string()
+        }),
+    })
+}
+
+/// Fase «esperar confirmación» (paso 9 de D5): consulta `GET /admin/sesion` hasta que el estado sea
+/// `activa`, con un presupuesto de `min(expira_en_ms - ahora_ms, tope)`, usando el tope cuando
+/// `expira_en_ms` es 0 (instante absoluto desconocido).
+///
+/// Devuelve [`ErrorDeCicloDeVida::CodigoExpirado`] si se agota el presupuesto sin llegar a `activa`.
+#[allow(clippy::too_many_arguments)]
+pub fn esperar_confirmacion(
+    cliente: &ClienteDocker,
+    nombres: &NombresDeCelula,
+    datos: &DatosDeCelulaParaRebind,
+    expira_en_ms: i64,
+    ahora_ms: i64,
+    imagen: &str,
+    plazos: &PlazosDeReemparejamiento,
+    limite_http: u64,
+) -> Result<(), ErrorDeCicloDeVida> {
+    let presupuesto_ms = if expira_en_ms > 0 {
+        let resto = expira_en_ms.saturating_sub(ahora_ms);
+        let tope_ms = plazos.tope_de_confirmacion_s.saturating_mul(1000);
+        resto.min(tope_ms as i64)
+    } else {
+        plazos.tope_de_confirmacion_s.saturating_mul(1000) as i64
+    };
+    let intentos = (presupuesto_ms.max(0) as u64)
+        .div_euclid(plazos.cadencia_ms.max(1))
+        .max(1);
+    let url = format!(
+        "http://{}:{}/admin/sesion",
+        nombres.nucleo, datos.puerto_admin
+    );
+    for _ in 0..intentos {
+        let respuesta = consultar_por_hermano(
+            cliente,
+            nombres,
+            imagen,
+            guion_de_peticion_http(&url, None, limite_http),
+            &datos.red,
+        )?;
+        if estado_de_sesion(&respuesta)? == EstadoDeSesion::Activa {
+            return Ok(());
+        }
+        std::thread::sleep(std::time::Duration::from_millis(plazos.cadencia_ms));
+    }
+    Err(ErrorDeCicloDeVida::CodigoExpirado)
+}
+
+/// Fase «reanudar envío» (parte Docker del paso 10 de D5): envía `POST /admin/envio/pausa
+/// reanudar`. `canal_sin_sesion` se trata como éxito; cualquier otro `fallido` es error.
+pub fn reanudar_envio(
+    cliente: &ClienteDocker,
+    nombres: &NombresDeCelula,
+    datos: &DatosDeCelulaParaRebind,
+    imagen: &str,
+    limite_http: u64,
+) -> Result<(), ErrorDeCicloDeVida> {
+    let url = format!(
+        "http://{}:{}/admin/envio/pausa",
+        nombres.nucleo, datos.puerto_admin
+    );
+    let cuerpo = serde_json::json!({ "accion": "reanudar" }).to_string();
+    let respuesta = consultar_por_hermano(
+        cliente,
+        nombres,
+        imagen,
+        guion_de_peticion_http(&url, Some(&cuerpo), limite_http),
+        &datos.red,
+    )?;
+    match desenlace_de_pausa(&respuesta)? {
+        DesenlaceDePausa::Aplicado { .. } | DesenlaceDePausa::CanalSinSesion => Ok(()),
+        DesenlaceDePausa::Fallido { motivo } => {
+            Err(ErrorDeCicloDeVida::PausaDeEnvioFallida { motivo })
+        }
+    }
 }

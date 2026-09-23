@@ -36,6 +36,10 @@ pub const MOTIVO_DE_ALTA_IMPLICITA: &str = "alta_implicita";
 /// llegue, sin que HEX-083 implemente el comportamiento contra código no fusionado.
 pub const MOTIVO_DE_SESION_CERRADA: &str = "sesion_cerrada";
 
+/// Motivo con el que `cell rebind` persiste el estado final `EnEjecucion` tras confirmar el
+/// reemparejamiento (tarea 13 de A-6, HEX-085-b, paso 10 de D5).
+pub const MOTIVO_DE_EMPAREJAMIENTO_CONFIRMADO: &str = "emparejamiento_confirmado";
+
 const MIGRACION_0001: &str = include_str!("../migraciones/0001-plano-de-control.sql");
 
 /// Fallo tipado del almacén del plano de control.
@@ -307,6 +311,71 @@ impl AlmacenDelPlanoDeControl {
         transaccion
             .commit()
             .map_err(Self::en("confirmar la transición"))?;
+        Ok(())
+    }
+
+    /// Confirma un reemparejamiento completado: persiste la célula como `EnEjecucion` con motivo
+    /// [`MOTIVO_DE_EMPAREJAMIENTO_CONFIRMADO`], inserta la transición `Reemparejando` → `EnEjecucion`
+    /// y añade una fila de auditoría en `sustituciones`, todo en una única transacción.
+    ///
+    /// La fila de `sustituciones` sólo guarda `id_celula`, `motivo` (el motivo de la sustitución
+    /// que aportó el operador en `--motivo`) y `registrado_ms`: nunca almacena el número anterior,
+    /// el nuevo, el valor de emparejamiento ni ningún otro identificador de transporte
+    /// (adr-0039). La transacción hace que un fallo en cualquiera de las tres escrituras revierta
+    /// las demás, dejando la fila en `Reemparejando` para que un `cell rebind` posterior reanude.
+    pub fn confirmar_reemparejamiento(
+        &self,
+        id: &str,
+        motivo_de_sustitucion: &str,
+        ahora_ms: i64,
+    ) -> Result<(), ErrorDeAlmacenDePlano> {
+        let transaccion = self
+            .conexion
+            .unchecked_transaction()
+            .map_err(Self::en("iniciar la confirmación del reemparejamiento"))?;
+        transaccion
+            .execute(
+                "INSERT INTO celulas (id, estado, motivo, actualizado_ms)
+                 VALUES (?1, ?2, ?3, ?4)
+                 ON CONFLICT(id) DO UPDATE SET
+                    estado = ?2,
+                    motivo = ?3,
+                    actualizado_ms = ?4",
+                rusqlite::params![
+                    id,
+                    etiqueta_persistida(EstadoDeCelula::EnEjecucion),
+                    MOTIVO_DE_EMPAREJAMIENTO_CONFIRMADO,
+                    ahora_ms,
+                ],
+            )
+            .map_err(Self::en(
+                "actualizar la fila de celulas al confirmar el reemparejamiento",
+            ))?;
+        transaccion
+            .execute(
+                "INSERT INTO transiciones (id_celula, de, a, motivo, registrado_ms)
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                rusqlite::params![
+                    id,
+                    etiqueta_persistida(EstadoDeCelula::Reemparejando),
+                    etiqueta_persistida(EstadoDeCelula::EnEjecucion),
+                    MOTIVO_DE_EMPAREJAMIENTO_CONFIRMADO,
+                    ahora_ms,
+                ],
+            )
+            .map_err(Self::en(
+                "insertar la transición de reemparejamiento confirmado",
+            ))?;
+        transaccion
+            .execute(
+                "INSERT INTO sustituciones (id_celula, motivo, registrado_ms)
+                 VALUES (?1, ?2, ?3)",
+                rusqlite::params![id, motivo_de_sustitucion, ahora_ms],
+            )
+            .map_err(Self::en("insertar la sustitución del reemparejamiento"))?;
+        transaccion
+            .commit()
+            .map_err(Self::en("confirmar la transacción de reemparejamiento"))?;
         Ok(())
     }
 

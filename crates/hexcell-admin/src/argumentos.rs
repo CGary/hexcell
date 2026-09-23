@@ -68,6 +68,9 @@ impl Subcomando {
     fn requiere_motivo(self) -> bool {
         self == Subcomando::Reemparejar
     }
+    fn admite_metodo(self) -> bool {
+        self == Subcomando::Reemparejar
+    }
     fn requiere_confirmar(self) -> bool {
         matches!(self, Subcomando::Retirar | Subcomando::Reemparejar)
     }
@@ -85,6 +88,7 @@ pub struct Invocacion {
     subcomando: Subcomando,
     id: Option<String>,
     motivo: Option<String>,
+    metodo: Option<MetodoDeEmparejamiento>,
     simular: bool,
     confirmar: bool,
 }
@@ -117,6 +121,13 @@ impl Comando {
     pub fn motivo(&self) -> Option<&str> {
         match self {
             Self::Cell(i) => i.motivo(),
+            Self::ConfigRender(_) => None,
+            Self::ReporteTokens(_) => None,
+        }
+    }
+    pub fn metodo(&self) -> Option<MetodoDeEmparejamiento> {
+        match self {
+            Self::Cell(i) => i.metodo(),
             Self::ConfigRender(_) => None,
             Self::ReporteTokens(_) => None,
         }
@@ -210,6 +221,30 @@ impl InvocacionReporte {
     }
 }
 
+/// Método de emparejamiento admitido por `cell rebind` (tarea 13 de A-6, HEX-085-b).
+///
+/// Tipo LOCAL de la CLI: `hexcell-admin` NO depende del crate `hexcell-canal-whatsmeow`, así que este
+/// enumerado reparte sólo la gramática del flag `--metodo`. La traducción al nombre de cable
+/// (`qr`, `codigo_de_vinculacion`) vive en la capa de ciclo de vida.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum MetodoDeEmparejamiento {
+    /// Emparejamiento mediante código QR.
+    Qr,
+    /// Emparejamiento mediante código de vinculación textual.
+    CodigoDeVinculacion,
+}
+
+impl MetodoDeEmparejamiento {
+    /// Nombre de cable asociado a cada método, tal y como viaja en el cuerpo JSON de
+    /// `POST /admin/sesion/emparejamiento`.
+    pub fn nombre_de_cable(self) -> &'static str {
+        match self {
+            Self::Qr => "qr",
+            Self::CodigoDeVinculacion => "codigo_de_vinculacion",
+        }
+    }
+}
+
 impl Invocacion {
     /// El subcomando reconocido.
     pub fn subcomando(&self) -> Subcomando {
@@ -222,6 +257,10 @@ impl Invocacion {
     /// El valor de `--motivo`, si fue aportado.
     pub fn motivo(&self) -> Option<&str> {
         self.motivo.as_deref()
+    }
+    /// El método de emparejamiento elegido, si fue aportado.
+    pub fn metodo(&self) -> Option<MetodoDeEmparejamiento> {
+        self.metodo
     }
     /// Si el operador pidió el modo de simulación (`--simular`).
     pub fn simular(&self) -> bool {
@@ -295,6 +334,12 @@ pub enum ErrorDeArgumentos {
     /// refactor de un ayudante de mensajes compartido puede desviar el texto sin que las
     /// pruebas del mensaje exacto se pongan rojas.
     CopiaEsSessionsDb,
+    /// El valor aportado a `--metodo` no corresponde a ningún método de emparejamiento conocido.
+    ValorDeOpcionInvalido {
+        subcomando: Subcomando,
+        opcion: String,
+        valor: String,
+    },
 }
 
 impl fmt::Display for ErrorDeArgumentos {
@@ -351,6 +396,15 @@ impl fmt::Display for ErrorDeArgumentos {
             ErrorDeArgumentos::CopiaEsSessionsDb => {
                 f.write_str("el reporte sólo lee copias VACUUM INTO, nunca sessions.db")
             }
+            ErrorDeArgumentos::ValorDeOpcionInvalido {
+                subcomando,
+                opcion,
+                valor,
+            } => write!(
+                f,
+                "valor inválido para «{opcion}» en «{valor}» para «{}» (valores admitidos: qr, codigo_de_vinculacion)",
+                subcomando.nombre_en_cli()
+            ),
         }
     }
 }
@@ -366,7 +420,7 @@ Subcomandos:
   pause       --id <cell_id>                Suspender temporalmente una célula.
   unpause     --id <cell_id>                Reactivar una célula.
   terminate   --id <cell_id> --confirmar    Eliminar definitivamente una célula.
-  rebind      --id <cell_id> --motivo <texto> --confirmar
+  rebind      --id <cell_id> --motivo <texto> --confirmar [--metodo qr|codigo_de_vinculacion]
                                               Sustituir el número de una célula.
   list                                        Listar las células conocidas.
   status      --id <cell_id>                Mostrar el estado de una célula.
@@ -721,6 +775,7 @@ fn dias_desde_la_epoca(año: i64, mes: u32, día: u32) -> i64 {
 struct OpcionesRecogidas {
     id: Option<String>,
     motivo: Option<String>,
+    metodo: Option<String>,
     simular: bool,
     confirmar: Option<bool>,
 }
@@ -731,6 +786,7 @@ fn extraer_opciones(
 ) -> Result<OpcionesRecogidas, ErrorDeArgumentos> {
     let mut id: Option<String> = None;
     let mut motivo: Option<String> = None;
+    let mut metodo: Option<String> = None;
     let mut simular = false;
     let mut confirmar: Option<bool> = None;
     let mut i = 0;
@@ -752,6 +808,13 @@ fn extraer_opciones(
             i += 1;
             continue;
         }
+        if let Some(valor) = arg.strip_prefix("--metodo=") {
+            rechazar_si_repetido(&metodo, subcomando, "--metodo")?;
+            rechazar_si_vacio(valor, subcomando, "--metodo")?;
+            metodo = Some(valor.to_string());
+            i += 1;
+            continue;
+        }
         if arg == "--id" {
             rechazar_si_repetido(&id, subcomando, "--id")?;
             let valor = tomar_valor(argumentos, i, subcomando, "--id")?;
@@ -763,6 +826,13 @@ fn extraer_opciones(
             rechazar_si_repetido(&motivo, subcomando, "--motivo")?;
             let valor = tomar_valor(argumentos, i, subcomando, "--motivo")?;
             motivo = Some(valor.to_string());
+            i += 2;
+            continue;
+        }
+        if arg == "--metodo" {
+            rechazar_si_repetido(&metodo, subcomando, "--metodo")?;
+            let valor = tomar_valor(argumentos, i, subcomando, "--metodo")?;
+            metodo = Some(valor.to_string());
             i += 2;
             continue;
         }
@@ -803,6 +873,7 @@ fn extraer_opciones(
     Ok(OpcionesRecogidas {
         id,
         motivo,
+        metodo,
         simular,
         confirmar,
     })
@@ -870,6 +941,12 @@ fn validar_opciones(
             opcion: "--motivo".to_string(),
         });
     }
+    if opciones.metodo.is_some() && !subcomando.admite_metodo() {
+        return Err(ErrorDeArgumentos::OpcionNoAdmitida {
+            subcomando,
+            opcion: "--metodo".to_string(),
+        });
+    }
     if opciones.confirmar.is_some() && !subcomando.admite_confirmar() {
         return Err(ErrorDeArgumentos::OpcionNoAdmitida {
             subcomando,
@@ -894,11 +971,40 @@ fn validar_opciones(
             opcion: "--confirmar".to_string(),
         });
     }
+    // `--metodo` es opcional: cuando `cell rebind` no lo aporta, se asume `qr`.
+    let metodo = match opciones.metodo.as_deref() {
+        Some(valor) => Some(parsear_metodo(valor, subcomando)?),
+        None => {
+            if subcomando == Subcomando::Reemparejar {
+                Some(MetodoDeEmparejamiento::Qr)
+            } else {
+                None
+            }
+        }
+    };
     Ok(Invocacion {
         subcomando,
         id: opciones.id.clone(),
         motivo: opciones.motivo.clone(),
+        metodo,
         simular: opciones.simular,
         confirmar: opciones.confirmar.unwrap_or(false),
     })
+}
+
+/// Traduce el valor textual de `--metodo` a la variante correspondiente, o rechaza con
+/// [`ErrorDeArgumentos::ValorDeOpcionInvalido`] si no es `qr` ni `codigo_de_vinculacion`.
+fn parsear_metodo(
+    valor: &str,
+    subcomando: Subcomando,
+) -> Result<MetodoDeEmparejamiento, ErrorDeArgumentos> {
+    match valor {
+        "qr" => Ok(MetodoDeEmparejamiento::Qr),
+        "codigo_de_vinculacion" => Ok(MetodoDeEmparejamiento::CodigoDeVinculacion),
+        otro => Err(ErrorDeArgumentos::ValorDeOpcionInvalido {
+            subcomando,
+            opcion: "--metodo".to_string(),
+            valor: otro.to_string(),
+        }),
+    }
 }

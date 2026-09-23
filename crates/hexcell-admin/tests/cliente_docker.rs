@@ -534,3 +534,183 @@ fn crear_e_iniciar_con_opciones_elimina_el_contenedor_si_falla_el_arranque() {
         ]
     );
 }
+
+// ============================================================================
+// `leer_salida_estandar` y `crear_e_iniciar_contenedor_con_volumen` (HEX-085-b).
+// ============================================================================
+
+/// `leer_salida_estandar` envía `GET /containers/<id>/logs?stdout=1&stderr=0` y demultiplexa un
+/// cuerpo con DOS tramas (stdout con «hola» y stderr ignorado) devolviendo solo los bytes de stdout.
+#[test]
+fn leer_salida_estandar_demultiplexa_y_se_solo_con_stdout() {
+    let servidor = ServidorDockerFalso::nuevo("logs-demux");
+    let ruta = servidor.ruta();
+    let cuerpo_demux: &'static [u8] = Box::leak(
+        [
+            // Trama stdout (flujo = 1): «hola» (4 bytes).
+            &[1u8, 0, 0, 0, 0, 0, 0, 4, b'h', b'o', b'l', b'a'][..],
+            // Trama stderr (flujo = 2): «error» (ignorada, 5 bytes).
+            &[2u8, 0, 0, 0, 0, 0, 0, 5, b'e', b'r', b'r', b'o', b'r'][..],
+        ]
+        .concat()
+        .into_boxed_slice(),
+    );
+    let hilo = std::thread::spawn(move || {
+        servidor.atender(Guion::ConCuerpo {
+            estado: 200,
+            razon: "OK",
+            cuerpo: cuerpo_demux,
+        })
+    });
+
+    let cliente = ClienteDocker::nuevo(ruta);
+    let salida = cliente.leer_salida_estandar("abc123").unwrap();
+    assert_eq!(salida, b"hola");
+
+    let peticion = hilo.join().unwrap();
+    assert_eq!(peticion.metodo, "GET");
+    assert_eq!(
+        peticion.objetivo,
+        "/containers/abc123/logs?stdout=1&stderr=0"
+    );
+}
+
+/// Un encabezado de trama truncado produce `RespuestaMalformada`, nunca un pánico.
+#[test]
+fn leer_salida_estandar_encabezado_truncado_es_respuesta_malformada() {
+    let servidor = ServidorDockerFalso::nuevo("logs-truncado");
+    let ruta = servidor.ruta();
+    let hilo = std::thread::spawn(move || {
+        servidor.atender(Guion::ConCuerpo {
+            estado: 200,
+            razon: "OK",
+            // Solo 3 bytes: el encabezado completo requiere 8.
+            cuerpo: &[1, 0, 0],
+        })
+    });
+
+    let cliente = ClienteDocker::nuevo(ruta);
+    let resultado = cliente.leer_salida_estandar("abc123");
+    assert!(matches!(
+        resultado,
+        Err(ErrorDeClienteDocker::RespuestaMalformada { .. })
+    ));
+
+    hilo.join().unwrap();
+}
+
+/// `crear_e_iniciar_contenedor_con_volumen` emite el montaje del volumen en el cuerpo de creación.
+#[test]
+fn crear_e_iniciar_contenedor_con_volumen_emite_el_mount() {
+    let servidor = ServidorDockerFalso::nuevo("crear-con-volumen");
+    let ruta = servidor.ruta();
+    let hilo = std::thread::spawn(move || {
+        let crear = servidor.atender(Guion::ConCuerpo {
+            estado: 201,
+            razon: "Created",
+            cuerpo: br#"{"Id":"rm1","Warnings":[]}"#,
+        });
+        let iniciar = servidor.atender(sin_cuerpo(204, "No Content"));
+        (crear, iniciar)
+    });
+
+    let cliente = ClienteDocker::nuevo(ruta);
+    let opciones = OpcionesDeContenedor {
+        red: "none".to_string(),
+        cmd: vec![
+            "rm".to_string(),
+            "-f".to_string(),
+            "/var/lib/hexcell/sqlstore.db".to_string(),
+        ],
+    };
+    let resultado = cliente
+        .crear_e_iniciar_contenedor_con_volumen(
+            "alpine:3",
+            opciones,
+            "volumen-datos-celula-x7k9m2",
+            "/var/lib/hexcell",
+        )
+        .unwrap();
+
+    assert_eq!(
+        resultado,
+        ResultadoDeArranque::Iniciado {
+            id_contenedor: "rm1".to_string()
+        }
+    );
+
+    let (crear, iniciar) = hilo.join().unwrap();
+    assert_eq!(crear.objetivo, "/containers/create");
+    let cuerpo: serde_json::Value = serde_json::from_slice(&crear.cuerpo).unwrap();
+    assert_eq!(cuerpo["Image"], "alpine:3");
+    assert_eq!(cuerpo["HostConfig"]["NetworkMode"], "none");
+    assert_eq!(
+        cuerpo["HostConfig"]["Mounts"],
+        serde_json::json!([{
+            "Type": "volume",
+            "Source": "volumen-datos-celula-x7k9m2",
+            "Target": "/var/lib/hexcell",
+        }])
+    );
+    assert_eq!(
+        cuerpo["Cmd"],
+        serde_json::json!(["rm", "-f", "/var/lib/hexcell/sqlstore.db"])
+    );
+    assert_eq!(iniciar.objetivo, "/containers/rm1/start");
+}
+
+/// Si el arranque falla al crear con volumen, el contenedor recién creado NO se queda huérfano:
+/// se emite su DELETE en el mejor esfuerzo.
+#[test]
+fn crear_e_iniciar_con_volumen_elimina_el_contenedor_si_falla_el_arranque() {
+    let servidor = ServidorDockerFalso::nuevo("crear-volumen-arranque-falla");
+    let ruta = servidor.ruta();
+    let (emisor, receptor) = std::sync::mpsc::channel();
+    let _hilo = std::thread::spawn(move || {
+        let _ = emisor.send(servidor.atender(Guion::ConCuerpo {
+            estado: 201,
+            razon: "Created",
+            cuerpo: br#"{"Id":"rm-fallo","Warnings":[]}"#,
+        }));
+        let _ = emisor.send(servidor.atender(sin_cuerpo(500, "Internal Server Error")));
+        let _ = emisor.send(servidor.atender(sin_cuerpo(204, "No Content")));
+    });
+
+    let cliente = ClienteDocker::nuevo(ruta);
+    let opciones = OpcionesDeContenedor {
+        red: "none".to_string(),
+        cmd: vec![
+            "rm".to_string(),
+            "-f".to_string(),
+            "/var/lib/hexcell/sqlstore.db".to_string(),
+        ],
+    };
+    let resultado = cliente.crear_e_iniciar_contenedor_con_volumen(
+        "alpine:3",
+        opciones,
+        "vol-1",
+        "/var/lib/hexcell",
+    );
+
+    match resultado {
+        Err(ErrorDeClienteDocker::ErrorDelDaemon { estado: 500, .. }) => {}
+        otro => panic!("se esperaba el 500 del arranque propagado, se obtuvo {otro:?}"),
+    }
+
+    let cota = std::time::Duration::from_secs(10);
+    let mut secuencia = Vec::new();
+    for _ in 0..3 {
+        let peticion = receptor
+            .recv_timeout(cota)
+            .expect("el DELETE del contenedor huérfano debe llegar dentro del límite");
+        secuencia.push(format!("{} {}", peticion.metodo, peticion.objetivo));
+    }
+    assert_eq!(
+        secuencia,
+        vec![
+            "POST /containers/create".to_string(),
+            "POST /containers/rm-fallo/start".to_string(),
+            "DELETE /containers/rm-fallo".to_string(),
+        ]
+    );
+}

@@ -17,7 +17,9 @@ mod comun;
 use std::sync::mpsc::{Receiver, Sender};
 use std::time::Duration;
 
-use hexcell_admin::ciclo_de_vida::{self, DatosDeSondeo, ErrorDeCicloDeVida, NombresDeCelula};
+use hexcell_admin::ciclo_de_vida::{
+    self, DatosDeSondeo, ErrorDeCicloDeVida, NombresDeCelula, PlazosDeReemparejamiento,
+};
 use hexcell_admin::docker::{ClienteDocker, ErrorDeClienteDocker};
 
 use comun::{Guion, PeticionRecibida, ServidorDockerFalso};
@@ -639,5 +641,327 @@ fn retirar_aborta_sin_destruir_nada_si_la_sonda_de_cierre_falla() {
     assert!(
         receptor.recv_timeout(Duration::from_millis(100)).is_err(),
         "no debe haber peticiones de stop/rm tras el fallo del cierre de sesión"
+    );
+}
+
+// ============================================================================
+// `cell rebind` — fase de `preparar_reemparejamiento` (HEX-085-b, D5.2-D5.4).
+// ============================================================================
+
+/// Helper: plazos mínimos para pruebas (cadencia 1 ms, 2 intentos, 2 intentos, tope 2 s).
+fn plazos_de_rebind() -> PlazosDeReemparejamiento {
+    PlazosDeReemparejamiento {
+        cadencia_ms: 1,
+        intentos_de_pausa: 2,
+        intentos_de_emparejamiento: 2,
+        tope_de_confirmacion_s: 2,
+    }
+}
+
+/// Envuelve un cuerpo como una trama stdout del formato multiplexado de Docker (encabezado de 8
+/// bytes + datos), para simular la respuesta de `GET /containers/{id}/logs`.
+fn trama_stdout(cuerpo: &[u8]) -> Vec<u8> {
+    let mut trama = Vec::with_capacity(8 + cuerpo.len());
+    trama.push(1u8); // stdout
+    trama.extend_from_slice(&[0u8, 0, 0]); // relleno
+    trama.extend_from_slice(&(cuerpo.len() as u32).to_be_bytes());
+    trama.extend_from_slice(cuerpo);
+    trama
+}
+
+/// Helper: respuesta de logs del demonio falso con el cuerpo dado como única trama stdout.
+fn guion_de_logs(cuerpo: &[u8]) -> Guion {
+    let trama: &'static [u8] = Box::leak(trama_stdout(cuerpo).into_boxed_slice());
+    Guion::ConCuerpo {
+        estado: 200,
+        razon: "OK",
+        cuerpo: trama,
+    }
+}
+
+/// Inspección del núcleo para rebind: con red, puerto de admin y volumen del accesorio.
+fn inspeccion_del_nucleo_para_rebind() -> Guion {
+    Guion::ConCuerpo {
+        estado: 200,
+        razon: "OK",
+        cuerpo: br#"{"State":{"Status":"running"},"NetworkSettings":{"Networks":{"red-de-rebind":{"NetworkID":"n1"}}},"Config":{"Env":["PATH=/usr/bin","HEXCELL_DIRECCION_ADMIN=0.0.0.0:7070"]},"Mounts":[{"Type":"volume","Name":"vol-rebind-9k2m","Destination":"/var/lib/hexcell"}]}"#,
+    }
+}
+
+/// `resolver_datos_de_celula_para_rebind` lee red, puerto y volumen de la inspección del núcleo.
+#[test]
+fn resolver_datos_de_celula_para_rebind_lee_red_puerto_y_volumen() {
+    let servidor = ServidorDockerFalso::nuevo("resolver-rebind");
+    let ruta = servidor.ruta();
+    let nombres = NombresDeCelula::nueva("c1");
+    let (emisor, receptor) = std::sync::mpsc::channel();
+    let _hilo = std::thread::spawn(move || {
+        let _ = emisor.send(servidor.atender(inspeccion_del_nucleo_para_rebind()));
+        let _ = emisor.send(servidor.atender(Guion::ConCuerpo {
+            estado: 200,
+            razon: "OK",
+            cuerpo: br#"{"State":{"Status":"running"}}"#,
+        }));
+    });
+
+    let cliente = ClienteDocker::nuevo(ruta);
+    let datos = ciclo_de_vida::resolver_datos_de_celula_para_rebind(&cliente, &nombres).unwrap();
+    assert_eq!(datos.red, "red-de-rebind");
+    assert_eq!(datos.puerto_admin, "7070");
+    assert_eq!(datos.volumen, "vol-rebind-9k2m");
+
+    assert_eq!(recibir(&receptor).objetivo, "/containers/c1-nucleo/json");
+    assert_eq!(recibir(&receptor).objetivo, "/containers/c1-sidecar/json");
+}
+
+/// AC-8: `preparar_reemparejamiento` envía `POST /admin/envio/pausa {"accion":"pausar"}` y, si tiene
+/// éxito, intenta el cierre de sesión como mejor esfuerzo. Con la pausa respondiendo `aplicado`, no
+/// devuelve aviso de cierre.
+#[test]
+fn preparar_reemparejamiento_envia_pausar_y_cierra_sesion() {
+    let servidor = ServidorDockerFalso::nuevo("preparar-rebind");
+    let ruta = servidor.ruta();
+    let nombres = NombresDeCelula::nueva("c1");
+    let (emisor, receptor) = std::sync::mpsc::channel();
+    let _hilo = std::thread::spawn(move || {
+        // Inspección del núcleo (para verificar que está corriendo).
+        let _ = emisor.send(servidor.atender(inspeccion_del_nucleo_para_rebind()));
+        // Sonda de pausa (create, start, wait, logs, delete).
+        let _ = emisor.send(servidor.atender(Guion::ConCuerpo {
+            estado: 201,
+            razon: "Created",
+            cuerpo: br#"{"Id":"sonda-pausa","Warnings":[]}"#,
+        }));
+        let _ = emisor.send(servidor.atender(sin_cuerpo(204, "No Content")));
+        let _ = emisor.send(servidor.atender(Guion::ConCuerpo {
+            estado: 200,
+            razon: "OK",
+            cuerpo: br#"{"StatusCode":0}"#,
+        }));
+        let _ = emisor.send(servidor.atender(guion_de_logs(
+            br#"{"resultado":"aplicado","accion":"pausar"}"#,
+        )));
+        let _ = emisor.send(servidor.atender(sin_cuerpo(204, "No Content")));
+        // Sonda de cierre (create, start, wait, delete).
+        let _ = emisor.send(servidor.atender(Guion::ConCuerpo {
+            estado: 201,
+            razon: "Created",
+            cuerpo: br#"{"Id":"sonda-cierre","Warnings":[]}"#,
+        }));
+        let _ = emisor.send(servidor.atender(sin_cuerpo(204, "No Content")));
+        let _ = emisor.send(servidor.atender(Guion::ConCuerpo {
+            estado: 200,
+            razon: "OK",
+            cuerpo: br#"{"StatusCode":0}"#,
+        }));
+        let _ = emisor.send(servidor.atender(sin_cuerpo(204, "No Content")));
+    });
+
+    let cliente = ClienteDocker::nuevo(ruta);
+    let datos = ciclo_de_vida::DatosDeCelulaParaRebind {
+        red: "red-de-rebind".to_string(),
+        puerto_admin: "7070".to_string(),
+        volumen: "vol-rebind".to_string(),
+    };
+    let aviso = ciclo_de_vida::preparar_reemparejamiento(
+        &cliente,
+        &nombres,
+        &datos,
+        "sonda-de-prueba:1",
+        40,
+    )
+    .unwrap();
+
+    assert!(
+        aviso.is_none(),
+        "con pausa aplicada y cierre 0 no debe haber aviso"
+    );
+
+    // Descartar la inspección del núcleo.
+    assert_eq!(recibir(&receptor).objetivo, "/containers/c1-nucleo/json");
+    // Verificar el cuerpo de la sonda de pausa: POST /admin/envio/pausa {"accion":"pausar"}.
+    let crear_pausa = recibir(&receptor);
+    assert_eq!(crear_pausa.objetivo, "/containers/create");
+    let cuerpo: serde_json::Value = serde_json::from_slice(&crear_pausa.cuerpo).unwrap();
+    assert_eq!(
+        cuerpo["Cmd"],
+        serde_json::json!([
+            "wget",
+            "-q",
+            "-O",
+            "-",
+            "-T",
+            "40",
+            "--post-data",
+            r#"{"accion":"pausar"}"#,
+            "http://c1-nucleo:7070/admin/envio/pausa"
+        ])
+    );
+}
+
+/// AC-8: una pausa que responde `fallido` aborta con `PausaDeEnvioFallida` y NO emite el cierre de
+/// sesión.
+#[test]
+fn preparar_reemparejamiento_falla_si_pausa_responde_fallido() {
+    let servidor = ServidorDockerFalso::nuevo("preparar-pausa-fallida");
+    let ruta = servidor.ruta();
+    let nombres = NombresDeCelula::nueva("c1");
+    let (emisor, receptor) = std::sync::mpsc::channel();
+    let _hilo = std::thread::spawn(move || {
+        // Inspección del núcleo.
+        let _ = emisor.send(servidor.atender(inspeccion_del_nucleo_para_rebind()));
+        // Sonda de pausa.
+        let _ = emisor.send(servidor.atender(Guion::ConCuerpo {
+            estado: 201,
+            razon: "Created",
+            cuerpo: br#"{"Id":"sonda-pausa","Warnings":[]}"#,
+        }));
+        let _ = emisor.send(servidor.atender(sin_cuerpo(204, "No Content")));
+        let _ = emisor.send(servidor.atender(Guion::ConCuerpo {
+            estado: 200,
+            razon: "OK",
+            cuerpo: br#"{"StatusCode":0}"#,
+        }));
+        let _ = emisor.send(servidor.atender(guion_de_logs(
+            br#"{"resultado":"fallido","accion":"pausar","motivo":"sin_conexion"}"#,
+        )));
+        let _ = emisor.send(servidor.atender(sin_cuerpo(204, "No Content")));
+    });
+
+    let cliente = ClienteDocker::nuevo(ruta);
+    let datos = ciclo_de_vida::DatosDeCelulaParaRebind {
+        red: "red-de-rebind".to_string(),
+        puerto_admin: "7070".to_string(),
+        volumen: "vol-rebind".to_string(),
+    };
+    let resultado = ciclo_de_vida::preparar_reemparejamiento(
+        &cliente,
+        &nombres,
+        &datos,
+        "sonda-de-prueba:1",
+        40,
+    );
+
+    match resultado {
+        Err(ErrorDeCicloDeVida::PausaDeEnvioFallida { motivo }) => {
+            assert_eq!(motivo, "sin_conexion");
+        }
+        otro => panic!("se esperaba PausaDeEnvioFallida, se obtuvo {otro:?}"),
+    }
+
+    // NO debe haber sonda de cierre: 1 inspección + 5 peticiones de la sonda de pausa.
+    for _ in 0..6 {
+        recibir(&receptor);
+    }
+    assert!(
+        receptor.recv_timeout(Duration::from_millis(100)).is_err(),
+        "tras pausa fallida no debe emitirse el cierre de sesión"
+    );
+}
+
+/// AC-9: un cierre de sesión que sale con código distinto de cero devuelve un aviso (no un error) y
+/// la secuencia continúa.
+#[test]
+fn preparar_reemparejamiento_avisa_cuando_cierre_falla_pero_continua() {
+    let servidor = ServidorDockerFalso::nuevo("preparar-cierre-aviso");
+    let ruta = servidor.ruta();
+    let nombres = NombresDeCelula::nueva("c1");
+    let (emisor, receptor) = std::sync::mpsc::channel();
+    let _hilo = std::thread::spawn(move || {
+        // Inspección del núcleo.
+        let _ = emisor.send(servidor.atender(inspeccion_del_nucleo_para_rebind()));
+        // Sonda de pausa (éxito).
+        let _ = emisor.send(servidor.atender(Guion::ConCuerpo {
+            estado: 201,
+            razon: "Created",
+            cuerpo: br#"{"Id":"sonda-pausa","Warnings":[]}"#,
+        }));
+        let _ = emisor.send(servidor.atender(sin_cuerpo(204, "No Content")));
+        let _ = emisor.send(servidor.atender(Guion::ConCuerpo {
+            estado: 200,
+            razon: "OK",
+            cuerpo: br#"{"StatusCode":0}"#,
+        }));
+        let _ = emisor.send(servidor.atender(guion_de_logs(
+            br#"{"resultado":"aplicado","accion":"pausar"}"#,
+        )));
+        let _ = emisor.send(servidor.atender(sin_cuerpo(204, "No Content")));
+        // Sonda de cierre (falla con código 1).
+        let _ = emisor.send(servidor.atender(Guion::ConCuerpo {
+            estado: 201,
+            razon: "Created",
+            cuerpo: br#"{"Id":"sonda-cierre","Warnings":[]}"#,
+        }));
+        let _ = emisor.send(servidor.atender(sin_cuerpo(204, "No Content")));
+        let _ = emisor.send(servidor.atender(Guion::ConCuerpo {
+            estado: 200,
+            razon: "OK",
+            cuerpo: br#"{"StatusCode":1}"#,
+        }));
+        let _ = emisor.send(servidor.atender(sin_cuerpo(204, "No Content")));
+    });
+
+    let cliente = ClienteDocker::nuevo(ruta);
+    let datos = ciclo_de_vida::DatosDeCelulaParaRebind {
+        red: "red-de-rebind".to_string(),
+        puerto_admin: "7070".to_string(),
+        volumen: "vol-rebind".to_string(),
+    };
+    let aviso = ciclo_de_vida::preparar_reemparejamiento(
+        &cliente,
+        &nombres,
+        &datos,
+        "sonda-de-prueba:1",
+        40,
+    )
+    .unwrap();
+
+    assert!(
+        aviso.is_some(),
+        "un cierre con código 1 debe generar un aviso"
+    );
+    assert!(aviso.unwrap().contains("código 1"));
+}
+
+/// `guion_de_peticion_http` produce el literal exacto de `wget` de disparo único con cuerpo JSON.
+#[test]
+fn guion_de_peticion_http_con_cuerpo_es_el_literal_exacto() {
+    let guion = ciclo_de_vida::guion_de_peticion_http(
+        "http://c1-nucleo:7070/admin/sesion/emparejamiento",
+        Some(r#"{"metodo":"qr"}"#),
+        40,
+    );
+    assert_eq!(
+        guion,
+        vec![
+            "wget".to_string(),
+            "-q".to_string(),
+            "-O".to_string(),
+            "-".to_string(),
+            "-T".to_string(),
+            "40".to_string(),
+            "--post-data".to_string(),
+            r#"{"metodo":"qr"}"#.to_string(),
+            "http://c1-nucleo:7070/admin/sesion/emparejamiento".to_string(),
+        ]
+    );
+}
+
+/// `guion_de_peticion_http` sin cuerpo omite `--post-data` (para `GET /admin/sesion`).
+#[test]
+fn guion_de_peticion_http_sin_cuerpo_omite_post_data() {
+    let guion =
+        ciclo_de_vida::guion_de_peticion_http("http://c1-nucleo:7070/admin/sesion", None, 40);
+    assert_eq!(
+        guion,
+        vec![
+            "wget".to_string(),
+            "-q".to_string(),
+            "-O".to_string(),
+            "-".to_string(),
+            "-T".to_string(),
+            "40".to_string(),
+            "http://c1-nucleo:7070/admin/sesion".to_string(),
+        ]
     );
 }
