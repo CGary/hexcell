@@ -10,7 +10,8 @@ mod comun;
 
 use hexcell_admin::almacen_plano_de_control::{
     AlmacenDelPlanoDeControl, ErrorDeAlmacenDePlano, MOTIVO_DE_ALTA_IMPLICITA,
-    VERSION_DE_ESQUEMA_DEL_PLANO, estado_desde_etiqueta, etiqueta_persistida,
+    MOTIVO_DE_EMPAREJAMIENTO_CONFIRMADO, VERSION_DE_ESQUEMA_DEL_PLANO, estado_desde_etiqueta,
+    etiqueta_persistida,
 };
 use hexcell_admin::estado_de_celula::EstadoDeCelula;
 
@@ -371,6 +372,133 @@ fn leer_sustituciones_devuelve_el_historial_ordenado() {
         ["linea devuelta 100", "baneo permanente 200"],
         "el historial sale ordenado por registrado_ms ascendente"
     );
+}
+
+/// AC-14/AC-15 (HEX-085-b): `confirmar_reemparejamiento` escribe la fila de `celulas` como
+/// `EnEjecucion` con motivo `emparejamiento_confirmado`, una transición `Reemparejando` →
+/// `EnEjecucion` y una fila de `sustituciones` con el motivo del operador, todo atómicamente.
+#[test]
+fn confirmar_reemparejamiento_escribe_tres_filas_atomicas() {
+    let almacen = AlmacenTemporal::nuevo("conf-reemp");
+    let a = AlmacenDelPlanoDeControl::abrir(almacen.ruta()).unwrap();
+
+    // Parte de una célula en `Reemparejando`.
+    a.registrar_transicion(
+        "c1",
+        Some(EstadoDeCelula::EnEjecucion),
+        EstadoDeCelula::Reemparejando,
+        "baneo-permanente",
+        1000,
+    )
+    .unwrap();
+
+    a.confirmar_reemparejamiento("c1", "baneo-permanente", 5000)
+        .unwrap();
+
+    let fila = a.leer_estado("c1").unwrap().unwrap();
+    assert_eq!(fila.estado, EstadoDeCelula::EnEjecucion);
+    assert_eq!(fila.motivo, MOTIVO_DE_EMPAREJAMIENTO_CONFIRMADO);
+    assert_eq!(fila.actualizado_ms, 5000);
+
+    let sustituciones = a.leer_sustituciones("c1").unwrap();
+    assert_eq!(sustituciones.len(), 1);
+    assert_eq!(sustituciones[0].id_celula, "c1");
+    assert_eq!(sustituciones[0].motivo, "baneo-permanente");
+    assert_eq!(sustituciones[0].registrado_ms, 5000);
+}
+
+/// AC-14 (blueprint, HEX-085-b): si la inserción en `sustituciones` falla, TODA la transacción de
+/// `confirmar_reemparejamiento` revierte: la fila de `celulas` queda en `Reemparejando` (no pasa a
+/// `EnEjecucion`) y no se añade la transición de confirmación. Se fuerza el fallo eliminando la
+/// tabla `sustituciones` desde una conexión aparte antes de llamar a la función bajo prueba, así
+/// que el fallo es real (el motor SQLite lo rechaza), no simulado.
+#[test]
+fn confirmar_reemparejamiento_revierte_si_falla_la_insercion_en_sustituciones() {
+    let temporal = AlmacenTemporal::nuevo("conf-reemp-rollback");
+    let a = AlmacenDelPlanoDeControl::abrir(temporal.ruta()).unwrap();
+
+    a.registrar_transicion(
+        "c1",
+        Some(EstadoDeCelula::EnEjecucion),
+        EstadoDeCelula::Reemparejando,
+        "baneo-permanente",
+        1000,
+    )
+    .unwrap();
+
+    // Forzar el fallo de la tercera escritura desde una conexión aparte: dejar la tabla
+    // `sustituciones` ausente mientras `celulas` y `transiciones` siguen intactas.
+    rusqlite::Connection::open(temporal.ruta())
+        .unwrap()
+        .execute_batch("DROP TABLE sustituciones;")
+        .unwrap();
+
+    let error = a
+        .confirmar_reemparejamiento("c1", "baneo-permanente", 5000)
+        .err()
+        .expect("la inserción en una tabla ausente debe fallar");
+    assert!(
+        matches!(error, ErrorDeAlmacenDePlano::Sqlite { .. }),
+        "se esperaba el rechazo tipado de SQLite: {error:?}"
+    );
+
+    let fila = a.leer_estado("c1").unwrap().unwrap();
+    assert_eq!(
+        fila.estado,
+        EstadoDeCelula::Reemparejando,
+        "la transacción debe haber revertido: la fila sigue en Reemparejando"
+    );
+    assert_eq!(
+        fila.motivo, "baneo-permanente",
+        "el motivo tampoco cambió: quedó el de la transición original"
+    );
+
+    drop(a);
+    assert_eq!(
+        transiciones(&lector(&temporal)),
+        ["c1 en_ejecucion>reemparejando baneo-permanente 1000"],
+        "no debe haberse añadido la transición de confirmación tras el rollback"
+    );
+}
+
+/// AC-15 (HEX-085-b): la tabla `sustituciones` guarda exactamente las columnas `id`, `id_celula`,
+/// `motivo`, `registrado_ms`, y ninguna de ellas contiene un número de teléfono ni un valor de
+/// emparejamiento.
+#[test]
+fn sustituciones_no_guarda_ni_telefono_ni_valor_de_emparejamiento() {
+    let almacen = AlmacenTemporal::nuevo("sustituciones-limpias");
+    let a = AlmacenDelPlanoDeControl::abrir(almacen.ruta()).unwrap();
+
+    a.confirmar_reemparejamiento("cel-42", "cambio de número por baneo", 7000)
+        .unwrap();
+
+    let sustituciones = a.leer_sustituciones("cel-42").unwrap();
+    assert_eq!(sustituciones.len(), 1);
+    let fila = &sustituciones[0];
+    // Ningún texto almacenado en sustituciones parece un teléfono ni un código de emparejamiento.
+    assert_ne!(fila.motivo, "+34600123456");
+    assert_ne!(fila.motivo, "ABCD-EFGH");
+    // El motivo es literalmente el --motivo del operador.
+    assert_eq!(fila.motivo, "cambio de número por baneo");
+
+    // La tabla sustituciones tiene exactamente 4 columnas.
+    let conexion = {
+        // Abrir una conexión de sólo lectura independiente para consultar el esquema.
+        rusqlite::Connection::open_with_flags(
+            almacen.ruta(),
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+        )
+        .unwrap()
+    };
+    let mut sentencia = conexion
+        .prepare("PRAGMA table_info(sustituciones)")
+        .unwrap();
+    let columnas: Vec<String> = sentencia
+        .query_map([], |f| f.get::<_, String>(1))
+        .unwrap()
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+    assert_eq!(columnas, vec!["id", "id_celula", "motivo", "registrado_ms"]);
 }
 
 /// Guarda de fuente: ni el módulo ni la migración contienen tokens de transporte.

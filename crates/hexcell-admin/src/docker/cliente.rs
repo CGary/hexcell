@@ -227,12 +227,84 @@ impl ClienteDocker {
         comprobar_exito(&respuesta)
     }
 
-    /// Elimina un volumen por su nombre.
+    /// Elimina un volumen por su nombres.
     pub fn eliminar_volumen(&self, nombre: &str) -> Result<(), ErrorDeClienteDocker> {
         let ruta = format!("/volumes/{nombre}");
         let mut conexion = self.conectar()?;
         let respuesta = conexion.enviar("DELETE", &ruta, None)?;
         comprobar_exito(&respuesta)
+    }
+
+    /// Lee la salida estándar de un contenedor y la devuelve como bytes, demultiplexando el flujo
+    /// con encabezado de 8 bytes que devuelve `GET /containers/{id}/logs`.
+    ///
+    /// El demonio multiplexa `stdout` y `stderr` en un mismo flujo: cada trama va precedida de un
+    /// encabezado de 8 bytes (byte de flujo, 3 bytes de relleno, u32 big-endian con la longitud).
+    /// Esta función se queda sólo con las tramas de `stdout` (flujo = 1) y descarta las de `stderr`
+    /// (flujo = 2). Si el encabezado está truncado o el cuerpo no llega completo, devuelve
+    /// [`ErrorDeClienteDocker::RespuestaMalformada`] en vez de entrar en pánico.
+    ///
+    /// La petición consulta `stdout=1&stderr=0`, pero la demultiplexación se mantiene como defensa
+    /// en profundidad: el demonio podría ignorar `stderr=0` y servir ambos flujos.
+    pub fn leer_salida_estandar(&self, id: &str) -> Result<Vec<u8>, ErrorDeClienteDocker> {
+        let ruta = format!("/containers/{id}/logs?stdout=1&stderr=0");
+        let mut conexion = self.conectar()?;
+        let respuesta = conexion.enviar("GET", &ruta, None)?;
+        comprobar_exito(&respuesta)?;
+        demultiplexar_salida_estandar(&respuesta.cuerpo)
+    }
+
+    /// Crea e inicia un contenedor montando un volumen de Docker en la ruta de destino indicada,
+    /// con la red y el comando de [`OpcionesDeContenedor`].
+    ///
+    /// Comparte el contrato de creación/limpieza de
+    /// [`Self::crear_e_iniciar_contenedor_con_opciones`]: si el arranque falla, el contenedor se
+    /// elimina en el mejor esfuerzo. La diferencia es el montaje: `HostConfig.Mounts` lleva una
+    /// entrada de tipo `volume` con el nombre del volumen y el punto de destino.
+    ///
+    /// El contenedor hermano que descarta `sqlstore.db` (tarea 13 de A-6, paso 6 de D5) usa esta
+    /// función para montar el volumen de datos y ejecutar `rm -f` sobre los archivos del sidecar.
+    pub fn crear_e_iniciar_contenedor_con_volumen(
+        &self,
+        imagen: &str,
+        opciones: OpcionesDeContenedor,
+        volumen: &str,
+        destino: &str,
+    ) -> Result<ResultadoDeArranque, ErrorDeClienteDocker> {
+        let cuerpo = serde_json::json!({
+            "Image": imagen,
+            "HostConfig": {
+                "NetworkMode": opciones.red,
+                "Mounts": [{ "Type": "volume", "Source": volumen, "Target": destino }],
+            },
+            "Cmd": opciones.cmd,
+        })
+        .to_string();
+        let respuesta_de_creacion = {
+            let mut conexion = self.conectar()?;
+            conexion.enviar("POST", "/containers/create", Some(&cuerpo))?
+        };
+        let id_contenedor = extraer_id_de_creacion(&respuesta_de_creacion)?;
+        let ruta = format!("/containers/{id_contenedor}/start");
+        let respuesta = match self
+            .conectar()
+            .and_then(|mut conexion| conexion.enviar("POST", &ruta, None))
+        {
+            Ok(respuesta) => respuesta,
+            Err(error) => {
+                let _ = self.eliminar_contenedor(&id_contenedor);
+                return Err(error);
+            }
+        };
+        match respuesta.estado {
+            204 => Ok(ResultadoDeArranque::Iniciado { id_contenedor }),
+            304 => Ok(ResultadoDeArranque::YaEnEjecucion { id_contenedor }),
+            _ => {
+                let error = clasificar_estado(&respuesta);
+                let _ = self.eliminar_contenedor(&id_contenedor);
+                Err(error)
+            }
+        }
     }
 
     fn conectar(&self) -> Result<ConexionDocker, ErrorDeClienteDocker> {
@@ -278,4 +350,48 @@ fn extraer_id_de_creacion(respuesta: &RespuestaHttp) -> Result<String, ErrorDeCl
         .ok_or_else(|| ErrorDeClienteDocker::RespuestaMalformada {
             motivo: "el cuerpo de creación no lleva el campo Id".to_string(),
         })
+}
+
+/// Demultiplexa el flujo de registros de Docker (encabezado de 8 bytes por trama) y concatena
+/// sólo las tramas de `stdout` (byte de flujo = 1).
+///
+/// Formato de cada trama: `[flujo: u8][relleno: 3 bytes][longitud: u32 big-endian][datos: longitud
+/// bytes]`. Las tramas de `stderr` (flujo = 2) se descartan. Si el cuerpo termina en mitad de un
+/// encabezado o de un cuerpo de trama, devuelve [`ErrorDeClienteDocker::RespuestaMalformada`] sin
+/// entrar en pánico.
+fn demultiplexar_salida_estandar(cuerpo: &[u8]) -> Result<Vec<u8>, ErrorDeClienteDocker> {
+    let mut salida = Vec::new();
+    let mut desplazamiento = 0usize;
+    while desplazamiento < cuerpo.len() {
+        // Encabezado de 8 bytes: necesitamos todos para saber la longitud de la trama.
+        if desplazamiento + 8 > cuerpo.len() {
+            return Err(ErrorDeClienteDocker::RespuestaMalformada {
+                motivo: "encabezado de registro truncado".to_string(),
+            });
+        }
+        let flujo = cuerpo[desplazamiento];
+        let longitud = u32::from_be_bytes([
+            cuerpo[desplazamiento + 4],
+            cuerpo[desplazamiento + 5],
+            cuerpo[desplazamiento + 6],
+            cuerpo[desplazamiento + 7],
+        ]) as usize;
+        let inicio_del_cuerpo = desplazamiento + 8;
+        let fin_del_cuerpo = inicio_del_cuerpo.checked_add(longitud).ok_or_else(|| {
+            ErrorDeClienteDocker::RespuestaMalformada {
+                motivo: "longitud de registro desbordada".to_string(),
+            }
+        })?;
+        if fin_del_cuerpo > cuerpo.len() {
+            return Err(ErrorDeClienteDocker::RespuestaMalformada {
+                motivo: "cuerpo de registro truncado".to_string(),
+            });
+        }
+        if flujo == 1 {
+            // stdout.
+            salida.extend_from_slice(&cuerpo[inicio_del_cuerpo..fin_del_cuerpo]);
+        }
+        desplazamiento = fin_del_cuerpo;
+    }
+    Ok(salida)
 }

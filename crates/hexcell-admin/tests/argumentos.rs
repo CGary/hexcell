@@ -5,7 +5,9 @@
 //! `Vec<String>` propio sin tocar `std::env::args`. Ningún `match` sobre `Subcomando`
 //! tiene brazo comodín.
 
-use hexcell_admin::argumentos::{Comando, ErrorDeArgumentos, Subcomando, analizar};
+use hexcell_admin::argumentos::{
+    Comando, ErrorDeArgumentos, MetodoDeEmparejamiento, Subcomando, analizar,
+};
 
 fn args(snippet: &[&str]) -> Vec<String> {
     snippet.iter().map(|s| (*s).to_string()).collect()
@@ -654,4 +656,229 @@ fn reporte_tokens_convierte_fechas_a_milisegundos_con_anclas_independientes() {
         ]);
         assert_eq!(invocacion.desde_ms(), Some(esperado), "fecha {fecha:?}");
     }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────────────────
+// `cell rebind --metodo` (tarea 13 de la etapa A-6, HEX-085-b, AC-6).
+// ─────────────────────────────────────────────────────────────────────────────────────────
+
+#[test]
+fn rebind_sin_metodo_asume_qr() {
+    let comando = analizar(&args(&[
+        "cell",
+        "rebind",
+        "--id",
+        "c1",
+        "--motivo",
+        "baneo",
+        "--confirmar",
+    ]))
+    .unwrap();
+    let invocacion = match comando {
+        Comando::Cell(i) => i,
+        otro => panic!("se esperaba Cell, llegó {otro:?}"),
+    };
+    assert_eq!(invocacion.metodo(), Some(MetodoDeEmparejamiento::Qr));
+}
+
+#[test]
+fn rebind_con_metodo_codigo_de_vinculacion_en_ambas_ortografias() {
+    for snippet in [
+        &[
+            "cell",
+            "rebind",
+            "--id",
+            "c1",
+            "--motivo",
+            "x",
+            "--confirmar",
+            "--metodo",
+            "codigo_de_vinculacion",
+        ][..],
+        &[
+            "cell",
+            "rebind",
+            "--id",
+            "c1",
+            "--motivo",
+            "x",
+            "--confirmar",
+            "--metodo=codigo_de_vinculacion",
+        ][..],
+    ] {
+        let comando = analizar(&args(snippet)).unwrap();
+        let invocacion = match comando {
+            Comando::Cell(i) => i,
+            otro => panic!("se esperaba Cell, llegó {otro:?}"),
+        };
+        assert_eq!(
+            invocacion.metodo(),
+            Some(MetodoDeEmparejamiento::CodigoDeVinculacion),
+            "snippet {snippet:?}"
+        );
+    }
+}
+
+#[test]
+fn rebind_con_metodo_qr_en_ambas_ortografias() {
+    for snippet in [
+        &[
+            "cell",
+            "rebind",
+            "--id",
+            "c1",
+            "--motivo",
+            "x",
+            "--confirmar",
+            "--metodo",
+            "qr",
+        ][..],
+        &[
+            "cell",
+            "rebind",
+            "--id",
+            "c1",
+            "--motivo",
+            "x",
+            "--confirmar",
+            "--metodo=qr",
+        ][..],
+    ] {
+        let comando = analizar(&args(snippet)).unwrap();
+        let invocacion = match comando {
+            Comando::Cell(i) => i,
+            otro => panic!("se esperaba Cell, llegó {otro:?}"),
+        };
+        assert_eq!(
+            invocacion.metodo(),
+            Some(MetodoDeEmparejamiento::Qr),
+            "snippet {snippet:?}"
+        );
+    }
+}
+
+#[test]
+fn rebind_rechaza_metodo_invalido() {
+    let resultado = analizar(&args(&[
+        "cell",
+        "rebind",
+        "--id",
+        "c1",
+        "--motivo",
+        "x",
+        "--confirmar",
+        "--metodo",
+        "sms",
+    ]));
+    assert_eq!(
+        resultado.unwrap_err(),
+        ErrorDeArgumentos::ValorDeOpcionInvalido {
+            subcomando: Subcomando::Reemparejar,
+            opcion: "--metodo".to_string(),
+            valor: "sms".to_string(),
+        }
+    );
+}
+
+#[test]
+fn metodo_en_pause_es_opcion_no_admitida() {
+    let resultado = analizar(&args(&["cell", "pause", "--id", "c1", "--metodo", "qr"]));
+    assert_eq!(
+        resultado.unwrap_err(),
+        ErrorDeArgumentos::OpcionNoAdmitida {
+            subcomando: Subcomando::Pausar,
+            opcion: "--metodo".to_string(),
+        }
+    );
+}
+
+#[test]
+fn metodo_en_terminate_es_opcion_no_admitida() {
+    let resultado = analizar(&args(&[
+        "cell",
+        "terminate",
+        "--id",
+        "c1",
+        "--confirmar",
+        "--metodo",
+        "qr",
+    ]));
+    assert_eq!(
+        resultado.unwrap_err(),
+        ErrorDeArgumentos::OpcionNoAdmitida {
+            subcomando: Subcomando::Retirar,
+            opcion: "--metodo".to_string(),
+        }
+    );
+}
+
+#[test]
+fn metodo_repetido_es_opcion_repetida() {
+    let resultado = analizar(&args(&[
+        "cell",
+        "rebind",
+        "--id",
+        "c1",
+        "--motivo",
+        "x",
+        "--confirmar",
+        "--metodo",
+        "qr",
+        "--metodo",
+        "codigo_de_vinculacion",
+    ]));
+    assert!(matches!(
+        resultado.unwrap_err(),
+        ErrorDeArgumentos::OpcionRepetida { .. }
+    ));
+}
+
+#[test]
+fn metodo_sin_valor_es_falta_valor() {
+    let resultado = analizar(&args(&[
+        "cell",
+        "rebind",
+        "--id",
+        "c1",
+        "--motivo",
+        "x",
+        "--confirmar",
+        "--metodo",
+    ]));
+    assert!(matches!(
+        resultado.unwrap_err(),
+        ErrorDeArgumentos::FaltaValorDeOpcion { .. }
+    ));
+}
+
+#[test]
+fn metodo_inline_vacio_es_falta_valor() {
+    let resultado = analizar(&args(&[
+        "cell",
+        "rebind",
+        "--id",
+        "c1",
+        "--motivo",
+        "x",
+        "--confirmar",
+        "--metodo=",
+    ]));
+    assert!(matches!(
+        resultado.unwrap_err(),
+        ErrorDeArgumentos::FaltaValorDeOpcion { .. }
+    ));
+}
+
+#[test]
+fn motivo_y_confirmar_siguen_siendo_obligatorios_para_rebind() {
+    // Sin --motivo.
+    assert!(matches!(
+        analizar(&args(&["cell", "rebind", "--id", "c1", "--confirmar"])).unwrap_err(),
+        ErrorDeArgumentos::FaltaOpcionObligatoria { .. }
+    ));
+    // Sin --confirmar.
+    assert!(matches!(
+        analizar(&args(&["cell", "rebind", "--id", "c1", "--motivo", "x"])).unwrap_err(),
+        ErrorDeArgumentos::FaltaOpcionObligatoria { .. }
+    ));
 }
