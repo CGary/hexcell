@@ -196,6 +196,7 @@ Las entradas conservan su numeración; esta sección es la autoridad sobre el or
 * Actualización 2026-09-22: 12 cerrada (HEX-082) con la CLI de `cell terminate` —secuencia destructiva de seis pasos con cierre de sesión mediante contenedor hermano—, dividida en dos hijos: HEX-082-a (ruta del núcleo `POST /admin/sesion/cierre`) y HEX-082-b (CLI y pruebas). Con la tarea 14 (HEX-083) ya fusionada, el gancho `Retirada`/`sesion_cerrada` deja de estar inerte: `cell terminate` persiste esa transición contra el almacén del plano de control (ver el párrafo de cierre de la tarea 12). La cadena restante, con 12, 14 y 23 ya cerradas: 13 → 15 → 18 → 21 → 19.
 * Actualización 2026-09-22: 18 cerrada (HEX-086) con el trabajo `imagenes` de la CI construyendo y etiquetando ambas imágenes sin publicar (`push:false`, `load:true`; la decisión del registro sigue pendiente en STATUS.md) y la guarda `deploy/verificar_imagenes.sh` comprobando el usuario no root y el arranque en frío endurecido, con sus dos autopruebas negativas. Ver la nota de cierre de la tarea 18. La cadena restante, con 12, 14, 18 y 23 ya cerradas: 13 → 15 → 21 → 19.
 * Actualización 2026-09-22: 13 cerrada (HEX-085) con `cell rebind` real sobre Docker; ver su nota y su párrafo de cierre. La cadena restante, con 12, 13, 14, 18 y 23 ya cerradas: 15 → 21 → 19.
+* Actualización 2026-09-24: 21 cerrada (HEX-088) con `docs/runbook-operacion.md` — mapa situación-a-comando, una subsección por subcomando (`cell pause`, `cell unpause`, `cell terminate`, `cell rebind`, `cell list`, `cell status`, `reporte tokens`, `config render`), procedimiento de respuesta ante `OOMKilled` y remisión provisional a la tarea 15 para la reejecución idempotente. La cadena restante, con 12, 13, 14, 18, 21 y 23 ya cerradas: 15 → 19.
 
 ---
 
@@ -550,6 +551,15 @@ Las entradas conservan su numeración; esta sección es la autoridad sobre el or
     límites en la tarea 6— pasa a ser alcance explícito de esta tarea: se documenta en el runbook
     que aquí se escribe, diferido desde HEX-078 (AC-6 del 00-spec.yaml de esa tarea).
     `docs/runbook-operacion.md` NO se crea en HEX-078.
+
+    **Cerrada el 2026-09-24 con HEX-088.** `docs/runbook-operacion.md` entrega el mapa
+    situación-a-comando, una subsección por subcomando con cuándo/comando/efecto/verificación/fallos,
+    el procedimiento de respuesta ante `OOMKilled` (detectar/contener/registrar/escalar, sin cifras de
+    memoria inventadas — el límite se lee de `deploy/cell.compose.yml` y su revisión se escala a la
+    tarea 6 / `docs/STATUS.md`), y la remisión provisional a la tarea 15 para la reejecución
+    idempotente. Se añadió una oración de enlace al párrafo introductorio de la sección de la CLI en
+    `README.md`. La subsección de `cell rebind` documenta únicamente el HOW de HEX-085 y difiere el
+    WHETHER al runbook de baneo de la etapa A-7, que no existe todavía.
 22. **Configuración por célula como archivos** (1 día). Implementar la gestión de configuración basada en archivos (valores por defecto compartidos y superposiciones o overlays por célula) con validación de fallo cerrado al arrancar (concretando la tarea 8 sin editarla), gestionada de forma centralizada por `hexcell-admin` y versionable en git.
 
     **Cerrada el 2026-09-21 con HEX-081.**
