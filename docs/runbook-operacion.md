@@ -12,7 +12,7 @@ Este runbook le dice al operador **qué comando ejecutar ante cada situación op
 
 Lo que este runbook **no** cubre:
 
-* **Restauración de una célula desde respaldo** — es el ámbito de [docs/runbook-restauracion-de-celula.md](docs/runbook-restauracion-de-celula.md). Este runbook opera células vivas; no reponen datos perdidos.
+* **Restauración de una célula desde respaldo** — es el ámbito de [docs/runbook-restauracion-de-celula.md](docs/runbook-restauracion-de-celula.md). Este runbook opera células vivas; no repone datos perdidos.
 * **Vigilancia externa de vida del anfitrión** (dead-man's switch) — es el ámbito de [docs/runbook-vigilancia-externa.md](docs/runbook-vigilancia-externa.md).
 * **Operación del canal** en sí — emparejamiento inicial, reconexión de sesión, sustitución completa de número y respuesta ante baneo. Esos procedimientos viven en el plan de la etapa A-7 (`docs/plan/fase-a-7-pilotos.md`). La sustitución de número que se documenta aquí es exclusivamente el **cómo técnico** del comando `cell rebind`; el **cuándo procede** decidirlo es el runbook de baneo, que es un documento distinto y pendiente.
 
@@ -22,7 +22,7 @@ Lo que este runbook **no** cubre:
 
 * **`hexcell-admin` se ejecuta en el anfitrión**, no dentro de un contenedor. Se distribuye como binario nativo compilado desde `crates/hexcell-admin`.
 * **Depende del socket Unix de Docker** (`/var/run/docker.sock`). El usuario que ejecuta `hexcell-admin` debe tener permiso de lectura y escritura sobre ese socket; sin él, los subcomandos `cell` fallan con código 1 antes de emitir ninguna petición. `config render` y `reporte tokens` no tocan Docker.
-* **`HEXCELL_IMAGEN_SONDA`** — variable de entorno que nombra la imagen que los contenedores hermanos usan para operar dentro de la red de la célula (borrado de `sqlstore`, cierre de sesión, emparejamiento). Su valor por omisión es `alpine:3` (documentado en la nota de cierre de HEX-085, 2026-09-23). No se instancia ninguna celda con esta imagen; es únicamente la herramienta con la que `hexcell-admin` opera sobre las ya instanciadas.
+* **`HEXCELL_IMAGEN_SONDA`** — variable de entorno que nombra la imagen que los contenedores hermanos usan para operar dentro de la red de la célula: borrado de `sqlstore`, cierre de sesión y emparejamiento (`cell rebind`, `cell terminate`), y también la sonda de disponibilidad `GET /health/ready` de `cell unpause` y `cell status`. Su valor por omisión es `alpine:3` (documentado en la nota de cierre de HEX-085, 2026-09-23). No se instancia ninguna célula con esta imagen; es únicamente la herramienta con la que `hexcell-admin` opera sobre las ya instanciadas. Debe estar presente en Docker de antemano (`docker pull`): si falta, `cell unpause` falla con código 1.
 * **Almacén del plano de control** — SQLite configurable con `HEXCELL_ADMIN_ALMACEN` (por omisión `/var/lib/hexcell-admin/plano_de_control.db`). Los subcomandos que persisten estado lo abren en lectura/escritura y migran; los de sólo lectura (`list`, `status`) usan el descriptor de sólo lectura de SQLite, sin crear el archivo ni migrar. Un `HEXCELL_ADMIN_ALMACEN` cuyo directorio padre no existe falla con diagnóstico en vez de crear una base nueva.
 * **Sólo lectura por construcción:** `cell list` y `cell status` no reparan discrepancias. DISC-05 se reporta y la fila no se crea: el operador decide si es alta implícita legítima o inconsistencia.
 
@@ -34,7 +34,7 @@ Lo que este runbook **no** cubre:
 | :--- | :--- |
 | Falta de pago / pausa temporal de la actividad | `hexcell-admin cell pause --id <celula_id>` |
 | Reactivación tras pausa | `hexcell-admin cell unpause --id <celula_id>` |
-| Baja definitiva de un cliente | `hexcell-admin cell terminate --id <celula_id> --confirmar` |
+| Baja definitiva de un cliente | `hexcell-admin cell terminate --id <celula_id> --confirmar` (si la célula está pausada —p. ej. la ruta impago → pausa → baja definitiva— ejecutar antes `cell unpause`: `terminate` exige el núcleo `running`) |
 | Sustitución de número por baneo permanente o apelación fracasada | `hexcell-admin cell rebind --id <celula_id> --motivo "<motivo>" --confirmar [--metodo qr|codigo_de_vinculacion]` |
 | Ver el estado de una célula | `hexcell-admin cell status --id <celula_id>` |
 | Listar todas las células conocidas | `hexcell-admin cell list` |
@@ -110,7 +110,7 @@ hexcell-admin cell status --id <celula_id>
 | Código | Significado | Remediación |
 | :--- | :--- | :--- |
 | 0 | Éxito — la célula procesa mensajes | — |
-| 1 | Fallo: contenedores arrancaron pero la sesión no se reanudó | Verificar credenciales del sidecar; la célula corre pero el canal está mudo |
+| 1 | Fallo: contenedores arrancaron pero la sesión no se reanudó, la imagen de `HEXCELL_IMAGEN_SONDA` no existe en Docker, o se agotó el plazo de sondeo de `/health/ready` | Verificar credenciales del sidecar si la sesión no reanudó; si el diagnóstico nombra la imagen de sonda, ejecutar `docker pull` de esa imagen antes de reintentar; si se agotó el plazo, revisar la salud del contenedor hermano |
 | 2 | Uso incorrecto: faltó `--id` | Revisar diagnóstico en stderr |
 
 ---
@@ -118,6 +118,8 @@ hexcell-admin cell status --id <celula_id>
 ## 3. `cell terminate` — eliminar definitivamente una célula
 
 **Cuándo:** baja definitiva de un cliente o destrucción acordada de la célula. Operación **destructiva**: cierra la sesión de canal, destruye ambos contenedores y elimina el volumen de datos físicamente, incluidas las credenciales.
+
+**Precondición: la célula debe estar en ejecución.** `cell terminate` inspecciona el núcleo y exige que esté `running`; si la célula está pausada (`cell pause` previo, p. ej. la ruta impago → pausa → baja definitiva), el comando falla con código 1 y el diagnóstico «la célula está pausada: ejecute cell unpause antes de cell terminate» (`ciclo_de_vida.rs:176,531-533`), sin tocar nada. Ejecutar primero `hexcell-admin cell unpause --id <celula_id>` y luego `cell terminate`.
 
 **Comando:**
 
@@ -140,15 +142,15 @@ hexcell-admin cell terminate --id <celula_id> --confirmar
 hexcell-admin cell status --id <celula_id>
 ```
 
-* Esperado: `estado: retirada`, `docker nucleo: ausente`, `docker sidecar: ausente`. No debe haber discrepancias porque la fila persiste en el almacén.
-* Ningún `DISC-0N`. (Tras un `terminate` exitoso, la fila marca `retirada` y los contenedores están ausentes: es el estado pretendido, no DISC-04.)
+* Esperado: `estado: retirada`, `docker nucleo: ausente`, `docker sidecar: ausente`.
+* **`DISC-04` (el almacén tiene fila pero los contenedores no existen en Docker) es el resultado esperado y correcto, no una falla.** `cell status` lo sigue reportando y sale con código 1 por construcción: la fila persiste con `estado: retirada` mientras que los contenedores fueron eliminados, y esa combinación es exactamente la que dispara `DISC-04` (`comandos.rs:720-723`). Confirmar que la fila conserva `retirada` es la verificación real; el código de salida 1 de `cell status` en este caso no indica un problema.
 
 **Fallos comunes por código de salida:**
 
 | Código | Significado | Remediación |
 | :--- | :--- | :--- |
 | 0 | Éxito | — |
-| 1 | Fallo en algún paso de la secuencia destructiva (cierre de sesión, detención, eliminación) | Revisar diagnóstico en stderr; la secuencia se detiene en el primer paso que falla y no continúa — reejecutar el comando (ver «Reejecución de un comando» más abajo) |
+| 1 | La célula está pausada, o fallo en algún paso de la secuencia destructiva (cierre de sesión, detención, eliminación) | Si el diagnóstico dice «la célula está pausada», ejecutar `cell unpause` primero. Para los demás fallos, revisar diagnóstico en stderr; la secuencia se detiene en el primer paso que falla y no continúa — ver «Reejecución de un comando» más abajo |
 | 2 | Uso incorrecto: faltó `--id` o `--confirmar` | Revisar diagnóstico y texto de uso |
 
 > **Importante:** sin `--confirmar` el comando devuelve `UsoIncorrecto` (código 2) y no toca nada. Esta exigencia es la misma que aplica a `cell rebind`.
@@ -207,7 +209,7 @@ hexcell-admin cell status --id <celula_id>
 
 ## 5. `cell list` — listar todas las células conocidas
 
-**Cuándo:**Inventario rápido, verificación de cuántas células existen antes de una operación, o diagnóstico de Scope-creep.
+**Cuándo:** inventario rápido, verificación de cuántas células existen antes de una operación, o auditoría de cobertura entre el almacén y Docker.
 
 **Comando:**
 
@@ -232,7 +234,7 @@ hexcell-admin cell list
 | :--- | :--- | :--- |
 | 0 | Éxito — la lista se produjo | — |
 | 1 | Fallo al abrir el almacén o al listar contenedores en Docker | Revisar diagnóstico en stderr |
-| 2 | No aplica: `cell list` no admite `--id` ni ninguna opción más allá de `--simular` | Revisar diagnóstico y texto de uso |
+| 2 | Uso incorrecto: `cell list` no admite `--id` ni ninguna opción de identificación de célula (el analizador de argumentos lo rechaza) | Revisar diagnóstico y texto de uso |
 
 ---
 
@@ -265,7 +267,6 @@ hexcell-admin cell status --id <celula_id>
 ```
 
 * Para una célula sana en ejecución: `estado: en_ejecucion`, `docker nucleo: running`, `docker sidecar: running`, `salud: listo`. Ningún `DISC-0N`.
-* Ningún `DISC-0N` cuando la célula está sana.
 
 **Fallos comunes por código de salida:**
 
@@ -346,7 +347,7 @@ hexcell-admin config render --defecto deploy/celula.defecto.env.ejemplo --superp
 
 ## Reejecución de un comando
 
-El procedimiento definitivo de reejecución idempotente —detección del punto en que quedó la secuencia y recuperación automática— es alcance de la **tarea 15** del plan de la etapa A-6, en progreso en paralelo. Hasta que cierre, un fallo parcial de `cell terminate` o `cell rebind` se reejecuta manualmente con el **mismo comando**; el comando avanza desde donde falló o falla con un diagnóstico que nombra el paso.
+El procedimiento definitivo de reejecución idempotente —detección del punto en que quedó la secuencia y recuperación automática para todos los comandos— es alcance de la **tarea 15** del plan de la etapa A-6, en progreso en paralelo. Hoy sólo `cell rebind` tiene una reanudación real: una célula que quedó en `Reemparejando` retoma en el paso 7 con el **mismo comando** (ver sección 4). `cell terminate` **no** tiene ese mecanismo: un fallo parcial no se reanuda, y la recuperación de esa secuencia es alcance de la tarea 15.
 
 ---
 
@@ -356,7 +357,7 @@ Un contenedor muerto por `OOMKilled` es la señal de que el límite de memoria f
 
 ### Detectar
 
-1. `cell status` muestra `DISC-01` y el contenedor afectado aparece como `ausente` o `exited`.
+1. `cell status` muestra `DISC-01` y el contenedor afectado aparece como `exited` (un contenedor muerto por `OOMKilled` sigue existiendo en Docker; `ausente` es el estado de `DISC-04`, no de esta situación).
 2. Confirmar que la causa es OOM:
    ```bash
    docker inspect --format '{{.State.OOMKilled}}' <contenedor>
@@ -373,11 +374,17 @@ Un contenedor muerto por `OOMKilled` es la señal de que el límite de memoria f
 
 ### Registrar
 
-Fecha absoluta, contenedor afectado y límite de memoria vigente **leído de `deploy/cell.compose.yml`** (no de `docker stats` ni de la memoria del anfitrión: ese archivo es la única fuente de verdad del límite).
+Fecha absoluta, contenedor afectado y límite de memoria vigente. `deploy/cell.compose.yml` declara `mem_limit` como una referencia de variable (`${HEXCELL_NUCLEO_LIMITE_MEMORIA}` en la línea 106 para el núcleo, `${HEXCELL_SIDECAR_LIMITE_MEMORIA}` en la línea 174 para el sidecar), no un valor literal: ese archivo por sí solo no dice cuánta memoria tiene el contenedor. El valor efectivo es el que sustituye el archivo de entorno de la célula (referente `deploy/celula.env.ejemplo`) o, para el contenedor ya en ejecución, el que reporta:
+
+```bash
+docker inspect --format '{{.HostConfig.Memory}}' <contenedor>
+```
+
+No usar `docker stats` ni la memoria del anfitrión como fuente del límite.
 
 ### Escalar
 
-Si el `OOMKilled` se repite en una misma célula en menos de 24 horas, la decisión de **revisar el límite** corresponde a la **tarea 6** y a `docs/STATUS.md` (reparto 48m/32m y demás valores provisionales hasta la medición de la tarea 16). **No se cambia el límite desde este runbook**; se escala con el registro del paso anterior.
+Si el `OOMKilled` se repite en una misma célula en menos de 24 horas, la decisión de **revisar el límite** corresponde a la **tarea 6** y a `docs/STATUS.md`; los valores vigentes son provisionales hasta la medición de la tarea 16. **No se cambia el límite desde este runbook**; se escala con el registro del paso anterior.
 
 ---
 
