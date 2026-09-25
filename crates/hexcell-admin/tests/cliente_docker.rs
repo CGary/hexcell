@@ -55,9 +55,42 @@ fn crear_e_iniciar_devuelve_el_identificador() {
 }
 
 /// AC-2: detener envía `t=30` al demonio y da la operación por buena sobre el 204.
+///
+/// Hex-074-b fijaba la ruta con `t=30`; desde HEX-087 (tarea 15) la parada es UNA sola operación
+/// con plazo opcional y esta prueba cubre los dos caminos: `Some(30)` añade `?t=30` y `None`
+/// omite la consulta por completo, dejando la gracia al `stop_grace_period` de la plantilla.
 #[test]
 fn detener_envia_el_margen_de_gracia_de_30_segundos() {
-    let servidor = ServidorDockerFalso::nuevo("ac2");
+    for (plazo, objetivo) in [
+        (Some(30), "/containers/abc123/stop?t=30"),
+        (None, "/containers/abc123/stop"),
+    ] {
+        let servidor = ServidorDockerFalso::nuevo("ac2");
+        let ruta = servidor.ruta();
+        let hilo = std::thread::spawn(move || {
+            servidor.atender(Guion::SinCuerpo {
+                estado: 204,
+                razon: "No Content",
+            })
+        });
+
+        let cliente = ClienteDocker::nuevo(ruta);
+        cliente.detener_contenedor("abc123", plazo).unwrap();
+
+        let peticion = hilo.join().unwrap();
+        assert_eq!(peticion.metodo, "POST");
+        assert_eq!(
+            peticion.objetivo, objetivo,
+            "con plazo {plazo:?} la ruta debe ser {objetivo}"
+        );
+    }
+}
+
+/// HEX-087 (tarea 15): `despausar_contenedor` reanuda un contenedor congelado con un
+/// `POST /containers/{id}/unpause` sin cuerpo.
+#[test]
+fn despausar_contenedor_envia_post_unpause_sin_cuerpo() {
+    let servidor = ServidorDockerFalso::nuevo("despausar");
     let ruta = servidor.ruta();
     let hilo = std::thread::spawn(move || {
         servidor.atender(Guion::SinCuerpo {
@@ -67,11 +100,12 @@ fn detener_envia_el_margen_de_gracia_de_30_segundos() {
     });
 
     let cliente = ClienteDocker::nuevo(ruta);
-    cliente.detener_contenedor("abc123").unwrap();
+    cliente.despausar_contenedor("abc123").unwrap();
 
     let peticion = hilo.join().unwrap();
     assert_eq!(peticion.metodo, "POST");
-    assert_eq!(peticion.objetivo, "/containers/abc123/stop?t=30");
+    assert_eq!(peticion.objetivo, "/containers/abc123/unpause");
+    assert!(peticion.cuerpo.is_empty(), "el unpause no lleva cuerpo");
 }
 
 /// AC-3: inspeccionar devuelve el cuerpo JSON interpretado.
@@ -216,7 +250,7 @@ fn respuesta_malformada_no_panica() {
     let cliente = ClienteDocker::nuevo(ruta);
     // El cierre de pánico cruzaría la frontera del test y lo haría fallar: basta con que la
     // llamada devuelva Err, nunca propague un pánico.
-    let resultado = cliente.detener_contenedor("abc123");
+    let resultado = cliente.detener_contenedor("abc123", None);
 
     assert!(matches!(
         resultado,
@@ -233,7 +267,7 @@ fn demonio_inalcanzable_sin_listener() {
     let ruta = ruta_socket_sin_vincular("ac9");
     let cliente = ClienteDocker::nuevo(ruta);
 
-    let resultado = cliente.detener_contenedor("abc123");
+    let resultado = cliente.detener_contenedor("abc123", None);
 
     assert!(matches!(
         resultado,
@@ -257,7 +291,7 @@ fn permiso_denegado_sin_autoridad() {
     std::fs::set_permissions(&ruta, std::fs::Permissions::from_mode(0o000)).unwrap();
 
     let cliente = ClienteDocker::con_tiempo_limite(ruta.clone(), Duration::from_millis(300));
-    let resultado = cliente.detener_contenedor("abc123");
+    let resultado = cliente.detener_contenedor("abc123", None);
 
     let es_root = std::fs::metadata("/proc/self")
         .map(|m| m.uid() == 0)
@@ -294,7 +328,7 @@ fn tiempo_de_espera_agotado_sin_respuesta() {
 
     let cliente = ClienteDocker::con_tiempo_limite(ruta, Duration::from_millis(300));
     let inicio = std::time::Instant::now();
-    let resultado = cliente.detener_contenedor("abc123");
+    let resultado = cliente.detener_contenedor("abc123", None);
 
     assert!(matches!(
         resultado,

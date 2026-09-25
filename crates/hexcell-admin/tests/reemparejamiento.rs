@@ -695,8 +695,9 @@ fn cuerpos_del_happy_path() {
     }
 }
 
-/// AC-7, AC-16: el resume desde `Reemparejando` emite sólo las sondas de emparejamiento, estado y
-/// reanudar, más las dos inspecciones iniciales, y omite pausa/cierre/rm/stop/start.
+/// AC-7, AC-16: el resume desde `Reemparejando` emite la sonda de sesión (HEX-087, D3), las
+/// sondas de emparejamiento, estado y reanudar, más las dos inspecciones iniciales, y omite
+/// pausa/cierre/rm/stop/start.
 #[test]
 fn resume_desde_reemparejando_omite_pausa_cierre_y_rm() {
     let servidor = ServidorDockerFalso::nuevo("rebind-resume");
@@ -726,17 +727,20 @@ fn resume_desde_reemparejando_omite_pausa_cierre_y_rm() {
     guiones.push(inspeccion_del_nucleo());
     guiones.push(inspeccion_del_sidecar());
 
-    // 3-7: sonda de emparejamiento.
+    // 3-7 (HEX-087, D3): sonda de sesión; no está activa, así que se sigue al emparejamiento.
+    servir_sonda_http(&mut guiones, &mut contador, br#"{"estado":"desvinculada"}"#);
+
+    // 8-12: sonda de emparejamiento.
     servir_sonda_http(
         &mut guiones,
         &mut contador,
         br#"{"resultado":"codigo","metodo":"qr","valor":"QR-RESUME","expira_en_ms":1700000000000}"#,
     );
 
-    // 8-12: sonda de estado.
+    // 13-17: sonda de estado.
     servir_sonda_http(&mut guiones, &mut contador, br#"{"estado":"activa"}"#);
 
-    // 13-17: sonda de reanudar.
+    // 18-22: sonda de reanudar.
     servir_sonda_http(
         &mut guiones,
         &mut contador,
@@ -776,7 +780,7 @@ fn resume_desde_reemparejando_omite_pausa_cierre_y_rm() {
     let mut esperado: Vec<String> = Vec::with_capacity(total_peticiones);
     esperado.push("GET /containers/c1-nucleo/json".to_string());
     esperado.push("GET /containers/c1-sidecar/json".to_string());
-    for i in 0..3 {
+    for i in 0..4 {
         esperado.push("POST /containers/create".to_string());
         esperado.push(format!("POST /containers/{}/start", id_de_sonda(i)));
         esperado.push(format!("POST /containers/{}/wait", id_de_sonda(i)));
@@ -1378,10 +1382,11 @@ fn cierre_fallido_emite_un_aviso_por_diagnostico_y_continua_hasta_exito() {
     assert_eq!(fila.estado, EstadoDeCelula::EnEjecucion);
 }
 
-/// AC-12: un `fallido` de emparejamiento con un motivo DISTINTO de `sin_conexion` (p. ej.
-/// `ya_emparejada`) termina en `Fallo`, deja la fila en `Reemparejando` y NO escribe ninguna fila
-/// de `sustituciones`. Mata la mutación M9 (reintentar sobre cualquier motivo) a nivel de
-/// secuencia completa: con esa mutación se emitiría una segunda sonda que este test no programó.
+/// AC-12 + HEX-087 (D3): un `fallido` de emparejamiento con un motivo DISTINTO de `sin_conexion`
+/// y de `ya_emparejada` (el único que dispara la recuperación única del resume) termina en
+/// `Fallo`, deja la fila en `Reemparejando` y NO escribe ninguna fila de `sustituciones`. Mata
+/// la mutación M9 (reintentar sobre cualquier motivo) a nivel de secuencia completa: con esa
+/// mutación se emitiría una segunda sonda que este test no programó.
 #[test]
 fn resume_con_emparejamiento_fallido_por_otro_motivo_no_reintenta_ni_persiste() {
     let servidor = ServidorDockerFalso::nuevo("rebind-otro-motivo");
@@ -1396,10 +1401,12 @@ fn resume_con_emparejamiento_fallido_por_otro_motivo_no_reintenta_ni_persiste() 
     let mut contador = 0usize;
     guiones.push(inspeccion_del_nucleo());
     guiones.push(inspeccion_del_sidecar());
+    // Sonda de sesión (HEX-087, D3): no activa, se continúa al emparejamiento.
+    servir_sonda_http(&mut guiones, &mut contador, br#"{"estado":"desvinculada"}"#);
     servir_sonda_http(
         &mut guiones,
         &mut contador,
-        br#"{"resultado":"fallido","motivo":"ya_emparejada"}"#,
+        br#"{"resultado":"fallido","motivo":"dispositivo_no_encontrado"}"#,
     );
 
     let total_peticiones = guiones.len();
@@ -1433,7 +1440,7 @@ fn resume_con_emparejamiento_fallido_por_otro_motivo_no_reintenta_ni_persiste() 
     assert_eq!(codigo, CodigoDeSalida::Fallo);
     let diagnostico = String::from_utf8(diagnostico_buf).unwrap();
     assert!(
-        diagnostico.contains("ya_emparejada"),
+        diagnostico.contains("dispositivo_no_encontrado"),
         "diagnóstico: {diagnostico}"
     );
 
@@ -1465,6 +1472,8 @@ fn resume_con_emparejamiento_sin_conexion_dos_veces_luego_codigo() {
     let mut contador = 0usize;
     guiones.push(inspeccion_del_nucleo());
     guiones.push(inspeccion_del_sidecar());
+    // Sonda de sesión (HEX-087, D3): no activa, se continúa al emparejamiento.
+    servir_sonda_http(&mut guiones, &mut contador, br#"{"estado":"desvinculada"}"#);
     servir_sonda_http(
         &mut guiones,
         &mut contador,
@@ -1546,6 +1555,8 @@ fn resume_con_reanudar_fallido_deja_la_fila_reemparejando_y_sin_sustituciones() 
     let mut contador = 0usize;
     guiones.push(inspeccion_del_nucleo());
     guiones.push(inspeccion_del_sidecar());
+    // Sonda de sesión (HEX-087, D3): no activa, se continúa al emparejamiento.
+    servir_sonda_http(&mut guiones, &mut contador, br#"{"estado":"desvinculada"}"#);
     servir_sonda_http(
         &mut guiones,
         &mut contador,
@@ -1626,6 +1637,8 @@ fn presupuesto_de_confirmacion_se_agota_tras_varias_sondas_de_estado() {
     let mut contador = 0usize;
     guiones.push(inspeccion_del_nucleo());
     guiones.push(inspeccion_del_sidecar());
+    // Sonda de sesión (HEX-087, D3): no activa, se continúa al emparejamiento.
+    servir_sonda_http(&mut guiones, &mut contador, br#"{"estado":"desvinculada"}"#);
     servir_sonda_http(
         &mut guiones,
         &mut contador,
@@ -1675,8 +1688,8 @@ fn presupuesto_de_confirmacion_se_agota_tras_varias_sondas_de_estado() {
         .count();
     assert_eq!(
         creaciones,
-        1 + sondas_de_estado_esperadas as usize,
-        "1 sonda de emparejamiento + {sondas_de_estado_esperadas} sondas de estado"
+        2 + sondas_de_estado_esperadas as usize,
+        "1 sonda de sesión + 1 de emparejamiento + {sondas_de_estado_esperadas} de estado"
     );
     exigir_silencio(&receptor);
 }
@@ -1799,6 +1812,8 @@ fn resume_con_codigo_de_vinculacion_nombra_el_metodo_elegido_no_el_ecoado() {
     let mut contador = 0usize;
     guiones.push(inspeccion_del_nucleo());
     guiones.push(inspeccion_del_sidecar());
+    // Sonda de sesión (HEX-087, D3): no activa, se continúa al emparejamiento.
+    servir_sonda_http(&mut guiones, &mut contador, br#"{"estado":"desvinculada"}"#);
     // El núcleo ecoa "metodo":"" — un core que no lo declara — para distinguir «lo elegido» de
     // «lo recibido».
     servir_sonda_http(
@@ -1844,6 +1859,9 @@ fn resume_con_codigo_de_vinculacion_nombra_el_metodo_elegido_no_el_ecoado() {
 
     recibir(&receptor); // inspección núcleo
     recibir(&receptor); // inspección sidecar
+    for _ in 0..5 {
+        recibir(&receptor); // sonda de sesión (create, start, wait, logs, delete)
+    }
     let crear_pairing = recibir(&receptor);
     let cuerpo: serde_json::Value = serde_json::from_slice(&crear_pairing.cuerpo).unwrap();
     assert_eq!(
@@ -1868,4 +1886,359 @@ fn resume_con_codigo_de_vinculacion_nombra_el_metodo_elegido_no_el_ecoado() {
         texto_estandar.contains("emparejamiento codigo_de_vinculacion: CODE-ELEGIDO"),
         "la línea debe nombrar el método ELEGIDO, no el ecoado (vacío): {texto_estandar}"
     );
+}
+
+// ============================================================================
+// HEX-087 (tarea 15, D3): la reanudación desde `Reemparejando` consulta la sesión antes de
+// re-emparejar y se recupera una única vez de un `ya_emparejada` (AC-9 y AC-10).
+// ============================================================================
+
+/// AC-9: si la sonda de sesión reporta `activa`, la célula quedó en `Reemparejando` por un fallo
+/// POSTERIOR al emparejamiento: se omite el emparejamiento (y su confirmación) y se reanuda el
+/// envío directo, persistiendo `EnEjecucion` con `emparejamiento_confirmado` y una sola
+/// sustitución. Ninguna sonda de emparejamiento se emite.
+#[test]
+fn resume_con_sesion_ya_activa_omite_el_emparejamiento_y_confirma() {
+    let servidor = ServidorDockerFalso::nuevo("rebind-sesion-activa");
+    let ruta = servidor.ruta();
+    let cliente = ClienteDocker::nuevo(ruta.clone());
+    let inventario = InventarioDocker::nuevo(ruta.clone(), std::time::Duration::from_secs(70));
+    let almacen = AlmacenTemporal::nuevo("rebind-sesion-activa");
+    let ruta_almacen = almacen.texto();
+    sembrar_reemparejando(&ruta_almacen);
+
+    let mut guiones: Vec<Guion> = Vec::new();
+    let mut contador = 0usize;
+    guiones.push(inspeccion_del_nucleo());
+    guiones.push(inspeccion_del_sidecar());
+    // Sonda de sesión: la sesión sigue activa.
+    servir_sonda_http(&mut guiones, &mut contador, br#"{"estado":"activa"}"#);
+    // Reanudar envío directo, sin emparejamiento.
+    servir_sonda_http(
+        &mut guiones,
+        &mut contador,
+        br#"{"resultado":"aplicado","accion":"reanudar"}"#,
+    );
+
+    let total_peticiones = guiones.len();
+    guiones.push(sin_cuerpo(204, "No Content")); // nunca debe servirse: prueba exigir_silencio.
+    let receptor = servir_guiones(servidor, guiones);
+
+    let argumento = vec![
+        "cell",
+        "rebind",
+        "--id",
+        "c1",
+        "--motivo",
+        "sustitución por baneo",
+        "--confirmar",
+    ];
+
+    let mut estandar_buf: Vec<u8> = Vec::new();
+    let mut diagnostico_buf: Vec<u8> = Vec::new();
+    let mut salida = Salida::nueva(&mut estandar_buf, &mut diagnostico_buf);
+
+    let ahora_ms = 1_700_000_000_000i64;
+    let codigo = ejecutar_rebind(
+        &argumento,
+        &cliente,
+        &inventario,
+        &ruta_almacen,
+        ahora_ms,
+        &mut salida,
+    );
+
+    assert_eq!(
+        codigo,
+        CodigoDeSalida::Exito,
+        "una sesión ya activa debe confirmar sin re-emparejar"
+    );
+
+    let diagnostico = String::from_utf8(diagnostico_buf).unwrap();
+    assert!(
+        diagnostico.contains("la sesión ya está activa: se omite el emparejamiento"),
+        "el aviso de omisión debe llegar al diagnóstico: {diagnostico}"
+    );
+
+    let mut esperado: Vec<String> = Vec::with_capacity(total_peticiones);
+    esperado.push("GET /containers/c1-nucleo/json".to_string());
+    esperado.push("GET /containers/c1-sidecar/json".to_string());
+    for i in 0..2 {
+        esperado.push("POST /containers/create".to_string());
+        esperado.push(format!("POST /containers/{}/start", id_de_sonda(i)));
+        esperado.push(format!("POST /containers/{}/wait", id_de_sonda(i)));
+        esperado.push(format!(
+            "GET /containers/{}/logs?stdout=1&stderr=0",
+            id_de_sonda(i)
+        ));
+        esperado.push(format!("DELETE /containers/{}", id_de_sonda(i)));
+    }
+    let recibidas = secuencia_recibida(&receptor, total_peticiones);
+    assert_eq!(
+        recibidas, esperado,
+        "solo inspecciones, sonda de sesión y reanudar: ninguna sonda de emparejamiento"
+    );
+    exigir_silencio(&receptor);
+
+    let a =
+        AlmacenDelPlanoDeControl::abrir_solo_lectura(std::path::Path::new(&ruta_almacen)).unwrap();
+    let fila = a.leer_estado("c1").unwrap().unwrap();
+    assert_eq!(fila.estado, EstadoDeCelula::EnEjecucion);
+    assert_eq!(fila.motivo, "emparejamiento_confirmado");
+    let sustituciones = a.leer_sustituciones("c1").unwrap();
+    assert_eq!(sustituciones.len(), 1);
+}
+
+/// AC-10 (éxito): un `ya_emparejada` en la reanudación dispara UNA recuperación —descartar el
+/// `sqlstore` y rearrancar el sidecar con la pausa reaplicada— y UN reintento de emparejamiento;
+/// si el reintento tiene éxito, la secuencia sigue igual (estado, reanudar) hasta `Exito`.
+#[test]
+fn resume_recupera_un_solo_ya_emparejada_y_reintenta_el_emparejamiento() {
+    let servidor = ServidorDockerFalso::nuevo("rebind-ya-emparejada-exito");
+    let ruta = servidor.ruta();
+    let cliente = ClienteDocker::nuevo(ruta.clone());
+    let inventario = InventarioDocker::nuevo(ruta.clone(), std::time::Duration::from_secs(70));
+    let almacen = AlmacenTemporal::nuevo("rebind-ya-emparejada-exito");
+    let ruta_almacen = almacen.texto();
+    sembrar_reemparejando(&ruta_almacen);
+
+    let mut guiones: Vec<Guion> = Vec::new();
+    let mut contador = 0usize;
+    guiones.push(inspeccion_del_nucleo());
+    guiones.push(inspeccion_del_sidecar());
+    // Sonda de sesión: no activa, se continúa al emparejamiento.
+    servir_sonda_http(&mut guiones, &mut contador, br#"{"estado":"desvinculada"}"#);
+    // Primer emparejamiento: ya_emparejada -> recuperación única.
+    servir_sonda_http(
+        &mut guiones,
+        &mut contador,
+        br#"{"resultado":"fallido","motivo":"ya_emparejada"}"#,
+    );
+    // Recuperación (descartar_sqlstore_y_rearrancar): parar sidecar, rm con volumen, rearrancar,
+    // pausa reaplicada.
+    guiones.push(sin_cuerpo(204, "No Content")); // detener sidecar
+    servir_contenedor_sin_logs(&mut guiones, &mut contador); // rm sibling
+    guiones.push(sin_cuerpo(204, "No Content")); // rearrancar sidecar
+    servir_sonda_http(
+        &mut guiones,
+        &mut contador,
+        br#"{"resultado":"aplicado","accion":"pausar"}"#,
+    );
+    // Reintento de emparejamiento: éxito.
+    servir_sonda_http(
+        &mut guiones,
+        &mut contador,
+        br#"{"resultado":"codigo","metodo":"qr","valor":"QR-REINTENTO","expira_en_ms":1700000000000}"#,
+    );
+    // Confirmación y reanudación.
+    servir_sonda_http(&mut guiones, &mut contador, br#"{"estado":"activa"}"#);
+    servir_sonda_http(
+        &mut guiones,
+        &mut contador,
+        br#"{"resultado":"aplicado","accion":"reanudar"}"#,
+    );
+
+    let total_peticiones = guiones.len();
+    guiones.push(sin_cuerpo(204, "No Content")); // nunca debe servirse: prueba exigir_silencio.
+    let receptor = servir_guiones(servidor, guiones);
+
+    let argumento = vec![
+        "cell",
+        "rebind",
+        "--id",
+        "c1",
+        "--motivo",
+        "sustitución por baneo",
+        "--confirmar",
+    ];
+
+    let mut estandar_buf: Vec<u8> = Vec::new();
+    let mut diagnostico_buf: Vec<u8> = Vec::new();
+    let mut salida = Salida::nueva(&mut estandar_buf, &mut diagnostico_buf);
+
+    let ahora_ms = 1_700_000_000_000i64;
+    let codigo = ejecutar_rebind(
+        &argumento,
+        &cliente,
+        &inventario,
+        &ruta_almacen,
+        ahora_ms,
+        &mut salida,
+    );
+
+    assert_eq!(
+        codigo,
+        CodigoDeSalida::Exito,
+        "un ya_emparejada recuperado con éxito debe terminar en Exito"
+    );
+
+    // Secuencia completa: 2 inspecciones + sonda de sesión (5) + pairing fallido (5) + stop (1)
+    // + rm (4) + start (1) + pausa (5) + pairing reintentado (5) + estado (5) + reanudar (5).
+    let mut esperado: Vec<String> = Vec::with_capacity(total_peticiones);
+    esperado.push("GET /containers/c1-nucleo/json".to_string());
+    esperado.push("GET /containers/c1-sidecar/json".to_string());
+    // Sonda de sesión.
+    for i in 0..1 {
+        esperado.push("POST /containers/create".to_string());
+        esperado.push(format!("POST /containers/{}/start", id_de_sonda(i)));
+        esperado.push(format!("POST /containers/{}/wait", id_de_sonda(i)));
+        esperado.push(format!(
+            "GET /containers/{}/logs?stdout=1&stderr=0",
+            id_de_sonda(i)
+        ));
+        esperado.push(format!("DELETE /containers/{}", id_de_sonda(i)));
+    }
+    // Pairing fallido (sonda 1).
+    esperado.push("POST /containers/create".to_string());
+    esperado.push(format!("POST /containers/{}/start", id_de_sonda(1)));
+    esperado.push(format!("POST /containers/{}/wait", id_de_sonda(1)));
+    esperado.push(format!(
+        "GET /containers/{}/logs?stdout=1&stderr=0",
+        id_de_sonda(1)
+    ));
+    esperado.push(format!("DELETE /containers/{}", id_de_sonda(1)));
+    // Recuperación: stop sidecar, rm (sonda 2), start sidecar, pausa (sonda 3).
+    esperado.push("POST /containers/c1-sidecar/stop".to_string());
+    esperado.push("POST /containers/create".to_string());
+    esperado.push(format!("POST /containers/{}/start", id_de_sonda(2)));
+    esperado.push(format!("POST /containers/{}/wait", id_de_sonda(2)));
+    esperado.push(format!("DELETE /containers/{}", id_de_sonda(2)));
+    esperado.push("POST /containers/c1-sidecar/start".to_string());
+    for i in 3..4 {
+        esperado.push("POST /containers/create".to_string());
+        esperado.push(format!("POST /containers/{}/start", id_de_sonda(i)));
+        esperado.push(format!("POST /containers/{}/wait", id_de_sonda(i)));
+        esperado.push(format!(
+            "GET /containers/{}/logs?stdout=1&stderr=0",
+            id_de_sonda(i)
+        ));
+        esperado.push(format!("DELETE /containers/{}", id_de_sonda(i)));
+    }
+    // Pairing reintentado, estado y reanudar (sondas 4, 5 y 6).
+    for i in 4..7 {
+        esperado.push("POST /containers/create".to_string());
+        esperado.push(format!("POST /containers/{}/start", id_de_sonda(i)));
+        esperado.push(format!("POST /containers/{}/wait", id_de_sonda(i)));
+        esperado.push(format!(
+            "GET /containers/{}/logs?stdout=1&stderr=0",
+            id_de_sonda(i)
+        ));
+        esperado.push(format!("DELETE /containers/{}", id_de_sonda(i)));
+    }
+    let recibidas = secuencia_recibida(&receptor, total_peticiones);
+    assert_eq!(recibidas, esperado);
+    exigir_silencio(&receptor);
+
+    let texto_estandar = String::from_utf8(estandar_buf).unwrap();
+    assert!(
+        texto_estandar.contains("emparejamiento qr: QR-REINTENTO"),
+        "la línea de emparejamiento del reintento debe aparecer por estándar: {texto_estandar}"
+    );
+
+    let a =
+        AlmacenDelPlanoDeControl::abrir_solo_lectura(std::path::Path::new(&ruta_almacen)).unwrap();
+    let fila = a.leer_estado("c1").unwrap().unwrap();
+    assert_eq!(fila.estado, EstadoDeCelula::EnEjecucion);
+    let sustituciones = a.leer_sustituciones("c1").unwrap();
+    assert_eq!(sustituciones.len(), 1);
+}
+
+/// AC-10 (fracaso): si el reintento vuelve a responder `ya_emparejada`, NO hay una segunda
+/// recuperación: se termina en `Fallo` con el motivo en el diagnóstico, la fila queda en
+/// `Reemparejando` y no se escribe ninguna sustitución.
+#[test]
+fn resume_con_un_segundo_ya_emparejada_falla_sin_mas_reintentos() {
+    let servidor = ServidorDockerFalso::nuevo("rebind-ya-emparejada-fallo");
+    let ruta = servidor.ruta();
+    let cliente = ClienteDocker::nuevo(ruta.clone());
+    let inventario = InventarioDocker::nuevo(ruta.clone(), std::time::Duration::from_secs(70));
+    let almacen = AlmacenTemporal::nuevo("rebind-ya-emparejada-fallo");
+    let ruta_almacen = almacen.texto();
+    sembrar_reemparejando(&ruta_almacen);
+
+    let mut guiones: Vec<Guion> = Vec::new();
+    let mut contador = 0usize;
+    guiones.push(inspeccion_del_nucleo());
+    guiones.push(inspeccion_del_sidecar());
+    // Sonda de sesión: no activa, se continúa al emparejamiento.
+    servir_sonda_http(&mut guiones, &mut contador, br#"{"estado":"desvinculada"}"#);
+    // Primer emparejamiento: ya_emparejada -> recuperación única.
+    servir_sonda_http(
+        &mut guiones,
+        &mut contador,
+        br#"{"resultado":"fallido","motivo":"ya_emparejada"}"#,
+    );
+    // Recuperación única.
+    guiones.push(sin_cuerpo(204, "No Content")); // detener sidecar
+    servir_contenedor_sin_logs(&mut guiones, &mut contador); // rm sibling
+    guiones.push(sin_cuerpo(204, "No Content")); // rearrancar sidecar
+    servir_sonda_http(
+        &mut guiones,
+        &mut contador,
+        br#"{"resultado":"aplicado","accion":"pausar"}"#,
+    );
+    // Reintento: ya_emparejada OTRA VEZ -> sin segunda recuperación.
+    servir_sonda_http(
+        &mut guiones,
+        &mut contador,
+        br#"{"resultado":"fallido","motivo":"ya_emparejada"}"#,
+    );
+
+    let total_peticiones = guiones.len();
+    guiones.push(sin_cuerpo(204, "No Content")); // nunca debe servirse: prueba exigir_silencio.
+    let receptor = servir_guiones(servidor, guiones);
+
+    let argumento = vec![
+        "cell",
+        "rebind",
+        "--id",
+        "c1",
+        "--motivo",
+        "sustitución por baneo",
+        "--confirmar",
+    ];
+
+    let mut estandar_buf: Vec<u8> = Vec::new();
+    let mut diagnostico_buf: Vec<u8> = Vec::new();
+    let mut salida = Salida::nueva(&mut estandar_buf, &mut diagnostico_buf);
+
+    let ahora_ms = 1_700_000_000_000i64;
+    let codigo = ejecutar_rebind(
+        &argumento,
+        &cliente,
+        &inventario,
+        &ruta_almacen,
+        ahora_ms,
+        &mut salida,
+    );
+
+    assert_eq!(
+        codigo,
+        CodigoDeSalida::Fallo,
+        "un segundo ya_emparejada debe terminar en Fallo sin más reintentos"
+    );
+    let diagnostico = String::from_utf8(diagnostico_buf).unwrap();
+    assert!(
+        diagnostico.contains("ya_emparejada"),
+        "el diagnóstico debe nombrar el motivo: {diagnostico}"
+    );
+
+    // Exactamente una recuperación: la secuencia termina tras el segundo emparejamiento fallido.
+    let recibidas = secuencia_recibida(&receptor, total_peticiones);
+    assert_eq!(recibidas.len(), total_peticiones);
+    let creaciones = recibidas
+        .iter()
+        .filter(|l| l.as_str() == "POST /containers/create")
+        .count();
+    assert_eq!(
+        creaciones, 5,
+        "sonda de sesión + pairing fallido + rm + pausa + pairing reintentado = 5 creaciones"
+    );
+    exigir_silencio(&receptor);
+
+    let a =
+        AlmacenDelPlanoDeControl::abrir_solo_lectura(std::path::Path::new(&ruta_almacen)).unwrap();
+    let fila = a.leer_estado("c1").unwrap().unwrap();
+    assert_eq!(fila.estado, EstadoDeCelula::Reemparejando);
+    assert!(a.leer_sustituciones("c1").unwrap().is_empty());
 }

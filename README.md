@@ -200,3 +200,25 @@ el reporte cubre toda la historia. La agregación reutiliza la fórmula literal 
 conciliación, sumado solo sobre reservas conciliadas; las liberadas nunca cuentan. La salida es
 una línea por conversación `id_conversacion unidades` ordenada por identificador y una línea
 final `TOTAL <celula> <desde|inicio> <hasta|fin> <unidades>`.
+
+### 9. Reejecución (entregado el 2026-09-25 con HEX-087, tarea 15 de A-6)
+
+Reejecutar un comando de ciclo de vida sobre una célula que ya está en el estado objetivo ya no
+se rechaza: la reejecución **concilia contra el estado real de Docker** y completa sólo lo que
+falta. `cell pause` sobre una célula ya `suspendida` inspecciona ambos contenedores y detiene el
+que haya quedado corriendo; `cell unpause` sobre una célula ya `en_ejecucion` arranca el que
+haya quedado detenido y confirma con `/health/ready`; `cell terminate` sobre una célula ya
+`retirada` borra los restos que hayan quedado (contenedores y, si el núcleo sigue existiendo
+para resolverlo, el volumen de datos). Cuando no hay nada que hacer, el comando responde
+«sin cambios: la célula ya está …» y **no toca el almacén** del plano de control: ninguna
+reejecución registra transiciones. El retiro es además **parcial-tolerante**: `cell terminate
+--confirmar` sobre una fila cuyos contenedores ya no existen, están detenidos o congelados
+termina en éxito con sus avisos y persiste `Retirada`; el único caso que sigue fallando es el de
+una célula sin fila y sin contenedores («célula no encontrada»). En `cell terminate`, el cierre
+de la sesión de WhatsApp es **a mejor esfuerzo**: si el núcleo responde 502/504 o la sonda de
+cierre sale con código distinto de cero, la CLI escribe por stderr un aviso
+(*«aviso: el cierre de sesión devolvió código N; se continúa igual»*) y continúa con la
+destrucción de contenedores y volumen; la línea «sesión cerrada» sólo aparece cuando ese paso
+llegó a completarse. Si el núcleo ya no existe, el nombre del volumen no se puede resolver y la
+CLI avisa la limpieza manual (`docker volume rm <nombre>`); el procedimiento completo de los
+fallos habituales de `cell terminate` está en el runbook de operación.

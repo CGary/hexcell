@@ -408,6 +408,47 @@ Las entradas conservan su numeración; esta sección es la autoridad sobre el or
     `cell rebind` que encuentra la sesión ya emparejada (`ya_emparejada`), registrada como pendiente
     en STATUS.md el 2026-09-22 y asignada a esta tarea: se decide y se cablea aquí, y esa entrada
     pasa a Definido en el mismo commit.
+
+    **Cerrada el 2026-09-25 con HEX-087.** La tarea cierra las cuatro decisiones que la nota de
+    seguimiento del 2026-09-22 dejó abiertas, en una sola entrega sin dividir:
+
+    * **D1 — la reejecución es reconciliación.** `cell pause`/`cell unpause`/`cell terminate`
+      reejecutados sobre una célula que YA está en el estado objetivo dejan de rechazarse: la rama
+      de identidad vive en la capa de comando ANTES del rechazo de transiciones, inspecciona el
+      estado real de Docker y completa sólo lo que falta (parar el contenedor que quedó corriendo,
+      arrancar el que quedó detenido, borrar los restos de una célula ya retirada), respondiendo
+      «sin cambios: la célula ya está …» cuando no hay nada que hacer, y NUNCA registra una
+      transición. Se extiende con el **retiro parcial**: `cell terminate --confirmar` sobre una
+      fila con contenedores ausentes, detenidos o congelados termina en éxito —con sus avisos—
+      persistiendo `Retirada`; el único camino de terminate que sigue fallando por recursos
+      ausentes es el de sin fila y sin contenedores (`célula no encontrada`, AC-7). Los casos
+      AC-23..AC-25 (retiro parcial) se añadieron durante la fase de blueprint por decisión humana
+      y no se descartaron en ningún reparto.
+    * **D2 — el cierre de sesión de `cell terminate` pasa a mejor esfuerzo**, igual que el de
+      `cell rebind`, y **sustituye la elección de fail-closed de la tarea 12** (que abortaba la
+      secuencia sin destruir nada): un 502/504 del núcleo (o una sonda con código distinto de
+      cero) se avisa por stderr y la destrucción continúa. Sin bandera nueva: es extensión del
+      comportamiento ante el fallo del cierre, como previó la nota del 2026-09-22. El motivo
+      persistido sigue siendo `sesion_cerrada`; «sesión cerrada» sólo se imprime cuando el cierre
+      llegó a completarse.
+    * **D3 — la reanudación de `cell rebind` desde `Reemparejando` consulta primero la sesión**
+      (`GET /admin/sesion`): si sigue `activa`, se omite el emparejamiento y se confirma directo;
+      si el emparejamiento responde `ya_emparejada`, se descarta el `sqlstore` y se reintenta el
+      emparejamiento exactamente una vez más. La entrada pendiente de STATUS.md (2026-09-22,
+      HEX-085) pasa a Definido en este mismo commit.
+    * **D4 — el cliente Docker funde las dos paradas** (`detener_contenedor` con `t=30` y la
+      variante sin plazo) en una sola operación con plazo opcional, y gana `despausar_contenedor`
+      para los contenedores congelados (`paused`), que ahora se descongelan antes de detenerse en
+      el retiro y en la reconciliación.
+
+    **Riesgo residual asumido (decisión humana, 2026-09-24):** el nombre del volumen de datos se
+    resuelve ÚNICAMENTE de la inspección del núcleo (Mounts[].Name en `/var/lib/hexcell`), nunca
+    por convención ni del sidecar. Cuando el núcleo ya no existe y el volumen quedó huérfano, la
+    CLI no puede resolverlo: lo avisa por stderr y deja la limpieza manual documentada
+    (`docker volume rm <nombre>`); una reejecución de terminate sobre esa célula responde «sin
+    cambios» sin poder borrar el volumen. El procedimiento operativo de esa limpieza manual y de
+    los fallos habituales de terminate vive en `docs/runbook-operacion.md`, sección de
+    `cell terminate`, «fallos habituales» (tarea 21, HEX-088).
 16. **Medir memoria y tamaño de imágenes** (0,5 días). Consumo de la célula completa en reposo y bajo
     carga, y peso de ambas imágenes, registrados como valores de referencia.
     No se reutiliza `rss_linea_base` (mide solo el núcleo con adaptador simulado).

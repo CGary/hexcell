@@ -24,8 +24,8 @@ use crate::argumentos::{
     TEXTO_DE_USO,
 };
 use crate::ciclo_de_vida::{
-    self, DatosDeSondeo, DesenlaceDeSolicitudDeEmparejamiento, Disponibilidad,
-    LIMITE_DE_SONDEO_DE_ESTADO_S, NombresDeCelula,
+    self, DatosDeSondeo, DesenlaceDeSolicitudDeEmparejamiento, Disponibilidad, ErrorDeCicloDeVida,
+    EstadoDeSesion, LIMITE_DE_SONDEO_DE_ESTADO_S, NombresDeCelula,
 };
 use crate::codigo_de_salida::CodigoDeSalida;
 use crate::docker::{ClienteDocker, ErrorDeClienteDocker, InventarioDocker};
@@ -293,6 +293,22 @@ pub fn ejecutar_con_efectos<S: Write, D: Write>(
             return diagnosticar_fallo(salida, &error.to_string());
         }
     };
+    // HEX-087 (tarea 15, D1): la reejecución de un comando sobre una célula que YA está en el
+    // estado objetivo deja de rechazarse. El par identidad se concilia contra el estado real de
+    // Docker —completando sólo lo que falta— y NUNCA registra una transición: el almacén queda
+    // intacto. Esta rama vive ANTES del rechazo de transiciones para que la tabla de
+    // transiciones de `EstadoDeCelula` no se modifique (invariante de la tarea).
+    if let Some(fila) = &fila_existente
+        && fila.estado == estado_objetivo
+    {
+        let nombres = NombresDeCelula::nueva(id);
+        return match invocacion.subcomando() {
+            Subcomando::Pausar => reejecutar_pausa(salida, cliente, &nombres, id),
+            Subcomando::Reanudar => reejecutar_reanudacion(salida, cliente, &nombres, id, &datos),
+            Subcomando::Retirar => reejecutar_retiro(salida, cliente, &nombres),
+            _ => unreachable!("los subcomandos de sólo lectura ya se despacharon antes"),
+        };
+    }
     if let Some(fila) = &fila_existente
         && let Err(transicion) = fila.estado.transitar(estado_objetivo)
     {
@@ -307,8 +323,21 @@ pub fn ejecutar_con_efectos<S: Write, D: Write>(
     // motivo y el origen vacío, igual que la alta implícita de `pause`/`unpause` pero con su
     // propio motivo.
     if invocacion.subcomando() == Subcomando::Retirar {
-        return match ciclo_de_vida::retirar(cliente, &nombres, &datos) {
-            Ok(volumen) => {
+        let resultado = {
+            // Todos los avisos de `retirar` (volumen resuelto, cierre omitido o fallido) salen
+            // por el sumidero de diagnóstico EN TIEMPO REAL, antes de la petición que les sigue
+            // (AC-21), nunca acumulados para el final.
+            let mut avisar = |texto: &str| {
+                let _ = salida.diagnostico(texto);
+            };
+            ciclo_de_vida::retirar(cliente, &nombres, &datos, &mut avisar)
+        };
+        return match resultado {
+            Ok(resultado_de_retiro) => {
+                // La transición se persiste sólo después de que el retiro tuvo éxito (adr-0039,
+                // R6); el motivo queda `sesion_cerrada` también cuando el cierre se omitió o
+                // falló, porque un motivo nuevo tocaría el almacén, fuera del alcance de la
+                // tarea (decisión registrada en la tarea 15).
                 if let Err(error) = almacen.registrar_transicion(
                     id,
                     fila_existente.as_ref().map(|f| f.estado),
@@ -318,17 +347,44 @@ pub fn ejecutar_con_efectos<S: Write, D: Write>(
                 ) {
                     return diagnosticar_fallo(salida, &error.to_string());
                 }
-                if salida.linea("sesión cerrada").is_err() {
+                // «sesión cerrada» se imprime SÓLO si el cierre llegó a completarse (D2).
+                if resultado_de_retiro.sesion_cerrada && salida.linea("sesión cerrada").is_err() {
                     return CodigoDeSalida::Fallo;
                 }
                 if salida.linea("contenedores eliminados").is_err() {
                     return CodigoDeSalida::Fallo;
                 }
-                match salida.linea(&format!("volumen {volumen} eliminado")) {
-                    Ok(()) => CodigoDeSalida::Exito,
-                    Err(_) => CodigoDeSalida::Fallo,
+                match resultado_de_retiro.volumen_eliminado {
+                    Some(volumen) => match salida.linea(&format!("volumen {volumen} eliminado")) {
+                        Ok(()) => CodigoDeSalida::Exito,
+                        Err(_) => CodigoDeSalida::Fallo,
+                    },
+                    None => CodigoDeSalida::Exito,
                 }
             }
+            // Retiro parcial (D1, AC-23): hay fila en el almacén pero Docker no conoce NINGUNO
+            // de los dos contenedores. El retiro ya quedó hecho; se avisa, se persiste
+            // `Retirada` y se termina en éxito sin nada por estándar.
+            Err(ErrorDeCicloDeVida::CelulaNoEncontrada) if fila_existente.is_some() => {
+                let _ = salida.diagnostico(
+                    "aviso: ni el núcleo ni el sidecar existen en Docker; no queda nada que detener ni borrar",
+                );
+                let _ = salida.diagnostico(
+                    "aviso: no se pudo resolver el volumen de datos porque el núcleo ya no existe; si quedó, bórrelo a mano con docker volume rm <nombre>",
+                );
+                if let Err(error) = almacen.registrar_transicion(
+                    id,
+                    fila_existente.as_ref().map(|f| f.estado),
+                    EstadoDeCelula::Retirada,
+                    MOTIVO_DE_SESION_CERRADA,
+                    ahora_ms,
+                ) {
+                    return diagnosticar_fallo(salida, &error.to_string());
+                }
+                CodigoDeSalida::Exito
+            }
+            // Sin fila y sin contenedores: el único camino de terminate que falla por recursos
+            // ausentes (AC-7); sin avisos, con el diagnóstico pelado de `CelulaNoEncontrada`.
             Err(error) => match salida.diagnostico(&error.to_string()) {
                 Ok(()) => CodigoDeSalida::Fallo,
                 Err(_) => CodigoDeSalida::Fallo,
@@ -363,6 +419,103 @@ pub fn ejecutar_con_efectos<S: Write, D: Write>(
             )) {
                 Ok(()) => CodigoDeSalida::Exito,
                 Err(_) => CodigoDeSalida::Fallo,
+            }
+        }
+        Err(error) => diagnosticar_fallo(salida, &error.to_string()),
+    }
+}
+
+// ============================================================================
+// Reejecuciones idempotentes (HEX-087, tarea 15, D1): los tres comandos de ciclo de vida con
+// estado objetivo reejecutados sobre una célula que YA está en ese estado. Ninguno registra
+// transiciones ni toca el almacén; los avisos de retiro salen por diagnóstico en tiempo real.
+// ============================================================================
+
+/// Línea de «sin cambios» por diagnóstico: `sin cambios: la célula ya está {estado}`.
+fn sin_cambios<S: Write, D: Write>(
+    salida: &mut Salida<S, D>,
+    estado: EstadoDeCelula,
+) -> CodigoDeSalida {
+    match salida.diagnostico(&format!("sin cambios: la célula ya está {estado}")) {
+        Ok(()) => CodigoDeSalida::Exito,
+        Err(_) => CodigoDeSalida::Fallo,
+    }
+}
+
+/// Reejecución de `cell pause` sobre una célula ya `Suspendida`: concilia y detiene sólo el
+/// contenedor que falte, o responde «sin cambios» si ambos ya están detenidos (AC-1/AC-2).
+fn reejecutar_pausa<S: Write, D: Write>(
+    salida: &mut Salida<S, D>,
+    cliente: &ClienteDocker,
+    nombres: &NombresDeCelula,
+    id: &str,
+) -> CodigoDeSalida {
+    match ciclo_de_vida::reconciliar_pausa(cliente, nombres) {
+        Ok(ciclo_de_vida::Reconciliacion::SinCambios) => {
+            sin_cambios(salida, EstadoDeCelula::Suspendida)
+        }
+        Ok(ciclo_de_vida::Reconciliacion::Aplicada) => {
+            match salida.linea(&format!("cell pause completado para «{id}»")) {
+                Ok(()) => CodigoDeSalida::Exito,
+                Err(_) => CodigoDeSalida::Fallo,
+            }
+        }
+        Err(error) => diagnosticar_fallo(salida, &error.to_string()),
+    }
+}
+
+/// Reejecución de `cell unpause` sobre una célula ya `EnEjecucion`: arranca sólo el contenedor
+/// que falte y confirma la disponibilidad con la sonda, o responde «sin cambios» si ya todo
+/// corría y la sonda confirma (AC-3/AC-4).
+fn reejecutar_reanudacion<S: Write, D: Write>(
+    salida: &mut Salida<S, D>,
+    cliente: &ClienteDocker,
+    nombres: &NombresDeCelula,
+    id: &str,
+    datos: &DatosDeSondeo,
+) -> CodigoDeSalida {
+    match ciclo_de_vida::reconciliar_reanudacion(cliente, nombres, datos) {
+        Ok(ciclo_de_vida::Reconciliacion::SinCambios) => {
+            sin_cambios(salida, EstadoDeCelula::EnEjecucion)
+        }
+        Ok(ciclo_de_vida::Reconciliacion::Aplicada) => {
+            match salida.linea(&format!("cell unpause completado para «{id}»")) {
+                Ok(()) => CodigoDeSalida::Exito,
+                Err(_) => CodigoDeSalida::Fallo,
+            }
+        }
+        Err(error) => diagnosticar_fallo(salida, &error.to_string()),
+    }
+}
+
+/// Reejecución de `cell terminate` sobre una célula ya `Retirada`: elimina los restos que hayan
+/// quedado en Docker o responde «sin cambios» si no queda nada (AC-5/AC-6). Sin cierre de
+/// sesión: una célula retirada no tiene sesión que cerrar.
+fn reejecutar_retiro<S: Write, D: Write>(
+    salida: &mut Salida<S, D>,
+    cliente: &ClienteDocker,
+    nombres: &NombresDeCelula,
+) -> CodigoDeSalida {
+    let resultado = {
+        let mut avisar = |texto: &str| {
+            let _ = salida.diagnostico(texto);
+        };
+        ciclo_de_vida::completar_retiro(cliente, nombres, &mut avisar)
+    };
+    match resultado {
+        Ok(ciclo_de_vida::ReconciliacionDeRetiro::SinCambios) => {
+            sin_cambios(salida, EstadoDeCelula::Retirada)
+        }
+        Ok(ciclo_de_vida::ReconciliacionDeRetiro::Aplicada { volumen_eliminado }) => {
+            if salida.linea("contenedores eliminados").is_err() {
+                return CodigoDeSalida::Fallo;
+            }
+            match volumen_eliminado {
+                Some(volumen) => match salida.linea(&format!("volumen {volumen} eliminado")) {
+                    Ok(()) => CodigoDeSalida::Exito,
+                    Err(_) => CodigoDeSalida::Fallo,
+                },
+                None => CodigoDeSalida::Exito,
             }
         }
         Err(error) => diagnosticar_fallo(salida, &error.to_string()),
@@ -458,6 +611,30 @@ pub fn ejecutar_reemparejamiento<S: Write, D: Write>(
     // corriendo, y `preparar_reemparejamiento` lo verifica de nuevo.
     let desde_estado = estado_actual;
 
+    // HEX-087 (tarea 15, D3): al reanudar desde `Reemparejando`, consultar primero la sesión.
+    // Si sigue `activa`, la célula quedó aquí por un fallo posterior al emparejamiento (pasos
+    // 9-10 o el arranque del sidecar) y no hay nada que re-emparejar: se omite el paso 8 —y su
+    // paso 9— y se reanuda el envío directo. Una sonda fallida aborta con `Fallo` en vez de
+    // adivinar; la fila queda en `Reemparejando` para un nuevo intento.
+    let reanudando = matches!(estado_actual, Some(EstadoDeCelula::Reemparejando));
+    let mut sesion_ya_activa = false;
+    if reanudando {
+        match ciclo_de_vida::consultar_estado_de_sesion(
+            cliente,
+            &nombres,
+            &datos_de_celula,
+            &imagen,
+            ciclo_de_vida::LIMITE_DE_EMPAREJAMIENTO_SONDA_S,
+        ) {
+            Ok(EstadoDeSesion::Activa) => {
+                let _ = salida.diagnostico("la sesión ya está activa: se omite el emparejamiento");
+                sesion_ya_activa = true;
+            }
+            Ok(_) => {}
+            Err(error) => return diagnosticar_fallo(salida, &error.to_string()),
+        }
+    }
+
     // Pasos 2-4: preparar reemparejamiento (sólo si partimos de EnEjecución o sin fila).
     let en_secuencia_completa = matches!(estado_actual, None | Some(EstadoDeCelula::EnEjecucion));
     let aviso_de_cierre = if en_secuencia_completa {
@@ -504,60 +681,100 @@ pub fn ejecutar_reemparejamiento<S: Write, D: Write>(
         }
     }
 
-    // Paso 8: solicitar emparejamiento.
-    match ciclo_de_vida::solicitar_emparejamiento(
-        cliente,
-        &nombres,
-        &datos_de_celula,
-        metodo.nombre_de_cable(),
-        &imagen,
-        &plazos,
-        ciclo_de_vida::LIMITE_DE_EMPAREJAMIENTO_SONDA_S,
-    ) {
-        Ok(DesenlaceDeSolicitudDeEmparejamiento::Codigo {
-            valor,
-            expira_en_ms,
-        }) => {
-            // Línea de emparejamiento por salida estándar (AC-12): nombra el método que el
-            // OPERADOR eligió (--metodo), no el que el núcleo decida ecoar en la respuesta.
-            if salida
-                .linea(&format!(
-                    "emparejamiento {}: {}",
+    // Paso 8: solicitar emparejamiento (omitido si la sesión ya está activa en el resume).
+    let desenlace_del_emparejamiento = if sesion_ya_activa {
+        None
+    } else {
+        match ciclo_de_vida::solicitar_emparejamiento(
+            cliente,
+            &nombres,
+            &datos_de_celula,
+            metodo.nombre_de_cable(),
+            &imagen,
+            &plazos,
+            ciclo_de_vida::LIMITE_DE_EMPAREJAMIENTO_SONDA_S,
+        ) {
+            Ok(desenlace) => Some(desenlace),
+            // D3: en la reanudación, un `ya_emparejada` —la sesión del sidecar sobrevivió al
+            // fallo que dejó la célula en `Reemparejando`— se recupera UNA sola vez: se
+            // descarta el `sqlstore` (corresponde a un dispositivo que el sidecar cree vivo) y
+            // se reintenta el emparejamiento exactamente una vez más (AC-10). Cualquier otro
+            // motivo, o un segundo `ya_emparejada`, cae en `Fallo` con la fila en `Reemparejando`.
+            Err(ciclo_de_vida::ErrorDeCicloDeVida::EmparejamientoFallido { motivo })
+                if reanudando && motivo == ciclo_de_vida::MOTIVO_YA_EMPAREJADA =>
+            {
+                if let Err(error) = ciclo_de_vida::descartar_sqlstore_y_rearrancar(
+                    cliente,
+                    &nombres,
+                    &datos_de_celula,
+                    &imagen,
+                    &plazos,
+                    ciclo_de_vida::LIMITE_DE_EMPAREJAMIENTO_SONDA_S,
+                ) {
+                    return diagnosticar_fallo(salida, &error.to_string());
+                }
+                match ciclo_de_vida::solicitar_emparejamiento(
+                    cliente,
+                    &nombres,
+                    &datos_de_celula,
                     metodo.nombre_de_cable(),
-                    valor
-                ))
-                .is_err()
-            {
-                return CodigoDeSalida::Fallo;
+                    &imagen,
+                    &plazos,
+                    ciclo_de_vida::LIMITE_DE_EMPAREJAMIENTO_SONDA_S,
+                ) {
+                    Ok(desenlace) => Some(desenlace),
+                    Err(error) => return diagnosticar_fallo(salida, &error.to_string()),
+                }
             }
-            // Nota de renderizado gráfico (AC-12, misma redacción que emparejar.rs:243).
-            if salida
-                .linea(
-                    "Nota: el renderizado gráfico no está integrado; puede visualizar esta cadena con un renderizador QR externo.",
-                )
-                .is_err()
-            {
-                return CodigoDeSalida::Fallo;
-            }
-            // Paso 9: esperar confirmación.
-            if let Err(error) = ciclo_de_vida::esperar_confirmacion(
-                cliente,
-                &nombres,
-                &datos_de_celula,
-                expira_en_ms,
-                ahora_ms,
-                &imagen,
-                &plazos,
-                ciclo_de_vida::LIMITE_DE_EMPAREJAMIENTO_SONDA_S,
-            ) {
+            Err(error) => {
                 return diagnosticar_fallo(salida, &error.to_string());
             }
         }
-        Ok(DesenlaceDeSolicitudDeEmparejamiento::CanalSinSesion) => {
-            // canal_sin_sesion omite el paso 9 y va directo al paso 10.
-        }
-        Err(error) => {
-            return diagnosticar_fallo(salida, &error.to_string());
+    };
+    if let Some(desenlace) = desenlace_del_emparejamiento {
+        match desenlace {
+            DesenlaceDeSolicitudDeEmparejamiento::Codigo {
+                valor,
+                expira_en_ms,
+            } => {
+                // Línea de emparejamiento por salida estándar (AC-12): nombra el método que el
+                // OPERADOR eligió (--metodo), no el que el núcleo decida ecoar en la respuesta.
+                if salida
+                    .linea(&format!(
+                        "emparejamiento {}: {}",
+                        metodo.nombre_de_cable(),
+                        valor
+                    ))
+                    .is_err()
+                {
+                    return CodigoDeSalida::Fallo;
+                }
+                // Nota de renderizado gráfico (AC-12, misma redacción que emparejar.rs:243).
+                if salida
+                    .linea(
+                        "Nota: el renderizado gráfico no está integrado; puede visualizar esta cadena con un renderizador QR externo.",
+                    )
+                    .is_err()
+                {
+                    return CodigoDeSalida::Fallo;
+                }
+                // Paso 9: esperar confirmación.
+                if let Err(error) = ciclo_de_vida::esperar_confirmacion(
+                    cliente,
+                    &nombres,
+                    &datos_de_celula,
+                    expira_en_ms,
+                    ahora_ms,
+                    &imagen,
+                    &plazos,
+                    ciclo_de_vida::LIMITE_DE_EMPAREJAMIENTO_SONDA_S,
+                ) {
+                    return diagnosticar_fallo(salida, &error.to_string());
+                }
+            }
+            DesenlaceDeSolicitudDeEmparejamiento::CanalSinSesion => {
+                // canal_sin_sesion omite el paso 9 y va directo al paso 10.
+            }
         }
     }
 

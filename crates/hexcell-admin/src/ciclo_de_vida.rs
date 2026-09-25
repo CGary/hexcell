@@ -134,10 +134,6 @@ pub enum ErrorDeCicloDeVida {
     ImagenDeSondaNoEncontrada { imagen: String },
     /// La célula no existe: falta el núcleo o el sidecar.
     CelulaNoEncontrada,
-    /// La célula está pausada: el núcleo no está en ejecución.
-    CelulaPausada,
-    /// El cierre de sesión falló: la sonda de cierre salió con código distinto de cero.
-    CierreDeSesionFallido { codigo: i64 },
     /// `POST /admin/envio/pausa` respondió `fallido` antes del paso destructivo (tarea 13, D5.3).
     PausaDeEnvioFallida { motivo: String },
     /// `POST /admin/sesion/emparejamiento` respondió `fallido` con un motivo distinto de
@@ -171,14 +167,6 @@ impl fmt::Display for ErrorDeCicloDeVida {
                 "la imagen de sonda «{imagen}» no existe en Docker; hay que traerla antes de reanudar"
             ),
             Self::CelulaNoEncontrada => write!(f, "célula no encontrada"),
-            Self::CelulaPausada => write!(
-                f,
-                "la célula está pausada: ejecute cell unpause antes de cell terminate"
-            ),
-            Self::CierreDeSesionFallido { codigo } => write!(
-                f,
-                "el cierre de sesión falló: la sonda de cierre salió con código {codigo}"
-            ),
             Self::PausaDeEnvioFallida { motivo } => {
                 write!(f, "la pausa de envío falló: {motivo}")
             }
@@ -236,8 +224,8 @@ fn detener_ambos_sin_plazo(
     cliente: &ClienteDocker,
     nombres: &NombresDeCelula,
 ) -> Result<(), ErrorDeCicloDeVida> {
-    cliente.detener_contenedor_sin_plazo(&nombres.sidecar)?;
-    cliente.detener_contenedor_sin_plazo(&nombres.nucleo)?;
+    cliente.detener_contenedor(&nombres.sidecar, None)?;
+    cliente.detener_contenedor(&nombres.nucleo, None)?;
     Ok(())
 }
 
@@ -319,7 +307,18 @@ pub fn reanudar(
 ) -> Result<(), ErrorDeCicloDeVida> {
     cliente.iniciar_contenedor(&nombres.nucleo)?;
     cliente.iniciar_contenedor(&nombres.sidecar)?;
+    esperar_disponibilidad(cliente, nombres, datos)
+}
 
+/// Espera la disponibilidad de la célula: reinspecciona el núcleo, crea la sonda hermana en su
+/// red con el puerto de salud LEÍDO de esa inspección, espera su código de salida y limpia
+/// siempre la sonda. Extraída de `reanudar` (HEX-087) para que la reconciliación de una
+/// reejecución de `cell unpause` reutilice el mismo veredicto sin duplicar la plantilla.
+fn esperar_disponibilidad(
+    cliente: &ClienteDocker,
+    nombres: &NombresDeCelula,
+    datos: &DatosDeSondeo,
+) -> Result<(), ErrorDeCicloDeVida> {
     let inspeccion = cliente.inspeccionar_contenedor(&nombres.nucleo)?;
     let red = red_de_inspeccion(&inspeccion)?;
     let puerto = puerto_de_inspeccion(&inspeccion, "HEXCELL_DIRECCION_SALUD")?;
@@ -355,6 +354,134 @@ pub fn reanudar(
             limite_segundos: datos.limite_segundos,
         })
     }
+}
+
+// ============================================================================
+// Reconciliación de reejecuciones (HEX-087, tarea 15, D1): cuando el estado almacenado YA es el
+// objetivo del comando, la reejecución ya no se rechaza: inspecciona el estado real de Docker y
+// completa sólo lo que falta, sin persistir ninguna transición (la capa de comando se reserva
+// esa escritura para las transiciones reales).
+// ============================================================================
+
+/// Desenlace de una reconciliación de `cell pause`/`cell unpause` sobre una célula que ya está
+/// en el estado objetivo.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Reconciliacion {
+    /// Nada que hacer: Docker ya refleja el estado objetivo.
+    SinCambios,
+    /// Se completó al menos una operación Docker (parada o arranque) para alcanzar el objetivo.
+    Aplicada,
+}
+
+/// Reconciliar una reejecución de `cell pause` sobre una célula ya `Suspendida`: inspecciona
+/// ambos contenedores y detiene sólo los que no estén ya detenidos, sidecar primero. Un 404 en
+/// cualquiera de los dos es [`ErrorDeCicloDeVida::CelulaNoEncontrada`]: no hay nada que conciliar.
+pub fn reconciliar_pausa(
+    cliente: &ClienteDocker,
+    nombres: &NombresDeCelula,
+) -> Result<Reconciliacion, ErrorDeCicloDeVida> {
+    let inspeccion_nucleo = inspeccionar_si_existe(cliente, &nombres.nucleo)?
+        .ok_or(ErrorDeCicloDeVida::CelulaNoEncontrada)?;
+    let inspeccion_sidecar = inspeccionar_si_existe(cliente, &nombres.sidecar)?
+        .ok_or(ErrorDeCicloDeVida::CelulaNoEncontrada)?;
+    let mut hubo_cambios = false;
+    let estado_sidecar = estado_de_contenedor(&inspeccion_sidecar)?;
+    let estado_nucleo = estado_de_contenedor(&inspeccion_nucleo)?;
+    if !matches!(estado_sidecar, "exited" | "created" | "dead") {
+        detener_si_hace_falta(cliente, &nombres.sidecar, estado_sidecar)?;
+        hubo_cambios = true;
+    }
+    if !matches!(estado_nucleo, "exited" | "created" | "dead") {
+        detener_si_hace_falta(cliente, &nombres.nucleo, estado_nucleo)?;
+        hubo_cambios = true;
+    }
+    Ok(if hubo_cambios {
+        Reconciliacion::Aplicada
+    } else {
+        Reconciliacion::SinCambios
+    })
+}
+
+/// Reconciliar una reejecución de `cell unpause` sobre una célula ya `EnEjecucion`: inspecciona
+/// ambos contenedores, arranca sólo los que no estén corriendo y confirma la disponibilidad con
+/// la sonda de `/health/ready`. Sin arranques y con la sonda en 0 → [`Reconciliacion::SinCambios`];
+/// con al menos un arranque → [`Reconciliacion::Aplicada`]; si la sonda no confirma, el error
+/// [`ErrorDeCicloDeVida::TiempoDeSondeoAgotado`] aborta igual que en la reanudación normal.
+pub fn reconciliar_reanudacion(
+    cliente: &ClienteDocker,
+    nombres: &NombresDeCelula,
+    datos: &DatosDeSondeo,
+) -> Result<Reconciliacion, ErrorDeCicloDeVida> {
+    let inspeccion_nucleo = inspeccionar_si_existe(cliente, &nombres.nucleo)?
+        .ok_or(ErrorDeCicloDeVida::CelulaNoEncontrada)?;
+    let inspeccion_sidecar = inspeccionar_si_existe(cliente, &nombres.sidecar)?
+        .ok_or(ErrorDeCicloDeVida::CelulaNoEncontrada)?;
+    let mut hubo_arranque = false;
+    if estado_de_contenedor(&inspeccion_nucleo)? != "running" {
+        cliente.iniciar_contenedor(&nombres.nucleo)?;
+        hubo_arranque = true;
+    }
+    if estado_de_contenedor(&inspeccion_sidecar)? != "running" {
+        cliente.iniciar_contenedor(&nombres.sidecar)?;
+        hubo_arranque = true;
+    }
+    esperar_disponibilidad(cliente, nombres, datos)?;
+    Ok(if hubo_arranque {
+        Reconciliacion::Aplicada
+    } else {
+        Reconciliacion::SinCambios
+    })
+}
+
+/// Desenlace de una reejecución de `cell terminate` sobre una célula ya `Retirada`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ReconciliacionDeRetiro {
+    /// Nada que hacer: ni núcleo ni sidecar existen en Docker.
+    SinCambios,
+    /// Se eliminaron los restos encontrados.
+    Aplicada {
+        /// Nombre del volumen de datos eliminado, o `None` si no se pudo resolver.
+        volumen_eliminado: Option<String>,
+    },
+}
+
+/// Reconciliar una reejecución de `cell terminate` sobre una célula ya `Retirada`: elimina los
+/// contenedores que hayan quedado (deteniéndolos si hace falta, sidecar primero) y el volumen de
+/// datos si el núcleo sigue existiendo para resolverlo. No hay cierre de sesión: una célula
+/// retirada no tiene sesión que cerrar. Si no queda NADA en Docker → [`ReconciliacionDeRetiro::SinCambios`].
+pub fn completar_retiro(
+    cliente: &ClienteDocker,
+    nombres: &NombresDeCelula,
+    avisar: &mut dyn FnMut(&str),
+) -> Result<ReconciliacionDeRetiro, ErrorDeCicloDeVida> {
+    let inspeccion_nucleo = inspeccionar_si_existe(cliente, &nombres.nucleo)?;
+    let inspeccion_sidecar = inspeccionar_si_existe(cliente, &nombres.sidecar)?;
+    if inspeccion_nucleo.is_none() && inspeccion_sidecar.is_none() {
+        return Ok(ReconciliacionDeRetiro::SinCambios);
+    }
+    let volumen = match &inspeccion_nucleo {
+        Some(inspeccion) => {
+            let volumen = volumen_de_inspeccion(inspeccion)?;
+            avisar(&format!("volumen de la célula: {volumen}"));
+            Some(volumen)
+        }
+        None => {
+            avisar(
+                "aviso: no se pudo resolver el volumen de datos porque el núcleo ya no existe; si quedó, bórrelo a mano con docker volume rm <nombre>",
+            );
+            None
+        }
+    };
+    destruir_restos(
+        cliente,
+        nombres,
+        inspeccion_nucleo.as_ref(),
+        inspeccion_sidecar.as_ref(),
+        volumen.as_deref(),
+    )?;
+    Ok(ReconciliacionDeRetiro::Aplicada {
+        volumen_eliminado: volumen,
+    })
 }
 
 /// Veredicto corto de la sonda de disponibilidad que usa `cell status`.
@@ -494,62 +621,88 @@ pub fn guion_de_cierre_de_sesion(url: &str) -> Vec<String> {
     ]
 }
 
-/// Retira definitivamente una célula: cierra la sesión, detiene ambos contenedores y elimina
-/// los contenedores y el volumen de datos.
-///
-/// Secuencia de seis pasos, abortando al primer fallo:
-/// 1. Inspeccionar el núcleo; si no existe, `CelulaNoEncontrada`; si no está en ejecución,
-///    `CelulaPausada`.
-/// 2. Inspeccionar el sidecar; si no existe, `CelulaNoEncontrada`.
-/// 3. Resolver red, puerto de admin y nombre del volumen desde la inspección del núcleo.
-/// 4. POST `/admin/sesion/cierre` mediante un contenedor hermano; si falla, abortar sin destruir
-///    nada (salvo la propia sonda de cierre).
-/// 5. Detener sidecar y núcleo (sin plazo explícito, rige el `stop_grace_period`).
-/// 6. Eliminar sidecar, núcleo y volumen; devolver el nombre del volumen eliminado.
-pub fn retirar(
-    cliente: &ClienteDocker,
-    nombres: &NombresDeCelula,
-    datos: &DatosDeSondeo,
-) -> Result<String, ErrorDeCicloDeVida> {
-    // Paso 1: inspeccionar el núcleo.
-    let inspeccion_nucleo = match cliente.inspeccionar_contenedor(&nombres.nucleo) {
-        Ok(inspeccion) => inspeccion,
-        Err(ErrorDeClienteDocker::NoEncontrado) => {
-            return Err(ErrorDeCicloDeVida::CelulaNoEncontrada);
-        }
-        Err(error) => return Err(error.into()),
-    };
+/// Resultado de un `retirar` que llegó hasta el final, aunque fuera por un camino parcial.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResultadoDeRetiro {
+    /// ¿El cierre de sesión se completó con éxito (código 0 de la sonda)? `false` si se omitió
+    /// (núcleo ausente o no en ejecución) o si la sonda salió con código distinto de cero.
+    pub sesion_cerrada: bool,
+    /// Nombre del volumen de datos eliminado, o `None` si no se pudo resolver (núcleo ausente).
+    pub volumen_eliminado: Option<String>,
+}
 
-    // Verificar que el núcleo está en ejecución.
-    let estado = inspeccion_nucleo
+/// Texto del aviso de cierre de sesión fallido que comparten `retirar` y
+/// `preparar_reemparejamiento`: el cierre es a mejor esfuerzo y un fallo se escribe por
+/// diagnóstico sin abortar la secuencia.
+fn aviso_de_cierre_de_sesion(codigo: i64) -> String {
+    format!("aviso: el cierre de sesión devolvió código {codigo}; se continúa igual")
+}
+
+/// Inspecciona un contenedor traduciendo el 404 a `None`: la ausencia es una observación, no un
+/// error. Cualquier otro fallo de Docker se propaga y aborta.
+fn inspeccionar_si_existe(
+    cliente: &ClienteDocker,
+    nombre: &str,
+) -> Result<Option<serde_json::Value>, ErrorDeCicloDeVida> {
+    match cliente.inspeccionar_contenedor(nombre) {
+        Ok(inspeccion) => Ok(Some(inspeccion)),
+        Err(ErrorDeClienteDocker::NoEncontrado) => Ok(None),
+        Err(error) => Err(error.into()),
+    }
+}
+
+/// Lee el estado de un contenedor de su inspección (`State.Status`).
+fn estado_de_contenedor(inspeccion: &serde_json::Value) -> Result<&str, ErrorDeCicloDeVida> {
+    inspeccion
         .pointer("/State/Status")
         .and_then(serde_json::Value::as_str)
         .ok_or_else(|| {
-            ErrorDeCicloDeVida::Configuracion("el núcleo no declara su estado".to_string())
-        })?;
-    if estado != "running" {
-        return Err(ErrorDeCicloDeVida::CelulaPausada);
-    }
+            ErrorDeCicloDeVida::Configuracion("el contenedor no declara su estado".to_string())
+        })
+}
 
-    // Paso 2: inspeccionar el sidecar.
-    match cliente.inspeccionar_contenedor(&nombres.sidecar) {
-        Ok(_) => {}
-        Err(ErrorDeClienteDocker::NoEncontrado) => {
-            return Err(ErrorDeCicloDeVida::CelulaNoEncontrada);
+/// Detiene un contenedor sólo si hace falta, según su estado observado:
+///
+/// * `paused` (congelado por el motor, no por `cell pause`) → se descongela con
+///   [`ClienteDocker::despausar_contenedor`] y después se detiene;
+/// * `exited`/`created`/`dead` → ya está detenido: no se hace nada;
+/// * cualquier otro estado (`running`, `restarting`, …) → se detiene.
+///
+/// La parada nunca fija plazo (`None`): rige el `stop_grace_period` de la plantilla.
+fn detener_si_hace_falta(
+    cliente: &ClienteDocker,
+    nombre: &str,
+    estado: &str,
+) -> Result<(), ErrorDeCicloDeVida> {
+    match estado {
+        "paused" => {
+            cliente.despausar_contenedor(nombre)?;
+            cliente.detener_contenedor(nombre, None)?;
         }
-        Err(error) => return Err(error.into()),
+        "exited" | "created" | "dead" => {}
+        _ => {
+            cliente.detener_contenedor(nombre, None)?;
+        }
     }
+    Ok(())
+}
 
-    // Paso 3: resolver red, puerto y volumen desde la inspección del núcleo.
-    let red = red_de_inspeccion(&inspeccion_nucleo)?;
-    let puerto = puerto_de_inspeccion(&inspeccion_nucleo, "HEXCELL_DIRECCION_ADMIN")?;
-    let volumen = volumen_de_inspeccion(&inspeccion_nucleo)?;
-
-    // Paso 4: POST /admin/sesion/cierre mediante un contenedor hermano.
-    let url = format!("http://{}:{}/admin/sesion/cierre", nombres.nucleo, puerto);
+/// Ejecuta `POST /admin/sesion/cierre` mediante un contenedor hermano y devuelve su código de
+/// salida: 0 si la ruta respondió 2xx, distinto de cero (502/504, conexión reseteada, etc.) en
+/// caso contrario. La sonda se elimina siempre, también en los caminos de error.
+///
+/// Los fallos de Docker (imagen ausente, demonio inalcanzable, espera fallida) se propagan:
+/// el cierre es a mejor esfuerzo SÓLO ante un código de salida distinto de cero, no ante un
+/// fallo de infraestructura.
+fn cerrar_sesion(
+    cliente: &ClienteDocker,
+    datos: &DatosDeSondeo,
+    red: &str,
+    url: &str,
+) -> Result<i64, ErrorDeCicloDeVida> {
     let opciones = OpcionesDeContenedor {
-        red,
-        cmd: guion_de_cierre_de_sesion(&url),
+        red: red.to_string(),
+        cmd: guion_de_cierre_de_sesion(url),
     };
     let sonda = match cliente.crear_e_iniciar_contenedor_con_opciones(&datos.imagen, opciones) {
         Ok(resultado) => match resultado {
@@ -563,31 +716,124 @@ pub fn retirar(
         }
         Err(error) => return Err(error.into()),
     };
-
-    // Esperar y limpiar la sonda de cierre en ambos caminos (éxito y fallo).
     let espera = cliente.esperar_contenedor(&sonda);
     let limpieza = cliente.eliminar_contenedor(&sonda);
-    let codigo = match (espera, limpieza) {
-        (Ok(codigo), Ok(())) => codigo,
-        (Err(error), Ok(())) => return Err(error.into()),
-        (Ok(_), Err(error)) => return Err(error.into()),
-        (Err(error), Err(_)) => return Err(error.into()),
-    };
+    match (espera, limpieza) {
+        (Ok(codigo), Ok(())) => Ok(codigo),
+        (Err(error), Ok(())) => Err(error.into()),
+        (Ok(_), Err(error)) => Err(error.into()),
+        (Err(error), Err(_)) => Err(error.into()),
+    }
+}
 
-    // Si el cierre de sesión falló, abortar sin destruir nada.
-    if codigo != 0 {
-        return Err(ErrorDeCicloDeVida::CierreDeSesionFallido { codigo });
+/// Destruye los restos de una célula: detiene TODOS los contenedores presentes que lo necesiten
+/// (sidecar primero) y después los elimina (también sidecar primero), y por último elimina el
+/// volumen de datos (tolerando que ya no exista). El orden «primero todas las paradas, después
+/// todos los borrados» preserva el invariante «nada sale durante la pausa» que `pausar` ya
+/// sostiene.
+///
+/// `inspeccion_nucleo`/`inspeccion_sidecar` son las observaciones de [`inspeccionar_si_existe`]:
+/// un `None` significa que el contenedor ya no existe y se omite. El volumen se elimina sólo si
+/// el llamador lo resolvió (nunca se deriva por convención); un 404 del volumen no es un error.
+fn destruir_restos(
+    cliente: &ClienteDocker,
+    nombres: &NombresDeCelula,
+    inspeccion_nucleo: Option<&serde_json::Value>,
+    inspeccion_sidecar: Option<&serde_json::Value>,
+    volumen: Option<&str>,
+) -> Result<(), ErrorDeCicloDeVida> {
+    if let Some(inspeccion) = inspeccion_sidecar {
+        detener_si_hace_falta(cliente, &nombres.sidecar, estado_de_contenedor(inspeccion)?)?;
+    }
+    if let Some(inspeccion) = inspeccion_nucleo {
+        detener_si_hace_falta(cliente, &nombres.nucleo, estado_de_contenedor(inspeccion)?)?;
+    }
+    if inspeccion_sidecar.is_some() {
+        cliente.eliminar_contenedor(&nombres.sidecar)?;
+    }
+    if inspeccion_nucleo.is_some() {
+        cliente.eliminar_contenedor(&nombres.nucleo)?;
+    }
+    if let Some(volumen) = volumen {
+        match cliente.eliminar_volumen(volumen) {
+            Ok(()) => {}
+            Err(ErrorDeClienteDocker::NoEncontrado) => {}
+            Err(error) => return Err(error.into()),
+        }
+    }
+    Ok(())
+}
+
+/// Retira definitivamente una célula: cierra la sesión cuando el núcleo está en ejecución y
+/// destruye los contenedores y el volumen de datos, tolerando una célula parcialmente destruida.
+///
+/// Tolerancia a restos (HEX-087, tarea 15, D1/D2):
+/// 1. Inspeccionar el núcleo y el sidecar. Si AMBOS faltan, `CelulaNoEncontrada` sin avisos ni
+///    más peticiones (el llamador decide si hay fila que persistir).
+/// 2. Núcleo presente → resolver red, puerto de admin y volumen desde su inspección y avisar
+///    `volumen de la célula: <nombre>` ANTES de cualquier parada. Si el núcleo está en
+///    ejecución, `POST /admin/sesion/cierre` a mejor esfuerzo: un código distinto de cero se
+///    avisa y se continúa (D2); un fallo de Docker (imagen ausente, demonio inalcanzable)
+///    todavía aborta antes de destruir nada. Si el núcleo no está en ejecución, el cierre se
+///    omite con su aviso.
+/// 3. Núcleo ausente (pero sidecar presente) → se avisa que el cierre se omite y que el volumen
+///    no se pudo resolver, con la limpieza manual `docker volume rm <nombre>`.
+/// 4. Detener y eliminar los contenedores presentes (sidecar primero) y el volumen resuelto.
+///
+/// Todos los avisos salen por `avisar` en tiempo real, antes de la petición que les sigue.
+pub fn retirar(
+    cliente: &ClienteDocker,
+    nombres: &NombresDeCelula,
+    datos: &DatosDeSondeo,
+    avisar: &mut dyn FnMut(&str),
+) -> Result<ResultadoDeRetiro, ErrorDeCicloDeVida> {
+    let inspeccion_nucleo = inspeccionar_si_existe(cliente, &nombres.nucleo)?;
+    let inspeccion_sidecar = inspeccionar_si_existe(cliente, &nombres.sidecar)?;
+    if inspeccion_nucleo.is_none() && inspeccion_sidecar.is_none() {
+        return Err(ErrorDeCicloDeVida::CelulaNoEncontrada);
     }
 
-    // Paso 5: detener sidecar y núcleo.
-    detener_ambos_sin_plazo(cliente, nombres)?;
+    let mut sesion_cerrada = false;
+    let volumen = match &inspeccion_nucleo {
+        Some(inspeccion) => {
+            let red = red_de_inspeccion(inspeccion)?;
+            let puerto = puerto_de_inspeccion(inspeccion, "HEXCELL_DIRECCION_ADMIN")?;
+            let volumen = volumen_de_inspeccion(inspeccion)?;
+            avisar(&format!("volumen de la célula: {volumen}"));
+            if estado_de_contenedor(inspeccion)? == "running" {
+                let url = format!("http://{}:{}/admin/sesion/cierre", nombres.nucleo, puerto);
+                let codigo = cerrar_sesion(cliente, datos, &red, &url)?;
+                if codigo == 0 {
+                    sesion_cerrada = true;
+                } else {
+                    avisar(&aviso_de_cierre_de_sesion(codigo));
+                }
+            } else {
+                avisar("aviso: el núcleo no está en ejecución; se omite el cierre de sesión");
+            }
+            Some(volumen)
+        }
+        None => {
+            avisar("aviso: el núcleo no existe; se omite el cierre de sesión");
+            avisar(
+                "aviso: no se pudo resolver el volumen de datos porque el núcleo ya no existe; si quedó, bórrelo a mano con docker volume rm <nombre>",
+            );
+            None
+        }
+    };
 
-    // Paso 6: eliminar sidecar, núcleo y volumen.
-    cliente.eliminar_contenedor(&nombres.sidecar)?;
-    cliente.eliminar_contenedor(&nombres.nucleo)?;
-    cliente.eliminar_volumen(&volumen)?;
+    destruir_restos(
+        cliente,
+        nombres,
+        inspeccion_nucleo.as_ref(),
+        inspeccion_sidecar.as_ref(),
+        volumen.as_deref(),
+    )?;
 
-    Ok(volumen)
+    Ok(ResultadoDeRetiro {
+        sesion_cerrada,
+        volumen_eliminado: volumen,
+    })
 }
 
 // ============================================================================
@@ -869,6 +1115,38 @@ fn estado_de_sesion(desde: &[u8]) -> Result<EstadoDeSesion, ErrorDeCicloDeVida> 
     }
 }
 
+/// Motivo de `POST /admin/sesion/emparejamiento` que significa que el sidecar ya tiene una
+/// sesión emparejada con este dispositivo: la reanudación de `cell rebind` desde `Reemparejando`
+/// la trata con una recuperación única (HEX-087, tarea 15, D3).
+pub const MOTIVO_YA_EMPAREJADA: &str = "ya_emparejada";
+
+/// Consulta `GET /admin/sesion` mediante un contenedor hermano y devuelve el estado de la sesión.
+///
+/// Es la sonda que `cell rebind` dispara al reanudar desde `Reemparejando` (HEX-087, tarea 15,
+/// D3): si la sesión sigue `activa`, la célula quedó en `Reemparejando` por un fallo posterior
+/// al emparejamiento y no hay nada que re-emparejar. Un fallo de la sonda o un cuerpo ilegible
+/// se propagan: el llamador aborta con `Fallo` en vez de adivinar.
+pub fn consultar_estado_de_sesion(
+    cliente: &ClienteDocker,
+    nombres: &NombresDeCelula,
+    datos_rebind: &DatosDeCelulaParaRebind,
+    imagen: &str,
+    limite_http: u64,
+) -> Result<EstadoDeSesion, ErrorDeCicloDeVida> {
+    let url = format!(
+        "http://{}:{}/admin/sesion",
+        nombres.nucleo, datos_rebind.puerto_admin
+    );
+    let respuesta = consultar_por_hermano(
+        cliente,
+        nombres,
+        imagen,
+        guion_de_peticion_http(&url, None, limite_http),
+        &datos_rebind.red,
+    )?;
+    estado_de_sesion(&respuesta)
+}
+
 // ============================================================================
 // Servicios de fase de `cell rebind` (tarea 13 de A-6, HEX-085-b).
 //
@@ -963,9 +1241,7 @@ pub fn preparar_reemparejamiento(
     let aviso = if codigo_cierre == 0 {
         None
     } else {
-        Some(format!(
-            "aviso: el cierre de sesión devolvió código {codigo_cierre}; se continúa igual"
-        ))
+        Some(aviso_de_cierre_de_sesion(codigo_cierre))
     };
     Ok(aviso)
 }
@@ -982,7 +1258,7 @@ pub fn descartar_sqlstore_y_rearrancar(
     limite_http: u64,
 ) -> Result<(), ErrorDeCicloDeVida> {
     // Paso 6a: detener el sidecar sin plazo.
-    cliente.detener_contenedor_sin_plazo(&nombres.sidecar)?;
+    cliente.detener_contenedor(&nombres.sidecar, None)?;
 
     // Paso 6b: contenedor hermano con el volumen montado que borra sólo sqlstore.db.
     let cmd_rm = vec![
