@@ -1960,23 +1960,48 @@ fn resume_con_sesion_ya_activa_omite_el_emparejamiento_y_confirma() {
         "el aviso de omisión debe llegar al diagnóstico: {diagnostico}"
     );
 
-    let mut esperado: Vec<String> = Vec::with_capacity(total_peticiones);
-    esperado.push("GET /containers/c1-nucleo/json".to_string());
-    esperado.push("GET /containers/c1-sidecar/json".to_string());
-    for i in 0..2 {
-        esperado.push("POST /containers/create".to_string());
-        esperado.push(format!("POST /containers/{}/start", id_de_sonda(i)));
-        esperado.push(format!("POST /containers/{}/wait", id_de_sonda(i)));
-        esperado.push(format!(
-            "GET /containers/{}/logs?stdout=1&stderr=0",
-            id_de_sonda(i)
-        ));
-        esperado.push(format!("DELETE /containers/{}", id_de_sonda(i)));
+    // 0-1: inspecciones (no asertamos cuerpo).
+    for _ in 0..2 {
+        recibir(&receptor);
     }
-    let recibidas = secuencia_recibida(&receptor, total_peticiones);
+
+    // Sonda de sesión: crear con Cmd correcto (HEX-087, revisión D3: sin asertar el cuerpo, una
+    // URL o un método distintos pasaban en verde).
+    let crear_sesion = recibir(&receptor);
+    let cuerpo: serde_json::Value = serde_json::from_slice(&crear_sesion.cuerpo).unwrap();
+    assert_eq!(cuerpo["Image"], IMAGEN_DEL_ACCESORIO);
+    assert_eq!(cuerpo["HostConfig"]["NetworkMode"], RED_DEL_ACCESORIO);
+    assert_eq!(
+        cuerpo["Cmd"],
+        serde_json::json!([
+            "wget",
+            "-q",
+            "-O",
+            "-",
+            "-T",
+            "40",
+            "http://c1-nucleo:5080/admin/sesion"
+        ]),
+        "la sonda de sesión no debe llevar --post-data ni cambiar de ruta"
+    );
+    for _ in 0..4 {
+        recibir(&receptor);
+    }
+
+    let restantes = total_peticiones - 7;
+    let mut esperado: Vec<String> = Vec::with_capacity(restantes);
+    esperado.push("POST /containers/create".to_string());
+    esperado.push(format!("POST /containers/{}/start", id_de_sonda(1)));
+    esperado.push(format!("POST /containers/{}/wait", id_de_sonda(1)));
+    esperado.push(format!(
+        "GET /containers/{}/logs?stdout=1&stderr=0",
+        id_de_sonda(1)
+    ));
+    esperado.push(format!("DELETE /containers/{}", id_de_sonda(1)));
+    let recibidas = secuencia_recibida(&receptor, restantes);
     assert_eq!(
         recibidas, esperado,
-        "solo inspecciones, sonda de sesión y reanudar: ninguna sonda de emparejamiento"
+        "tras la sonda de sesión solo debe seguir reanudar: ninguna sonda de emparejamiento"
     );
     exigir_silencio(&receptor);
 
@@ -1987,6 +2012,111 @@ fn resume_con_sesion_ya_activa_omite_el_emparejamiento_y_confirma() {
     assert_eq!(fila.motivo, "emparejamiento_confirmado");
     let sustituciones = a.leer_sustituciones("c1").unwrap();
     assert_eq!(sustituciones.len(), 1);
+}
+
+/// D3 (revisión): un `ya_emparejada` en la secuencia COMPLETA (sin reanudación desde
+/// `Reemparejando`) NO dispara la recuperación de D3 —descartar `sqlstore` y reintentar el
+/// emparejamiento— porque esa recuperación es exclusiva de la reanudación. Mata la mutación que
+/// borra el `reanudando &&` del guard en `comandos::ejecutar_reemparejamiento`: sin el guard, un
+/// `ya_emparejada` en la secuencia completa dispararía un segundo `descartar_sqlstore_y_rearrancar`
+/// y una segunda sonda de emparejamiento en vez de terminar en `Fallo`.
+#[test]
+fn secuencia_completa_con_ya_emparejada_no_activa_la_recuperacion_de_resume() {
+    let servidor = ServidorDockerFalso::nuevo("rebind-full-ya-emparejada");
+    let ruta = servidor.ruta();
+    let cliente = ClienteDocker::nuevo(ruta.clone());
+    let inventario = InventarioDocker::nuevo(ruta.clone(), std::time::Duration::from_secs(70));
+    let almacen = AlmacenTemporal::nuevo("rebind-full-ya-emparejada");
+    let ruta_almacen = almacen.texto();
+
+    let mut guiones: Vec<Guion> = Vec::new();
+    let mut contador = 0usize;
+
+    // 1-2: resolver_datos_de_celula_para_rebind.
+    guiones.push(inspeccion_del_nucleo());
+    guiones.push(inspeccion_del_sidecar());
+    // 3: preparar_reemparejamiento inspecciona el núcleo otra vez.
+    guiones.push(inspeccion_del_nucleo());
+    // 4-8: sonda de pausa.
+    servir_sonda_http(
+        &mut guiones,
+        &mut contador,
+        br#"{"resultado":"aplicado","accion":"pausar"}"#,
+    );
+    // 9-12: sonda de cierre.
+    servir_contenedor_sin_logs(&mut guiones, &mut contador);
+    // 13: detener sidecar sin plazo.
+    guiones.push(sin_cuerpo(204, "No Content"));
+    // 14-17: rm sibling.
+    servir_contenedor_sin_logs(&mut guiones, &mut contador);
+    // 18: rearrancar sidecar.
+    guiones.push(sin_cuerpo(204, "No Content"));
+    // 19-23: sonda de pausa con reintento.
+    servir_sonda_http(
+        &mut guiones,
+        &mut contador,
+        br#"{"resultado":"aplicado","accion":"pausar"}"#,
+    );
+    // 24-28: sonda de emparejamiento: falla con `ya_emparejada` (sin reanudación previa).
+    servir_sonda_http(
+        &mut guiones,
+        &mut contador,
+        br#"{"resultado":"fallido","motivo":"ya_emparejada"}"#,
+    );
+
+    let total_peticiones = guiones.len();
+    guiones.push(sin_cuerpo(204, "No Content")); // nunca debe servirse: prueba exigir_silencio.
+    let receptor = servir_guiones(servidor, guiones);
+
+    let argumento = vec![
+        "cell",
+        "rebind",
+        "--id",
+        "c1",
+        "--motivo",
+        "sustitución por baneo",
+        "--confirmar",
+    ];
+
+    let mut estandar_buf: Vec<u8> = Vec::new();
+    let mut diagnostico_buf: Vec<u8> = Vec::new();
+    let mut salida = Salida::nueva(&mut estandar_buf, &mut diagnostico_buf);
+
+    let ahora_ms = 1_700_000_000_000i64;
+    let codigo = ejecutar_rebind(
+        &argumento,
+        &cliente,
+        &inventario,
+        &ruta_almacen,
+        ahora_ms,
+        &mut salida,
+    );
+
+    assert_eq!(
+        codigo,
+        CodigoDeSalida::Fallo,
+        "ya_emparejada en secuencia completa (sin reanudación) debe terminar en Fallo"
+    );
+    let diagnostico = String::from_utf8(diagnostico_buf).unwrap();
+    assert!(
+        diagnostico.contains("ya_emparejada"),
+        "diagnóstico: {diagnostico}"
+    );
+
+    // Ninguna petición extra: ni segundo descarte de sqlstore ni segunda sonda de emparejamiento.
+    let recibidas = secuencia_recibida(&receptor, total_peticiones);
+    assert_eq!(recibidas.len(), total_peticiones);
+    exigir_silencio(&receptor);
+
+    let a =
+        AlmacenDelPlanoDeControl::abrir_solo_lectura(std::path::Path::new(&ruta_almacen)).unwrap();
+    let fila = a.leer_estado("c1").unwrap().unwrap();
+    assert_eq!(
+        fila.estado,
+        EstadoDeCelula::Reemparejando,
+        "la fila debe quedar en Reemparejando: sin la recuperación de resume"
+    );
+    assert!(a.leer_sustituciones("c1").unwrap().is_empty());
 }
 
 /// AC-10 (éxito): un `ya_emparejada` en la reanudación dispara UNA recuperación —descartar el
