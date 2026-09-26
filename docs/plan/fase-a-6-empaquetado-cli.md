@@ -449,6 +449,9 @@ Las entradas conservan su numeración; esta sección es la autoridad sobre el or
     cambios» sin poder borrar el volumen. El procedimiento operativo de esa limpieza manual y de
     los fallos habituales de terminate vive en `docs/runbook-operacion.md`, sección de
     `cell terminate`, «fallos habituales» (tarea 21, HEX-088).
+
+    **Deuda registrada:** clippy --tests falla en main desde antes de HEX-087 (~27 lints en 9
+    archivos de pruebas); queda para un chore aparte que además añada --tests a la CI.
 16. **Medir memoria y tamaño de imágenes** (0,5 días). Consumo de la célula completa en reposo y bajo
     carga, y peso de ambas imágenes, registrados como valores de referencia.
     No se reutiliza `rss_linea_base` (mide solo el núcleo con adaptador simulado).
