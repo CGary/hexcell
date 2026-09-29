@@ -201,7 +201,7 @@ conciliación, sumado solo sobre reservas conciliadas; las liberadas nunca cuent
 una línea por conversación `id_conversacion unidades` ordenada por identificador y una línea
 final `TOTAL <celula> <desde|inicio> <hasta|fin> <unidades>`.
 
-### 9. Reejecución (entregado el 2026-09-25 con HEX-087, tarea 15 de A-6)
+### 9. Reejecución (entregado el 2026-09-26 con HEX-087, tarea 15 de A-6)
 
 Reejecutar un comando de ciclo de vida sobre una célula que ya está en el estado objetivo ya no
 se rechaza: la reejecución **concilia contra el estado real de Docker** y completa sólo lo que

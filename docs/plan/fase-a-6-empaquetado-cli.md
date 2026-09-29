@@ -409,7 +409,7 @@ Las entradas conservan su numeración; esta sección es la autoridad sobre el or
     en STATUS.md el 2026-09-22 y asignada a esta tarea: se decide y se cablea aquí, y esa entrada
     pasa a Definido en el mismo commit.
 
-    **Cerrada el 2026-09-25 con HEX-087.** La tarea cierra las cuatro decisiones que la nota de
+    **Cerrada el 2026-09-26 con HEX-087.** La tarea cierra las cuatro decisiones que la nota de
     seguimiento del 2026-09-22 dejó abiertas, en una sola entrega sin dividir:
 
     * **D1 — la reejecución es reconciliación.** `cell pause`/`cell unpause`/`cell terminate`
@@ -428,9 +428,11 @@ Las entradas conservan su numeración; esta sección es la autoridad sobre el or
       `cell rebind`, y **sustituye la elección de fail-closed de la tarea 12** (que abortaba la
       secuencia sin destruir nada): un 502/504 del núcleo (o una sonda con código distinto de
       cero) se avisa por stderr y la destrucción continúa. Sin bandera nueva: es extensión del
-      comportamiento ante el fallo del cierre, como previó la nota del 2026-09-22. El motivo
-      persistido sigue siendo `sesion_cerrada`; «sesión cerrada» sólo se imprime cuando el cierre
-      llegó a completarse.
+      comportamiento ante el fallo del cierre, como previó la nota del 2026-09-22. Motivo del
+      cambio: el caso que lo originó es el dispositivo ya baneado, cuyo núcleo no puede cerrar la
+      sesión; con fail-closed la célula quedaba sin destruir y el volumen ocupado, y el operador
+      no tenía salida sin tocar Docker a mano. El motivo persistido sigue siendo
+      `sesion_cerrada`; «sesión cerrada» sólo se imprime cuando el cierre llegó a completarse.
     * **D3 — la reanudación de `cell rebind` desde `Reemparejando` consulta primero la sesión**
       (`GET /admin/sesion`): si sigue `activa`, se omite el emparejamiento y se confirma directo;
       si el emparejamiento responde `ya_emparejada`, se descarta el `sqlstore` y se reintenta el
@@ -446,12 +448,33 @@ Las entradas conservan su numeración; esta sección es la autoridad sobre el or
     por convención ni del sidecar. Cuando el núcleo ya no existe y el volumen quedó huérfano, la
     CLI no puede resolverlo: lo avisa por stderr y deja la limpieza manual documentada
     (`docker volume rm <nombre>`); una reejecución de terminate sobre esa célula responde «sin
-    cambios» sin poder borrar el volumen. El procedimiento operativo de esa limpieza manual y de
-    los fallos habituales de terminate vive en `docs/runbook-operacion.md`, sección de
-    `cell terminate`, «fallos habituales» (tarea 21, HEX-088).
+    cambios» sin poder borrar el volumen. El procedimiento operativo de esa limpieza manual
+    corresponde a `docs/runbook-operacion.md` (tarea 21, HEX-088), pero ese runbook se fusionó
+    ANTES que esta tarea (`7b72405`, 2026-09-24) y todavía no lo contiene: describe el
+    comportamiento previo a HEX-087 («`terminate` exige el núcleo `running`», «un fallo parcial no
+    se reanuda», cierre de sesión que aborta, remisión a la tarea 15 en su subsección
+    «Reejecución de un comando»). Alinear el runbook con esta tarea —incluida la limpieza manual
+    del volumen huérfano y el retiro parcial— es un commit `docs:` propio, inmediatamente
+    posterior a la fusión de HEX-087; esta rama no toca el runbook porque queda fuera de su
+    contrato.
 
-    **Deuda registrada:** clippy --tests falla en main desde antes de HEX-087 (~27 lints en 9
-    archivos de pruebas); queda para un chore aparte que además añada --tests a la CI.
+    **Deuda registrada (corregida el 2026-09-29):** `cargo clippy --workspace --tests` falla en
+    main desde antes de HEX-087. La causa primera es `clippy::approx_constant` (deny por
+    omisión) en `crates/hexcell-core/tests/embeddings.rs:71`, que aborta la compilación antes de
+    lintar el resto de las pruebas; por eso los recuentos vistos (2, ~27 y 36 lints, según el
+    estado de la caché de compilación) son cotas inferiores y el total real es desconocido hasta
+    corregir ese archivo. Queda para un chore aparte que corrija los lints de las pruebas y
+    añada `--tests` (o `--all-targets`) al clippy de la CI en el mismo commit. La CI actual sólo
+    corre `clippy --workspace`, que es el comando del contrato de esta tarea y sale limpio.
+
+    **Incidencias de la ejecución (2026-09-26):** la sesión que dirigía la tarea se cortó
+    (`Connection lost`) tras rebasar la rama sobre `7b72405`, refrescar `05-validation.json` y
+    commitear `6a35716`; las fases `accept` y `memory` de Quorum no llegaron a correr y la
+    revisión aprobada (`06-review.json`) es de `ee0d51d`, anterior al rebase. Antes de fusionar,
+    se repitió `cargo fmt --check`, `cargo clippy --workspace -- -D warnings` y
+    `cargo test -p hexcell-admin` (192 pruebas) sobre el árbol rebasado. Desviación aceptada
+    en la revisión: al reanudar una célula con contenedor `paused`, la reconciliación usa
+    `start` en lugar de `unpause`.
 16. **Medir memoria y tamaño de imágenes** (0,5 días). Consumo de la célula completa en reposo y bajo
     carga, y peso de ambas imágenes, registrados como valores de referencia.
     No se reutiliza `rss_linea_base` (mide solo el núcleo con adaptador simulado).
