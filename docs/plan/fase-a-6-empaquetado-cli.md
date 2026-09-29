@@ -560,6 +560,26 @@ Las entradas conservan su numeración; esta sección es la autoridad sobre el or
     idempotente. Se añadió una oración de enlace al párrafo introductorio de la sección de la CLI en
     `README.md`. La subsección de `cell rebind` documenta únicamente el HOW de HEX-085 y difiere el
     WHETHER al runbook de baneo de la etapa A-7, que no existe todavía.
+
+    **Incidencias y deudas de la ejecución (registradas el 2026-09-29):** la revisión adversarial
+    devolvió `revise` con cinco defectos funcionales (una verificación de terminate que nunca
+    podía pasar porque DISC-04 aparece siempre; cifras de memoria tomadas del `.env` de ejemplo y
+    no del compose; falta del código 1 de terminate sobre una célula pausada; la afirmación de que
+    terminate retoma donde falló), corregidos en `1d7f61c`; la segunda revisión aprobó sin
+    hallazgos. Dos guardas del contrato nacieron vacuas y se corrigieron durante la tarea: la de
+    contenido prohibido fallaba ya en la base (`reverse_proxy` en README e IDs largos en el plan)
+    y la de exactitud sólo leía bloques ```` ```bash ```` , así que una bandera falsa en la tabla
+    pasaba; el primer despacho a la flota externa se perdió por la primera. Deudas que quedan:
+    (1) el runbook describe el comportamiento previo a la tarea 15 (HEX-087, sin fusionar al
+    escribir esto) en la remisión introductoria, en «`terminate` exige el núcleo `running`», en el
+    cierre de sesión que aborta y en la subsección «Reejecución de un comando»; se alinea en un
+    commit `docs:` tras esa fusión, junto con la limpieza manual del volumen huérfano y el retiro
+    parcial; (2) el resume de `cell rebind` cita «paso 7» donde el código numera el rearranque
+    como paso 8 (`comandos.rs`, porque separa descartar y rearrancar); (3) el diagnóstico «la
+    célula está pausada» de terminate, en el comportamiento previo a HEX-087, se emitía para
+    cualquier núcleo no `running`, también para uno caído con el almacén en `EnEjecucion`, y el
+    runbook no lo advierte; (4) los artefactos de HEX-088 siguen en
+    `.ai/tasks/done/` a la espera del `chore: archivar` conjunto con HEX-082..086.
 22. **Configuración por célula como archivos** (1 día). Implementar la gestión de configuración basada en archivos (valores por defecto compartidos y superposiciones o overlays por célula) con validación de fallo cerrado al arrancar (concretando la tarea 8 sin editarla), gestionada de forma centralizada por `hexcell-admin` y versionable en git.
 
     **Cerrada el 2026-09-21 con HEX-081.**
