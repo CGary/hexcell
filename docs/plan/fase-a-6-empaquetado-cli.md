@@ -549,6 +549,17 @@ Las entradas conservan su numeración; esta sección es la autoridad sobre el or
     **nunca actualizar todas las células el mismo día**. La centinela es además el sitio donde se
     ensayan medidas cuya eficacia no está probada —el experimento con Meta Verified, entre ellas—,
     porque es el único número cuyo baneo no le cuesta el negocio a nadie.
+
+    **Nota de cierre parcial 2026-09-30 (HEX-089):** la parte 19-a entrega el procedimiento escrito
+    de canario y despliegue escalonado en `docs/runbook-canal-whatsmeow.md` (sección «Despliegue
+    escalonado en cartera», que sustituye al texto diferido a esta etapa) y el guardia estático
+    `deploy/verificar_despliegue_escalonado.sh` con su autoprueba de mutación, cableado en la CI
+    como trabajo `guardas-despliegue`: el criterio de las líneas 676-679 (ninguna vía que actualice
+    toda la cartera en un solo paso) queda verificado de forma mecánica, y el procedimiento declara
+    que `hexcell-admin` no expone ni expondrá comandos de actualización o despliegue. La parte 19-b
+    —el alta de la célula centinela con su número propio y la corrida real de 72 horas— queda
+    pendiente hasta que la entrada «Número propio de WhatsApp para el centinela» de `docs/STATUS.md`
+    (línea 592) pase a `Definido`.
 20. **Implementar alertas push, métricas por célula y el dead-man's switch** (1,5 días). Tres piezas
     complementarias:
     * **Alertas activas** por bot de Telegram, con una simple llamada HTTP saliente desde el

@@ -224,6 +224,28 @@ jobs:
       - name: Autoprueba de mutación del guardia de configuración
         run: bash deploy/verificar_renderizado_configuracion.sh --autoprueba
 
+  guardas-despliegue:
+    name: Guardas de despliegue — escalonado de actualizaciones de whatsmeow (HEX-089)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # AC-4/AC-8: el criterio de la tarea 19 (docs/plan/fase-a-6-empaquetado-cli.md,
+      # líneas 676-679) exige que ninguna vía —ni la CI ni la CLI— actualice toda la
+      # cartera en un solo paso. Este guardia comprueba que ningún trabajo distinto de
+      # `imagenes` ejecuta docker compose up/pull/restart ni un script de despliegue, y
+      # que hexcell-admin no expone subcomandos de actualización. No lleva paso de
+      # toolchain a propósito: el guardia usa solo bash, grep, awk, sed, cmp, mktemp y
+      # cp, todos presentes en ubuntu-latest (contraste con guardas-limites, que sí
+      # necesita docker compose, PyYAML y cargo para sus guardias).
+      - name: Verificar que ninguna vía actualiza toda la cartera en un solo paso
+        run: bash deploy/verificar_despliegue_escalonado.sh
+
+      # Prueba de mutación. Un guardia que nunca se vio fallar no es todavía
+      # un guardia.
+      - name: Autoprueba de mutación del guardia de despliegue escalonado
+        run: bash deploy/verificar_despliegue_escalonado.sh --autoprueba
+
   # HEX-086 (tarea 18 de A-6): integración de la construcción de las imágenes
   # en la CI. Sin `needs:` a propósito: no depende de ningún otro trabajo y
   # corre en paralelo con rust/go/guardas-*.
