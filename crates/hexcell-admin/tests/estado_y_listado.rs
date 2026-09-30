@@ -518,6 +518,115 @@ fn una_fuente_docker_que_falla_se_nombra_y_no_se_convierte_en_discrepancia() {
     }
 }
 
+/// AC-16 (HEX-087, tarea 15): el mismo fallo de fuente que el test anterior, pero con el 500 en
+/// la inspección del SIDECAR —el caso que la tarea 14 dejó sin cubrir—: se nombra el contenedor
+/// en el diagnóstico, no se emite ningún `DISC-0N` y no se lanza la sonda.
+#[test]
+fn una_fuente_docker_que_falla_en_el_sidecar_se_nombra_y_no_se_convierte_en_discrepancia() {
+    let c = correr_estado(
+        "fuente-docker-500-sidecar",
+        Some(EstadoDeCelula::EnEjecucion),
+        vec![
+            cuerpo(CORRIENDO),
+            Guion::SinCuerpo {
+                estado: 500,
+                razon: "Internal Server Error",
+            },
+            sin_cuerpo(),
+        ],
+    );
+    assert_eq!(c.codigo, CodigoDeSalida::Fallo);
+    assert!(
+        c.diagnostico.contains(TEXTO_DE_FUENTE_DOCKER_FALLIDA)
+            && c.diagnostico.contains("c1-sidecar"),
+        "el diagnóstico nombra la fuente y el contenedor: {:?}",
+        c.diagnostico
+    );
+    for codigo in CODIGOS {
+        assert!(
+            !c.diagnostico.contains(codigo),
+            "una fuente que falla no produce {codigo}: {:?}",
+            c.diagnostico
+        );
+    }
+    assert_eq!(
+        secuencia_recibida(&c.receptor, 2),
+        [
+            "GET /containers/c1-nucleo/json",
+            "GET /containers/c1-sidecar/json"
+        ],
+        "exactamente las dos inspecciones y nada más"
+    );
+    exigir_silencio(&c.receptor);
+}
+
+/// AC-17 (HEX-087, tarea 15): DISC-05 también se dispara con el par a MEDIAS —un contenedor
+/// presente y el otro ausente, en ambas orientaciones— y sin fila en el almacén. El contenedor
+/// ausente se reporta como tal en la salida estándar.
+#[test]
+fn disc_05_se_dispara_con_el_par_a_medias_y_sin_fila_en_el_almacen() {
+    for (etiqueta, nucleo, sidecar) in [
+        ("disc-05-nucleo-presente", cuerpo(CORRIENDO), ausente()),
+        ("disc-05-sidecar-presente", ausente(), cuerpo(CORRIENDO)),
+    ] {
+        let c = correr_estado(etiqueta, None, vec![nucleo, sidecar, sin_cuerpo()]);
+        c.exige_solo("DISC-05");
+        assert!(
+            c.estandar.contains("docker nucleo: ausente")
+                || c.estandar.contains("docker sidecar: ausente"),
+            "el contenedor ausente se reporta como tal: {:?}",
+            c.estandar
+        );
+        assert_eq!(
+            secuencia_recibida(&c.receptor, 2),
+            [
+                "GET /containers/c1-nucleo/json",
+                "GET /containers/c1-sidecar/json"
+            ],
+            "con un par a medias la sonda no se lanza: solo los dos inspect"
+        );
+        exigir_silencio(&c.receptor);
+    }
+}
+
+/// AC-18 (HEX-087, tarea 15): DISC-03 también se dispara cuando la sonda es INALCANZABLE —la
+/// creación del contenedor hermano responde 500, `Disponibilidad::Inalcanzable`—, distinto del
+/// caso `NoListo` ya cubierto (wait con StatusCode 1). La salud se reporta `inalcanzable`.
+#[test]
+fn disc_03_se_dispara_cuando_la_sonda_es_inalcanzable() {
+    let c = correr_estado(
+        "disc-03-inalcanzable",
+        Some(EstadoDeCelula::EnEjecucion),
+        vec![
+            cuerpo(CORRIENDO),
+            cuerpo(CORRIENDO),
+            cuerpo(NUCLEO_CON_RED),
+            Guion::SinCuerpo {
+                estado: 500,
+                razon: "Internal Server Error",
+            },
+            sin_cuerpo(),
+        ],
+    );
+    c.exige_solo("DISC-03");
+    assert!(
+        c.estandar.contains("salud: inalcanzable"),
+        "la salud se reporta inalcanzable: {:?}",
+        c.estandar
+    );
+    assert_eq!(
+        secuencia_recibida(&c.receptor, 4),
+        [
+            "GET /containers/c1-nucleo/json",
+            "GET /containers/c1-sidecar/json",
+            "GET /containers/c1-nucleo/json",
+            "POST /containers/create"
+        ],
+        "cuatro peticiones exactas: dos inspecciones, la reinspección de la sonda y la creación que falla"
+    );
+    exigir_silencio(&c.receptor);
+}
+
 /// Un almacén ausente es también una fuente que falla: `cell status` y `cell list` devuelven
 /// `Fallo` nombrando la ruta y NO crean el archivo. Los dos comandos se comprueban porque cada
 /// uno tiene su propia línea de apertura: con sólo `status`, una apertura de escritura en

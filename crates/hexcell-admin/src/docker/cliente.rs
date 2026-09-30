@@ -13,13 +13,6 @@ use std::time::Duration;
 use super::error::ErrorDeClienteDocker;
 use super::transporte::{ConexionDocker, RespuestaHttp};
 
-/// Segundos de gracia que se piden al demonio antes de que pueda escalar a `SIGKILL`.
-///
-/// Es el contrato de apagado del PRD («SIGTERM Docker Container, 30-second grace»): la parada usa
-/// el mecanismo nativo de la API del motor (el parámetro `t`), **nunca** un bucle de
-/// `std::thread::sleep` seguido de una llamada a matar en el cliente.
-const SEGUNDOS_DE_GRACIA: u32 = 30;
-
 /// Resultado de `crear_e_iniciar_contenedor`.
 ///
 /// Dos variantes y ambas llevan el identificador del contenedor: el arranque normal y el caso en
@@ -102,31 +95,42 @@ impl ClienteDocker {
         }
     }
 
-    /// Detiene un contenedor pidiendo al demonio un margen de gracia de 30 segundos (`t=30`).
+    /// Detiene un contenedor, con un plazo de gracia opcional pedido al demonio.
     ///
-    /// **Reemplazada** por [`Self::detener_contenedor_sin_plazo`] desde HEX-080 (2026-09-21): tras
-    /// esa tarea no le queda ningún llamador en `src/`. Se conserva intacta, junto con su prueba,
-    /// porque es API que entregó HEX-074-b. Seguimiento de la tarea 15, que toca el cliente por
-    /// derecho propio: fundir ambas en una sola operación con plazo opcional y mover la prueba.
-    pub fn detener_contenedor(&self, id: &str) -> Result<(), ErrorDeClienteDocker> {
-        let ruta = format!("/containers/{id}/stop?t={SEGUNDOS_DE_GRACIA}");
+    /// Con `plazo_s = Some(t)` la petición sale como `POST /containers/{id}/stop?t={t}` y el
+    /// demonio espera hasta `t` segundos antes de escalar a `SIGKILL`; es el mecanismo nativo de
+    /// la API del motor que fija el contrato de apagado del PRD («SIGTERM Docker Container,
+    /// 30-second grace»), **nunca** un bucle de `std::thread::sleep` seguido de una llamada a
+    /// matar en el cliente. Con `plazo_s = None` la petición sale sin el parámetro `t`, de modo
+    /// que el plazo de gracia lo decide una sola fuente: el `stop_grace_period` que la plantilla
+    /// de célula declara para cada contenedor.
+    ///
+    /// Es la operación fundida de las dos paradas previas de HEX-074-b (la que fijaba `t=30`
+    /// siempre y la variante sin plazo, eliminadas en HEX-087, tarea 15): hoy ningún llamador de
+    /// producción pasa `Some`, porque `cell pause`, `cell terminate` y el descarte del `sqlstore`
+    /// de `cell rebind` dejan la gracia en manos de la plantilla; las pruebas ejercitan
+    /// `Some(30)` para fijar la ruta con consulta.
+    pub fn detener_contenedor(
+        &self,
+        id: &str,
+        plazo_s: Option<u32>,
+    ) -> Result<(), ErrorDeClienteDocker> {
+        let ruta = match plazo_s {
+            Some(plazo) => format!("/containers/{id}/stop?t={plazo}"),
+            None => format!("/containers/{id}/stop"),
+        };
         let mut conexion = self.conectar()?;
         let respuesta = conexion.enviar("POST", &ruta, None)?;
         comprobar_exito(&respuesta)
     }
 
-    /// Detiene un contenedor **sin** fijar ningún plazo desde la CLI.
+    /// Reanuda un contenedor pausado (descongelado): `POST /containers/{id}/unpause`.
     ///
-    /// La petición sale como `POST /containers/{id}/stop`, sin el parámetro `t`, de modo que el
-    /// plazo de gracia lo decide una sola fuente: el `stop_grace_period` que la plantilla de
-    /// célula declara para cada contenedor. Es la operación que usa `cell pause` para los dos
-    /// contenedores, sidecar incluido: el sidecar también se detiene CON gracia, porque tiene que
-    /// cerrar su websocket saliente y dejar su almacén consistente.
-    ///
-    /// [`Self::detener_contenedor`] se conserva intacta, con su `t=30`, porque es la operación que
-    /// entregó HEX-074-b y su prueba fija la ruta exacta.
-    pub fn detener_contenedor_sin_plazo(&self, id: &str) -> Result<(), ErrorDeClienteDocker> {
-        let ruta = format!("/containers/{id}/stop");
+    /// La usa el ciclo de vida para deshacer un `paused` de Docker —estado de congelación del
+    /// motor, distinto del `exited` que deja `cell pause`— antes de detener un contenedor que
+    /// quedó congelado.
+    pub fn despausar_contenedor(&self, id: &str) -> Result<(), ErrorDeClienteDocker> {
+        let ruta = format!("/containers/{id}/unpause");
         let mut conexion = self.conectar()?;
         let respuesta = conexion.enviar("POST", &ruta, None)?;
         comprobar_exito(&respuesta)

@@ -798,23 +798,204 @@ fn cell_unpause_sobre_retirada_falla_sin_emitir_ninguna_peticion_docker() {
     assert!(transiciones_de(&c.almacen).is_empty());
 }
 
-/// AC-3: `cell pause` sobre una célula ya `suspendida` también se rechaza: los pares identidad
-/// están ausentes de la tabla de transiciones a propósito. Cero peticiones Docker.
+/// AC-1 (HEX-087, D1): reejecutar `cell pause` sobre una célula ya `suspendida` ya no se
+/// rechaza. Inspecciona los dos contenedores y, si ambos ya están detenidos, es una
+/// no-operación: aviso «sin cambios» por diagnóstico, estándar vacío, sin ninguna petición
+/// destructiva y sin tocar el almacén (ni bytes ni transiciones).
 #[test]
-fn cell_pause_sobre_suspendida_falla_sin_emitir_ninguna_peticion_docker() {
+fn cell_pause_sobre_suspendida_con_ambos_detenidos_es_una_no_operacion() {
     let c = correr_con_efectos(
-        "suspendida-sin-docker",
+        "suspendida-repeticion",
         Some(EstadoDeCelula::Suspendida),
-        vec![sin_cuerpo(204, "No Content")],
+        vec![
+            Guion::ConCuerpo {
+                estado: 200,
+                razon: "OK",
+                cuerpo: br#"{"State":{"Status":"exited"}}"#,
+            },
+            Guion::ConCuerpo {
+                estado: 200,
+                razon: "OK",
+                cuerpo: br#"{"State":{"Status":"exited"}}"#,
+            },
+            sin_cuerpo(204, "No Content"),
+        ],
         &["cell", "pause", "--id", "c1"],
     );
-    assert_eq!(c.codigo, CodigoDeSalida::Fallo);
+    assert_eq!(c.codigo, CodigoDeSalida::Exito, "diag: {:?}", c.diagnostico);
     assert!(c.estandar.is_empty(), "estándar vacío: {:?}", c.estandar);
     assert_eq!(
-        c.diagnostico,
-        "transición no permitida: de «suspendida» a «suspendida» no figura en la tabla\n"
+        c.diagnostico, "sin cambios: la célula ya está suspendida\n",
+        "el aviso de no-operación es el literal exacto"
+    );
+    assert_eq!(
+        secuencia_recibida(&c.receptor, 2),
+        [
+            "GET /containers/c1-nucleo/json",
+            "GET /containers/c1-sidecar/json"
+        ],
+        "solo las dos inspecciones, en este orden, y nada más"
     );
     exigir_silencio(&c.receptor);
+    assert_eq!(c.almacen.bytes(), c.bytes_antes, "el almacén no se toca");
+    assert!(
+        transiciones_de(&c.almacen).is_empty(),
+        "la reejecución nunca registra transiciones"
+    );
+}
+
+/// AC-2 (HEX-087, D1): reejecutar `cell pause` sobre una célula `suspendida` cuyo sidecar
+/// todavía está corriendo detiene SÓLO el contenedor que falta, sin `?t=`, y no toca el almacén.
+#[test]
+fn cell_pause_sobre_suspendida_detiene_solo_el_contenedor_que_falta() {
+    let c = correr_con_efectos(
+        "suspendida-parcial",
+        Some(EstadoDeCelula::Suspendida),
+        vec![
+            Guion::ConCuerpo {
+                estado: 200,
+                razon: "OK",
+                cuerpo: br#"{"State":{"Status":"exited"}}"#,
+            }, // núcleo ya detenido
+            Guion::ConCuerpo {
+                estado: 200,
+                razon: "OK",
+                cuerpo: br#"{"State":{"Status":"running"}}"#,
+            }, // sidecar todavía corriendo
+            sin_cuerpo(204, "No Content"), // detener sidecar
+            sin_cuerpo(204, "No Content"), // guion de sobra con el que afirmar silencio
+        ],
+        &["cell", "pause", "--id", "c1"],
+    );
+    assert_eq!(c.codigo, CodigoDeSalida::Exito, "diag: {:?}", c.diagnostico);
+    assert_eq!(c.estandar, "cell pause completado para «c1»\n");
+    assert_eq!(
+        secuencia_recibida(&c.receptor, 3),
+        [
+            "GET /containers/c1-nucleo/json",
+            "GET /containers/c1-sidecar/json",
+            "POST /containers/c1-sidecar/stop"
+        ],
+        "se detiene solo el sidecar, sin «?t=», y el núcleo no se toca"
+    );
+    exigir_silencio(&c.receptor);
+    assert_eq!(c.almacen.bytes(), c.bytes_antes, "el almacén no se toca");
+    assert!(transiciones_de(&c.almacen).is_empty());
+}
+
+/// Los siete guiones de una reanudación reconciliada: dos inspecciones (núcleo y sidecar), el
+/// arranque opcional del sidecar (AC-4), la reinspección del núcleo de la sonda y los cuatro
+/// pasos de la sonda. El `Cmd` de la sonda es el bucle de `guion_de_sonda` contra
+/// `/health/ready`.
+fn guiones_de_reanudacion_sin_arranque(
+    veredicto: &'static [u8],
+    arrancar_sidecar: bool,
+) -> Vec<Guion> {
+    let mut guiones = vec![
+        Guion::ConCuerpo {
+            estado: 200,
+            razon: "OK",
+            cuerpo: br#"{"State":{"Status":"running"}}"#,
+        }, // inspeccionar núcleo
+        Guion::ConCuerpo {
+            estado: 200,
+            razon: "OK",
+            cuerpo: if arrancar_sidecar {
+                br#"{"State":{"Status":"exited"}}"#
+            } else {
+                br#"{"State":{"Status":"running"}}"#
+            },
+        }, // inspeccionar sidecar
+    ];
+    if arrancar_sidecar {
+        guiones.push(sin_cuerpo(204, "No Content")); // iniciar sidecar
+    }
+    guiones.extend([
+        Guion::ConCuerpo {
+            estado: 200,
+            razon: "OK",
+            cuerpo: br#"{"NetworkSettings":{"Networks":{"red-del-operador":{"NetworkID":"n1"}}},"Config":{"Env":["HEXCELL_DIRECCION_SALUD=0.0.0.0:9099"]}}"#,
+        }, // reinspección de la sonda
+        Guion::ConCuerpo {
+            estado: 201,
+            razon: "Created",
+            cuerpo: br#"{"Id":"sonda1","Warnings":[]}"#,
+        },
+        sin_cuerpo(204, "No Content"), // iniciar sonda
+        Guion::ConCuerpo {
+            estado: 200,
+            razon: "OK",
+            cuerpo: veredicto,
+        },
+        sin_cuerpo(204, "No Content"), // eliminar sonda
+        sin_cuerpo(204, "No Content"), // guion de sobra con el que afirmar silencio
+    ]);
+    guiones
+}
+
+/// AC-3 (HEX-087, D1): reejecutar `cell unpause` sobre una célula ya `en_ejecucion` con ambos
+/// contenedores corriendo y la sonda confirmando es una no-operación: ninguna arrancada, aviso
+/// «sin cambios» y almacén intacto.
+#[test]
+fn cell_unpause_sobre_en_ejecucion_con_ambos_corriendo_es_una_no_operacion() {
+    let c = correr_con_efectos(
+        "en-ejecucion-repeticion",
+        Some(EstadoDeCelula::EnEjecucion),
+        guiones_de_reanudacion_sin_arranque(br#"{"StatusCode":0}"#, false),
+        &["cell", "unpause", "--id", "c1"],
+    );
+    assert_eq!(c.codigo, CodigoDeSalida::Exito, "diag: {:?}", c.diagnostico);
+    assert!(c.estandar.is_empty(), "estándar vacío: {:?}", c.estandar);
+    assert_eq!(
+        c.diagnostico, "sin cambios: la célula ya está en ejecución\n",
+        "el aviso de no-operación es el literal exacto"
+    );
+    assert_eq!(
+        secuencia_recibida(&c.receptor, 7),
+        [
+            "GET /containers/c1-nucleo/json",
+            "GET /containers/c1-sidecar/json",
+            "GET /containers/c1-nucleo/json",
+            "POST /containers/create",
+            "POST /containers/sonda1/start",
+            "POST /containers/sonda1/wait",
+            "DELETE /containers/sonda1"
+        ],
+        "sin arrancadas de contenedor de célula: inspecciones y sonda"
+    );
+    exigir_silencio(&c.receptor);
+    assert_eq!(c.almacen.bytes(), c.bytes_antes, "el almacén no se toca");
+    assert!(transiciones_de(&c.almacen).is_empty());
+}
+
+/// AC-4 (HEX-087, D1): reejecutar `cell unpause` sobre una célula `en_ejecucion` cuyo sidecar
+/// sigue detenido arranca SÓLO ese contenedor y confirma con la sonda; el núcleo no se arranca.
+#[test]
+fn cell_unpause_sobre_en_ejecucion_arranca_solo_el_contenedor_que_falta() {
+    let c = correr_con_efectos(
+        "en-ejecucion-parcial",
+        Some(EstadoDeCelula::EnEjecucion),
+        guiones_de_reanudacion_sin_arranque(br#"{"StatusCode":0}"#, true),
+        &["cell", "unpause", "--id", "c1"],
+    );
+    assert_eq!(c.codigo, CodigoDeSalida::Exito, "diag: {:?}", c.diagnostico);
+    assert_eq!(c.estandar, "cell unpause completado para «c1»\n");
+    assert_eq!(
+        secuencia_recibida(&c.receptor, 8),
+        [
+            "GET /containers/c1-nucleo/json",
+            "GET /containers/c1-sidecar/json",
+            "POST /containers/c1-sidecar/start",
+            "GET /containers/c1-nucleo/json",
+            "POST /containers/create",
+            "POST /containers/sonda1/start",
+            "POST /containers/sonda1/wait",
+            "DELETE /containers/sonda1"
+        ],
+        "se arranca solo el sidecar; el núcleo nunca recibe /start"
+    );
+    exigir_silencio(&c.receptor);
+    assert_eq!(c.almacen.bytes(), c.bytes_antes, "el almacén no se toca");
     assert!(transiciones_de(&c.almacen).is_empty());
 }
 
@@ -905,9 +1086,8 @@ fn servir_terminate(servidor: ServidorDockerFalso) -> std::sync::mpsc::Receiver<
     receptor
 }
 
-/// Sirve las peticiones de un terminate que aborta en el paso 3: la sonda de cierre de sesión
-/// responde con código de salida distinto de cero, así que ningún `stop` ni `rm` se emite
-/// después de su propia limpieza (R6).
+/// Sirve las peticiones de un terminate cuyo cierre de sesión sale con código distinto de cero:
+/// desde HEX-087 (D2) la secuencia CONTINÚA —paradas, borrados y volumen— en vez de abortar.
 fn servir_terminate_con_cierre_fallido(
     servidor: ServidorDockerFalso,
 ) -> std::sync::mpsc::Receiver<()> {
@@ -930,14 +1110,21 @@ fn servir_terminate_con_cierre_fallido(
             razon: "OK",
             cuerpo: br#"{"StatusCode":1}"#,
         }); // esperar sonda: cierre de sesión fallido
-        servidor.atender(sin_cuerpo(204, "No Content")); // eliminar sonda (limpieza en ambos caminos)
+        servidor.atender(sin_cuerpo(204, "No Content")); // eliminar sonda
+        servidor.atender(sin_cuerpo(204, "No Content")); // detener sidecar
+        servidor.atender(sin_cuerpo(204, "No Content")); // detener núcleo
+        servidor.atender(sin_cuerpo(204, "No Content")); // eliminar sidecar
+        servidor.atender(sin_cuerpo(204, "No Content")); // eliminar núcleo
+        servidor.atender(sin_cuerpo(204, "No Content")); // eliminar volumen
         let _ = emisor.send(());
     });
     receptor
 }
 
 /// AC-9: `cell terminate --id X --confirmar` despacha a `ciclo_de_vida::retirar` a través de
-/// `ejecutar_con_efectos`, imprimiendo las tres líneas fijas en el sumidero estándar.
+/// `ejecutar_con_efectos`, imprimiendo las tres líneas fijas en el sumidero estándar. Desde
+/// HEX-087 (AC-21) el diagnóstico ya no queda vacío: lleva la línea «volumen de la célula»
+/// emitida por el callback antes de la primera parada.
 #[test]
 fn ejecutar_con_efectos_despacha_terminate_a_ciclo_de_vida() {
     let servidor = ServidorDockerFalso::nuevo("efectos-terminate");
@@ -962,7 +1149,11 @@ fn ejecutar_con_efectos_despacha_terminate_a_ciclo_de_vida() {
         ),
         "las tres líneas fijas en orden"
     );
-    assert!(diagnostico.is_empty(), "diagnóstico vacío: {diagnostico:?}");
+    assert_eq!(
+        diagnostico,
+        format!("volumen de la célula: {VOLUMEN_DE_TERMINATE}\n"),
+        "el volumen se anuncia por diagnóstico a través del callback"
+    );
 
     esperar_guion(&receptor);
 }
@@ -1035,12 +1226,12 @@ fn cell_terminate_persiste_retirada_con_motivo_sesion_cerrada() {
     esperar_guion(&receptor);
 }
 
-/// R6: si el paso 3 (`POST /admin/sesion/cierre`) falla, `ciclo_de_vida::retirar` devuelve
-/// `Err` ANTES de llegar al paso 6, así que `ejecutar_con_efectos` nunca invoca
-/// `registrar_transicion`: el almacén queda idéntico byte a byte, igual que en el camino de
-/// fallo de Docker de `cell pause`/`cell unpause`.
+/// AC-8 (HEX-087, D2): si el cierre de sesión falla (sonda con código 1, que es como `wget`
+/// traduce un 502/504), `cell terminate` ya no aborta: avisa por diagnóstico, continúa la
+/// destrucción completa, persiste `Retirada` y termina en `Exito` — sin la línea «sesión
+/// cerrada» por estándar, porque ese paso no llegó a completarse.
 #[test]
-fn cell_terminate_no_toca_el_almacen_cuando_el_cierre_de_sesion_falla() {
+fn cell_terminate_avisa_y_continua_cuando_el_cierre_de_sesion_falla() {
     let servidor = ServidorDockerFalso::nuevo("terminate-cierre-fallido");
     let ruta = servidor.ruta();
     let receptor = servir_terminate_con_cierre_fallido(servidor);
@@ -1049,7 +1240,6 @@ fn cell_terminate_no_toca_el_almacen_cuando_el_cierre_de_sesion_falla() {
     let inventario = InventarioDocker::nuevo(ruta, std::time::Duration::from_secs(10));
     let almacen = AlmacenTemporal::nuevo("terminate-cierre-fallido");
     sembrar_fila(&almacen, "c1", EstadoDeCelula::EnEjecucion);
-    let bytes_antes = almacen.bytes();
 
     let (codigo, estandar, diagnostico) = ejecutar_con_efectos_con(
         &["cell", "terminate", "--id", "c1", "--confirmar"],
@@ -1058,22 +1248,360 @@ fn cell_terminate_no_toca_el_almacen_cuando_el_cierre_de_sesion_falla() {
         &almacen.texto(),
     );
 
-    assert_eq!(codigo, CodigoDeSalida::Fallo);
-    assert!(estandar.is_empty(), "estándar vacío: {estandar:?}");
-    assert!(!diagnostico.is_empty(), "el fallo se diagnostica");
     assert_eq!(
-        almacen.bytes(),
-        bytes_antes,
-        "el almacén queda idéntico byte a byte cuando el cierre de sesión falla"
+        codigo,
+        CodigoDeSalida::Exito,
+        "un cierre fallido ya no aborta el terminate (D2)"
+    );
+    assert_eq!(
+        estandar, "contenedores eliminados\nvolumen volumen-datos-terminate-z8w3q5 eliminado\n",
+        "sin la línea «sesión cerrada»: ese paso no se completó"
+    );
+    assert_eq!(
+        diagnostico,
+        format!(
+            "volumen de la célula: {VOLUMEN_DE_TERMINATE}\naviso: el cierre de sesión devolvió código 1; se continúa igual\n"
+        ),
+        "el volumen se anuncia y el cierre fallido se avisa, ambos por diagnóstico"
     );
     assert_eq!(
         fila_de(&almacen, "c1").as_deref(),
-        Some("en_ejecucion sembrada 1"),
-        "la fila sembrada no se toca"
+        Some("retirada sesion_cerrada 1700000000000"),
+        "la fila queda en retirada con el motivo sesion_cerrada, aunque el cierre fallara"
     );
-    assert!(transiciones_de(&almacen).is_empty());
+    assert_eq!(
+        transiciones_de(&almacen),
+        ["c1 en_ejecucion>retirada sesion_cerrada 1700000000000"]
+    );
 
     esperar_guion(&receptor);
+}
+
+// ============================================================================
+// Reejecuciones de terminate y retiros parciales (HEX-087, D1, AC-5..AC-7 y AC-23..AC-25).
+// ============================================================================
+
+/// Inspección del núcleo ya retirado, con el volumen del accesorio: para los restos que una
+/// reejecución de terminate puede encontrar.
+fn inspeccion_del_nucleo_retirado() -> Guion {
+    Guion::ConCuerpo {
+        estado: 200,
+        razon: "OK",
+        cuerpo: br#"{"State":{"Status":"exited"},"Mounts":[{"Type":"volume","Name":"volumen-datos-terminate-z8w3q5","Destination":"/var/lib/hexcell"}]}"#,
+    }
+}
+
+/// AC-5 + AC-22 (HEX-087, D1): reejecutar `cell terminate` sobre una célula ya `retirada` sin
+/// ningún resto en Docker es una no-operación: aviso «sin cambios», sin paradas, sin borrados,
+/// sin sonda de cierre y con el almacén intacto.
+#[test]
+fn cell_terminate_sobre_retirada_sin_restos_es_una_no_operacion() {
+    let c = correr_con_efectos(
+        "retirada-repeticion",
+        Some(EstadoDeCelula::Retirada),
+        vec![
+            sin_cuerpo(404, "Not Found"),
+            sin_cuerpo(404, "Not Found"),
+            sin_cuerpo(204, "No Content"),
+        ],
+        &["cell", "terminate", "--id", "c1", "--confirmar"],
+    );
+    assert_eq!(c.codigo, CodigoDeSalida::Exito, "diag: {:?}", c.diagnostico);
+    assert!(c.estandar.is_empty(), "estándar vacío: {:?}", c.estandar);
+    assert_eq!(
+        c.diagnostico, "sin cambios: la célula ya está retirada\n",
+        "el aviso de no-operación es el literal exacto"
+    );
+    assert_eq!(
+        secuencia_recibida(&c.receptor, 2),
+        [
+            "GET /containers/c1-nucleo/json",
+            "GET /containers/c1-sidecar/json"
+        ],
+        "solo las dos inspecciones: ni paradas, ni borrados, ni sonda de cierre"
+    );
+    exigir_silencio(&c.receptor);
+    assert_eq!(c.almacen.bytes(), c.bytes_antes, "el almacén no se toca");
+    assert!(transiciones_de(&c.almacen).is_empty());
+}
+
+/// AC-6(a) + AC-22 (HEX-087, D1): reejecutar `cell terminate` sobre una célula `retirada` con
+/// restos —núcleo detenido con su volumen, sidecar ausente— borra sólo lo que falta y anuncia el
+/// volumen por diagnóstico.
+#[test]
+fn cell_terminate_sobre_retirada_con_restos_borra_solo_lo_que_falta() {
+    let c = correr_con_efectos(
+        "retirada-restos",
+        Some(EstadoDeCelula::Retirada),
+        vec![
+            inspeccion_del_nucleo_retirado(),
+            sin_cuerpo(404, "Not Found"),
+            sin_cuerpo(204, "No Content"), // eliminar núcleo
+            sin_cuerpo(204, "No Content"), // eliminar volumen
+            sin_cuerpo(204, "No Content"), // guion de sobra con el que afirmar silencio
+        ],
+        &["cell", "terminate", "--id", "c1", "--confirmar"],
+    );
+    assert_eq!(c.codigo, CodigoDeSalida::Exito, "diag: {:?}", c.diagnostico);
+    assert_eq!(
+        c.estandar,
+        "contenedores eliminados\nvolumen volumen-datos-terminate-z8w3q5 eliminado\n"
+    );
+    assert_eq!(
+        c.diagnostico,
+        format!("volumen de la célula: {VOLUMEN_DE_TERMINATE}\n")
+    );
+    assert_eq!(
+        secuencia_recibida(&c.receptor, 4),
+        [
+            "GET /containers/c1-nucleo/json",
+            "GET /containers/c1-sidecar/json",
+            "DELETE /containers/c1-nucleo",
+            "DELETE /volumes/volumen-datos-terminate-z8w3q5"
+        ],
+        "el núcleo detenido se borra sin parada previa, y el volumen se elimina"
+    );
+    exigir_silencio(&c.receptor);
+    assert_eq!(c.almacen.bytes(), c.bytes_antes, "el almacén no se toca");
+    assert!(transiciones_de(&c.almacen).is_empty());
+}
+
+/// AC-6(b) + AC-22 (HEX-087, D1): con el núcleo ausente y el sidecar todavía corriendo, la
+/// reejecución de terminate detiene y borra el sidecar, avisa de que el volumen no se pudo
+/// resolver (limpieza manual) y no emite ninguna petición de volumen.
+#[test]
+fn cell_terminate_sobre_retirada_con_sidecar_sin_nucleo_avisa_del_volumen_no_resuelto() {
+    let c = correr_con_efectos(
+        "retirada-sidecar-solo",
+        Some(EstadoDeCelula::Retirada),
+        vec![
+            sin_cuerpo(404, "Not Found"),
+            Guion::ConCuerpo {
+                estado: 200,
+                razon: "OK",
+                cuerpo: br#"{"State":{"Status":"running"}}"#,
+            },
+            sin_cuerpo(204, "No Content"), // detener sidecar
+            sin_cuerpo(204, "No Content"), // eliminar sidecar
+            sin_cuerpo(204, "No Content"), // guion de sobra con el que afirmar silencio
+        ],
+        &["cell", "terminate", "--id", "c1", "--confirmar"],
+    );
+    assert_eq!(c.codigo, CodigoDeSalida::Exito, "diag: {:?}", c.diagnostico);
+    assert_eq!(c.estandar, "contenedores eliminados\n");
+    assert_eq!(
+        c.diagnostico,
+        "aviso: no se pudo resolver el volumen de datos porque el núcleo ya no existe; si quedó, bórrelo a mano con docker volume rm <nombre>\n"
+    );
+    assert_eq!(
+        secuencia_recibida(&c.receptor, 4),
+        [
+            "GET /containers/c1-nucleo/json",
+            "GET /containers/c1-sidecar/json",
+            "POST /containers/c1-sidecar/stop",
+            "DELETE /containers/c1-sidecar"
+        ],
+        "el sidecar se detiene y borra; ninguna petición a /volumes/"
+    );
+    exigir_silencio(&c.receptor);
+    assert_eq!(c.almacen.bytes(), c.bytes_antes, "el almacén no se toca");
+    assert!(transiciones_de(&c.almacen).is_empty());
+}
+
+/// AC-7 (HEX-087): `cell terminate` sin fila en el almacén y sin contenedores en Docker sigue
+/// siendo un fallo duro con «célula no encontrada», sin avisos y sin escribir nada. Es el ÚNICO
+/// camino de terminate que falla por recursos ausentes (AC-26).
+#[test]
+fn cell_terminate_sin_fila_y_sin_contenedores_sigue_siendo_un_fallo_duro() {
+    let c = correr_con_efectos(
+        "terminate-sin-fila",
+        None,
+        vec![
+            sin_cuerpo(404, "Not Found"),
+            sin_cuerpo(404, "Not Found"),
+            sin_cuerpo(204, "No Content"),
+        ],
+        &["cell", "terminate", "--id", "c1", "--confirmar"],
+    );
+    assert_eq!(c.codigo, CodigoDeSalida::Fallo);
+    assert!(c.estandar.is_empty(), "estándar vacío: {:?}", c.estandar);
+    assert_eq!(
+        c.diagnostico, "célula no encontrada\n",
+        "sin avisos: el diagnóstico es el de CelulaNoEncontrada, pelado"
+    );
+    assert_eq!(
+        secuencia_recibida(&c.receptor, 2),
+        [
+            "GET /containers/c1-nucleo/json",
+            "GET /containers/c1-sidecar/json"
+        ],
+        "exactamente las dos inspecciones y nada más"
+    );
+    exigir_silencio(&c.receptor);
+    assert_eq!(
+        fila_de(&c.almacen, "c1"),
+        None,
+        "sin fila previa no se crea ninguna fila"
+    );
+    assert!(transiciones_de(&c.almacen).is_empty());
+}
+
+/// AC-23 (HEX-087, D1, retiro parcial): `cell terminate` sobre una fila `en_ejecucion` cuyos
+/// dos contenedores ya no existen en Docker termina en éxito con los dos avisos, sin ninguna
+/// petición destructiva ni de sonda, y persiste `Retirada` con su transición.
+#[test]
+fn cell_terminate_sobre_fila_sin_contenedores_avisa_y_persiste_retirada() {
+    let c = correr_con_efectos(
+        "terminate-parcial",
+        Some(EstadoDeCelula::EnEjecucion),
+        vec![
+            sin_cuerpo(404, "Not Found"),
+            sin_cuerpo(404, "Not Found"),
+            sin_cuerpo(204, "No Content"), // guion de sobra con el que afirmar silencio
+        ],
+        &["cell", "terminate", "--id", "c1", "--confirmar"],
+    );
+    assert_eq!(c.codigo, CodigoDeSalida::Exito, "diag: {:?}", c.diagnostico);
+    assert!(c.estandar.is_empty(), "estándar vacío: {:?}", c.estandar);
+    assert_eq!(
+        c.diagnostico,
+        "aviso: ni el núcleo ni el sidecar existen en Docker; no queda nada que detener ni borrar\n\
+         aviso: no se pudo resolver el volumen de datos porque el núcleo ya no existe; si quedó, bórrelo a mano con docker volume rm <nombre>\n",
+        "los dos avisos del retiro parcial, en orden"
+    );
+    assert_eq!(
+        secuencia_recibida(&c.receptor, 2),
+        [
+            "GET /containers/c1-nucleo/json",
+            "GET /containers/c1-sidecar/json"
+        ],
+        "sin paradas, sin borrados y sin sonda de cierre"
+    );
+    exigir_silencio(&c.receptor);
+    assert_eq!(
+        fila_de(&c.almacen, "c1").as_deref(),
+        Some("retirada sesion_cerrada 1700000000000")
+    );
+    assert_eq!(
+        transiciones_de(&c.almacen),
+        ["c1 en_ejecucion>retirada sesion_cerrada 1700000000000"]
+    );
+}
+
+/// Inspección del núcleo suspendido (congelado) con red, puerto de admin y volumen: para el
+/// retiro parcial de AC-24.
+fn inspeccion_del_nucleo_pausado() -> Guion {
+    Guion::ConCuerpo {
+        estado: 200,
+        razon: "OK",
+        cuerpo: br#"{"State":{"Status":"paused"},"NetworkSettings":{"Networks":{"red-terminate":{"NetworkID":"n1"}}},"Config":{"Env":["PATH=/usr/bin","HEXCELL_DIRECCION_ADMIN=0.0.0.0:7071"]},"Mounts":[{"Type":"volume","Name":"volumen-datos-terminate-z8w3q5","Destination":"/var/lib/hexcell"}]}"#,
+    }
+}
+
+/// AC-24 (HEX-087, D1, retiro parcial): sobre una fila `suspendida` con ambos contenedores
+/// CONGELADOS (`paused`), `cell terminate` los descongela antes de detenerlos, omite el cierre
+/// de sesión con su aviso, borra contenedores y volumen y persiste `Retirada`.
+#[test]
+fn cell_terminate_descongela_los_contenedores_antes_de_detenerlos() {
+    let c = correr_con_efectos(
+        "terminate-congelado",
+        Some(EstadoDeCelula::Suspendida),
+        vec![
+            inspeccion_del_nucleo_pausado(),
+            Guion::ConCuerpo {
+                estado: 200,
+                razon: "OK",
+                cuerpo: br#"{"State":{"Status":"paused"}}"#,
+            },
+            sin_cuerpo(204, "No Content"), // despausar sidecar
+            sin_cuerpo(204, "No Content"), // detener sidecar
+            sin_cuerpo(204, "No Content"), // despausar núcleo
+            sin_cuerpo(204, "No Content"), // detener núcleo
+            sin_cuerpo(204, "No Content"), // eliminar sidecar
+            sin_cuerpo(204, "No Content"), // eliminar núcleo
+            sin_cuerpo(204, "No Content"), // eliminar volumen
+            sin_cuerpo(204, "No Content"), // guion de sobra con el que afirmar silencio
+        ],
+        &["cell", "terminate", "--id", "c1", "--confirmar"],
+    );
+    assert_eq!(c.codigo, CodigoDeSalida::Exito, "diag: {:?}", c.diagnostico);
+    assert_eq!(
+        c.estandar, "contenedores eliminados\nvolumen volumen-datos-terminate-z8w3q5 eliminado\n",
+        "sin «sesión cerrada»: el núcleo no estaba en ejecución"
+    );
+    assert_eq!(
+        c.diagnostico,
+        format!(
+            "volumen de la célula: {VOLUMEN_DE_TERMINATE}\naviso: el núcleo no está en ejecución; se omite el cierre de sesión\n"
+        )
+    );
+    assert_eq!(
+        secuencia_recibida(&c.receptor, 9),
+        [
+            "GET /containers/c1-nucleo/json",
+            "GET /containers/c1-sidecar/json",
+            "POST /containers/c1-sidecar/unpause",
+            "POST /containers/c1-sidecar/stop",
+            "POST /containers/c1-nucleo/unpause",
+            "POST /containers/c1-nucleo/stop",
+            "DELETE /containers/c1-sidecar",
+            "DELETE /containers/c1-nucleo",
+            "DELETE /volumes/volumen-datos-terminate-z8w3q5"
+        ],
+        "cada contenedor congelado se descongela antes de pararse; ninguna sonda de cierre"
+    );
+    exigir_silencio(&c.receptor);
+    assert_eq!(
+        fila_de(&c.almacen, "c1").as_deref(),
+        Some("retirada sesion_cerrada 1700000000000")
+    );
+}
+
+/// AC-25 (HEX-087, D1, retiro parcial): con el núcleo ausente y el sidecar detenido, `cell
+/// terminate` omite el cierre con su aviso, avisa del volumen no resuelto y borra el sidecar
+/// sin parada previa ni petición de volumen.
+#[test]
+fn cell_terminate_sin_nucleo_borra_el_sidecar_y_avisa_del_volumen() {
+    let c = correr_con_efectos(
+        "terminate-sin-nucleo",
+        Some(EstadoDeCelula::EnEjecucion),
+        vec![
+            sin_cuerpo(404, "Not Found"),
+            Guion::ConCuerpo {
+                estado: 200,
+                razon: "OK",
+                cuerpo: br#"{"State":{"Status":"exited"}}"#,
+            },
+            sin_cuerpo(204, "No Content"), // eliminar sidecar
+            sin_cuerpo(204, "No Content"), // guion de sobra con el que afirmar silencio
+        ],
+        &["cell", "terminate", "--id", "c1", "--confirmar"],
+    );
+    assert_eq!(c.codigo, CodigoDeSalida::Exito, "diag: {:?}", c.diagnostico);
+    assert_eq!(c.estandar, "contenedores eliminados\n");
+    assert_eq!(
+        c.diagnostico,
+        "aviso: el núcleo no existe; se omite el cierre de sesión\n\
+         aviso: no se pudo resolver el volumen de datos porque el núcleo ya no existe; si quedó, bórrelo a mano con docker volume rm <nombre>\n"
+    );
+    assert_eq!(
+        secuencia_recibida(&c.receptor, 3),
+        [
+            "GET /containers/c1-nucleo/json",
+            "GET /containers/c1-sidecar/json",
+            "DELETE /containers/c1-sidecar"
+        ],
+        "el sidecar detenido se borra sin parada y sin tocar /volumes/"
+    );
+    exigir_silencio(&c.receptor);
+    assert_eq!(
+        fila_de(&c.almacen, "c1").as_deref(),
+        Some("retirada sesion_cerrada 1700000000000")
+    );
+    assert_eq!(
+        transiciones_de(&c.almacen),
+        ["c1 en_ejecucion>retirada sesion_cerrada 1700000000000"]
+    );
 }
 
 // ─────────────────────────────────────────────────────────────────────────────────────────
