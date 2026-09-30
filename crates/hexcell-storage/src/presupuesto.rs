@@ -4,7 +4,7 @@
 //! reserva previa de presupuesto antes de llamar al proveedor de inferencia, consulta de saldo
 //! y aportes iniciales.
 
-use std::time::SystemTime;
+use std::time::{Duration, SystemTime};
 
 use hexcell_core::identidad::IdConversacion;
 use hexcell_core::presupuesto::UnidadesDePresupuesto;
@@ -22,6 +22,19 @@ pub struct Saldo {
     pub disponible: i64,
     /// Unidades retenidas en reservas activas pendientes de conciliación.
     pub reservado: i64,
+}
+
+/// Resumen de un barrido de reservas huérfanas de presupuesto en el arranque.
+///
+/// Lo devuelve [`RepositorioDeSesiones::liberar_reservas_huerfanas`] para que el arranque del
+/// binario pueda emitir el evento estructurado `reservas_huerfanas_liberadas` sin reconsultar la
+/// base: cuántas reservas activas antiguas se liberaron y por qué monto total.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ResumenDeBarridoDeReservas {
+    /// Cantidad de reservas liberadas por el barrido.
+    pub reservas_liberadas: u64,
+    /// Suma de los montos devueltos al saldo disponible.
+    pub monto_liberado: i64,
 }
 
 /// Veredicto del intento de reserva de presupuesto.
@@ -64,6 +77,63 @@ pub struct ConsumoDeConversacion {
     pub id_conversacion: IdConversacion,
     /// Cantidad acumulada de unidades consumidas.
     pub unidades_consumidas: i64,
+}
+
+/// Aplica la liberación de **una** reserva activa ya seleccionada, dentro de una transacción abierta.
+///
+/// Es el cuerpo contable compartido por [`RepositorioDeSesiones::liberar_presupuesto`] y por
+/// [`RepositorioDeSesiones::liberar_reservas_huerfanas`], para que los dos caminos no puedan
+/// divergir en la contabilidad: transición a `'liberada'` con su `resuelta_ms`, devolución del
+/// monto reservado a `saldo.disponible`, y movimiento `'liberacion'` con el `saldo_resultante`
+/// progresivo dentro de la misma transacción.
+///
+/// No re-consulta la reserva: quien llama ya la seleccionó por `estado = 'activa'`.
+fn liberar_una_reserva_activa(
+    transaccion: &rusqlite::Connection,
+    id_reserva: i64,
+    id_conversacion: Option<String>,
+    monto_reservado: i64,
+    marca_ms: i64,
+) -> Result<(), ErrorDeAlmacen> {
+    transaccion
+        .execute(
+            "UPDATE reservas SET estado = 'liberada', resuelta_ms = ?2 WHERE id = ?1",
+            params![id_reserva, marca_ms],
+        )
+        .map_err(ErrorDeAlmacen::en(
+            "actualizar el estado de la reserva a liberada",
+        ))?;
+
+    transaccion
+        .execute(
+            "UPDATE saldo SET disponible = disponible + ?1, reservado = reservado - ?1, actualizado_ms = ?2 WHERE id = 1",
+            params![monto_reservado, marca_ms],
+        )
+        .map_err(ErrorDeAlmacen::en("actualizar el saldo tras liberación"))?;
+
+    let saldo_resultante: i64 = transaccion
+        .query_row("SELECT disponible FROM saldo WHERE id = 1", [], |fila| {
+            fila.get(0)
+        })
+        .map_err(ErrorDeAlmacen::en(
+            "consultar el saldo resultante tras liberación",
+        ))?;
+
+    transaccion
+        .execute(
+            "INSERT INTO movimientos (id_reserva, id_conversacion, clase, monto, saldo_resultante, registrado_ms) \
+             VALUES (?1, ?2, 'liberacion', ?3, ?4, ?5)",
+            params![
+                id_reserva,
+                id_conversacion,
+                monto_reservado,
+                saldo_resultante,
+                marca_ms
+            ],
+        )
+        .map_err(ErrorDeAlmacen::en("registrar el movimiento de liberación"))?;
+
+    Ok(())
 }
 
 impl RepositorioDeSesiones {
@@ -397,41 +467,7 @@ impl RepositorioDeSesiones {
                 return Ok(ResultadoDeResolucion::ReservaNoActiva);
             };
 
-            transaccion
-                .execute(
-                    "UPDATE reservas SET estado = 'liberada', resuelta_ms = ?2 WHERE id = ?1",
-                    params![id_reserva, marca_ms],
-                )
-                .map_err(ErrorDeAlmacen::en("actualizar el estado de la reserva a liberada"))?;
-
-            transaccion
-                .execute(
-                    "UPDATE saldo SET disponible = disponible + ?1, reservado = reservado - ?1, actualizado_ms = ?2 WHERE id = 1",
-                    params![monto_reservado, marca_ms],
-                )
-                .map_err(ErrorDeAlmacen::en("actualizar el saldo tras liberación"))?;
-
-            let saldo_resultante: i64 = transaccion
-                .query_row(
-                    "SELECT disponible FROM saldo WHERE id = 1",
-                    [],
-                    |fila| fila.get(0),
-                )
-                .map_err(ErrorDeAlmacen::en("consultar el saldo resultante tras liberación"))?;
-
-            transaccion
-                .execute(
-                    "INSERT INTO movimientos (id_reserva, id_conversacion, clase, monto, saldo_resultante, registrado_ms) \
-                     VALUES (?1, ?2, 'liberacion', ?3, ?4, ?5)",
-                    params![
-                        id_reserva,
-                        id_conversacion,
-                        monto_reservado,
-                        saldo_resultante,
-                        marca_ms
-                    ],
-                )
-                .map_err(ErrorDeAlmacen::en("registrar el movimiento de liberación"))?;
+            liberar_una_reserva_activa(&transaccion, id_reserva, id_conversacion, monto_reservado, marca_ms)?;
 
             transaccion
                 .commit()
@@ -440,6 +476,83 @@ impl RepositorioDeSesiones {
             Ok(ResultadoDeResolucion::Resuelta {
                 ajuste_aplicado: monto_reservado,
                 deficit_no_cubierto: 0,
+            })
+        })
+    }
+
+    /// Libera en una sola transacción todas las reservas activas más antiguas que una antigüedad máxima.
+    ///
+    /// Barrido de saneamiento del arranque (HEX-092, entrada pendiente de STATUS HEX-051-a): libera
+    /// cada reserva en estado `'activa'` cuyo instante de creación sea **estrictamente anterior** a
+    /// `ahora - antiguedad_maxima`, aplicando la misma contabilidad que [`Self::liberar_presupuesto`]
+    /// —devolución del monto al saldo disponible y movimiento `'liberacion'`—. Toda la operación
+    /// ocurre en **una** transacción: si algo falla, ninguna reserva ni el saldo se modifican. Una
+    /// reserva en cualquier otro estado, o con una antigüedad menor o igual al umbral, nunca se toca.
+    pub fn liberar_reservas_huerfanas(
+        &self,
+        ahora: SystemTime,
+        antiguedad_maxima: Duration,
+    ) -> Result<ResumenDeBarridoDeReservas, ErrorDeAlmacen> {
+        let ahora_ms = a_milisegundos(ahora);
+        let antiguedad_ms = i64::try_from(antiguedad_maxima.as_millis()).unwrap_or(i64::MAX);
+        // Saturación, no pánico: una antigüedad que no cupiera en el entero de SQLite equivale a
+        // «no barrer nada», que es seguro, y un `ahora` anterior a la antigüedad deja el umbral
+        // en o por debajo del epoch, donde ninguna reserva real puede estar.
+        let umbral_ms = ahora_ms.saturating_sub(antiguedad_ms);
+
+        self.pools.sesiones().con_escritura(|conexion| {
+            let transaccion = conexion
+                .unchecked_transaction()
+                .map_err(ErrorDeAlmacen::en(
+                    "abrir la transacción del barrido de reservas huérfanas",
+                ))?;
+
+            let mut sentencia = transaccion
+                .prepare(
+                    "SELECT id, id_conversacion, monto_reservado FROM reservas \
+                     WHERE estado = 'activa' AND creada_ms < ?1 ORDER BY creada_ms, id",
+                )
+                .map_err(ErrorDeAlmacen::en(
+                    "preparar la selección de reservas huérfanas",
+                ))?;
+
+            let filas = sentencia
+                .query_map(params![umbral_ms], |fila| {
+                    Ok((
+                        fila.get::<_, i64>(0)?,
+                        fila.get::<_, Option<String>>(1)?,
+                        fila.get::<_, i64>(2)?,
+                    ))
+                })
+                .map_err(ErrorDeAlmacen::en("seleccionar las reservas huérfanas"))?;
+
+            let mut candidatas = Vec::new();
+            for fila in filas {
+                candidatas.push(fila.map_err(ErrorDeAlmacen::en("leer una reserva huérfana"))?);
+            }
+            drop(sentencia);
+
+            let mut reservas_liberadas: u64 = 0;
+            let mut monto_liberado: i64 = 0;
+            for (id_reserva, id_conversacion, monto_reservado) in candidatas {
+                liberar_una_reserva_activa(
+                    &transaccion,
+                    id_reserva,
+                    id_conversacion,
+                    monto_reservado,
+                    ahora_ms,
+                )?;
+                reservas_liberadas += 1;
+                monto_liberado += monto_reservado;
+            }
+
+            transaccion.commit().map_err(ErrorDeAlmacen::en(
+                "confirmar el barrido de reservas huérfanas",
+            ))?;
+
+            Ok(ResumenDeBarridoDeReservas {
+                reservas_liberadas,
+                monto_liberado,
             })
         })
     }

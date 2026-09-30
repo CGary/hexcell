@@ -179,3 +179,16 @@ familia de decisiones: poner un techo explícito a lo que el proceso se permite 
 * **Decisiones de producto pendientes:** el **modelo de monetización** condiciona la calibración de
   saldos, umbrales y política de degradación. No bloquea la construcción del mecanismo, pero sí su
   puesta en producción con valores definitivos.
+
+---
+
+## Nota (HEX-092, 2026-09-30)
+
+La entrada pendiente de STATUS «Barrido y liberación de reservas huérfanas de presupuesto en el
+arranque» (HEX-051-a, actualizada por HEX-063) quedó definida en esta etapa: `RepositorioDeSesiones::liberar_reservas_huerfanas`
+libera en una única transacción toda reserva en estado `'activa'` más antigua que el límite de
+drenaje (`HEXCELL_LIMITE_DE_DRENAJE_SEGUNDOS`), reutilizando la contabilidad de `liberar_presupuesto`
+(devolución a `saldo.disponible` y movimiento `'liberacion'`), y `main.rs` la invoca una sola vez en
+el arranque, tras abrir la persistencia y antes de que el HTTP acepte tráfico. Un fallo del barrido
+solo se registra como aviso y el arranque continúa: la célula debe poder servir aunque el
+saneamiento falle, porque las reservas huérfanas bloquean saldo pero no impiden atender tráfico.
