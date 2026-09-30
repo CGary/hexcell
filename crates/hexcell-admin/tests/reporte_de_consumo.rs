@@ -72,7 +72,6 @@ fn ejecutar_con(snippet: &[&str]) -> (CodigoDeSalida, String, String) {
     {
         let mut salida = Salida::nueva(&mut bufer_estandar, &mut bufer_diagnostico);
         let codigo = ejecutar(resultado, &mut salida);
-        drop(salida);
         let estandar = String::from_utf8(bufer_estandar).expect("UTF-8 en el estándar");
         let diagnostico = String::from_utf8(bufer_diagnostico).expect("UTF-8 en el diagnóstico");
         (codigo, estandar, diagnostico)

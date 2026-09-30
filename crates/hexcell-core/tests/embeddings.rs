@@ -68,7 +68,7 @@ fn puerto_de_embeddings_se_consume_genericamente() {
 
 #[test]
 fn vector_de_embedding_conversion_a_bytes_le_y_reconstruccion() {
-    let valores_originales = vec![1.0f32, -2.5f32, 3.14159f32, 0.0f32];
+    let valores_originales = vec![1.0f32, -2.5f32, 1.23456f32, 0.0f32];
     let vector = VectorDeEmbedding::nuevo(valores_originales.clone());
 
     assert_eq!(vector.dimension(), 4);
@@ -103,7 +103,7 @@ fn vector_de_embedding_rechaza_bytes_con_longitud_no_multiplo_de_cuatro() {
 
 #[test]
 fn respuesta_de_embeddings_mantiene_correspondencia_posicional() {
-    let textos = vec!["alfa".to_string(), "beta".to_string(), "gamma".to_string()];
+    let textos = ["alfa".to_string(), "beta".to_string(), "gamma".to_string()];
     let vectores = vec![
         Some(VectorDeEmbedding::nuevo(vec![0.1])),
         None,

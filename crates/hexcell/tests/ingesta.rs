@@ -68,10 +68,10 @@ where
                     if lector.read_line(&mut linea).is_err() || linea.trim().is_empty() {
                         break;
                     }
-                    if linea.to_lowercase().starts_with("content-length:") {
-                        if let Some(val) = linea.split(':').nth(1) {
-                            longitud_cuerpo = val.trim().parse::<usize>().unwrap_or(0);
-                        }
+                    if linea.to_lowercase().starts_with("content-length:")
+                        && let Some(val) = linea.split(':').nth(1)
+                    {
+                        longitud_cuerpo = val.trim().parse::<usize>().unwrap_or(0);
                     }
                 }
 
@@ -311,9 +311,8 @@ async fn ac_3_tamano_de_lote_openrouter_y_gemini() {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .push(cantidad);
-        let elementos: Vec<&str> = std::iter::repeat(r#"{"values":[0.1,0.2]}"#)
-            .take(cantidad)
-            .collect();
+        let elementos: Vec<&str> =
+            std::iter::repeat_n(r#"{"values":[0.1,0.2]}"#, cantidad).collect();
         let cuerpo_respuesta = format!(
             r#"{{"embeddings":[{}],"usageMetadata":{{"promptTokenCount":10}}}}"#,
             elementos.join(",")

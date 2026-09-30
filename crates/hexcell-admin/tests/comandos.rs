@@ -42,7 +42,6 @@ fn ejecutar_con(snippet: &[&str]) -> (CodigoDeSalida, String, String) {
     {
         let mut salida = Salida::nueva(&mut bufer_estandar, &mut bufer_diagnostico);
         let codigo = ejecutar(resultado, &mut salida);
-        drop(salida);
         let estandar = String::from_utf8(bufer_estandar).expect("UTF-8 en el estándar");
         let diagnostico = String::from_utf8(bufer_diagnostico).expect("UTF-8 en el diagnóstico");
         (codigo, estandar, diagnostico)
@@ -93,7 +92,7 @@ fn errores_de_analisis_devuelven_uso_incorrecto_con_diagnostico_y_estandar_vacio
         ),
     ];
     for (snippet, token) in casos {
-        let (codigo, estandar, diagnostico) = ejecutar_con(&snippet);
+        let (codigo, estandar, diagnostico) = ejecutar_con(snippet);
         assert_eq!(codigo, CodigoDeSalida::UsoIncorrecto, "snippet {snippet:?}");
         assert_ne!(codigo, CodigoDeSalida::Exito);
         assert_ne!(codigo, CodigoDeSalida::Fallo);
@@ -137,7 +136,7 @@ fn subcomando_valido_sin_simular_devuelve_no_implementado_todavia() {
         (&["cell", "status", "--id", "c1"][..], "status"),
     ];
     for (snippet, nombre) in casos {
-        let (codigo, estandar, diagnostico) = ejecutar_con(&snippet);
+        let (codigo, estandar, diagnostico) = ejecutar_con(snippet);
         assert_eq!(
             codigo,
             CodigoDeSalida::NoImplementadoTodavia,
@@ -202,7 +201,7 @@ fn subcomando_valido_con_simular_devuelve_exito_y_linea_en_estandar() {
         ),
     ];
     for (snippet, esperado) in casos {
-        let (codigo, estandar, diagnostico) = ejecutar_con(&snippet);
+        let (codigo, estandar, diagnostico) = ejecutar_con(snippet);
         assert_eq!(codigo, CodigoDeSalida::Exito, "snippet {snippet:?}");
         assert_eq!(estandar, esperado, "estándar de {snippet:?}");
         assert!(
@@ -599,21 +598,19 @@ fn transiciones_de(temporal: &AlmacenTemporal) -> Vec<String> {
     let mut s = conexion
         .prepare("SELECT id_celula, de, a, motivo, registrado_ms FROM transiciones ORDER BY id")
         .unwrap();
-    let v = s
-        .query_map([], |f| {
-            Ok(format!(
-                "{} {}>{} {} {}",
-                f.get::<_, String>(0)?,
-                f.get::<_, String>(1)?,
-                f.get::<_, String>(2)?,
-                f.get::<_, String>(3)?,
-                f.get::<_, i64>(4)?
-            ))
-        })
-        .unwrap()
-        .map(Result::unwrap)
-        .collect();
-    v
+    s.query_map([], |f| {
+        Ok(format!(
+            "{} {}>{} {} {}",
+            f.get::<_, String>(0)?,
+            f.get::<_, String>(1)?,
+            f.get::<_, String>(2)?,
+            f.get::<_, String>(3)?,
+            f.get::<_, i64>(4)?
+        ))
+    })
+    .unwrap()
+    .map(Result::unwrap)
+    .collect()
 }
 
 /// Los siete guiones de una reanudación completa, en orden.

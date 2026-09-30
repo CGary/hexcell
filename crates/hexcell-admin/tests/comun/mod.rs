@@ -259,10 +259,10 @@ pub fn leer_peticion(flujo: &mut UnixStream) -> PeticionRecibida {
         if cabecera.is_empty() {
             break;
         }
-        if let Some((nombre, valor)) = cabecera.split_once(':') {
-            if nombre.trim().eq_ignore_ascii_case("content-length") {
-                longitud_de_cuerpo = valor.trim().parse().unwrap_or(0);
-            }
+        if let Some((nombre, valor)) = cabecera.split_once(':')
+            && nombre.trim().eq_ignore_ascii_case("content-length")
+        {
+            longitud_de_cuerpo = valor.trim().parse().unwrap_or(0);
         }
     }
 

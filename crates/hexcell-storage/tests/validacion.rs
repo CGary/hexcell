@@ -56,7 +56,7 @@ fn verificar_ac1_vectores_huerfanos() {
         [],
     ).unwrap();
 
-    let vector_valido = vec![0.0f32, 0.0f32, 0.0f32, 0.0f32];
+    let vector_valido = [0.0f32, 0.0f32, 0.0f32, 0.0f32];
     let bytes_vector = vector_valido
         .iter()
         .flat_map(|val| val.to_le_bytes())
@@ -145,7 +145,7 @@ fn verificar_ac2_hueco_ordinal() {
         [],
     ).unwrap();
 
-    let vector_valido = vec![0.0f32, 0.0f32, 0.0f32, 0.0f32];
+    let vector_valido = [0.0f32, 0.0f32, 0.0f32, 0.0f32];
     let bytes_vector = vector_valido
         .iter()
         .flat_map(|val| val.to_le_bytes())
@@ -241,7 +241,7 @@ fn verificar_ac3_mismatch_de_fragmentacion() {
         [],
     ).unwrap();
 
-    let vector_valido = vec![0.0f32, 0.0f32, 0.0f32, 0.0f32];
+    let vector_valido = [0.0f32, 0.0f32, 0.0f32, 0.0f32];
     let bytes_vector = vector_valido
         .iter()
         .flat_map(|val| val.to_le_bytes())
@@ -312,7 +312,7 @@ fn verificar_ac4_dimension_incorrecta() {
     ).unwrap();
 
     // Escribimos un vector de dimensión 8 (32 bytes) -> pasa el CHECK SQL (múltiplo de 4) pero incumple la época.
-    let vector_incorrecto = vec![0.0f32; 8];
+    let vector_incorrecto = [0.0f32; 8];
     let bytes_incorrectos = vector_incorrecto
         .iter()
         .flat_map(|val| val.to_le_bytes())
@@ -426,7 +426,7 @@ fn verificar_ac6_verificacion_semantica() {
         [],
     ).unwrap();
 
-    let vector = vec![1.0f32, 0.0f32, 0.0f32, 0.0f32];
+    let vector = [1.0f32, 0.0f32, 0.0f32, 0.0f32];
     let bytes_vector = vector
         .iter()
         .flat_map(|val| val.to_le_bytes())
@@ -530,7 +530,7 @@ fn verificar_ac7_ruta_de_archivo_personalizada() {
         [],
     ).unwrap();
 
-    let vector = vec![1.0f32, 0.0f32, 0.0f32, 0.0f32];
+    let vector = [1.0f32, 0.0f32, 0.0f32, 0.0f32];
     let bytes_vector = vector
         .iter()
         .flat_map(|val| val.to_le_bytes())

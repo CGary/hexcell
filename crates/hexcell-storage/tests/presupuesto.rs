@@ -794,7 +794,7 @@ fn vistas_consumo_por_conversacion_y_consumo_de_ingesta_no_se_mezclan() {
 #[test]
 fn consumo_de_ingesta_sin_filas_devuelve_cero_por_coalesce() {
     let directorio = DirectorioTemporal::nuevo("consumo-ingesta-vacio");
-    let repo = repositorio(&directorio);
+    let _repo = repositorio(&directorio);
 
     let conexion = Connection::open(directorio.ruta().join(NOMBRE_DE_ARCHIVO_DE_SESIONES))
         .expect("abrir sessions.db");
