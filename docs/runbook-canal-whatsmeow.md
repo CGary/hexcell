@@ -27,7 +27,7 @@ Correr una versión atrasada de la biblioteca introduce un doble riesgo (`adr-00
 * **Revisión técnica:** el equipo revisa periódicamente los cambios aguas arriba en el repositorio de `tulir/whatsmeow` (nuevos commits, avisos de roturas y actualizaciones de versión de cliente de WhatsApp Web).
 * **Puerta de paso (gate):** la incorporación de un nuevo commit requiere que la batería de pruebas automatizadas del sidecar (`go test ./...`) y las pruebas de integración del workspace pasen en verde antes de considerar la versión como candidata.
 * **Cadencia de actualización:** la frecuencia numérica regular con la que se evalúan y aplican actualizaciones ordinarias queda declarada **a calibrar** como decisión de negocio pendiente en `docs/STATUS.md`.
-* **Despliegue escalonado en cartera (diferido a etapa A-6):** el despliegue de una versión candidata no se aplica a toda la cartera simultáneamente. Siguiendo `adr-0015` (Capa 3, canary de biblioteca), la actualización se ejecuta primero sobre una célula centinela con número propio durante 72 horas antes de escalonar progresivamente al resto de las células. La automatización de este escalonado pertenece a la etapa A-6.
+* **Despliegue escalonado en cartera:** el procedimiento operativo completo —canario de 72 horas en la célula centinela, escalonado por lotes con parada ante incidencias y la prohibición de actualizar toda la cartera el mismo día— se describe en la sección 7, con su respaldo mecánico en el guardia de CI `deploy/verificar_despliegue_escalonado.sh` (trabajo `guardas-despliegue`).
 
 ---
 
@@ -98,6 +98,86 @@ Durante la sesión de laboratorio del **2026-08-18**, se validaron empíricament
   Guardas: `deploy/verificar_senales.sh` (en CI) y `deploy/verificar_apagado_ordenado.sh` (manual, con
   contenedores reales; HEX-075).
 
+## 7. Despliegue escalonado en cartera
+
+La actualización del commit fijado de `whatsmeow` (sección 1) no se aplica nunca a toda la cartera
+a la vez. El criterio de aceptación de la tarea 19 de la etapa A-6
+(`docs/plan/fase-a-6-empaquetado-cli.md`) exige que no exista ninguna vía —ni la CI, ni la CLI— que
+actualice toda la cartera en un solo paso, y `adr-0015` (Capa 3, canary de biblioteca) fija la forma:
+primero la célula centinela durante 72 horas y después, por lotes, el resto.
+
+### Canario de 72 horas en la célula centinela
+
+La **célula centinela** es una célula propia de HexCell, con número propio y sin ningún cliente
+encima, que corre la versión candidata de `whatsmeow` durante **72 horas** antes de que la
+actualización toque a cualquier célula de cliente. Su alta está pendiente de la decisión «Número
+propio de WhatsApp para el centinela» de `docs/STATUS.md` (pendiente de pasar a `Definido`); hasta
+entonces, la corrida real de 72 horas no puede ejecutarse. La centinela es además el sitio donde se
+ensayan medidas cuya eficacia no está probada —el experimento con Meta Verified, entre ellas— porque
+es el único número cuyo baneo no le cuesta el negocio a nadie; ninguna de esas medidas se documenta
+como probada mientras no lo esté.
+
+### Escalonado por lotes sobre la cartera
+
+Superadas las 72 horas sin incidencias, la actualización avanza por lotes.
+
+**Una vez por candidato, antes de la corrida de la centinela** (no dentro de cada lote): actualizar
+el commit fijado en `sidecar/go.mod`, ejecutar `go test ./...` y construir la imagen del sidecar
+(secciones 1 y 3). La misma imagen candidata que corrió 72 horas en la centinela es la que recibe
+cada lote; no se reconstruye entre lotes.
+
+**Por cada lote, célula por célula:**
+
+1. **Pausar la célula:** `hexcell-admin cell pause --id <cell_id>`.
+2. **Recrear el contenedor del sidecar de esa célula con la imagen candidata** (paso 4 de la sección
+   3, una célula a la vez): con `docker compose` sobre el proyecto de **esa única célula**,
+   apuntando `HEXCELL_IMAGEN_SIDECAR` de su archivo de entorno a la imagen candidata y ejecutando
+   `docker compose -p <proyecto_de_la_celula> --env-file <entorno_de_la_celula> -f
+   deploy/cell.compose.yml create --force-recreate --no-build sidecar`. `<proyecto_de_la_celula>`
+   es el mismo nombre de proyecto de compose con el que se levantó esa célula en su alta (los
+   scripts de `deploy/` lo pasan siempre con `-p`); ningún documento fija un nombre para una
+   célula real, así que aquí es un marcador y no se inventa una convención. Sin `-p`, compose usa
+   el proyecto `deploy` para todas las células: el comando falla con un conflicto de nombre de
+   contenedor, la imagen sigue siendo la vieja y las células no pueden coexistir. Solo con `-p`
+   se cumple que nunca se ejecuta sobre las demás células ni sobre la cartera entera.
+3. **Reanudar la célula:** `hexcell-admin cell unpause --id <cell_id>`. Este comando solo arranca
+   por nombre los contenedores existentes de la célula (el equivalente de `docker start`), incluido
+   el contenedor recreado en el paso 2: **por sí solo no cambia la imagen**; la imagen nueva llega
+   únicamente por la recreación del paso 2.
+4. **Comprobar** con `hexcell-admin cell status --id <cell_id>` que la célula queda en ejecución y
+   que el websocket reconecta sin `Client outdated (405)`.
+5. **Registrar el lote** en el registro de despliegue (tabla más abajo).
+
+**Prohibición operativa literal: nunca actualizar todas las células el mismo día.**
+
+**Condiciones de parada para el lote siguiente:** no se avanza al siguiente lote si el lote anterior
+presenta baneos, desconexiones anómalas o `Client outdated (405)`: se detiene el escalonado y se
+vuelve al procedimiento ante rotura de la sección 3.
+
+**Tamaño de lote:** el tamaño de lote es un **parámetro** del procedimiento, no una constante. Su
+valor por omisión es **una célula por lote**, el paso más pequeño que no es la cartera entera:
+`adr-0015` fija el riesgo de que una versión candidata defectuosa se lleve por delante a todos los
+clientes a la vez, y el techo de cartera es decisión de negocio pendiente, así que ningún documento
+fija un número de células por lote. Mientras no se decida otro valor, un lote es una célula.
+
+### Registro de despliegue
+
+Cada lote se registra con **fecha** (absoluta), **células** del lote, **versión o commit** de
+`whatsmeow` desplegado y **resultado** (OK o la condición de parada que detuvo el escalonado):
+
+| Fecha | Células | Versión/commit de whatsmeow | Resultado |
+| :--- | :--- | :--- | :--- |
+
+### Comandos y respaldo mecánico
+
+`hexcell-admin` **no tiene ningún comando de actualización ni de despliegue**: no existen `update`,
+`deploy`, `actualizar` ni `desplegar`, y no se añadirá ninguno. Los únicos comandos que intervienen
+en este procedimiento son los que ya existen: `cell pause`, `cell unpause` y `cell status`. El
+guardia estático `deploy/verificar_despliegue_escalonado.sh` —ejecutado en la CI como trabajo
+`guardas-despliegue`— comprueba que ningún trabajo distinto de `imagenes` ejecuta `docker compose
+up`/`pull`/`restart` ni un script de despliegue, y que la CLI no expone subcomandos de actualización:
+es el respaldo mecánico de la prohibición anterior.
+
 ## Referencias
 
 * `docs/adr/adr-0015-politica-de-convivencia-con-el-baneo.md` (ítem 14 `[precautorio]`, Capa 3 canary de biblioteca).
@@ -109,3 +189,4 @@ Durante la sesión de laboratorio del **2026-08-18**, se validaron empíricament
 * `docs/STATUS.md` (registro de estado y decisiones de negocio pendientes).
 * `docs/PRD.md` (FR-01, FR-12, NFR-01, NFR-05).
 * `docs/bitacora-de-descartes.md` (D-07, D-08).
+* `deploy/verificar_despliegue_escalonado.sh` (guardia estático del despliegue escalonado y su autoprueba de mutación; HEX-089).
