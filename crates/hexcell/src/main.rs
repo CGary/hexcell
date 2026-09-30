@@ -343,6 +343,38 @@ async fn main() -> ExitCode {
         }
     }
 
+    // Saneamiento del arranque (HEX-092, decisión de STATUS HEX-051-a): libera en una sola
+    // transacción las reservas de presupuesto que un proceso anterior abandonó en estado 'activa'
+    // más allá del límite de drenaje, devolviendo el monto al saldo disponible. Un fallo del
+    // barrido solo se registra como aviso y el arranque continúa: las reservas huérfanas bloquean
+    // saldo pero no impiden atender tráfico, y la célula debe poder servir aunque el saneamiento
+    // falle (justificación en la nota de `docs/plan/fase-a-4-admision-presupuesto.md`).
+    match repositorio.liberar_reservas_huerfanas(SystemTime::now(), configuracion.limite_de_drenaje)
+    {
+        Ok(resumen) if resumen.reservas_liberadas > 0 => {
+            registro::emitir(
+                EntradaDeRegistro::nueva(NivelDeRegistro::Info, "reservas_huerfanas_liberadas")
+                    .con_detalle(format!(
+                        "recuento={} monto={}",
+                        resumen.reservas_liberadas, resumen.monto_liberado
+                    )),
+            );
+        }
+        Ok(_) => {
+            registro::emitir(
+                EntradaDeRegistro::nueva(NivelDeRegistro::Info, "reservas_huerfanas_liberadas")
+                    .con_detalle("sin cambios"),
+            );
+        }
+        Err(error) => {
+            eprintln!("hexcell: no se pudo barrer las reservas huérfanas de presupuesto: {error}");
+            registro::emitir(
+                EntradaDeRegistro::nueva(NivelDeRegistro::Aviso, "reservas_huerfanas_liberadas")
+                    .con_detalle(error.to_string()),
+            );
+        }
+    }
+
     let receptor_apagado = senal_de_apagado.observador();
     let debe_apagar = move || *receptor_apagado.borrow();
 
