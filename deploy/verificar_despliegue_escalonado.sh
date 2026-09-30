@@ -369,6 +369,7 @@ LIT_UP="u""p"
 LIT_PULL="pu""ll"
 LIT_RESTART="re""start"
 LIT_UPDATE="up""date"
+LIT_DESPLEGAR="des""plegar"
 
 # paso_yaml <comando>: paso YAML (a 6 espacios) que ejecuta <comando>.
 paso_yaml() {
@@ -476,9 +477,23 @@ CASO="$(preparar_caso "m4-punto")"; mkdir -p "$CASO/deploy"
 printf '#!/usr/bin/env bash\n%s %s %s %s -d\n' "$LIT_DOCKER" "$LIT_COMPOSE" "$COMANDO_COMPOSE_BASE" "$LIT_UP" > "$CASO/deploy/$SCRIPT_MUTADO"
 insertar_paso_en_trabajo "$CASO/.github/workflows/ci.yml" "guardas-limites" "$(paso_yaml "./deploy/$SCRIPT_MUTADO")"
 correr_caso "M4: ./deploy/<script> cuyo contenido ejecuta la regla compose" "CI-SCRIPT" "$CASO" "$CASO/.github/workflows/ci.yml" "$CI"
-CASO="$(preparar_caso "m4-tallo")"
-insertar_paso_en_trabajo "$CASO/.github/workflows/ci.yml" "guardas-limites" "$(paso_yaml "bash deploy/${LIT_UPDATE}.sh")"
-correr_caso "M4: script con tallo de despliegue (${LIT_UPDATE}.sh)" "CI-SCRIPT" "$CASO" "$CASO/.github/workflows/ci.yml" "$CI"
+
+# Palabras update y desplegar: brazo del match (CLI-SUBCOMANDO), línea de uso
+# (CLI-USO) y tallo de script (CI-SCRIPT). En el caso del tallo el script SÍ
+# existe y está limpio en la copia: solo la comprobación del tallo puede ponerlo
+# rojo (si no, «no existe» taparía la deriva de PALABRA_UPDATE/PALABRA_DESPLEGAR).
+for LIT_PALABRA in "$LIT_UPDATE" "$LIT_DESPLEGAR"; do
+    CASO="$(preparar_caso "m2-$LIT_PALABRA")"
+    insertar_antes_de "$CASO/argumentos.rs" '^[[:space:]]*"status"[[:space:]]*=>' "        \"$LIT_PALABRA\" => Subcomando::Estado,"
+    correr_caso "M2: brazo de subcomando \"$LIT_PALABRA\" en el match" "CLI-SUBCOMANDO" "$CASO" "$CASO/argumentos.rs" "$ORIGINAL_ARGUMENTOS"
+    CASO="$(preparar_caso "m3-$LIT_PALABRA")"
+    insertar_antes_de "$CASO/argumentos.rs" '^[[:space:]]*status[[:space:]]+--id' "  $LIT_PALABRA     --id <cell_id>                Subcomando mutado de prueba."
+    correr_caso "M3: línea de uso que comienza con $LIT_PALABRA" "CLI-USO" "$CASO" "$CASO/argumentos.rs" "$ORIGINAL_ARGUMENTOS"
+    CASO="$(preparar_caso "m4-tallo-$LIT_PALABRA")"; mkdir -p "$CASO/deploy"
+    printf '#!/usr/bin/env bash\necho limpio\n' > "$CASO/deploy/$LIT_PALABRA.sh"
+    insertar_paso_en_trabajo "$CASO/.github/workflows/ci.yml" "guardas-limites" "$(paso_yaml "bash deploy/$LIT_PALABRA.sh")"
+    correr_caso "M4: script existente y limpio con tallo de despliegue ($LIT_PALABRA.sh)" "CI-SCRIPT" "$CASO" "$CASO/.github/workflows/ci.yml" "$CI"
+done
 
 # Casos que NO deben disparar.
 CASO="$(preparar_caso "exento-imagenes")"; insertar_paso_en_trabajo "$CASO/.github/workflows/ci.yml" "imagenes" "$(paso_yaml "${LIT_DOCKER} ${LIT_COMPOSE} $COMANDO_COMPOSE_BASE ${LIT_UP} -d")"

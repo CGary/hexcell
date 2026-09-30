@@ -132,11 +132,18 @@ cada lote; no se reconstruye entre lotes.
 2. **Recrear el contenedor del sidecar de esa célula con la imagen candidata** (paso 4 de la sección
    3, una célula a la vez): con `docker compose` sobre el proyecto de **esa única célula**,
    apuntando `HEXCELL_IMAGEN_SIDECAR` de su archivo de entorno a la imagen candidata y ejecutando
-   `docker compose -f deploy/cell.compose.yml --env-file <entorno_de_la_celula> create
-   --force-recreate sidecar`. Nunca se ejecuta sobre las demás células ni sobre la cartera entera.
+   `docker compose -p <proyecto_de_la_celula> --env-file <entorno_de_la_celula> -f
+   deploy/cell.compose.yml create --force-recreate --no-build sidecar`. `<proyecto_de_la_celula>`
+   es el mismo nombre de proyecto de compose con el que se levantó esa célula en su alta (los
+   scripts de `deploy/` lo pasan siempre con `-p`); ningún documento fija un nombre para una
+   célula real, así que aquí es un marcador y no se inventa una convención. Sin `-p`, compose usa
+   el proyecto `deploy` para todas las células: el comando falla con un conflicto de nombre de
+   contenedor, la imagen sigue siendo la vieja y las células no pueden coexistir. Solo con `-p`
+   se cumple que nunca se ejecuta sobre las demás células ni sobre la cartera entera.
 3. **Reanudar la célula:** `hexcell-admin cell unpause --id <cell_id>`. Este comando solo arranca
-   los contenedores existentes de la célula: **por sí solo no cambia la imagen**; la imagen nueva
-   llega únicamente por la recreación del paso 2.
+   por nombre los contenedores existentes de la célula (el equivalente de `docker start`), incluido
+   el contenedor recreado en el paso 2: **por sí solo no cambia la imagen**; la imagen nueva llega
+   únicamente por la recreación del paso 2.
 4. **Comprobar** con `hexcell-admin cell status --id <cell_id>` que la célula queda en ejecución y
    que el websocket reconecta sin `Client outdated (405)`.
 5. **Registrar el lote** en el registro de despliegue (tabla más abajo).
