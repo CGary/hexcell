@@ -1,7 +1,7 @@
 // Package ipc es la representación tipada del protocolo que fija
-// `docs/protocolo-ipc-nucleo-sidecar.md`, versión 1.5 (versión de cable 6).
+// `docs/protocolo-ipc-nucleo-sidecar.md`, versión 1.6 (versión de cable 7).
 //
-// Aquí no hay socket, ni escucha, ni outbox: solo los objetos de valor de los diecisiete tipos de
+// Aquí no hay socket, ni escucha, ni outbox: solo los objetos de valor de los diecinueve tipos de
 // mensaje y dos funciones puras, [Codificar] y [Decodificar]. El transporte llega con la tarea 3
 // del plan de la etapa A-3; separarlo permite comprobar el formato con tests normales, sin abrir
 // ningún descriptor, por el mismo motivo por el que `registro::formatear` está separado de
@@ -29,7 +29,7 @@ import (
 )
 
 // VersionProtocolo es la versión que este binario habla. Un desajuste cierra la conexión.
-const VersionProtocolo int64 = 6
+const VersionProtocolo int64 = 7
 
 // LongitudMaximaDeLinea es el techo de una línea del protocolo, en bytes, salto de línea
 // incluido. Existe para que el lector del otro extremo dimensione un búfer acotado.
@@ -44,25 +44,27 @@ const (
 // TipoMensaje es el conjunto cerrado de tipos del documento.
 type TipoMensaje string
 
-// Los diecisiete tipos del protocolo, ni uno más.
+// Los diecinueve tipos del protocolo, ni uno más.
 const (
-	TipoSaludo                 TipoMensaje = "saludo"
-	TipoEventoEntrante         TipoMensaje = "evento_entrante"
-	TipoConfirmacion           TipoMensaje = "confirmacion"
-	TipoEstadoSesion           TipoMensaje = "estado_sesion"
-	TipoOrdenRespaldoSqlstore  TipoMensaje = "orden_respaldo_sqlstore"
-	TipoAcuseRespaldoSqlstore  TipoMensaje = "acuse_respaldo_sqlstore"
-	TipoOrdenRespaldoIdentidad TipoMensaje = "orden_respaldo_identidad"
-	TipoAcuseRespaldoIdentidad TipoMensaje = "acuse_respaldo_identidad"
-	TipoOrdenEmparejar         TipoMensaje = "orden_emparejar"
-	TipoCodigoEmparejamiento   TipoMensaje = "codigo_emparejamiento"
-	TipoAcuseEmparejamiento    TipoMensaje = "acuse_emparejamiento"
-	TipoMensajeSaliente        TipoMensaje = "mensaje_saliente"
-	TipoAcuseEnvio             TipoMensaje = "acuse_envio"
-	TipoOrdenCierreDeSesion    TipoMensaje = "orden_cierre_de_sesion"
-	TipoAcuseCierreDeSesion    TipoMensaje = "acuse_cierre_de_sesion"
-	TipoOrdenPausaDeEnvio      TipoMensaje = "orden_pausa_de_envio"
-	TipoAcusePausaDeEnvio      TipoMensaje = "acuse_pausa_de_envio"
+	TipoSaludo                   TipoMensaje = "saludo"
+	TipoEventoEntrante           TipoMensaje = "evento_entrante"
+	TipoConfirmacion             TipoMensaje = "confirmacion"
+	TipoEstadoSesion             TipoMensaje = "estado_sesion"
+	TipoOrdenRespaldoSqlstore    TipoMensaje = "orden_respaldo_sqlstore"
+	TipoAcuseRespaldoSqlstore    TipoMensaje = "acuse_respaldo_sqlstore"
+	TipoOrdenRespaldoIdentidad   TipoMensaje = "orden_respaldo_identidad"
+	TipoAcuseRespaldoIdentidad   TipoMensaje = "acuse_respaldo_identidad"
+	TipoOrdenEmparejar           TipoMensaje = "orden_emparejar"
+	TipoCodigoEmparejamiento     TipoMensaje = "codigo_emparejamiento"
+	TipoAcuseEmparejamiento      TipoMensaje = "acuse_emparejamiento"
+	TipoMensajeSaliente          TipoMensaje = "mensaje_saliente"
+	TipoAcuseEnvio               TipoMensaje = "acuse_envio"
+	TipoOrdenCierreDeSesion      TipoMensaje = "orden_cierre_de_sesion"
+	TipoAcuseCierreDeSesion      TipoMensaje = "acuse_cierre_de_sesion"
+	TipoOrdenPausaDeEnvio        TipoMensaje = "orden_pausa_de_envio"
+	TipoAcusePausaDeEnvio        TipoMensaje = "acuse_pausa_de_envio"
+	TipoOrdenRestablecerContacto TipoMensaje = "orden_restablecer_contacto"
+	TipoAcuseRestablecerContacto TipoMensaje = "acuse_restablecer_contacto"
 )
 
 // Valores cerrados del campo `emisor` de un saludo.
@@ -141,6 +143,13 @@ const (
 // ResultadoPausaAplicado es el valor cerrado del campo `resultado` de un acuse de pausa de envío
 // cuando la compuerta se aplicó; el fallo reutiliza [ResultadoFallido].
 const ResultadoPausaAplicado = "aplicado"
+
+const (
+	ValorSi                           = "si"
+	ValorNo                           = "no"
+	ResultadoRestablecimientoAplicado = "aplicado"
+	ResultadoContactoDesconocido      = "contacto_desconocido"
+)
 
 // Errores de protocolo. Cualquiera de ellos cierra la conexión: una vez que el delimitado por
 // líneas es dudoso, seguir leyendo es adivinar.
@@ -387,6 +396,30 @@ type AcusePausaDeEnvio struct {
 	Motivo    string
 }
 
+type OrdenRestablecerContacto struct {
+	Contacto    string
+	IncluirBaja string
+}
+
+func (OrdenRestablecerContacto) tipo() TipoMensaje { return TipoOrdenRestablecerContacto }
+func (o OrdenRestablecerContacto) valores() []any  { return []any{o.Contacto, o.IncluirBaja} }
+
+type AcuseRestablecerContacto struct {
+	Contacto                   string
+	IncluirBaja                string
+	Resultado                  string
+	Existe                     string
+	Cortacircuitos             int64
+	PresentacionDeConversacion int64
+	BajaDeContacto             int64
+	Motivo                     string
+}
+
+func (AcuseRestablecerContacto) tipo() TipoMensaje { return TipoAcuseRestablecerContacto }
+func (a AcuseRestablecerContacto) valores() []any {
+	return []any{a.Contacto, a.IncluirBaja, a.Resultado, a.Existe, a.Cortacircuitos, a.PresentacionDeConversacion, a.BajaDeContacto, a.Motivo}
+}
+
 func (AcusePausaDeEnvio) tipo() TipoMensaje { return TipoAcusePausaDeEnvio }
 func (a AcusePausaDeEnvio) valores() []any {
 	return []any{a.Accion, a.Resultado, a.Motivo}
@@ -604,6 +637,16 @@ var descriptores = map[TipoMensaje]descriptor{
 			return AcusePausaDeEnvio{Accion: cadenas[0], Resultado: cadenas[1], Motivo: cadenas[2]}
 		},
 	},
+	TipoOrdenRestablecerContacto: {
+		campos:    []declaracion{{"contacto", claseCadena}, {"incluir_baja", claseCadena}},
+		construir: func(c []string, _ []int64) Cuerpo { return OrdenRestablecerContacto{Contacto: c[0], IncluirBaja: c[1]} },
+	},
+	TipoAcuseRestablecerContacto: {
+		campos: []declaracion{{"contacto", claseCadena}, {"incluir_baja", claseCadena}, {"resultado", claseCadena}, {"existe", claseCadena}, {"cortacircuitos", claseEntero}, {"presentacion_de_conversacion", claseEntero}, {"baja_de_contacto", claseEntero}, {"motivo", claseCadena}},
+		construir: func(c []string, n []int64) Cuerpo {
+			return AcuseRestablecerContacto{Contacto: c[0], IncluirBaja: c[1], Resultado: c[2], Existe: c[3], Cortacircuitos: n[0], PresentacionDeConversacion: n[1], BajaDeContacto: n[2], Motivo: c[4]}
+		},
+	},
 }
 
 // CausasDeclaradas devuelve el vocabulario cerrado de causas en orden estable,
@@ -654,6 +697,7 @@ func TiposDeclarados() []TipoMensaje {
 		TipoMensajeSaliente, TipoAcuseEnvio,
 		TipoOrdenCierreDeSesion, TipoAcuseCierreDeSesion,
 		TipoOrdenPausaDeEnvio, TipoAcusePausaDeEnvio,
+		TipoOrdenRestablecerContacto, TipoAcuseRestablecerContacto,
 	}
 }
 

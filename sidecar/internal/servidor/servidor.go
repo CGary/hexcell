@@ -20,6 +20,7 @@ import (
 
 	"github.com/CGary/hexcell/sidecar/internal/canal"
 	"github.com/CGary/hexcell/sidecar/internal/configuracion"
+	"github.com/CGary/hexcell/sidecar/internal/identidad"
 	"github.com/CGary/hexcell/sidecar/internal/ipc"
 	"github.com/CGary/hexcell/sidecar/internal/outbox"
 	"github.com/CGary/hexcell/sidecar/internal/registro"
@@ -47,6 +48,7 @@ type Dependencias struct {
 	Portero             *outbox.PorteroDeSalida
 	DBRespaldo          *sql.DB
 	DBRespaldoIdentidad *sql.DB
+	AlmacenIdentidad    *identidad.Almacen
 	Sesion              *canal.Sesion
 	TelefonoCelula      string
 	// Desvinculador es la costura de desvinculación para la orden de cierre de sesión. Si queda

@@ -256,6 +256,9 @@ struct PendientesDeSesion {
     pausa: tokio::sync::Mutex<
         Option<tokio::sync::oneshot::Sender<crate::mensajes::AcusePausaDeEnvio>>,
     >,
+    restablecimiento: tokio::sync::Mutex<
+        Option<tokio::sync::oneshot::Sender<crate::mensajes::AcuseRestablecerContacto>>,
+    >,
 }
 
 /// Adaptador `ChannelAdapter` + `CicloDeVidaSesion` sobre IPC con el sidecar whatsmeow.
@@ -696,6 +699,76 @@ impl AdaptadorWhatsmeow {
             plazo,
         )
         .await
+    }
+
+    /// Ordena al sidecar restablecer un contacto y espera su acuse dentro del plazo. `incluir_baja`
+    /// se serializa tal cual (`si`/`no`). Sin conexión devuelve `SinConexion`; un acuse huérfano
+    /// se descarta y un acuse con eco distinto o fuera de plazo es un error de protocolo.
+    pub async fn ordenar_restablecimiento_de_contacto(
+        &self,
+        contacto: &str,
+        incluir_baja: bool,
+        plazo: Duration,
+    ) -> Result<crate::mensajes::AcuseRestablecerContacto, ErrorCanalWhatsmeow> {
+        ordenar_restablecimiento_de_contacto_interno(
+            &self.escritor_compartido,
+            &self.pendientes_de_sesion,
+            contacto,
+            incluir_baja,
+            plazo,
+        )
+        .await
+    }
+}
+
+/// Implementación compartida del restablecimiento de contacto, usada por el adaptador y su asa.
+async fn ordenar_restablecimiento_de_contacto_interno(
+    escritor: &Arc<tokio::sync::Mutex<Option<tokio::io::WriteHalf<tokio::net::UnixStream>>>>,
+    pendientes: &Arc<PendientesDeSesion>,
+    contacto: &str,
+    incluir_baja: bool,
+    plazo: Duration,
+) -> Result<crate::mensajes::AcuseRestablecerContacto, ErrorCanalWhatsmeow> {
+    if escritor.lock().await.is_none() {
+        return Err(ErrorCanalWhatsmeow::SinConexion);
+    }
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    {
+        *pendientes.restablecimiento.lock().await = Some(tx);
+    }
+    let orden = crate::mensajes::OrdenRestablecerContacto {
+        version: crate::mensajes::VERSION_PROTOCOLO,
+        tipo: "orden_restablecer_contacto".into(),
+        contacto: contacto.into(),
+        incluir_baja: if incluir_baja {
+            "si".into()
+        } else {
+            "no".into()
+        },
+    };
+    let linea = serde_json::to_string(&orden).map_err(|e| {
+        ErrorCanalWhatsmeow::ErrorDeProtocolo(format!("serializar restablecimiento: {e}"))
+    })?;
+    if let Err(e) = escribir_linea(escritor, &linea).await {
+        *pendientes.restablecimiento.lock().await = None;
+        return Err(e);
+    }
+    match tokio::time::timeout(plazo, rx).await {
+        Ok(Ok(acuse))
+            if acuse.contacto == contacto
+                && acuse.incluir_baja == if incluir_baja { "si" } else { "no" } =>
+        {
+            Ok(acuse)
+        }
+        Ok(Ok(_)) => Err(ErrorCanalWhatsmeow::ErrorDeProtocolo(
+            "acuse de restablecimiento incoherente".into(),
+        )),
+        Ok(Err(_)) | Err(_) => {
+            *pendientes.restablecimiento.lock().await = None;
+            Err(ErrorCanalWhatsmeow::ErrorDeProtocolo(
+                "no se recibió acuse de restablecimiento dentro del plazo".into(),
+            ))
+        }
     }
 }
 
@@ -1183,6 +1256,16 @@ async fn leer_mensajes(
                     eprintln!("hexcell-canal-whatsmeow: acuse_pausa_de_envio huérfano recibido");
                 }
             }
+            MensajeEntrante::AcuseRestablecerContacto(acuse) => {
+                let remitente = pendientes_de_sesion.restablecimiento.lock().await.take();
+                if let Some(tx) = remitente {
+                    let _ = tx.send(acuse);
+                } else {
+                    eprintln!(
+                        "hexcell-canal-whatsmeow: acuse_restablecer_contacto huérfano recibido"
+                    );
+                }
+            }
             MensajeEntrante::AcuseEnvio(acuse) => {
                 // Los acuses de envío se consumen sin elevar la taxonomía de whatsmeow al puerto,
                 // pero se registran en los contadores de acuse por conversación para la alerta de
@@ -1406,6 +1489,25 @@ impl AsaDeSesion {
             &self.escritor_compartido,
             &self.pendientes_de_sesion,
             accion,
+            plazo,
+        )
+        .await
+    }
+
+    /// Ordena al sidecar restablecer un contacto y espera su acuse dentro del plazo. `incluir_baja`
+    /// se serializa tal cual (`si`/`no`). Sin conexión devuelve `SinConexion`; un acuse huérfano
+    /// se descarta y un acuse con eco distinto o fuera de plazo es un error de protocolo.
+    pub async fn ordenar_restablecimiento_de_contacto(
+        &self,
+        contacto: &str,
+        incluir_baja: bool,
+        plazo: Duration,
+    ) -> Result<crate::mensajes::AcuseRestablecerContacto, ErrorCanalWhatsmeow> {
+        ordenar_restablecimiento_de_contacto_interno(
+            &self.escritor_compartido,
+            &self.pendientes_de_sesion,
+            contacto,
+            incluir_baja,
             plazo,
         )
         .await

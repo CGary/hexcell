@@ -97,6 +97,7 @@ func main() {
 		Portero:             portero,
 		DBRespaldo:          recursos.DBRespaldo,
 		DBRespaldoIdentidad: recursos.DBRespaldoIdentidad,
+		AlmacenIdentidad:    recursos.AlmacenIdentidad,
 		Sesion:              recursos.Sesion,
 		TelefonoCelula:      cfg.TelefonoCelula,
 	})

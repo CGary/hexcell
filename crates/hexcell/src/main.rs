@@ -48,9 +48,10 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
 use hexcell::admin::{
-    AccionDePausa, DesenlaceDeEmparejamiento, DesenlaceDePausa, EstadoDeAdmin, MOTIVO_SIN_CONEXION,
-    MOTIVO_YA_EMPAREJADA, MetodoSolicitado, OperacionesDeSesion, PlazosDeSesion, RegistroDeSesion,
-    SesionDeCanal, servir_servicios_http,
+    AccionDePausa, DesenlaceDeEmparejamiento, DesenlaceDePausa, DesenlaceDeRestablecimiento,
+    EstadoDeAdmin, MOTIVO_SIN_CONEXION, MOTIVO_YA_EMPAREJADA, MetodoSolicitado,
+    OperacionesDeSesion, PlazosDeSesion, RegistroDeSesion, SesionDeCanal, servir_servicios_http,
+    traducir_acuse_de_restablecimiento,
 };
 use hexcell::alertas::EmisorDeAlertas;
 use hexcell::apagado::Apagado;
@@ -111,6 +112,7 @@ fn construir_sesion_de_canal(
     let asa_cerrar = Arc::new(asa.clone());
     let asa_pausa = Arc::new(asa.clone());
     let asa_emparejar = Arc::new(asa.clone());
+    let asa_restablecer = Arc::new(asa.clone());
     let asa_estado = Arc::new(asa);
 
     SesionDeCanal::ConSesion(OperacionesDeSesion {
@@ -186,6 +188,36 @@ fn construir_sesion_de_canal(
                         motivo: MOTIVO_SIN_CONEXION.to_string(),
                     },
                     Err(e) => DesenlaceDeEmparejamiento::Fallido {
+                        motivo: e.to_string(),
+                    },
+                }
+            })
+        }),
+        restablecer_contacto: Box::new(move |solicitud, plazo| {
+            let asa = Arc::clone(&asa_restablecer);
+            Box::pin(async move {
+                let incluir = solicitud.incluir_baja;
+                match asa
+                    .ordenar_restablecimiento_de_contacto(&solicitud.contacto, incluir, plazo)
+                    .await
+                {
+                    Ok(acuse) => traducir_acuse_de_restablecimiento(
+                        &solicitud,
+                        &hexcell::admin::AcuseDeRestablecimientoCrudo {
+                            contacto: acuse.contacto,
+                            incluir_baja: acuse.incluir_baja,
+                            resultado: acuse.resultado,
+                            existe: acuse.existe,
+                            cortacircuitos: acuse.cortacircuitos,
+                            presentacion_de_conversacion: acuse.presentacion_de_conversacion,
+                            baja_de_contacto: acuse.baja_de_contacto,
+                            motivo: acuse.motivo,
+                        },
+                    ),
+                    Err(ErrorCanalWhatsmeow::SinConexion) => DesenlaceDeRestablecimiento::Fallido {
+                        motivo: MOTIVO_SIN_CONEXION.to_string(),
+                    },
+                    Err(e) => DesenlaceDeRestablecimiento::Fallido {
                         motivo: e.to_string(),
                     },
                 }
