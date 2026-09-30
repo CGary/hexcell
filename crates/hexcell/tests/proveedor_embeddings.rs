@@ -49,10 +49,10 @@ where
                     if reader.read_line(&mut linea).is_err() || linea.trim().is_empty() {
                         break;
                     }
-                    if linea.to_lowercase().starts_with("content-length:") {
-                        if let Some(val) = linea.split(':').nth(1) {
-                            longitud_cuerpo = val.trim().parse::<usize>().unwrap_or(0);
-                        }
+                    if linea.to_lowercase().starts_with("content-length:")
+                        && let Some(val) = linea.split(':').nth(1)
+                    {
+                        longitud_cuerpo = val.trim().parse::<usize>().unwrap_or(0);
                     }
                 }
 

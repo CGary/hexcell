@@ -18,7 +18,7 @@ Rust workspace (eight crates):
 cargo build --workspace
 cargo test --workspace
 cargo fmt --check
-cargo clippy --workspace -- -D warnings
+cargo clippy --workspace --all-targets -- -D warnings
 cargo test -p <crate> <test_name>            # single test
 cargo test --workspace -- --ignored rss_linea_base --nocapture  # RSS baseline (ignored test)
 ```

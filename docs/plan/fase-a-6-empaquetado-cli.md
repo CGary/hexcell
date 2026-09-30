@@ -511,6 +511,9 @@ Las entradas conservan su numeración; esta sección es la autoridad sobre el or
     solo el número de dispositivo de ambos sockets, que dos volúmenes nombrados comparten siempre,
     de modo que la aserción era una guarda invertida imposible de pasar—; se corrigió al par
     dispositivo:inodo y quedó registrado como D-49.
+
+    **Deuda saldada el 2026-09-30 con HEX-090: 38 lints en 19 archivos; --all-targets cableado en la CI**
+
 18. **Integrar la construcción de las imágenes en la CI** (1 día). Construcción reproducible,
     etiquetado por versión y por commit, y publicación en el registro elegido.
     * Guarda en CI que falla si la imagen corre como root o sin rootfs de solo lectura (criterio ya

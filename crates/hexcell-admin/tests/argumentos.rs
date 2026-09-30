@@ -57,14 +57,7 @@ fn subcomando_para(nombre: &str) -> Subcomando {
         "status" => analizar(&args(&["cell", "status", "--id", "c1"])).unwrap(),
         otro => panic!("nombre no reconocido: {otro}"),
     };
-    match invocacion.subcomando().unwrap() {
-        Subcomando::Pausar => Subcomando::Pausar,
-        Subcomando::Reanudar => Subcomando::Reanudar,
-        Subcomando::Retirar => Subcomando::Retirar,
-        Subcomando::Reemparejar => Subcomando::Reemparejar,
-        Subcomando::Listar => Subcomando::Listar,
-        Subcomando::Estado => Subcomando::Estado,
-    }
+    invocacion.subcomando().unwrap()
 }
 
 #[test]

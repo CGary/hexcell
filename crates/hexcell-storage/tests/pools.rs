@@ -425,7 +425,7 @@ fn verificar_ac7_anchura_configurada_sobrevive_a_promocion_y_reversion() {
             [],
         )
         .unwrap();
-    let bytes = vec![1.0f32; 4]
+    let bytes = [1.0f32; 4]
         .iter()
         .flat_map(|v| v.to_le_bytes())
         .collect::<Vec<u8>>();

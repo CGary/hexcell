@@ -166,7 +166,7 @@ fn verificar_ac1_drenaje_espera_por_lector() {
             [],
         )
         .unwrap();
-    let bytes = vec![1.0f32; 2]
+    let bytes = [1.0f32; 2]
         .iter()
         .flat_map(|v| v.to_le_bytes())
         .collect::<Vec<u8>>();
@@ -321,7 +321,7 @@ fn verificar_ac4_vector_incomparable_aborta_y_nombra_fragmento() {
         )
         .unwrap();
 
-    let bytes_largos: Vec<u8> = vec![1.0f32, 2.0, 3.0, 4.0]
+    let bytes_largos: Vec<u8> = [1.0f32, 2.0, 3.0, 4.0]
         .iter()
         .flat_map(|v| v.to_le_bytes())
         .collect();
@@ -428,10 +428,7 @@ fn verificar_ac5_dimension_de_consulta_discrepante_antes_de_escaneo() {
         )
         .unwrap();
     // 8 bytes (2 floats) en lugar de 16 bytes (4 floats)
-    let bytes_corruptos: Vec<u8> = vec![1.0f32, 2.0]
-        .iter()
-        .flat_map(|v| v.to_le_bytes())
-        .collect();
+    let bytes_corruptos: Vec<u8> = [1.0f32, 2.0].iter().flat_map(|v| v.to_le_bytes()).collect();
     conexion
         .execute(
             "INSERT INTO vectores_de_fragmento (id_fragmento, vector) VALUES (99, ?1)",

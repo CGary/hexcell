@@ -513,7 +513,7 @@ fn upgrade_de_conocimiento_v2_a_v3_preserva_datos_preexistentes_y_reaplica_es_un
         )
         .expect("insertar fragmento v2");
 
-    let vector_valido = vec![0.5f32, -0.25f32, 1.0f32, 0.0f32];
+    let vector_valido = [0.5f32, -0.25f32, 1.0f32, 0.0f32];
     let vector_bytes: Vec<u8> = vector_valido.iter().flat_map(|v| v.to_le_bytes()).collect();
     conexion
         .execute(
@@ -695,7 +695,7 @@ fn ida_y_vuelta_de_valores_f32_little_endian_produce_bits_identicos() {
         .expect("insertar fragmento");
 
     // Serie de valores f32 conocidos, incluidos casos de borde: cero, uno, negativos, NaN canónico.
-    let originales: Vec<f32> = vec![0.0, 1.0, -1.0, 3.14159, f32::MAX, f32::MIN_POSITIVE];
+    let originales: Vec<f32> = vec![0.0, 1.0, -1.0, 1.23456, f32::MAX, f32::MIN_POSITIVE];
     let blob: Vec<u8> = originales.iter().flat_map(|v| v.to_le_bytes()).collect();
 
     conexion

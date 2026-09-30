@@ -16,10 +16,10 @@ use hexcell_storage::conocimiento::NOMBRE_DE_ARCHIVO_DE_CONOCIMIENTO_EN_SOMBRA;
 use hexcell_storage::drenaje::drenar_epoca_superseida;
 use hexcell_storage::error::ErrorDeAlmacen;
 use hexcell_storage::migraciones::aplicar_migraciones_de_conocimiento;
-use hexcell_storage::pools::{GestorDePools, NOMBRE_DE_ARCHIVO_DE_CONOCIMIENTO};
+use hexcell_storage::pools::GestorDePools;
 use hexcell_storage::promocion::promover_epoca;
 use hexcell_storage::retencion::{
-    EpocaConservada, EpocaPurgada, MotivoDeConservacion, SUFIJO_DE_MARCA_DE_EPOCA_SOSPECHOSA,
+    EpocaConservada, MotivoDeConservacion, SUFIJO_DE_MARCA_DE_EPOCA_SOSPECHOSA,
     VENTANA_DE_RETENCION_DE_EPOCAS_POR_DEFECTO, escribir_marca_de_epoca_sospechosa,
     purgar_epocas_retiradas,
 };

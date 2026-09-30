@@ -63,7 +63,7 @@ fn el_respaldo_produce_las_dos_copias_de_pools_intactas_y_verificadas() {
     // propio test haría cambiar ese valor, así que se ancla al caso por omisión que los demás
     // tests de este archivo también ejercitan.
     for copia in &resumen.copias {
-        match copia.nombre_logico.as_ref() {
+        match copia.nombre_logico {
             NOMBRE_DE_ARCHIVO_DE_SESIONES => {
                 assert!(
                     copia.numero_de_epoca.is_none(),
@@ -100,7 +100,7 @@ fn cada_copia_conserva_su_version_de_esquema() {
         let version: i64 = conexion
             .query_row("PRAGMA user_version", [], |fila| fila.get(0))
             .expect("leer user_version de la copia");
-        let version_esperada = match copia.nombre_logico.as_ref() {
+        let version_esperada = match copia.nombre_logico {
             NOMBRE_DE_ARCHIVO_DE_SESIONES => VERSION_DE_ESQUEMA_DE_SESIONES,
             NOMBRE_DE_ARCHIVO_DE_CONOCIMIENTO => VERSION_DE_ESQUEMA_DE_CONOCIMIENTO,
             otro => panic!("copia con nombre lógico no esperado: {otro}"),

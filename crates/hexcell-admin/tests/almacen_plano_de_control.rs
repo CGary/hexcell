@@ -31,12 +31,10 @@ fn tablas(conexion: &rusqlite::Connection) -> Vec<String> {
     let mut s = conexion
         .prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
         .unwrap();
-    let v = s
-        .query_map([], |f| f.get::<_, String>(0))
+    s.query_map([], |f| f.get::<_, String>(0))
         .unwrap()
         .map(Result::unwrap)
-        .collect();
-    v
+        .collect()
 }
 
 /// Columnas de `tabla` como `«nombre TIPO nn=N def=X pk=N»`, una cadena por columna.
@@ -44,21 +42,19 @@ fn columnas(conexion: &rusqlite::Connection, tabla: &str) -> Vec<String> {
     let mut s = conexion
         .prepare(&format!("PRAGMA table_info({tabla})"))
         .unwrap();
-    let v = s
-        .query_map([], |f| {
-            Ok(format!(
-                "{} {} nn={} def={} pk={}",
-                f.get::<_, String>(1)?,
-                f.get::<_, String>(2)?,
-                f.get::<_, i64>(3)?,
-                f.get::<_, Option<String>>(4)?.unwrap_or_default(),
-                f.get::<_, i64>(5)?
-            ))
-        })
-        .unwrap()
-        .map(Result::unwrap)
-        .collect();
-    v
+    s.query_map([], |f| {
+        Ok(format!(
+            "{} {} nn={} def={} pk={}",
+            f.get::<_, String>(1)?,
+            f.get::<_, String>(2)?,
+            f.get::<_, i64>(3)?,
+            f.get::<_, Option<String>>(4)?.unwrap_or_default(),
+            f.get::<_, i64>(5)?
+        ))
+    })
+    .unwrap()
+    .map(Result::unwrap)
+    .collect()
 }
 
 /// Filas de `transiciones` como `«id de>a motivo ms»`.
@@ -66,21 +62,19 @@ fn transiciones(conexion: &rusqlite::Connection) -> Vec<String> {
     let mut s = conexion
         .prepare("SELECT id_celula, de, a, motivo, registrado_ms FROM transiciones ORDER BY id")
         .unwrap();
-    let v = s
-        .query_map([], |f| {
-            Ok(format!(
-                "{} {}>{} {} {}",
-                f.get::<_, String>(0)?,
-                f.get::<_, String>(1)?,
-                f.get::<_, String>(2)?,
-                f.get::<_, String>(3)?,
-                f.get::<_, i64>(4)?
-            ))
-        })
-        .unwrap()
-        .map(Result::unwrap)
-        .collect();
-    v
+    s.query_map([], |f| {
+        Ok(format!(
+            "{} {}>{} {} {}",
+            f.get::<_, String>(0)?,
+            f.get::<_, String>(1)?,
+            f.get::<_, String>(2)?,
+            f.get::<_, String>(3)?,
+            f.get::<_, i64>(4)?
+        ))
+    })
+    .unwrap()
+    .map(Result::unwrap)
+    .collect()
 }
 
 /// AC-1: abrir contra un archivo vacío crea las tres tablas y fija la versión de esquema.
@@ -283,9 +277,8 @@ fn el_codec_de_etiquetas_redondea_las_cinco_variantes_en_ascii() {
 /// omisión silencioso.
 #[test]
 fn una_etiqueta_desconocida_se_rechaza() {
-    let error = estado_desde_etiqueta("estado_inventado")
-        .err()
-        .expect("una etiqueta ajena no se resuelve");
+    let error =
+        estado_desde_etiqueta("estado_inventado").expect_err("una etiqueta ajena no se resuelve");
     assert!(
         matches!(&error, ErrorDeAlmacenDePlano::EstadoDesconocido { etiqueta } if etiqueta == "estado_inventado"),
         "se esperaba EstadoDesconocido: {error:?}"
@@ -435,8 +428,7 @@ fn confirmar_reemparejamiento_revierte_si_falla_la_insercion_en_sustituciones() 
 
     let error = a
         .confirmar_reemparejamiento("c1", "baneo-permanente", 5000)
-        .err()
-        .expect("la inserción en una tabla ausente debe fallar");
+        .expect_err("la inserción en una tabla ausente debe fallar");
     assert!(
         matches!(error, ErrorDeAlmacenDePlano::Sqlite { .. }),
         "se esperaba el rechazo tipado de SQLite: {error:?}"

@@ -161,13 +161,13 @@ fn clasificar(contexto: &ContextoRecuperado) -> Procedencia {
 /// pasaría a verde el día que cambie la redacción, no el día que se arregle la contención.
 fn es_contencion_de_sqlite(error: &ErrorDeAlmacen) -> bool {
     match error {
-        ErrorDeAlmacen::Sqlite { causa, .. } => match causa {
-            rusqlite::Error::SqliteFailure(codigo, _) => matches!(
-                codigo.code,
-                rusqlite::ErrorCode::DatabaseBusy | rusqlite::ErrorCode::DatabaseLocked
-            ),
-            _ => false,
-        },
+        ErrorDeAlmacen::Sqlite {
+            causa: rusqlite::Error::SqliteFailure(codigo, _),
+            ..
+        } => matches!(
+            codigo.code,
+            rusqlite::ErrorCode::DatabaseBusy | rusqlite::ErrorCode::DatabaseLocked
+        ),
         _ => false,
     }
 }
