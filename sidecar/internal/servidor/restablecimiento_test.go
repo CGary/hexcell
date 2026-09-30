@@ -184,7 +184,8 @@ func (e *escenarioDeRestablecimiento) eventos(t *testing.T, evento string) []map
 
 const (
 	eventoRestablecido = "identidad.contacto_restablecido"
-	eventoBajaRevivida = "identidad.baja_de_contacto_reestablecida"
+	eventoBajaRevivida = "identidad.baja_de_contacto_revivida"
+	origenEsperado     = "origen=hexcell-admin contacto restablecer --incluir-baja --confirmar"
 )
 
 func TestOrdenRestablecerContactoSinBajaConservaLaBajaDelContacto(t *testing.T) {
@@ -292,6 +293,13 @@ func TestOrdenRestablecerContactoDesconocidoYExistenteSinFilas(t *testing.T) {
 	if obtenidas := e.filas(t, otro); obtenidas != [3]int64{1, 1, 1} {
 		t.Fatalf("filas de otro contacto tras un id desconocido = %v, se esperaba [1 1 1]", obtenidas)
 	}
+	// Un contacto desconocido con incluir_baja=si no revivió nada: ni aviso ni evento informativo.
+	if n := len(e.eventos(t, eventoBajaRevivida)); n != 0 {
+		t.Fatalf("un contacto desconocido no debe emitir el aviso de baja revivida, emitió %d", n)
+	}
+	if n := len(e.eventos(t, eventoRestablecido)); n != 0 {
+		t.Fatalf("un contacto desconocido no debe emitir el evento de restablecimiento, emitió %d", n)
+	}
 
 	for repeticion := 1; repeticion <= 2; repeticion++ {
 		existente := e.restablecer(t, vacio, ipc.ValorNo)
@@ -347,6 +355,15 @@ func TestOrdenRestablecerContactoRegistraEventosSegunLaBaja(t *testing.T) {
 			if caso.avisosEsperado == 1 {
 				if avisos[0][registro.CampoIdEvento] != contacto {
 					t.Errorf("el aviso no lleva el id del contacto: %v", avisos[0])
+				}
+				if avisos[0][registro.CampoDetalle] != origenEsperado {
+					t.Errorf("origen del aviso = %q, se esperaba %q", avisos[0][registro.CampoDetalle], origenEsperado)
+				}
+				if avisos[0][registro.CampoEvento] != eventoBajaRevivida {
+					t.Errorf("evento del aviso = %q, se esperaba %q", avisos[0][registro.CampoEvento], eventoBajaRevivida)
+				}
+				if avisos[0][registro.CampoNivel] != "aviso" {
+					t.Errorf("nivel del aviso = %v, se esperaba aviso", avisos[0][registro.CampoNivel])
 				}
 				if avisos[0][registro.CampoNivel] == informativos[0][registro.CampoNivel] {
 					t.Errorf("el aviso de baja revivida debe ser más ruidoso que el evento informativo: %v", avisos[0])

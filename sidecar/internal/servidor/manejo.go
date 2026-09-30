@@ -231,6 +231,14 @@ func (s *Servidor) leerEntrante(ctx context.Context, c *conexionActiva, lector *
 	}
 }
 
+// EventoBajaDeContactoRevivida nombra el aviso que se emite cuando un restablecimiento borra filas
+// de `baja_de_contacto`.
+const EventoBajaDeContactoRevivida = "identidad.baja_de_contacto_revivida"
+
+// OrigenDeLaBajaRevivida es el origen que el aviso declara: la única vía operativa que puede
+// levantar una baja es la orden de `hexcell-admin` con las dos banderas explícitas.
+const OrigenDeLaBajaRevivida = "hexcell-admin contacto restablecer --incluir-baja --confirmar"
+
 // procesarOrdenRestablecerContacto atiende el restablecimiento de un contacto: valida la orden
 // antes de tocar el almacén, ejecuta el restablecimiento transaccional y responde con un acuse
 // que repite el contacto y la bandera. La baja solo se toca si `incluir_baja` es exactamente
@@ -258,10 +266,12 @@ func (s *Servidor) procesarOrdenRestablecerContacto(ctx context.Context, c *cone
 			} else {
 				acuse.Resultado = ipc.ResultadoContactoDesconocido
 			}
-			if s.deps.Registro != nil {
+			if s.deps.Registro != nil && resultado.Existe {
 				s.deps.Registro.Info("identidad.contacto_restablecido", registro.Campos{IdEvento: orden.Contacto, Detalle: "incluir_baja=" + orden.IncluirBaja})
 				if resultado.BajaDeContacto > 0 {
-					s.deps.Registro.Aviso("identidad.baja_de_contacto_reestablecida", registro.Campos{IdEvento: orden.Contacto})
+					// Evento sensible: levanta un STOP de consentimiento (FR-11). El vocabulario de campos del
+					// registro es cerrado (adr-0019), así que el origen viaja en el único campo de texto libre.
+					s.deps.Registro.Aviso(EventoBajaDeContactoRevivida, registro.Campos{IdEvento: orden.Contacto, Detalle: "origen=" + OrigenDeLaBajaRevivida})
 				}
 			}
 		}
