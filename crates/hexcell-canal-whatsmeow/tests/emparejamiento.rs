@@ -25,7 +25,7 @@ async fn ordenar_emparejamiento_envia_metodo_qr_y_codigo_vinculacion_exactos() {
 
     sidecar.aceptar_conexion().await;
     let _ = sidecar.leer_saludo().await;
-    sidecar.enviar_saludo(6, "celula-1").await;
+    sidecar.enviar_saludo(7, "celula-1").await;
 
     // 1. Método QR
     let tarea_qr = {
@@ -60,7 +60,7 @@ async fn ordenar_emparejamiento_codigo_de_vinculacion_expira_en_cero() {
 
     sidecar.aceptar_conexion().await;
     let _ = sidecar.leer_saludo().await;
-    sidecar.enviar_saludo(6, "celula-1").await;
+    sidecar.enviar_saludo(7, "celula-1").await;
 
     let codigos_capturados: Arc<Mutex<Vec<CodigoEmparejamiento>>> =
         Arc::new(Mutex::new(Vec::new()));
@@ -105,7 +105,7 @@ async fn rotacion_de_codigos_qr_se_entrega_en_orden_antes_del_acuse_terminal() {
 
     sidecar.aceptar_conexion().await;
     let _ = sidecar.leer_saludo().await;
-    sidecar.enviar_saludo(6, "celula-1").await;
+    sidecar.enviar_saludo(7, "celula-1").await;
 
     let codigos_recibidos: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
     let codigos_ref = Arc::clone(&codigos_recibidos);
@@ -156,7 +156,7 @@ async fn acuse_emparejamiento_expirado_retorna_acuse() {
 
     sidecar.aceptar_conexion().await;
     let _ = sidecar.leer_saludo().await;
-    sidecar.enviar_saludo(6, "celula-1").await;
+    sidecar.enviar_saludo(7, "celula-1").await;
 
     let tarea_exp = tokio::spawn(async move {
         adaptador
@@ -182,7 +182,7 @@ async fn acuse_emparejamiento_fallido_con_motivo_retorna_acuse() {
 
     sidecar.aceptar_conexion().await;
     let _ = sidecar.leer_saludo().await;
-    sidecar.enviar_saludo(6, "celula-1").await;
+    sidecar.enviar_saludo(7, "celula-1").await;
 
     let tarea_fallo = tokio::spawn(async move {
         adaptador
@@ -214,7 +214,7 @@ async fn timeout_por_plazo_limpia_slot_y_descartar_huerfanos() {
 
     sidecar.aceptar_conexion().await;
     let _ = sidecar.leer_saludo().await;
-    sidecar.enviar_saludo(6, "celula-1").await;
+    sidecar.enviar_saludo(7, "celula-1").await;
 
     // Plazo breve sin respuesta del sidecar
     let err = adaptador
@@ -256,7 +256,7 @@ async fn acuse_resultado_desconocido_se_descarta_fail_closed() {
 
     sidecar.aceptar_conexion().await;
     let _ = sidecar.leer_saludo().await;
-    sidecar.enviar_saludo(6, "celula-1").await;
+    sidecar.enviar_saludo(7, "celula-1").await;
 
     let tarea = tokio::spawn(async move {
         adaptador
@@ -297,7 +297,7 @@ async fn suscribir_estado_refleja_estado_activo() {
 
     sidecar.aceptar_conexion().await;
     let _ = sidecar.leer_saludo().await;
-    sidecar.enviar_saludo(6, "celula-1").await;
+    sidecar.enviar_saludo(7, "celula-1").await;
 
     // Esperar notificación de cambio de estado
     while *receptor.borrow() != EstadoSesion::Activa {
@@ -326,7 +326,7 @@ async fn iniciar_emparejamiento_con_codigo_de_vinculacion_envia_orden_y_devuelve
 
     sidecar.aceptar_conexion().await;
     let _ = sidecar.leer_saludo().await;
-    sidecar.enviar_saludo(6, "celula-1").await;
+    sidecar.enviar_saludo(7, "celula-1").await;
 
     let tarea = tokio::spawn(async move {
         adaptador
@@ -340,7 +340,7 @@ async fn iniciar_emparejamiento_con_codigo_de_vinculacion_envia_orden_y_devuelve
     let orden = sidecar.leer_orden_emparejar().await;
     assert_eq!(orden.tipo, "orden_emparejar");
     assert_eq!(orden.metodo, "codigo_de_vinculacion");
-    assert_eq!(orden.version, 6);
+    assert_eq!(orden.version, 7);
 
     let valor_fixture = "WXYZ-1234";
     let expira_fixture: i64 = 1700000100;
@@ -377,7 +377,7 @@ async fn iniciar_emparejamiento_con_mismo_resultado_a_traves_de_asa() {
 
     sidecar.aceptar_conexion().await;
     let _ = sidecar.leer_saludo().await;
-    sidecar.enviar_saludo(6, "celula-1").await;
+    sidecar.enviar_saludo(7, "celula-1").await;
 
     let asa: AsaDeSesion = adaptador.asa_de_sesion("cell rebind");
 
@@ -391,7 +391,7 @@ async fn iniciar_emparejamiento_con_mismo_resultado_a_traves_de_asa() {
 
     let orden = sidecar.leer_orden_emparejar().await;
     assert_eq!(orden.metodo, "codigo_de_vinculacion");
-    assert_eq!(orden.version, 6);
+    assert_eq!(orden.version, 7);
 
     sidecar
         .enviar_codigo_emparejamiento("codigo_de_vinculacion", "ASA-TEST", 1700000200)
@@ -428,7 +428,7 @@ async fn iniciar_emparejamiento_con_acuse_primero_devuelve_acuse_y_no_bloquea_bu
 
     sidecar.aceptar_conexion().await;
     let _ = sidecar.leer_saludo().await;
-    sidecar.enviar_saludo(6, "celula-1").await;
+    sidecar.enviar_saludo(7, "celula-1").await;
 
     let tarea = tokio::spawn(async move {
         adaptador
@@ -487,7 +487,7 @@ async fn iniciar_emparejamiento_con_plazo_agotado_devuelve_sin_acuse_y_no_bloque
 
     sidecar.aceptar_conexion().await;
     let _ = sidecar.leer_saludo().await;
-    sidecar.enviar_saludo(6, "celula-1").await;
+    sidecar.enviar_saludo(7, "celula-1").await;
 
     let err = adaptador
         .iniciar_emparejamiento_con(MetodoDeEmparejamiento::Qr, Duration::from_millis(50))
@@ -569,7 +569,7 @@ async fn trait_iniciar_emparejamiento_envia_qr_y_mapea_codigo_a_codigo_qr() {
 
     sidecar.aceptar_conexion().await;
     let _ = sidecar.leer_saludo().await;
-    sidecar.enviar_saludo(6, "celula-1").await;
+    sidecar.enviar_saludo(7, "celula-1").await;
 
     let tarea = tokio::spawn(async move { adaptador.iniciar_emparejamiento().await });
 
@@ -605,7 +605,7 @@ async fn trait_iniciar_emparejamiento_con_acuse_devuelve_error_de_protocolo() {
 
     sidecar.aceptar_conexion().await;
     let _ = sidecar.leer_saludo().await;
-    sidecar.enviar_saludo(6, "celula-1").await;
+    sidecar.enviar_saludo(7, "celula-1").await;
 
     let tarea = tokio::spawn(async move { adaptador.iniciar_emparejamiento().await });
 
@@ -647,7 +647,7 @@ async fn iniciar_emparejamiento_con_codigo_primero_luego_acuse_y_estado_actualiz
 
     sidecar.aceptar_conexion().await;
     let _ = sidecar.leer_saludo().await;
-    sidecar.enviar_saludo(6, "celula-1").await;
+    sidecar.enviar_saludo(7, "celula-1").await;
 
     let tarea = tokio::spawn(async move {
         adaptador

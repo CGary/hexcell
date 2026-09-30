@@ -85,7 +85,7 @@ impl SidecarSimulado {
         marca_temporal_ms: i64,
     ) {
         let evento = hexcell_canal_whatsmeow::mensajes::EventoEntranteIpc {
-            version: 6,
+            version: 7,
             tipo: "evento_entrante".to_string(),
             id_deduplicacion: id_deduplicacion.to_string(),
             id_conversacion: id_conversacion.to_string(),
@@ -112,7 +112,7 @@ impl SidecarSimulado {
         expira_en_ms: i64,
     ) {
         let estado_sesion = hexcell_canal_whatsmeow::mensajes::EstadoSesionIpc {
-            version: 6,
+            version: 7,
             tipo: "estado_sesion".to_string(),
             estado: estado.to_string(),
             causa: causa.to_string(),
@@ -149,7 +149,7 @@ impl SidecarSimulado {
         marca_temporal_ms: i64,
     ) {
         let acuse = hexcell_canal_whatsmeow::mensajes::AcuseEnvioIpc {
-            version: 6,
+            version: 7,
             tipo: "acuse_envio".to_string(),
             id_mensaje: id_mensaje.to_string(),
             estado: estado.to_string(),
@@ -179,7 +179,7 @@ impl SidecarSimulado {
         motivo: &str,
     ) {
         let acuse = hexcell_canal_whatsmeow::mensajes::AcuseRespaldoSqlstore {
-            version: 6,
+            version: 7,
             tipo: "acuse_respaldo_sqlstore".to_string(),
             identificador_de_ronda: identificador_de_ronda.to_string(),
             resultado: resultado.to_string(),
@@ -209,7 +209,7 @@ impl SidecarSimulado {
         motivo: &str,
     ) {
         let acuse = hexcell_canal_whatsmeow::mensajes::AcuseRespaldoIdentidad {
-            version: 6,
+            version: 7,
             tipo: "acuse_respaldo_identidad".to_string(),
             identificador_de_ronda: identificador_de_ronda.to_string(),
             resultado: resultado.to_string(),
@@ -245,7 +245,7 @@ impl SidecarSimulado {
         expira_en_ms: i64,
     ) {
         let codigo = hexcell_canal_whatsmeow::mensajes::CodigoEmparejamiento {
-            version: 6,
+            version: 7,
             tipo: "codigo_emparejamiento".to_string(),
             metodo: metodo.to_string(),
             valor: valor.to_string(),
@@ -258,7 +258,7 @@ impl SidecarSimulado {
     /// Envía un acuse de emparejamiento.
     pub async fn enviar_acuse_emparejamiento(&mut self, resultado: &str, motivo: &str) {
         let acuse = hexcell_canal_whatsmeow::mensajes::AcuseEmparejamiento {
-            version: 6,
+            version: 7,
             tipo: "acuse_emparejamiento".to_string(),
             resultado: resultado.to_string(),
             motivo: motivo.to_string(),
@@ -278,7 +278,7 @@ impl SidecarSimulado {
     /// Envía un acuse de cierre de sesión.
     pub async fn enviar_acuse_cierre_de_sesion(&mut self, resultado: &str, motivo: &str) {
         let acuse = hexcell_canal_whatsmeow::mensajes::AcuseCierreDeSesion {
-            version: 6,
+            version: 7,
             tipo: "acuse_cierre_de_sesion".to_string(),
             resultado: resultado.to_string(),
             motivo: motivo.to_string(),
@@ -303,7 +303,7 @@ impl SidecarSimulado {
         motivo: &str,
     ) {
         let acuse = hexcell_canal_whatsmeow::mensajes::AcusePausaDeEnvio {
-            version: 6,
+            version: 7,
             tipo: "acuse_pausa_de_envio".to_string(),
             accion: accion.to_string(),
             resultado: resultado.to_string(),

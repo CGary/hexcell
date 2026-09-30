@@ -180,6 +180,8 @@ pub enum RutaAdmin {
     ConsultarSesion,
     /// Petición `POST /admin/sesion/cierre` para ordenar el cierre de sesión del canal.
     CerrarSesion,
+    /// Petición `POST /admin/contacto/restablecer` para limpiar el estado operativo de un contacto.
+    RestablecerContacto,
     /// Ruta o método no reconocido.
     NoEncontrada,
 }
@@ -193,6 +195,7 @@ pub fn enrutar_admin(metodo: &Method, ruta: &str) -> RutaAdmin {
         (&Method::POST, "/admin/sesion/emparejamiento") => RutaAdmin::IniciarEmparejamiento,
         (&Method::GET, "/admin/sesion") => RutaAdmin::ConsultarSesion,
         (&Method::POST, "/admin/sesion/cierre") => RutaAdmin::CerrarSesion,
+        (&Method::POST, "/admin/contacto/restablecer") => RutaAdmin::RestablecerContacto,
         _ => RutaAdmin::NoEncontrada,
     }
 }
@@ -207,6 +210,18 @@ pub struct PausarEnvioEntrante {
 #[derive(Clone, Debug, serde::Deserialize)]
 pub struct EmparejamientoEntrante {
     pub metodo: String,
+}
+
+/// DTO de entrada del `POST /admin/contacto/restablecer`. `incluir_baja` es opcional y por omisión
+/// `false`; cualquier otro tipo (cadena, número, nulo) o un campo desconocido es un 400.
+#[derive(Clone, Debug, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RestablecerContactoEntrante {
+    /// Identificador interno `ct-` + 32 hexadecimales en minúscula.
+    pub contacto: String,
+    /// Si es `true`, el restablecimiento también borra la baja (consentimiento de STOP).
+    #[serde(default)]
+    pub incluir_baja: bool,
 }
 
 /// DTO de entrada para deserializar el cuerpo JSON del POST de ingesta.
@@ -293,6 +308,8 @@ pub struct PlazosDeSesion {
     pub pausa: Duration,
     /// Plazo para esperar el código de emparejamiento.
     pub emparejamiento: Duration,
+    /// Plazo para esperar el acuse del restablecimiento de un contacto.
+    pub restablecimiento: Duration,
 }
 
 impl PlazosDeSesion {
@@ -302,6 +319,7 @@ impl PlazosDeSesion {
             cierre: Duration::from_secs(30),
             pausa: Duration::from_secs(30),
             emparejamiento: Duration::from_secs(30),
+            restablecimiento: Duration::from_secs(30),
         }
     }
 }
@@ -368,6 +386,128 @@ pub enum DesenlaceDeEmparejamiento {
     Fallido { motivo: String },
 }
 
+/// Solicitud ya validada de restablecimiento de un contacto.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SolicitudDeRestablecimiento {
+    /// Identificador interno del contacto, ya validado.
+    pub contacto: String,
+    /// Si es `true`, también se borra la baja del contacto.
+    pub incluir_baja: bool,
+}
+
+/// Acuse del sidecar en cadenas y enteros planos, espejo del cable, para que este módulo siga
+/// sin conocer el transporte: la raíz de composición lo construye y `traducir_acuse_de_restablecimiento`
+/// lo interpreta.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AcuseDeRestablecimientoCrudo {
+    pub contacto: String,
+    pub incluir_baja: String,
+    pub resultado: String,
+    pub existe: String,
+    pub cortacircuitos: i64,
+    pub presentacion_de_conversacion: i64,
+    pub baja_de_contacto: i64,
+    pub motivo: String,
+}
+/// Desenlace de un restablecimiento, ya traducido del acuse del sidecar.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum DesenlaceDeRestablecimiento {
+    Aplicado {
+        contacto: String,
+        incluir_baja: bool,
+        cortacircuitos: i64,
+        presentacion_de_conversacion: i64,
+        baja_de_contacto: i64,
+    },
+    ContactoDesconocido {
+        contacto: String,
+        incluir_baja: bool,
+    },
+    Fallido {
+        motivo: String,
+    },
+}
+
+/// Operación de restablecimiento de contacto: recibe la solicitud y el plazo y devuelve el desenlace.
+pub type CajaDeRestablecimiento = Box<
+    dyn Fn(
+            SolicitudDeRestablecimiento,
+            Duration,
+        ) -> Pin<Box<dyn Future<Output = DesenlaceDeRestablecimiento> + Send>>
+        + Send
+        + Sync,
+>;
+
+/// Valor por omisión de la operación de restablecimiento: falla cerrado con `sin_conexion`.
+pub fn restablecimiento_no_disponible() -> CajaDeRestablecimiento {
+    Box::new(|_, _| {
+        Box::pin(async {
+            DesenlaceDeRestablecimiento::Fallido {
+                motivo: MOTIVO_SIN_CONEXION.to_string(),
+            }
+        })
+    })
+}
+
+/// Valida la forma del identificador interno de un contacto: `ct-` más 32 hexadecimales en
+/// minúscula. Trabaja sobre bytes, sin cortar la cadena por índice, de modo que una entrada
+/// multibyte se rechaza en lugar de entrar en pánico.
+pub fn es_contacto_valido(contacto: &str) -> bool {
+    let bytes = contacto.as_bytes();
+    bytes.len() == 35
+        && bytes.starts_with(b"ct-")
+        && bytes
+            .iter()
+            .skip(3)
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(b))
+}
+
+/// Traduce el acuse crudo del sidecar al desenlace. La existencia del contacto viene SIEMPRE del
+/// discriminante `existe` del acuse, nunca de los contadores; un acuse incoherente con la
+/// solicitud (eco distinto, `existe` fuera de `si`/`no`, contadores negativos, baja tocada sin
+/// haberla pedido) es un fallo.
+pub fn traducir_acuse_de_restablecimiento(
+    s: &SolicitudDeRestablecimiento,
+    a: &AcuseDeRestablecimientoCrudo,
+) -> DesenlaceDeRestablecimiento {
+    let esperado = if s.incluir_baja { "si" } else { "no" };
+    if a.contacto != s.contacto
+        || a.incluir_baja != esperado
+        || !matches!(a.existe.as_str(), "si" | "no")
+        || a.cortacircuitos < 0
+        || a.presentacion_de_conversacion < 0
+        || a.baja_de_contacto < 0
+        || (!s.incluir_baja && a.baja_de_contacto != 0)
+    {
+        return DesenlaceDeRestablecimiento::Fallido {
+            motivo: "acuse de restablecimiento incoherente".into(),
+        };
+    }
+    match (a.resultado.as_str(), a.existe.as_str()) {
+        ("aplicado", "si") => DesenlaceDeRestablecimiento::Aplicado {
+            contacto: s.contacto.clone(),
+            incluir_baja: s.incluir_baja,
+            cortacircuitos: a.cortacircuitos,
+            presentacion_de_conversacion: a.presentacion_de_conversacion,
+            baja_de_contacto: a.baja_de_contacto,
+        },
+        ("contacto_desconocido", "no") => DesenlaceDeRestablecimiento::ContactoDesconocido {
+            contacto: s.contacto.clone(),
+            incluir_baja: s.incluir_baja,
+        },
+        ("fallido", _) => DesenlaceDeRestablecimiento::Fallido {
+            motivo: if a.motivo.is_empty() {
+                "fallido".into()
+            } else {
+                a.motivo.clone()
+            },
+        },
+        _ => DesenlaceDeRestablecimiento::Fallido {
+            motivo: "acuse de restablecimiento incoherente".into(),
+        },
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Operaciones de sesión (cuatro operaciones tipadas)
 // ---------------------------------------------------------------------------
@@ -410,6 +550,8 @@ pub struct OperacionesDeSesion {
     pub emparejar: CajaDeEmparejamiento,
     /// Consulta el estado actual de la sesión, devuelve el valor del puerto.
     pub estado: CajaDeEstadoSesion,
+    /// Restablece el estado operativo de un contacto (cortacircuitos, presentación y, si se pide, baja).
+    pub restablecer_contacto: CajaDeRestablecimiento,
 }
 
 /// Enumerado que la raíz de composición entrega a las rutas de sesión.
@@ -480,6 +622,7 @@ impl SesionDeCanal {
                 let v = Arc::clone(&valor_estado);
                 Box::pin(async move { CicloDeVidaSesion::estado_sesion(&*v) })
             }),
+            restablecer_contacto: restablecimiento_no_disponible(),
         })
     }
 
@@ -627,6 +770,63 @@ pub async fn atender_pausa_de_envio(
                         }),
                     )
                 }
+            }
+        }
+    }
+}
+
+/// Servicio de aplicación puro del restablecimiento de un contacto, bajo prueba directa.
+///
+/// Registro sin poblar → 502 `fallido` (falla cerrado); `SinSesion` → 200 `canal_sin_sesion`;
+/// con sesión, el desenlace se vuelca a JSON con el discriminante `existe` explícito.
+pub async fn atender_restablecimiento_de_contacto(
+    registro: &RegistroDeSesion,
+    solicitud: SolicitudDeRestablecimiento,
+    plazo: Duration,
+) -> (StatusCode, serde_json::Value) {
+    let sesion = match registro.get() {
+        Some(s) => s,
+        None => {
+            return (
+                StatusCode::BAD_GATEWAY,
+                serde_json::json!({"resultado":"fallido","motivo":"restablecimiento no registrado en la composición"}),
+            );
+        }
+    };
+    match sesion {
+        SesionDeCanal::SinSesion => (
+            StatusCode::OK,
+            serde_json::json!({"resultado": MOTIVO_CANAL_SIN_SESION}),
+        ),
+        SesionDeCanal::ConSesion(operaciones) => {
+            match tokio::time::timeout(plazo, (operaciones.restablecer_contacto)(solicitud, plazo))
+                .await
+            {
+                Ok(DesenlaceDeRestablecimiento::Aplicado {
+                    contacto,
+                    incluir_baja,
+                    cortacircuitos,
+                    presentacion_de_conversacion,
+                    baja_de_contacto,
+                }) => (
+                    StatusCode::OK,
+                    serde_json::json!({"resultado":"aplicado","contacto":contacto,"existe":true,"incluir_baja":incluir_baja,"cortacircuitos":cortacircuitos,"presentacion_de_conversacion":presentacion_de_conversacion,"baja_de_contacto":baja_de_contacto}),
+                ),
+                Ok(DesenlaceDeRestablecimiento::ContactoDesconocido {
+                    contacto,
+                    incluir_baja,
+                }) => (
+                    StatusCode::OK,
+                    serde_json::json!({"resultado":"contacto_desconocido","contacto":contacto,"existe":false,"incluir_baja":incluir_baja,"cortacircuitos":0,"presentacion_de_conversacion":0,"baja_de_contacto":0}),
+                ),
+                Ok(DesenlaceDeRestablecimiento::Fallido { motivo }) => (
+                    StatusCode::OK,
+                    serde_json::json!({"resultado":"fallido","motivo":motivo}),
+                ),
+                Err(_) => (
+                    StatusCode::OK,
+                    serde_json::json!({"resultado":"fallido","motivo":"no se recibió acuse de restablecimiento dentro del plazo"}),
+                ),
             }
         }
     }
@@ -872,6 +1072,38 @@ where
 
             let (estado_http, cuerpo) =
                 atender_pausa_de_envio(registro_sesion, accion, plazos.pausa).await;
+            respuesta_json(estado_http, cuerpo)
+        }
+        RutaAdmin::RestablecerContacto => {
+            let bytes = match acumular_cuerpo_acotado(peticion, limite_cuerpo_bytes).await {
+                Ok(b) => b,
+                Err(codigo) => return respuesta_texto(codigo, "cuerpo demasiado grande"),
+            };
+            let entrada: RestablecerContactoEntrante = match serde_json::from_slice(&bytes) {
+                Ok(e) => e,
+                Err(_) => {
+                    return respuesta_json(
+                        StatusCode::BAD_REQUEST,
+                        serde_json::json!({"resultado":"fallido","motivo":"cuerpo JSON inválido"}),
+                    );
+                }
+            };
+            if !es_contacto_valido(&entrada.contacto) {
+                return respuesta_json(
+                    StatusCode::BAD_REQUEST,
+                    serde_json::json!({"resultado":"fallido","motivo":"contacto inválido"}),
+                );
+            }
+            let solicitud = SolicitudDeRestablecimiento {
+                contacto: entrada.contacto,
+                incluir_baja: entrada.incluir_baja,
+            };
+            let (estado_http, cuerpo) = atender_restablecimiento_de_contacto(
+                registro_sesion,
+                solicitud,
+                plazos.restablecimiento,
+            )
+            .await;
             respuesta_json(estado_http, cuerpo)
         }
         // POST /admin/sesion/emparejamiento: inicio del emparejamiento del dispositivo.

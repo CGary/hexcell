@@ -1,4 +1,4 @@
-//! Objetos de valor del protocolo IPC versión 6 (documento 1.5): un struct por tipo de mensaje.
+//! Objetos de valor del protocolo IPC versión 7 (documento 1.6): un struct por tipo de mensaje.
 //!
 //! Cada struct lleva `#[serde(deny_unknown_fields)]` porque la regla 3 del protocolo
 //! (sección 1 de `docs/protocolo-ipc-nucleo-sidecar.md`) hace **obligatorio** rechazar campos
@@ -11,8 +11,8 @@
 
 use serde::{Deserialize, Serialize};
 
-/// Versión de cable del protocolo. En esta implementación, `6` (documento 1.5).
-pub const VERSION_PROTOCOLO: i64 = 6;
+/// Versión de cable del protocolo. En esta implementación, `7` (documento 1.6).
+pub const VERSION_PROTOCOLO: i64 = 7;
 
 /// Límite de línea del protocolo: 131 072 bytes (128 KiB), contando el salto de línea final.
 /// Una línea más larga es un error de protocolo y cierra la conexión.
@@ -196,6 +196,35 @@ pub struct AcusePausaDeEnvio {
     pub motivo: String,
 }
 
+/// Orden del núcleo para restablecer el estado operativo de un contacto. `incluir_baja` viaja
+/// como la cadena cerrada `si` o `no` (la regla 2 del protocolo prohíbe booleanos en el cable).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OrdenRestablecerContacto {
+    pub version: i64,
+    pub tipo: String,
+    pub contacto: String,
+    pub incluir_baja: String,
+}
+
+/// Acuse del restablecimiento: eco del contacto y de `incluir_baja`, `resultado`, el
+/// discriminante explícito `existe` (`si`/`no`), las filas borradas por tabla y `motivo` (siempre
+/// presente, vacío si no hay fallo).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AcuseRestablecerContacto {
+    pub version: i64,
+    pub tipo: String,
+    pub contacto: String,
+    pub incluir_baja: String,
+    pub resultado: String,
+    pub existe: String,
+    pub cortacircuitos: i64,
+    pub presentacion_de_conversacion: i64,
+    pub baja_de_contacto: i64,
+    pub motivo: String,
+}
+
 // ---------------------------------------------------------------------------
 // Mensajes del núcleo al sidecar
 // ---------------------------------------------------------------------------
@@ -356,6 +385,8 @@ pub enum MensajeEntrante {
     AcuseCierreDeSesion(AcuseCierreDeSesion),
     /// Acuse de la pausa o reanudación del envío saliente.
     AcusePausaDeEnvio(AcusePausaDeEnvio),
+    /// Acuse del restablecimiento de un contacto.
+    AcuseRestablecerContacto(AcuseRestablecerContacto),
 }
 
 /// Analiza una línea JSON ya validada en tamaño y la despacha al tipo concreto por el campo
@@ -431,6 +462,11 @@ pub fn analizar_mensaje_entrante(linea: &str) -> Result<MensajeEntrante, String>
                 .map_err(|e| format!("acuse_pausa_de_envio inválido: {e}"))?;
             Ok(MensajeEntrante::AcusePausaDeEnvio(msg))
         }
+        "acuse_restablecer_contacto" => {
+            let msg: AcuseRestablecerContacto = serde_json::from_str(linea)
+                .map_err(|e| format!("acuse_restablecer_contacto inválido: {e}"))?;
+            Ok(MensajeEntrante::AcuseRestablecerContacto(msg))
+        }
         // Los tipos que el núcleo ENVÍA no se esperan como entrantes.
         "confirmacion"
         | "orden_emparejar"
@@ -438,6 +474,7 @@ pub fn analizar_mensaje_entrante(linea: &str) -> Result<MensajeEntrante, String>
         | "orden_respaldo_identidad"
         | "orden_cierre_de_sesion"
         | "orden_pausa_de_envio"
+        | "orden_restablecer_contacto"
         | "mensaje_saliente" => Err(format!(
             "tipo '{tipo}' no es un mensaje entrante válido del sidecar"
         )),

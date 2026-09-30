@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/CGary/hexcell/sidecar/internal/canal"
+	"github.com/CGary/hexcell/sidecar/internal/identidad"
 	"github.com/CGary/hexcell/sidecar/internal/ipc"
 	"github.com/CGary/hexcell/sidecar/internal/outbox"
 	"github.com/CGary/hexcell/sidecar/internal/registro"
@@ -63,7 +64,7 @@ func leerLineaAcotada(r *bufio.Reader) ([]byte, error) {
 	return linea, nil
 }
 
-// atenderConexion realiza el apretón de manos inicial (saludo estricto v6), aplica el relevo de
+// atenderConexion realiza el apretón de manos inicial (saludo estricto v7), aplica el relevo de
 // conexión única (most-recent-wins) y arranca las goroutines lectora y escritora.
 func (s *Servidor) atenderConexion(ctx context.Context, conn net.Conn) {
 	lector := bufio.NewReader(conn)
@@ -130,7 +131,7 @@ func (s *Servidor) atenderConexion(ctx context.Context, conn net.Conn) {
 
 	if s.deps.Registro != nil {
 		s.deps.Registro.Info("servidor.saludo_completado", registro.Campos{
-			Detalle: "apretón de manos de saludo versión 6 completado con éxito",
+			Detalle: "apretón de manos de saludo versión 7 completado con éxito",
 		})
 	}
 
@@ -219,10 +220,64 @@ func (s *Servidor) leerEntrante(ctx context.Context, c *conexionActiva, lector *
 			if orden, ok := sobre.Cuerpo.(ipc.OrdenPausaDeEnvio); ok {
 				s.procesarOrdenPausaDeEnvio(c, orden)
 			}
+		case ipc.TipoOrdenRestablecerContacto:
+			if orden, ok := sobre.Cuerpo.(ipc.OrdenRestablecerContacto); ok {
+				go s.procesarOrdenRestablecerContacto(ctx, c, orden)
+			}
 		default:
 			registroProtocoloError(s.deps.Registro, fmt.Errorf("%w: tipo no esperado en conexión establecida: %q", ipc.ErrTipoDesconocido, sobre.Tipo))
 			return
 		}
+	}
+}
+
+// EventoBajaDeContactoRevivida nombra el aviso que se emite cuando un restablecimiento borra filas
+// de `baja_de_contacto`.
+const EventoBajaDeContactoRevivida = "identidad.baja_de_contacto_revivida"
+
+// OrigenDeLaBajaRevivida es el origen que el aviso declara: la única vía operativa que puede
+// levantar una baja es la orden de `hexcell-admin` con las dos banderas explícitas.
+const OrigenDeLaBajaRevivida = "hexcell-admin contacto restablecer --incluir-baja --confirmar"
+
+// procesarOrdenRestablecerContacto atiende el restablecimiento de un contacto: valida la orden
+// antes de tocar el almacén, ejecuta el restablecimiento transaccional y responde con un acuse
+// que repite el contacto y la bandera. La baja solo se toca si `incluir_baja` es exactamente
+// `si`; cualquier otro valor es un acuse fallido sin llamadas al almacén.
+func (s *Servidor) procesarOrdenRestablecerContacto(ctx context.Context, c *conexionActiva, orden ipc.OrdenRestablecerContacto) {
+	acuse := ipc.AcuseRestablecerContacto{Contacto: orden.Contacto, IncluirBaja: orden.IncluirBaja, Resultado: ipc.ResultadoFallido, Existe: ipc.ValorNo, Motivo: ""}
+	if s.deps.AlmacenIdentidad == nil {
+		acuse.Motivo = "almacén de identidad no disponible"
+	} else if !identidad.EsIdInternoValido(orden.Contacto) {
+		acuse.Motivo = "contacto inválido"
+	} else if orden.IncluirBaja != ipc.ValorSi && orden.IncluirBaja != ipc.ValorNo {
+		acuse.Motivo = "incluir_baja inválido"
+	} else {
+		resultado, err := s.deps.AlmacenIdentidad.RestablecerContacto(ctx, orden.Contacto, orden.IncluirBaja == ipc.ValorSi)
+		if err != nil {
+			acuse.Motivo = err.Error()
+		} else {
+			acuse.Existe = ipc.ValorNo
+			acuse.Cortacircuitos = resultado.Cortacircuitos
+			acuse.PresentacionDeConversacion = resultado.PresentacionDeConversacion
+			acuse.BajaDeContacto = resultado.BajaDeContacto
+			if resultado.Existe {
+				acuse.Existe = ipc.ValorSi
+				acuse.Resultado = ipc.ResultadoRestablecimientoAplicado
+			} else {
+				acuse.Resultado = ipc.ResultadoContactoDesconocido
+			}
+			if s.deps.Registro != nil && resultado.Existe {
+				s.deps.Registro.Info("identidad.contacto_restablecido", registro.Campos{IdEvento: orden.Contacto, Detalle: "incluir_baja=" + orden.IncluirBaja})
+				if resultado.BajaDeContacto > 0 {
+					// Evento sensible: levanta un STOP de consentimiento (FR-11). El vocabulario de campos del
+					// registro es cerrado (adr-0019), así que el origen viaja en el único campo de texto libre.
+					s.deps.Registro.Aviso(EventoBajaDeContactoRevivida, registro.Campos{IdEvento: orden.Contacto, Detalle: "origen=" + OrigenDeLaBajaRevivida})
+				}
+			}
+		}
+	}
+	if b, err := ipc.Codificar(ipc.NuevoSobre(acuse)); err == nil {
+		c.enviar(b)
 	}
 }
 

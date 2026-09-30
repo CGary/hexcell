@@ -32,13 +32,13 @@ async fn cerrar_sesion_emite_orden_y_resuelve_ok_en_completado() {
 
     sidecar.aceptar_conexion().await;
     let _ = sidecar.leer_saludo().await;
-    sidecar.enviar_saludo(6, "celula-1").await;
+    sidecar.enviar_saludo(7, "celula-1").await;
 
     let tarea = tokio::spawn(async move { adaptador.cerrar_sesion().await });
 
     let orden = sidecar.leer_orden_cierre_de_sesion().await;
     assert_eq!(orden.tipo, "orden_cierre_de_sesion");
-    assert_eq!(orden.version, 6);
+    assert_eq!(orden.version, 7);
 
     sidecar
         .enviar_acuse_cierre_de_sesion("completado", "")
@@ -63,13 +63,13 @@ async fn cerrar_sesion_devuelve_error_en_fallido() {
 
     sidecar.aceptar_conexion().await;
     let _ = sidecar.leer_saludo().await;
-    sidecar.enviar_saludo(6, "celula-1").await;
+    sidecar.enviar_saludo(7, "celula-1").await;
 
     let tarea = tokio::spawn(async move { adaptador.cerrar_sesion().await });
 
     let orden = sidecar.leer_orden_cierre_de_sesion().await;
     assert_eq!(orden.tipo, "orden_cierre_de_sesion");
-    assert_eq!(orden.version, 6);
+    assert_eq!(orden.version, 7);
 
     sidecar
         .enviar_acuse_cierre_de_sesion("fallido", "desvinculación rechazada por el sidecar")
@@ -105,7 +105,7 @@ async fn asa_de_sesion_con_motivo_cell_terminate_emite_orden_con_ese_motivo() {
 
     sidecar.aceptar_conexion().await;
     let _ = sidecar.leer_saludo().await;
-    sidecar.enviar_saludo(6, "celula-1").await;
+    sidecar.enviar_saludo(7, "celula-1").await;
 
     // Tomar el asa ANTES de que el adaptador se consuma (aunque aquí no se consume, el
     // patrón es el mismo que en main.rs).
@@ -115,7 +115,7 @@ async fn asa_de_sesion_con_motivo_cell_terminate_emite_orden_con_ese_motivo() {
 
     let orden = sidecar.leer_orden_cierre_de_sesion().await;
     assert_eq!(orden.tipo, "orden_cierre_de_sesion");
-    assert_eq!(orden.version, 6);
+    assert_eq!(orden.version, 7);
     // El motivo debe ser exactamente "cell terminate", no vacío.
     assert_eq!(
         orden.motivo, "cell terminate",
@@ -147,13 +147,13 @@ async fn adaptador_whatsmeow_cerrar_sesion_trait_envia_motivo_vacio() {
 
     sidecar.aceptar_conexion().await;
     let _ = sidecar.leer_saludo().await;
-    sidecar.enviar_saludo(6, "celula-1").await;
+    sidecar.enviar_saludo(7, "celula-1").await;
 
     let tarea = tokio::spawn(async move { adaptador.cerrar_sesion().await });
 
     let orden = sidecar.leer_orden_cierre_de_sesion().await;
     assert_eq!(orden.tipo, "orden_cierre_de_sesion");
-    assert_eq!(orden.version, 6);
+    assert_eq!(orden.version, 7);
     // El motivo debe ser vacío, no "cell terminate".
     assert_eq!(
         orden.motivo, "",

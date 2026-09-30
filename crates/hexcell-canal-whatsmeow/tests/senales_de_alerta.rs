@@ -52,7 +52,7 @@ async fn la_expiracion_del_baneo_viaja_junto_al_estado_en_un_unico_envio() {
 
     sidecar.aceptar_conexion().await;
     let _ = sidecar.leer_saludo().await;
-    sidecar.enviar_saludo(6, "celula-alertas").await;
+    sidecar.enviar_saludo(7, "celula-alertas").await;
 
     let mut receptor = adaptador.suscribir_estado_con_expiracion();
 
@@ -110,7 +110,7 @@ async fn el_acuse_enviado_no_cuenta_y_solo_la_entrega_mueve_el_contador() {
 
     sidecar.aceptar_conexion().await;
     let _ = sidecar.leer_saludo().await;
-    sidecar.enviar_saludo(6, "celula-acuses").await;
+    sidecar.enviar_saludo(7, "celula-acuses").await;
 
     sidecar
         .enviar_evento("dedup-1", "conv-acuse-1", "rem-1", "hola", 1_000)
@@ -190,7 +190,7 @@ async fn un_contacto_que_deja_de_acusar_hace_caer_su_ratio() {
 
     sidecar.aceptar_conexion().await;
     let _ = sidecar.leer_saludo().await;
-    sidecar.enviar_saludo(6, "celula-caida").await;
+    sidecar.enviar_saludo(7, "celula-caida").await;
 
     sidecar
         .enviar_evento("dedup-caida", "conv-bloqueada", "rem-1", "hola", 1_000)
@@ -250,7 +250,7 @@ async fn los_contadores_de_acuse_usan_id_conversacion_nunca_jid() {
 
     sidecar.aceptar_conexion().await;
     let _ = sidecar.leer_saludo().await;
-    sidecar.enviar_saludo(6, "celula-no-jid").await;
+    sidecar.enviar_saludo(7, "celula-no-jid").await;
 
     // El evento entrante lleva un id_conversacion opaco (no un JID).
     sidecar
