@@ -1,0 +1,106 @@
+task_id: HEX-087
+summary: "hexcell-admin re-run reconciliation and partial terminate, best-effort close, rebind resume fix, merged Docker stop, DISC tests; verify = fmt, clippy, test."
+goal: >-
+  Make pause/unpause/terminate re-runs reconcile against Docker's real state instead of rejecting
+  identity transitions and let terminate finish over partially destroyed cells (D1, AC-21..AC-26),
+  make terminate's session close best-effort like rebind (D2), make
+  rebind resumed from Reemparejando check session activity and recover once from ya_emparejada
+  (D3), merge the two Docker stop functions into one with an optional deadline (D4), add the three
+  missing cell status failure-path tests (D5), and append the D6 documentation, all inside
+  crates/hexcell-admin plus README.md, the A-6 plan and STATUS.md, following 01-blueprint.yaml.
+read:
+  - .ai/tasks/active/HEX-087-new-spec/00-spec.yaml
+  - .ai/tasks/active/HEX-087-new-spec/01-blueprint.yaml
+  - CLAUDE.md
+  - crates/hexcell-admin/src/estado_de_celula.rs
+  - crates/hexcell-admin/src/almacen_plano_de_control.rs
+  - crates/hexcell-admin/src/docker/mod.rs
+  - crates/hexcell-admin/src/docker/error.rs
+  - crates/hexcell-admin/src/docker/transporte.rs
+  - crates/hexcell-admin/src/salida.rs
+  - crates/hexcell-admin/src/codigo_de_salida.rs
+  - crates/hexcell-admin/src/main.rs
+  - deploy/cell.compose.yml
+  - docs/protocolo-ipc-nucleo-sidecar.md
+  - docs/adr/adr-0039-almacen-del-plano-de-control.md
+touch:
+  - crates/hexcell-admin/src/docker/cliente.rs
+  - crates/hexcell-admin/src/ciclo_de_vida.rs
+  - crates/hexcell-admin/src/comandos.rs
+  - crates/hexcell-admin/tests/cliente_docker.rs
+  - crates/hexcell-admin/tests/estado_y_listado.rs
+  - crates/hexcell-admin/tests/comandos.rs
+  - crates/hexcell-admin/tests/reemparejamiento.rs
+  - crates/hexcell-admin/tests/ciclo_de_vida.rs
+  - crates/hexcell-admin/tests/comun/mod.rs
+  - README.md
+  - docs/plan/fase-a-6-empaquetado-cli.md
+  - docs/STATUS.md
+forbid:
+  files:
+    - crates/hexcell/**
+    - crates/hexcell-core/**
+    - crates/hexcell-canal-whatsmeow/**
+    - crates/hexcell-canal-simulado/**
+    - crates/hexcell-canal-contrato/**
+    - crates/hexcell-storage/**
+    - crates/hexcell-meta/**
+    - sidecar/**
+    - deploy/**
+    - .github/**
+    - docs/protocolo-ipc-nucleo-sidecar.md
+    - docs/runbook-operacion.md
+    - docs/adr/**
+    - Cargo.toml
+    - Cargo.lock
+    - crates/hexcell-admin/Cargo.toml
+    - crates/hexcell-admin/src/estado_de_celula.rs
+    - crates/hexcell-admin/src/almacen_plano_de_control.rs
+    - crates/hexcell-admin/src/argumentos.rs
+    - crates/hexcell-admin/src/main.rs
+    - crates/hexcell-admin/src/lib.rs
+    - crates/hexcell-admin/migraciones/**
+  behaviors:
+    - "Do not modify the Aprovisionada/EnEjecucion/Suspendida/Reemparejando/Retirada transition table or its identity-pair rejection; the re-run branch lives in comandos.rs before the transitar call."
+    - "Keep the store-then-Docker order: read and validate the store row before any Docker request, and persist only after the Docker operation succeeds. Identity re-runs (store estado == target) never call registrar_transicion."
+    - "terminate with no store row and no containers must still exit 1 with CelulaNoEncontrada and no warning lines; this is the only terminate path that fails for missing resources. A store row EnEjecucion/Suspendida with absent, stopped or paused containers finishes as Retirada (AC-23..AC-25); only a Retirada store row enters the identity re-run path."
+    - "Never derive or guess the data volume name: it comes only from the core container inspection (Mounts[].Name at /var/lib/hexcell); when the core is absent, skip the volume delete and print the unresolved-volume warning naming 'docker volume rm <nombre>'."
+    - "In terminate, write 'volumen de la célula: <nombre>' to stderr through the avisar callback before the first stop request; all skip warnings are emitted in real time through that callback, not collected at the end."
+    - "Unpause a container in Docker state paused before stopping it; never stop an already exited/created/dead container."
+    - "Do not add any CLI flag, exit code, runtime dependency or dev-dependency."
+    - "Do not delete the four existing tests whose behavior D1/D2/D3 invert (see blueprint risks); rewrite them to the new semantics and keep their no-write / no-extra-request guards (AlmacenTemporal::bytes equality, exigir_silencio)."
+    - "Every Docker-facing test asserts the full request sequence (method + target) and ends with exigir_silencio where silence is the claim; tests that create a sibling container also assert the create body (Image, NetworkMode, Cmd, Mounts where relevant). A guard asserting only a Docker path without the body passes vacuously and does not count."
+    - "Test expectations use literals, never the production constant under test (for example the literal '?t=30' and 'sin cambios: la célula ya está suspendida')."
+    - "Every new guard must be seen failing under one hand mutation that is then reverted; record each mutation and the red test name in 04-implementation-log.yaml."
+    - "No real Docker, no network, and no sleep beyond the injected test plazos in any test."
+    - "Documentation edits are append-only: STATUS.md's 2026-09-22 HEX-085 Pendiente line keeps its text and gains a '*(Definido <absolute date>, HEX-087: ...)*' suffix; README.md and the plan file only gain new paragraphs. Absolute dates only."
+    - "The STATUS.md edit ships in the same commit as the D3 code (AC-9/AC-10)."
+    - "Do not open an ADR; if an alternative is studied and rejected, stop and ask before writing a bitácora de descartes entry (the file is outside touch)."
+    - "All identifiers, comments, docs and commit messages in Spanish; Conventional Commits; never add Co-Authored-By or any AI attribution line."
+verify:
+  commands:
+    - cargo fmt --check
+    - cargo clippy --workspace -- -D warnings
+    - cargo test -p hexcell-admin
+  target_s: 60
+acceptance:
+  human_gate: true
+limits:
+  max_files_changed: 12
+  max_diff_lines: 3420
+  max_cost_usd: 6.0
+  per_class:
+    - glob: crates/hexcell-admin/src/**
+      max_diff_lines: 950
+    - glob: crates/hexcell-admin/tests/**
+      max_diff_lines: 2300
+    - glob: README.md
+      max_diff_lines: 50
+    - glob: docs/**
+      max_diff_lines: 120
+execution:
+  mode: worktree_edit
+  branch: ai/HEX-087
+retry_policy:
+  max_attempts: 2
+  escalate_after: 2

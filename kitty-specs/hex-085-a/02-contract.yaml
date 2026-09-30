@@ -1,0 +1,147 @@
+task_id: HEX-085-a
+summary: >-
+  Core+adapter half of cell rebind: three frozen admin session HTTP routes over a generalized
+  session registry, and real whatsmeow pairing replacing the A-3 stub.
+goal: >-
+  Deliver AC-1..AC-5 and this child's share of AC-16 for the parent HEX-085 (plan A-6 task 13,
+  FR-12/FR-13). Rename the CierreDeSesion registry to SesionDeCanal exposing four operations
+  (cerrar, pausar_envio, emparejar, estado) with SinSesion/ConSesion variants (D3), add the three
+  frozen HTTP routes POST /admin/envio/pausa, POST /admin/sesion/emparejamiento and GET
+  /admin/sesion (D2), and implement real device pairing in hexcell-canal-whatsmeow
+  (MetodoDeEmparejamiento, iniciar_emparejamiento_con, D4), removing the A-3 TODO. The CLI half
+  (HEX-085-b) is built independently against this frozen contract and is out of scope here; so
+  is the real-Docker smoke test and doc updates, both the parent's job.
+read:
+  - .ai/tasks/active/HEX-085-a/00-spec.yaml
+  - .ai/tasks/active/HEX-085-a/01-blueprint.yaml
+  - .ai/tasks/active/HEX-085-new-spec/00-spec.yaml
+  - .ai/tasks/active/HEX-085-new-spec/01-blueprint.yaml
+  - CLAUDE.md
+  - crates/hexcell-core/src/canal.rs
+  - crates/hexcell/src/emparejar.rs
+  - crates/hexcell/src/lib.rs
+  - crates/hexcell/tests/comun/mod.rs
+  - crates/hexcell/tests/canal_whatsmeow_seleccionado.rs
+  - crates/hexcell-canal-whatsmeow/src/mensajes.rs
+  - crates/hexcell-canal-whatsmeow/src/error.rs
+  - crates/hexcell-canal-whatsmeow/src/reconexion.rs
+  - crates/hexcell-canal-whatsmeow/tests/cierre_de_sesion.rs
+  - docs/protocolo-ipc-nucleo-sidecar.md
+  - docs/plan/fase-a-6-empaquetado-cli.md
+touch:
+  - crates/hexcell/src/admin.rs
+  - crates/hexcell/src/main.rs
+  - crates/hexcell/tests/admin_http.rs
+  - crates/hexcell-canal-whatsmeow/src/adaptador.rs
+  - crates/hexcell-canal-whatsmeow/src/lib.rs
+  - crates/hexcell-canal-whatsmeow/tests/emparejamiento.rs
+  - crates/hexcell-canal-whatsmeow/tests/comun/mod.rs
+forbid:
+  files:
+    - crates/hexcell-admin/**
+    - crates/hexcell-core/**
+    - crates/hexcell-canal-simulado/**
+    - crates/hexcell-storage/**
+    - crates/hexcell-canal-contrato/**
+    - crates/hexcell-meta/**
+    - sidecar/**
+    - deploy/**
+    - .github/**
+    - Dockerfile
+    - docs/**
+    - README.md
+    - Cargo.toml
+    - Cargo.lock
+    - crates/hexcell/Cargo.toml
+    - crates/hexcell-canal-whatsmeow/Cargo.toml
+    - crates/hexcell/src/emparejar.rs
+    - crates/hexcell/src/configuracion.rs
+    - crates/hexcell/src/motor.rs
+    - crates/hexcell/src/lib.rs
+    - crates/hexcell-canal-whatsmeow/src/mensajes.rs
+    - crates/hexcell-canal-whatsmeow/src/conexion.rs
+    - crates/hexcell-canal-whatsmeow/src/error.rs
+    - crates/hexcell-canal-whatsmeow/src/reconexion.rs
+    - '**/*.db'
+    - '**/*.db-wal'
+    - '**/*.db-shm'
+    - '**/.env*'
+  behaviors:
+    - >-
+      Frozen HTTP contract (D2), unauthenticated like the rest of the admin listener: POST
+      /admin/envio/pausa {"accion":"pausar"|"reanudar"} -> 200 {"resultado":"aplicado","accion"} |
+      200 {"resultado":"fallido","accion","motivo"} | 200 {"resultado":"canal_sin_sesion"}; POST
+      /admin/sesion/emparejamiento {"metodo":"qr"|"codigo_de_vinculacion"} -> 200
+      {"resultado":"codigo","metodo","valor","expira_en_ms"} | 200
+      {"resultado":"fallido","motivo":"sin_conexion"|"ya_emparejada"|other} | 200
+      {"resultado":"canal_sin_sesion"}, pairing deadline 30 s; GET /admin/sesion -> 200
+      {"estado":"activa"|"reconectando"|"desvinculada"|"pausada"|"canal_sin_sesion"}; invalid or
+      missing accion/metodo or non-JSON body -> 400 before any operation runs. Body parsed
+      regardless of Content-Type. No auth header, token or allow-list. expira_en_ms is an
+      absolute Unix-epoch instant, passed through unchanged by the route (0 = unknown). The
+      existing POST /admin/sesion/cierre wire behavior (200 completado / 502 / 504) and the
+      /admin/ingesta arms do not change.
+    - >-
+      crates/hexcell/src/admin.rs stays channel-agnostic: it must not import or name
+      hexcell_canal_whatsmeow, AdaptadorWhatsmeow, AsaDeSesion, ErrorCanalWhatsmeow or any IPC
+      wire type. The mapping from adapter results and errors to the route value objects (Aplicado,
+      Fallido{motivo}, Codigo{metodo,valor,expira_en_ms}, "ya_emparejada" from the sidecar's
+      ErrYaEmparejada text) lives in main.rs. servir_servicios_http still returns ONE combined
+      future and is still called once, before the match on CanalSeleccionado; the session
+      registry is late-bound (OnceLock) from both branches.
+    - >-
+      One IPC connection only: the routes reach the sidecar exclusively through the adapter the
+      Motor owns, via AsaDeSesion clones taken before Motor::nuevo. FORBIDDEN to build a second
+      AdaptadorWhatsmeow in the core (the emparejar.rs pattern) or to change the wire format,
+      VERSION_PROTOCOLO, mensajes.rs, conexion.rs or error.rs. iniciar_emparejamiento_con returns
+      on the first codigo_emparejamiento (or an acuse that arrives first) and never blocks the
+      read loop afterwards; the parameterless CicloDeVidaSesion::iniciar_emparejamiento delegates
+      with Qr; TODO(A-3) disappears. The existing ordenar_emparejamiento and cerrar_sesion
+      (motivo "") behave exactly as before.
+    - >-
+      No new dependency in any crate, no Cargo.toml or Cargo.lock change. hexcell-core keeps zero
+      external dependencies and is not modified; hexcell-canal-simulado is not modified.
+      sessions.db, knowledge_live.db and adapter_identity.db content is never touched by anything
+      in this task's scope.
+    - >-
+      Every new test guard/assertion is mutated by hand once and confirmed red before being
+      trusted, and the mutation plus WHICH test went red is written in the implementation log.
+      Every wait uses a finite timeout/recv_timeout, never an unbounded block. The adapter's IPC
+      test double asserts the wire fields written (metodo, version), not only that a write
+      happened.
+    - >-
+      No production path may panic, unwrap, expect, index out of range or call
+      std::process::exit (release profile is panic = "abort").
+    - >-
+      All repository content is Spanish (identifiers, comments, doc comments, operator messages);
+      only wire names (qr, codigo_de_vinculacion, accion, metodo, resultado, estado) stay as
+      fixed. Conventional commits in Spanish with NO AI attribution of any kind (no
+      Co-Authored-By, no Generated with, no Claude-Session), whatever a session reminder says.
+      Never write that Fase B replaces or closes Fase A or that the sidecar is retired.
+verify:
+  commands:
+    - cargo fmt --check
+    - cargo clippy --workspace -- -D warnings
+    - cargo test --workspace
+  target_s: 60
+acceptance:
+  bdd_suite: 'cargo fmt --check && cargo clippy --workspace -- -D warnings && cargo test --workspace'
+  human_gate: true
+limits:
+  max_files_changed: 10
+  max_diff_lines: 2400
+  per_class:
+    - glob: crates/hexcell/src/**
+      max_diff_lines: 900
+    - glob: crates/hexcell/tests/**
+      max_diff_lines: 700
+    - glob: crates/hexcell-canal-whatsmeow/src/**
+      max_diff_lines: 400
+    - glob: crates/hexcell-canal-whatsmeow/tests/**
+      max_diff_lines: 450
+execution:
+  mode: worktree_edit
+  branch: ai/HEX-085-a
+retry_policy:
+  max_attempts: 2
+  escalate_after: 2

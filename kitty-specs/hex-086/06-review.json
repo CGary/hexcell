@@ -1,0 +1,24 @@
+{
+  "task_id": "HEX-086",
+  "summary": "Re-review after 4e68847 and 438af1e: both prior fix_tasks resolved on disk and verified; contract and coverage clean; script re-run end to end with zero Docker residue. Approve.",
+  "verdict": "approve",
+  "contract_compliance": true,
+  "forbidden_files_touched": [],
+  "unrequested_refactor": false,
+  "missing_tests": [],
+  "functional_risk": "low",
+  "notes": [
+    "contract-check ok=true, violations=[]; not_checked: forbid.behaviors (hand-reviewed on the fix commits: only deploy/verificar_imagenes.sh touched, no push/login/credential, no Dockerfile/compose/crates/sidecar/Cargo.lock edits, no ADR, Spanish conventional commit messages without AI trailer).",
+    "acceptance-coverage status=pass, AC-1..AC-14 covered, gaps=[]. 05-validation.json (2026-09-23T01:40Z) overall_result=passed: script exit 0, fmt/clippy/test 0, docs/README diff has zero deleted lines; hand mutations M1-M4 recorded red.",
+    "Limits: 5 files (max 5); 404 lines (max 520); verificar_imagenes.sh 292/300 (per_class limit raised 280->300 with an inline dated reason: +20 for the review-required anti-vacuity guards), ci.yml 89/90, docs 21/90, README 2/40.",
+    "fix_task autoprueba-usuario-exige-imagen-existente RESOLVED (4e68847): verificar_usuario_no_root now returns 'FALLA: [img] no existe o no se pudo inspeccionar' when docker image inspect fails, and caso_usuario_rechaza_imagen_root captures the guard output and requires the exact line 'FALLA: [<imagen_raiz>] .Config.User es [] y debe ser exactamente 10001:10001'; any other rejection reason (missing image, broken inspect) prints 'rechazó la imagen raíz por otro motivo' and fails. Orchestrator mutation M3 (root image never built) goes red on that line.",
+    "fix_task autoprueba-sin-volumen-exige-salida-del-contenedor RESOLVED (4e68847): caso_arranque_en_frio_nucleo_sin_volumen_falla now fails with 'no llegó a arrancar y morir (ExitCode=[..])' when the inspected State.ExitCode is empty or 0; the inspected name hex086-nucleo-sinvolumen-${RUN_ID} matches the container the shared guard creates. Orchestrator mutation M4 (nonexistent image) goes red with ExitCode=[].",
+    "Cosmetics RESOLVED (438af1e): file mode is now 100755 (git ls-files -s) and the file ends with a newline (tail -c1 = 0x0a).",
+    "Independent re-run by the reviewer on 2026-09-23 against hexcell-nucleo:local and hexcell-sidecar:local: all seven checks OK, final line 'AC-4..AC-9 pasan' (only emitted when FALLAS=0), and afterwards zero hex086-* containers, networks, volumes or images remained.",
+    "Prior-review items not re-attacked (already cleared and unchanged since: CI job, docs appends, EXIT trap, build contexts, task chain 13 -> 15 -> 21 -> 19).",
+    "NOTE, accepted documented deviation (not a defect): AC-7/D4 say 'no extra environment variables' but the script sets HEXCELL_VENTANA_ZONA for the sidecar because the sidecar refuses to start without it ('HEXCELL_VENTANA_ZONA es requerida y no puede estar vacía', ExitCode=1). The deviation is explained in the script comment; the blueprint's AC-7 scenario wording remains literally inaccurate on that point.",
+    "Residual, non-blocking (unchanged from prior review): a `docker run -d` that fails after creating the container would leave a Created container untracked by the trap; the sidecar run does not assert HostConfig hardening flags via docker inspect (not required by spec).",
+    "No external advisory pre-read this round (orchestrator instructed to skip it; the prior round's opencode_go attempt timed out with no output). Verdict is Claude's own hand review."
+  ],
+  "fix_tasks": []
+}

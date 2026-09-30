@@ -1,0 +1,3 @@
+entries: []
+summary: 'Real cell terminate in hexcell-admin plus the channel-agnostic POST /admin/sesion/cierre route on the core. Destructive and irreversible: abort before destroying anything.'
+task_id: HEX-082

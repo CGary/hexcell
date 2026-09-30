@@ -1,0 +1,67 @@
+task_id: HEX-084
+summary: "Add hexcell-admin command 'reporte tokens' that reads a VACUUM INTO copy of sessions.db and aggregates consumo_por_conversacion into totals per cell and period."
+goal: >
+  Implement task 23 of stage A-6: a per-client token-consumption report command in
+  hexcell-admin, so an operator can obtain a total of consumed units per cell and
+  optional period without ever touching the hot sessions.db, using only a VACUUM INTO
+  copy already produced by the existing A-2 backup path. Traceability: FR-14.
+invariants:
+  - "The command NEVER opens the hot sessions.db; it only reads a VACUUM INTO copy or structured records (adr-0024)."
+  - "The database connection used to read the copy is always opened SQLITE_OPEN_READ_ONLY, with rusqlite pinned at the workspace version 0.39 (not bumped)."
+  - "If the basename of --copia is 'sessions.db', or the path ends in '-wal' or '-shm', the command exits UsoIncorrecto with the exact message 'el reporte sólo lee copias VACUUM INTO, nunca sessions.db' and performs no read."
+  - "Aggregation reuses literally the same formula as the consumo_por_conversacion view (migration 0004): monto_reservado minus the conciliacion monto, summed only over RECONCILED reservations; released (liberada) reservations never count."
+  - "The consumption unit is always called 'unidades' in code and output, never renamed to 'tokens'."
+  - "Exit codes are limited to the fixed set Exito=0, Fallo=1, UsoIncorrecto=2, NoImplementadoTodavia=3; no new exit code is introduced."
+  - "hexcell-storage is added to hexcell-admin only as a dev-dependency (to seed data in tests); its schema, migrations, and AlmacenDePresupuesto are not modified."
+  - "The dispatch in comandos.rs adds exactly ONE new match branch for the 'reporte tokens' command, without reordering or touching the branches owned by sibling tasks 12 and 14."
+  - "sidecar/, docs/protocolo-ipc-nucleo-sidecar.md, crates/hexcell-admin/src/docker/cliente.rs, and the state transition table in estado_de_celula.rs are never modified by this task."
+  - "No new CLI flags are introduced beyond --celula, --copia, --desde, --hasta, and --simular on the new 'reporte tokens' command."
+acceptance:
+  - id: AC-1
+    statement: "Aggregating a VACUUM INTO copy seeded with two conversations holding reconciled reservations and one released reservation yields a total equal to the sum of the seeded conciliaciones, excluding the released one."
+    given: "a temporary sessions.db seeded via AlmacenDePresupuesto with two conversations that each have a RECONCILED reservation-plus-conciliacion pair, plus one conversation with a released (liberada) reservation, then copied with VACUUM INTO into copia.db"
+    when: "the operator runs 'reporte tokens --celula <id> --copia copia.db' with no period"
+    then: "the command exits Exito=0, prints one 'id_conversacion unidades' line per reconciled conversation ordered by id, and a final 'TOTAL <celula> inicio fin <unidades>' line whose total equals the sum of the seeded conciliaciones and excludes the released conversation entirely"
+  - id: AC-2
+    statement: "A --desde/--hasta period that excludes a conversation by its reservation's resuelta_ms leaves that conversation out of the totals."
+    given: "the same seeded copia.db as AC-1, where the reconciled reservations have distinct resuelta_ms timestamps"
+    when: "the operator runs 'reporte tokens --celula <id> --copia copia.db --desde <fecha> --hasta <fecha>' choosing a UTC window (desde inclusive, hasta exclusive) that covers only one of the two reconciled conversations"
+    then: "the command exits Exito=0, the excluded conversation's line is absent, and the TOTAL line reflects only the included conversation's units"
+  - id: AC-3
+    statement: "Passing a copy path whose basename is sessions.db, or ending in -wal/-shm, is rejected before any read."
+    given: "a file named sessions.db (or one ending in -wal or -shm) present on disk"
+    when: "the operator runs 'reporte tokens --celula <id> --copia <that path>'"
+    then: "the command exits UsoIncorrecto=2 with the exact message 'el reporte sólo lee copias VACUUM INTO, nunca sessions.db' and does not open the file"
+  - id: AC-4
+    statement: "--simular short-circuits in the argument analyzer and opens no file at all."
+    given: "any value for --copia, including a nonexistent path"
+    when: "the operator runs 'reporte tokens --celula <id> --copia <any path> --simular'"
+    then: "the command completes without ever attempting to open --copia, confirming the short-circuit happens in argument analysis before storage access"
+  - id: AC-5
+    statement: "A malformed --desde or --hasta date is rejected as a usage error."
+    given: "a --desde or --hasta value that is not a valid AAAA-MM-DD UTC date"
+    when: "the operator runs 'reporte tokens --celula <id> --copia copia.db' with that malformed date"
+    then: "the command exits UsoIncorrecto=2 without attempting to open the copy"
+  - id: AC-6
+    statement: "An unreadable database or one missing the consumo_por_conversacion view fails with Fallo, not UsoIncorrecto."
+    given: "a --copia path that exists but is not a valid sqlite database, or is a valid sqlite database without the consumo_por_conversacion view"
+    when: "the operator runs 'reporte tokens --celula <id> --copia <that path>'"
+    then: "the command exits Fallo=1"
+  - "Every new test added for this command is demonstrable by hand-mutation: breaking the relevant code path makes the test fail, and reverting the mutation restores a passing test."
+  - "cargo fmt --check, cargo clippy --workspace -- -D warnings, and cargo test --workspace all pass after the change; the sidecar guard (cd sidecar && go vet ./... && go test ./... -count=1) is unaffected since sidecar/ is untouched."
+  - "README's CLI section gains an appended entry for the new 'reporte' command group, and docs/plan/fase-a-6-empaquetado-cli.md's task 23 entry gains an appended closing line '**Cerrada el AAAA-MM-DD con HEX-084.**' plus one appended bullet under '## Orden de ejecución' reflecting the live execution chain read from disk at closing time."
+risk: medium
+non_goals:
+  - "Implementing the alternative of aggregating structured logs instead of a VACUUM INTO copy; this is recorded as a non-implemented alternative in the plan's task 23 closing paragraph, not as a bitacora discard."
+  - "Producing VACUUM INTO copies; that remains the responsibility of the existing A-2 backup path inside the cell (docs/runbook-restauracion-de-celula.md, adr-0031). This command only reads copies that already exist."
+  - "Writing a new ADR; the data-source decision is already settled by adr-0024 and STATUS.md."
+  - "Any change to sessions.db migrations, AlmacenDePresupuesto, or the consumo_por_conversacion view definition."
+  - "Any change to sidecar/, the IPC protocol, docker/cliente.rs, or the cell state transition table."
+constraints:
+  - "New CLI surface is exactly: 'reporte tokens --celula <id> --copia <ruta.db> [--desde AAAA-MM-DD] [--hasta AAAA-MM-DD] [--simular]', added as a new first-level group in crates/hexcell-admin/src/argumentos.rs."
+  - "Dates are UTC; --desde is inclusive, --hasta is exclusive; with neither given, the period is the entire history."
+  - "New module: crates/hexcell-admin/src/reporte_de_consumo.rs; dispatched from comandos.rs with exactly one new match branch."
+  - "hexcell-storage is added to hexcell-admin's Cargo.toml as a dev-dependency only, to seed data in tests."
+  - "stdout format: one line per conversation as 'id_conversacion unidades' ordered by id, followed by a final line 'TOTAL <celula> <desde|inicio> <hasta|fin> <unidades>'."
+  - "All new tests live under crates/hexcell-admin/tests/, use snake_case descriptive names and a tempdir; the Docker double in tests/comun/mod.rs is not used since no Docker interaction is involved."
+  - "All repository content produced by this task (identifiers, comments, docs, commit messages) is written in Spanish; commit messages follow conventional-commit prefixes with no AI attribution."

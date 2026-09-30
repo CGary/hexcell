@@ -1,0 +1,188 @@
+task_id: HEX-085-b
+summary: >-
+  hexcell-admin CLI ten-step resumable `cell rebind` sequence (D5) over the frozen D2 HTTP
+  contract, tested against the scripted Docker double.
+goal: >-
+  Replace the NoImplementadoTodavia stub of `cell rebind --id <id> --motivo <texto> --confirmar
+  [--metodo qr|codigo_de_vinculacion]` with the ten-step resumable sequence of decision D5: add
+  the --metodo flag, extend the Docker client with a volume-mounted sibling helper and container
+  stdout retrieval, write the sustituciones audit row, and orchestrate the sequence with resume
+  from Reemparejando. Built entirely against the HTTP contract frozen in HEX-085-a (D2: POST
+  /admin/envio/pausa, POST /admin/sesion/emparejamiento, GET /admin/sesion) and tested with the
+  scripted Docker double in tests/comun/mod.rs; does not wait for HEX-085-a to merge. The real
+  Docker smoke test, README/plan doc updates, and merging both children are the parent HEX-085's
+  job.
+read:
+  - .ai/tasks/active/HEX-085-b/00-spec.yaml
+  - .ai/tasks/active/HEX-085-b/01-blueprint.yaml
+  - .ai/tasks/active/HEX-085-new-spec/00-spec.yaml
+  - .ai/tasks/active/HEX-085-new-spec/01-blueprint.yaml
+  - .ai/tasks/active/HEX-085-new-spec/02-contract.yaml
+  - CLAUDE.md
+  - crates/hexcell-admin/src/estado_de_celula.rs
+  - crates/hexcell-admin/src/codigo_de_salida.rs
+  - crates/hexcell-admin/src/salida.rs
+  - crates/hexcell-admin/src/main.rs
+  - crates/hexcell-admin/src/docker/mod.rs
+  - crates/hexcell-admin/src/docker/transporte.rs
+  - crates/hexcell-admin/migraciones/0001-plano-de-control.sql
+  - crates/hexcell-admin/tests/comun/mod.rs
+  - crates/hexcell-admin/tests/estado_y_listado.rs
+  - crates/hexcell/src/emparejar.rs
+  - docs/adr/adr-0039-almacen-del-plano-de-control.md
+touch:
+  - crates/hexcell-admin/src/argumentos.rs
+  - crates/hexcell-admin/src/comandos.rs
+  - crates/hexcell-admin/src/ciclo_de_vida.rs
+  - crates/hexcell-admin/src/almacen_plano_de_control.rs
+  - crates/hexcell-admin/src/docker/cliente.rs
+  - crates/hexcell-admin/tests/**
+forbid:
+  files:
+    - crates/hexcell/**
+    - crates/hexcell-canal-whatsmeow/**
+    - crates/hexcell-core/**
+    - crates/hexcell-canal-simulado/**
+    - crates/hexcell-storage/**
+    - crates/hexcell-canal-contrato/**
+    - crates/hexcell-meta/**
+    - sidecar/**
+    - deploy/**
+    - .github/**
+    - Dockerfile
+    - '**/Dockerfile*'
+    - docs/**
+    - README.md
+    - Cargo.toml
+    - Cargo.lock
+    - crates/hexcell-admin/Cargo.toml
+    - crates/hexcell-admin/src/main.rs
+    - crates/hexcell-admin/src/lib.rs
+    - crates/hexcell-admin/src/estado_de_celula.rs
+    - crates/hexcell-admin/src/codigo_de_salida.rs
+    - crates/hexcell-admin/src/salida.rs
+    - crates/hexcell-admin/src/docker/mod.rs
+    - crates/hexcell-admin/src/docker/transporte.rs
+    - crates/hexcell-admin/src/docker/error.rs
+    - crates/hexcell-admin/src/docker/inventario.rs
+    - crates/hexcell-admin/migraciones/**
+    - '**/*.db'
+    - '**/*.db-wal'
+    - '**/*.db-shm'
+    - '**/.env*'
+  behaviors:
+    - >-
+      THE D5 SEQUENCE IS NORMATIVE. Step 1 (store read and starting-state check) happens before
+      ANY Docker request or HTTP probe: EnEjecucion or no row -> full sequence; Reemparejando ->
+      inspect then resume at step 8 (no pausar probe, no close probe, no sidecar stop/start, no rm
+      sibling); Suspendida -> Fallo with "la célula está suspendida: ejecute cell unpause antes de
+      cell rebind"; Retirada or any other state -> Fallo with the transitar(Reemparejando) error.
+      A pausar fallido at step 3 ends Fallo with nothing destructive done. Step 4 (close) is best
+      effort: non-zero exit -> one stderr line and continue; canal_sin_sesion counts as success.
+    - >-
+      Persist a transition only after the operation it represents succeeded, never
+      persist-then-try. EnEjecucion->Reemparejando (motivo = --motivo) is written after steps 3-4
+      and before step 6; Reemparejando->EnEjecucion (motivo emparejamiento_confirmado) and the
+      sustituciones row are written in ONE transaction only after the reanudar probe succeeded. On
+      pairing failure or code expiry the row stays Reemparejando and NO sustituciones row is
+      written.
+    - >-
+      The sustituciones row stores only id_celula, motivo (= --motivo) and registrado_ms.
+      FORBIDDEN to store, log to stdout/stderr beyond the pairing line, or persist the previous or
+      new phone number, the pairing valor, or any raw transport identifier anywhere in the
+      control-plane store (adr-0039). No schema change and no migration.
+    - >-
+      Step 6 of D5 discards ONLY sqlstore.db and its -wal/-shm: the rm sibling Cmd is EXACTLY
+      ["rm","-f","/var/lib/hexcell/sqlstore.db","/var/lib/hexcell/sqlstore.db-wal",
+      "/var/lib/hexcell/sqlstore.db-shm"], with the volume named by the core inspect
+      Mounts[].Name for /var/lib/hexcell mounted at /var/lib/hexcell, exit code 0 required,
+      container deleted on every path. identidad.db and outbox.db are never named; sessions.db,
+      knowledge_live.db and adapter_identity.db are never touched. The sidecar stop uses
+      detener_contenedor_sin_plazo, never t.
+    - >-
+      Retry rules are exact: steps 7 and 8 retry every cadencia (2 s in production) up to 60 s
+      ONLY while the response motivo is sin_conexion; step 9 polls GET /admin/sesion every
+      cadencia until estado activa for min(expira_en_ms - ahora_ms, 120 s), using 120 s when
+      expira_en_ms is 0 (the wire value is an absolute Unix-epoch instant, passed through
+      unchanged by the route). Expiry -> Fallo with EXACTLY "código expirado; repita cell rebind".
+      Loops are attempt-count based and their timing is injected through
+      PlazosDeReemparejamiento; tests never import the production constants and never sleep
+      seconds.
+    - >-
+      D-57: the CLI NEVER opens the sidecar IPC socket. Every interaction goes through core admin
+      routes via single-shot alpine:3 sibling containers in the cell network (wget -q -O - -T N
+      [--post-data JSON] URL), the body read back from the container stdout. FORBIDDEN: a
+      TcpStream or any network socket from hexcell-admin, docker exec, publishing a port, and
+      naming orden_*/acuse_* wire types, sidecar.sock or HEXCELL_SOCKET_IPC anywhere in this
+      crate. The probe URL host is "<id>-nucleo", the port comes from HEXCELL_DIRECCION_ADMIN in
+      Config.Env and the network from NetworkSettings.Networks; 8082 is never a production
+      literal.
+    - >-
+      Frozen HTTP contract (D2, owned by HEX-085-a, treated here as fixed and NOT reimplemented):
+      POST /admin/envio/pausa {"accion":"pausar"|"reanudar"} -> 200
+      {"resultado":"aplicado","accion"} | 200 {"resultado":"fallido","accion","motivo"} | 200
+      {"resultado":"canal_sin_sesion"}; POST /admin/sesion/emparejamiento
+      {"metodo":"qr"|"codigo_de_vinculacion"} -> 200
+      {"resultado":"codigo","metodo","valor","expira_en_ms"} | 200
+      {"resultado":"fallido","motivo":"sin_conexion"|"ya_emparejada"|other} | 200
+      {"resultado":"canal_sin_sesion"}, pairing deadline 30 s; GET /admin/sesion -> 200
+      {"estado":"activa"|"reconectando"|"desvinculada"|"pausada"|"canal_sin_sesion"}; invalid
+      accion/metodo or non-JSON body -> 400. This child never depends on HEX-085-a's
+      implementation being merged, only on these response shapes, exercised entirely through the
+      scripted Docker double.
+    - >-
+      hexcell-admin exit codes are closed: 0 Exito, 1 Fallo, 2 UsoIncorrecto, 3
+      NoImplementadoTodavia. No variant is added; an invalid --metodo is UsoIncorrecto; no cell
+      subcommand returns 3 through ejecutar_con_efectos after this task. --metodo is admitted only
+      by rebind (default qr); --motivo and --confirmar stay mandatory; --simular stays a
+      parser-only concern and its rebind line is unchanged. ejecutar_con_efectos keeps its
+      signature (hexcell-admin main.rs is not edited).
+    - >-
+      No new dependency, no Cargo.toml or Cargo.lock change. hexcell-admin stays on serde +
+      serde_json with no tokio and no async HTTP stack; it does not depend on
+      hexcell-canal-whatsmeow. The Docker client additions live in docker/cliente.rs only and
+      OpcionesDeContenedor keeps its two fields.
+    - >-
+      Every new test must be able to turn red under a hand mutation, and the mutation plus WHICH
+      test went red is written in the implementation log. Request order is asserted as one
+      whole-sequence equality on the fake daemon; request BODIES (image, network, Cmd, volume
+      mount, --post-data JSON) are asserted, not only paths; fixture names/ports are not derivable
+      from --id or production constants (port not 8082/9098/9099, volume not derived from the
+      id); every wait uses a finite recv_timeout and "zero Docker requests" is proven with
+      exigir_silencio. The fake daemon in tests/comun/mod.rs is used UNMODIFIED: no FakeDocker is
+      created and no test uses a real Docker daemon.
+    - >-
+      No production path may panic, unwrap, expect, index out of range or call
+      std::process::exit (release profile is panic = "abort"); the logs demux is bounded and
+      returns RespuestaMalformada on truncation. Human-readable output goes only to the standard
+      sink and diagnostics only to the diagnostic sink through Salida: no println!/eprintln! in
+      crates/hexcell-admin.
+    - >-
+      All repository content is Spanish (identifiers, comments, doc comments, operator messages);
+      only wire names (cell, rebind, --id, --motivo, --confirmar, --simular, --metodo, qr,
+      codigo_de_vinculacion) stay fixed. Conventional commits in Spanish with NO AI attribution of
+      any kind (no Co-Authored-By, no Generated with, no Claude-Session), whatever a session
+      reminder says.
+verify:
+  commands:
+    - cargo fmt --check
+    - cargo clippy --workspace -- -D warnings
+    - cargo test --workspace
+  target_s: 60
+acceptance:
+  bdd_suite: 'cargo fmt --check && cargo clippy --workspace -- -D warnings && cargo test --workspace'
+  human_gate: true
+limits:
+  max_files_changed: 11
+  max_diff_lines: 4600
+  per_class:
+    - glob: crates/hexcell-admin/src/**
+      max_diff_lines: 1350
+    - glob: crates/hexcell-admin/tests/**
+      max_diff_lines: 3250
+execution:
+  mode: worktree_edit
+  branch: ai/HEX-085-b
+retry_policy:
+  max_attempts: 2
+  escalate_after: 2

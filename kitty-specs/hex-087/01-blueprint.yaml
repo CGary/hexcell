@@ -1,0 +1,163 @@
+task_id: HEX-087
+summary: "hexcell-admin: re-run reconciliation + partial terminate (D1), best-effort close (D2), rebind resume fix (D3), merged Docker stop (D4), DISC tests (D5), docs (D6)."
+affected_files:
+  - crates/hexcell-admin/src/docker/cliente.rs
+  - crates/hexcell-admin/src/ciclo_de_vida.rs
+  - crates/hexcell-admin/src/comandos.rs
+  - crates/hexcell-admin/tests/cliente_docker.rs
+  - crates/hexcell-admin/tests/estado_y_listado.rs
+  - crates/hexcell-admin/tests/comandos.rs
+  - crates/hexcell-admin/tests/reemparejamiento.rs
+  - crates/hexcell-admin/tests/ciclo_de_vida.rs
+  - crates/hexcell-admin/tests/comun/mod.rs
+  - README.md
+  - docs/plan/fase-a-6-empaquetado-cli.md
+  - docs/STATUS.md
+symbols:
+  - "ClienteDocker::detener_contenedor(&self, id: &str, plazo_s: Option<u32>) (merged; Some(t) -> POST /containers/{id}/stop?t={t}, None -> POST /containers/{id}/stop with no query)"
+  - "ClienteDocker::despausar_contenedor(&self, id: &str) -> POST /containers/{id}/unpause, no body (new, for Docker-paused containers)"
+  - "REMOVED: ClienteDocker::detener_contenedor_sin_plazo, the one-arg detener_contenedor, private const SEGUNDOS_DE_GRACIA (dead code after the merge)"
+  - "ciclo_de_vida::retirar(cliente, nombres, datos, avisar: &mut dyn FnMut(&str)) -> Result<ResultadoDeRetiro { sesion_cerrada: bool, volumen_eliminado: Option<String> }, ErrorDeCicloDeVida> (partial-tolerant; warnings go through avisar in real time)"
+  - "REMOVED: ErrorDeCicloDeVida::CierreDeSesionFallido and ErrorDeCicloDeVida::CelulaPausada with their Display arms (no longer constructed)"
+  - "ciclo_de_vida private helpers: aviso_de_cierre_de_sesion(codigo) (shared with preparar_reemparejamiento), inspeccionar_si_existe(cliente, nombre) (404 -> None), detener_si_hace_falta(cliente, nombre, estado) (paused -> unpause then stop(None); exited/created/dead -> nothing; otherwise stop(None)), destruir_restos(...) (stop + delete present containers sidecar-first, then delete the resolved volume tolerating 404), esperar_disponibilidad (extracted from reanudar)"
+  - "ciclo_de_vida::Reconciliacion { SinCambios, Aplicada } + reconciliar_pausa(cliente, nombres) + reconciliar_reanudacion(cliente, nombres, datos)"
+  - "ciclo_de_vida::ReconciliacionDeRetiro { SinCambios, Aplicada { volumen_eliminado: Option<String> } } + completar_retiro(cliente, nombres, avisar)"
+  - "ciclo_de_vida::consultar_estado_de_sesion(cliente, nombres, datos_rebind, imagen, limite_http) -> Result<EstadoDeSesion, ErrorDeCicloDeVida> + pub const MOTIVO_YA_EMPAREJADA = 'ya_emparejada'"
+  - "comandos::ejecutar_con_efectos: identity re-run branch before the transitar check; terminate passes an avisar closure over salida.diagnostico and maps CelulaNoEncontrada to success-with-warnings when a store row exists"
+  - "comandos::ejecutar_reemparejamiento: resume from Reemparejando probes GET /admin/sesion first; activa skips steps 8-9; ya_emparejada on resume runs descartar_sqlstore_y_rearrancar and retries solicitar_emparejamiento exactly once"
+dependencies:
+  - crates/hexcell-admin/src/estado_de_celula.rs
+  - crates/hexcell-admin/src/almacen_plano_de_control.rs
+  - crates/hexcell-admin/src/docker/error.rs
+  - crates/hexcell-admin/src/docker/transporte.rs
+  - crates/hexcell-admin/src/salida.rs
+  - crates/hexcell-admin/src/codigo_de_salida.rs
+  - deploy/cell.compose.yml
+  - docs/protocolo-ipc-nucleo-sidecar.md
+  - docs/adr/adr-0039-almacen-del-plano-de-control.md
+test_scenarios:
+  - statement: "comandos.rs: store Suspendida, both inspections State.Status exited -> exit 0, stderr exactly 'sin cambios: la célula ya está suspendida\\n', stdout empty, sequence exactly [GET c1-nucleo/json, GET c1-sidecar/json] then exigir_silencio, store bytes identical, transiciones empty. Rewrites the inverted cell_pause_sobre_suspendida_falla_sin_emitir_ninguna_peticion_docker in place."
+    covers: [AC-1]
+  - statement: "comandos.rs: store Suspendida, core exited, sidecar running -> exit 0, sequence [GET nucleo, GET sidecar, POST /containers/c1-sidecar/stop] (assert_eq on the whole target, no '?t='), no stop for the core, exigir_silencio, store bytes identical."
+    covers: [AC-2]
+  - statement: "comandos.rs: store EnEjecucion, both running, probe wait StatusCode 0 -> exit 0, stderr exactly 'sin cambios: la célula ya está en ejecución\\n', sequence [GET nucleo, GET sidecar, GET nucleo, POST create, POST sonda/start, POST sonda/wait, DELETE sonda] with no /start for c1-nucleo or c1-sidecar; the create body Cmd is the guion_de_sonda loop against /health/ready; store bytes identical."
+    covers: [AC-3]
+  - statement: "comandos.rs: store EnEjecucion, core running, sidecar exited -> exit 0, sequence [GET nucleo, GET sidecar, POST /containers/c1-sidecar/start, GET nucleo, POST create, start, wait, DELETE], no start for c1-nucleo, store bytes identical."
+    covers: [AC-4]
+  - statement: "comandos.rs: store Retirada, both inspections 404 -> exit 0, stderr exactly 'sin cambios: la célula ya está retirada\\n', exactly the two GETs then exigir_silencio (no stop, no DELETE, no sibling create), store bytes identical."
+    covers: [AC-5, AC-22]
+  - statement: "comandos.rs: store Retirada with leftovers, two fixtures: (a) core exited with a Mounts volume, sidecar 404 -> [GET nucleo, GET sidecar, DELETE /containers/c1-nucleo, DELETE /volumes/<fixture volume>] and stderr 'volumen de la célula: <fixture volume>'; (b) core 404, sidecar running -> [GET nucleo, GET sidecar, POST /containers/c1-sidecar/stop, DELETE /containers/c1-sidecar] with the unresolved-volume warning on stderr and no /volumes/ request. Both exit 0, no session-close sibling, exigir_silencio, store bytes identical."
+    covers: [AC-6, AC-22]
+  - statement: "comandos.rs: no store row, core and sidecar inspections 404 -> exit 1, stderr exactly 'célula no encontrada\\n' with no warning lines, exactly the two GETs then exigir_silencio, no celulas row and no transiciones row for c1."
+    covers: [AC-7]
+  - statement: "comandos.rs + tests/ciclo_de_vida.rs: the close sibling wait returns StatusCode 1 (wget exit on 502/504) -> exit 0, stderr exactly 'volumen de la célula: <v>\\naviso: el cierre de sesión devolvió código 1; se continúa igual\\n', the full sequence continues through stop sidecar, stop core, DELETE sidecar, DELETE core, DELETE volume, row 'retirada sesion_cerrada 1700000000000', stdout without the 'sesión cerrada' line. Rewrites cell_terminate_no_toca_el_almacen_cuando_el_cierre_de_sesion_falla and retirar_aborta_sin_destruir_nada_si_la_sonda_de_cierre_falla; success-path tests assert sesion_cerrada == true."
+    covers: [AC-8]
+  - statement: "reemparejamiento.rs: seeded Reemparejando, session probe logs {\"estado\":\"activa\"} -> exit 0, sequence [GET nucleo, GET sidecar, 5 requests of the GET /admin/sesion sibling, 5 requests of the reanudar sibling] then exigir_silencio (no pairing sibling); the session sibling create body Cmd is guion_de_peticion_http without --post-data against http://c1-nucleo:<port>/admin/sesion; row EnEjecucion with motivo emparejamiento_confirmado; exactly one sustituciones row."
+    covers: [AC-9]
+  - statement: "reemparejamiento.rs: seeded Reemparejando, session probe desvinculada, pairing ya_emparejada, recovery [POST /containers/c1-sidecar/stop (no ?t=), rm sibling create/start/wait/DELETE with Mounts of the fixture volume, POST /containers/c1-sidecar/start, pause sibling aplicado], retried pairing codigo, state probe activa, reanudar aplicado -> exit 0, pairing line on stdout, row EnEjecucion, one sustituciones row, whole sequence asserted."
+    covers: [AC-10]
+  - statement: "reemparejamiento.rs: same fixture as the AC-10 success case but the retried pairing returns ya_emparejada again -> exit 1, stderr contains ya_emparejada, exigir_silencio after the second pairing sibling (exactly one retry), row stays Reemparejando, sustituciones empty."
+    covers: [AC-10]
+  - statement: "reemparejamiento.rs: the M9 guard resume_con_emparejamiento_fallido_por_otro_motivo_no_reintenta_ni_persiste keeps its no-retry/no-persist assertions but uses a non-sin_conexion motivo other than ya_emparejada; it and the five other resume tests (701, 1455, 1536, 1612, 1789) get the non-activa session probe prepended and still pass."
+    covers: [AC-9, AC-10]
+  - statement: "docs/STATUS.md: the 2026-09-22 HEX-085 Pendiente line keeps its full original text and gains the appended '*(Definido <absolute date>, HEX-087: ...)*' suffix in the same commit that implements AC-9/AC-10 (git show of that commit lists comandos.rs and docs/STATUS.md)."
+    covers: [AC-11]
+  - statement: "cliente_docker.rs: the HEX-074-b stop test (lines 57-74) is renamed and extended: Some(30) -> assert_eq objetivo '/containers/abc123/stop?t=30' (literal, not a production constant); None -> assert_eq objetivo '/containers/abc123/stop' exactly; method POST in both. A new case asserts despausar_contenedor sends POST '/containers/abc123/unpause' with an empty body."
+    covers: [AC-12, AC-13, AC-15, AC-24]
+  - statement: "Compile + grep: 'detener_contenedor_sin_plazo' has zero hits under crates/; every detener_contenedor call takes two arguments; the production callers at ciclo_de_vida.rs:239, :240 and :985 pass None; the four error-path tests in cliente_docker.rs (219, 236, 260, 297) use the new signature."
+    covers: [AC-14]
+  - statement: "estado_y_listado.rs: store EnEjecucion, core inspect running, sidecar inspect HTTP 500 -> exit 1, diagnostic contains TEXTO_DE_FUENTE_DOCKER_FALLIDA and 'c1-sidecar', no DISC-0N code, exigir_silencio after the two GETs."
+    covers: [AC-16]
+  - statement: "estado_y_listado.rs: NO store row, half pair in both orientations (core running + sidecar 404; core 404 + sidecar running) -> exige_solo('DISC-05'), exactly two GETs then silence, stdout reports 'ausente' for the missing container."
+    covers: [AC-17]
+  - statement: "estado_y_listado.rs: store EnEjecucion, both running, probe unreachable (sibling create answers 500, Disponibilidad::Inalcanzable) -> exige_solo('DISC-03'), stdout contains 'salud: inalcanzable', sequence [GET nucleo, GET sidecar, GET nucleo, POST create] then silence. Distinct from the existing NoListo test (wait StatusCode 1)."
+    covers: [AC-18]
+  - statement: "docs/plan/fase-a-6-empaquetado-cli.md: one closing paragraph appended under task 15 naming D1 (re-run reconciliation plus partial terminate), D2 (best-effort close superseding task 12's fail-closed choice), D3 and D4; documenting the orphan-volume residual risk with 'docker volume rm <nombre>' and the reference to docs/runbook-operacion.md (terminate section, «fallos habituales»); and recording that AC-23..AC-25 were added during blueprint by human decision, with exit 1 only for no row and no containers. git diff shows only added lines in that file."
+    covers: [AC-19, AC-22, AC-26]
+  - statement: "README.md: a 'Reejecución' paragraph appended to the 'Manual de Operación de la CLI de Administración' section documenting D1 (including the partial terminate) and the D2 stderr warning; git diff shows only added lines in README.md."
+    covers: [AC-20]
+  - statement: "tests/ciclo_de_vida.rs: retirar with the double pushing each served request into a shared Arc<Mutex<Vec<String>>> log and an avisar closure pushing into the same log -> the entry 'volumen de la célula: volumen-datos-celula-x7k9m2' has a smaller index than 'POST /containers/c1-sidecar/stop'. This is race-free because the double logs the stop only after reading it, and the client sends it only after avisar returns. comandos.rs: the existing terminate dispatch test now asserts that exact stderr line instead of an empty diagnostic."
+    covers: [AC-21]
+  - statement: "comandos.rs: store EnEjecucion, core and sidecar inspections 404 -> exit 0, stderr exactly the 'ni el núcleo ni el sidecar existen' warning plus the unresolved-volume warning, stdout empty, exactly the two GETs then exigir_silencio (no stop, no DELETE, no sibling), row 'retirada sesion_cerrada 1700000000000' and one transicion en_ejecucion>retirada."
+    covers: [AC-23, AC-22]
+  - statement: "comandos.rs: store Suspendida, both inspections State.Status paused, core carrying network/admin env/Mounts -> exit 0, stderr ['volumen de la célula: <v>', 'aviso: el núcleo no está en ejecución; se omite el cierre de sesión'], sequence [GET nucleo, GET sidecar, POST /containers/c1-sidecar/unpause, POST /containers/c1-sidecar/stop, POST /containers/c1-nucleo/unpause, POST /containers/c1-nucleo/stop, DELETE sidecar, DELETE nucleo, DELETE /volumes/<v>] with empty unpause bodies and no sibling create, row retirada."
+    covers: [AC-24]
+  - statement: "comandos.rs: store EnEjecucion, core 404, sidecar exited -> exit 0, stderr ['aviso: el núcleo no existe; se omite el cierre de sesión', unresolved-volume warning], sequence [GET nucleo, GET sidecar, DELETE /containers/c1-sidecar] with no stop and no /volumes/ request, row retirada. tests/ciclo_de_vida.rs: the inverted CelulaPausada and missing-sidecar tests become partial-path cases, and the core-404 test serves a sidecar 404 and still expects CelulaNoEncontrada after exactly two GETs."
+    covers: [AC-25, AC-22]
+strategy:
+  - step: 1
+    action: "D4 (Infrastructure adapter): in docker/cliente.rs replace detener_contenedor and detener_contenedor_sin_plazo with one detener_contenedor(id, plazo_s: Option<u32>) and add despausar_contenedor(id) (POST /containers/{id}/unpause, comprobar_exito). Delete SEGUNDOS_DE_GRACIA and move its PRD rationale into the fn doc. Update ciclo_de_vida.rs:239, :240 and :985 to pass None."
+    files:
+      - crates/hexcell-admin/src/docker/cliente.rs
+      - crates/hexcell-admin/src/ciclo_de_vida.rs
+  - step: 2
+    action: "Shared domain helpers in ciclo_de_vida.rs: inspeccionar_si_existe (404 -> None, other errors abort), detener_si_hace_falta (paused -> despausar then detener(None); exited/created/dead -> nothing; otherwise detener(None)), destruir_restos (stop then DELETE present containers sidecar-first, then DELETE the resolved volume, NoEncontrado on the volume tolerated), aviso_de_cierre_de_sesion(codigo) reused by preparar_reemparejamiento at 963-970 (the spec cites 967-973; that range has drifted) with unchanged behavior, and esperar_disponibilidad extracted from reanudar at 323-357."
+    files:
+      - crates/hexcell-admin/src/ciclo_de_vida.rs
+  - step: 3
+    action: "D2 + partial terminate (Application service retirar): inspect core then sidecar with inspeccionar_si_existe; both absent -> Err(CelulaNoEncontrada) with no warning and no further request. Core present -> resolve red, admin port and volume from the core, then avisar('volumen de la célula: <v>') BEFORE any stop. Core absent -> avisar('aviso: el núcleo no existe; se omite el cierre de sesión') and avisar('aviso: no se pudo resolver el volumen de datos porque el núcleo ya no existe; si quedó, bórrelo a mano con docker volume rm <nombre>'); never derive the name. Core present but State.Status != running -> avisar('aviso: el núcleo no está en ejecución; se omite el cierre de sesión'). Core running -> close sibling; exit code != 0 -> avisar(D2 literal) and continue; sibling Docker errors and ImagenDeSondaNoEncontrada still abort before any destruction. Then destruir_restos. Return ResultadoDeRetiro { sesion_cerrada, volumen_eliminado }. Remove the CelulaPausada and CierreDeSesionFallido variants."
+    files:
+      - crates/hexcell-admin/src/ciclo_de_vida.rs
+  - step: 4
+    action: "D1 (Application services): Reconciliacion + reconciliar_pausa (inspect both, 404 -> CelulaNoEncontrada, detener_si_hace_falta sidecar then core, nothing to do -> SinCambios); reconciliar_reanudacion (start core then sidecar only when State.Status != running, then esperar_disponibilidad; nothing started and probe 0 -> SinCambios; probe failure -> TiempoDeSondeoAgotado); ReconciliacionDeRetiro + completar_retiro(avisar) (both absent -> SinCambios; otherwise the same core-only volume rule and warnings as retirar, no session close, destruir_restos -> Aplicada)."
+    files:
+      - crates/hexcell-admin/src/ciclo_de_vida.rs
+  - step: 5
+    action: "D3 (Application service): consultar_estado_de_sesion via consultar_por_hermano + guion_de_peticion_http(url /admin/sesion, None, limite) + the existing private estado_de_sesion parser; pub const MOTIVO_YA_EMPAREJADA."
+    files:
+      - crates/hexcell-admin/src/ciclo_de_vida.rs
+  - step: 6
+    action: "Orchestration in comandos::ejecutar_con_efectos. After reading the store row and BEFORE the transitar check at 296-300, if fila.estado == estado_objetivo, dispatch to a private re-run helper (Pausar -> reconciliar_pausa, Reanudar -> reconciliar_reanudacion, Retirar -> completar_retiro). SinCambios -> stderr 'sin cambios: la célula ya está {estado_objetivo}' (Display) and Exito; Aplicada -> the usual completion line(s) and Exito; never registrar_transicion on this path. Non-identity terminate: call retirar with a closure that writes each warning through salida.diagnostico. On Ok, persist Retirada/sesion_cerrada, print 'sesión cerrada' only when sesion_cerrada, then 'contenedores eliminados' and 'volumen X eliminado' when volumen_eliminado is Some. Err(CelulaNoEncontrada) with a store row -> the two warnings ('aviso: ni el núcleo ni el sidecar existen en Docker; no queda nada que detener ni borrar' and the unresolved-volume one), persist Retirada, Exito with empty stdout. Err(CelulaNoEncontrada) with no row -> Fallo 'célula no encontrada' (AC-7). Any other Err -> Fallo without a store write."
+    files:
+      - crates/hexcell-admin/src/comandos.rs
+  - step: 7
+    action: "D3 orchestration in comandos::ejecutar_reemparejamiento: when estado_actual is Reemparejando, after resolver_datos_de_celula_para_rebind call consultar_estado_de_sesion. Err -> diagnosticar_fallo (row stays Reemparejando). Activa -> stderr 'la sesión ya está activa: se omite el emparejamiento' and skip steps 8-9 to reanudar_envio + confirmar_reemparejamiento. Otherwise run step 8; if it returns EmparejamientoFallido with motivo MOTIVO_YA_EMPAREJADA on the resume path, run descartar_sqlstore_y_rearrancar once and call solicitar_emparejamiento exactly once more, then continue with the existing match. The full sequence is unchanged."
+    files:
+      - crates/hexcell-admin/src/comandos.rs
+  - step: 8
+    action: "Tests for D4 in cliente_docker.rs: rename and extend the stop test (AC-12/13/15), add the unpause request case, and update the four error-path call sites."
+    files:
+      - crates/hexcell-admin/tests/cliente_docker.rs
+  - step: 9
+    action: "Tests for D1, D2 and the partial terminate in tests/comandos.rs (AC-1..AC-8, AC-21..AC-25). Use correr_con_efectos, sembrar_fila, secuencia_recibida, exigir_silencio and AlmacenTemporal::bytes. Rewrite the two inverted tests in place and update the terminate dispatch test's stderr expectation. In tests/ciclo_de_vida.rs, pass an avisar closure at every retirar call site. Add the AC-21 ordering test with a shared log. Rewrite the three inverted retirar tests (CelulaPausada, missing sidecar, close failure) and serve the sidecar 404 in the core-404 test. Touch tests/comun/mod.rs only for a genuinely shared fixture."
+    files:
+      - crates/hexcell-admin/tests/comandos.rs
+      - crates/hexcell-admin/tests/ciclo_de_vida.rs
+      - crates/hexcell-admin/tests/comun/mod.rs
+  - step: 10
+    action: "Tests for D3 in tests/reemparejamiento.rs: new AC-9 test and two AC-10 tests; prepend the non-activa session probe to the five other resume tests; rewrite the M9 no-retry guard to use a motivo other than ya_emparejada."
+    files:
+      - crates/hexcell-admin/tests/reemparejamiento.rs
+  - step: 11
+    action: "Tests for D5 in tests/estado_y_listado.rs: sidecar-500 source failure (AC-16), DISC-05 half pair without a store row in both orientations (AC-17), and DISC-03 with Disponibilidad::Inalcanzable via a sibling create 500 (AC-18). These are test-only; the status code in comandos.rs does not change."
+    files:
+      - crates/hexcell-admin/tests/estado_y_listado.rs
+  - step: 12
+    action: "Mutation evidence: for every new guard, apply one hand mutation, see the named test go red, then revert. Record each in 04-implementation-log.yaml. Minimum set: always append ?t (AC-13); drop the identity branch (AC-1/3/5); stop without the status predicate (AC-2); start both unconditionally (AC-4); fail completar_retiro on an absent core (AC-6); restore the code != 0 abort (AC-8); drop the activa check (AC-9); loop the ya_emparejada retry (AC-10); remove the sidecar from the status source-failure loop (AC-16); compute alguno_presente as both present (AC-17); treat Inalcanzable as Listo (AC-18); emit the volume line after destruir_restos (AC-21); resolve the volume name from the sidecar or from --id (AC-22/25); map CelulaNoEncontrada with a row to Fallo (AC-23); skip despausar (AC-24)."
+    files:
+      - crates/hexcell-admin/src/comandos.rs
+      - crates/hexcell-admin/src/ciclo_de_vida.rs
+      - crates/hexcell-admin/src/docker/cliente.rs
+  - step: 13
+    action: "Docs D6, append-only: STATUS.md line 594 gets the appended Definido suffix in the SAME commit as step 7; one plan task-15 closing paragraph covers D1-D4, the orphan-volume residual risk with 'docker volume rm <nombre>' and the runbook reference, and the note that the partial terminate was added during blueprint (AC-19/22/26); README gets the 'Reejecución' paragraph (AC-20). Commits are Spanish Conventional Commits with no Co-Authored-By or AI attribution."
+    files:
+      - docs/STATUS.md
+      - docs/plan/fase-a-6-empaquetado-cli.md
+      - README.md
+risks:
+  - "Spec file:line references checked at 141df60. Exact: estado_de_celula.rs:73-98, comandos.rs:296-300/430/462, cliente.rs:111/128, ciclo_de_vida.rs:239-240/985, tests/cliente_docker.rs:57-74. comandos.rs:705-728 is inside the DISC block (699-729). The spec's ciclo_de_vida.rs:967-973 has drifted: the preparar_reemparejamiento best-effort warning is at 963-970, and that is where this blueprint points."
+  - "The spec's original scope list omitted tests/ciclo_de_vida.rs. The amended constraint adds it together with tests/comun/mod.rs. D2 and the partial terminate change every direct retirar call site there (new avisar argument and return type)."
+  - "The unnamed criterion 'existing tests continue to pass' cannot hold literally. D1, D2, D3 and the partial terminate invert six existing tests, which must be rewritten, not deleted, keeping their no-write and no-extra-request guards: comandos.rs 801-819 and 1038-1083; ciclo_de_vida.rs 487-525 (CelulaPausada), 528-558 (missing sidecar) and 592-650 (close failure); reemparejamiento.rs 1381-1449. Three more change mechanically: ciclo_de_vida.rs 456-485 (core 404 now also inspects the sidecar), the comandos.rs terminate dispatch test (stderr now carries the volume line), and five resume tests in reemparejamiento.rs (the GET /admin/sesion probe is prepended)."
+  - "AC-18 wording mismatch: guion_de_sonda loops wget and exits 1 on an unreachable target, which maps to NoListo and is already covered. The plan's gap is Disponibilidad::Inalcanzable, so the new test drives it through a sibling create 500."
+  - "AC-17: DISC-05 fires only when there is no store row (comandos.rs:726), so the fixture seeds none."
+  - "Coordinator premise mismatch (conclusion unaffected): deploy/cell.compose.yml:221-222 DOES set name: ${HEXCELL_VOLUMEN_CELULA} for the data volume. The name is operator-set per cell, not derived from --id, and not kept in the store, so convention-based derivation stays forbidden."
+  - "Human-chosen residual risk: the volume name is resolved ONLY from the core inspection (AC-22/AC-25), although the sidecar mounts the same volume at /var/lib/hexcell (deploy/cell.compose.yml:195-196) and its Mounts would also carry the name. Resolving from the sidecar would shrink the orphan-volume case; it is left out by decision."
+  - "The coordinator's partial-terminate text mentions skipping the 'send pause'. terminate has no send-pause step today (only rebind does), and none is added; the skip rule applies to the session close only."
+  - "D2 and partial-terminate choices a reviewer may veto: the persisted motivo stays sesion_cerrada even when the close was skipped or failed, because a new motivo would touch almacen_plano_de_control.rs, which is out of scope. 'sesión cerrada' prints on stdout only when the close succeeded. The row-with-nothing-left case prints nothing on stdout."
+  - "D3 edge accepted by the human decision: activa on resume counts as pairing confirmation, so a cell stuck at steps 5-6 whose old session is still activa is confirmed without re-pairing. A failed session probe aborts with Fallo instead of guessing."
+  - "Docker-paused (frozen) containers are unpaused before stopping in retirar, completar_retiro and reconciliar_pausa alike, through one predicate. hexcell's own pause leaves containers exited, not paused."
+  - "D4 dead-code trap: no production caller passes Some after the merge, so SEGUNDOS_DE_GRACIA must go, or clippy -D warnings fails. Tests use the literal Some(30) and '?t=30'."
+  - "Removing the CierreDeSesionFallido and CelulaPausada variants changes a pub enum of the hexcell-admin lib. Its only consumers are the crate's own bin and tests, which is consistent with public_api=false."
+  - "Parallel HEX-088 (runbook) edits README's CLI manual intro and plan task 21, so textual merge conflicts are possible. Its terminate section must cover the post-HEX-087 behavior; AC-22 points operators at its «fallos habituales»."
+  - "Quorum locator divergence: the task directory is HEX-087-new-spec while the worktree and branch are HEX-087. Align them before fleet dispatch."
+  - "failure-lookup found no overlapping failed task, and the HSME advisory search returned no relevant memories. Phase 1b external summarization was replaced by targeted direct reads because exact file:line validation was mandated."

@@ -1,0 +1,248 @@
+task_id: HEX-082-b
+parent_task: HEX-082
+depends_on:
+  - HEX-082-a
+risk: high
+summary: >-
+  CLI side of HEX-082: the real six-step destructive `cell terminate` sequence in hexcell-admin, its
+  four mandatory Docker-double tests, and every documentation deliverable of the parent task.
+goal: >
+  Replace the NoImplementadoTodavia stub of `cell terminate --id <id> --confirmar [--simular]` with
+  the real, strictly ordered, abort-on-first-failure sequence, using the
+  `POST /admin/sesion/cierre` route that sibling HEX-082-a has already merged. In
+  crates/hexcell-admin/src/ciclo_de_vida.rs: (1) inspect the nucleo container and THEN the sidecar
+  container, failing with "celula no encontrada" if either is missing and with the exact literal
+  "la celula esta pausada: ejecute cell unpause antes de cell terminate" if the nucleo is not
+  running; (2) resolve from that same inspect the volume name (the Mounts[] entry whose Destination
+  is /var/lib/hexcell, field Name - never by convention), the network from
+  NetworkSettings.Networks and the admin port from HEXCELL_DIRECCION_ADMIN inside Config.Env;
+  (3) POST the session close from an alpine:3 SIBLING container inside the cell network with
+  `wget -q -O - --post-data ''`, reusing DatosDeSondeo and a NEW single-shot script beside
+  guion_de_sonda, aborting and destroying NOTHING if that container exits non-zero; (4) stop the
+  sidecar and THEN the nucleo, reusing the same no-deadline stop operation `cell pause` already uses
+  through a common function extracted in ciclo_de_vida.rs; (5) remove the sidecar container, remove
+  the nucleo container, remove the volume resolved in step 2; (6) print exactly three stdout lines
+  and exit Exito=0. In crates/hexcell-admin/src/comandos.rs the Retirar arm moves to the effectful
+  group with a SINGLE-LINE edit per existing match arm and no reordering. This child also owns
+  every documentation deliverable of HEX-082 and is therefore the LAST of the two children to merge.
+invariants:
+  - A volume is never removed while the channel session is still bound to it; the session-close step
+    must succeed before any container or volume is touched.
+  - The terminate sequence aborts at the first failing step with exit code Fallo=1 and a diagnostic
+    on the diagnostic sink; no step after the failure point runs.
+  - >-
+    If the core container is not in `running` state, terminate aborts immediately with the exact
+    literal message "la célula está pausada: ejecute cell unpause antes de cell terminate" and
+    starts nothing.
+  - The volume name used for removal always comes from `docker inspect` (Mounts[].Name) of the core
+    container, never derived by naming convention, container id or `--id`.
+  - >-
+    The CLI never opens a direct IPC connection to the sidecar (per D-57) and never opens any
+    network connection of its own to the core; it always reaches the core over HTTP through a
+    sibling container in the cell's network, the same pattern used by `cell unpause`'s readiness
+    probe. No file under crates/hexcell-admin may name orden_cierre_de_sesion,
+    acuse_cierre_de_sesion, sidecar.sock or HEXCELL_SOCKET_IPC.
+  - Exit codes are limited to the existing set (Exito=0, Fallo=1, UsoIncorrecto=2,
+    NoImplementadoTodavia=3); no new exit code is introduced.
+  - No new CLI flag is introduced beyond what already exists for `cell terminate`.
+acceptance:
+  - id: AC-1
+    statement: >
+      `cell terminate --id X --confirmar` executes the six-step sequence in strict order:
+      (1) inspect both containers, (2) read the volume name from the core's docker inspect
+      Mounts[].Name, (3) POST /admin/sesion/cierre via a sibling container, (4) stop sidecar then
+      core reusing the same no-deadline stop operation used by `cell pause`, (5) remove sidecar
+      container, remove core container, remove the volume from step 2, (6) print three stdout lines
+      and exit Exito=0.
+    given: a cell with both containers running and a session bound
+    when: the operator runs `cell terminate --id X --confirmar`
+    then: >
+      Docker requests occur in exactly this order, asserted as POSITIONS in the received sequence
+      and never as independent presence checks: inspect core, inspect sidecar, create+start+wait
+      sibling probe container (and its own removal), stop sidecar, stop core, remove sidecar
+      container, remove core container, remove volume; stdout prints exactly the three lines
+      "sesión cerrada", "contenedores eliminados", "volumen <nombre> eliminado" - and NOT the
+      generic "cell ... completado" line of pause/unpause - and the process exits 0. The probe URL
+      host is the core container name, its port comes from HEXCELL_DIRECCION_ADMIN in Config.Env
+      (fixture port distinct from both the 8082 production default and the 9099 of the existing
+      unpause fixture) and its network comes from NetworkSettings.Networks; the probe Cmd is the
+      single-shot close script carrying `--post-data` and the path `/admin/sesion/cierre`, not the
+      retry loop of guion_de_sonda.
+  - id: AC-2
+    statement: Step 1 aborts before any other Docker call if either container does not exist.
+    given: an --id that does not resolve to an existing core or sidecar container
+    when: the operator runs `cell terminate --id X --confirmar`
+    then: >
+      the command fails with "celula no encontrada" on the diagnostic sink, exit code Fallo=1, and
+      no request beyond the existence check reaches the fake daemon, proven with a finite
+      recv_timeout so that a missing abort turns the test red instead of hanging it (idempotence
+      handling is explicitly out of scope, task 15).
+  - id: AC-3
+    statement: >
+      Step 1 aborts with the exact literal pause message if the core container is not in `running`
+      state, without starting anything.
+    given: a cell whose core container is `exited` (paused via `cell pause`)
+    when: the operator runs `cell terminate --id X --confirmar`
+    then: >
+      the diagnostic sink carries exactly "la célula está pausada: ejecute cell unpause antes de
+      cell terminate", exit code is Fallo=1, and no start, stop, rm, create, wait or POST request
+      follows the state check.
+  - id: AC-4
+    statement: >
+      The volume name used in step 5 is read from `docker inspect`'s Mounts[].Name for the core
+      container's /var/lib/hexcell mount, never derived from the container id or a naming
+      convention, and the mount-point literal is hardcoded in exactly one place.
+    given: >
+      a core container whose mounted volume name is derivable from neither the --id nor the
+      container id (the fixture name must be chosen so that any convention-derived name turns the
+      test red)
+    when: terminate reaches step 2 and later step 5
+    then: the volume removal request targets the exact name read from Mounts[].Name in step 2.
+  - id: AC-5
+    statement: >
+      If the sibling probe container that issues the session-close POST exits with a non-zero code
+      (session-close failed or timed out), terminate aborts before any stop/rm request and destroys
+      nothing.
+    given: the core route answers 502 or 504, so the probe container exits non-zero
+    when: terminate reaches step 3
+    then: >
+      the command reports Fallo=1 with a diagnostic, and the ONLY removal issued is the probe
+      container's own cleanup - which happens on the failure path too - while no stop, no cell
+      container removal and no volume removal reaches the daemon. This is the failure the task
+      exists to prevent.
+  - id: AC-6
+    statement: >
+      Steps 4-5 reuse the same no-deadline stop operation already used by `cell pause` (sidecar
+      first, then core) through a common function extracted inside ciclo_de_vida.rs that `pausar`
+      also calls, rather than duplicating the sequence; containers are removed with
+      eliminar_contenedor and the volume with eliminar_volumen, consuming the existing Docker client
+      operations WITHOUT modifying crates/hexcell-admin/src/docker/cliente.rs (merging the two stop
+      operations is task 15). No `t` parameter is passed and detener_contenedor with t=30 is not used.
+  - id: AC-9
+    statement: >
+      The hexcell-admin test suite (tests/comandos.rs, tests/ciclo_de_vida.rs) covers, against the
+      temporary Unix-socket Docker double already in tests/comun/mod.rs - which is NOT modified and
+      to which no variant is added, and with no FakeDocker type introduced - all four mandatory
+      cases: (a) exact Docker request order for a full successful run, asserted by position;
+      (b) a sibling probe container exiting non-zero emits no subsequent stop or cell-container or
+      volume removal; (c) a core container in `exited` state yields Fallo and no request after the
+      state check; (d) the removed volume name comes from the inspect response, not from any
+      id-derived or conventional name. tests/comandos.rs additionally proves that
+      `cell terminate --id X --confirmar` dispatches into the terminate path while
+      `cell terminate --simular` still short-circuits with Exito=0 opening no socket, and that
+      rebind, list and status still return NoImplementadoTodavia=3.
+  - id: AC-10
+    statement: >
+      Plan and README documentation deliverables land append-only or as exact-literal replacement,
+      and this child owns ALL of them because it merges last: (1) a closing paragraph
+      "**Cerrada el 2026-MM-DD con HEX-082.**" appended to task 12's entry in
+      docs/plan/fase-a-6-empaquetado-cli.md stating that the terminate target state is `Retirada`
+      with motivo `sesion_cerrada` and is NOT persisted here (task 14 creates the store), and
+      mentioning the admin-surface change of ratification R1 (the cell template now exposes the
+      admin listener on the cell's internal network); (2) one sentence appended to task 14's
+      2026-09-21 note: "también persiste `Retirada` con motivo `sesion_cerrada` tras
+      `cell terminate` (tarea 12)"; (3) a written follow-up in task 15 for a forced-terminate
+      variant covering already-banned devices with no session to close, with no new flag; (4) a new
+      bullet at the end of the execution chain, RE-READING the chain currently on disk and
+      recomputing it; (5) a sentence appended to the README CLI status line saying `cell terminate`
+      is real as of HEX-082 - including the admin-surface note - while rebind, list and status still
+      return exit code 3.
+    given: the branch just before merge
+    when: '`git diff main...HEAD -- docs README.md | grep "^-"` is run'
+    then: no deleted line appears other than an exact literal being replaced.
+  - All verification commands pass cleanly (cargo fmt --check, cargo clippy --workspace -D warnings,
+    cargo test --workspace, and cd sidecar && go vet ./... && go test ./... -count=1), and every new
+    test is demonstrated RED under a hand-applied mutation before being restored green, with the
+    mutation and the exact test that turned red written into the report.
+non_goals:
+  - >-
+    The core side of HEX-082 - the `POST /admin/sesion/cierre` route, its channel-agnostic seam, the
+    whatsmeow session handle with `motivo`, the simulated-channel close policy and the
+    HEXCELL_DIRECCION_ADMIN line in deploy/cell.compose.yml - which is sibling HEX-082-a and merges
+    FIRST. This child touches no file under crates/hexcell/, crates/hexcell-canal-whatsmeow/,
+    crates/hexcell-canal-simulado/ or deploy/.
+  - The end-to-end smoke test of terminate over a simulated cell, which the parent HEX-082 runs after
+    both children are merged.
+  - Idempotent re-execution of `cell terminate` after a partial failure, or any detection of where a
+    previous run stopped (owned by task 15).
+  - Persisting the `Retirada` state with motivo `sesion_cerrada` to a control-plane store (owned by
+    task 14, which creates that store).
+  - Implementing a forced-terminate variant for banned devices; it is only WRITTEN as a follow-up in
+    task 15, with no new flag.
+  - Merging detener_contenedor with detener_contenedor_sin_plazo inside the Docker client (task 15).
+  - Any new CLI flag beyond the existing `--id`, `--confirmar`, `--simular` for `terminate`, any new
+    subcommand, and any new process exit code.
+  - Any change to the core<->sidecar IPC protocol or wire format, or to any Cargo.toml / Cargo.lock.
+constraints:
+  - >-
+    FORBIDDEN PATHS (inherited, must appear verbatim in this child's 02-contract forbid list):
+    sidecar/**, docs/protocolo-ipc-nucleo-sidecar.md, crates/hexcell-admin/src/docker/cliente.rs,
+    and the state transition table in crates/hexcell-admin/src/estado_de_celula.rs. Additionally for
+    this child: crates/hexcell/**, crates/hexcell-core/**, crates/hexcell-canal-whatsmeow/**,
+    crates/hexcell-canal-simulado/**, crates/hexcell-canal-contrato/**, deploy/**,
+    crates/hexcell-admin/src/argumentos.rs, crates/hexcell-admin/src/codigo_de_salida.rs,
+    crates/hexcell-admin/tests/comun/mod.rs, docs/adr/**, docs/bitacora-de-descartes.md, and every
+    Cargo.toml / Cargo.lock.
+  - >-
+    PRODUCTION TOUCH LIST IS EXACTLY TWO FILES and pinning it is what keeps this child inside the
+    fleet: crates/hexcell-admin/src/ciclo_de_vida.rs and crates/hexcell-admin/src/comandos.rs. The
+    cut in .agents/policies/complexity.yaml is l_max_files=5, so at most five production files may
+    ever be counted; the test files (crates/hexcell-admin/tests/ciclo_de_vida.rs,
+    crates/hexcell-admin/tests/comandos.rs) and the documentation files
+    (docs/plan/fase-a-6-empaquetado-cli.md, README.md) are NOT counted, but the blueprint must still
+    pass the policy's noncounted_globs in the complexity-score request or they will be.
+  - >-
+    The blueprint declares migration=false, public_api=false and schema_change=false. Justification,
+    so it is not silently flipped: no versioned or externally consumed contract changes here - the
+    CLI flags, the subcommand set and the exit codes are unchanged and explicitly forbidden, and
+    `terminate` was already parsed by argumentos.rs. Any of those flags set true forces band L
+    regardless of file count.
+  - >-
+    VERIFY COMMANDS, fast and deterministic only: `cargo fmt --check`;
+    `cargo clippy --workspace -- -D warnings`; `cargo test --workspace`;
+    `(cd sidecar && go vet ./... && go test ./... -count=1)`. Absolutely no test may hit a real
+    Docker daemon, a real container, the network or a real sidecar: the whole CLI half is verified
+    over the fake Unix-socket daemon of crates/hexcell-admin/tests/comun/mod.rs, whose existing
+    scripted responses already cover 200, 201, 204, 304, 404 and silence.
+  - >-
+    MUTATION-PROVABILITY IS A HARD GATE. Request order is asserted over POSITIONS in the received
+    sequence, never with independent presence assertions that would also pass with the order
+    inverted; no test file imports the production constant it pins (port, deadline, cadence); the
+    fixture volume name is derivable from neither the --id nor the container id; the fixture admin
+    port is neither 8082 nor 9099; no wait is a blind join - a finite recv_timeout is used so a
+    missing request turns the test red instead of hanging it; no assertion may move both of its
+    sides under mutation; and no guard may collapse distinct values through output formatting. Each
+    new test is hand-broken once and the exact test that turned red is named in the report.
+  - >-
+    New hexcell-admin tests live under crates/hexcell-admin/tests/ with descriptive snake_case
+    names, using the existing temporary Unix-socket Docker double in tests/comun/mod.rs unmodified;
+    no FakeDocker type is introduced.
+  - >-
+    `--simular` remains exclusively an argument-parser concern that short-circuits before any Docker
+    call and before any ClienteDocker is constructed; terminate's real behaviour is never gated
+    behind it in the business logic. `comandos::ejecutar` keeps its current signature and body.
+  - >-
+    Three parallel tasks (12, 14, 23) touch the command match in comandos.rs; this task's change is
+    a SINGLE LINE in each of the two existing arms, with no reordering of any arm, and the branch is
+    rebased onto main before merge.
+  - >-
+    DOCUMENTATION IS APPEND-ONLY OR EXACT-LITERAL REPLACEMENT. This child adds NO ADR and NO
+    bitacora entry: D-57 already decided the CLI -> core -> sidecar route, and ratification R1 is
+    explicit that keeping loopback as the binary default is not a discarded technique. If a genuine
+    new discard appears during implementation, STOP and escalate instead of adding it silently. ADR
+    and bitacora numbers, if they were ever needed, are read from disk AT COMMIT TIME because
+    sibling branches run in parallel. Dates written into documentation are absolute, never relative.
+  - >-
+    This child depends on HEX-082-a and merges LAST. It does not compile against the sibling's code
+    - it only POSTs the path string - but its README and plan claims are only true once the route
+    exists, and the admin-surface change must land with the route that justifies it.
+  - All repository content produced (identifiers, comments, doc comments, operator messages,
+    documentation) is in Spanish, as CLAUDE.md fixes; only the CLI wire names (cell, terminate,
+    pause, unpause) and the flags --id, --confirmar, --simular stay as docs/PRD.md and README.md fix
+    them. The commit message is a Spanish conventional commit with NO AI attribution line of any
+    kind - no Co-Authored-By, no Generated with, no Claude-Session.
+  - >-
+    No production path may end in panic, unwrap, expect, out-of-range indexing or
+    std::process::exit: the release profile sets panic = "abort". Readable output goes ONLY to the
+    standard sink and diagnostics ONLY to the diagnostic sink, through Salida: no println!,
+    eprintln!, print! or write! against the process streams anywhere in crates/hexcell-admin.

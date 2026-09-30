@@ -1,0 +1,3 @@
+entries: []
+summary: 'Add "reporte tokens" to hexcell-admin: read-only VACUUM INTO copy aggregation of consumo_por_conversacion, optional resuelta_ms period window.'
+task_id: HEX-084

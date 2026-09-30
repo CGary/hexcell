@@ -1,0 +1,32 @@
+{
+  "commands": [
+    {
+      "command": "cargo build -p hexcell-admin --quiet",
+      "duration_s": 0.041,
+      "exit_code": 0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "verify hexcell-admin invocations in runbook (23 total)",
+      "duration_s": 0.108,
+      "exit_code": 0,
+      "output_excerpt": "OK: ninguna invocacion de hexcell-admin en docs/runbook-operacion.md devolvio codigo 2 (24 ejecutadas)"
+    },
+    {
+      "command": "verify no forbidden content (proxy, VPN, jitter, etc.)",
+      "duration_s": 0.009,
+      "exit_code": 0,
+      "output_excerpt": "OK: sin contenido prohibido ni digitos largos"
+    },
+    {
+      "command": "verify no deletions in README.md and docs/plan/fase-a-6-empaquetado-cli.md",
+      "duration_s": 0.004,
+      "exit_code": 0,
+      "output_excerpt": "OK: 0 lineas borradas en README.md y docs/plan/fase-a-6-empaquetado-cli.md"
+    }
+  ],
+  "executed_at": "2026-09-24T00:00:00Z",
+  "overall_result": "passed",
+  "summary": "Fast verification passed for all contract commands.",
+  "task_id": "HEX-088"
+}

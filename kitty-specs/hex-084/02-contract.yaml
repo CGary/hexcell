@@ -1,0 +1,138 @@
+acceptance:
+  human_gate: true
+execution:
+  branch: ai/HEX-084
+  mode: worktree_edit
+forbid:
+  behaviors:
+  - 'Do NOT touch sidecar/, docs/protocolo-ipc-nucleo-sidecar.md, or crates/hexcell-admin/src/docker/cliente.rs
+    (stop-merge is reserved for sibling task 15). Do NOT touch the state transition table in crates/hexcell-admin/src/estado_de_celula.rs.
+    Do NOT touch the `match invocacion.subcomando()` block inside crates/hexcell-admin/src/comandos.rs::ejecutar_con_efectos,
+    nor any of the six existing Subcomando variants or their Display/nombre_en_cli mappings: those belong
+    to sibling tasks 12/13/14/15. The only allowed new dispatch path in comandos.rs is the ONE new Comando::ReporteTokens
+    branch and the minimal exhaustiveness fixups it forces (see 01-blueprint.yaml step 4).'
+  - 'Do NOT introduce a new exit code. Map exactly as the spec requires: argument-shape failures (unknown
+    group/subcommand, missing/malformed --celula/--copia/--desde/--hasta, the sessions.db/-wal/-shm basename
+    check) to UsoIncorrecto=2; a --copia that cannot be opened as SQLite or lacks the schema the query
+    needs to Fallo=1; success to Exito=0; NoImplementadoTodavia=3 is never used by this command since
+    it delivers real behavior, not a skeleton.'
+  - Do NOT open crates/hexcell-admin/src/reporte_de_consumo.rs's Connection to --copia with anything other
+    than rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY combined with SQLITE_OPEN_NO_MUTEX (the same flags
+    crates/hexcell-storage/src/pools.rs and crates/hexcell-storage/src/respaldo.rs already use for read-only
+    access). Do NOT add SQLITE_OPEN_READ_WRITE or SQLITE_OPEN_CREATE anywhere in this module.
+  - 'Do NOT rename the consumption unit anywhere in code, output, or docs: it is "unidades" everywhere,
+    never "tokens" except in the CLI group name "reporte tokens" itself (which the spec fixes verbatim)
+    and in prose that explains the report is about token spend.'
+  - 'Do NOT hand-write a SECOND copy of the consumo_por_conversacion aggregation formula for the unfiltered
+    case that differs from the period-filtered one. Both AC-1 (no period) and AC-2 (period) must run through
+    the SAME parameterized SQL statement in reporte_de_consumo.rs, with NULL-bindable resuelta_ms bounds,
+    exactly as 01-blueprint.yaml step 3 specifies. Do NOT call hexcell_storage::presupuesto::RepositorioDeSesiones::consumo_por_conversacion()
+    or the consumo_por_conversacion VIEW from production code: hexcell-storage is a dev-dependency only,
+    reachable from tests, never from crates/hexcell-admin/src/*.'
+  - 'Do NOT add hexcell-storage or hexcell-core under [dependencies] in crates/hexcell-admin/Cargo.toml;
+    both belong under [dev-dependencies] only. Do NOT modify crates/hexcell-storage/Cargo.toml, crates/hexcell-storage''s
+    migrations, or crates/hexcell-core in any way: this task reads their public API, never their schema
+    or dependency list. Do NOT change the rusqlite version (must stay 0.39, workspace-pinned) or add any
+    date/time crate (chrono, time, jiff): the AAAA-MM-DD parser is hand-written, per D-53''s precedent
+    against pulling in CLI/parsing dependencies for this crate.'
+  - Do NOT let --simular open, stat, or otherwise touch the path in --copia in any code path, including
+    a nonexistent one, and do NOT let it skip the --copia basename/suffix or --desde/--hasta format validation,
+    which run unconditionally inside argument analysis before --simular is ever consulted (AC-3/AC-4/AC-5
+    must all hold simultaneously).
+  - 'Do NOT change the exact rejection message for AC-3: the string must be byte-for-byte ''el reporte
+    sólo lee copias VACUUM INTO, nunca sessions.db'', produced by a dedicated fixed Display arm, not composed
+    at the call site.'
+  - 'Do NOT reorder, delete, or rewrite any existing line in README.md or docs/plan/fase-a-6-empaquetado-cli.md:
+    both edits are pure appends (a new CLI entry, a new "**Cerrada el AAAA-MM-DD con HEX-084.**" line
+    and one new "## Orden de ejecución" bullet). `git diff -- docs README.md | grep ''^-''` must show
+    no deleted lines. Re-read docs/plan/fase-a-6-empaquetado-cli.md''s current chain from disk before
+    writing the new bullet; do not copy 01-blueprint.yaml''s snapshot verbatim if the file has moved on.'
+  - 'Do NOT write a new ADR or a new docs/bitacora-de-descartes.md entry: 00-spec.yaml''s non_goals explicitly
+    reserve the non-implemented "structured logs" alternative for the plan''s task 23 closing paragraph,
+    not a bitacora discard, and the data-source decision is already settled by adr-0024.'
+  - Do NOT write English identifiers, comments, log/error/CLI-output strings, docs, or commit messages.
+    Conventional commits in Spanish, no AI attribution (no Co-Authored-By line).
+  - 'No entra NINGUN paquete nuevo al arbol externo. La invariante es sobre el arbol, no sobre el archivo:
+    declarar rusqlite en crates/hexcell-admin reescribe por fuerza la entrada [[package]] de ese crate
+    en Cargo.lock, asi que prohibir el archivo volvia imposible lo que el contrato manda hacer (leccion
+    de HEX-073). La guarda real es que `git diff main...HEAD -- Cargo.lock | grep -cE ''^\+\[\[package\]\]''`
+    sea 0. El Cargo.toml raiz y crates/hexcell-storage/Cargo.toml siguen intocables; crates/hexcell-admin/Cargo.toml
+    no, porque el blueprint manda agregarle rusqlite y hexcell-storage como dev-dependency.'
+  files:
+  - sidecar/**
+  - docs/protocolo-ipc-nucleo-sidecar.md
+  - crates/hexcell-admin/src/docker/cliente.rs
+  - crates/hexcell-admin/src/estado_de_celula.rs
+  - crates/hexcell-admin/src/main.rs
+  - crates/hexcell-admin/src/codigo_de_salida.rs
+  - crates/hexcell-admin/src/salida.rs
+  - crates/hexcell-storage/src/presupuesto.rs
+  - crates/hexcell-storage/src/lib.rs
+  - crates/hexcell-storage/migraciones/**
+  - crates/hexcell-storage/Cargo.toml
+  - crates/hexcell-core/** - docs/adr/**
+  - docs/bitacora-de-descartes.md
+  - docs/STATUS.md
+  - deploy/**
+  - .github/workflows/ci.yml
+goal: 'Implement plan task 23 of stage A-6: an operator-facing per-cell token-consumption report in hexcell-admin
+  that reads only a VACUUM INTO copy of sessions.db, never the hot database, reusing the exact consumo_por_conversacion
+  formula from migration 0004 for both the unfiltered and the resuelta_ms period-filtered case. Traceability:
+  FR-14.'
+limits:
+  max_diff_lines: 1450
+  max_files_changed: 11
+  per_class:
+  - glob: crates/hexcell-admin/tests/reporte_de_consumo.rs
+    max_diff_lines: 420
+read:
+- .ai/tasks/active/HEX-084-new-spec/00-spec.yaml
+- .ai/tasks/active/HEX-084-new-spec/01-blueprint.yaml
+- crates/hexcell-admin/src/argumentos.rs
+- crates/hexcell-admin/src/comandos.rs
+- crates/hexcell-admin/src/codigo_de_salida.rs
+- crates/hexcell-admin/src/salida.rs
+- crates/hexcell-admin/src/estado_de_celula.rs
+- crates/hexcell-admin/src/lib.rs
+- crates/hexcell-admin/src/main.rs
+- crates/hexcell-admin/tests/argumentos.rs
+- crates/hexcell-admin/tests/comandos.rs
+- crates/hexcell-admin/tests/comun/mod.rs
+- crates/hexcell-storage/src/presupuesto.rs
+- crates/hexcell-storage/src/respaldo.rs
+- crates/hexcell-storage/src/pools.rs
+- crates/hexcell-storage/src/tiempo.rs
+- crates/hexcell-storage/src/lib.rs
+- crates/hexcell-storage/migraciones/sesiones/0004-reservas-sin-conversacion.sql
+- crates/hexcell-storage/tests/presupuesto.rs
+- crates/hexcell-core/src/presupuesto.rs
+- crates/hexcell-core/src/identidad.rs
+- docs/plan/fase-a-6-empaquetado-cli.md
+- docs/bitacora-de-descartes.md
+- docs/STATUS.md
+- README.md
+retry_policy:
+  escalate_after: 1
+  max_attempts: 2
+summary: 'Add "reporte tokens" to hexcell-admin: read-only VACUUM INTO copy aggregation of consumo_por_conversacion,
+  optional resuelta_ms period window.'
+task_id: HEX-084
+touch:
+- crates/hexcell-admin/src/argumentos.rs
+- crates/hexcell-admin/src/comandos.rs
+- crates/hexcell-admin/src/reporte_de_consumo.rs
+- crates/hexcell-admin/src/lib.rs
+- crates/hexcell-admin/Cargo.toml
+- crates/hexcell-admin/tests/reporte_de_consumo.rs
+- crates/hexcell-admin/tests/argumentos.rs
+- crates/hexcell-admin/tests/comandos.rs
+- README.md
+- docs/plan/fase-a-6-empaquetado-cli.md
+- Cargo.lock
+verify:
+  commands:
+  - cargo fmt --check
+  - cargo clippy --workspace -- -D warnings
+  - cargo test --workspace
+  - cd sidecar && go vet ./... && go test ./... -count=1
+  - bash -c 'test "$(git diff main...HEAD -- Cargo.lock | grep -cE "^\+\[\[package\]\]")" = 0'

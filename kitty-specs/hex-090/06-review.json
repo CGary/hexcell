@@ -1,0 +1,21 @@
+{
+  "task_id": "HEX-090",
+  "summary": "Both fix_tasks of the previous review applied exactly in dd0858b (guard restored with commented per-item allow; plan note 38->39); nothing else changed. Approve.",
+  "verdict": "approve",
+  "contract_compliance": true,
+  "forbidden_files_touched": [],
+  "unrequested_refactor": false,
+  "missing_tests": [],
+  "functional_risk": "low",
+  "notes": [
+    "Re-review after fix loop: branch ai/HEX-090-new-spec = f673d65 (fleet implement) + dd0858b (internal fix). Scope of this pass: verify both fix_tasks and that dd0858b introduces nothing else. External pre-read not repeated (first pass: cell opencode-go/mimo-v2.5 timed out at 300 s, 0 findings).",
+    "contract-check on the cumulative diff main...HEAD (22 files, +109/-118): ok=true, violations=[]; not_checked: forbid.behaviors (reviewed by hand). acceptance-coverage unchanged from first pass: status=pass, AC-1..AC-7 covered.",
+    "05-validation.json regenerated 2026-09-30T05:52:45Z after dd0858b: overall_result=passed, all 7 verify commands exit 0; cargo test 704/0/6/93 identical to baseline; ci.yml mutations M1/M2 detected; CLAUDE.md mutation detected; scope+allow-comment guard ok; plan guard reports N=39 M=19.",
+    "fix_task 1 verified: dd0858b touches only argumentos.rs and the plan file. Cumulative diff of crates/hexcell-admin/tests/argumentos.rs against main is exactly 4 added lines (a three-line Spanish comment explaining the deliberate exhaustiveness guard and `#[allow(clippy::needless_match)]` on the fn item) and zero deletions: the identity match over the six Subcomando variants is byte-identical to main and the original doc comment is true again. Per-item allow with comment on the preceding line satisfies spec invariant 2 / AC-3; no `#![allow` added; clippy --all-targets -D warnings exits 0 with it.",
+    "fix_task 2 verified: the plan note now reads `Deuda saldada el 2026-09-30 con HEX-090: 39 lints en 19 archivos; --all-targets cableado en la CI`, matching the reviewer's measurement on main 9b59ba9 (61 `error:` lines minus 22 `could not compile` = 39 deduplicated diagnostics in 19 files). Cumulative plan diff is still +3/-0 (append-only guard green). Of the 39, 38 are fixed in place and 1 (needless_match) is deliberately allowed with justification, which is the settlement the spec permits.",
+    "dd0858b commit message is Spanish, conventional `fix:` prefix, no AI attribution. Worktree clean, no untracked files outside .ai/.",
+    "All first-pass equivalence findings on the other 18 test files stand unchanged (approx_constant literals not PI-intended, vec!->array only under .iter()/.len(), drop of non-Drop Salida, expect_err, repeat_n, let-chains on edition 2024 / toolchain 1.92.0, collapsed match in estres_conmutacion.rs, `_repo` keeps the store alive, unused imports genuinely unused). ci.yml single hunk @@ -28,2 +28,2 @@; CLAUDE.md one line.",
+    "Residual observation (contract, not implementer): the plan-note guard only checks N >= M, so it cannot catch a wrong N by itself; N was validated by the reviewer's independent measurement."
+  ],
+  "fix_tasks": []
+}

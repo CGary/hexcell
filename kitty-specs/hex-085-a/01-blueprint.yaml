@@ -1,0 +1,227 @@
+task_id: HEX-085-a
+summary: >-
+  Three admin session HTTP routes on a generalized SesionDeCanal registry (D2/D3) plus real
+  whatsmeow pairing in the adapter (D4), narrowed from HEX-085's validated parent blueprint.
+affected_files:
+  - crates/hexcell/src/admin.rs
+  - crates/hexcell/src/main.rs
+  - crates/hexcell/tests/admin_http.rs
+  - crates/hexcell-canal-whatsmeow/src/adaptador.rs
+  - crates/hexcell-canal-whatsmeow/src/lib.rs
+  - crates/hexcell-canal-whatsmeow/tests/emparejamiento.rs
+  - crates/hexcell-canal-whatsmeow/tests/comun/mod.rs
+symbols:
+  - 'hexcell::admin::RutaAdmin::{PausarEnvio, IniciarEmparejamiento, ConsultarSesion} (new variants; POST /admin/envio/pausa, POST /admin/sesion/emparejamiento, GET /admin/sesion)'
+  - 'hexcell::admin::enrutar_admin (three new arms; GET /admin/sesion/cierre and every other pair stay NoEncontrada)'
+  - 'hexcell::admin::SesionDeCanal { ConSesion(OperacionesDeSesion), SinSesion } (generalizes CierreDeSesion at admin.rs:293; the old name is removed, not aliased)'
+  - 'hexcell::admin::OperacionesDeSesion (four type-erased boxed operations: cerrar, pausar_envio, emparejar, estado)'
+  - 'hexcell::admin::RegistroDeSesion = Arc<OnceLock<SesionDeCanal>> (replaces RegistroDeCierreDeSesion at admin.rs:312 and CerradorRegistrado at admin.rs:304)'
+  - 'hexcell::admin value objects AccionDePausa {Pausar, Reanudar}, MetodoSolicitado {Qr, CodigoDeVinculacion}, DesenlaceDePausa {Aplicado, Fallido{motivo}}, DesenlaceDeEmparejamiento {Codigo{metodo, valor, expira_en_ms}, Fallido{motivo}}'
+  - 'hexcell::admin::atender_pausa_de_envio / atender_emparejamiento / atender_consulta_de_sesion (pure async units, deadline injected; atender_cierre_de_sesion at admin.rs:344 keeps its current wire behavior)'
+  - 'hexcell::admin::PlazosDeSesion (cierre 30 s, pausa, emparejamiento 30 s; production defaults only) replacing the plazo_cierre parameter of servir_servicios_http (admin.rs:602), servir_admin (admin.rs:518) and atender_peticion_de_admin (admin.rs:440)'
+  - 'hexcell::admin::MOTIVO_SIN_CONEXION = "sin_conexion" and MOTIVO_YA_EMPAREJADA = "ya_emparejada" (frozen HTTP contract literals)'
+  - 'main.rs composition (crates/hexcell/src/main.rs:281-399): whatsmeow branch builds OperacionesDeSesion from AsaDeSesion clones taken before Motor::nuevo; simulado branch registers SesionDeCanal::SinSesion'
+  - 'hexcell_canal_whatsmeow::adaptador::MetodoDeEmparejamiento { Qr, CodigoDeVinculacion } (+ wire name accessor)'
+  - 'hexcell_canal_whatsmeow::adaptador::InicioDeEmparejamiento { Codigo(CodigoEmparejamiento), Acuse(AcuseEmparejamiento) } (whichever arrives first)'
+  - 'AdaptadorWhatsmeow::iniciar_emparejamiento_con(metodo, plazo) and AsaDeSesion::iniciar_emparejamiento_con(metodo, plazo) over one shared free fn'
+  - 'AsaDeSesion::ordenar_pausa_de_envio(accion, plazo) sharing a free fn with AdaptadorWhatsmeow::ordenar_pausa_de_envio (adaptador.rs:487-536 body moved, not duplicated)'
+  - 'AsaDeSesion (adaptador.rs:1163) gains an emparejamiento_pendiente Arc clone; CicloDeVidaSesion::iniciar_emparejamiento for AdaptadorWhatsmeow (adaptador.rs:1127, TODO(A-3) at line 1128) and AsaDeSesion (adaptador.rs:1270 stub) delegates with Qr'
+  - 'hexcell_canal_whatsmeow lib.rs re-exports AsaDeSesion, MetodoDeEmparejamiento, InicioDeEmparejamiento'
+dependencies:
+  - crates/hexcell-core/src/canal.rs
+  - crates/hexcell/src/emparejar.rs
+  - crates/hexcell/src/lib.rs
+  - crates/hexcell/tests/comun/mod.rs
+  - crates/hexcell/tests/canal_whatsmeow_seleccionado.rs
+  - crates/hexcell-canal-whatsmeow/src/mensajes.rs
+  - crates/hexcell-canal-whatsmeow/src/error.rs
+  - crates/hexcell-canal-whatsmeow/src/reconexion.rs
+  - crates/hexcell-canal-whatsmeow/tests/cierre_de_sesion.rs
+  - docs/protocolo-ipc-nucleo-sidecar.md
+test_scenarios:
+  - statement: >-
+      admin_http.rs, pure unit: atender_pausa_de_envio with SinSesion registered answers 200
+      {"resultado":"canal_sin_sesion"} for both accion values; with ConSesion whose fake pause
+      returns Aplicado it answers 200 {"resultado":"aplicado","accion":"pausar"}; with a fake
+      returning Fallido{motivo:"motivo-distintivo-pausa-7q"} it answers 200 resultado fallido, the
+      echoed accion and that exact motivo.
+    covers:
+      - AC-1
+      - AC-4
+      - AC-16
+  - statement: >-
+      POST /admin/envio/pausa with accion "detener", with a missing accion field and with a
+      non-JSON body answers 400, and the fake pause operation is never invoked (a call counter in
+      the fake stays at zero).
+    covers:
+      - AC-1
+      - AC-16
+  - statement: >-
+      atender_emparejamiento with SinSesion answers 200 {"resultado":"canal_sin_sesion"}; with a
+      fake returning Codigo{metodo:"codigo_de_vinculacion", valor:"ABCD-EFGH",
+      expira_en_ms:1234567} it answers 200 with resultado "codigo" and those three values
+      verbatim; with a fake returning Fallido{motivo:"sin_conexion"} it answers 200 fallido
+      sin_conexion; the metodo the fake receives equals the one in the request body.
+    covers:
+      - AC-2
+      - AC-4
+      - AC-16
+  - statement: >-
+      An invalid metodo ("sms") answers 400 without invoking the fake; a fake that never
+      resolves, with a TEST-supplied deadline of 50 ms (never the 30 s production constant),
+      answers 200 {"resultado":"fallido"} with a non-empty motivo and the test completes in well
+      under a second.
+    covers:
+      - AC-2
+      - AC-16
+  - statement: >-
+      atender_consulta_de_sesion with SinSesion answers 200 {"estado":"canal_sin_sesion"}; with
+      ConSesion whose fake estado returns each of Activa, Reconectando, Desvinculada and Pausada
+      it answers 200 with estado activa, reconectando, desvinculada and pausada respectively
+      (four distinct literals asserted, so collapsing any two turns it red).
+    covers:
+      - AC-3
+      - AC-4
+      - AC-16
+  - statement: >-
+      enrutar_admin maps (POST,/admin/envio/pausa), (POST,/admin/sesion/emparejamiento) and
+      (GET,/admin/sesion) to the three new variants; (GET,/admin/envio/pausa),
+      (GET,/admin/sesion/emparejamiento), (POST,/admin/sesion) and (GET,/admin/sesion/cierre)
+      stay NoEncontrada; the existing ingesta and cierre arms are unchanged.
+    covers:
+      - AC-1
+      - AC-2
+      - AC-3
+  - statement: >-
+      The existing HEX-082 close-route tests keep passing after the rename to
+      SesionDeCanal/RegistroDeSesion (SinSesion 200 completado + motivo canal_sin_sesion,
+      ConSesion ok 200, fallido 502 with the real motivo, 504 on elapsed deadline, 502 when
+      nothing is registered): the generalization does not change the close wire contract.
+    covers:
+      - AC-4
+      - AC-16
+  - statement: >-
+      Through the real binary on the simulado channel: POST /admin/envio/pausa answers 200
+      canal_sin_sesion, POST /admin/sesion/emparejamiento answers 200 canal_sin_sesion and GET
+      /admin/sesion answers 200 {"estado":"canal_sin_sesion"}, proving the three routes are wired
+      into servir_admin and that the simulado branch registers SinSesion.
+    covers:
+      - AC-1
+      - AC-2
+      - AC-3
+      - AC-4
+  - statement: >-
+      Through the real binary on the whatsmeow channel with NO sidecar listening on the socket:
+      POST /admin/envio/pausa {"accion":"pausar"} answers 200 fallido with motivo exactly
+      "sin_conexion" and GET /admin/sesion answers {"estado":"reconectando"}; this is the only
+      test that covers the main.rs mapping ErrorCanalWhatsmeow::SinConexion -> "sin_conexion" on
+      which the (out-of-scope) CLI retry loops will depend.
+    covers:
+      - AC-1
+      - AC-3
+      - AC-4
+  - statement: >-
+      whatsmeow tests, SidecarSimulado: iniciar_emparejamiento_con(CodigoDeVinculacion, 5 s)
+      writes orden_emparejar with metodo "codigo_de_vinculacion" and version 6, and resolves with
+      InicioDeEmparejamiento::Codigo carrying the exact valor and expira_en_ms the double sent;
+      the same through AsaDeSesion taken from the adapter.
+    covers:
+      - AC-5
+      - AC-16
+  - statement: >-
+      After iniciar_emparejamiento_con returned the first code, the double sends a second code,
+      acuse_emparejamiento completado and estado_sesion activa; estado_actual() reaches Activa
+      within a finite timeout, proving the read loop is not blocked by the returned caller and
+      later events update the state receiver.
+    covers:
+      - AC-5
+      - AC-16
+  - statement: >-
+      Expired path: the double answers acuse_emparejamiento expirado before any code and the
+      call resolves with InicioDeEmparejamiento::Acuse(resultado "expirado"); with no event at
+      all and a 50 ms deadline it resolves Err(EmparejamientoSinAcuse) and a later orphan code
+      does not panic or wedge the loop.
+    covers:
+      - AC-5
+      - AC-16
+  - statement: >-
+      No-connection path: with no IPC connection established iniciar_emparejamiento_con returns
+      Err(SinConexion) without writing anything; the trait method
+      CicloDeVidaSesion::iniciar_emparejamiento sends metodo "qr" and maps a received code to
+      Emparejamiento::CodigoQr(valor).
+    covers:
+      - AC-5
+      - AC-16
+strategy:
+  - step: 1
+    action: >-
+      Value objects + application services on the core admin surface (admin.rs). Rename
+      CierreDeSesion -> SesionDeCanal {ConSesion(OperacionesDeSesion), SinSesion} and
+      RegistroDeCierreDeSesion -> RegistroDeSesion (Arc<OnceLock<..>>); OperacionesDeSesion holds
+      four type-erased boxed operations (cerrar -> Result<(),String>;
+      pausar_envio(AccionDePausa) -> DesenlaceDePausa; emparejar(MetodoSolicitado, plazo) ->
+      DesenlaceDeEmparejamiento; estado() -> hexcell_core::canal::EstadoSesion). admin.rs keeps
+      importing only hexcell_core types and never names hexcell_canal_whatsmeow.
+      atender_cierre_de_sesion keeps its exact current wire behavior (200 completado / 502
+      fallido / 504 ausente / 502 unregistered; SinSesion = 200 completado + motivo
+      canal_sin_sesion). Existing close tests in admin_http.rs are updated mechanically for the
+      rename only.
+    files:
+      - crates/hexcell/src/admin.rs
+      - crates/hexcell/tests/admin_http.rs
+  - step: 2
+    action: >-
+      Three new routes, frozen HTTP contract (D2), no authentication (doc comment states the
+      cell internal network is the boundary, like /admin/ingesta). Pure units
+      atender_pausa_de_envio, atender_emparejamiento, atender_consulta_de_sesion take the
+      registry, the already-read body bytes and an injected deadline. Body is parsed as JSON
+      regardless of Content-Type (busybox wget --post-data sends x-www-form-urlencoded); invalid
+      JSON, missing or unknown accion/metodo -> 400 before any operation runs; body read through
+      acumular_cuerpo_acotado. Every non-400 answer is 200 with resultado/estado in the body;
+      SinSesion -> {"resultado":"canal_sin_sesion"} or {"estado":"canal_sin_sesion"}; nothing
+      registered -> fail closed like the close route (502). Pairing Codigo ->
+      {"resultado":"codigo","metodo","valor","expira_en_ms"} where expira_en_ms is passed through
+      UNCHANGED from the wire (absolute Unix-epoch ms, 0 = unknown); the route deadline is
+      PlazosDeSesion.emparejamiento (30 s) and elapsing it yields 200 fallido. Plumb
+      PlazosDeSesion through atender_peticion_de_admin, servir_admin and servir_servicios_http,
+      which still returns ONE combined future.
+    files:
+      - crates/hexcell/src/admin.rs
+      - crates/hexcell/tests/admin_http.rs
+  - step: 3
+    action: >-
+      Adapter entity work (adaptador.rs, lib.rs). Add MetodoDeEmparejamiento and
+      InicioDeEmparejamiento. Extract a free fn shared by AdaptadorWhatsmeow and AsaDeSesion that
+      registers the emparejamiento_pendiente sender BEFORE writing orden_emparejar, waits for the
+      first event within plazo, returns Codigo on the first code or Acuse on an acuse that
+      arrives first, and on return DROPS its receiver without clearing the slot (the read loop's
+      send on a closed mpsc fails immediately, and the terminal acuse take()s the slot), so later
+      codes, the acuse and estado_sesion never block the read loop. On deadline/closed channel
+      clear the slot and return EmparejamientoSinAcuse; with no writer return SinConexion. Move
+      the body of AdaptadorWhatsmeow::ordenar_pausa_de_envio into a free fn reused by a new
+      AsaDeSesion::ordenar_pausa_de_envio. AsaDeSesion gains an emparejamiento_pendiente Arc clone
+      set by asa_de_sesion(). Both CicloDeVidaSesion::iniciar_emparejamiento impls delegate with
+      Qr and a default plazo, mapping Codigo to Emparejamiento::CodigoQr / CodigoDeVinculacion and
+      an Acuse to Err(ErrorDeProtocolo(motivo)). The existing ordenar_emparejamiento used by
+      hexcell emparejar is untouched. No wire type, no error variant and no VERSION_PROTOCOLO
+      change.
+    files:
+      - crates/hexcell-canal-whatsmeow/src/adaptador.rs
+      - crates/hexcell-canal-whatsmeow/src/lib.rs
+      - crates/hexcell-canal-whatsmeow/tests/emparejamiento.rs
+      - crates/hexcell-canal-whatsmeow/tests/comun/mod.rs
+  - step: 4
+    action: >-
+      Composition root (main.rs). Simulado branch registers SesionDeCanal::SinSesion. Whatsmeow
+      branch takes asa_de_sesion("cell terminate") before Motor::nuevo and builds
+      OperacionesDeSesion from clones: cerrar -> CicloDeVidaSesion::cerrar_sesion; pausar_envio ->
+      AsaDeSesion::ordenar_pausa_de_envio mapping acuse aplicado -> Aplicado, acuse fallido ->
+      Fallido{acuse motivo}, Err(SinConexion) -> Fallido{"sin_conexion"}, other Err ->
+      Fallido{Display}; emparejar -> iniciar_emparejamiento_con mapping Codigo -> Codigo{..},
+      Acuse fallido whose motivo equals the sidecar ErrYaEmparejada text -> Fallido{"ya_emparejada"},
+      other acuse -> Fallido{acuse motivo or resultado}, Err(SinConexion) ->
+      Fallido{"sin_conexion"}; estado -> estado_sesion(). Add the two real-binary wiring tests
+      (simulado and whatsmeow-without-sidecar).
+    files:
+      - crates/hexcell/src/main.rs
+      - crates/hexcell/tests/admin_http.rs

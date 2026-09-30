@@ -1,0 +1,58 @@
+entries:
+    - changed_files:
+        - crates/hexcell-admin/src/ciclo_de_vida.rs
+        - crates/hexcell-admin/src/comandos.rs
+        - crates/hexcell-admin/tests/ciclo_de_vida.rs
+        - crates/hexcell-admin/tests/comandos.rs
+        - docs/plan/fase-a-6-empaquetado-cli.md
+        - README.md
+      notes:
+        - 'Commit 1657977 "feat(admin): implementar cell terminate sobre Docker (tarea 12 de A-6)" sobre ai/HEX-082-b, sin atribucion de IA. Incluye la correccion de un warning dead_code (VOLUMEN_DE_TERMINATE sin usar en tests/comandos.rs, reutilizado en el assert_eq del stdout) detectado por cargo clippy -D warnings antes de la primera corrida verde.'
+        - 'Documentacion verificada append-only: cierre de la tarea 12 en el plan con el parrafo "**Cerrada el 2026-09-22 con HEX-082.**", frase anadida a la nota 2026-09-21 de la tarea 14, seguimiento nuevo en la tarea 15 sobre terminate forzado para dispositivos baneados, y la vineta de cadena de ejecucion recalculada desde el disco (13 -> 14 -> 15 -> 18 -> 23 -> 21 -> 19). README con la frase de actualizacion 2026-09-22.'
+      verify_pending: false
+    - changed_files:
+        - crates/hexcell-admin/tests/ciclo_de_vida.rs
+        - docs/plan/fase-a-6-empaquetado-cli.md
+      notes:
+        - 'Bucle de correccion tras 06-review.json (verdict revise, dos fix_tasks). Commit 0cab225 "fix(admin): asertar el cuerpo de la sonda de cierre y desnombrar la bandera del seguimiento de la tarea 15" sobre ai/HEX-082-b, sin atribucion de IA.'
+        - 'FIX 1 (asertar-cuerpo-de-la-sonda-de-cierre): en retirar_ejecuta_la_secuencia_completa_en_orden_estricto (tests/ciclo_de_vida.rs), la peticion 3 (/containers/create) ahora se parsea como JSON y se comprueban Image ("sonda-de-prueba:1"), HostConfig.NetworkMode ("red-de-retirar") y Cmd (el literal exacto de wget contra http://c1-nucleo:7070/admin/sesion/cierre), todos escritos como literales sin importar constantes de produccion ni llamar a guion_de_cierre_de_sesion, siguiendo el patron de la aserción de cuerpo de reanudar_arranca_inspecciona_crea_la_sonda_y_tiene_exito_con_200_ok.'
+        - 'FIX 2 (seguimiento-tarea-15-sin-nombrar-flag): reescrita la frase del seguimiento 2026-09-22 bajo la tarea 15 en docs/plan/fase-a-6-empaquetado-cli.md; ya no nombra "--forzar" (contradecia "sin anadir una nueva bandera" en la misma oracion y violaba AC-10(3)); ahora describe "una variante forzada del cierre" sin comprometer una superficie de CLI concreta, dejando el mecanismo pendiente de la tarea 15. Reemplazo de literal exacto (la linea es nueva en esta rama), CMD 8 del contrato (guardia de docs) sigue en verde.'
+        - cargo fmt -p hexcell-admin aplicado tras el FIX 1 para colapsar una linea que el formateador exige en una sola (declaracion de `cuerpo`); sin cambios de contenido, solo de formato.
+        - 'Re-corridos los 15 comandos de verificacion del contrato desde el worktree: 15/15 en verde (ver 05-validation.json).'
+      verify_pending: false
+summary: 'Consolidacion HEX-082-b mas bucle de correccion tras review (revise): aserción de cuerpo de la sonda de cierre y seguimiento de la tarea 15 sin nombrar bandera.'
+task_id: HEX-082-b
+tdd_red_runs:
+    - acceptance_id: AC-1
+      command: Invertido el orden sidecar/nucleo en detener_ambos_sin_plazo (ciclo_de_vida.rs, lineas 150-151); cargo test -p hexcell-admin --test ciclo_de_vida retirar_ejecuta_la_secuencia_completa_en_orden_estricto
+      red_exit_code: 101
+    - acceptance_id: AC-5
+      command: '`if codigo != 0` cambiado a `if false && codigo != 0` en retirar (ciclo_de_vida.rs, linea 400), deshabilitando el aborto por fallo de la sonda de cierre; cargo test -p hexcell-admin --test ciclo_de_vida retirar_aborta_sin_destruir_nada_si_la_sonda_de_cierre_falla'
+      red_exit_code: 101
+    - acceptance_id: AC-3
+      command: '`estado != "running"` invertido a `estado == "running"` en retirar (ciclo_de_vida.rs, linea 352); cargo test -p hexcell-admin --test ciclo_de_vida retirar_aborta_con_celula_pausada_si_el_nucleo_no_corre'
+      red_exit_code: 101
+    - acceptance_id: AC-4
+      command: volumen_de_inspeccion(&inspeccion_nucleo)? reemplazado por format!("{}-datos", nombres.nucleo) en retirar (ciclo_de_vida.rs, linea 368), derivando el volumen por convencion del nombre del contenedor; cargo test -p hexcell-admin --test ciclo_de_vida retirar_elimina_el_volumen_leido_de_la_inspeccion_no_uno_derivado_del_id
+      red_exit_code: 101
+    - acceptance_id: AC-3
+      command: Literal exacto del Display de CelulaPausada (ciclo_de_vida.rs, linea 108) mutado de "ejecute cell unpause antes de cell terminate" a "ejecute cell unpause antes de terminar"; cargo test -p hexcell-admin --test ciclo_de_vida retirar_aborta_con_celula_pausada_si_el_nucleo_no_corre
+      red_exit_code: 101
+    - acceptance_id: AC-1
+      command: Linea fija de stdout "contenedores eliminados" mutada a "contenedores borrados" en comandos.rs (linea 178); cargo test -p hexcell-admin --test comandos ejecutar_con_efectos_despacha_terminate_a_ciclo_de_vida
+      red_exit_code: 101
+    - acceptance_id: AC-10
+      command: 'Reescrito el CMD 8 del contrato (guardia de docs) porque el original exigia cero lineas ''-'' en `git diff main...HEAD -- docs README.md`, regla mas estricta que la real del proyecto (append-only O reemplazo de literal exacto, CLAUDE.md y AC-10). Probado por mutacion en un worktree desechable creado desde el commit 1657977 (rama temporal tmp-guard-mutation, eliminada tras la prueba, sin tocar ai/HEX-082-b): MUTACION A, borrado puro sin reemplazo (se elimino la linea de contexto "## Tareas" de docs/plan/fase-a-6-empaquetado-cli.md sin anadir contraparte, confirmado con `git diff --stat` antes de correr la guarda) -> guarda NO CORREGIDA hubiera dado 1 igual (coincidencia, mide solo presencia de ''-''); guarda CORREGIDA da 1 (correcto: no hay linea anadida cuyo prefijo sea "## Tareas").'
+      red_exit_code: 1
+    - acceptance_id: AC-10
+      command: 'MUTACION B sobre el mismo guardia reescrito: se trunco el reemplazo truncando la primera palabra ("Estado ") de la linea de README.md ya extendida por el commit 1657977, de modo que la linea anadida deja de empezar con el contenido exacto de la linea borrada ("Estado (2026-09-14): ..."), confirmado con `git diff --stat` antes de correr la guarda. Guarda CORREGIDA da 1 (correcto: rompe el chequeo de prefijo, ya no es un reemplazo de literal exacto). Mismo worktree desechable que MUTACION A, eliminado tras la prueba.'
+      red_exit_code: 1
+    - acceptance_id: AC-1
+      command: 'FIX 1 (fix_tasks de 06-review.json). En src/ciclo_de_vida.rs linea 374, `cmd: guion_de_cierre_de_sesion(&url)` mutado a `cmd: guion_de_sonda(&url)`. Confirmado con `git diff --stat crates/hexcell-admin/src/ciclo_de_vida.rs` que el archivo cambio (1 insercion, 1 borrado) antes de correr la prueba. cargo test -p hexcell-admin --test ciclo_de_vida retirar_ejecuta_la_secuencia_completa_en_orden_estricto -> rojo: el Cmd capturado es el bucle /bin/sh de guion_de_sonda contra la URL de cierre, distinto del wget directo esperado. Restaurado con `git diff --stat` en cero tras revertir.'
+      red_exit_code: 101
+    - acceptance_id: AC-1
+      command: 'FIX 1, segunda mutacion. En src/ciclo_de_vida.rs linea 371, la ruta de cierre "/admin/sesion/cierre" mutada a "/health/ready" dentro del format! de la URL de la sonda. Confirmado con `git diff --stat` (1 insercion, 1 borrado) antes de correr la prueba. cargo test -p hexcell-admin --test ciclo_de_vida retirar_ejecuta_la_secuencia_completa_en_orden_estricto -> rojo: el Cmd capturado apunta a http://c1-nucleo:7070/health/ready en vez de /admin/sesion/cierre. Restaurado con `git diff --stat` en cero tras revertir.'
+      red_exit_code: 101
+    - acceptance_id: AC-1
+      command: 'FIX 1, tercera mutacion. En src/ciclo_de_vida.rs linea 373, `red,` (campo `red` de OpcionesDeContenedor, tomado de la inspeccion del nucleo) mutado a un valor fijo `red: "red-fija-de-mutacion".to_string(),`. Confirmado con `git diff --stat` (1 insercion, 1 borrado) antes de correr la prueba. cargo test -p hexcell-admin --test ciclo_de_vida retirar_ejecuta_la_secuencia_completa_en_orden_estricto -> rojo: HostConfig.NetworkMode capturado es "red-fija-de-mutacion" en vez de "red-de-retirar". Restaurado con `git diff --stat` en cero tras revertir; las 13 pruebas de tests/ciclo_de_vida.rs vuelven a verde.'
+      red_exit_code: 101

@@ -1,0 +1,3 @@
+entries: []
+summary: New CI job builds/tags both cell images without publishing; new deploy/verificar_imagenes.sh guards non-root user and read-only cold start. Docs appends elsewhere; no Rust/Go source touched.
+task_id: HEX-086

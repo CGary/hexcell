@@ -1,0 +1,19 @@
+{
+  "task_id": "HEX-090-new-spec",
+  "bundle_hash": "a1b30246e7bb35c77a53d522f5f89cc0e1a683e7c26fbfe8c18698366bdb02c9",
+  "files": [
+    ".ai/tasks/active/HEX-090-new-spec/00-spec.yaml",
+    ".github/workflows/ci.yml",
+    "CLAUDE.md",
+    "crates/hexcell-admin/tests/reemparejamiento.rs"
+  ],
+  "protocol_version": "fleet-bundle-protocol/v2",
+  "created_at": "2026-09-30T05:21:50Z",
+  "dropped": [
+    {
+      "component": "code_slice",
+      "path": "docs/plan/fase-a-6-empaquetado-cli.md",
+      "reason": "bundle exceeded max_bytes budget"
+    }
+  ]
+}

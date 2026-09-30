@@ -1,0 +1,600 @@
+task_id: HEX-085
+summary: >-
+  Real cell rebind: three session admin routes on the core over a generalized session registry,
+  real whatsmeow pairing, and a ten-step resumable CLI sequence. Split into HEX-085-a and -b.
+affected_files:
+  - crates/hexcell/src/admin.rs
+  - crates/hexcell/src/main.rs
+  - crates/hexcell-canal-whatsmeow/src/adaptador.rs
+  - crates/hexcell-canal-whatsmeow/src/lib.rs
+  - crates/hexcell/tests/admin_http.rs
+  - crates/hexcell-canal-whatsmeow/tests/emparejamiento.rs
+  - crates/hexcell-canal-whatsmeow/tests/comun/mod.rs
+  - crates/hexcell-admin/src/argumentos.rs
+  - crates/hexcell-admin/src/comandos.rs
+  - crates/hexcell-admin/src/ciclo_de_vida.rs
+  - crates/hexcell-admin/src/almacen_plano_de_control.rs
+  - crates/hexcell-admin/src/docker/cliente.rs
+  - crates/hexcell-admin/tests/reemparejamiento.rs
+  - crates/hexcell-admin/tests/comandos.rs
+  - crates/hexcell-admin/tests/argumentos.rs
+  - crates/hexcell-admin/tests/cliente_docker.rs
+  - crates/hexcell-admin/tests/almacen_plano_de_control.rs
+  - crates/hexcell-admin/tests/ciclo_de_vida.rs
+  - docs/plan/fase-a-6-empaquetado-cli.md
+  - README.md
+symbols:
+  - 'HEX-085-a | hexcell::admin::RutaAdmin::{PausarEnvio, IniciarEmparejamiento, ConsultarSesion} (new variants; POST /admin/envio/pausa, POST /admin/sesion/emparejamiento, GET /admin/sesion)'
+  - 'HEX-085-a | hexcell::admin::enrutar_admin (three new arms; GET /admin/sesion/cierre and every other pair stay NoEncontrada)'
+  - 'HEX-085-a | hexcell::admin::SesionDeCanal { ConSesion(OperacionesDeSesion), SinSesion } (generalizes CierreDeSesion; the old name is removed, not aliased)'
+  - 'HEX-085-a | hexcell::admin::OperacionesDeSesion (four type-erased boxed operations: cerrar, pausar_envio, emparejar, estado)'
+  - 'HEX-085-a | hexcell::admin::RegistroDeSesion = Arc<OnceLock<SesionDeCanal>> (replaces RegistroDeCierreDeSesion and CerradorRegistrado)'
+  - 'HEX-085-a | hexcell::admin value objects AccionDePausa {Pausar, Reanudar}, MetodoSolicitado {Qr, CodigoDeVinculacion}, DesenlaceDePausa {Aplicado, Fallido{motivo}}, DesenlaceDeEmparejamiento {Codigo{metodo, valor, expira_en_ms}, Fallido{motivo}}'
+  - 'HEX-085-a | hexcell::admin::atender_pausa_de_envio / atender_emparejamiento / atender_consulta_de_sesion (pure async units, deadline injected; atender_cierre_de_sesion keeps its current wire behavior)'
+  - 'HEX-085-a | hexcell::admin::PlazosDeSesion (cierre 30 s, pausa, emparejamiento 30 s; production defaults only) replacing the plazo_cierre parameter of servir_servicios_http/servir_admin/atender_peticion_de_admin'
+  - 'HEX-085-a | hexcell::admin::MOTIVO_SIN_CONEXION = "sin_conexion" and MOTIVO_YA_EMPAREJADA = "ya_emparejada" (frozen HTTP contract literals)'
+  - 'HEX-085-a | main.rs composition: whatsmeow branch builds OperacionesDeSesion from AsaDeSesion clones taken before Motor::nuevo; simulado branch registers SesionDeCanal::SinSesion'
+  - 'HEX-085-a | hexcell_canal_whatsmeow::adaptador::MetodoDeEmparejamiento { Qr, CodigoDeVinculacion } (+ wire name accessor)'
+  - 'HEX-085-a | hexcell_canal_whatsmeow::adaptador::InicioDeEmparejamiento { Codigo(CodigoEmparejamiento), Acuse(AcuseEmparejamiento) } (whichever arrives first)'
+  - 'HEX-085-a | AdaptadorWhatsmeow::iniciar_emparejamiento_con(metodo, plazo) and AsaDeSesion::iniciar_emparejamiento_con(metodo, plazo) over one shared free fn'
+  - 'HEX-085-a | AsaDeSesion::ordenar_pausa_de_envio(accion, plazo) sharing a free fn with AdaptadorWhatsmeow::ordenar_pausa_de_envio (body moved, not duplicated)'
+  - 'HEX-085-a | AsaDeSesion gains an emparejamiento_pendiente Arc clone; CicloDeVidaSesion::iniciar_emparejamiento for AdaptadorWhatsmeow and AsaDeSesion delegates with Qr (TODO(A-3) and the Asa stub removed)'
+  - 'HEX-085-a | hexcell_canal_whatsmeow lib.rs re-exports AsaDeSesion, MetodoDeEmparejamiento, InicioDeEmparejamiento'
+  - 'HEX-085-b | hexcell_admin::argumentos::MetodoDeEmparejamiento { Qr, CodigoDeVinculacion } + Invocacion::metodo() (Some(Qr) by default for rebind, None otherwise)'
+  - 'HEX-085-b | hexcell_admin::argumentos::ErrorDeArgumentos::ValorDeOpcionInvalido { subcomando, opcion, valor } (invalid --metodo value -> UsoIncorrecto=2)'
+  - 'HEX-085-b | hexcell_admin::argumentos extraer_opciones/validar_opciones/TEXTO_DE_USO (--metodo in both spellings, admitted only by rebind)'
+  - 'HEX-085-b | hexcell_admin::almacen_plano_de_control::MOTIVO_DE_EMPAREJAMIENTO_CONFIRMADO = "emparejamiento_confirmado"'
+  - 'HEX-085-b | AlmacenDelPlanoDeControl::confirmar_reemparejamiento(id, motivo_de_sustitucion, ahora_ms) (one transaction: celulas UPSERT Reemparejando->EnEjecucion, transiciones row, sustituciones row)'
+  - 'HEX-085-b | hexcell_admin::docker::ClienteDocker::leer_salida_estandar(id) (GET /containers/{id}/logs?stdout=1&stderr=0 + 8-byte frame demux)'
+  - 'HEX-085-b | hexcell_admin::docker::ClienteDocker::crear_e_iniciar_contenedor_con_volumen(imagen, opciones, volumen, destino) (HostConfig.Mounts type volume; same create/start/cleanup contract as crear_e_iniciar_contenedor_con_opciones)'
+  - 'HEX-085-b | hexcell_admin::ciclo_de_vida::PlazosDeReemparejamiento { cadencia, intentos_de_pausa, intentos_de_emparejamiento, tope_de_confirmacion } + por_omision() (2 s, 30, 30, 120 s)'
+  - 'HEX-085-b | hexcell_admin::ciclo_de_vida::guion_de_peticion_http(url, cuerpo, limite) (single-shot wget -q -O - -T N [--post-data JSON] URL, no loop) and consultar_por_hermano (create, start, wait, logs, delete always)'
+  - 'HEX-085-b | hexcell_admin::ciclo_de_vida phase services: preparar_reemparejamiento (steps 2-4), descartar_sqlstore_y_rearrancar (steps 6-7), solicitar_emparejamiento (8), esperar_confirmacion (9), reanudar_envio (10 Docker part)'
+  - 'HEX-085-b | hexcell_admin::ciclo_de_vida::ErrorDeCicloDeVida new variants for pause failure, pairing failure, expired code, sqlstore discard failure, unreadable probe body, core not running for rebind'
+  - 'HEX-085-b | hexcell_admin::comandos::ejecutar_reemparejamiento(invocacion, salida, cliente, ruta_almacen, ahora_ms, datos, plazos) (pub; ejecutar_con_efectos calls it with PlazosDeReemparejamiento::por_omision(), signature of ejecutar_con_efectos unchanged)'
+dependencies:
+  - crates/hexcell-core/src/canal.rs
+  - crates/hexcell/src/emparejar.rs
+  - crates/hexcell/src/lib.rs
+  - crates/hexcell/tests/comun/mod.rs
+  - crates/hexcell/tests/canal_whatsmeow_seleccionado.rs
+  - crates/hexcell-canal-whatsmeow/src/mensajes.rs
+  - crates/hexcell-canal-whatsmeow/src/error.rs
+  - crates/hexcell-canal-whatsmeow/src/reconexion.rs
+  - crates/hexcell-canal-whatsmeow/tests/cierre_de_sesion.rs
+  - crates/hexcell-admin/src/estado_de_celula.rs
+  - crates/hexcell-admin/src/codigo_de_salida.rs
+  - crates/hexcell-admin/src/salida.rs
+  - crates/hexcell-admin/src/main.rs
+  - crates/hexcell-admin/src/docker/mod.rs
+  - crates/hexcell-admin/src/docker/transporte.rs
+  - crates/hexcell-admin/migraciones/0001-plano-de-control.sql
+  - crates/hexcell-admin/tests/comun/mod.rs
+  - crates/hexcell-admin/tests/estado_y_listado.rs
+  - deploy/cell.compose.yml
+  - sidecar/internal/servidor/manejo.go
+  - sidecar/internal/canal/emparejamiento.go
+  - docs/protocolo-ipc-nucleo-sidecar.md
+  - docs/adr/adr-0036-contrato-de-analisis-de-argumentos-y-modo-de-simulacion.md
+  - docs/adr/adr-0039-almacen-del-plano-de-control.md
+  - docs/bitacora-de-descartes.md
+test_scenarios:
+  - statement: >-
+      HEX-085-a (admin_http.rs, pure unit): atender_pausa_de_envio with SinSesion registered answers
+      200 {"resultado":"canal_sin_sesion"} for both accion values; with ConSesion whose fake pause
+      returns Aplicado it answers 200 {"resultado":"aplicado","accion":"pausar"}; with a fake
+      returning Fallido{motivo:"motivo-distintivo-pausa-7q"} it answers 200 resultado fallido, the
+      echoed accion and that exact motivo.
+    covers:
+      - AC-1
+      - AC-4
+      - AC-16
+  - statement: >-
+      HEX-085-a: POST /admin/envio/pausa with accion "detener", with a missing accion field and with
+      a non-JSON body answers 400, and the fake pause operation is never invoked (a call counter in
+      the fake stays at zero).
+    covers:
+      - AC-1
+      - AC-16
+  - statement: >-
+      HEX-085-a: atender_emparejamiento with SinSesion answers 200 {"resultado":"canal_sin_sesion"};
+      with a fake returning Codigo{metodo:"codigo_de_vinculacion", valor:"ABCD-EFGH",
+      expira_en_ms:1234567} it answers 200 with resultado "codigo" and those three values
+      verbatim; with a fake returning Fallido{motivo:"sin_conexion"} it answers 200 fallido
+      sin_conexion; the metodo the fake receives equals the one in the request body.
+    covers:
+      - AC-2
+      - AC-4
+      - AC-16
+  - statement: >-
+      HEX-085-a: an invalid metodo ("sms") answers 400 without invoking the fake; a fake that never
+      resolves, with a TEST-supplied deadline of 50 ms (never the 30 s production constant), answers
+      200 {"resultado":"fallido"} with a non-empty motivo and the test completes in well under a
+      second.
+    covers:
+      - AC-2
+      - AC-16
+  - statement: >-
+      HEX-085-a: atender_consulta_de_sesion with SinSesion answers 200 {"estado":"canal_sin_sesion"};
+      with ConSesion whose fake estado returns each of Activa, Reconectando, Desvinculada and Pausada
+      it answers 200 with estado activa, reconectando, desvinculada and pausada respectively (four
+      distinct literals asserted, so collapsing any two turns it red).
+    covers:
+      - AC-3
+      - AC-4
+      - AC-16
+  - statement: >-
+      HEX-085-a: enrutar_admin maps (POST,/admin/envio/pausa), (POST,/admin/sesion/emparejamiento) and
+      (GET,/admin/sesion) to the three new variants; (GET,/admin/envio/pausa),
+      (GET,/admin/sesion/emparejamiento), (POST,/admin/sesion) and (GET,/admin/sesion/cierre) stay
+      NoEncontrada; the existing ingesta and cierre arms are unchanged.
+    covers:
+      - AC-1
+      - AC-2
+      - AC-3
+  - statement: >-
+      HEX-085-a: the existing HEX-082 close-route tests keep passing after the rename to
+      SesionDeCanal/RegistroDeSesion (SinSesion 200 completado + motivo canal_sin_sesion, ConSesion ok
+      200, fallido 502 with the real motivo, 504 on elapsed deadline, 502 when nothing is
+      registered): the generalization does not change the close wire contract.
+    covers:
+      - AC-4
+      - AC-16
+  - statement: >-
+      HEX-085-a, through the real binary on the simulado channel: POST /admin/envio/pausa answers 200
+      canal_sin_sesion, POST /admin/sesion/emparejamiento answers 200 canal_sin_sesion and GET
+      /admin/sesion answers 200 {"estado":"canal_sin_sesion"}, proving the three routes are wired
+      into servir_admin and that the simulado branch registers SinSesion.
+    covers:
+      - AC-1
+      - AC-2
+      - AC-3
+      - AC-4
+  - statement: >-
+      HEX-085-a, through the real binary on the whatsmeow channel with NO sidecar listening on the
+      socket: POST /admin/envio/pausa {"accion":"pausar"} answers 200 fallido with motivo exactly
+      "sin_conexion" and GET /admin/sesion answers {"estado":"reconectando"}; this is the only test
+      that covers the main.rs mapping ErrorCanalWhatsmeow::SinConexion -> "sin_conexion" on which the
+      CLI retry loops depend.
+    covers:
+      - AC-1
+      - AC-3
+      - AC-4
+  - statement: >-
+      HEX-085-a (whatsmeow tests, SidecarSimulado): iniciar_emparejamiento_con(CodigoDeVinculacion,
+      5 s) writes orden_emparejar with metodo "codigo_de_vinculacion" and version 6, and resolves with
+      InicioDeEmparejamiento::Codigo carrying the exact valor and expira_en_ms the double sent; the
+      same through AsaDeSesion taken from the adapter.
+    covers:
+      - AC-5
+      - AC-16
+  - statement: >-
+      HEX-085-a: after iniciar_emparejamiento_con returned the first code, the double sends a second
+      code, acuse_emparejamiento completado and estado_sesion activa; estado_actual() reaches Activa
+      within a finite timeout, proving the read loop is not blocked by the returned caller and later
+      events update the state receiver.
+    covers:
+      - AC-5
+      - AC-16
+  - statement: >-
+      HEX-085-a: expired path - the double answers acuse_emparejamiento expirado before any code and
+      the call resolves with InicioDeEmparejamiento::Acuse(resultado "expirado"); with no event at all
+      and a 50 ms deadline it resolves Err(EmparejamientoSinAcuse) and a later orphan code does not
+      panic or wedge the loop.
+    covers:
+      - AC-5
+      - AC-16
+  - statement: >-
+      HEX-085-a: no-connection path - with no IPC connection established iniciar_emparejamiento_con
+      returns Err(SinConexion) without writing anything; the trait method
+      CicloDeVidaSesion::iniciar_emparejamiento sends metodo "qr" and maps a received code to
+      Emparejamiento::CodigoQr(valor).
+    covers:
+      - AC-5
+      - AC-16
+  - statement: >-
+      HEX-085-b (argumentos.rs): cell rebind without --metodo yields metodo Qr; --metodo
+      codigo_de_vinculacion and --metodo=codigo_de_vinculacion yield CodigoDeVinculacion; --metodo sms
+      is rejected with ValorDeOpcionInvalido (UsoIncorrecto=2); --metodo on pause/terminate is
+      OpcionNoAdmitida; a repeated --metodo is OpcionRepetida; --motivo and --confirmar are still
+      mandatory for rebind; the rebind --simular line is byte-for-byte unchanged.
+    covers:
+      - AC-6
+  - statement: >-
+      HEX-085-b (reemparejamiento.rs, fake Docker socket, tiny injected PlazosDeReemparejamiento):
+      the happy path from EnEjecucion issues the Docker requests in EXACTLY this sequence, asserted
+      as one whole-sequence equality - inspect nucleo, inspect sidecar; pause probe (create, start,
+      wait, logs, delete); close probe (create, start, wait, delete); sidecar stop without t;
+      rm sibling (create, start, wait, delete); sidecar start; pause probe; pairing probe;
+      status probe; resume probe.
+    covers:
+      - AC-7
+      - AC-8
+      - AC-9
+      - AC-10
+      - AC-11
+      - AC-12
+      - AC-13
+      - AC-14
+      - AC-16
+  - statement: >-
+      HEX-085-b: request BODIES of the happy path are asserted, not only paths - each probe create
+      body carries Image alpine:3 (or the injected probe image), HostConfig.NetworkMode equal to the
+      network key read from the core inspect, and a Cmd whose URL host is "<id>-nucleo", whose port
+      comes from HEXCELL_DIRECCION_ADMIN in Config.Env (fixture port not 8082, not 9098, not 9099),
+      whose path is the right route and whose --post-data is the exact JSON for pausar, the chosen
+      metodo, or reanudar.
+    covers:
+      - AC-8
+      - AC-11
+      - AC-12
+      - AC-14
+      - AC-16
+  - statement: >-
+      HEX-085-b: the rm sibling create body has Cmd EXACTLY ["rm","-f","/var/lib/hexcell/sqlstore.db",
+      "/var/lib/hexcell/sqlstore.db-wal","/var/lib/hexcell/sqlstore.db-shm"], mounts the volume whose
+      name is the core inspect Mounts[].Name for /var/lib/hexcell (fixture name not derivable from
+      --id) at /var/lib/hexcell, and the whole body contains neither "identidad.db" nor "outbox.db".
+    covers:
+      - AC-10
+      - AC-16
+  - statement: >-
+      HEX-085-b: final state of the happy path read back from the store - row EnEjecucion with motivo
+      "emparejamiento_confirmado", transiciones EnEjecucion->Reemparejando with motivo = --motivo then
+      Reemparejando->EnEjecucion, exactly one sustituciones row with motivo = --motivo and
+      registrado_ms = injected ahora_ms; stdout carries "emparejamiento <metodo>: <valor>", the
+      rendering note literal of emparejar.rs:243 and the completion line; exit Exito=0.
+    covers:
+      - AC-12
+      - AC-14
+      - AC-15
+      - AC-16
+  - statement: >-
+      HEX-085-b: the sustituciones table after the happy path has exactly the columns id, id_celula,
+      motivo, registrado_ms and no stored text in any column of any control-plane table equals the
+      fixture pairing valor or a phone-number-like string supplied by the double.
+    covers:
+      - AC-15
+  - statement: >-
+      HEX-085-b: resume from a row already in Reemparejando issues only inspect nucleo, inspect
+      sidecar, pairing probe, status probe and resume probe - no pausar probe, no close probe, no
+      sidecar stop/start, no rm sibling - and ends Exito with the row EnEjecucion and one
+      sustituciones row.
+    covers:
+      - AC-7
+      - AC-16
+  - statement: >-
+      HEX-085-b: a close probe exiting non-zero writes one stderr line and the sequence continues to
+      the stop, rm, start, pause, pairing, status and resume requests, ending Exito.
+    covers:
+      - AC-9
+      - AC-16
+  - statement: >-
+      HEX-085-b: rows in Suspendida and in Retirada both end Fallo=1 before any Docker request
+      (exigir_silencio on the fake daemon); Suspendida's diagnostic contains "ejecute cell unpause
+      antes de cell rebind", Retirada's is the illegal-transition diagnostic, and neither row changes.
+    covers:
+      - AC-7
+      - AC-16
+  - statement: >-
+      HEX-085-b: a pausar probe answering fallido at step 3 ends Fallo with no close probe, no stop,
+      no rm and the row unchanged (still EnEjecucion).
+    covers:
+      - AC-8
+  - statement: >-
+      HEX-085-b: a pause probe answering fallido sin_conexion at step 7 is retried at the injected
+      cadence and succeeds on the next attempt; a pairing probe answering sin_conexion twice then
+      codigo proceeds; a pairing fallido with any other motivo ends Fallo with the row left
+      Reemparejando and no sustituciones row.
+    covers:
+      - AC-11
+      - AC-12
+  - statement: >-
+      HEX-085-b: status probes that never report activa exhaust the injected confirmation budget; the
+      command ends Fallo with the exact diagnostic "código expirado; repita cell rebind", the row
+      stays Reemparejando, no resume probe is issued and sustituciones stays empty.
+    covers:
+      - AC-13
+      - AC-16
+  - statement: >-
+      HEX-085-b: a pairing probe answering canal_sin_sesion skips the status polling (no status
+      probe issued), issues the resume probe and ends Exito with row EnEjecucion and one
+      sustituciones row.
+    covers:
+      - AC-12
+      - AC-14
+      - AC-16
+  - statement: >-
+      HEX-085-b (cliente_docker.rs): leer_salida_estandar sends GET
+      /containers/<id>/logs?stdout=1&stderr=0 and demultiplexes a two-frame body into the exact stdout
+      bytes, dropping stderr frames; a truncated frame header yields RespuestaMalformada, never a
+      panic; crear_e_iniciar_contenedor_con_volumen emits the volume mount in the create body and
+      deletes the container when start fails.
+    covers:
+      - AC-10
+      - AC-12
+  - statement: >-
+      HEX-085-b (almacen tests): confirmar_reemparejamiento writes the celulas row, one transiciones
+      row and one sustituciones row atomically; a failure in the sustituciones insert leaves the row
+      in Reemparejando (transaction rolled back).
+    covers:
+      - AC-14
+  - statement: >-
+      HEX-085-b (comandos.rs): the old test asserting rebind returns NoImplementadoTodavia is replaced
+      by one proving ejecutar_con_efectos dispatches rebind into the real path (Suspendida row ->
+      Fallo before Docker); no cell subcommand reaches code 3 through ejecutar_con_efectos, and
+      CodigoDeSalida still has exactly the four values 0,1,2,3.
+    covers:
+      - AC-7
+      - AC-20
+  - statement: >-
+      Parent (after both merges): a real-Docker smoke test on a simulated cell checksums sessions.db,
+      knowledge_live.db and adapter_identity.db (and their -wal files) from a sibling container
+      before and after a full cell rebind, asserts equality, asserts identidad.db and outbox.db still
+      exist when present, and records the evidence in the parent implementation log.
+    covers:
+      - AC-17
+  - statement: >-
+      Parent docs: git diff main...HEAD -- docs README.md | grep '^-' shows only README line 81; the
+      plan gets the task 13 closing paragraph, the Nota 2026-09-22 (D6, D5.4, D5.6, resume) and a
+      new "La cadena restante" bullet recomputed from disk at merge time.
+    covers:
+      - AC-18
+      - AC-19
+  - statement: >-
+      Parent: cargo fmt --check, cargo clippy --workspace -- -D warnings and cargo test --workspace
+      pass on the merged tree; neither child touched hexcell-core, hexcell-canal-simulado, sidecar/,
+      deploy/, .github/, any Dockerfile, the IPC protocol doc or Cargo.lock.
+    covers:
+      - AC-20
+      - AC-21
+strategy:
+  - step: 1
+    action: >-
+      HEX-085-a | Value objects + application services on the core admin surface (admin.rs). Rename
+      CierreDeSesion -> SesionDeCanal {ConSesion(OperacionesDeSesion), SinSesion} and
+      RegistroDeCierreDeSesion -> RegistroDeSesion (Arc<OnceLock<..>>); OperacionesDeSesion holds four
+      type-erased boxed operations (cerrar -> Result<(),String>; pausar_envio(AccionDePausa) ->
+      DesenlaceDePausa; emparejar(MetodoSolicitado, plazo) -> DesenlaceDeEmparejamiento; estado() ->
+      hexcell_core::canal::EstadoSesion). admin.rs keeps importing only hexcell_core types and never
+      names hexcell_canal_whatsmeow. atender_cierre_de_sesion keeps its exact current wire behavior
+      (200 completado / 502 fallido / 504 ausente / 502 unregistered; SinSesion = 200 completado +
+      motivo canal_sin_sesion). Existing close tests in admin_http.rs are updated mechanically for the
+      rename only.
+    files:
+      - crates/hexcell/src/admin.rs
+      - crates/hexcell/tests/admin_http.rs
+  - step: 2
+    action: >-
+      HEX-085-a | Three new routes, frozen HTTP contract (D2), no authentication (doc comment states the
+      cell internal network is the boundary, like /admin/ingesta). Pure units atender_pausa_de_envio,
+      atender_emparejamiento, atender_consulta_de_sesion take the registry, the already-read body
+      bytes and an injected deadline. Body is parsed as JSON regardless of Content-Type (busybox wget
+      --post-data sends x-www-form-urlencoded); invalid JSON, missing or unknown accion/metodo -> 400
+      before any operation runs; body read through acumular_cuerpo_acotado. Every non-400 answer is
+      200 with resultado/estado in the body; SinSesion -> {"resultado":"canal_sin_sesion"} or
+      {"estado":"canal_sin_sesion"}; nothing registered -> fail closed like the close route (502).
+      Pairing Codigo -> {"resultado":"codigo","metodo","valor","expira_en_ms"} where expira_en_ms is
+      passed through UNCHANGED from the wire (absolute Unix-epoch ms, 0 = unknown); the route deadline
+      is PlazosDeSesion.emparejamiento (30 s) and elapsing it yields 200 fallido. Plumb PlazosDeSesion
+      through atender_peticion_de_admin, servir_admin and servir_servicios_http, which still returns ONE
+      combined future.
+    files:
+      - crates/hexcell/src/admin.rs
+      - crates/hexcell/tests/admin_http.rs
+  - step: 3
+    action: >-
+      HEX-085-a | Adapter entity work (adaptador.rs, lib.rs). Add MetodoDeEmparejamiento and
+      InicioDeEmparejamiento. Extract a free fn shared by AdaptadorWhatsmeow and AsaDeSesion that
+      registers the emparejamiento_pendiente sender BEFORE writing orden_emparejar, waits for the first
+      event within plazo, returns Codigo on the first code or Acuse on an acuse that arrives first,
+      and on return DROPS its receiver without clearing the slot (the read loop's send on a closed
+      mpsc fails immediately, and the terminal acuse take()s the slot), so later codes, the acuse and
+      estado_sesion never block the read loop. On deadline/closed channel clear the slot and return
+      EmparejamientoSinAcuse; with no writer return SinConexion. Move the body of
+      AdaptadorWhatsmeow::ordenar_pausa_de_envio into a free fn reused by a new
+      AsaDeSesion::ordenar_pausa_de_envio. AsaDeSesion gains an emparejamiento_pendiente Arc clone set
+      by asa_de_sesion(). Both CicloDeVidaSesion::iniciar_emparejamiento impls delegate with Qr and a
+      default plazo, mapping Codigo to Emparejamiento::CodigoQr / CodigoDeVinculacion and an Acuse to
+      Err(ErrorDeProtocolo(motivo)). The existing ordenar_emparejamiento used by hexcell emparejar is
+      untouched. No wire type, no error variant and no VERSION_PROTOCOLO change.
+    files:
+      - crates/hexcell-canal-whatsmeow/src/adaptador.rs
+      - crates/hexcell-canal-whatsmeow/src/lib.rs
+      - crates/hexcell-canal-whatsmeow/tests/emparejamiento.rs
+  - step: 4
+    action: >-
+      HEX-085-a | Composition root (main.rs). Simulado branch registers SesionDeCanal::SinSesion.
+      Whatsmeow branch takes asa_de_sesion("cell terminate") before Motor::nuevo and builds
+      OperacionesDeSesion from clones: cerrar -> CicloDeVidaSesion::cerrar_sesion; pausar_envio ->
+      AsaDeSesion::ordenar_pausa_de_envio mapping acuse aplicado -> Aplicado, acuse fallido ->
+      Fallido{acuse motivo}, Err(SinConexion) -> Fallido{"sin_conexion"}, other Err -> Fallido{Display};
+      emparejar -> iniciar_emparejamiento_con mapping Codigo -> Codigo{..}, Acuse fallido whose motivo
+      equals the sidecar ErrYaEmparejada text -> Fallido{"ya_emparejada"}, other acuse -> Fallido{acuse
+      motivo or resultado}, Err(SinConexion) -> Fallido{"sin_conexion"}; estado -> estado_sesion().
+      Add the two real-binary wiring tests (simulado and whatsmeow-without-sidecar).
+    files:
+      - crates/hexcell/src/main.rs
+      - crates/hexcell/tests/admin_http.rs
+  - step: 5
+    action: >-
+      HEX-085-b | CLI grammar (argumentos.rs). Add MetodoDeEmparejamiento (CLI-local type; hexcell-admin
+      does NOT depend on the whatsmeow crate), --metodo in both spellings admitted only by rebind,
+      default Qr, ValorDeOpcionInvalido for unknown values, usage text line for rebind. The rebind
+      --simular line stays byte-for-byte unchanged.
+    files:
+      - crates/hexcell-admin/src/argumentos.rs
+      - crates/hexcell-admin/tests/argumentos.rs
+  - step: 6
+    action: >-
+      HEX-085-b | Docker client extension (docker/cliente.rs, beyond the D1 list, see risks):
+      leer_salida_estandar(id) = GET /containers/{id}/logs?stdout=1&stderr=0 with a pure demux of the
+      8-byte-header multiplexed stream (stream byte, 3 zero bytes, u32 big-endian length) keeping only
+      stdout frames, bounded and panic-free on truncation; crear_e_iniciar_contenedor_con_volumen
+      sharing the create/start/cleanup helper with crear_e_iniciar_contenedor_con_opciones and adding
+      HostConfig.Mounts [{Type:volume, Source, Target}]. OpcionesDeContenedor keeps its two fields so
+      no existing literal changes; docker/mod.rs is not edited.
+    files:
+      - crates/hexcell-admin/src/docker/cliente.rs
+      - crates/hexcell-admin/tests/cliente_docker.rs
+  - step: 7
+    action: >-
+      HEX-085-b | Control-plane store (almacen_plano_de_control.rs). Add
+      MOTIVO_DE_EMPAREJAMIENTO_CONFIRMADO and confirmar_reemparejamiento(id, motivo_de_sustitucion,
+      ahora_ms) writing, in ONE transaction, the celulas UPSERT to EnEjecucion with the new motivo, the
+      transiciones row Reemparejando->EnEjecucion and the sustituciones row (id_celula, motivo,
+      registrado_ms only). No schema change, no migration. Step 5 reuses registrar_transicion with
+      de = current row state (None for implicit creation) and motivo = --motivo.
+    files:
+      - crates/hexcell-admin/src/almacen_plano_de_control.rs
+      - crates/hexcell-admin/tests/almacen_plano_de_control.rs
+  - step: 8
+    action: >-
+      HEX-085-b | Lifecycle application services (ciclo_de_vida.rs). Extract the inspect-and-resolve
+      of steps 1-3 of retirar into a shared helper (network, admin port from HEXCELL_DIRECCION_ADMIN,
+      volume from Mounts[].Name) keeping retirar's request order byte-identical. Add
+      guion_de_peticion_http (single shot wget -q -O - -T N, optional --post-data JSON) and
+      consultar_por_hermano (create, start, wait, logs, delete; delete also on failure) that parses
+      the JSON body. Add PlazosDeReemparejamiento and the phase services: preparar_reemparejamiento
+      (inspect both, core running, pausar probe; fallido -> error; canal_sin_sesion = ok; then close
+      probe via guion_de_cierre_de_sesion, non-zero exit returned as a warning, not an error);
+      descartar_sqlstore_y_rearrancar (detener_contenedor_sin_plazo on the sidecar, rm sibling with
+      NetworkMode none and the volume mounted, exit 0 required, start sidecar, pausar retried every
+      cadencia up to intentos_de_pausa while motivo = sin_conexion); solicitar_emparejamiento (same
+      retry rule; codigo -> Codigo, canal_sin_sesion -> SinSesion, other fallido -> error);
+      esperar_confirmacion (attempts = ceil(min(expira_en_ms - ahora_ms or tope when 0, tope) /
+      cadencia), at least one, until estado activa, else CodigoExpirado); reanudar_envio (reanudar
+      probe, canal_sin_sesion = ok). Loops are attempt-count based so tests with a 1 ms cadence are
+      deterministic; production cadence 2 s. The Docker client timeout stays above every wget -T.
+    files:
+      - crates/hexcell-admin/src/ciclo_de_vida.rs
+      - crates/hexcell-admin/tests/ciclo_de_vida.rs
+  - step: 9
+    action: >-
+      HEX-085-b | Command orchestration (comandos.rs). ejecutar_con_efectos routes Reemparejar to
+      ejecutar_reemparejamiento with production plazos. Step 1: open the store, read the row; None is
+      treated as EnEjecucion (implicit creation, de = None); EnEjecucion -> full sequence; Reemparejando
+      -> resume (inspect, then step 8); Suspendida -> Fallo "la célula está suspendida: ejecute cell
+      unpause antes de cell rebind"; any other state -> Fallo with the transitar(Reemparejando) error;
+      zero Docker requests before this. Persist EnEjecucion->Reemparejando only after steps 3-4, and
+      confirmar_reemparejamiento only after the reanudar probe succeeds. Stdout: the pairing line
+      "emparejamiento <metodo>: <valor>", the rendering note literal of emparejar.rs:243, and on
+      success "cell rebind completado para «<id>»"; the close warning and every failure go to the
+      diagnostic sink only. Exit codes stay 0/1/2 (3 unreachable for cell through this path).
+      Replace the rebind-returns-3 test in tests/comandos.rs; D8 sequence tests live in the new
+      tests/reemparejamiento.rs using the unmodified fake daemon in tests/comun/mod.rs.
+    files:
+      - crates/hexcell-admin/src/comandos.rs
+      - crates/hexcell-admin/tests/comandos.rs
+      - crates/hexcell-admin/tests/reemparejamiento.rs
+  - step: 10
+    action: >-
+      Parent HEX-085 (after merging HEX-085-a then HEX-085-b onto main): run cargo fmt --check, cargo
+      clippy --workspace -D warnings and cargo test --workspace on the merged tree; run the real-Docker
+      smoke test from an uncommitted scratch script (deploy/ is forbidden and task 18 owns it): build
+      both images FROM the merged tree, start a simulated cell from an empty volume, seed and checksum
+      sessions.db, knowledge_live.db and adapter_identity.db (plus -wal) via an alpine sibling, run
+      hexcell-admin cell rebind --confirmar, re-checksum, compare, and log the evidence. Then write the
+      docs: README line 81 literal replacement (six cell subcommands real since HEX-085, code 3
+      reserved) and the plan task 13 closing paragraph, Nota 2026-09-22 and a new La cadena restante
+      bullet recomputed from disk at merge time.
+    files:
+      - docs/plan/fase-a-6-empaquetado-cli.md
+      - README.md
+risks:
+  - >-
+    DECOMPOSITION (D1): production files touched = 9 (admin.rs, main.rs, adaptador.rs, whatsmeow
+    lib.rs, argumentos.rs, comandos.rs, ciclo_de_vida.rs, almacen_plano_de_control.rs,
+    docker/cliente.rs) > l_max_files=5, so the parent is band L and must go through /q-decompose.
+    HEX-085-a counts 4 (band M) and HEX-085-b counts 5 (band M, exactly at the cut: ONE more
+    production file, e.g. docker/mod.rs or hexcell-admin main.rs, flips it to L). public_api=false,
+    no migration, no schema change.
+  - >-
+    CONTRACT GAP vs D1 (needs orchestrator acknowledgment, not a reopened decision): D5 step 6 needs a
+    sibling container with the data volume mounted, and D5 "captura el cuerpo (wget -O -)" plus
+    step 8's printed valor need the probe container's stdout. The current Docker client has neither:
+    OpcionesDeContenedor carries only red and cmd, and there is no logs method (docker/mod.rs even
+    documents log retrieval as out of its scope). HEX-085-b therefore MUST touch
+    crates/hexcell-admin/src/docker/cliente.rs, which D1's file list omits. Workarounds rejected: exit
+    codes cannot carry the pairing valor; a TcpStream from the CLI, docker exec or a published port
+    are forbidden by the HEX-082 contract and D-57.
+  - >-
+    STARTING-STATE MISMATCH: the claim that the close route answers resultado ok|fallido|canal_sin_sesion
+    all with 200 is false. Real admin.rs answers 200 {"resultado":"completado"} (ConSesion ok), 200
+    {"resultado":"completado","motivo":"canal_sin_sesion"} (SinSesion), 502 fallido, 504 ausente and
+    502 when unregistered. D2's "as /admin/sesion/cierre" therefore describes the new routes, not the
+    close route. The blueprint keeps the close wire contract unchanged (HEX-082 tests and cell
+    terminate depend on it); step 4 of rebind consumes it by wget exit code only, which already makes
+    SinSesion a success and any 5xx a best-effort failure.
+  - >-
+    STARTING-STATE DETAIL: the Asa stub at adaptador.rs:1270 is not tagged TODO(A-3) (only
+    AdaptadorWhatsmeow's at 1128 is). AsaDeSesion has no access to emparejamiento_pendiente nor to the
+    pause path, so both must be added to the handle. An ordenar_emparejamiento(metodo: &str, plazo,
+    manejador) already exists (blocks until the terminal acuse, used by hexcell emparejar); the new
+    iniciar_emparejamiento_con shares its pending slot but returns on the first code.
+  - >-
+    CONTRACT AMBIGUITY RESOLVED: the wire codigo_emparejamiento.expira_en_ms is an ABSOLUTE Unix-epoch
+    instant (0 = unknown), not a duration. The frozen HTTP contract passes it through unchanged; the
+    CLI computes the step-9 budget as min(expira_en_ms - ahora_ms, 120 s), using 120 s when it is 0.
+    Both children must implement this same reading.
+  - >-
+    "ya_emparejada" is not a protocol token: the sidecar sends acuse fallido with motivo
+    err.Error() = "canal: la sesión ya está emparejada" (sidecar/internal/servidor/manejo.go). The
+    composition maps that exact sidecar literal to "ya_emparejada"; if the sidecar text ever changes the
+    route silently degrades to "<otro>". The CLI treats every non-sin_conexion fallido the same, so no
+    CLI behavior depends on it.
+  - >-
+    RESUME GAP (D5 closed, recorded for a human): a failure AFTER step 5 but BEFORE step 7 completes
+    (rm sibling fails, sidecar start fails) leaves the row Reemparejando with sqlstore.db possibly
+    still on disk or the sidecar stopped; the next cell rebind resumes at step 8 and cannot redo the
+    discard, so pairing will keep failing (ya_emparejada or sin_conexion). Recovery then needs task 15
+    (idempotence) or manual action. Not fixed here.
+  - >-
+    D5 note-literal oddity: AC-12 asks for the emparejar.rs:243 note ("renderizado gráfico no está
+    integrado; ... renderizador QR externo") after the pairing line; in emparejar.rs it is printed only
+    for qr. The blueprint follows the AC literally (printed for both methods); for
+    codigo_de_vinculacion the note is irrelevant. A human may restrict it to qr later.
+  - >-
+    QR usability: the route returns the FIRST code only and later rotated QR codes are dropped, so with
+    --metodo qr the operator must scan before the first code expires (typically about 60 s);
+    codigo_de_vinculacion is the practical choice for a remote rebind. Consequence of D4, not changed.
+  - >-
+    The close issued at step 4 reuses the Asa built with motivo "cell terminate", so the sidecar logs
+    that motivo during a rebind. Diagnostic only; the close route takes no body and D2 does not change
+    it.
+  - >-
+    Clock: ejecutar_con_efectos receives one ahora_ms snapshot at process start and its signature must
+    not change (hexcell-admin main.rs is out of scope and would push HEX-085-b to band L), so both
+    transitions and the sustituciones registrado_ms carry the command start time, up to about four
+    minutes before the actual confirmation.
+  - >-
+    Docker logs transport: transporte.rs reads bodies by chunked or Content-Length only and returns an
+    empty body otherwise. Real dockerd serves logs chunked over HTTP/1.1, but only the parent's
+    real-Docker smoke test proves it; the fake-daemon tests cannot.
+  - >-
+    wget -T per probe must stay below TIEMPO_LIMITE_DEL_CLIENTE_DOCKER_S (70 s) because
+    POST /containers/{id}/wait blocks for the probe's whole life; the pairing probe waits up to the
+    core's 30 s deadline, so its -T must be above 30 s and below 70 s. Mirror the existing const
+    assertion.
+  - >-
+    ADR-0036 section 3 lists the cell options and --metodo is not in it. Per non-goals no new ADR is
+    written; the plan note records the flag. An ADR superseding 0036 may be requested later by the
+    human.
+  - >-
+    The plan's task 13 prose still asks for "el número anterior" in the audit row; D6 plus adr-0039
+    override it and the Nota 2026-09-22 records why. Reviewers must read the revised AC and D6, not the
+    prose.
+  - >-
+    Parent smoke test: the core keeps running during rebind, so SQLite checkpoints could change
+    sessions.db bytes independently of rebind; checksum main files plus -wal and keep the cell idle
+    (simulated channel, no traffic) between readings. Build images from the merged tree and start
+    from an empty volume.
+  - >-
+    Merge contention: HEX-086 (task 18, worktree live) also touches README.md and
+    docs/plan/fase-a-6-empaquetado-cli.md; the parent must rebase on main and recompute La cadena
+    restante from disk at merge time, and grep the whole tree for conflict markers before
+    rebase --continue.
+  - >-
+    Child specs inherit the parent spec literally in quorum task split; each child must be narrowed
+    (HEX-085-a owns AC-1..AC-5 and its part of AC-16/AC-20/AC-21; HEX-085-b owns AC-6..AC-15 and its
+    part of AC-16/AC-20/AC-21; AC-17..AC-19 stay with the parent) while keeping the AC-N ids.

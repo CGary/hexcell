@@ -1,0 +1,85 @@
+task_id: HEX-085-a
+summary: Revise pass fixing review verdict of 2026-09-23.
+entries:
+  - changed_files:
+      - path: crates/hexcell/src/admin.rs
+      - path: crates/hexcell/src/main.rs
+    notes:
+      - Moved construir_sesion_de_canal (and every hexcell_canal_whatsmeow reference it used:
+        AsaDeSesion, ErrorCanalWhatsmeow, MetodoDeEmparejamiento, InicioDeEmparejamiento, the
+        ya_emparejada literal comparison) from admin.rs to main.rs, the composition point, per
+        forbid.behaviors. admin.rs no longer names hexcell_canal_whatsmeow in code; the leftover
+        stray link-only doc mention and the "yabb emparejada" typo were fixed too.
+      - Added a #[cfg(test)] mod tests in main.rs (the only place construir_sesion_de_canal is
+        visible, since it is private to the binary) that drives a real AdaptadorWhatsmeow against
+        a minimal fake sidecar over a Unix socket, sends an acuse fallido with the sidecar's exact
+        text, and asserts the route body ends with motivo == "ya_emparejada".
+  - changed_files:
+      - path: crates/hexcell/src/admin.rs
+    notes:
+      - 'D2 fix: atender_pausa_de_envio now maps the outer timeout to 200
+        {resultado:fallido,accion,motivo} instead of 502 BAD_GATEWAY; 5xx stays reserved for the
+        unregistered-composition case (fail-closed, not a listener failure).'
+  - changed_files:
+      - path: crates/hexcell-canal-whatsmeow/src/adaptador.rs
+      - path: crates/hexcell-canal-whatsmeow/tests/emparejamiento.rs
+    notes:
+      - Added a small public accessor AdaptadorWhatsmeow::emparejamiento_pendiente_ocupado() so
+        the M8 mutation (skip the *pendiente = None cleanup on timeout in
+        iniciar_emparejamiento_con_interno) has an externally observable effect; without a real
+        pending-count observable, a mutated timeout arm behaves identically from the outside (the
+        overwrite on the next attempt is unconditional either way).
+      - Asserted !emparejamiento_pendiente_ocupado() right after the plazo-agotado branch in
+        iniciar_emparejamiento_con_plazo_agotado_devuelve_sin_acuse_y_no_bloquea.
+  - changed_files:
+      - path: crates/hexcell/tests/admin_http.rs
+    notes:
+      - Added admin_en_proceso_con_sesion(): boots the real servir_admin listener in-process
+        (not the spawned binary subprocess) with a spy SesionDeCanal registered, so a 400 test can
+        assert the spy's call counter never moves.
+      - Rewrote pausa_de_envio_invalida_o_sin_json_devuelve_400_sin_invocar_operacion and
+        emparejamiento_invalido_o_sin_json_devuelve_400_sin_invocar_operacion to use the
+        in-process spy server and assert contador == 0 after all three 400 cases.
+      - operaciones_espia_codigo() now also returns an Arc<Mutex<Option<MetodoSolicitado>>>
+        capturing the method the fake received; emparejamiento_con_codigo_devuelve_200_codigo_con_valores
+        asserts it equals the requested method.
+      - Added pausa_de_envio_que_nunca_resuelve_con_plazo_corto_devuelve_200_fallido (D2 timeout
+        guard, never-resolving fake pause with a 50 ms test deadline).
+tdd_red_runs: []
+mutations:
+  - id: M4
+    guard: main.rs tests::construir_sesion_de_canal_traduce_ya_emparejada_hasta_la_ruta
+    change: 'acuse.motivo == "canal: la sesión ya está emparejada" -> acuse.motivo == "canal: NUNCA"'
+    command: cargo test -p hexcell --bin hexcell construir_sesion_de_canal_traduce_ya_emparejada
+    result: RED (assertion cuerpo["motivo"] == "ya_emparejada" failed, left raw sidecar text)
+    reverted: true
+  - id: M8
+    guard: emparejamiento.rs iniciar_emparejamiento_con_plazo_agotado_devuelve_sin_acuse_y_no_bloquea
+    change: adaptador.rs Err(_agotado) arm of iniciar_emparejamiento_con_interno, dropped "*pendiente = None"
+    command: cargo test -p hexcell-canal-whatsmeow --test emparejamiento iniciar_emparejamiento_con_plazo_agotado_devuelve_sin_acuse_y_no_bloquea
+    result: RED (assert !emparejamiento_pendiente_ocupado() failed)
+    reverted: true
+  - id: metodo-passthrough
+    guard: admin_http.rs emparejamiento_con_codigo_devuelve_200_codigo_con_valores
+    change: 'admin.rs atender_emparejamiento call site, (operaciones.emparejar)(metodo, plazo) -> (operaciones.emparejar)(MetodoSolicitado::Qr, plazo)'
+    command: cargo test -p hexcell --test admin_http emparejamiento_con_codigo_devuelve_200_codigo_con_valores
+    result: RED (metodo_recibido == Some(Qr), expected Some(CodigoDeVinculacion))
+    reverted: true
+  - id: pausa-400-counter
+    guard: admin_http.rs pausa_de_envio_invalida_o_sin_json_devuelve_400_sin_invocar_operacion
+    change: 'admin.rs pausa accion match, "pausar" => AccionDePausa::Pausar -> "pausar" | "detener" => AccionDePausa::Pausar'
+    command: cargo test -p hexcell --test admin_http pausa_de_envio_invalida_o_sin_json_devuelve_400_sin_invocar_operacion
+    result: RED (accion inválida "detener" answered 200 aplicado instead of 400)
+    reverted: true
+  - id: emparejamiento-400-counter
+    guard: admin_http.rs emparejamiento_invalido_o_sin_json_devuelve_400_sin_invocar_operacion
+    change: 'admin.rs metodo match, "qr" => MetodoSolicitado::Qr -> "qr" | "sms" => MetodoSolicitado::Qr'
+    command: cargo test -p hexcell --test admin_http emparejamiento_invalido_o_sin_json_devuelve_400_sin_invocar_operacion
+    result: RED (metodo inválido "sms" answered 200 fallido instead of 400)
+    reverted: true
+  - id: pausa-timeout-d2
+    guard: admin_http.rs pausa_de_envio_que_nunca_resuelve_con_plazo_corto_devuelve_200_fallido
+    change: 'admin.rs atender_pausa_de_envio Err(_agotado) arm, StatusCode::OK -> StatusCode::BAD_GATEWAY'
+    command: cargo test -p hexcell --test admin_http pausa_de_envio_que_nunca_resuelve_con_plazo_corto_devuelve_200_fallido
+    result: RED (estado 502 != expected 200)
+    reverted: true

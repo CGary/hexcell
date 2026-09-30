@@ -1,0 +1,315 @@
+task_id: HEX-084
+summary: >-
+  hexcell-admin gains "reporte tokens": opens a read-only VACUUM INTO copy of sessions.db and
+  aggregates the consumo_por_conversacion formula, optionally windowed by resuelta_ms.
+affected_files:
+  - crates/hexcell-admin/src/argumentos.rs
+  - crates/hexcell-admin/src/comandos.rs
+  - crates/hexcell-admin/src/reporte_de_consumo.rs
+  - crates/hexcell-admin/src/lib.rs
+  - crates/hexcell-admin/src/main.rs
+  - crates/hexcell-admin/src/codigo_de_salida.rs
+  - crates/hexcell-admin/src/salida.rs
+  - crates/hexcell-admin/Cargo.toml
+  - crates/hexcell-admin/tests/reporte_de_consumo.rs
+  - crates/hexcell-admin/tests/argumentos.rs
+  - crates/hexcell-admin/tests/comandos.rs
+  - crates/hexcell-storage/src/presupuesto.rs
+  - crates/hexcell-storage/migraciones/sesiones/0004-reservas-sin-conversacion.sql
+  - crates/hexcell-storage/Cargo.toml
+  - Cargo.toml
+  - README.md
+  - docs/plan/fase-a-6-empaquetado-cli.md
+symbols:
+  - argumentos::Comando::ReporteTokens
+  - argumentos::InvocacionReporte
+  - argumentos::ErrorDeArgumentos::CopiaEsSessionsDb
+  - argumentos::ErrorDeArgumentos::ReporteInvalido
+  - argumentos::analizar_reporte
+  - comandos::ejecutar_reporte_tokens
+  - reporte_de_consumo::generar_reporte
+  - reporte_de_consumo::ErrorDeReporte
+  - hexcell_storage::presupuesto::RepositorioDeSesiones (read-only, test-seeding surface)
+  - hexcell_storage::respaldo::respaldar_base (test-only VACUUM INTO helper)
+dependencies:
+  - crates/hexcell-storage/src/presupuesto.rs
+  - crates/hexcell-storage/src/respaldo.rs
+  - crates/hexcell-storage/src/pools.rs
+  - crates/hexcell-storage/migraciones/sesiones/0004-reservas-sin-conversacion.sql
+  - crates/hexcell-core/src/presupuesto.rs
+  - crates/hexcell-admin/src/estado_de_celula.rs
+test_scenarios:
+  - statement: >-
+      Aggregating a VACUUM INTO copy seeded with two conciliated conversations plus one
+      liberada reservation yields per-conversation lines and a TOTAL equal to the sum of the
+      seeded conciliaciones, excluding the liberada conversation entirely.
+    covers: [AC-1]
+  - statement: >-
+      A --desde/--hasta UTC window keyed on resuelta_ms (desde inclusive, hasta exclusive)
+      that covers only one of two conciliated conversations excludes the other from both the
+      per-line output and the TOTAL.
+    covers: [AC-2]
+  - statement: >-
+      --copia with basename "sessions.db", or a path ending in "-wal" or "-shm", is rejected
+      by the argument analyzer with UsoIncorrecto=2 and the exact fixed message, before any
+      file is opened, whether or not --simular is also given.
+    covers: [AC-3]
+  - statement: >-
+      --simular on "reporte tokens" prints the simulated action and exits Exito without ever
+      constructing a Connection to --copia, even when --copia points at a nonexistent path.
+    covers: [AC-4]
+  - statement: >-
+      A malformed --desde or --hasta (wrong length, non-numeric, out-of-range month/day, e.g.
+      2026-02-30) is rejected by the argument analyzer as UsoIncorrecto=2 without touching
+      --copia.
+    covers: [AC-5]
+  - statement: >-
+      A --copia file that is not a valid SQLite database, or is valid but lacks the
+      consumo_por_conversacion... view/columns the query needs (e.g. missing resuelta_ms),
+      fails the read with Fallo=1, distinct from the UsoIncorrecto path of AC-3/AC-5.
+    covers: [AC-6]
+  - statement: >-
+      The period-filtered query and the unfiltered query are the SAME parameterized SQL
+      statement (NULL-bindable resuelta_ms bounds) built from the literal migration-0004
+      formula, never a second hand-copied formula that could silently drift from the view.
+  - statement: >-
+      Every new test is demonstrable by hand-mutation: flipping ">=" to ">" on the desde bound,
+      or "<" to "<=" on the hasta bound, or "conciliada" to a different literal in the CASE,
+      turns a passing AC-1/AC-2 test red; reverting restores green.
+risks:
+  - >-
+    FALSE ASSUMPTION in the task prompt: no type named "AlmacenDePresupuesto" exists anywhere
+    in the workspace. The real type is hexcell_storage::presupuesto::RepositorioDeSesiones,
+    and it exposes reservar_presupuesto, reservar_presupuesto_de_ingesta, aportar_presupuesto,
+    conciliar_presupuesto, liberar_presupuesto and consumo_por_conversacion (verified by
+    reading crates/hexcell-storage/src/presupuesto.rs). Tests must construct it via
+    RepositorioDeSesiones::nuevo(Arc<GestorDePools>), the same pattern already used in
+    crates/hexcell-storage/tests/presupuesto.rs.
+  - >-
+    INCOMPLETE ASSUMPTION: the task prompt names only reservar_presupuesto/conciliar_presupuesto/
+    aportar_presupuesto as the seeding surface, but AC-1 requires a "liberada" reservation too,
+    which needs the fourth method liberar_presupuesto (verified present at
+    crates/hexcell-storage/src/presupuesto.rs:375). The dev-dependency touch on
+    RepositorioDeSesiones's public API is four methods plus consumo_por_conversacion for
+    smoke-checking test fixtures, not three.
+  - >-
+    INCOMPLETE ASSUMPTION: seeding tests needs TWO dev-dependency crates, not one.
+    RepositorioDeSesiones::reservar_presupuesto takes &hexcell_core::identidad::IdConversacion
+    and hexcell_core::presupuesto::UnidadesDePresupuesto (= u64); hexcell-storage does not
+    re-export either symbol from hexcell-core. crates/hexcell-admin/Cargo.toml's
+    [dev-dependencies] must add BOTH hexcell-storage (path = "../hexcell-storage") AND
+    hexcell-core (path = "../hexcell-core").
+  - >-
+    hexcell-admin has no existing rusqlite dependency and no [dev-dependencies] section today
+    (verified: crates/hexcell-admin/Cargo.toml has only serde/serde_json). This task must add
+    a PRODUCTION `rusqlite = { workspace = true }` line under [dependencies] (to open the
+    read-only copy in reporte_de_consumo.rs) in addition to the dev-only hexcell-storage/
+    hexcell-core lines. Sibling task 14 is independently reported to ALSO add
+    `rusqlite = { workspace = true }` to this same Cargo.toml and a branch to a match in
+    comandos.rs — same dependency line, different files otherwise; a rebase before merge that
+    keeps one copy of the duplicated dependency line resolves this cleanly since Cargo accepts
+    only one `rusqlite` key per section. This is a real, anticipated merge conflict, not a
+    design flaw.
+  - >-
+    CONFIRMED: crates/hexcell-storage/migraciones/sesiones/0004-reservas-sin-conversacion.sql
+    DROPs and recreates consumo_por_conversacion with this exact body (the literal formula to
+    copy): `SELECT r.id_conversacion, SUM(CASE WHEN r.estado = 'conciliada' THEN
+    r.monto_reservado - COALESCE(m.monto, 0) ELSE 0 END) AS unidades_consumidas FROM reservas
+    AS r LEFT JOIN movimientos AS m ON m.id_reserva = r.id AND m.clase = 'conciliacion' WHERE
+    r.id_conversacion IS NOT NULL GROUP BY r.id_conversacion`. The spec's pointer to "migration
+    0004" for this formula is accurate (the view is first created in 0003 but 0004 is the
+    version currently live on disk).
+  - >-
+    CONFIRMED: RepositorioDeSesiones::consumo_por_conversacion() already runs this exact
+    unfiltered query against the view and is the correct reference implementation for AC-1's
+    no-period case, but it cannot be reused for AC-2 because the view exposes no resuelta_ms
+    column for per-row filtering. reporte_de_consumo.rs must therefore hold its own copy of the
+    formula as a raw parameterized SQL statement (see test_scenarios) rather than delegate to
+    that method or to the view when a period is requested.
+  - >-
+    CONFIRMED: reservas.resuelta_ms is set by both conciliar_presupuesto (to the reconciliation
+    timestamp) and liberar_presupuesto (to the release timestamp), and the table's CHECK
+    constraint `(estado = 'activa') = (resuelta_ms IS NULL)` guarantees it is always non-NULL on
+    a 'conciliada' row. AC-2's premise that resuelta_ms is a valid period-filter key for
+    reconciled reservations holds.
+  - >-
+    GAP: the workspace has no date/time parsing crate (chrono, time, jiff) anywhere, and the
+    task constraints forbid adding a new external dependency implicitly (none is named in
+    00-spec.yaml's constraints, and D-53 already discarded several CLI-parsing crates on the
+    same "hand-written, no new dependency" reasoning this codebase applies repeatedly). AAAA-MM-DD
+    UTC parsing and validation (including rejecting a nonexistent calendar date such as
+    2026-02-30) plus the days-since-epoch-to-ms conversion must be hand-written inside
+    argumentos.rs, mirroring the hand-rolled style already used for --id/--motivo parsing and
+    for tiempo.rs's own saturating conversions. This is new, non-trivial arithmetic
+    (a Howard-Hinnant-style civil-to-days formula) that HEX-084's own hand-mutation test
+    obligation must cover for at least one leap-year edge case.
+  - >-
+    DESIGN DECISION recorded here (not litigated in 00-spec.yaml, which is silent on this
+    exact point): --copia's basename/suffix rejection (AC-3) and --desde/--hasta format
+    validation (AC-5) both run unconditionally inside analizar_reporte, BEFORE any
+    Comando::ReporteTokens value is constructed and therefore before the --simular branch is
+    ever consulted in comandos.rs. This matches the existing `cell` group's precedent, where
+    validar_opciones enforces required/malformed-option rejection independently of --simular;
+    it also means a --copia literally named sessions.db is rejected even when --simular is
+    also passed, which is consistent with invariant #3's unconditional wording and does not
+    contradict AC-4 (AC-4's "any value for --copia" is read as any value other than the
+    sessions.db/-wal/-shm shapes AC-3 already owns).
+  - >-
+    NOTE for the implementer, not a blocker: docs/plan/fase-a-6-empaquetado-cli.md's "## Orden
+    de ejecución" section's last two appended bullets disagree on order because one is a dated
+    backfill entry appended after a newer one. The most recently appended chain-bearing line as
+    of 2026-09-22 (HEX-080/HEX-081 both closed) reads "12 → 13 → 14 → 15 → 18 → 23 → 21 → 19".
+    Per 00-spec.yaml's own acceptance criterion, the implementer must re-read this file from
+    disk AT CLOSING TIME (not trust this blueprint's snapshot) before appending task 23's
+    closing bullet, since sibling tasks 12/13/14/15/18 may close first.
+  - >-
+    Test-fixture note: hexcell_storage::pools::GestorDePools::respaldar_en(dir) always names
+    its sessions.db copy literally "sessions.db" inside dir (NOMBRE_DE_ARCHIVO_DE_SESIONES),
+    which is exactly the basename this task's own guard rejects. Tests must either (a) call the
+    lower-level hexcell_storage::respaldo::respaldar_base(&conexion_de_lectura, &ruta_copia,
+    VERSION_DE_ESQUEMA_DE_SESIONES, "sessions.db") directly with an arbitrary destination
+    filename such as copia.db (both are re-exported at the hexcell-storage crate root), or
+    (b) call respaldar_en into a throwaway directory and std::fs::rename the result. Option (a)
+    is simpler and avoids touching a private pools field.
+strategy:
+  - step: 1
+    action: >-
+      Extend argumentos.rs: add Comando::ReporteTokens(InvocacionReporte) as a third enum
+      variant alongside Cell and ConfigRender, following the same shape InvocacionRenderizado
+      already established (a plain struct with private fields and public accessors). Add a
+      third top-level group branch in analizar() for "reporte" (parallel to the existing
+      "config" branch), dispatching to a new analizar_reporte(&argumentos[1..]) that requires
+      the literal subcommand "tokens", then parses --celula, --copia, --desde, --hasta (both
+      "--clave valor" and "--clave=valor" spellings, same duplicate/missing-value rejections
+      the existing extractor uses) and --simular. --celula and --copia are mandatory; --desde
+      and --hasta are optional and independently validated. Update GrupoDesconocido's Display
+      message to list "cell", "config" and "reporte" as the admitted groups (a literal-string
+      edit, not a behavior change). Every accessor method on Comando (subcomando/id/motivo/
+      simular/confirmar) that matches exhaustively over the enum needs a new arm for
+      ReporteTokens, mirroring what it already returns for ConfigRender (None/None/simular-only/
+      false), to keep those functions compiling; this is a mechanical consequence of adding an
+      enum variant, not new business logic.
+    files:
+      - crates/hexcell-admin/src/argumentos.rs
+      - crates/hexcell-admin/tests/argumentos.rs
+  - step: 2
+    action: >-
+      Add the hand-written AAAA-MM-DD UTC date parser inside argumentos.rs (private fn, e.g.
+      fecha_utc_a_ms_desde_epoca(&str) -> Result<i64, ()>): validate exact length and dash
+      positions, parse year/month/day as integers, reject month outside 1..=12 and day outside
+      1..=days_in_month(year, month) (with a correct leap-year rule: divisible by 4, not by 100
+      unless also by 400), then compute days-since-epoch with a standard civil-to-days formula
+      (Howard Hinnant's days_from_civil, public domain) and multiply by 86_400_000. Wire it into
+      analizar_reporte so a malformed --desde/--hasta becomes ErrorDeArgumentos::ReporteInvalido
+      before any Comando is constructed (AC-5). Add ErrorDeArgumentos::ReporteInvalido {
+      mensaje: String } (generic grammar/date errors, same shape as ConfiguracionInvalida) and
+      a dedicated fixed-message ErrorDeArgumentos::CopiaEsSessionsDb variant (its Display impl
+      is the exact literal string 'el reporte sólo lee copias VACUUM INTO, nunca sessions.db',
+      hardcoded rather than built through a formatter, so no future refactor of a shared
+      message-building helper can silently drift the required exact text). The --copia
+      basename/suffix check (Path::new(copia).file_name() == "sessions.db", or copia ends_with
+      "-wal"/"-shm") also lives in analizar_reporte, unconditionally, before --simular is even
+      read (see the risks entry on this).
+    files:
+      - crates/hexcell-admin/src/argumentos.rs
+      - crates/hexcell-admin/tests/argumentos.rs
+  - step: 3
+    action: >-
+      Create crates/hexcell-admin/src/reporte_de_consumo.rs: a pub fn generar_reporte(copia:
+      &std::path::Path, desde_ms: Option<i64>, hasta_ms: Option<i64>) -> Result<Vec<(String,
+      i64)>, ErrorDeReporte> that opens copia with
+      rusqlite::Connection::open_with_flags(copia, OpenFlags::SQLITE_OPEN_READ_ONLY |
+      OpenFlags::SQLITE_OPEN_NO_MUTEX) (the same flag combination crates/hexcell-storage/src/
+      pools.rs and respaldo.rs already use for read-only access), then runs ONE parameterized
+      query for both the filtered and unfiltered case (params![desde_ms, hasta_ms], both
+      Option<i64>, bind to NULL when None): `SELECT r.id_conversacion, SUM(CASE WHEN r.estado =
+      'conciliada' THEN r.monto_reservado - COALESCE(m.monto, 0) ELSE 0 END) AS
+      unidades_consumidas FROM reservas AS r LEFT JOIN movimientos AS m ON m.id_reserva = r.id
+      AND m.clase = 'conciliacion' WHERE r.id_conversacion IS NOT NULL AND (?1 IS NULL OR
+      r.resuelta_ms >= ?1) AND (?2 IS NULL OR r.resuelta_ms < ?2) GROUP BY r.id_conversacion
+      ORDER BY r.id_conversacion`. This is deliberately the SAME statement regardless of
+      whether a period was requested (NULL bounds are no-ops), so there is only one formula in
+      the codebase to keep in sync with migration 0004, per the invariant. Any rusqlite::Error
+      from open/prepare/query (unreadable file, missing table/columns from a database that
+      predates migration 0004) becomes ErrorDeReporte, mapped by the caller to Fallo, never
+      UsoIncorrecto (AC-6). ErrorDeReporte is a minimal owned-string wrapper (this module
+      cannot use hexcell_storage::ErrorDeAlmacen or its `.en()` helper: hexcell-storage is a
+      dev-dependency only).
+    files:
+      - crates/hexcell-admin/src/reporte_de_consumo.rs
+      - crates/hexcell-admin/tests/reporte_de_consumo.rs
+  - step: 4
+    action: >-
+      Wire comandos.rs: add a new ejecutar_reporte_tokens<S: Write, D: Write>(invocacion:
+      InvocacionReporte, salida: &mut Salida<S, D>) -> CodigoDeSalida that, under --simular,
+      writes a "simulación: reporte tokens ..." line to the standard sink and returns Exito
+      without calling reporte_de_consumo at all (AC-4); otherwise calls
+      reporte_de_consumo::generar_reporte, on Err diagnoses and returns Fallo (AC-6), on Ok
+      writes one "id_conversacion unidades" line per row (already ordered by id from the SQL),
+      sums the second column, and writes the final "TOTAL <celula> <desde|inicio> <hasta|fin>
+      <unidades>" line using the ORIGINAL validated --desde/--hasta text (or the literal words
+      "inicio"/"fin" when absent) rather than recomputed values, then returns Exito (or Fallo on
+      any io::Error from the sinks, matching the existing diagnosticar_fallo idiom). Dispatch it
+      from ejecutar(): add `if let Comando::ReporteTokens(invocacion) = comando { return
+      ejecutar_reporte_tokens(invocacion, salida); }` immediately alongside the existing
+      ConfigRender if-let, and extend the subsequent exhaustive match's now-two-armed
+      unreachable case to three arms (Comando::ConfigRender(_) | Comando::ReporteTokens(_) =>
+      unreachable!()). In ejecutar_con_efectos(), extend the existing `otro @
+      Comando::ConfigRender(_) => return ejecutar(Ok(otro), salida)` arm to `otro @
+      (Comando::ConfigRender(_) | Comando::ReporteTokens(_))`, since reporte tokens never
+      touches Docker either. This is the ONE new command-dispatch path required by the
+      invariant; it does not touch the separate `match invocacion.subcomando()` block that
+      sibling tasks 12/13/14/15 own, because ReporteTokens is a new top-level Comando variant,
+      never a Subcomando arm of Cell.
+    files:
+      - crates/hexcell-admin/src/comandos.rs
+      - crates/hexcell-admin/src/lib.rs
+      - crates/hexcell-admin/tests/comandos.rs
+  - step: 5
+    action: >-
+      Update crates/hexcell-admin/Cargo.toml: add `rusqlite = { workspace = true }` under
+      [dependencies] (production, to open the read-only copy) and a new [dev-dependencies]
+      section with `hexcell-storage = { path = "../hexcell-storage" }` and `hexcell-core = {
+      path = "../hexcell-core" }` (test-only seeding surface, per the risks entries above).
+      Do not touch the pinned rusqlite version (0.39) or its bundled feature at the workspace
+      root.
+    files:
+      - crates/hexcell-admin/Cargo.toml
+  - step: 6
+    action: >-
+      Write crates/hexcell-admin/tests/reporte_de_consumo.rs covering AC-1 through AC-6 with
+      snake_case descriptive names and a hand-rolled tempdir (std::env::temp_dir() +
+      process::id() + an incrementing counter, matching the existing convention documented in
+      the root Cargo.toml and already used under crates/hexcell/tests/ and
+      crates/hexcell-admin/tests/comun/mod.rs's SECUENCIA counter; no tempfile crate). Seed
+      fixtures via hexcell_storage::pools::GestorDePools::abrir + Arc +
+      hexcell_storage::presupuesto::RepositorioDeSesiones::nuevo, using
+      reservar_presupuesto/aportar_presupuesto/conciliar_presupuesto/liberar_presupuesto exactly
+      as crates/hexcell-storage/tests/presupuesto.rs already does (create the conversation via
+      anotar_entrante first: id_conversacion has a FOREIGN KEY into conversaciones). Produce the
+      VACUUM INTO copy with hexcell_storage::respaldo::respaldar_base(&conexion_de_lectura,
+      &destino, VERSION_DE_ESQUEMA_DE_SESIONES, "sessions.db") on a destino path named something
+      other than sessions.db (e.g. copia.db), per the test-fixture risk entry above. Cover AC-1
+      (two conciliadas + one liberada), AC-2 (period window via --desde/--hasta bracketing one
+      of two distinct resuelta_ms values), AC-3 (sessions.db/-wal/-shm rejection, asserting the
+      exact message and that the file is never opened — e.g. point --copia at a path that would
+      panic or error loudly if opened), AC-4 (--simular against a nonexistent --copia), AC-5
+      (malformed dates: wrong length, non-numeric, 2026-02-30, month 13), and AC-6 (a
+      non-sqlite file, and a valid sqlite file without the reservas/movimientos schema). Every
+      new test must be demonstrable by hand-mutation per the spec's blanket acceptance item;
+      record which single-character/operator mutation flips each of AC-1/AC-2's assertions.
+    files:
+      - crates/hexcell-admin/tests/reporte_de_consumo.rs
+  - step: 7
+    action: >-
+      Append README.md's CLI section with a new "reporte tokens" entry (usage line and the
+      output format), appended after the existing "cell"/"config render" entries, never
+      replacing or reordering them. Append docs/plan/fase-a-6-empaquetado-cli.md's task 23
+      entry with "**Cerrada el AAAA-MM-DD con HEX-084.**" (date read at closing time) plus one
+      new bullet under "## Orden de ejecución" stating the chain re-read from disk at that
+      moment (per the note in risks above — do not copy this blueprint's snapshot verbatim).
+      Both edits are pure appends; the pre-commit check `git diff -- docs README.md | grep
+      '^-'` must show no deleted lines.
+    files:
+      - README.md
+      - docs/plan/fase-a-6-empaquetado-cli.md

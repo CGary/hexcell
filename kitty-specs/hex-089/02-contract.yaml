@@ -1,0 +1,86 @@
+task_id: HEX-089
+summary: "Runbook rollout section, bash-only no-whole-portfolio-update guard with self-test, CI job, plan closing note."
+goal: >-
+  Deliver part (a) of A-6 task 19 following 01-blueprint.yaml: replace the deferred-to-A-6 staggering
+  text in docs/runbook-canal-whatsmeow.md with a written canary and batch-rollout procedure, add
+  deploy/verificar_despliegue_escalonado.sh (guard plus --autoprueba that mutates copies and demands
+  the expected check id per mutation), wire it into .github/workflows/ci.yml as job
+  guardas-despliegue with no extra toolchain, and append a partial closing note to task 19 in
+  docs/plan/fase-a-6-empaquetado-cli.md. Sentinel registration and the real 72 h run (part b) stay out.
+read:
+  - .ai/tasks/active/HEX-089-new-spec/00-spec.yaml
+  - .ai/tasks/active/HEX-089-new-spec/01-blueprint.yaml
+  - CLAUDE.md
+  - deploy/verificar_limites.sh
+  - deploy/verificar_senales.sh
+  - crates/hexcell-admin/src/argumentos.rs
+  - docs/runbook-canal-whatsmeow.md
+  - docs/runbook-operacion.md
+  - docs/plan/fase-a-6-empaquetado-cli.md
+  - docs/adr/adr-0015-politica-de-convivencia-con-el-baneo.md
+  - docs/STATUS.md
+touch:
+  - docs/runbook-canal-whatsmeow.md
+  - deploy/verificar_despliegue_escalonado.sh
+  - .github/workflows/ci.yml
+  - docs/plan/fase-a-6-empaquetado-cli.md
+forbid:
+  files:
+    - crates/**
+    - sidecar/**
+    - deploy/cell.compose.yml
+    - docs/STATUS.md
+    - docs/bitacora-de-descartes.md
+    - docs/adr/**
+    - docs/runbook-operacion.md
+    - README.md
+    - Cargo.toml
+    - Cargo.lock
+    - deploy/verificar_limites.sh
+    - deploy/verificar_senales.sh
+    - deploy/verificar_imagenes.sh
+  behaviors:
+    - "crates/hexcell-admin/src/argumentos.rs is READ by the guard only (TEXTO_DE_USO at lines 416-438, dispatch at 453-480 as of bf1e088); never edit it and never add a hexcell-admin subcommand."
+    - "The guard and its self-test use only bash, grep, awk, sed, cmp, mktemp, cp and rm: no yq, python, docker, cargo or network. The CI job guardas-despliegue has actions/checkout only; do not add rust-toolchain, cache, docker or python steps to it."
+    - "Token comparison is exact string equality on tokenised lines (case-folded), never grep contains combined with ||; the imagenes exemption is equality on the job key, never a pattern."
+    - "Full-line comments and step name: values are ignored by CI-COMPOSE and CI-SCRIPT; the guard must not contain a literal 'docker compose ... up|pull|restart' line outside comments (build mutation payloads from separate variables) so it needs no self-exemption."
+    - "--autoprueba mutates COPIES in a mktemp dir only, never the repo files; each mutation is proven to have changed its copy with cmp before the guard runs on it; a nonzero exit alone never counts: the expected FALLA[<id>] text must appear and the other ids must be absent."
+    - "--autoprueba must include the non-trigger cases (clean copies green, compose up inside job imagenes green); a guard whose result is constant is not a guard."
+    - "Distinct failure ids are fixed: CI-COMPOSE, CI-SCRIPT, CLI-SUBCOMANDO, CLI-USO, printed as FALLA[<id>] and OK[<id>]."
+    - "Run the guard on the unmodified base and see it exit 0 BEFORE writing --autoprueba; record the output in the implementation log."
+    - "Runbook edit is exact-literal replacement of the single bullet at line 30 (text starting 'Despliegue escalonado en cartera (diferido a etapa A-6):' through 'pertenece a la etapa A-6.') plus appended blocks; lines 63-65 (Aviso) stay unchanged; no other existing line is rewritten."
+    - "The plan edit is APPEND-only after the task 19 item; do not touch the criterion at lines 676-679, the risks table or any existing line."
+    - "The procedure names only cell pause, cell unpause and cell status, states that hexcell-admin has no update or deploy command, contains the literal 'nunca actualizar todas las células el mismo día', and marks the sentinel registration pending on the own-number decision in STATUS.md."
+    - "No invented client, cell, portfolio, price or sentinel-number figures; batch size is a parameter with default one cell per batch justified from adr-0015 and plan task 19, and no calendar cohort size is invented."
+    - "Do not resolve or restate as settled the Meta Verified location tension (sentinel per plan task 19 vs piloto-01 per adr-0015 and A-7): describe the sentinel as the testing ground for unproven measures per task 19 and never call Meta Verified a proven measure."
+    - "Never write that Fase B replaces Fase A or that the sidecar is retired."
+    - "All content in Spanish, absolute dates, Conventional Commits, no Co-Authored-By or any AI attribution."
+verify:
+  commands:
+    - bash -n deploy/verificar_despliegue_escalonado.sh
+    - bash deploy/verificar_despliegue_escalonado.sh
+    - bash deploy/verificar_despliegue_escalonado.sh --autoprueba
+    - "bash -c '! grep -n \"diferido a etapa A-6\" docs/runbook-canal-whatsmeow.md'"
+    - "grep -q 'nunca actualizar todas las células el mismo día' docs/runbook-canal-whatsmeow.md"
+    - "grep -q 'guardas-despliegue' .github/workflows/ci.yml"
+    - "bash -c 'test -z \"$(git status --porcelain -- crates sidecar deploy/cell.compose.yml docs/STATUS.md)\" && git diff --quiet main...HEAD -- crates sidecar deploy/cell.compose.yml docs/STATUS.md'"
+  target_s: 60
+acceptance:
+  human_gate: true
+limits:
+  max_files_changed: 4
+  max_diff_lines: 830
+  max_cost_usd: 3.0
+  per_class:
+    - glob: deploy/**
+      max_diff_lines: 560
+    - glob: .github/**
+      max_diff_lines: 40
+    - glob: docs/**
+      max_diff_lines: 230
+execution:
+  mode: worktree_edit
+  branch: ai/HEX-089-new-spec
+retry_policy:
+  max_attempts: 2
+  escalate_after: 2

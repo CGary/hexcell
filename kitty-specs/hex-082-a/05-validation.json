@@ -1,0 +1,98 @@
+{
+  "commands": [
+    {
+      "command": "bash -c 'test -z \"$(git diff --name-only main...HEAD | grep -E \"^(sidecar/|docs/|README\\.md|Cargo\\.(toml|lock)|\\.github/|crates/hexcell-core/|crates/hexcell-canal-simulado/|crates/hexcell-canal-contrato/|crates/hexcell-admin/|crates/hexcell-storage/|crates/hexcell-meta/)\")\"'",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "sin salida (guarda vacia = ok); solo significativa despues del commit 8c9c80c, antes era vacua por construccion (main...HEAD vacio con 0 commits)"
+    },
+    {
+      "command": "bash -c 'test -z \"$(git diff --name-only main...HEAD -- crates/hexcell/src/configuracion.rs crates/hexcell/src/emparejar.rs crates/hexcell-canal-whatsmeow/src/mensajes.rs crates/hexcell-canal-whatsmeow/src/lib.rs deploy/verificar_endurecimiento.sh deploy/verificar_limites.sh deploy/verificar_renderizado_configuracion.sh deploy/celula.env.ejemplo)\"'",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "sin salida; ninguno de esos ocho archivos figura en el diff main...HEAD"
+    },
+    {
+      "command": "bash -c 'test -z \"$(grep -rnE \"hexcell_canal_whatsmeow|AdaptadorWhatsmeow|AsaDeSesion|orden_cierre_de_sesion\" crates/hexcell/src/admin.rs)\"'",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "sin salida; admin.rs no nombra ningun tipo o funcion del adaptador whatsmeow"
+    },
+    {
+      "command": "bash -c 'grep -q \"canal_sin_sesion\" crates/hexcell/src/admin.rs'",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "coincide en la constante pub const MOTIVO_CANAL_SIN_SESION: &str = \"canal_sin_sesion\"; (linea 273)"
+    },
+    {
+      "command": "bash -c 'grep -qE \"^[[:space:]]+HEXCELL_DIRECCION_ADMIN:[[:space:]]*0\\.0\\.0\\.0:8082$\" deploy/cell.compose.yml'",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "coincide la linea HEXCELL_DIRECCION_ADMIN: 0.0.0.0:8082 en el servicio nucleo"
+    },
+    {
+      "command": "bash -c 'test -z \"$(grep -nE \"^[[:space:]]*ports:\" deploy/cell.compose.yml)\"'",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "sin salida; ningun bloque ports: en la plantilla"
+    },
+    {
+      "command": "bash -c 'test -z \"$(grep -nE \"PLAZO_DE_CIERRE_DE_SESION|8082\" crates/hexcell/tests/admin_http.rs crates/hexcell-canal-whatsmeow/tests/cierre_de_sesion.rs)\"'",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "sin salida; ningun archivo de test importa la constante de plazo ni el literal de puerto"
+    },
+    {
+      "command": "bash -c 'test -z \"$(git diff main...HEAD -- crates/hexcell-canal-whatsmeow/tests/cierre_de_sesion.rs | grep -E \"^-\" | grep -v \"^---\")\"'",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "sin salida; los dos casos preexistentes de HEX-071 quedan sin editar, solo hay lineas anadidas"
+    },
+    {
+      "command": "bash -c 'test -z \"$(git log main..HEAD --format=%B | grep -iE \"co-authored-by|generated with|claude-session|claude\\.ai/code\")\"'",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "sin salida; el commit 8c9c80c no lleva ninguna linea de atribucion de IA"
+    },
+    {
+      "command": "cargo fmt --check",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "sin salida"
+    },
+    {
+      "command": "cargo clippy --workspace -- -D warnings",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.02s; sin advertencias sobre el diff de esta tarea (las de NOMBRE_DE_ARCHIVO_DE_CONOCIMIENTO/EpocaPurgada/repo de una corrida previa eran preexistentes en hexcell-storage y no aparecieron en esta corrida limpia)"
+    },
+    {
+      "command": "cargo test -p hexcell --test admin_http",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out"
+    },
+    {
+      "command": "cargo test -p hexcell-canal-whatsmeow --test cierre_de_sesion",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out"
+    },
+    {
+      "command": "cargo test --workspace",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "todos los crates del workspace en ok, incluyendo doc-tests de hexcell-core (2 passed); sin fallos"
+    },
+    {
+      "command": "cd sidecar && go vet ./... && go test ./... -count=1",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "ok  github.com/CGary/hexcell/sidecar 0.007s\nok  .../internal/canal 0.063s\nok  .../internal/configuracion 0.002s\nok  .../internal/identidad 0.040s\nok  .../internal/ipc 0.003s\nok  .../internal/metricas 0.003s\nok  .../internal/outbox 0.037s\nok  .../internal/registro 0.003s\nok  .../internal/servidor 0.007s"
+    }
+  ],
+  "executed_at": "2026-09-22T13:45:00Z",
+  "overall_result": "passed",
+  "summary": "Las 15 guardas del contrato exit 0 tras el commit 8c9c80c; las tres de main...HEAD dejan de ser vacuas.",
+  "task_id": "HEX-082-a"
+}

@@ -1,0 +1,311 @@
+task_id: HEX-085-b
+summary: >-
+  hexcell-admin CLI ten-step resumable `cell rebind` sequence (D5) over the frozen D2 HTTP
+  contract, tested against the scripted Docker double in tests/comun/mod.rs.
+affected_files:
+  - crates/hexcell-admin/src/argumentos.rs
+  - crates/hexcell-admin/src/comandos.rs
+  - crates/hexcell-admin/src/ciclo_de_vida.rs
+  - crates/hexcell-admin/src/almacen_plano_de_control.rs
+  - crates/hexcell-admin/src/docker/cliente.rs
+  - crates/hexcell-admin/tests/argumentos.rs
+  - crates/hexcell-admin/tests/cliente_docker.rs
+  - crates/hexcell-admin/tests/almacen_plano_de_control.rs
+  - crates/hexcell-admin/tests/ciclo_de_vida.rs
+  - crates/hexcell-admin/tests/comandos.rs
+  - crates/hexcell-admin/tests/reemparejamiento.rs
+symbols:
+  - 'hexcell_admin::argumentos::MetodoDeEmparejamiento { Qr, CodigoDeVinculacion } + Invocacion::metodo() (Some(Qr) by default for rebind, None otherwise)'
+  - 'hexcell_admin::argumentos::ErrorDeArgumentos::ValorDeOpcionInvalido { subcomando, opcion, valor } (invalid --metodo value -> UsoIncorrecto=2)'
+  - 'hexcell_admin::argumentos extraer_opciones/validar_opciones/TEXTO_DE_USO (--metodo in both spellings, admitted only by rebind)'
+  - 'hexcell_admin::almacen_plano_de_control::MOTIVO_DE_EMPAREJAMIENTO_CONFIRMADO = "emparejamiento_confirmado"'
+  - 'AlmacenDelPlanoDeControl::confirmar_reemparejamiento(id, motivo_de_sustitucion, ahora_ms) (one transaction: celulas UPSERT Reemparejando->EnEjecucion, transiciones row, sustituciones row)'
+  - 'hexcell_admin::docker::ClienteDocker::leer_salida_estandar(id) (GET /containers/{id}/logs?stdout=1&stderr=0 + 8-byte frame demux)'
+  - 'hexcell_admin::docker::ClienteDocker::crear_e_iniciar_contenedor_con_volumen(imagen, opciones, volumen, destino) (HostConfig.Mounts type volume; same create/start/cleanup contract as crear_e_iniciar_contenedor_con_opciones)'
+  - 'hexcell_admin::ciclo_de_vida::PlazosDeReemparejamiento { cadencia, intentos_de_pausa, intentos_de_emparejamiento, tope_de_confirmacion } + por_omision() (2 s, 30, 30, 120 s)'
+  - 'hexcell_admin::ciclo_de_vida::guion_de_peticion_http(url, cuerpo, limite) (single-shot wget -q -O - -T N [--post-data JSON] URL, no loop) and consultar_por_hermano (create, start, wait, logs, delete always)'
+  - 'hexcell_admin::ciclo_de_vida phase services: preparar_reemparejamiento (steps 2-4), descartar_sqlstore_y_rearrancar (steps 6-7), solicitar_emparejamiento (8), esperar_confirmacion (9), reanudar_envio (10 Docker part)'
+  - 'hexcell_admin::ciclo_de_vida::ErrorDeCicloDeVida new variants for pause failure, pairing failure, expired code, sqlstore discard failure, unreadable probe body, core not running for rebind'
+  - 'hexcell_admin::comandos::ejecutar_reemparejamiento(invocacion, salida, cliente, ruta_almacen, ahora_ms, datos, plazos) (pub; ejecutar_con_efectos calls it with PlazosDeReemparejamiento::por_omision(), signature of ejecutar_con_efectos unchanged)'
+dependencies:
+  - crates/hexcell-admin/src/estado_de_celula.rs
+  - crates/hexcell-admin/src/codigo_de_salida.rs
+  - crates/hexcell-admin/src/salida.rs
+  - crates/hexcell-admin/src/main.rs
+  - crates/hexcell-admin/src/docker/mod.rs
+  - crates/hexcell-admin/src/docker/transporte.rs
+  - crates/hexcell-admin/migraciones/0001-plano-de-control.sql
+  - crates/hexcell-admin/tests/comun/mod.rs
+  - crates/hexcell-admin/tests/estado_y_listado.rs
+  - crates/hexcell/src/emparejar.rs
+  - docs/adr/adr-0039-almacen-del-plano-de-control.md
+test_scenarios:
+  - statement: >-
+      argumentos.rs: cell rebind without --metodo yields metodo Qr; --metodo codigo_de_vinculacion
+      and --metodo=codigo_de_vinculacion yield CodigoDeVinculacion; --metodo sms is rejected with
+      ValorDeOpcionInvalido (UsoIncorrecto=2); --metodo on pause/terminate is OpcionNoAdmitida; a
+      repeated --metodo is OpcionRepetida; --motivo and --confirmar are still mandatory for
+      rebind; the rebind --simular line is byte-for-byte unchanged.
+    covers:
+      - AC-6
+  - statement: >-
+      reemparejamiento.rs, fake Docker socket, tiny injected PlazosDeReemparejamiento: the happy
+      path from EnEjecucion issues the Docker requests in EXACTLY this sequence, asserted as one
+      whole-sequence equality - inspect nucleo, inspect sidecar; pause probe (create, start, wait,
+      logs, delete); close probe (create, start, wait, delete); sidecar stop without t; rm sibling
+      (create, start, wait, delete); sidecar start; pause probe; pairing probe; status probe;
+      resume probe.
+    covers:
+      - AC-7
+      - AC-8
+      - AC-9
+      - AC-10
+      - AC-11
+      - AC-12
+      - AC-13
+      - AC-14
+      - AC-16
+  - statement: >-
+      request BODIES of the happy path are asserted, not only paths - each probe create body
+      carries Image alpine:3 (or the injected probe image), HostConfig.NetworkMode equal to the
+      network key read from the core inspect, and a Cmd whose URL host is "<id>-nucleo", whose
+      port comes from HEXCELL_DIRECCION_ADMIN in Config.Env (fixture port not 8082, not 9098, not
+      9099), whose path is the right route and whose --post-data is the exact JSON for pausar, the
+      chosen metodo, or reanudar.
+    covers:
+      - AC-8
+      - AC-11
+      - AC-12
+      - AC-14
+      - AC-16
+  - statement: >-
+      the rm sibling create body has Cmd EXACTLY ["rm","-f","/var/lib/hexcell/sqlstore.db",
+      "/var/lib/hexcell/sqlstore.db-wal","/var/lib/hexcell/sqlstore.db-shm"], mounts the volume
+      whose name is the core inspect Mounts[].Name for /var/lib/hexcell (fixture name not
+      derivable from --id) at /var/lib/hexcell, and the whole body contains neither
+      "identidad.db" nor "outbox.db".
+    covers:
+      - AC-10
+      - AC-16
+  - statement: >-
+      final state of the happy path read back from the store - row EnEjecucion with motivo
+      "emparejamiento_confirmado", transiciones EnEjecucion->Reemparejando with motivo = --motivo
+      then Reemparejando->EnEjecucion, exactly one sustituciones row with motivo = --motivo and
+      registrado_ms = injected ahora_ms; stdout carries "emparejamiento <metodo>: <valor>", the
+      rendering note literal of emparejar.rs:243 and the completion line; exit Exito=0.
+    covers:
+      - AC-12
+      - AC-14
+      - AC-15
+      - AC-16
+  - statement: >-
+      the sustituciones table after the happy path has exactly the columns id, id_celula, motivo,
+      registrado_ms and no stored text in any column of any control-plane table equals the
+      fixture pairing valor or a phone-number-like string supplied by the double.
+    covers:
+      - AC-15
+  - statement: >-
+      resume from a row already in Reemparejando issues only inspect nucleo, inspect sidecar,
+      pairing probe, status probe and resume probe - no pausar probe, no close probe, no sidecar
+      stop/start, no rm sibling - and ends Exito with the row EnEjecucion and one sustituciones
+      row.
+    covers:
+      - AC-7
+      - AC-16
+  - statement: >-
+      a close probe exiting non-zero writes one stderr line and the sequence continues to the
+      stop, rm, start, pause, pairing, status and resume requests, ending Exito.
+    covers:
+      - AC-9
+      - AC-16
+  - statement: >-
+      rows in Suspendida and in Retirada both end Fallo=1 before any Docker request
+      (exigir_silencio on the fake daemon); Suspendida's diagnostic contains "ejecute cell unpause
+      antes de cell rebind", Retirada's is the illegal-transition diagnostic, and neither row
+      changes.
+    covers:
+      - AC-7
+      - AC-16
+  - statement: >-
+      a pausar probe answering fallido at step 3 ends Fallo with no close probe, no stop, no rm
+      and the row unchanged (still EnEjecucion).
+    covers:
+      - AC-8
+  - statement: >-
+      a pause probe answering fallido sin_conexion at step 7 is retried at the injected cadence
+      and succeeds on the next attempt; a pairing probe answering sin_conexion twice then codigo
+      proceeds; a pairing fallido with any other motivo ends Fallo with the row left Reemparejando
+      and no sustituciones row.
+    covers:
+      - AC-11
+      - AC-12
+  - statement: >-
+      status probes that never report activa exhaust the injected confirmation budget; the
+      command ends Fallo with the exact diagnostic "código expirado; repita cell rebind", the row
+      stays Reemparejando, no resume probe is issued and sustituciones stays empty.
+    covers:
+      - AC-13
+      - AC-16
+  - statement: >-
+      a pairing probe answering canal_sin_sesion skips the status polling (no status probe
+      issued), issues the resume probe and ends Exito with row EnEjecucion and one sustituciones
+      row.
+    covers:
+      - AC-12
+      - AC-14
+      - AC-16
+  - statement: >-
+      cliente_docker.rs: leer_salida_estandar sends GET /containers/<id>/logs?stdout=1&stderr=0
+      and demultiplexes a two-frame body into the exact stdout bytes, dropping stderr frames; a
+      truncated frame header yields RespuestaMalformada, never a panic;
+      crear_e_iniciar_contenedor_con_volumen emits the volume mount in the create body and
+      deletes the container when start fails.
+    covers:
+      - AC-10
+      - AC-12
+  - statement: >-
+      almacen tests: confirmar_reemparejamiento writes the celulas row, one transiciones row and
+      one sustituciones row atomically; a failure in the sustituciones insert leaves the row in
+      Reemparejando (transaction rolled back).
+    covers:
+      - AC-14
+  - statement: >-
+      comandos.rs: the old test asserting rebind returns NoImplementadoTodavia is replaced by one
+      proving ejecutar_con_efectos dispatches rebind into the real path (Suspendida row -> Fallo
+      before Docker); no cell subcommand reaches code 3 through ejecutar_con_efectos.
+    covers:
+      - AC-7
+strategy:
+  - step: 1
+    action: >-
+      CLI grammar (argumentos.rs). Add MetodoDeEmparejamiento (CLI-local type; hexcell-admin does
+      NOT depend on the whatsmeow crate), --metodo in both spellings admitted only by rebind,
+      default Qr, ValorDeOpcionInvalido for unknown values, usage text line for rebind. The rebind
+      --simular line stays byte-for-byte unchanged.
+    files:
+      - crates/hexcell-admin/src/argumentos.rs
+      - crates/hexcell-admin/tests/argumentos.rs
+  - step: 2
+    action: >-
+      Docker client extension (docker/cliente.rs). leer_salida_estandar(id) = GET
+      /containers/{id}/logs?stdout=1&stderr=0 with a pure demux of the 8-byte-header multiplexed
+      stream (stream byte, 3 zero bytes, u32 big-endian length) keeping only stdout frames,
+      bounded and panic-free on truncation; crear_e_iniciar_contenedor_con_volumen sharing the
+      create/start/cleanup helper with crear_e_iniciar_contenedor_con_opciones and adding
+      HostConfig.Mounts [{Type:volume, Source, Target}]. OpcionesDeContenedor keeps its two fields
+      so no existing literal changes; docker/mod.rs is not edited.
+    files:
+      - crates/hexcell-admin/src/docker/cliente.rs
+      - crates/hexcell-admin/tests/cliente_docker.rs
+  - step: 3
+    action: >-
+      Control-plane store (almacen_plano_de_control.rs). Add MOTIVO_DE_EMPAREJAMIENTO_CONFIRMADO
+      and confirmar_reemparejamiento(id, motivo_de_sustitucion, ahora_ms) writing, in ONE
+      transaction, the celulas UPSERT to EnEjecucion with the new motivo, the transiciones row
+      Reemparejando->EnEjecucion and the sustituciones row (id_celula, motivo, registrado_ms
+      only). No schema change, no migration. Step 5 (of the D5 sequence) reuses
+      registrar_transicion with de = current row state (None for implicit creation) and motivo =
+      --motivo.
+    files:
+      - crates/hexcell-admin/src/almacen_plano_de_control.rs
+      - crates/hexcell-admin/tests/almacen_plano_de_control.rs
+  - step: 4
+    action: >-
+      Lifecycle application services (ciclo_de_vida.rs). Extract the inspect-and-resolve of D5
+      steps 2-3 (network, admin port from HEXCELL_DIRECCION_ADMIN, volume from Mounts[].Name) as a
+      shared helper, keeping retirar's request order byte-identical. Add guion_de_peticion_http
+      (single shot wget -q -O - -T N, optional --post-data JSON) and consultar_por_hermano
+      (create, start, wait, logs, delete; delete also on failure) that parses the JSON body. Add
+      PlazosDeReemparejamiento and the phase services: preparar_reemparejamiento (inspect both,
+      core running, pausar probe; fallido -> error; canal_sin_sesion = ok; then close probe via
+      guion_de_cierre_de_sesion, non-zero exit returned as a warning, not an error);
+      descartar_sqlstore_y_rearrancar (detener_contenedor_sin_plazo on the sidecar, rm sibling with
+      NetworkMode none and the volume mounted, exit 0 required, start sidecar, pausar retried
+      every cadencia up to intentos_de_pausa while motivo = sin_conexion); solicitar_emparejamiento
+      (same retry rule; codigo -> Codigo, canal_sin_sesion -> SinSesion, other fallido -> error);
+      esperar_confirmacion (attempts = ceil(min(expira_en_ms - ahora_ms or tope when 0, tope) /
+      cadencia), at least one, until estado activa, else CodigoExpirado); reanudar_envio (reanudar
+      probe, canal_sin_sesion = ok). Loops are attempt-count based so tests with a 1 ms cadence are
+      deterministic; production cadence 2 s. The Docker client timeout stays above every wget -T.
+    files:
+      - crates/hexcell-admin/src/ciclo_de_vida.rs
+      - crates/hexcell-admin/tests/ciclo_de_vida.rs
+  - step: 5
+    action: >-
+      Command orchestration (comandos.rs). ejecutar_con_efectos routes Reemparejar to
+      ejecutar_reemparejamiento with production plazos. Step 1 of D5: open the store, read the
+      row; None is treated as EnEjecucion (implicit creation, de = None); EnEjecucion -> full
+      sequence; Reemparejando -> resume (inspect, then step 8); Suspendida -> Fallo "la célula
+      está suspendida: ejecute cell unpause antes de cell rebind"; any other state -> Fallo with
+      the transitar(Reemparejando) error; zero Docker requests before this. Persist
+      EnEjecucion->Reemparejando only after steps 3-4, and confirmar_reemparejamiento only after
+      the reanudar probe succeeds. Stdout: the pairing line "emparejamiento <metodo>: <valor>",
+      the rendering note literal of emparejar.rs:243, and on success "cell rebind completado para
+      «<id>»"; the close warning and every failure go to the diagnostic sink only. Exit codes stay
+      0/1/2 (3 unreachable for cell through this path). Replace the rebind-returns-3 test in
+      tests/comandos.rs; D8 sequence tests live in the new tests/reemparejamiento.rs using the
+      unmodified fake daemon in tests/comun/mod.rs.
+    files:
+      - crates/hexcell-admin/src/comandos.rs
+      - crates/hexcell-admin/tests/comandos.rs
+      - crates/hexcell-admin/tests/reemparejamiento.rs
+risks:
+  - >-
+    CONTRACT GAP vs D1 (parent-acknowledged, not a reopened decision): D5 step 6 needs a sibling
+    container with the data volume mounted, and step 4's captured body plus step 8's printed
+    valor need the probe container's stdout. The current Docker client has neither:
+    OpcionesDeContenedor carries only red and cmd, and there is no logs method. This child
+    therefore MUST touch crates/hexcell-admin/src/docker/cliente.rs, per the parent's already
+    frozen decision.
+  - >-
+    STARTING-STATE MISMATCH inherited from the parent: the close route this child calls via
+    guion_de_cierre_de_sesion is NOT the new D2 routes; it is the existing
+    POST /admin/sesion/cierre (200 completado ok, 200 completado + motivo canal_sin_sesion, 502
+    fallido, 504 ausente, 502 unregistered), unchanged by HEX-085-a. Step 4 consumes it by wget
+    exit code only, so SinSesion is already a success and any 5xx is a best-effort failure; no
+    change needed here.
+  - >-
+    CONTRACT AMBIGUITY RESOLVED (parent D5/D2): codigo_emparejamiento.expira_en_ms is an ABSOLUTE
+    Unix-epoch instant (0 = unknown), not a duration. esperar_confirmacion computes its budget as
+    min(expira_en_ms - ahora_ms, 120 s), using 120 s when it is 0.
+  - >-
+    "ya_emparejada" is not a protocol token this child inspects specially: the CLI treats every
+    non-sin_conexion fallido from the pairing probe the same way (Fallo, row left Reemparejando),
+    so no CLI behavior branches on that literal.
+  - >-
+    RESUME GAP (D5 closed by the parent, recorded for a human): a failure AFTER step 5 but BEFORE
+    step 7 completes (rm sibling fails, sidecar start fails) leaves the row Reemparejando with
+    sqlstore.db possibly still on disk or the sidecar stopped; the next cell rebind resumes at
+    step 8 and cannot redo the discard, so pairing will keep failing. Recovery needs task 15
+    (idempotence) or manual action. Not fixed in this task.
+  - >-
+    D5 note-literal oddity: AC-12 asks for the emparejar.rs:243 note ("renderizado gráfico no está
+    integrado; ... renderizador QR externo") after the pairing line for both methods, even though
+    in emparejar.rs it is printed only for qr. This blueprint follows the AC literally; for
+    codigo_de_vinculacion the note is irrelevant but not wrong. A human may restrict it later.
+  - >-
+    Clock: ejecutar_con_efectos receives one ahora_ms snapshot at process start and its signature
+    must not change (main.rs is out of scope), so both the Reemparejando->EnEjecucion transition
+    and the sustituciones registrado_ms carry the command start time, up to about four minutes
+    before the actual confirmation.
+  - >-
+    Docker logs transport: transporte.rs (out of scope, dependency only) reads bodies by chunked
+    or Content-Length only and returns an empty body otherwise. Only the parent's real-Docker
+    smoke test proves dockerd's actual chunked log framing; the fake-daemon tests here cannot.
+  - >-
+    wget -T per probe must stay below the Docker client's request timeout because
+    POST /containers/{id}/wait blocks for the probe's whole life; the pairing probe waits up to
+    the core's 30 s deadline, so its -T must be above 30 s and below the client timeout. Mirror
+    the existing const assertion pattern used by retirar's probes.
+  - >-
+    ADR-0036 section 3 lists the cell options and --metodo is not in it. Per non-goals no new ADR
+    is written here; the plan note recording it is the parent's job.
+  - >-
+    tests/comun/mod.rs (the scripted-socket fake daemon) is a dependency, read but not modified:
+    D8 requires every new sequence test to run against it unmodified, so no FakeDocker is
+    introduced and no existing fixture behavior in that file changes.
+  - >-
+    Band: touched production files = 5 (argumentos.rs, comandos.rs, ciclo_de_vida.rs,
+    almacen_plano_de_control.rs, docker/cliente.rs), exactly at l_max_files=5 (strictly-above
+    triggers L), no migration/public_api/schema_change signal -> band M per
+    .agents/policies/complexity.yaml. Test files under tests/** are noncounted globs.

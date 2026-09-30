@@ -1,0 +1,55 @@
+{
+  "task_id": "HEX-082-a",
+  "bundle_hash": "ecd667dd82b7dd224c3a6f0ef3977a20f97c8c20da14ba0642c350693ed6f957",
+  "files": [
+    ".ai/tasks/active/HEX-082-a/00-spec.yaml",
+    ".ai/tasks/active/HEX-082-a/01-blueprint.yaml",
+    "CLAUDE.md",
+    "crates/hexcell-canal-whatsmeow/src/adaptador.rs",
+    "crates/hexcell-canal-whatsmeow/src/error.rs",
+    "crates/hexcell-canal-whatsmeow/src/lib.rs",
+    "crates/hexcell-canal-whatsmeow/src/mensajes.rs",
+    "crates/hexcell-canal-whatsmeow/tests/cierre_de_sesion.rs",
+    "crates/hexcell-canal-whatsmeow/tests/comun/mod.rs",
+    "crates/hexcell-core/src/canal.rs"
+  ],
+  "protocol_version": "fleet-bundle-protocol/v2",
+  "created_at": "2026-09-22T05:05:20Z",
+  "dropped": [
+    {
+      "component": "code_slice",
+      "path": "deploy/cell.compose.yml",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "crates/hexcell/tests/comun/mod.rs",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "crates/hexcell/tests/admin_http.rs",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "crates/hexcell/src/salud.rs",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "crates/hexcell/src/main.rs",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "crates/hexcell/src/configuracion.rs",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "crates/hexcell/src/admin.rs",
+      "reason": "bundle exceeded max_bytes budget"
+    }
+  ]
+}

@@ -1,0 +1,102 @@
+entries:
+  - changed_files:
+      - .ai/tasks/active/HEX-082-a/02-contract.yaml
+    notes:
+      - >-
+        Ratificación humana (2026-09-22): elevado el techo per_class de
+        crates/hexcell-canal-whatsmeow/src/** de 190 a 240 líneas de diff, con el motivo escrito
+        en línea junto al límite. El propio blueprint pedía mover el cuerpo de
+        ordenar_cierre_de_sesion a una función libre compartida (AsaDeSesion delega, no
+        duplica); ese refactor más los comentarios de documentación son los que exceden el
+        techo original. Ningún otro límite del contrato se tocó. `quorum validate` sobre
+        02-contract.yaml sale limpio (exit 0, sin salida).
+    verify_pending: false
+  - changed_files:
+      - crates/hexcell/tests/admin_http.rs
+    notes:
+      - >-
+        Guarda anti-vacuidad (hallazgo pin-canal-sin-sesion-literal de 06-review.json): las dos
+        pruebas cierre_de_sesion_sin_sesion_devuelve_200_con_motivo y
+        cierre_de_sesion_canal_simulado_responde_200_con_motivo ya no importan
+        MOTIVO_CANAL_SIN_SESION; ahora afirman el literal "canal_sin_sesion" escrito a mano.
+        Se retiró la constante de la lista de imports de hexcell::admin.
+      - >-
+        Prueba de mutación (M10, ejecutada a mano): en crates/hexcell/src/admin.rs se cambió
+        `pub const MOTIVO_CANAL_SIN_SESION: &str = "canal_sin_sesion";` por un valor distinto
+        ("MUTADO_valor_distinto"), confirmado con `git diff --stat` no vacío. Con
+        `cargo test -p hexcell --test admin_http -- cierre_de_sesion_sin_sesion_devuelve_200_con_motivo cierre_de_sesion_canal_simulado_responde_200_con_motivo`
+        AMBAS pruebas se pusieron en ROJO (antes de la corrección solo se habría quedado verde,
+        que es exactamente el defecto que reportó la revisión). Restaurado el archivo con
+        `git checkout --`, las dos pruebas vuelven a ok.
+    verify_pending: false
+  - changed_files:
+      - crates/hexcell-canal-whatsmeow/src/adaptador.rs
+      - crates/hexcell-canal-whatsmeow/tests/cierre_de_sesion.rs
+      - crates/hexcell/src/admin.rs
+      - crates/hexcell/src/main.rs
+      - deploy/cell.compose.yml
+    notes:
+      - >-
+        Commit del trabajo del delegado externo (fase de revisión anterior lo dejó sin
+        commitear): 8c9c80c7e36b952cb8e9e0971a6b0d65ee59833a
+        "feat(admin): añadir POST /admin/sesion/cierre con CierreDeSesion en tiempo de
+        compilación", conventional commit en español, sin atribución de IA. Los archivos de
+        .ai/tasks/ siguen el precedente de commits ai/HEX-0xx recientes (p. ej. 1635020 en
+        ai/HEX-081): no se versionan en la rama de la tarea.
+      - >-
+        Lista completa de mutaciones manuales de la lista de revisión (archivo, edición, prueba
+        que debía ponerse roja). Cada una se aplicó, se confirmó con `git diff --stat` que el
+        archivo cambió de verdad, se corrió SOLO la prueba nombrada, se confirmó rojo, se
+        restauró con `git checkout --` y se confirmó verde de nuevo:
+      - >-
+        M1 admin.rs: borrado el brazo `(&Method::POST, "/admin/sesion/cierre") =>
+        RutaAdmin::CerrarSesion` -> enrutar_admin_post_sesion_cierre_es_cerrar_sesion: ROJO
+        (left: NoEncontrada, right: CerrarSesion).
+      - >-
+        M2 admin.rs: en el brazo `Ok(Ok(()))` de atender_cierre_de_sesion se añadió una clave
+        `motivo` al cuerpo 200 -> cierre_de_sesion_con_sesion_ok_devuelve_200_sin_motivo: ROJO
+        ("el 200 de ConSesion-Ok no debe llevar campo motivo").
+      - >-
+        M3 admin.rs: en el brazo `Ok(Err(motivo))` se sustituyó el motivo real por un literal
+        fijo -> cierre_de_sesion_con_sesion_error_devuelve_502_con_motivo_real: ROJO (left:
+        "mutacion-m3-literal-fijo", right: "error-de-prueba-distintivo-abc123xyz").
+      - >-
+        M4 admin.rs: en el brazo de plazo agotado (`Err(_agotado)`) se cambió
+        StatusCode::GATEWAY_TIMEOUT por StatusCode::BAD_GATEWAY ->
+        cierre_de_sesion_con_sesion_que_nunca_responde_devuelve_504: ROJO (left: 502, right:
+        504).
+      - >-
+        M5 admin.rs: en la rama `None` de `registro.get()` se devolvió 200/completado en vez de
+        502/fallido -> cierre_de_sesion_sin_registro_devuelve_502: ROJO (left: 200, right: 502).
+      - >-
+        M6 main.rs: borrada la línea `CierreDeSesion::SinSesion.registrar(&registro_cierre)` de
+        la rama Simulado -> cierre_de_sesion_canal_simulado_responde_200_con_motivo: ROJO (el
+        binario real respondió 502 "cierre de sesión no registrado en la composición" en vez de
+        200).
+      - >-
+        M7 admin.rs: en el brazo `CierreDeSesion::SinSesion` se quitó la clave `motivo` del
+        cuerpo 200 -> cierre_de_sesion_sin_sesion_devuelve_200_con_motivo: ROJO (left: Null,
+        right: "canal_sin_sesion").
+      - >-
+        M8 adaptador.rs, `asa_de_sesion`: forzado `motivo: String::new()` en vez de
+        `motivo.into()` -> asa_de_sesion_con_motivo_cell_terminate_emite_orden_con_ese_motivo:
+        ROJO (left: "", right: "cell terminate").
+      - >-
+        M9 adaptador.rs, impl `CicloDeVidaSesion for AdaptadorWhatsmeow::cerrar_sesion`: cambiado
+        el motivo enviado de `""` a un literal no vacío ->
+        adaptador_whatsmeow_cerrar_sesion_trait_envia_motivo_vacio: ROJO (left:
+        "mutacion-m9-motivo-no-vacio", right: "").
+      - >-
+        M10: ver la entrada de crates/hexcell/tests/admin_http.rs arriba (motivo constante
+        mutado, ambas pruebas SinSesion en rojo tras la corrección).
+      - Ninguna mutación sobrevivió. No hubo mutaciones inaplicables (los diez `sed`/ediciones
+        cambiaron el archivo, verificado con `git diff --stat` antes de correr cada prueba).
+      - >-
+        Tras cada mutación se restauró con `git checkout -- <archivo>` (el árbol estaba
+        commiteado en 8c9c80c, así que la restauración es exacta); `git status --porcelain` y
+        `git diff --stat HEAD` quedaron vacíos al terminar la ronda completa.
+    verify_pending: false
+summary: >-
+  Core half of cell terminate (R5): POST /admin/sesion/cierre fed by a compile-time CierreDeSesion
+  enum, a cloneable whatsmeow session handle with motivo, and the admin bind in the compose template.
+task_id: HEX-082-a

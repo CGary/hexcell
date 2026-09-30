@@ -1,0 +1,23 @@
+task_id: HEX-089
+summary: Fix loop after review revise; guard hardened, runbook batch recreate step, criterion cited by text.
+entries:
+  - changed_files:
+      - deploy/verificar_despliegue_escalonado.sh
+      - .github/workflows/ci.yml
+      - docs/runbook-canal-whatsmeow.md
+      - docs/plan/fase-a-6-empaquetado-cli.md
+    notes:
+      - Guard scans both yml and yaml workflows; CI-SCRIPT takes any deploy/*.sh token with optional ./ prefix.
+      - Self-test payloads built from LIT_* fragments independent of detection constants; 16 cases, all cmp-proven.
+      - Hand mutations on scratch copy: VERBO_SUBIR=upx gives 10/16 red naming the compose and script cases; neutering yaml glob, ./ strip, restart verb and docker-compose token each turn exactly the matching case red.
+      - Runbook section 7 batch steps now include per-cell sidecar container recreate; unpause alone does not change the image.
+      - Line-number citations replaced by criterion text; exec bit set to 100755; folded scalar documented as blind spot.
+      - contract-check ok=true (deploy 504 lines within amended cap 560).
+    verify_pending: true
+  - changed_files:
+      - docs/runbook-canal-whatsmeow.md
+      - deploy/verificar_despliegue_escalonado.sh
+    notes:
+      - Fix loop 2 - runbook step 2 now uses docker compose with the project selector placeholder, --no-build, and explains that without the project selector all cells collapse into one project and the recreate collides.
+      - Self-test gained update and desplegar cases (match arm, usage line, existing clean script with the stem); 21 cases; hand mutation of PALABRA_UPDATE and PALABRA_DESPLEGAR on scratch copies turns 3 named cases red each.
+    verify_pending: true

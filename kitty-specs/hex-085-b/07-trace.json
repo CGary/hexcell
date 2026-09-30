@@ -1,0 +1,204 @@
+{
+  "attempts": [
+    {
+      "duration_s": 1800.044855507,
+      "model": "opencode-go/longcat-2.0",
+      "notes": "{\"type\":\"step_start\",\"timestamp\":1790139601880,\"sessionID\":\"ses_f335d897cffeNTfjcdPBeaEMk6\",\"part\":{\"id\":\"prt_0cca293d5001NxYLBoHjCIVl68\",\"messageID\":\"msg_0cca2777f0014kvzcv8wU6emqA\",\"sessionID\":\"ses_f335d897cffeNTfjcdPBeaEMk6\",\"snapshot\":\"842825430031423712b25cbb4ceee638c4ab5217\",\"type\":\"step-start\"}} {\"type\":\"tool_use\",\"timestamp\":1790139607540,\"sessionID\":\"ses_f335d897cffeNTfjcdPBeaEMk6\",\"part\":{\"type\":\"tool\",\"tool\":\"read\",\"callID\":\"call_de9fc4f0b9834f5fa8bac900\",\"state\":{\"status\":\"completed\",\"input\":{\"filePath\":\"/home/gary/dev/hexcell/worktrees/HEX-085-b/crates/hexcell-admin/src/docker/cliente.rs\"},\"output\":\"\u003cpath\u003e/home/gary/dev/hexcell/worktrees/HEX-085-b/crates/hexcell-admin/src/docker/cliente.rs\u003c/path\u003e\\n\u003ctype\u003efile\u003c/type\u003e\\n\u003ccontent\u003e\\n1: //! Cliente del demonio de Docker: las cinco operaciones de HEX-074-b más las que añadió la\\n2: //! orquestación de `cell pause`/`cell unpause`.\\n3: //!\\n4: //! [`ClienteDocker`] traduce cada operación a una o dos llamadas HTTP/1.1 contra el socket Unix,\\n5: //! usando [`super::transporte::ConexionDocker`], y despacha el código de estado de forma explícita:\\n6: //! 200/201/204/304 tienen forma de éxito, 404 es [`ErrorDeClienteDocker::NoEncontrado`], 409 es\\n7: //! [`ErrorDeClienteDocker::Conflicto`] y cualquier otro código (5xx incluido) cae en\\n8: //! [`ErrorDeClienteDocker::ErrorDelDaemon`] en vez de ignorarse.\\n9: \\n10: use std::path::PathBuf;\\n11: use std::time::Duration;\\n12: \\n13: use super::error::ErrorDeClienteDocker;\\n14: use super::transporte::{ConexionDocker, RespuestaHttp};\\n15: \\n16: /// Segundos de gracia que se piden al demonio antes de que pueda escalar a `SIGKILL`.\\n17: ///\\n18: /// Es el contrato de apagado del PRD («SIGTERM Docker Container, 30-second grace»): la parada usa\\n19: /// el mecanismo nativo de la API del motor (el parámetro `t`), **nunca** un bucle de\\n20: /// `std::thread::sleep` seguido de una llamada a matar en el cliente.\\n21: const SEGUNDOS_DE_GRACIA: u32 = 30;\\n22: \\n23: /// Resu...",
+      "phase": "execute",
+      "result": "failed"
+    }
+  ],
+  "context_overflows": [],
+  "events": [
+    {
+      "at": "2026-09-23",
+      "event": "risk_level_calculated",
+      "level": "medium",
+      "notes": "Calculated level equals the human-declared risk (medium): no risk_level_divergence event.",
+      "phase": "blueprint",
+      "reasons": [
+        "file_count_high: 11"
+      ],
+      "signals": {
+        "files_count": 11,
+        "sensitive_matches": [],
+        "symbols_count": 0
+      }
+    },
+    {
+      "at": "2026-09-23",
+      "band": "M",
+      "complexity_band": "M",
+      "event": "complexity_band_inherited",
+      "inputs": {
+        "files_count": 5,
+        "migration": false,
+        "public_api": false,
+        "schema_change": false
+      },
+      "notes": "Band M over the 5 TOUCHED production files this child owns (argumentos.rs, comandos.rs, ciclo_de_vida.rs, almacen_plano_de_control.rs, docker/cliente.rs) -- exactly at l_max_files=5, which requires strictly-above to trigger L (.agents/policies/complexity.yaml). Already validated by the parent HEX-085 blueprint's D1 decomposition risk note (.ai/tasks/active/HEX-085-new-spec/01-blueprint.yaml); not recomputed here per the parent's already-validated strategy. Test files under tests/** are noncounted globs.",
+      "phase": "blueprint"
+    },
+    {
+      "blocked": "",
+      "candidate": {
+        "agent": "opencode_go",
+        "level": 1,
+        "model": "opencode-go/deepseek-v4-flash"
+      },
+      "dispatch_id": "",
+      "inputs_snapshot": {
+        "complexity_band": "M",
+        "control": {
+          "disabled": [
+            {
+              "at": "2026-09-09T16:46:15Z",
+              "by": "human",
+              "reason": "Antigravity/Gemini subscription retired 2026-09-09 (human decision); propagated from quorum",
+              "target": "agy"
+            },
+            {
+              "at": "2026-09-09T16:46:15Z",
+              "by": "human",
+              "reason": "Antigravity/Gemini subscription retired 2026-09-09 (human decision); propagated from quorum",
+              "target": "agy_edit"
+            }
+          ],
+          "updated_at": "2026-09-09T16:46:15Z"
+        },
+        "exclusions": [],
+        "hashes": {
+          "agents_yaml": "ea0f730316f5ee07d999731405e39b6d5a2b8040b6222489976f447ac2b8f450",
+          "config_yaml": "959b1fc9182793ab6c2a8510f82f49724db816b46ddb6ab7aa9fa8f1fb2f890e",
+          "routing_yaml": "8c3b821b2d603e67dc1c220721291fbb5130799d88712d0deaa4b90bbf5479cc"
+        },
+        "incumbent_family": "",
+        "level": 1,
+        "phase": "implement",
+        "risk": "medium",
+        "router_version": "fleet-route/v1"
+      },
+      "reasons": null,
+      "reroute_budget": 2,
+      "review_family_degraded": false,
+      "ts": "2026-09-23T04:47:26Z",
+      "type": "routing_decision"
+    },
+    {
+      "bundle_hash": "4a91393a7f6b11f49e11474ee203816f24b57640c8910dc19b0370acaee9c7c9",
+      "dispatch_id": "4a91393a7f6b",
+      "ts": "2026-09-23T04:47:31Z",
+      "type": "dispatch_started"
+    },
+    {
+      "cause": "wrapper_broken",
+      "dispatch_id": "4a91393a7f6b",
+      "ts": "2026-09-23T04:59:43Z",
+      "type": "reroute"
+    },
+    {
+      "dispatch_id": "4a91393a7f6b",
+      "ts": "2026-09-23T04:59:43Z",
+      "type": "wrapper_broken"
+    },
+    {
+      "applied": false,
+      "cause": "wrapper_broken",
+      "diff_stat": {
+        "deletions": 0,
+        "empty": true,
+        "files_changed": 0,
+        "indeterminate": false,
+        "insertions": 0
+      },
+      "dispatch_id": "4a91393a7f6b",
+      "forensic_ref": null,
+      "noop": false,
+      "outcome_class": "reroute",
+      "ts": "2026-09-23T04:59:43Z",
+      "type": "dispatch_finished",
+      "usage_source": "none"
+    },
+    {
+      "blocked": "",
+      "candidate": {
+        "agent": "opencode_go",
+        "level": 1,
+        "model": "opencode-go/longcat-2.0"
+      },
+      "dispatch_id": "",
+      "inputs_snapshot": {
+        "complexity_band": "M",
+        "control": {
+          "disabled": [
+            {
+              "at": "2026-09-09T16:46:15Z",
+              "by": "human",
+              "reason": "Antigravity/Gemini subscription retired 2026-09-09 (human decision); propagated from quorum",
+              "target": "agy"
+            },
+            {
+              "at": "2026-09-09T16:46:15Z",
+              "by": "human",
+              "reason": "Antigravity/Gemini subscription retired 2026-09-09 (human decision); propagated from quorum",
+              "target": "agy_edit"
+            }
+          ],
+          "updated_at": "2026-09-09T16:46:15Z"
+        },
+        "exclusions": [
+          {
+            "agent": "opencode_go",
+            "level": 0,
+            "model": "opencode-go/deepseek-v4-flash"
+          }
+        ],
+        "hashes": {
+          "agents_yaml": "ea0f730316f5ee07d999731405e39b6d5a2b8040b6222489976f447ac2b8f450",
+          "config_yaml": "959b1fc9182793ab6c2a8510f82f49724db816b46ddb6ab7aa9fa8f1fb2f890e",
+          "routing_yaml": "8c3b821b2d603e67dc1c220721291fbb5130799d88712d0deaa4b90bbf5479cc"
+        },
+        "incumbent_family": "",
+        "level": 1,
+        "phase": "implement",
+        "risk": "medium",
+        "router_version": "fleet-route/v1"
+      },
+      "reasons": null,
+      "reroute_budget": 2,
+      "review_family_degraded": false,
+      "ts": "2026-09-23T04:59:49Z",
+      "type": "routing_decision"
+    },
+    {
+      "bundle_hash": "4a91393a7f6b11f49e11474ee203816f24b57640c8910dc19b0370acaee9c7c9",
+      "dispatch_id": "4a91393a7f6b",
+      "ts": "2026-09-23T04:59:53Z",
+      "type": "dispatch_started"
+    },
+    {
+      "applied": false,
+      "cause": null,
+      "diff_stat": {
+        "deletions": 46,
+        "empty": false,
+        "files_changed": 11,
+        "indeterminate": false,
+        "insertions": 3194
+      },
+      "dispatch_id": "4a91393a7f6b",
+      "forensic_ref": "refs/fleet/HEX-085-b/attempt-1-opencode-go-longcat-2.0",
+      "noop": false,
+      "outcome_class": "attempt",
+      "ts": "2026-09-23T05:29:53Z",
+      "type": "dispatch_finished",
+      "usage_source": "none"
+    }
+  ],
+  "execution_mode": "worktree_edit",
+  "started_at": "2026-09-23T00:00:00Z",
+  "summary": "CLI half of cell rebind: hexcell-admin's ten-step resumable D5 sequence over the frozen D2 HTTP contract, tested against the scripted Docker double.",
+  "task_id": "HEX-085-b",
+  "total_cost_usd": 0,
+  "violations": []
+}

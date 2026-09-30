@@ -1,0 +1,513 @@
+task_id: HEX-083
+summary: >-
+  Control-plane SQLite store in hexcell-admin plus real cell list and cell status; pause/unpause
+  record transitions after Docker succeeds. Stage A-6 task 14.
+affected_files:
+  - crates/hexcell-admin/src/almacen_plano_de_control.rs
+  - crates/hexcell-admin/migraciones/0001-plano-de-control.sql
+  - crates/hexcell-admin/src/docker/inventario.rs
+  - crates/hexcell-admin/src/docker/mod.rs
+  - crates/hexcell-admin/src/comandos.rs
+  - crates/hexcell-admin/src/ciclo_de_vida.rs
+  - crates/hexcell-admin/src/main.rs
+  - crates/hexcell-admin/src/lib.rs
+  - crates/hexcell-admin/Cargo.toml
+  - crates/hexcell-admin/tests/almacen_plano_de_control.rs
+  - crates/hexcell-admin/tests/estado_y_listado.rs
+  - crates/hexcell-admin/tests/comandos.rs
+  - crates/hexcell-admin/tests/comun/mod.rs
+  - docs/adr/adr-00NN-almacen-del-plano-de-control.md
+  - docs/adr/README.md
+  - README.md
+  - docs/plan/fase-a-6-empaquetado-cli.md
+  - docs/bitacora-de-descartes.md
+symbols:
+  - almacen_plano_de_control::AlmacenDelPlanoDeControl
+  - almacen_plano_de_control::AlmacenDelPlanoDeControl::abrir
+  - almacen_plano_de_control::AlmacenDelPlanoDeControl::leer_estado
+  - almacen_plano_de_control::AlmacenDelPlanoDeControl::registrar_transicion
+  - almacen_plano_de_control::AlmacenDelPlanoDeControl::leer_sustituciones
+  - almacen_plano_de_control::AlmacenDelPlanoDeControl::listar_celulas
+  - almacen_plano_de_control::FilaDeCelula
+  - almacen_plano_de_control::Sustitucion
+  - almacen_plano_de_control::ErrorDeAlmacenDePlano
+  - almacen_plano_de_control::etiqueta_persistida
+  - almacen_plano_de_control::estado_desde_etiqueta
+  - almacen_plano_de_control::VERSION_DE_ESQUEMA_DEL_PLANO
+  - almacen_plano_de_control::RUTA_POR_OMISION_DEL_ALMACEN
+  - almacen_plano_de_control::VARIABLE_DE_RUTA_DEL_ALMACEN
+  - almacen_plano_de_control::MOTIVO_DE_ALTA_IMPLICITA
+  - docker::inventario::InventarioDocker
+  - docker::inventario::InventarioDocker::nuevo
+  - docker::inventario::InventarioDocker::listar_contenedores
+  - docker::inventario::ResumenDeContenedor
+  - ciclo_de_vida::guion_de_sonda_con_limite
+  - ciclo_de_vida::sondear_disponibilidad
+  - ciclo_de_vida::Disponibilidad
+  - ciclo_de_vida::LIMITE_DE_SONDEO_DE_ESTADO_S
+  - comandos::ejecutar_con_efectos
+  - comandos::ejecutar_estado
+  - comandos::ejecutar_listado
+  - comandos::Discrepancia
+  - comandos::CODIGOS_DE_DISCREPANCIA
+dependencies:
+  - crates/hexcell-storage/src/migraciones.rs
+  - crates/hexcell-admin/src/estado_de_celula.rs
+  - crates/hexcell-admin/src/docker/cliente.rs
+  - crates/hexcell-admin/src/docker/transporte.rs
+  - crates/hexcell-admin/src/argumentos.rs
+  - crates/hexcell-admin/src/salida.rs
+  - crates/hexcell-admin/src/codigo_de_salida.rs
+  - crates/hexcell-admin/tests/estado_de_celula.rs
+  - crates/hexcell-admin/tests/ciclo_de_vida.rs
+  - Cargo.toml
+  - docs/plan/fase-a-6-empaquetado-cli.md
+  - CLAUDE.md
+test_scenarios:
+  - statement: >-
+      Opening the store against a fresh empty SQLite file in a tempdir creates celulas,
+      transiciones and sustituciones with the exact declared columns, and PRAGMA user_version
+      equals VERSION_DE_ESQUEMA_DEL_PLANO; reopening the same file is a no-op that returns Ok.
+    covers:
+      - AC-1
+  - statement: >-
+      Column-level assertion over PRAGMA table_info for the three tables: celulas has
+      (id, estado, motivo, actualizado_ms) with motivo defaulting to the empty string, and both
+      transiciones and sustituciones carry their declared columns; an added or renamed column
+      turns it red.
+    covers:
+      - AC-1
+  - statement: >-
+      cell pause against a stored row in EnEjecucion writes estado=suspendida only after both
+      Docker stop requests succeeded, and appends one transiciones row (de=en_ejecucion,
+      a=suspendida) whose registrado_ms equals the injected clock value.
+    covers:
+      - AC-2
+  - statement: >-
+      cell unpause against a stored row in Suspendida writes estado=en_ejecucion after the full
+      resume sequence (start, start, inspect, probe create/start/wait/remove) succeeded, and
+      actualizado_ms advances to the injected clock value.
+    covers:
+      - AC-2
+  - statement: >-
+      When the Docker double answers the first stop with 500, cell pause returns Fallo and the
+      stored row is left byte-for-byte unchanged with no transiciones row appended: the write
+      happens only on success.
+    covers:
+      - AC-2
+  - statement: >-
+      cell unpause against a stored row in Retirada (terminal) returns Fallo with a diagnostic
+      naming the illegal transition, and the Docker double receives ZERO requests, asserted by
+      an empty received-request vector read with recv_timeout, not by a blind join.
+    covers:
+      - AC-3
+  - statement: >-
+      cell pause against a stored row already in Suspendida returns Fallo (identity pairs are
+      absent from transiciones_permitidas) with zero Docker requests.
+    covers:
+      - AC-3
+  - statement: >-
+      cell pause against a cell id absent from celulas completes and INSERTs a row with
+      estado=suspendida and motivo=alta_implicita; the same for cell unpause with
+      estado=en_ejecucion.
+    covers:
+      - AC-4
+  - statement: >-
+      DISC-01 triggers when the store says en_ejecucion and the sidecar inspect reports
+      State.Status=exited; the same fixture with both containers running prints no DISC-01.
+    covers:
+      - AC-5
+  - statement: >-
+      DISC-02 triggers when the store says suspendida and the nucleo inspect reports
+      State.Status=running; with both containers exited it prints no DISC-02.
+    covers:
+      - AC-5
+  - statement: >-
+      DISC-03 triggers when both containers report running but the sibling probe exits non-zero
+      (health no_listo); with a probe exit code of 0 it prints no DISC-03.
+    covers:
+      - AC-5
+  - statement: >-
+      DISC-04 triggers when a celulas row exists and both inspects answer 404; with both
+      inspects answering 200 it prints no DISC-04.
+    covers:
+      - AC-5
+  - statement: >-
+      DISC-05 triggers when both inspects answer 200 and celulas has no row for the id; with a
+      row present it prints no DISC-05.
+    covers:
+      - AC-5
+  - statement: >-
+      cell status on a coherent cell prints the stored state, the docker state of nucleo and of
+      sidecar, the health verdict and a substitutions section, and exits Exito; the assertion
+      names all five fields so dropping one turns it red.
+    covers:
+      - AC-6
+  - statement: >-
+      cell status prints the substitutions history as table rows when sustituciones has rows
+      inserted directly by the fixture, and prints the explicit empty marker when it has none.
+    covers:
+      - AC-6
+  - statement: >-
+      cell status output contains none of the tokens ack, acuse, ratio, silencio or ventana:
+      the metric surface of task 20 does not leak into this command.
+    covers:
+      - AC-7
+  - statement: >-
+      A failing source makes cell status exit Fallo: an unreachable Docker socket and an
+      unreadable store path each produce Fallo with a diagnostic naming the failing source.
+    covers:
+      - AC-5
+      - AC-6
+  - statement: >-
+      cell list prints the union of a store-only cell and a Docker-only cell: the first shows
+      its stored state, the second shows sin_fila, both show the docker state of nucleo and
+      sidecar, and the command exits Exito.
+    covers:
+      - AC-8
+  - statement: >-
+      cell list issues exactly one GET /containers/json and no probe request at all: the
+      received-request sequence is compared whole, so any health probe turns it red.
+    covers:
+      - AC-8
+  - statement: >-
+      Neither cell status nor cell list writes: the .db file mtime and the full row contents of
+      the three tables are identical before and after running each command, including the
+      DISC-05 case where no row exists for the inspected cell.
+    covers:
+      - AC-6
+      - AC-8
+  - statement: >-
+      Opening the store under a directory that does not exist returns Fallo with a diagnostic
+      naming the missing directory, and the directory is still absent afterwards: hexcell-admin
+      never creates it.
+    covers:
+      - AC-1
+  - statement: >-
+      The persisted-label codec round-trips all five EstadoDeCelula variants, and an unknown
+      label read from the store is rejected as a typed error rather than silently defaulting.
+    covers:
+      - AC-1
+      - AC-2
+  - statement: >-
+      Source guard over crates/hexcell-admin/src/almacen_plano_de_control.rs: it contains no
+      phone-number or transport-identifier token (jid, telefono, numero, msisdn, whatsapp) and
+      the migration .sql declares no such column.
+    covers:
+      - AC-1
+  - statement: >-
+      The four exit-code variants remain exactly Exito, Fallo, UsoIncorrecto and
+      NoImplementadoTodavia, and cell terminate plus cell rebind still return
+      NoImplementadoTodavia through ejecutar_con_efectos without touching Docker.
+    covers:
+      - AC-2
+strategy:
+  - step: 1
+    action: >-
+      Read the pinned pattern before writing any code: crates/hexcell-storage/src/migraciones.rs
+      (the PasoDeMigracion ladder, include_str! constants and the same-transaction user_version
+      bump) and the note at Cargo.toml lines 42-56. Mirror that ladder; do not invent a second
+      migration mechanism and do not bump rusqlite off 0.39.
+    files:
+      - crates/hexcell-storage/src/migraciones.rs
+      - Cargo.toml
+  - step: 2
+    action: >-
+      Add rusqlite = { workspace = true } to crates/hexcell-admin/Cargo.toml as a SINGLE
+      dependency line under the existing [dependencies] table, with a short Spanish comment
+      justifying it against the existing serde note. Do not add any [dev-dependencies] table and
+      do not add a temp-dir crate: the root Cargo.toml discards it explicitly and tests build
+      their own temp paths.
+    files:
+      - crates/hexcell-admin/Cargo.toml
+  - step: 3
+    action: >-
+      Write the migration crates/hexcell-admin/migraciones/0001-plano-de-control.sql with the
+      three CREATE TABLE statements exactly as the spec declares them, plus Spanish comments. No
+      column holds a phone number or a transport identifier. Do not set PRAGMA user_version
+      inside the .sql: the runner owns that, in the same transaction, as in hexcell-storage.
+    files:
+      - crates/hexcell-admin/migraciones/0001-plano-de-control.sql
+  - step: 4
+    action: >-
+      Create crates/hexcell-admin/src/almacen_plano_de_control.rs as an Application Service over
+      a Value-Object row set. It owns: VARIABLE_DE_RUTA_DEL_ALMACEN ("HEXCELL_ADMIN_ALMACEN"),
+      RUTA_POR_OMISION_DEL_ALMACEN ("/var/lib/hexcell-admin/plano_de_control.db"),
+      VERSION_DE_ESQUEMA_DEL_PLANO, MOTIVO_DE_ALTA_IMPLICITA ("alta_implicita"), the
+      EstadoDeCelula persisted-label codec (etiqueta_persistida / estado_desde_etiqueta over
+      snake_case ASCII labels, NOT the accented Display labels), a typed
+      ErrorDeAlmacenDePlano with Display in Spanish, and abrir() which checks the parent
+      directory exists BEFORE opening and returns the typed error naming it when absent.
+    files:
+      - crates/hexcell-admin/src/almacen_plano_de_control.rs
+  - step: 5
+    action: >-
+      Implement the store's four query/command methods, keeping the clock OUT of the module:
+      every write takes an explicit ahora_ms: i64 argument so tests are deterministic and the
+      composition root owns SystemTime. leer_estado(id) -> Option<FilaDeCelula>;
+      registrar_transicion(id, de: Option<EstadoDeCelula>, a, motivo, ahora_ms) which UPSERTs
+      celulas and INSERTs one transiciones row in a SINGLE transaction; leer_sustituciones(id)
+      -> Vec<Sustitucion>; listar_celulas() -> Vec<FilaDeCelula>. Nothing in this module opens a
+      socket or reads an env var.
+    files:
+      - crates/hexcell-admin/src/almacen_plano_de_control.rs
+  - step: 6
+    action: >-
+      Create crates/hexcell-admin/src/docker/inventario.rs with InventarioDocker (its own
+      ruta_socket + tiempo_limite fields and nuevo(...) constructor) and
+      listar_contenedores() -> Result<Vec<ResumenDeContenedor>, ErrorDeClienteDocker>, issuing
+      GET /containers/json?all=true over the PUBLIC ConexionDocker::conectar_con_tiempo_limite +
+      enviar("GET", ruta, None) and parsing Names plus State with serde_json. This new file
+      exists precisely because docker/cliente.rs is forbidden and ClienteDocker has no listing
+      method and no accessor for its private ruta_socket; it must not duplicate any method
+      cliente.rs already has.
+    files:
+      - crates/hexcell-admin/src/docker/inventario.rs
+  - step: 7
+    action: >-
+      Register the two new modules additively: one `mod inventario;` line plus one `pub use`
+      line in crates/hexcell-admin/src/docker/mod.rs (extending its existing re-export list
+      without reordering it), and one `pub mod almacen_plano_de_control;` line in
+      crates/hexcell-admin/src/lib.rs. Update the scope note in docker/mod.rs to say listing now
+      lives in inventario.rs, as an appended sentence.
+    files:
+      - crates/hexcell-admin/src/docker/mod.rs
+      - crates/hexcell-admin/src/lib.rs
+  - step: 8
+    action: >-
+      In crates/hexcell-admin/src/ciclo_de_vida.rs make guion_de_sonda_con_limite public and add
+      LIMITE_DE_SONDEO_DE_ESTADO_S (a SHORT limit, seconds, distinct from LIMITE_DE_SONDEO_S)
+      plus sondear_disponibilidad(cliente, nombres, datos) -> Disponibilidad with the three
+      variants Listo / NoListo / Inalcanzable. cell status must not reuse the 60 s retry loop of
+      guion_de_sonda: a status query on a down cell would block for a minute. Leave pausar and
+      reanudar behaviourally unchanged.
+    files:
+      - crates/hexcell-admin/src/ciclo_de_vida.rs
+  - step: 9
+    action: >-
+      Thread the two new collaborators from the composition root
+      crates/hexcell-admin/src/main.rs: read HEXCELL_ADMIN_ALMACEN with
+      unwrap_or_else(RUTA_POR_OMISION_DEL_ALMACEN), build InventarioDocker with the same socket
+      path and timeout already used for ClienteDocker, and pass both plus the SystemTime-derived
+      ahora_ms into comandos::ejecutar_con_efectos. main.rs keeps no match over subcommands and
+      no message text of its own.
+    files:
+      - crates/hexcell-admin/src/main.rs
+  - step: 10
+    action: >-
+      Extend comandos::ejecutar_con_efectos's signature with the store path, the
+      &InventarioDocker and ahora_ms. In its subcommand match, MOVE Listar and Estado out of the
+      NoImplementadoTodavia arm by adding their two arms as single lines, leaving Retirar and
+      Reemparejar in that arm and leaving Pausar/Reanudar's arm textually untouched. Do not
+      reorder any arm: tasks 12 and 23 touch this same match on parallel branches.
+    files:
+      - crates/hexcell-admin/src/comandos.rs
+  - step: 11
+    action: >-
+      In comandos.rs, put transition validation BEFORE any Docker call on the pause/unpause
+      path: open the store, leer_estado(id), and when a row exists call
+      EstadoDeCelula::transitar (built on transiciones_permitidas) toward estado_objetivo; on
+      TransicionInvalida emit its Display as the diagnostic and return Fallo having issued zero
+      Docker requests. When no row exists, skip validation and proceed. Only after
+      ciclo_de_vida::pausar / reanudar returns Ok, call registrar_transicion with motivo
+      alta_implicita for the row-less case. Do not change the transition table itself.
+    files:
+      - crates/hexcell-admin/src/comandos.rs
+  - step: 12
+    action: >-
+      Add ejecutar_estado in comandos.rs as the Validator that crosses the three sources: the
+      store row, inspeccionar_contenedor of both NombresDeCelula (reading /State/Status), and
+      sondear_disponibilidad. Print stored state, docker state of nucleo and of sidecar, health
+      as listo|no_listo|inalcanzable, then the substitutions rows, then one line per discrepancy
+      carrying its stable code. Implement the five codes exactly as DISC-01 store en_ejecucion
+      with a container not running, DISC-02 store suspendida with a container running, DISC-03
+      containers running but health not ready, DISC-04 row present with no containers, DISC-05
+      containers present with no row. Exit Exito with no discrepancy, Fallo with any or when a
+      source fails. Emit no ack-ratio and no silence-window field.
+    files:
+      - crates/hexcell-admin/src/comandos.rs
+  - step: 13
+    action: >-
+      Add ejecutar_listado in comandos.rs: union listar_celulas() with the cell ids derived from
+      InventarioDocker::listar_contenedores by stripping the -nucleo/-sidecar suffixes that
+      NombresDeCelula::nueva builds, one line per cell with id, stored state or sin_fila, and the
+      docker state of each container. No health probe. Exito whenever the list is produced.
+      Neither this function nor ejecutar_estado calls any store write method.
+    files:
+      - crates/hexcell-admin/src/comandos.rs
+  - step: 14
+    action: >-
+      Extend crates/hexcell-admin/tests/comun/mod.rs additively with a .db fixture helper that
+      builds its temp path from std::env::temp_dir(), process::id() and the existing SECUENCIA
+      counter and removes it on Drop — the same hand-rolled pattern as ServidorDockerFalso,
+      because the root Cargo.toml discards the temp-dir crate — plus a helper that scripts N
+      sequential Docker responses on a worker thread and reports them over an mpsc channel read
+      with recv_timeout.
+    files:
+      - crates/hexcell-admin/tests/comun/mod.rs
+  - step: 15
+    action: >-
+      Write crates/hexcell-admin/tests/almacen_plano_de_control.rs covering AC-1 and AC-4 at the
+      store level: migration over an empty file, PRAGMA table_info column assertions, reopen
+      idempotence, missing-directory rejection that leaves the directory absent, label codec
+      round-trip plus rejection of an unknown label, and the source guard over the module and the
+      .sql for phone/transport tokens. Fixtures must not coincide with production defaults, per
+      the rule already written at the top of tests/ciclo_de_vida.rs.
+    files:
+      - crates/hexcell-admin/tests/almacen_plano_de_control.rs
+  - step: 16
+    action: >-
+      Write crates/hexcell-admin/tests/estado_y_listado.rs covering AC-5 through AC-8: the five
+      DISC codes each with a triggering AND a non-triggering fixture, the five printed fields,
+      the substitutions history empty and non-empty (rows inserted directly by the fixture, since
+      task 13 owns the writer), the ack/silence token-absence guard, the exactly-one
+      GET /containers/json assertion, the read-only assertion over file mtime and row contents,
+      and the union of a store-only and a Docker-only cell. Every Docker expectation compares the
+      whole request sequence and every wait uses recv_timeout: no test may hang.
+    files:
+      - crates/hexcell-admin/tests/estado_y_listado.rs
+  - step: 17
+    action: >-
+      Update crates/hexcell-admin/tests/comandos.rs for the new reality: adapt the
+      ejecutar_con_efectos_con helper to the widened signature, narrow
+      ejecutar_con_efectos_deja_los_otros_cuatro_subcomandos_en_no_implementado_sin_tocar_docker
+      to the TWO remaining subcommands (terminate, rebind) and rename it accordingly, and add the
+      AC-2 and AC-3 command-level cases (persist after success, no write on Docker failure, zero
+      Docker requests on an illegal transition). Do NOT touch
+      crates/hexcell-admin/tests/estado_de_celula.rs: its manifest guard blocks only
+      clap/argh/pico-args/structopt/lexopt/anyhow, so adding rusqlite keeps it green, and its
+      source guard forbids the literal rusqlite inside src/estado_de_celula.rs, which this task
+      leaves alone.
+    files:
+      - crates/hexcell-admin/tests/comandos.rs
+  - step: 18
+    action: >-
+      Wire the Retirada hook but leave it INERT, as the spec dictates: re-check at implement time
+      whether stage A-6 task 12 is merged into main (grep comandos.rs for a real terminate
+      implementation and the plan file for a task-12 closure line). Task 12 was NOT merged as of
+      main 8e96776, so leave terminate on the NoImplementadoTodavia arm, add the
+      motivo constant "sesion_cerrada" next to MOTIVO_DE_ALTA_IMPLICITA with a comment naming
+      task 12 as its future caller, and report the gap in the implementation log instead of
+      implementing against unmerged code.
+    files:
+      - crates/hexcell-admin/src/almacen_plano_de_control.rs
+  - step: 19
+    action: >-
+      Prove every new test can go red. For each new test, apply ONE manual mutation to the
+      production code it guards (for example invert the order of the store write and the Docker
+      call, drop one DISC code's condition, return the accented Display label from the codec,
+      delete the missing-directory check), run exactly that test, record which named test turned
+      red, then restore the code and confirm green. A mutation that leaves the file identical or
+      reddens nothing is not evidence; name the specific test per mutation in the report.
+    files:
+      - crates/hexcell-admin/tests/almacen_plano_de_control.rs
+      - crates/hexcell-admin/tests/estado_y_listado.rs
+      - crates/hexcell-admin/tests/comandos.rs
+  - step: 20
+    action: >-
+      Author the documentation LAST, reading the numbering from disk at commit time: the next
+      free ADR number (maxima on disk today is adr-0038) for
+      docs/adr/adr-00NN-almacen-del-plano-de-control.md documenting the schema, the env-var path,
+      the never-create-the-directory rule, the write-only-after-Docker-succeeds rule and the
+      status/list-never-write rule; one appended row in docs/adr/README.md; the next free D
+      number (maxima on disk today is D-57) in docs/bitacora-de-descartes.md for the discards
+      this task makes (no temp-dir crate, no serde derive on EstadoDeCelula, no listing method
+      added to the forbidden cliente.rs). All in Spanish, dates absolute as 2026-09-22.
+    files:
+      - docs/adr/adr-00NN-almacen-del-plano-de-control.md
+      - docs/adr/README.md
+      - docs/bitacora-de-descartes.md
+  - step: 21
+    action: >-
+      Append the operator-facing documentation without deleting a line: a new numbered CLI
+      section in README.md under the existing Manual de Operacion covering the real behaviour of
+      cell list and cell status (the env var, the five DISC codes, the three health verdicts,
+      the exit codes), and in docs/plan/fase-a-6-empaquetado-cli.md the task-14 closure paragraph
+      ending with the literal line "**Cerrada el 2026-09-22 con HEX-083.**" plus one new
+      execution-chain bullet. Verify with git diff -- docs README.md | grep '^-' showing no
+      deleted line except a replaced literal.
+    files:
+      - README.md
+      - docs/plan/fase-a-6-empaquetado-cli.md
+risks:
+  - >-
+    BLOCKING-SHAPED, resolved in-blueprint: ClienteDocker exposes NO container-listing method
+    (its API is create/start/stop/wait/inspect/remove only) and its ruta_socket and tiempo_limite
+    fields are private with no accessor, while crates/hexcell-admin/src/docker/cliente.rs is
+    forbidden by this contract. AC-8's union of store rows with Docker container pairs therefore
+    cannot be satisfied by any existing method. Resolution: a NEW file
+    crates/hexcell-admin/src/docker/inventario.rs issuing GET /containers/json over the already
+    public ConexionDocker/RespuestaHttp transport, registered with one line in docker/mod.rs
+    (which is NOT forbidden). cliente.rs and transporte.rs stay byte-identical. If a reviewer
+    reads the forbid list as covering all of src/docker/, this needs a human ruling.
+  - >-
+    The spec says the status health check reuses ciclo_de_vida::guion_de_sonda, but the only
+    public form of that script embeds LIMITE_DE_SONDEO_S = 60 s of retry looping
+    (guion_de_sonda_con_limite is private). Reusing it verbatim would make cell status on a
+    stopped cell block for a full minute before reporting no_listo. This blueprint therefore
+    makes guion_de_sonda_con_limite public and adds a separate short
+    LIMITE_DE_SONDEO_DE_ESTADO_S, which puts crates/hexcell-admin/src/ciclo_de_vida.rs in the
+    touch list even though the orchestrator's file list did not name it.
+  - >-
+    EstadoDeCelula has no FromStr, no TryFrom<&str> and deliberately no serde derive; its Display
+    emits accented labels with spaces ("en ejecución"). Persisting Display output would put an
+    accented, space-bearing string in a primary data column. The persisted-label codec therefore
+    lives in the NEW module over snake_case ASCII labels. It must NOT be added to
+    src/estado_de_celula.rs, whose live source guard
+    (tests/estado_de_celula.rs::el_modulo_de_produccion_no_contiene_tokens_prohibidos) rejects the
+    literals "rusqlite", "Serialize", "Deserialize", ".expect(", "panic!" and "_ =>" in that file.
+  - >-
+    Verified non-issue, do not "fix" it: tests/estado_de_celula.rs::el_cargo_toml_no_gano_ninguna
+    _dependencia_nueva reads crates/hexcell-admin/Cargo.toml via include_str! but asserts only a
+    blocklist of clap/argh/pico-args/structopt/lexopt/anyhow plus the presence of serde and
+    serde_json. Adding rusqlite keeps it green. That test file stays out of the touch list and
+    must not be edited to "register" the new dependency.
+  - >-
+    crates/hexcell-admin/tests/comandos.rs WILL break as written: its helper calls
+    ejecutar_con_efectos with four arguments, and
+    ejecutar_con_efectos_deja_los_otros_cuatro_subcomandos_en_no_implementado_sin_tocar_docker
+    asserts NoImplementadoTodavia for list and status. Both must be updated, so that file is a
+    required touch, not an optional one.
+  - >-
+    The root Cargo.toml (lines 54-55) explicitly DISCARDS the temp-dir crate for tests. The
+    spec's "tempdir for the .db" must be read as the hand-rolled std::env::temp_dir() +
+    process::id() + atomic counter pattern already in tests/comun/mod.rs. Adding tempfile or
+    tempdir as a dev-dependency would reopen a written discard and reintroduce a dependency the
+    workspace rejected.
+  - >-
+    hexcell-admin does not depend on hexcell-storage, so crates/hexcell-storage/src/tiempo.rs is
+    unavailable and pulling that crate in would drag arc-swap and hexcell-core into the CLI. The
+    millisecond clock is therefore taken as an explicit ahora_ms parameter produced at the
+    composition root in main.rs, which also makes the timestamp assertions deterministic.
+  - >-
+    Plan-order deviation: the execution chain in docs/plan/fase-a-6-empaquetado-cli.md states
+    "14 despues de 13: cell status incluye el historial de sustituciones, que solo existe tras
+    rebind", and task 13 is NOT closed. This task runs 14 before 13 by creating sustituciones and
+    only reading it, so the history is legitimately empty in production. The closure note and the
+    new chain bullet must state that deviation explicitly rather than let the chain silently
+    contradict itself.
+  - >-
+    Task 12 (cell terminate) is NOT merged into main as of 8e96776: the plan has no task-12
+    closure line and comandos.rs still routes Retirar to NoImplementadoTodavia. The Retirada /
+    sesion_cerrada transition stays an inert constant. The implementer must re-check main at
+    implement time because task 12 may land on a parallel branch first.
+  - >-
+    Parallel-branch hazard on two shared files. crates/hexcell-admin/src/comandos.rs's subcommand
+    match is touched by tasks 12, 14 and 23: add the new arms as single lines and reorder nothing.
+    crates/hexcell-admin/Cargo.toml also gains rusqlite from task 23: keep exactly ONE
+    rusqlite = { workspace = true } line so a rebase resolves to a single line, not a duplicate.
+  - >-
+    CI runs cargo clippy --workspace WITHOUT --all-targets, and the plan records that enabling
+    that flag surfaces 38 preexisting diagnostics across the workspace tests. The verify command
+    must stay exactly cargo clippy --workspace -- -D warnings; adding --all-targets would turn
+    verification red for reasons this task did not cause.
+  - >-
+    ServidorDockerFalso::atender serves ONE connection per call in the calling thread. cell status
+    needs two inspects plus the four probe calls, so every status fixture must script its
+    responses on a worker thread and be read with recv_timeout, following the servir_reanudacion
+    precedent in tests/ciclo_de_vida.rs. A blind join on a missing request hangs the suite
+    instead of failing it.
+  - >-
+    Prior-failure lookup returned null (no .ai/tasks/failed/ entries), and the HSME advisory read
+    returned only unrelated Quorum-framework memories at ~0.015 similarity. No prior art informs
+    this design; the guards below are derived from the codebase, not from memory.

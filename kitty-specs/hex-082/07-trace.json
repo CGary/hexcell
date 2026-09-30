@@ -1,0 +1,60 @@
+{
+  "attempts": [],
+  "context_overflows": [],
+  "events": [
+    {
+      "at": "2026-09-22",
+      "event": "risk_level_calculated",
+      "level": "medium",
+      "phase": "blueprint",
+      "reasons": [
+        "file_count_high: 12",
+        "symbols_count_high: 5"
+      ],
+      "signals": {
+        "files_count": 12,
+        "sensitive_matches": [],
+        "symbols_count": 5
+      }
+    },
+    {
+      "at": "2026-09-22",
+      "authority": "declared",
+      "calculated": "medium",
+      "declared": "high",
+      "event": "risk_level_divergence",
+      "phase": "blueprint",
+      "reasons": [
+        "file_count_high: 12",
+        "symbols_count_high: 5",
+        "El humano declaro riesgo alto y su declaracion manda; el puntuador es consultivo y la divergencia es ESPERADA, no un error a corregir. El puntuador solo cuenta archivos y simbolos: no ve que la operacion es DESTRUCTIVA E IRREVERSIBLE (borra dos contenedores y el volumen con las credenciales de sesion), ni que la ruta POST /admin/sesion/cierre queda HOY INALCANZABLE desde un contenedor hermano porque el listener de administracion vincula 127.0.0.1:8082 por omision y deploy/cell.compose.yml nunca fija HEXCELL_DIRECCION_ADMIN (RIESGO-1 del blueprint), ni que una segunda conexion IPC expulsaria al nucleo de su propio sidecar (RIESGO-5)."
+      ]
+    },
+    {
+      "at": "2026-09-22",
+      "band": "L",
+      "calibrated": true,
+      "complexity_band": "L",
+      "event": "complexity_band_calculated",
+      "inputs": {
+        "files_count": 6,
+        "migration": false,
+        "public_api": true,
+        "schema_change": false,
+        "symbols_count": 9
+      },
+      "notes": "Seis archivos de produccion contados (admin.rs, main.rs, adaptador.rs, ciclo_de_vida.rs, comandos.rs, cell.compose.yml) frente al corte l_max_files=5, mas senal de API publica. La superficie no se puede reducir sin dejar la ruta inalcanzable en produccion o abrir una segunda conexion IPC.",
+      "phase": "blueprint",
+      "signals": [
+        "public_api_signal",
+        "file_count_high: 6"
+      ]
+    }
+  ],
+  "execution_mode": "worktree_edit",
+  "started_at": "2026-09-22T04:30:15Z",
+  "summary": "Real cell terminate in hexcell-admin plus the channel-agnostic POST /admin/sesion/cierre route on the core. Destructive and irreversible: abort before destroying anything.",
+  "task_id": "HEX-082",
+  "total_cost_usd": 0,
+  "violations": []
+}

@@ -1,0 +1,133 @@
+task_id: HEX-085-b
+parent_task: HEX-085
+depends_on: []
+summary: cell rebind CLI ten-step resumable sequence (D5) against the frozen D2 contract, tested with the scripted Docker double. Covers AC-6..AC-15 and its share of AC-16.
+goal: >
+  Child of HEX-085 (plan A-6 task 13, "Implementar `cell rebind`", docs/plan/fase-a-6-empaquetado-cli.md
+  lines 304-322, FR-12/FR-13). This child delivers only the CLI half: the optional --metodo
+  qr|codigo_de_vinculacion flag (default qr) and the ten-step resumable destructive `cell rebind`
+  sequence (D5) — starting-state validation, pause, best-effort close, EnEjecucion -> Reemparejando
+  persistence, sidecar stop and sqlstore.db discard via a sibling alpine:3 container, sidecar
+  restart, pairing with retry, polling to activa, and final Reemparejando -> EnEjecucion persistence
+  plus the sustituciones audit row. It is built entirely against the HTTP contract frozen in
+  HEX-085-a (D2: POST /admin/envio/pausa, POST /admin/sesion/emparejamiento, GET /admin/sesion,
+  where expira_en_ms is an absolute Unix instant and ya_emparejada is translated at HEX-085-a's
+  composition point) and tested with the scripted Docker double in tests/comun/mod.rs; it does not
+  wait for HEX-085-a to merge. The core routes, the session registry, and the whatsmeow adapter are
+  HEX-085-a's scope. The real Docker smoke test, README/plan doc updates, and the merge of both
+  children are done by the parent HEX-085.
+invariants:
+  - sessions.db, knowledge_live.db and adapter_identity.db content is never mutated by cell
+    rebind; verified by checksum in the parent smoke test.
+  - The sustituciones audit row never stores the previous or new phone number, nor any raw
+    transport identifier (adr-0039); it stores only id_celula, motivo, and registrado_ms.
+  - Only sqlstore.db (and its -wal/-shm siblings) is discarded during rebind; identidad.db and
+    outbox.db of the sidecar are preserved untouched.
+  - No Docker action and no HTTP call to the cell happens before the starting cell-state
+    validation succeeds.
+  - A state transition is persisted only after the operation it represents has actually
+    succeeded (never persist-then-attempt).
+  - The CLI never opens the sidecar IPC socket directly (D-57); every interaction goes through
+    core HTTP admin routes.
+  - "hexcell-admin exit codes stay fixed and closed: 0 Exito, 1 Fallo, 2 UsoIncorrecto, 3
+    NoImplementadoTodavia; no new codes are added."
+acceptance:
+  - id: AC-6
+    statement: >
+      The CLI adds an optional --metodo qr|codigo_de_vinculacion flag (default qr) scoped only
+      to cell rebind; --motivo and --confirmar stay mandatory as in cell terminate.
+  - id: AC-7
+    statement: cell rebind validates the starting cell state before any Docker or HTTP call.
+    given: a cell row read from (or implicitly created in) the control-plane store
+    when: cell rebind runs
+    then: >
+      EnEjecucion runs the full ten-step sequence; Reemparejando resumes at step 8; Suspendida
+      fails with diagnostic "ejecute cell unpause antes de cell rebind"; Retirada fails as an
+      illegal transition; in both failure cases no Docker action has occurred yet.
+  - id: AC-8
+    statement: >
+      Steps 2-3 inspect the core and sidecar containers, resolve network/admin port/volume as
+      cell terminate does, then POST /admin/envio/pausa pausar; a fallido result ends the
+      command in Fallo with nothing destructive having happened.
+  - id: AC-9
+    statement: >
+      Step 4 (POST /admin/sesion/cierre) is best-effort: a fallido result is written to stderr
+      and the sequence continues; canal_sin_sesion counts as success.
+  - id: AC-10
+    statement: >
+      Steps 5-6 persist EnEjecucion -> Reemparejando with motivo = --motivo, stop the sidecar
+      without a deadline, then run a sibling alpine:3 container with the data volume mounted at
+      /var/lib/hexcell and Cmd ["rm","-f","/var/lib/hexcell/sqlstore.db",
+      "/var/lib/hexcell/sqlstore.db-wal","/var/lib/hexcell/sqlstore.db-shm"], waiting for exit
+      code 0 and removing the sibling container; identidad.db and outbox.db are never named in
+      that Cmd and remain on disk.
+  - id: AC-11
+    statement: >
+      Step 7 starts the sidecar and reapplies POST /admin/envio/pausa pausar, retrying every 2 s
+      up to 60 s while the response motivo is sin_conexion.
+  - id: AC-12
+    statement: >
+      Step 8 POSTs /admin/sesion/emparejamiento with the chosen metodo, retrying every 2 s up to
+      60 s while motivo is sin_conexion; resultado codigo prints one stdout line
+      "emparejamiento <metodo>: <valor>" plus the existing graphical-rendering-not-integrated
+      note (same wording as crates/hexcell/src/emparejar.rs:243); canal_sin_sesion skips
+      directly to step 10; any other fallido ends in Fallo with the row left in Reemparejando.
+  - id: AC-13
+    statement: >
+      Step 9 polls GET /admin/sesion every 2 s, up to expira_en_ms capped at 120 s, until
+      estado = activa; on expiry the command ends in Fallo with diagnostic "código expirado;
+      repita cell rebind" and the row stays Reemparejando so a later cell rebind resumes at
+      step 8.
+  - id: AC-14
+    statement: >
+      Step 10 POSTs /admin/envio/pausa reanudar, persists Reemparejando -> EnEjecucion with a
+      new motivo constant emparejamiento_confirmado, and inserts a row into sustituciones with
+      motivo = --motivo and registrado_ms; the command ends in Exito.
+  - id: AC-15
+    statement: >
+      The sustituciones row inserted at step 10 never contains the previous or new phone
+      number nor any other raw transport identifier, consistent with adr-0039.
+  - id: AC-16
+    statement: >
+      Minimum test coverage exists per decision D8, against the scripted Docker double
+      (tests/comun/mod.rs) asserting request bodies: happy path from EnEjecucion with exact
+      request order, the rm Cmd, and the final row EnEjecucion + sustituciones; resume from
+      Reemparejando skipping pause/close/rm; a failed close that does not abort the sequence;
+      Suspendida and Retirada failing before any Docker call; an expired pairing code leaving
+      the row Reemparejando without a sustituciones row; and canal_sin_sesion ending in Exito.
+risk: medium
+non_goals:
+  - No new ADR is written; D6 is recorded as a plan note, not an ADR, and is written by the
+    parent.
+  - No new decarte (bitácora) entry unless a studied alternative is explicitly rejected during
+    implementation.
+  - The operations runbook update belongs to task 21, not this task.
+  - Task 18 (.github/workflows/ci.yml, deploy/, Dockerfiles) runs in parallel and is out of
+    scope here.
+  - The core admin HTTP routes, the session registry, and the whatsmeow adapter's real pairing
+    are HEX-085-a's scope; this child builds only against the frozen D2 contract and does not
+    wait for HEX-085-a to merge.
+  - The real-Docker smoke test with checksums (AC-17), the README and plan doc updates
+    (AC-18/AC-19), and merging both children are the parent HEX-085's job.
+constraints:
+  - Difficulty tier is logic-on-existing-skeleton; no new runtime dependency without naming it
+    in the blueprint.
+  - Every blueprint test_scenarios entry must be an object with statement and covers:["AC-N"],
+    never a plain string.
+  - hexcell-admin has no FakeDocker double; the test double is a temporary Unix socket with
+    scripted HTTP responses (tests/comun/mod.rs), and Docker-request assertions check the
+    request body (image, network, command, volumes), not only the path.
+  - Every new guard/assertion is mutated by hand once and confirmed red before being trusted.
+  - "Frozen HTTP contract (D2), unauthenticated like the rest of the admin listener, is
+    inherited VERBATIM from HEX-085-a's AC-1..AC-3: POST /admin/envio/pausa
+    {\"accion\":\"pausar\"|\"reanudar\"} -> 200 {\"resultado\":\"aplicado\",\"accion\"} | 200
+    {\"resultado\":\"fallido\",\"accion\",\"motivo\"} | 200 {\"resultado\":\"canal_sin_sesion\"};
+    POST /admin/sesion/emparejamiento {\"metodo\":\"qr\"|\"codigo_de_vinculacion\"} -> 200
+    {\"resultado\":\"codigo\",\"metodo\",\"valor\",\"expira_en_ms\"} | 200
+    {\"resultado\":\"fallido\",\"motivo\":\"sin_conexion\"|\"ya_emparejada\"|other} | 200
+    {\"resultado\":\"canal_sin_sesion\"}, pairing deadline 30 s, expira_en_ms an absolute
+    Unix-epoch instant; GET /admin/sesion -> 200
+    {\"estado\":\"activa\"|\"reconectando\"|\"desvinculada\"|\"pausada\"|\"canal_sin_sesion\"};
+    invalid accion/metodo or non-JSON body -> 400 before any operation runs. This child treats
+    the contract as fixed and does not depend on HEX-085-a's implementation being merged
+    first, only on the response shapes above."

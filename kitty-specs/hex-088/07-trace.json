@@ -1,0 +1,190 @@
+{
+  "attempts": [
+    {
+      "duration_s": 592.683113274,
+      "model": "opencode-go/longcat-2.0",
+      "notes": "{\"type\":\"step_start\",\"timestamp\":1790266824593,\"sessionID\":\"ses_f2bc84740ffewJh2JYWyGx95BI\",\"part\":{\"id\":\"prt_0d437d78e001y6n0sU1AHjNscN\",\"messageID\":\"msg_0d437b9b1001i8mmnDe3Bo1nSa\",\"sessionID\":\"ses_f2bc84740ffewJh2JYWyGx95BI\",\"snapshot\":\"8a9b4fc22bfa071d36c4a76d2e57649a85d0a4cd\",\"type\":\"step-start\"}} {\"type\":\"tool_use\",\"timestamp\":1790266827393,\"sessionID\":\"ses_f2bc84740ffewJh2JYWyGx95BI\",\"part\":{\"type\":\"tool\",\"tool\":\"read\",\"callID\":\"call_d5708571af6f454fb2274011\",\"state\":{\"status\":\"completed\",\"input\":{\"filePath\":\"/home/gary/dev/hexcell/worktrees/HEX-088/docs/runbook-restauracion-de-celula.md\"},\"output\":\"\u003cpath\u003e/home/gary/dev/hexcell/worktrees/HEX-088/docs/runbook-restauracion-de-celula.md\u003c/path\u003e\\n\u003ctype\u003efile\u003c/type\u003e\\n\u003ccontent\u003e\\n1: # Runbook: restauración completa de una célula desde su respaldo\\n2: \\n3: * **Fecha de esta versión:** 2026-07-30.\\n4: * **Etapa que lo redacta:** A-2 (tarea 16 de `docs/plan/fase-a-2-nucleo-persistencia.md`).\\n5: * **Alcance de esta versión:** las tres bases que la etapa A-2 puede restaurar y verificar de punta\\n6:   a punta (`sessions.db`, `knowledge_live.db`, el almacén de identidad del adaptador), más el\\n7:   procedimiento razonado —pero **no ensayado contra un sidecar real**— para la cuarta, el\\n8:   `sqlstore`. El ensayo de las dos ramas de la bifurcación de este runbook contra la taxonomía de\\n9:   desconexión real de whatsmeow es diferido explícito a la etapa A-3.\\n10: \\n11: ---\\n12: \\n13: ## Antes de empezar\\n14: \\n15: * Este procedimiento asume que ya existe una ronda de respaldo completa: los archivos que produjo\\n16:   `crates/hexcell-storage/src/respaldo.rs` (`sessions.db`, `knowledge_live.db`,\\n17:   `adapter_identity.db`) bajo sus nombres canónicos en un directorio de destino, más —si aplica— la\\n18:   copia del `sqlstore` que hubiera producido el sidecar bajo\\n19:   `docs/contrato-ipc-respaldo-del-sqlstore.md`.\\n20: * **Copiar un archivo de respaldo ya escrito es seguro precisamente porque está quieto....",
+      "phase": "execute",
+      "result": "passed"
+    }
+  ],
+  "completed_at": null,
+  "context_overflows": [],
+  "events": [
+    {
+      "at": "2026-09-24",
+      "event": "risk_level_calculated",
+      "level": "low",
+      "phase": "blueprint",
+      "reasons": [
+        "no_signals_matched"
+      ],
+      "signals": {
+        "files_count": 3,
+        "sensitive_matches": [],
+        "symbols_count": 0
+      }
+    },
+    {
+      "blocked": "",
+      "candidate": {
+        "agent": "opencode_go",
+        "level": 1,
+        "model": "opencode-go/deepseek-v4-flash"
+      },
+      "dispatch_id": "",
+      "inputs_snapshot": {
+        "complexity_band": "M",
+        "control": {
+          "disabled": [
+            {
+              "at": "2026-09-09T16:46:15Z",
+              "by": "human",
+              "reason": "Antigravity/Gemini subscription retired 2026-09-09 (human decision); propagated from quorum",
+              "target": "agy"
+            },
+            {
+              "at": "2026-09-09T16:46:15Z",
+              "by": "human",
+              "reason": "Antigravity/Gemini subscription retired 2026-09-09 (human decision); propagated from quorum",
+              "target": "agy_edit"
+            }
+          ],
+          "updated_at": "2026-09-09T16:46:15Z"
+        },
+        "exclusions": [],
+        "hashes": {
+          "agents_yaml": "ea0f730316f5ee07d999731405e39b6d5a2b8040b6222489976f447ac2b8f450",
+          "config_yaml": "959b1fc9182793ab6c2a8510f82f49724db816b46ddb6ab7aa9fa8f1fb2f890e",
+          "routing_yaml": "8c3b821b2d603e67dc1c220721291fbb5130799d88712d0deaa4b90bbf5479cc"
+        },
+        "incumbent_family": "",
+        "level": 1,
+        "phase": "implement",
+        "risk": "low",
+        "router_version": "fleet-route/v1"
+      },
+      "reasons": null,
+      "reroute_budget": 2,
+      "review_family_degraded": false,
+      "ts": "2026-09-24T16:16:34Z",
+      "type": "routing_decision"
+    },
+    {
+      "bundle_hash": "6caa7078e4af67115734d7f23a827948442ca8f8958638589898259ea93eef68",
+      "dispatch_id": "6caa7078e4af",
+      "ts": "2026-09-24T16:16:42Z",
+      "type": "dispatch_started"
+    },
+    {
+      "cause": "wrapper_broken",
+      "dispatch_id": "6caa7078e4af",
+      "ts": "2026-09-24T16:19:40Z",
+      "type": "reroute"
+    },
+    {
+      "dispatch_id": "6caa7078e4af",
+      "ts": "2026-09-24T16:19:40Z",
+      "type": "wrapper_broken"
+    },
+    {
+      "applied": false,
+      "cause": "wrapper_broken",
+      "diff_stat": {
+        "deletions": 0,
+        "empty": true,
+        "files_changed": 0,
+        "indeterminate": false,
+        "insertions": 0
+      },
+      "dispatch_id": "6caa7078e4af",
+      "forensic_ref": null,
+      "noop": false,
+      "outcome_class": "reroute",
+      "ts": "2026-09-24T16:19:40Z",
+      "type": "dispatch_finished",
+      "usage_source": "none"
+    },
+    {
+      "blocked": "",
+      "candidate": {
+        "agent": "opencode_go",
+        "level": 1,
+        "model": "opencode-go/longcat-2.0"
+      },
+      "dispatch_id": "",
+      "inputs_snapshot": {
+        "complexity_band": "M",
+        "control": {
+          "disabled": [
+            {
+              "at": "2026-09-09T16:46:15Z",
+              "by": "human",
+              "reason": "Antigravity/Gemini subscription retired 2026-09-09 (human decision); propagated from quorum",
+              "target": "agy"
+            },
+            {
+              "at": "2026-09-09T16:46:15Z",
+              "by": "human",
+              "reason": "Antigravity/Gemini subscription retired 2026-09-09 (human decision); propagated from quorum",
+              "target": "agy_edit"
+            }
+          ],
+          "updated_at": "2026-09-09T16:46:15Z"
+        },
+        "exclusions": [
+          {
+            "agent": "opencode_go",
+            "level": 0,
+            "model": "opencode-go/deepseek-v4-flash"
+          }
+        ],
+        "hashes": {
+          "agents_yaml": "ea0f730316f5ee07d999731405e39b6d5a2b8040b6222489976f447ac2b8f450",
+          "config_yaml": "959b1fc9182793ab6c2a8510f82f49724db816b46ddb6ab7aa9fa8f1fb2f890e",
+          "routing_yaml": "8c3b821b2d603e67dc1c220721291fbb5130799d88712d0deaa4b90bbf5479cc"
+        },
+        "incumbent_family": "",
+        "level": 1,
+        "phase": "implement",
+        "risk": "low",
+        "router_version": "fleet-route/v1"
+      },
+      "reasons": null,
+      "reroute_budget": 2,
+      "review_family_degraded": false,
+      "ts": "2026-09-24T16:20:11Z",
+      "type": "routing_decision"
+    },
+    {
+      "bundle_hash": "3f334aac12151e6952ff7c747b9e0009a30a016e06cfd9f2b95ed3c30f0c449b",
+      "dispatch_id": "3f334aac1215",
+      "ts": "2026-09-24T16:20:16Z",
+      "type": "dispatch_started"
+    },
+    {
+      "applied": true,
+      "cause": null,
+      "diff_stat": {
+        "deletions": 0,
+        "empty": false,
+        "files_changed": 3,
+        "indeterminate": false,
+        "insertions": 405
+      },
+      "dispatch_id": "3f334aac1215",
+      "forensic_ref": "refs/fleet/HEX-088/attempt-1-opencode-go-longcat-2.0",
+      "noop": false,
+      "outcome_class": "attempt",
+      "ts": "2026-09-24T16:30:08Z",
+      "type": "dispatch_finished",
+      "usage_source": "none"
+    }
+  ],
+  "execution_mode": "worktree_edit",
+  "started_at": "2026-09-24T00:00:00Z",
+  "summary": "Runbook de operacion para hexcell-admin (tarea 21 de A-6) mas apendices en README.md y fase-a-6-empaquetado-cli.md.",
+  "task_id": "HEX-088",
+  "total_cost_usd": 0,
+  "violations": []
+}

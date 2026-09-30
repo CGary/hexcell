@@ -1,0 +1,63 @@
+{
+  "task_id": "HEX-085",
+  "summary": "Real cell rebind: core session routes over a generalized session registry, real whatsmeow pairing, ten-step resumable CLI sequence. Parent of HEX-085-a and HEX-085-b.",
+  "started_at": "2026-09-23T00:00:00Z",
+  "execution_mode": "worktree_edit",
+  "attempts": [],
+  "total_cost_usd": 0,
+  "violations": [],
+  "context_overflows": [],
+  "events": [
+    {
+      "at": "2026-09-23",
+      "phase": "blueprint",
+      "event": "risk_level_calculated",
+      "level": "medium",
+      "reasons": [
+        "file_count_high: 20",
+        "symbols_count_high: 28"
+      ],
+      "signals": {
+        "files_count": 20,
+        "symbols_count": 28,
+        "sensitive_matches": []
+      },
+      "notes": "Calculated level equals the human-declared risk (medium): no risk_level_divergence event."
+    },
+    {
+      "at": "2026-09-23",
+      "phase": "blueprint",
+      "event": "complexity_band_calculated",
+      "band": "L",
+      "complexity_band": "L",
+      "calibrated": true,
+      "inputs": {
+        "files_count": 9,
+        "symbols_count": 28,
+        "migration": false,
+        "public_api": false,
+        "schema_change": false
+      },
+      "signals": [
+        "file_count_high: 9"
+      ],
+      "children": {
+        "HEX-085-a": {
+          "band": "M",
+          "files_count": 4
+        },
+        "HEX-085-b": {
+          "band": "M",
+          "files_count": 5
+        }
+      },
+      "notes": "Calibrated policy from .agents/policies/complexity.yaml over TOUCHED production files only (tests and docs excluded by noncounted_globs): admin.rs, main.rs, adaptador.rs, whatsmeow lib.rs, argumentos.rs, comandos.rs, ciclo_de_vida.rs, almacen_plano_de_control.rs, docker/cliente.rs. Nine > l_max_files=5, so the parent is L and decomposition (D1) is mandatory. HEX-085-b sits exactly at the cut (5): one more production file flips it to L. docker/cliente.rs is outside D1's file list but required by D5 (volume-mounted sibling and probe stdout)."
+    },
+    {
+      "at": "2026-09-23",
+      "phase": "blueprint",
+      "event": "task_start_deferred",
+      "notes": "quorum task start NOT run on the parent: band L with mandatory decomposition into HEX-085-a (core+adapter) and HEX-085-b (CLI). Worktrees and branches are created per child after /q-decompose."
+    }
+  ]
+}

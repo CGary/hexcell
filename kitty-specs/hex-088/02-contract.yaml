@@ -1,0 +1,138 @@
+task_id: HEX-088
+summary: >
+  Write docs/runbook-operacion.md and append linking/closing sentences to README.md and
+  docs/plan/fase-a-6-empaquetado-cli.md, closing A-6 plan task 21.
+goal: >
+  Give a cell operator a fixed situation-to-command map plus one procedure subsection per
+  hexcell-admin cell/reporte/config command, an OOMKilled procedure, and a provisional pointer
+  to the in-progress command-retry procedure, without touching product code or reopening any
+  frozen Fase A/B decision.
+read:
+  - .ai/tasks/active/HEX-088-new-spec/00-spec.yaml
+  - README.md
+  - docs/plan/fase-a-6-empaquetado-cli.md
+  - docs/runbook-restauracion-de-celula.md
+  - docs/runbook-vigilancia-externa.md
+  - crates/hexcell-admin/src/comandos.rs
+  - crates/hexcell-admin/src/argumentos.rs
+  - crates/hexcell-admin/src/codigo_de_salida.rs
+  - deploy/cell.compose.yml
+  - docs/plan/fase-a-7-pilotos.md
+touch:
+  - docs/runbook-operacion.md
+  - README.md
+  - docs/plan/fase-a-6-empaquetado-cli.md
+forbid:
+  files:
+    - "crates/**"
+    - "sidecar/**"
+    - "deploy/**"
+    - "docs/STATUS.md"
+    - "docs/bitacora-de-descartes.md"
+    - "kitty-specs/**"
+    - "Cargo.lock"
+  behaviors:
+    - "State or imply that Fase B replaces, substitutes, or closes Fase A, or that the whatsmeow sidecar is retired"
+    - "Frame a ban (baneo) as a failure rather than an expected structural event"
+    - "Introduce bulk-sender folklore (jitter, warm-up protocols) or proxy/VPN/IP-rotation guidance"
+    - "Invent a client count, cell count, price, raw transport identifier, or phone number anywhere in the diff"
+    - "Delete or rewrite any existing sentence in README.md or docs/plan/fase-a-6-empaquetado-cli.md (edits must be strictly additive/append-only)"
+    - "Create or link to a nonexistent ban runbook file (docs/runbook-baneo.md or similar)"
+    - "Write the final 'Reejecución de un comando' procedure body (plan task 15's scope); only a provisional three-line pointer is allowed"
+    - "Change, propose, or imply a new value for the container memory limit in deploy/cell.compose.yml; only read and cite its current value"
+    - "Touch kitty-specs/hex-078/00-spec.yaml or its AC-6"
+    - "Show a hexcell-admin command literal in the runbook that is not a real, currently valid invocation of the actual argument parser"
+verify:
+  commands:
+    - cargo build -p hexcell-admin --quiet
+    - |
+      bash -c '
+      set -euo pipefail
+      cargo build -p hexcell-admin --quiet
+      BIN=./target/debug/hexcell-admin
+      FILE=docs/runbook-operacion.md
+      test -f "$FILE" || { echo "FALLA: falta $FILE"; exit 1; }
+      test -x "$BIN" || { echo "FALLA: no se pudo construir $BIN"; exit 1; }
+      tmp=$(mktemp)
+      awk "/^\`\`\`bash/{f=1;next} /^\`\`\`/{f=0;next} f" "$FILE" > "$tmp"
+      # Tambien las invocaciones en codigo en linea (tabla y prosa): todo comando escrito pasa por el analizador.
+      grep -oE "\`(\./)?hexcell-admin [^\`]*\`" "$FILE" | tr -d "\`" >> "$tmp" || true
+      fail=0
+      n=0
+      while IFS= read -r raw; do
+        line=$(printf "%s" "$raw" | sed -E "s/^[[:space:]]*//; s/[[:space:]]*\\\\\$//")
+        case "$line" in
+          ./hexcell-admin\ *) cmd="${line#./}" ;;
+          hexcell-admin\ *) cmd="$line" ;;
+          *) continue ;;
+        esac
+        cmd=$(printf "%s" "$cmd" | sed -E "s/<[a-zA-Z_]*id[a-zA-Z_]*>/ejemplo/g; s/<motivo>/prueba/g; s#<ruta[^>]*\\.db>#/tmp/hex088-copia.db#g; s#<ruta[^>]*>#/tmp/hex088-salida.env#g; s/\[([^]]*)\]/\1/g; s/AAAA-MM-DD/2026-09-01/g")
+        case "$cmd" in *--simular*) ;; *) cmd="$cmd --simular" ;; esac
+        case "$cmd" in
+          "hexcell-admin cell terminate"*|"hexcell-admin cell rebind"*)
+            case "$cmd" in *--confirmar*) ;; *) cmd="$cmd --confirmar" ;; esac
+            ;;
+        esac
+        rest="${cmd#hexcell-admin }"
+        n=$((n+1))
+        set +e
+        eval "$BIN $rest" >/tmp/hex088-out.$$ 2>&1
+        code=$?
+        set -e
+        if [ "$code" -eq 2 ]; then
+          echo "FALLA (codigo 2, UsoIncorrecto) en la linea del runbook: $raw"
+          echo "  comando ejecutado: $BIN $rest"
+          fail=1
+        fi
+        rm -f /tmp/hex088-out.$$
+      done < "$tmp"
+      rm -f "$tmp"
+      if [ "$fail" -ne 0 ]; then exit 1; fi
+      if [ "$n" -lt 20 ]; then echo "FALLA: solo $n invocaciones ejecutadas (piso 20); el extractor no ve el runbook"; exit 1; fi
+      echo "OK: ninguna invocacion de hexcell-admin en docs/runbook-operacion.md devolvio codigo 2 ($n ejecutadas)"
+      '
+    - |
+      bash -c '
+      set -euo pipefail
+      # Alcance: el runbook entero + solo las lineas ANADIDAS a README y plan (el contenido previo es intocable por append-only).
+      BASE=$(git merge-base main HEAD)
+      CONTENIDO=$(cat docs/runbook-operacion.md; git diff "$BASE" -- README.md docs/plan/fase-a-6-empaquetado-cli.md | grep "^+[^+]" || true)
+      if printf "%s\n" "$CONTENIDO" | grep -inE "jitter|warm-?up|calentamiento del numero|proxy|vpn|rotaci[oó]n de ip"; then
+        echo "FALLA: contenido prohibido encontrado (ver lineas arriba)"
+        exit 1
+      fi
+      if printf "%s\n" "$CONTENIDO" | grep -inE "[0-9]{7,}"; then
+        echo "FALLA: posible numero de telefono o identificador crudo (7+ digitos seguidos)"
+        exit 1
+      fi
+      echo "OK: sin contenido prohibido ni digitos largos"
+      '
+    - |
+      bash -c '
+      set -euo pipefail
+      DELETED=$(git diff main...HEAD -- README.md docs/plan/fase-a-6-empaquetado-cli.md | grep -c "^-[^-]" || true)
+      if [ "$DELETED" -ne 0 ]; then
+        echo "FALLA: se detectaron $DELETED lineas borradas en README.md o docs/plan/fase-a-6-empaquetado-cli.md (edicion debe ser append-only)"
+        exit 1
+      fi
+      echo "OK: 0 lineas borradas en README.md y docs/plan/fase-a-6-empaquetado-cli.md"
+      '
+  target_s: 60
+acceptance:
+  human_gate: true
+limits:
+  max_files_changed: 3
+  max_diff_lines: 430
+  per_class:
+    - glob: "docs/runbook-operacion.md"
+      max_diff_lines: 400
+    - glob: "README.md"
+      max_diff_lines: 10
+    - glob: "docs/plan/fase-a-6-empaquetado-cli.md"
+      max_diff_lines: 20
+execution:
+  mode: worktree_edit
+  branch: ai/HEX-088
+retry_policy:
+  max_attempts: 2
+  escalate_after: 1

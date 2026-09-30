@@ -1,0 +1,144 @@
+task_id: HEX-085-b
+summary: Revise fix for 06-review.json revise verdict; scoped strictly to the eight fix_tasks.
+entries:
+  - changed_files:
+      - path: crates/hexcell-admin/tests/reemparejamiento.rs
+      - path: crates/hexcell-admin/tests/ciclo_de_vida.rs
+    notes:
+      - Injected PlazosDeReemparejamiento (cadencia_ms 1) into every reemparejamiento.rs test via
+        ejecutar_reemparejamiento called directly, replacing por_omision() from
+        ejecutar_con_efectos; no test in the crate sleeps real seconds any more (hexcell-admin
+        suite wall time dropped from ~2.1 s minimum to ~1.5 s for the reemparejamiento file).
+      - Used the previously dead helper plazos_de_rebind() in tests/ciclo_de_vida.rs for four new
+        unit-level guards on solicitar_emparejamiento, reanudar_envio and
+        descartar_sqlstore_y_rearrancar.
+      - Fixed the misleading comment and removed the unconsumed second guion at
+        codigo_expirado_deja_la_fila_reemparejando_y_sin_sustituciones (the budget with a
+        negative window makes exactly one attempt, not a pair).
+    verify_pending: false
+  - changed_files:
+      - path: crates/hexcell-admin/tests/reemparejamiento.rs
+      - path: crates/hexcell-admin/tests/ciclo_de_vida.rs
+      - path: crates/hexcell-admin/tests/almacen_plano_de_control.rs
+    notes:
+      - Added the missing blueprint scenarios: step-7 pausa retry (sin_conexion then aplicado) at
+        both unit and end-to-end level; pairing sin_conexion twice then codigo; pairing fallido
+        with another motivo ending Fallo with the row left Reemparejando and no sustituciones row;
+        reanudar fallido ending Fallo with the row left Reemparejando; budget exhaustion after
+        4 status polls with injected plazos (AC-13); AC-9 end-to-end (close probe exit 1 writes
+        one diagnostic line and the sequence still reaches Exito); confirmar_reemparejamiento
+        rollback when the sustituciones insert fails (forced by dropping the table from a second
+        connection).
+    verify_pending: false
+  - changed_files:
+      - path: crates/hexcell-admin/src/ciclo_de_vida.rs
+      - path: crates/hexcell-admin/src/comandos.rs
+    notes:
+      - Narrowed solicitar_emparejamiento's return type to DesenlaceDeSolicitudDeEmparejamiento
+        (Codigo/CanalSinSesion only, no metodo field) so comandos.rs no longer needs the dead
+        Ok(Fallido) match arm; the compiler now enforces that a fallido pairing response can never
+        reach the caller as Ok.
+      - Replaced the unreachable!() panic path in ejecutar_reemparejamiento (transition rejection
+        arm) with a diagnosed Fallo; no production path in the crate panics.
+      - The "emparejamiento <metodo>: <valor>" line now prints metodo.nombre_de_cable() (the
+        operator's --metodo choice) instead of the core's echoed field.
+    verify_pending: false
+tdd_red_runs:
+  - acceptance_id: AC-8-M3
+    command: >-
+      cargo test -p hexcell-admin --test reemparejamiento
+      pausa_fallida_en_el_paso_3_no_persiste_ni_hace_nada_destructivo
+    red_exit_code: 1
+  - acceptance_id: AC-12-M5
+    command: >-
+      cargo test -p hexcell-admin --test ciclo_de_vida
+      solicitar_emparejamiento_reintenta_sin_conexion_y_envia_el_metodo_elegido
+    red_exit_code: 1
+  - acceptance_id: AC-14-M8
+    command: >-
+      cargo test -p hexcell-admin --test ciclo_de_vida reanudar_envio_falla_si_la_respuesta_es_fallido
+    red_exit_code: 1
+  - acceptance_id: AC-12-M9
+    command: >-
+      cargo test -p hexcell-admin --test ciclo_de_vida
+      solicitar_emparejamiento_no_reintenta_con_otro_motivo
+    red_exit_code: 1
+  - acceptance_id: AC-12-M9-e2e
+    command: >-
+      cargo test -p hexcell-admin --test reemparejamiento
+      resume_con_emparejamiento_fallido_por_otro_motivo_no_reintenta_ni_persiste
+    red_exit_code: 1
+  - acceptance_id: AC-14-rollback
+    command: >-
+      cargo test -p hexcell-admin --test almacen_plano_de_control
+      confirmar_reemparejamiento_revierte_si_falla_la_insercion_en_sustituciones
+    red_exit_code: 1
+  - acceptance_id: AC-11
+    command: >-
+      cargo test -p hexcell-admin --test ciclo_de_vida
+      descartar_sqlstore_y_rearrancar_reintenta_la_pausa_tras_sin_conexion
+    red_exit_code: 1
+  - acceptance_id: AC-9
+    command: >-
+      cargo test -p hexcell-admin --test reemparejamiento
+      cierre_fallido_emite_un_aviso_por_diagnostico_y_continua_hasta_exito
+    red_exit_code: 1
+  - acceptance_id: AC-13
+    command: >-
+      cargo test -p hexcell-admin --test reemparejamiento
+      presupuesto_de_confirmacion_se_agota_tras_varias_sondas_de_estado
+    red_exit_code: 1
+mutaciones:
+  - descripcion: >-
+      M3 reubicado a mano: persistir EnEjecucion->Reemparejando ANTES de la sonda de pausa del
+      paso 3 (comandos.rs, en_secuencia_completa) en vez de después de preparar_reemparejamiento.
+    prueba_que_se_puso_roja: pausa_fallida_en_el_paso_3_no_persiste_ni_hace_nada_destructivo
+  - descripcion: >-
+      M5 aplicado a mano: el cuerpo de la sonda de emparejamiento siempre manda {"metodo":"qr"}
+      sin importar el --metodo elegido (ciclo_de_vida.rs, solicitar_emparejamiento).
+    prueba_que_se_puso_roja: solicitar_emparejamiento_reintenta_sin_conexion_y_envia_el_metodo_elegido
+  - descripcion: >-
+      M8 aplicado a mano: reanudar_envio trata un fallido como éxito (colapsa las tres variantes
+      de DesenlaceDePausa en un único Ok(())).
+    prueba_que_se_puso_roja: reanudar_envio_falla_si_la_respuesta_es_fallido
+  - descripcion: >-
+      M9 aplicado a mano (dos veces): solicitar_emparejamiento reintenta sobre CUALQUIER motivo
+      en vez de sólo sin_conexion (quitando la guarda `if motivo == "sin_conexion"`).
+    prueba_que_se_puso_roja: >-
+      solicitar_emparejamiento_no_reintenta_con_otro_motivo (unitaria) y
+      resume_con_emparejamiento_fallido_por_otro_motivo_no_reintenta_ni_persiste
+      (secuencia completa)
+  - descripcion: >-
+      Rollback de confirmar_reemparejamiento: se ignora el error del INSERT en sustituciones con
+      `let _ =` y se confirma la transacción de todas formas, rompiendo la atomicidad.
+    prueba_que_se_puso_roja: confirmar_reemparejamiento_revierte_si_falla_la_insercion_en_sustituciones
+  - descripcion: >-
+      Reintento del paso 7 invertido a mano: la guarda de descartar_sqlstore_y_rearrancar pasa de
+      `motivo == "sin_conexion"` a `motivo != "sin_conexion"`, así que sin_conexion aborta de
+      inmediato en vez de reintentar.
+    prueba_que_se_puso_roja: >-
+      descartar_sqlstore_y_rearrancar_reintenta_la_pausa_tras_sin_conexion (unitaria) y
+      paso_7_pausa_reintenta_una_vez_tras_sin_conexion_y_continua_hasta_exito (secuencia completa)
+  - descripcion: >-
+      AC-9 suprimido a mano: se deja de escribir el aviso de cierre fallido por el sumidero de
+      diagnóstico (comandos.rs).
+    prueba_que_se_puso_roja: cierre_fallido_emite_un_aviso_por_diagnostico_y_continua_hasta_exito
+  - descripcion: >-
+      AC-13 vaciado a mano: esperar_confirmacion ignora el presupuesto calculado y hace SIEMPRE un
+      único intento.
+    prueba_que_se_puso_roja: presupuesto_de_confirmacion_se_agota_tras_varias_sondas_de_estado
+notas:
+  - Cada mutación de la tabla se aplicó con `sed`/edición directa en el worktree, se confirmó no
+    vacía comparando contra una copia previa (diff no vacío), se corrió el test indicado hasta
+    verlo ROJO, y se revirtió con la copia de respaldo antes de seguir. git status quedó limpio
+    salvo los cinco archivos de este cambio tras cada reversión.
+  - "comandos.rs:434 unreachable!() y comandos.rs:547 Ok(Fallido) no tienen mutación de prueba:
+    son caminos estructuralmente inalcanzables dados EstadoDeCelula::transiciones_permitidas() (el
+    primero) y el tipo angostado DesenlaceDeSolicitudDeEmparejamiento (el segundo, ahora
+    garantizado por el compilador en vez de por convención). El segundo se verifica por
+    compilación, no por una prueba en rojo/verde."
+  - >-
+    limits.max_diff_lines (2450) y los topes por clase (950 src / 1500 tests) del contrato
+    quedaron superados por este arreglo (ya lo estaban antes de este fix); la revisión anterior
+    marcó esto como decisión humana pendiente y esta tarea no recorta pruebas para encajar en el
+    tope, según la instrucción explícita del despacho.

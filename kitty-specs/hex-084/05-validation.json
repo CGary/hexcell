@@ -1,0 +1,32 @@
+{
+  "commands": [
+    {
+      "command": "cargo fmt --check",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "sin salida"
+    },
+    {
+      "command": "cargo clippy --workspace -- -D warnings",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.04s"
+    },
+    {
+      "command": "cargo test --workspace",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "0 measured; 0 filtered out; finished in 0.00s\n\n\nrunning 1 test\ntest crates/hexcell-core/src/canal.rs - canal::MensajeSaliente (line 172) - compile fail ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s\n\nall doctests ran in 0.11s; merged doctests compilation took 0.09s\n   Doc-tests hexcell_meta\n\nrunning 0 tests\n\ntest result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n   Doc-tests hexcell_storage\n\nrunning 0 tests\n\ntest result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s"
+    },
+    {
+      "command": "cd sidecar \u0026\u0026 go vet ./... \u0026\u0026 go test ./... -count=1",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "ok  \tgithub.com/CGary/hexcell/sidecar\t0.006s\nok  \tgithub.com/CGary/hexcell/sidecar/internal/canal\t0.050s\nok  \tgithub.com/CGary/hexcell/sidecar/internal/configuracion\t0.003s\nok  \tgithub.com/CGary/hexcell/sidecar/internal/identidad\t0.039s\nok  \tgithub.com/CGary/hexcell/sidecar/internal/ipc\t0.003s\nok  \tgithub.com/CGary/hexcell/sidecar/internal/metricas\t0.003s\nok  \tgithub.com/CGary/hexcell/sidecar/internal/outbox\t0.041s\nok  \tgithub.com/CGary/hexcell/sidecar/internal/registro\t0.002s\nok  \tgithub.com/CGary/hexcell/sidecar/internal/servidor\t0.009s"
+    }
+  ],
+  "executed_at": "2026-09-22T01:00:00Z",
+  "overall_result": "passed",
+  "summary": "Las cuatro guardas del contrato salieron en 0 sobre el arbol de worktrees/HEX-084 (sin commitear); tests/reporte_de_consumo.rs aporta 7 casos nuevos, todos verdes.",
+  "task_id": "HEX-084"
+}

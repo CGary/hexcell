@@ -1,0 +1,214 @@
+task_id: HEX-082-a
+summary: 'Core half of cell terminate (R5): POST /admin/sesion/cierre fed by a compile-time CierreDeSesion
+  enum, a cloneable whatsmeow session handle with motivo, and the admin bind in the compose template.'
+affected_files:
+- crates/hexcell/src/admin.rs
+- crates/hexcell/src/main.rs
+- crates/hexcell-canal-whatsmeow/src/adaptador.rs
+- deploy/cell.compose.yml
+- crates/hexcell/tests/admin_http.rs
+- crates/hexcell-canal-whatsmeow/tests/cierre_de_sesion.rs
+symbols:
+- hexcell::admin::RutaAdmin::CerrarSesion (new variant of the existing 3-variant route enum)
+- 'hexcell::admin::enrutar_admin (one new arm: (POST, "/admin/sesion/cierre"))'
+- 'hexcell::admin::CierreDeSesion<C: CicloDeVidaSesion> (enum ConSesion(C) | SinSesion, resolved at COMPILE
+  TIME by the composition root)'
+- hexcell::admin::MOTIVO_CANAL_SIN_SESION (&str = "canal_sin_sesion", constant declared beside the route,
+  contributed by the composition point and never by the trait)
+- hexcell::admin::CerradorRegistrado (type-erased ConSesion(Box<dyn Fn() -> Pin<Box<dyn Future<Output
+  = Result<(), String>> + Send>> + Send + Sync>) | SinSesion; keeps the variant distinction after erasure)
+- hexcell::admin::RegistroDeCierreDeSesion (Arc<std::sync::OnceLock<CerradorRegistrado>>, the late-binding
+  seam)
+- hexcell::admin::RegistroDeCierreDeSesion::registrar<C>(CierreDeSesion<C>) (generic entry point, erases
+  C into CerradorRegistrado exactly once)
+- 'hexcell::admin::atender_cierre_de_sesion(registro, plazo) (pure async application service under test:
+  200 / 502 / 504)'
+- hexcell::admin::PLAZO_DE_CIERRE_DE_SESION (Duration = 30 s, production default only; no test file imports
+  it)
+- hexcell::admin::atender_peticion_de_admin (gains registro + plazo parameters)
+- hexcell::admin::servir_admin and servir_servicios_http (plumb registro + plazo; servir_servicios_http
+  stays ONE call before the match)
+- hexcell_canal_whatsmeow::adaptador::AsaDeSesion (cloneable handle over escritor_compartido + pendientes_de_sesion
+  + receptor_estado, carrying its own motivo and plazo)
+- hexcell_canal_whatsmeow::adaptador::AsaDeSesion impl hexcell_core::canal::CicloDeVidaSesion (cerrar_sesion
+  sends the carried motivo)
+- hexcell_canal_whatsmeow::adaptador::AdaptadorWhatsmeow::asa_de_sesion(motivo) (taken BEFORE Motor::nuevo
+  consumes the adapter; precedent contadores_de_acuse / suscribir_estado_con_expiracion)
+- hexcell_canal_whatsmeow::adaptador::ordenar_cierre_de_sesion (gains a motivo parameter; the AdaptadorWhatsmeow
+  trait impl keeps passing "")
+dependencies:
+- crates/hexcell-core/src/canal.rs
+- crates/hexcell/src/configuracion.rs
+- crates/hexcell/src/salud.rs
+- crates/hexcell/tests/comun/mod.rs
+- crates/hexcell-canal-whatsmeow/src/mensajes.rs
+- crates/hexcell-canal-whatsmeow/src/error.rs
+- crates/hexcell-canal-whatsmeow/tests/comun/mod.rs
+- deploy/verificar_endurecimiento.sh
+- deploy/verificar_limites.sh
+- deploy/verificar_renderizado_configuracion.sh
+test_scenarios:
+- statement: 'Routing unit: enrutar_admin(POST, "/admin/sesion/cierre") is CerrarSesion, while (GET, "/admin/sesion/cierre"),
+    (PUT, "/admin/sesion/cierre") and any other path are NoEncontrada, and the two existing /admin/ingesta
+    arms keep their current mapping.'
+  covers:
+  - AC-7
+- statement: 'SinSesion over the real HTTP surface: a core binary launched with the simulated channel
+    answers POST /admin/sesion/cierre with 200 and a body whose motivo is exactly canal_sin_sesion (AC-13;
+    proves the route is wired into servir_admin, not only unit-reachable).'
+  covers:
+  - AC-7
+  - AC-13
+- statement: 'ConSesion completado: a DOUBLE declared in the test crate implementing CicloDeVidaSesion
+    returns Ok(()) -> 200 and the parsed JSON object has resultado=completado and NO motivo key at all
+    (asserting absence, so a collapsed body that always carries canal_sin_sesion goes red).'
+  covers:
+  - AC-7
+  - AC-8
+- statement: 'ConSesion fallido: the double returns Err(e) whose Display is a distinctive fixture string
+    absent from production code -> 502 with resultado=fallido and motivo equal to that exact string (a
+    generic collapsed message goes red).'
+  covers:
+  - AC-7
+  - AC-8
+- statement: 'ConSesion ausente: the double never resolves -> 504 within a test-supplied sub-second plazo
+    passed to atender_cierre_de_sesion; the production 30 s constant is never imported by a test file.'
+  covers:
+  - AC-7
+  - AC-8
+- statement: 'Unregistered seam: with the OnceLock never set, the route answers 502 (fail closed) and
+    never 200, so a cell whose composition root forgot to register can never report a completed close.'
+  covers:
+  - AC-7
+- statement: 'Whatsmeow motivo: using AsaDeSesion("cell terminate").cerrar_sesion() against SidecarSimulado,
+    the emitted line carries version 6, tipo orden_cierre_de_sesion and motivo exactly "cell terminate",
+    and resolves Ok on a completado acuse.'
+  covers:
+  - AC-12
+- statement: 'Whatsmeow default motivo pinned: AdaptadorWhatsmeow::cerrar_sesion() (the trait impl) still
+    emits motivo "" — asserted in a NEW case so the two pre-existing HEX-071 cases in cierre_de_sesion.rs
+    stay green and UNEDITED.'
+  covers:
+  - AC-12
+- statement: 'Compose template: deploy/cell.compose.yml carries HEXCELL_DIRECCION_ADMIN=0.0.0.0:8082 on
+    the nucleo service with a Spanish comment twinning the HEXCELL_DIRECCION_SALUD one, no ports: block
+    is added, and the three deploy guards still pass when run against the resolved YAML (human merge gate
+    — they need a real docker compose, see risks).'
+  covers:
+  - AC-11
+strategy:
+- step: 1
+  action: 'Value objects + application service on the core HTTP surface. In crates/hexcell/src/admin.rs
+    add: the RutaAdmin::CerrarSesion variant and its single enrutar_admin arm; the compile-time value
+    object CierreDeSesion<C: CicloDeVidaSesion> with variants ConSesion(C) and SinSesion; the constant
+    MOTIVO_CANAL_SIN_SESION = "canal_sin_sesion" declared right beside the route; the type-erased CerradorRegistrado
+    that PRESERVES the ConSesion/SinSesion distinction after erasure; RegistroDeCierreDeSesion (Arc<std::sync::OnceLock<CerradorRegistrado>>)
+    with a generic registrar<C>(CierreDeSesion<C>) that boxes C::cerrar_sesion into an owned future and
+    maps the error through to_string(); and the pure async unit atender_cierre_de_sesion(registro, plazo)
+    mapping SinSesion -> 200 {"resultado":"completado","motivo":"canal_sin_sesion"}, ConSesion Ok -> 200
+    {"resultado":"completado"} with NO motivo key, ConSesion Err -> 502 {"resultado":"fallido","motivo":
+    e.to_string()}, elapsed plazo -> 504, and an unset OnceLock -> 502 (fail closed). The route''s Spanish
+    doc comment states there is NO authentication and the security boundary is the cell''s internal network,
+    exactly as for /admin/ingesta. admin.rs must not name hexcell_canal_whatsmeow, AdaptadorWhatsmeow
+    or any IPC wire type.'
+  files:
+  - crates/hexcell/src/admin.rs
+- step: 2
+  action: 'Plumb the seam through the two existing HTTP entry points without splitting them. Thread registro:
+    RegistroDeCierreDeSesion and plazo: Duration through atender_peticion_de_admin, servir_admin and servir_servicios_http.
+    servir_servicios_http keeps returning ONE combined future, keeps its single call site before the match
+    on CanalSeleccionado, and keeps its existing #[allow(clippy::too_many_arguments)]; its doc comment
+    gains the reason the seam is late-bound rather than passed per branch.'
+  files:
+  - crates/hexcell/src/admin.rs
+- step: 3
+  action: 'Adapter-side value object. In crates/hexcell-canal-whatsmeow/src/adaptador.rs add the cloneable
+    AsaDeSesion holding clones of the already-Arc''d escritor_compartido, pendientes_de_sesion and receptor_estado
+    plus its own motivo and plazo; add AdaptadorWhatsmeow::asa_de_sesion(motivo) that builds it; give
+    ordenar_cierre_de_sesion a motivo parameter (today it hardcodes motivo: String::new() at the OrdenCierreDeSesion
+    construction) and DELEGATE the body rather than duplicating it, so AsaDeSesion and AdaptadorWhatsmeow
+    share one implementation. Implement hexcell_core::canal::CicloDeVidaSesion for AsaDeSesion: cerrar_sesion
+    sends the carried motivo, estado_sesion reads the cloned watch receiver, and iniciar_emparejamiento
+    mirrors the adapter''s existing Err(SinConexion) TODO stub with a doc comment saying so. AdaptadorWhatsmeow''s
+    own CicloDeVidaSesion::cerrar_sesion keeps passing "" and PLAZO_CIERRE_DE_SESION so the two pre-existing
+    HEX-071 cases stay green and unedited. No change to mensajes.rs, to VERSION_PROTOCOLO, to lib.rs (adaptador
+    is already a pub mod) or to the sidecar.'
+  files:
+  - crates/hexcell-canal-whatsmeow/src/adaptador.rs
+- step: 4
+  action: 'Composition root. In crates/hexcell/src/main.rs create the RegistroDeCierreDeSesion BEFORE
+    the single servir_servicios_http call, pass a clone in together with PLAZO_DE_CIERRE_DE_SESION, and
+    inside each arm of the match on CanalSeleccionado register the compile-time variant before the tokio::select!:
+    Simulado -> CierreDeSesion::SinSesion; Whatsmeow -> CierreDeSesion::ConSesion of adaptador.asa_de_sesion("cell
+    terminate"), taken BEFORE Motor::nuevo consumes the adapter, following the contadores_de_acuse() /
+    suscribir_estado_con_expiracion() precedent already in that branch. AdaptadorSimulado is not touched
+    and implements nothing new.'
+  files:
+  - crates/hexcell/src/main.rs
+- step: 5
+  action: 'Deployment template. Add HEXCELL_DIRECCION_ADMIN=0.0.0.0:8082 to the nucleo service''s environment
+    block in deploy/cell.compose.yml, immediately after the HEXCELL_DIRECCION_SALUD line, with a Spanish
+    comment twinning the existing one (around line 28 of the header and line 64 of the block) and stating
+    the consequence: the whole admin surface, /admin/ingesta included, becomes reachable from the cell''s
+    own network, which IS the declared security boundary. The loopback default in crates/hexcell/src/configuracion.rs
+    is not changed, no ports: block is added and no bind mount is introduced.'
+  files:
+  - deploy/cell.compose.yml
+- step: 6
+  action: 'Guards, each hand-mutated once and named in the report. In crates/hexcell/tests/admin_http.rs
+    add the routing unit, the DOUBLE implementing CicloDeVidaSesion with the three outcomes over atender_cierre_de_sesion
+    with an injected sub-second plazo, the unregistered-seam fail-closed case, and the end-to-end simulated-channel
+    case over the real binary via the existing lanzar_binario_con_variables / peticion_http_post_cruda
+    helpers. In crates/hexcell-canal-whatsmeow/tests/cierre_de_sesion.rs ADD (never edit the two HEX-071
+    cases) one case pinning motivo "cell terminate" through AsaDeSesion and one pinning motivo "" through
+    the AdaptadorWhatsmeow trait impl. Assertions must survive the project rule: assert the ABSENCE of
+    the motivo key for the ConSesion-Ok 200 so it cannot be satisfied by always emitting canal_sin_sesion,
+    and assert the fixture error string verbatim so a collapsed generic message goes red.'
+  files:
+  - crates/hexcell/tests/admin_http.rs
+  - crates/hexcell-canal-whatsmeow/tests/cierre_de_sesion.rs
+risks:
+- 'Double deadline in production. AsaDeSesion::cerrar_sesion applies the adapter''s own PLAZO_CIERRE_DE_SESION
+  (30 s, adaptador.rs line 212) and the route applies PLAZO_DE_CIERRE_DE_SESION (30 s) on top, so on whatsmeow
+  the two timers race: in practice the adapter returns Err first and the operator sees 502 carrying "no
+  se recibió acuse de cierre de sesión dentro del plazo", while 504 stays reachable only when the closer
+  hangs before its own timer (for example on the shared writer mutex). Both outcomes are honest; the implementer
+  must not add a third timeout to "fix" the overlap, and must not make a test depend on which of the two
+  fires.'
+- 'AsaDeSesion must implement the WHOLE CicloDeVidaSesion sub-trait because R5 fixes ConSesion to hold
+  an adapter implementing it, so it inherits iniciar_emparejamiento, which it can only mirror as the adapter''s
+  existing Err(SinConexion) TODO stub (adaptador.rs lines 1148-1155). That method is knowingly vacuous
+  and gets NO guard: any assertion on it would be tautological against its own referent. It carries a
+  doc comment saying it is a stub, not a capability.'
+- 'The three deploy guards named in AC-11 need a real `docker compose config`; they cannot be verify.commands
+  (the contract forbids live resources), so they sit in acceptance.bdd_suite behind the human gate. Verified
+  2026-09-22 against .github/workflows/ci.yml: verificar_limites.sh, verificar_senales.sh, verificar_aislamiento_estatica.sh,
+  verificar_ping_de_vigilancia.sh and verificar_renderizado_configuracion.sh are wired in CI, but deploy/verificar_endurecimiento.sh
+  is NOT — so the compose edit is not gated by CI at all and the human gate is the only real check.'
+- 'R1 asked for a coherence test between the config example and the template IF the render guard covers
+  it. Verified 2026-09-22: deploy/verificar_renderizado_configuracion.sh only exercises `hexcell-admin
+  config render` over deploy/celula.defecto.env.ejemplo and deploy/celula.superposicion.env.ejemplo and
+  never reads deploy/cell.compose.yml, and the new line is a LITERAL, not a ${VARIABLE}, so nothing in
+  the render path can observe it. No such test is owed and none is written; writing one would need a fifth
+  production file and would flip the band.'
+- 'Compile-time enum meets a single non-generic listener. servir_servicios_http is called ONCE before
+  the match on CanalSeleccionado (main.rs, the "un solo futuro para las dos superficies HTTP" comment),
+  so the generic CierreDeSesion<C> cannot reach the route as a generic: it is erased into CerradorRegistrado
+  at registrar<C>() time. The compile-time part of R5 is the VARIANT SELECTION in the composition root,
+  not a generic parameter on the HTTP stack. Erasure must preserve the ConSesion/SinSesion distinction,
+  otherwise the 200-with-motivo and 200-without-motivo bodies collapse into one and AC-8''s guard becomes
+  vacuous.'
+- 'Verified 2026-09-22: AdaptadorWhatsmeow is neither Clone nor dyn-safe (CicloDeVidaSesion uses -> impl
+  Future, adr-0002) and Motor::nuevo consumes it by value in both branches, so the handle MUST be taken
+  before the move. The parent blueprint''s late-bound OnceCell + cloneable-handle seam is therefore adopted,
+  with OnceLock instead of tokio''s OnceCell because registration is synchronous. All the state the handle
+  needs (escritor_compartido, pendientes_de_sesion, receptor_estado) is already behind Arc/watch, so no
+  new locking is introduced and no SECOND IPC connection is opened.'
+- 'Mutation-provability trap specific to this task: a 200 is produced by two different paths (SinSesion
+  and ConSesion-Ok), so a guard that only asserts the status code proves nothing. Each 200 guard must
+  assert the presence or the ABSENCE of the motivo key, and the 502 guard must assert the fixture''s own
+  distinctive text, never a substring that production code also emits.'
+- 'Sibling coordination: HEX-083 and HEX-084 hold live worktrees on main@8e96776 and HEX-082-b merges
+  AFTER this child. This child writes NO documentation, no ADR and no bitacora entry (R1 is explicit),
+  and must rebase on main before merging. If a genuine new discard appears during implementation, STOP
+  and escalate rather than adding it silently.'

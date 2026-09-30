@@ -1,0 +1,4 @@
+entries: []
+summary: |
+    Test-only clippy fixes in 19 test files, ci.yml clippy step, CLAUDE.md line and plan task 15 note.
+task_id: HEX-090

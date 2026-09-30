@@ -1,0 +1,319 @@
+task_id: HEX-082
+summary: >-
+  Real cell terminate: new unauthenticated POST /admin/sesion/cierre on the core (channel-agnostic
+  seam), sibling-probe POST from the CLI, ordered drain and destroy of containers and volume.
+affected_files:
+  - crates/hexcell/src/admin.rs
+  - crates/hexcell/src/main.rs
+  - crates/hexcell/tests/admin_http.rs
+  - crates/hexcell-canal-whatsmeow/src/adaptador.rs
+  - crates/hexcell-canal-whatsmeow/tests/cierre_de_sesion.rs
+  - crates/hexcell-admin/src/ciclo_de_vida.rs
+  - crates/hexcell-admin/src/comandos.rs
+  - crates/hexcell-admin/tests/ciclo_de_vida.rs
+  - crates/hexcell-admin/tests/comandos.rs
+  - deploy/cell.compose.yml
+  - docs/plan/fase-a-6-empaquetado-cli.md
+  - README.md
+symbols:
+  - 'hexcell::admin::RutaAdmin::CerrarSesion (new variant of the existing route enum)'
+  - 'hexcell::admin::enrutar_admin (new arm: POST /admin/sesion/cierre)'
+  - 'hexcell::admin::DesenlaceDeCierreDeSesion (Completado | Fallido{motivo} | SinAcuse)'
+  - 'hexcell::admin::CerradorDeSesion (Arc<dyn Fn() -> BoxFuture<DesenlaceDeCierreDeSesion>>, channel-agnostic seam)'
+  - 'hexcell::admin::RegistroDeCierreDeSesion (Arc<tokio::sync::OnceCell<CerradorDeSesion>>, late binding)'
+  - 'hexcell::admin::atender_cierre_de_sesion (pure async unit under test: 200/502/504, deadline injected)'
+  - 'hexcell::admin::atender_peticion_de_admin (gains registro + plazo parameters)'
+  - 'hexcell::admin::servir_admin / servir_servicios_http (plumb registro + plazo)'
+  - 'hexcell::admin::PLAZO_DE_CIERRE_DE_SESION_POR_DEFECTO (30 s, production default only)'
+  - 'hexcell_canal_whatsmeow::adaptador::AsaDeSesion (cloneable handle over escritor_compartido + pendientes_de_sesion)'
+  - 'hexcell_canal_whatsmeow::adaptador::AdaptadorWhatsmeow::asa_de_sesion'
+  - 'hexcell_canal_whatsmeow::adaptador::AsaDeSesion::ordenar_cierre_de_sesion(motivo, plazo)'
+  - 'hexcell_admin::ciclo_de_vida::retirar (six-step destructive sequence)'
+  - 'hexcell_admin::ciclo_de_vida::detener_par (shared no-deadline stop, reused by pausar)'
+  - 'hexcell_admin::ciclo_de_vida::guion_de_cierre_de_sesion (single-shot wget --post-data script)'
+  - 'hexcell_admin::ciclo_de_vida::ErrorDeCicloDeVida::{CelulaNoEncontrada, CelulaPausada, CierreDeSesionFallido, VolumenNoResuelto}'
+  - 'hexcell_admin::comandos::ejecutar_con_efectos (one-line match arm for Subcomando::Retirar)'
+dependencies:
+  - crates/hexcell-admin/src/docker/cliente.rs
+  - crates/hexcell-admin/src/argumentos.rs
+  - crates/hexcell-admin/src/estado_de_celula.rs
+  - crates/hexcell-admin/tests/comun/mod.rs
+  - crates/hexcell-core/src/canal.rs
+  - crates/hexcell/src/configuracion.rs
+  - crates/hexcell/tests/comun/mod.rs
+  - docs/protocolo-ipc-nucleo-sidecar.md
+  - docs/adr/adr-0032-protocolo-ipc-version-de-cable-6.md
+  - docs/bitacora-de-descartes.md
+test_scenarios:
+  - statement: >-
+      hexcell-admin, fake Docker socket: a full successful terminate issues the Docker requests in
+      exactly this sequence - GET inspect nucleo, GET inspect sidecar, POST /containers/create
+      (probe), POST probe/start, POST probe/wait, DELETE probe, POST sidecar/stop, POST nucleo/stop,
+      DELETE sidecar, DELETE nucleo, DELETE /volumes/<name>. Asserted as positions in the received
+      sequence, never as independent presence checks, so inverting any pair turns it red.
+    covers:
+      - AC-1
+      - AC-6
+  - statement: >-
+      hexcell-admin: stdout carries exactly the three lines "sesion cerrada", "contenedores
+      eliminados" and "volumen <nombre> eliminado" (with the accented Spanish literals), exit code
+      Exito=0, and the generic "cell ... completado" line of pause/unpause is NOT emitted.
+    covers:
+      - AC-1
+  - statement: >-
+      hexcell-admin: a 404 on the core inspect aborts with "celula no encontrada" on the diagnostic
+      sink, Fallo=1, and no further Docker request reaches the fake daemon (the channel yields
+      nothing more within a finite recv_timeout, so a missing abort fails instead of hanging).
+    covers:
+      - AC-2
+  - statement: >-
+      hexcell-admin: a core inspect whose State.Status is "exited" aborts with the exact literal
+      "la celula esta pausada: ejecute cell unpause antes de cell terminate" (accented as in the
+      spec), Fallo=1, and no start, stop, rm, create or wait request follows the two inspects.
+    covers:
+      - AC-3
+  - statement: >-
+      hexcell-admin: with the probe container exiting non-zero (StatusCode 8 in the wait body) the
+      command reports Fallo=1 and the ONLY DELETE issued is the probe's own cleanup - no stop, no
+      container removal and no volume removal reaches the daemon.
+    covers:
+      - AC-5
+  - statement: >-
+      hexcell-admin: the volume DELETE targets the exact Mounts[].Name of the /var/lib/hexcell mount
+      read in step 2. The fixture name ("volumen-ajeno-7f3c") is derivable from neither the --id
+      ("celula-de-prueba") nor the container id, so any convention-derived name turns it red.
+    covers:
+      - AC-4
+  - statement: >-
+      hexcell-admin: the probe URL host is the core container name and the port comes from
+      HEXCELL_DIRECCION_ADMIN inside Config.Env (fixture 9098, distinct from the 8082 production
+      default and from the 9099 used by the existing unpause fixture), so hardcoding 8082 turns it
+      red; the network comes from NetworkSettings.Networks, never derived from --id.
+    covers:
+      - AC-1
+  - statement: >-
+      hexcell-admin: the probe Cmd is the single-shot close script - it contains "--post-data" and
+      the path "/admin/sesion/cierre" and does NOT contain the polling "while" loop of
+      guion_de_sonda, so reusing the readiness script turns it red.
+    covers:
+      - AC-1
+  - statement: >-
+      hexcell-admin (tests/comandos.rs): cell terminate --id X --confirmar dispatches through
+      ejecutar_con_efectos into the terminate path, while cell terminate --simular still short
+      circuits to the simulation line with Exito=0 and opens no socket, and rebind/list/status still
+      return NoImplementadoTodavia=3.
+    covers:
+      - AC-9
+  - statement: >-
+      hexcell (tests/admin_http.rs): atender_cierre_de_sesion with an injected closure returning
+      Completado answers 200 with body {"resultado":"completado"}.
+    covers:
+      - AC-7
+      - AC-8
+  - statement: >-
+      hexcell: an injected closure returning Fallido with the distinctive motivo
+      "motivo-del-acuse-de-prueba" answers 502 and the body carries resultado fallido AND that exact
+      motivo, so collapsing the motivo into a generic string turns it red.
+    covers:
+      - AC-7
+      - AC-8
+  - statement: >-
+      hexcell: an injected closure that never resolves, with a deadline the TEST supplies (50 ms,
+      not the production 30 s constant), answers 504 and the test completes in well under a second.
+    covers:
+      - AC-7
+      - AC-8
+  - statement: >-
+      hexcell: enrutar_admin maps (POST, /admin/sesion/cierre) to the new variant while
+      (GET, /admin/sesion/cierre) and every other method/path still map to NoEncontrada, and the
+      existing /admin/ingesta arms are unchanged.
+    covers:
+      - AC-7
+  - statement: >-
+      hexcell, through the real binary: POST /admin/sesion/cierre on a core started with the
+      simulado channel answers 502 fallido (fail closed - no session lifecycle registered) and never
+      200, proving the route is actually wired into servir_admin and not only unit-reachable.
+    covers:
+      - AC-7
+  - statement: >-
+      hexcell-canal-whatsmeow (tests/cierre_de_sesion.rs, existing SidecarSimulado harness): the
+      AsaDeSesion handle taken from the adapter writes an orden_cierre_de_sesion line with version 6
+      and motivo "cell terminate", and resolves Ok on acuse completado; the trait method
+      CicloDeVidaSesion::cerrar_sesion keeps sending motivo "" so the existing HEX-071 assertions
+      stay green.
+    covers:
+      - AC-7
+strategy:
+  - step: 1
+    action: >-
+      Value object + application service on the core HTTP surface. In admin.rs add the route variant
+      to RutaAdmin, the arm to enrutar_admin, the outcome value object DesenlaceDeCierreDeSesion, the
+      channel-agnostic seam types CerradorDeSesion / RegistroDeCierreDeSesion, and the pure async
+      unit atender_cierre_de_sesion(registro, plazo) that maps Completado->200, Fallido->502 with the
+      acuse motivo, and elapsed deadline (or no closer registered)->504/502 respectively. Document in
+      the route's Spanish doc comment that there is NO authentication and the security boundary is
+      the cell's internal network, exactly as for /admin/ingesta. admin.rs must not import
+      hexcell_canal_whatsmeow.
+    files:
+      - crates/hexcell/src/admin.rs
+  - step: 2
+    action: >-
+      Plumb the seam. atender_peticion_de_admin, servir_admin and servir_servicios_http gain the
+      registro and the deadline; servir_servicios_http keeps returning ONE combined future (main.rs's
+      own doc comment forbids splitting the HTTP servers into the per-channel branches).
+    files:
+      - crates/hexcell/src/admin.rs
+  - step: 3
+    action: >-
+      Cloneable session handle in the whatsmeow adapter (Entity -> handle). Extract the body of
+      AdaptadorWhatsmeow::ordenar_cierre_de_sesion into a Clone-able AsaDeSesion holding Arc clones of
+      escritor_compartido and pendientes_de_sesion, parameterised by motivo; add
+      AdaptadorWhatsmeow::asa_de_sesion(&self). ordenar_cierre_de_sesion and the trait method
+      cerrar_sesion delegate to it, cerrar_sesion still passing motivo "". This is required because
+      AdaptadorWhatsmeow is not Clone, Motor::nuevo consumes it, and CicloDeVidaSesion is not
+      dyn-safe; it follows the existing precedent of contadores_de_acuse() and
+      suscribir_estado_con_expiracion(), which main.rs already extracts before the move.
+    files:
+      - crates/hexcell-canal-whatsmeow/src/adaptador.rs
+  - step: 4
+    action: >-
+      Composition root. In main.rs create the RegistroDeCierreDeSesion before servir_servicios_http
+      and pass it in; inside the Whatsmeow branch, right after AdaptadorWhatsmeow::nuevo and before
+      Motor::nuevo consumes the adapter, take asa_de_sesion() and register a closure that issues
+      ordenar_cierre_de_sesion with motivo "cell terminate". The Simulado branch registers nothing,
+      so the route fails closed with 502.
+    files:
+      - crates/hexcell/src/main.rs
+  - step: 5
+    action: >-
+      Make the admin listener reachable from a sibling container. deploy/cell.compose.yml sets
+      HEXCELL_DIRECCION_ADMIN to 0.0.0.0:8082 on the nucleo service, with a Spanish comment mirroring
+      the existing HEXCELL_DIRECCION_SALUD one and stating the consequence: the admin surface
+      (including /admin/ingesta) becomes reachable from the cell's own network, which is exactly the
+      declared security boundary. The loopback default in configuracion.rs is NOT changed.
+    files:
+      - deploy/cell.compose.yml
+  - step: 6
+    action: >-
+      Application service on the CLI side. In ciclo_de_vida.rs add retirar(cliente, nombres, datos):
+      (1) inspect nucleo then sidecar; (2) resolve the volume name from the core's Mounts[] entry
+      whose Destination is /var/lib/hexcell, plus the network from NetworkSettings.Networks and the
+      port from HEXCELL_DIRECCION_ADMIN in Config.Env; abort on State.Status != running with the
+      exact pause literal; (3) run the sibling probe with guion_de_cierre_de_sesion and abort on a
+      non-zero exit without destroying anything; (4) detener_par(sidecar then nucleo); (5)
+      eliminar_contenedor sidecar, eliminar_contenedor nucleo, eliminar_volumen. Extract detener_par
+      out of pausar so both share one no-deadline stop sequence; cliente.rs is not touched.
+    files:
+      - crates/hexcell-admin/src/ciclo_de_vida.rs
+  - step: 7
+    action: >-
+      Orchestration. In comandos.rs move Subcomando::Retirar out of the NoImplementadoTodavia group
+      into the effectful group with a single-line edit in each of the two existing match arms (no
+      reordering - tasks 12, 14 and 23 run in parallel over this match), dispatch to
+      ciclo_de_vida::retirar, and emit the three stdout lines on success. ejecutar keeps its current
+      signature and --simular keeps short circuiting before any Docker call.
+    files:
+      - crates/hexcell-admin/src/comandos.rs
+  - step: 8
+    action: >-
+      Tests. tests/ciclo_de_vida.rs gains the four mandatory scenarios plus the port/network/script
+      guards, over the existing fake Unix-socket daemon in tests/comun/mod.rs (not modified, no
+      FakeDocker); tests/comandos.rs gains the dispatch and simulation guards; tests/admin_http.rs
+      gains the three acuse outcomes, the routing guard and the through-the-binary wiring guard;
+      tests/cierre_de_sesion.rs gains the AsaDeSesion motivo guard. Every fixture value is chosen so
+      that it differs from the production default it pins.
+    files:
+      - crates/hexcell-admin/tests/ciclo_de_vida.rs
+      - crates/hexcell-admin/tests/comandos.rs
+      - crates/hexcell/tests/admin_http.rs
+      - crates/hexcell-canal-whatsmeow/tests/cierre_de_sesion.rs
+  - step: 9
+    action: >-
+      Documentation, append-only. Plan file: closing paragraph on task 12 (target state Retirada with
+      motivo sesion_cerrada, NOT persisted here - task 14 owns the store), one sentence appended to
+      task 14's 2026-09-21 note, a written follow-up on task 15 for a forced-terminate variant for
+      already-banned devices (no new flag), and a new bullet in the execution chain recomputed from
+      the chain currently on disk. README: one sentence appended to the CLI status line stating
+      terminate is real as of HEX-082 while rebind/list/status stay on exit code 3. No ADR and no
+      bitacora entry.
+    files:
+      - docs/plan/fase-a-6-empaquetado-cli.md
+      - README.md
+risks:
+  - >-
+    BLOCKING MISMATCH (resolved in design, needs human awareness): the admin listener binds to
+    127.0.0.1:8082 by default (DIRECCION_ADMIN_POR_DEFECTO in crates/hexcell/src/configuracion.rs)
+    and deploy/cell.compose.yml never sets HEXCELL_DIRECCION_ADMIN, so as literally specified a
+    sibling container CANNOT reach POST /admin/sesion/cierre. The task must add
+    HEXCELL_DIRECCION_ADMIN=0.0.0.0:8082 to the compose template. Consequence: POST/GET
+    /admin/ingesta, today loopback-only in the deployed cell, also becomes reachable from the cell's
+    internal network. The spec's premise "sin autenticacion, igual que /admin/ingesta" is therefore
+    true only AFTER this change, not before it.
+  - >-
+    The existing ordenar_cierre_de_sesion hardcodes motivo: String::new(); sending motivo
+    "cell terminate" requires a parameter in crates/hexcell-canal-whatsmeow/src/adaptador.rs. The
+    wire format does not change (the motivo field already exists in wire 6, adr-0032 and the protocol
+    doc are untouched), and CicloDeVidaSesion::cerrar_sesion keeps sending "" so the HEX-071 contract
+    test stays green.
+  - >-
+    main.rs starts both HTTP servers BEFORE the match on CanalSeleccionado builds the adapter, so the
+    session-close seam must be late-bound (OnceCell registered from the Whatsmeow branch). Moving
+    servir_servicios_http inside the two channel branches is explicitly rejected by main.rs's own doc
+    comment (a single combined future exists so a branch cannot silently lose an endpoint).
+  - >-
+    AdaptadorWhatsmeow is not Clone (it owns a watch::Sender), Motor::nuevo consumes it by value, and
+    CicloDeVidaSesion is not object-safe (RPITIT, documented in crates/hexcell-core/src/canal.rs), so
+    neither Arc<dyn> nor a clone of the adapter is available. Hence the AsaDeSesion handle, taken
+    before the move exactly like contadores_de_acuse() and suscribir_estado_con_expiracion() already
+    are in main.rs.
+  - >-
+    REJECTED ALTERNATIVE, do not implement: having the route (or the CLI) open its own IPC connection
+    to the sidecar, the way crates/hexcell/src/emparejar.rs does. The protocol admits ONE active
+    connection and evicts the previous one on connect
+    (sidecar/internal/servidor/manejo.go, recorded in HEX-080's contract and in D-57), so a second
+    connection would evict the core from its own sidecar mid-terminate.
+  - >-
+    The plan's 2026-09-10 acceptance criterion names a state "desvinculada_sesion_cerrada" that does
+    not exist in the transition table of crates/hexcell-admin/src/estado_de_celula.rs (HEX-074-c);
+    the terminal state is Retirada. The spec resolves this as Retirada with motivo sesion_cerrada,
+    named through the existing comandos::estado_objetivo and NOT persisted - task 14 creates the
+    control-plane store. estado_de_celula.rs is not touched.
+  - >-
+    No adapter other than AdaptadorWhatsmeow implements CicloDeVidaSesion (grep confirms a single
+    impl), so on a cell running the simulado channel nothing is registered and cell terminate always
+    aborts at step 3 with 502. This is deliberate fail-closed behaviour for a destructive command;
+    if the human prefers a 200 short circuit for the simulated channel it must be decided before
+    implementation, since no new status code may be introduced.
+  - >-
+    deploy/verificar_endurecimiento.sh and deploy/verificar_limites.sh run in CI over the resolved
+    compose template; adding one environment entry to the nucleo service must not trip either guard.
+    Verify by running them, not by reading them.
+  - >-
+    Three parallel tasks (12, 14 and 23) edit the same subcommand match in
+    crates/hexcell-admin/src/comandos.rs. This task's change is two single-line edits to the two
+    existing arms, with no reordering, and the branch is rebased onto main before merge.
+  - >-
+    Complexity band is L: six production files are touched (admin.rs, main.rs, adaptador.rs,
+    ciclo_de_vida.rs, comandos.rs, cell.compose.yml) against the l_max_files=5 cut in
+    .agents/policies/complexity.yaml, and the change adds public API. That is a routing fact for the
+    orchestrator, not a defect; the surface cannot be reduced without either leaving the route
+    unreachable in production or opening a second IPC connection.
+  - >-
+    BusyBox wget on alpine:3 (v1.37.0, checked 2026-09-22) does support --post-data and -T SEC, so
+    the single-shot close probe is feasible; it exits non-zero on 502 and 504, which is exactly what
+    makes AC-5 observable from the container exit code. The probe script must still set an explicit
+    -T so a hung core cannot outlive the Docker client's read timeout
+    (TIEMPO_LIMITE_DEL_CLIENTE_DOCKER_S = 70 s) on POST /containers/{id}/wait.
+  - >-
+    DEFERRED ON PURPOSE, not gaps for analyze: idempotent re-execution after a partial failure (task
+    15); persisting Retirada with motivo sesion_cerrada to the control-plane store (task 14); the
+    forced-terminate variant for cells whose device is already banned and cannot close a session
+    (written follow-up on task 15, no new flag); and merging detener_contenedor with
+    detener_contenedor_sin_plazo inside the Docker client (task 15, cliente.rs is forbidden here).
+  - >-
+    Mutation-provability is a hard requirement of this repo and several past guards died silently.
+    No test may import the production constant it pins (deadline, port, cadence); the request-order
+    assertion must be over positions in the received sequence, never independent presence checks; the
+    fixture volume name must not be derivable from the cell id or the container id; and the 502 test
+    must assert the acuse's own distinctive motivo so a generic collapsed message goes red. Guards
+    only prove what they prove under the compile profile the test runs in.

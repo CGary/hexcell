@@ -1,0 +1,152 @@
+task_id: HEX-090
+summary: >
+  Test-only clippy fixes for --all-targets, CI and CLAUDE.md wired to it, plus the task 15 note.
+affected_files:
+  - crates/hexcell-admin/tests/almacen_plano_de_control.rs
+  - crates/hexcell-admin/tests/argumentos.rs
+  - crates/hexcell-admin/tests/comandos.rs
+  - crates/hexcell-admin/tests/comun/mod.rs
+  - crates/hexcell-admin/tests/reporte_de_consumo.rs
+  - crates/hexcell-core/tests/embeddings.rs
+  - crates/hexcell-storage/tests/estres_conmutacion.rs
+  - crates/hexcell-storage/tests/migraciones.rs
+  - crates/hexcell-storage/tests/pools.rs
+  - crates/hexcell-storage/tests/presupuesto.rs
+  - crates/hexcell-storage/tests/recuperacion.rs
+  - crates/hexcell-storage/tests/respaldo.rs
+  - crates/hexcell-storage/tests/retencion.rs
+  - crates/hexcell-storage/tests/validacion.rs
+  - crates/hexcell/tests/ingesta.rs
+  - crates/hexcell/tests/notificaciones.rs
+  - crates/hexcell/tests/proveedor_embeddings_gemini.rs
+  - crates/hexcell/tests/proveedor_embeddings.rs
+  - crates/hexcell/tests/proveedor_openai.rs
+  - .github/workflows/ci.yml
+  - CLAUDE.md
+  - docs/plan/fase-a-6-empaquetado-cli.md
+symbols: []
+dependencies:
+  - .github/workflows/ci.yml
+  - crates/hexcell-admin/tests/reemparejamiento.rs
+test_scenarios:
+  - statement: >
+      `cargo clippy --workspace --all-targets -- -D warnings` exits 0 on the task branch. Measured on
+      main at 9b59ba9 (after the HEX-087 merge, identical to bf1e088) with --keep-going: 39 diagnostics in 19 test files (12 useless_vec, 6
+      collapsible_if, 4 let_and_return, 3 needless_borrow, 2 as_ref, 2 drop_non_drop, 2
+      err_expect, 2 approx_constant, plus single unused_import x2, unused_variables, repeat_take,
+      match_single_binding, collapsible_match). The final N and M are re-measured at implement time.
+    covers: [AC-1]
+  - statement: >
+      `cargo test --workspace` has the same totals before and after: baseline on main at 9b59ba9
+      is 704 passed, 0 failed, 6 ignored across 93 result lines; a verify command sums the
+      `test result` lines and fails naming which figure diverged.
+    covers: [AC-2]
+  - statement: >
+      Added lines carry no `#![allow`, and every added `#[allow(clippy::` has a `//` comment on the
+      same or the preceding line. Three untouched-by-this-task `#![allow(dead_code)]` headers already
+      exist in tests/comun/mod.rs files (one in a touched file), so the guard reads ADDED lines from
+      `git diff <merge-base>`, never the whole file.
+    covers: [AC-3]
+  - statement: >
+      A guard checks by trimmed exact-line equality (grep -Fx) that ci.yml holds the name line and
+      the run line with `--all-targets`, that the old `run: cargo clippy --workspace -- -D warnings`
+      is absent, and that exactly one `run: cargo clippy` line exists. Mutation M1 (revert only the
+      run line) must turn the guard red with CHK_RUN and without CHK_NAME; mutation M2 (revert only
+      the name line) must give CHK_NAME and without CHK_RUN; each mutation is proven applied with cmp
+      before the guard runs. A second check requires that the ci.yml diff against the merge-base is
+      non-empty and all hunks are `@@ -28,2 +28,2 @@`.
+    covers: [AC-4]
+  - statement: >
+      CLAUDE.md holds exactly one line equal to the new command, none equal to the old one, and its
+      diff is exactly one deleted and one added line; a reverted copy makes the check fail.
+    covers: [AC-5]
+  - statement: >
+      The plan file diff has zero deleted lines and exactly one added line matching «Deuda saldada el
+      AAAA-MM-DD con HEX-090: N lints en M archivos; --all-targets cableado en la CI», located between
+      the `15.` and `18.` task headings, with M equal to the number of changed files under crates/ and
+      N >= M.
+    covers: [AC-6]
+  - statement: >
+      Every changed path (diff against the merge-base plus untracked files, excluding .ai/) is a
+      crates/*/tests/**/*.rs file, ci.yml, CLAUDE.md or the plan file; nothing under crates/*/src,
+      Cargo.lock, Cargo.toml, deploy/, sidecar/ or another docs file. Commit messages of the branch
+      carry no Co-Authored-By nor generated-with trailer.
+    covers: [AC-7]
+strategy:
+  - step: 1
+    action: >
+      Fix the two approx_constant hits in crates/hexcell-core/tests/embeddings.rs with a literal that
+      does not approximate PI (or std::f32::consts::PI where the test intends PI), then run
+      `cargo clippy --workspace --all-targets --keep-going -- -D warnings` to list the whole surface
+      in one pass.
+    files:
+      - crates/hexcell-core/tests/embeddings.rs
+  - step: 2
+    action: >
+      Fix each remaining diagnostic in place in the test files listed in affected_files (useless_vec to
+      arrays or slices, collapsible_if/match, let_and_return, needless borrow, redundant as_ref, drop of
+      non-Drop value, err().expect() to expect_err, repeat().take(), unused import and variable). No
+      behavior change; a per-line `#[allow(clippy::...)]` with a Spanish reason only where the fix
+      worsens the test. Never a file or crate level allow.
+    files:
+      - crates/hexcell-admin/tests/almacen_plano_de_control.rs
+      - crates/hexcell-admin/tests/argumentos.rs
+      - crates/hexcell-admin/tests/comandos.rs
+      - crates/hexcell-admin/tests/comun/mod.rs
+      - crates/hexcell-admin/tests/reporte_de_consumo.rs
+      - crates/hexcell-storage/tests/estres_conmutacion.rs
+      - crates/hexcell-storage/tests/migraciones.rs
+      - crates/hexcell-storage/tests/pools.rs
+      - crates/hexcell-storage/tests/presupuesto.rs
+      - crates/hexcell-storage/tests/recuperacion.rs
+      - crates/hexcell-storage/tests/respaldo.rs
+      - crates/hexcell-storage/tests/retencion.rs
+      - crates/hexcell-storage/tests/validacion.rs
+      - crates/hexcell/tests/ingesta.rs
+      - crates/hexcell/tests/notificaciones.rs
+      - crates/hexcell/tests/proveedor_embeddings_gemini.rs
+      - crates/hexcell/tests/proveedor_embeddings.rs
+      - crates/hexcell/tests/proveedor_openai.rs
+  - step: 3
+    action: >
+      Change ONLY lines 28-29 of .github/workflows/ci.yml (step name and run) to
+      `cargo clippy --workspace --all-targets -- -D warnings`, and the matching Commands line of
+      CLAUDE.md. HEX-089 appends a job at the end of ci.yml in a different hunk.
+    files:
+      - .github/workflows/ci.yml
+      - CLAUDE.md
+  - step: 4
+    action: >
+      Append (never replace) the settlement note to plan task 15 with the figures measured in step 2,
+      and run the full verify set, comparing cargo test totals with the recorded baseline.
+    files:
+      - docs/plan/fase-a-6-empaquetado-cli.md
+risks:
+  - >-
+    RESOLVED during blueprint: HEX-087 was unmerged when the spec was written (the «Deuda registrada» note of
+    task 15 lives at plan line 461, task 15 spans lines 387-513), then merged into main as 9b59ba9 before
+    the worktree was created. Lints were re-measured on 9b59ba9 (still 39 in the same 19 files) and the test
+    baseline re-recorded (704 passed instead of 685). The header bullet at plan line 192 says 38, measured 39.
+  - >-
+    Lint count measured, not asserted: 39 diagnostics in 19 files under `--keep-going`. Without it the first
+    run stops at hexcell-core (2 approx_constant) and reports far fewer, so the spec's «total unknown» is now
+    known but still a snapshot of main at 9b59ba9. touch and limits carry a margin (24 files, 400 lines).
+  - >-
+    Spec AC-3 says no touched file contains `#![allow`, but crates/hexcell-admin/tests/comun/mod.rs
+    (touched, one lint) already has `#![allow(dead_code)]` at line 12 on main. Enforced on added lines only;
+    the pre-existing header must be left alone, not removed.
+  - >-
+    A fixture-style clippy fix can silently change a test (e.g. useless_vec to a slice, dropping a
+    binding). The cargo test totals guard catches vanished tests but not a weakened assertion; the reviewer
+    should read the diff of tests/comandos.rs and tests/validacion.rs.
+  - >-
+    Lints in `#[cfg(test)]` modules under crates/*/src: none surfaced (every lib test target compiled under
+    --keep-going), so no src file is in touch. If a fix would need one, the guard fails and the human
+    amends touch.
+  - >-
+    Test baseline (704 passed, 0 failed, 6 ignored, 93 result lines) is from main at 9b59ba9. The 6 ignored
+    tests are not run by `cargo test --workspace`. Any change of main (HEX-089 or another merge) invalidates it and
+    it must be re-recorded.
+  - >-
+    Coordination with HEX-089: it appends a job at the END of ci.yml (file has 314 lines); this task changes
+    only the hunk @@ -28,2 +28,2 @@, enforced by a verify command.

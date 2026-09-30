@@ -1,0 +1,143 @@
+task_id: HEX-087
+summary: Idempotent re-run and best-effort recovery for hexcell-admin cell commands (pause/unpause/terminate/rebind), merged Docker stop, and three missing DISC tests. Risk medium.
+goal: >
+  Turn re-runs of hexcell-admin lifecycle commands from hard rejection into
+  reconciliation against Docker's real state, make terminate's session close
+  best-effort like rebind already is, close the rebind-from-Reemparejando
+  resume path for the ya_emparejada case, merge the two Docker stop-container
+  functions into one with an optional deadline, and add the three DISC test
+  cases already known to be missing in cell status.
+invariants:
+  - The store-then-Docker transition validation order is unchanged; persistence still happens only after the Docker operation succeeds.
+  - The Suspendida/EnEjecucion/Retirada/Reemparejando transition table is not modified by this task.
+  - terminate on a cell with no store row and no containers still fails with exit 1 (CelulaNoEncontrada); this is not treated as a no-op re-run.
+  - All identifiers, comments, docs, and commit messages stay in Spanish; commits are Conventional Commits with no AI attribution / no Co-Authored-By line.
+  - No new CLI flag is introduced for the best-effort session close in terminate.
+  - "docs/STATUS.md's existing Pendiente entry (2026-09-22, HEX-085) about the rebind ya_emparejada resume path is never deleted; it is appended to become Definido in the same commit that closes it."
+acceptance:
+  - id: AC-1
+    statement: Re-running pause on a cell already Suspendida inspects both containers before rejecting; if both are already paused it is a no-op.
+    given: a cell in store state Suspendida whose core and sidecar containers are both already paused in Docker
+    when: cell pause runs again for that cell
+    then: 'the command exits 0, prints a stderr note "sin cambios: la célula ya está suspendida", and makes no store write'
+  - id: AC-2
+    statement: Re-running pause on a Suspendida cell where only one container is actually paused pauses the missing one and records the transition only if store state changes.
+    given: a cell in store state Suspendida whose core container is paused but whose sidecar container is still running
+    when: cell pause runs again for that cell
+    then: the command pauses the missing container, exits 0, and a store transition is recorded only if the persisted state actually changes
+  - id: AC-3
+    statement: Re-running unpause on EnEjecucion is symmetric to AC-1/AC-2, using the /health/ready probe as part of the both-running check.
+    given: a cell in store state EnEjecucion whose containers are both running and whose /health/ready probe returns OK
+    when: cell unpause runs again for that cell
+    then: the command exits 0 with the "sin cambios" stderr note and no store write
+  - id: AC-4
+    statement: Re-running unpause on EnEjecucion where one container is still paused resumes only the missing one.
+    given: a cell in store state EnEjecucion whose core container is running but whose sidecar container is still paused
+    when: cell unpause runs again for that cell
+    then: the command resumes the paused container and exits 0
+  - id: AC-5
+    statement: Re-running terminate on a cell already Retirada with no leftover containers or volume is a no-op.
+    given: a cell in store state Retirada with no containers and no volume remaining in Docker
+    when: cell terminate runs again for that cell
+    then: the command exits 0 with a "sin cambios" stderr note and performs no destructive Docker calls
+  - id: AC-6
+    statement: Re-running terminate on a cell already Retirada with leftover containers or volume repeats only the missing delete steps.
+    given: a cell in store state Retirada with a leftover container or volume still present in Docker
+    when: cell terminate runs again for that cell
+    then: the command deletes only the missing resources and exits 0
+  - id: AC-7
+    statement: terminate on a cell with no store row and no containers is still a hard failure, unaffected by the idempotency change.
+    given: no store row and no containers exist for the target cell id
+    when: cell terminate runs for that cell id
+    then: the command exits 1 with CelulaNoEncontrada
+  - id: AC-8
+    statement: terminate's WhatsApp session close becomes best-effort, matching rebind's existing pattern, without a new CLI flag.
+    given: POST /admin/sesion/cierre returns 502 or 504, or the post-close probe exits with a non-zero code, during cell terminate
+    when: cell terminate continues past that step
+    then: a stderr warning is printed, the terminate sequence continues to volume/container deletion, and the cell ends in state Retirada
+  - id: AC-9
+    statement: rebind resuming from Reemparejando checks session activity before re-pairing.
+    given: a cell in store state Reemparejando is resumed by cell rebind and GET /admin/sesion reports estado=activa
+    when: rebind resumes
+    then: rebind skips re-pairing, jumps directly to resuming message sending, persists EnEjecucion with emparejamiento_confirmado set, and writes a row in sustituciones, exiting 0
+  - id: AC-10
+    statement: rebind resuming from Reemparejando recovers once from a stale ya_emparejada pairing response.
+    given: a cell in store state Reemparejando is resumed, GET /admin/sesion reports estado different from activa, and the pairing attempt returns ya_emparejada
+    when: rebind runs the sqlstore-discard-and-restart-paused recovery steps and retries pairing exactly once
+    then: if the retried pairing succeeds the command exits 0 in the appropriate post-pairing state; if it fails again the command exits 1 with Fallo and the store row stays in Reemparejando
+  - id: AC-11
+    statement: "the STATUS.md Pendiente entry from 2026-09-22 (HEX-085) about this resume path becomes Definido in the same commit that implements AC-9/AC-10, by appending '*(Definido 2026-09-2X, HEX-087: ...)*' to the end of the existing line rather than replacing it."
+  - id: AC-12
+    statement: the Docker client exposes a single stop-container operation with an optional deadline, replacing the two prior functions.
+    given: the merged function is called with Some(30) as the deadline
+    when: the stop request is built
+    then: the request includes the `?t=30` query parameter
+  - id: AC-13
+    statement: calling the merged stop-container operation with no deadline omits the timeout query parameter entirely.
+    given: the merged function is called with None as the deadline
+    when: the stop request is built
+    then: the request has no `t` query parameter
+  - id: AC-14
+    statement: all three production callers of the old detener_contenedor / detener_contenedor_sin_plazo functions are updated to the merged signature, and both old functions are removed.
+  - id: AC-15
+    statement: the HEX-074-b Docker-stop test is moved and extended to assert both the Some(30) and None paths against the same request-path assertion used before.
+  - id: AC-16
+    statement: cell status detects a Docker 500 response while inspecting the sidecar container, in addition to the already-covered core container case.
+    given: Docker inspection of the sidecar container returns HTTP 500
+    when: cell status runs for that cell
+    then: the command reports the corresponding failure diagnosis and does not crash or hang
+  - id: AC-17
+    statement: cell status reports DISC-05 for the half-pair case where one container is present and the other is absent.
+    given: exactly one of the core/sidecar containers exists in Docker and the other does not
+    when: cell status runs for that cell
+    then: the command reports DISC-05
+  - id: AC-18
+    statement: cell status reports DISC-03 and no other code when the health probe is unreachable.
+    given: the health probe fails with a connection error (simulated the same way guion_de_sonda simulates an unreachable wget target)
+    when: cell status runs for that cell
+    then: the command reports DISC-03 and no other discrepancy code
+  - id: AC-19
+    statement: the plan file gets a closing paragraph under task 15 (fase-a-6-empaquetado-cli.md) summarizing the four decisions (D1 reconciliation semantics, D2 best-effort session close supersedes task 12's fail-closed choice, D3 rebind resume fix, D4 Docker client merge).
+  - id: AC-20
+    statement: README's "Manual de Operación de la CLI" section gets an appended "Reejecución" paragraph documenting the re-run-as-reconciliation rule (D1) and the best-effort session-close warning (D2), added by appending text rather than rewriting the existing section.
+  - Existing tests in tests/cliente_docker.rs, tests/estado_y_listado.rs, tests/comandos.rs, and tests/reemparejamiento.rs continue to pass alongside the new/moved cases.
+  - cargo fmt --check, cargo clippy -p hexcell-admin --tests -- -D warnings, and cargo test -p hexcell-admin all pass.
+  - id: AC-21
+    statement: "Human-authorized addition (2026-09-24, blueprint): terminate writes the data volume name resolved from the core inspection to stderr as 'volumen de la célula: <nombre>' before the first stop request, not only at the end."
+    given: a terminate whose core inspection yields the data volume name
+    when: cell terminate runs against the Docker double
+    then: "the stderr line 'volumen de la célula: <nombre>' is emitted before the first POST /containers/{id}/stop request reaches the double"
+  - id: AC-22
+    statement: "Human-authorized addition (2026-09-24, blueprint): the volume name is never derived by convention; when it cannot be resolved (core container absent) the command skips the volume delete, prints a stderr warning naming the manual cleanup 'docker volume rm <nombre>', and a Retirada re-run whose only leftover is the volume stays 'sin cambios'. The task-15 closing note in the plan documents this residual risk with the manual cleanup and refers to the operation runbook (docs/runbook-operacion.md, terminate section, 'fallos habituales', HEX-088)."
+  - id: AC-23
+    statement: "Human-authorized addition (2026-09-24, blueprint), partial terminate extending D1: terminate --confirmar on a store row EnEjecucion whose core and sidecar are both absent in Docker succeeds."
+    given: a store row EnEjecucion and Docker inspections of both containers returning 404
+    when: cell terminate --confirmar runs for that cell
+    then: the command exits 0, prints stderr warnings for each skipped step (session close, volume resolution), issues no stop and no delete request, and persists Retirada
+  - id: AC-24
+    statement: "Human-authorized addition (2026-09-24, blueprint), partial terminate: containers found in Docker state 'paused' are unpaused before being stopped."
+    given: a store row Suspendida and both containers in Docker state paused
+    when: cell terminate --confirmar runs for that cell
+    then: "for each container POST /containers/{id}/unpause (empty body) is issued before its POST /containers/{id}/stop, the session close is skipped with a stderr warning because the core is not running, the containers and the volume are deleted, the command exits 0 and Retirada is persisted"
+  - id: AC-25
+    statement: "Human-authorized addition (2026-09-24, blueprint), partial terminate: with the core absent the volume cannot be resolved and the remaining sidecar is still removed."
+    given: a store row EnEjecucion, the core inspection returning 404 and the sidecar in Docker state exited
+    when: cell terminate --confirmar runs for that cell
+    then: the command exits 0, skips the session close with a stderr warning, prints the unresolved-volume warning on stderr, deletes the sidecar without a stop request, issues no volume delete, and persists Retirada
+  - id: AC-26
+    statement: "Human-authorized addition (2026-09-24, blueprint): the task-15 closing note in docs/plan/fase-a-6-empaquetado-cli.md records that the partial-terminate case (AC-23..AC-25) was added to HEX-087 during the blueprint phase by human decision, and that exit 1 remains only for terminate with no store row and no containers (AC-7)."
+risk: medium
+non_goals:
+  - Do not add a new CLI flag for forcing or skipping the session-close step.
+  - Do not change the Suspendida/EnEjecucion/Retirada/Reemparejando transition table itself.
+  - Do not touch crates/hexcell, hexcell-core, the whatsmeow adapter, sidecar/, deploy/, or the IPC protocol.
+  - Do not write docs/runbook-operacion.md (owned by parallel plan task 21).
+  - Do not open a new ADR; do not write a bitácora de descartes entry unless an alternative was actually studied and rejected during this task.
+constraints:
+  - "Scope is limited to: crates/hexcell-admin/src/{docker/cliente.rs, ciclo_de_vida.rs, comandos.rs}; crates/hexcell-admin/tests/{cliente_docker.rs, estado_y_listado.rs, comandos.rs, reemparejamiento.rs}; README.md; docs/plan/fase-a-6-empaquetado-cli.md; docs/STATUS.md."
+  - public_api is false for this task.
+  - "Repo pattern preserved: validate the transition against the store before touching Docker; persist only after the Docker operation succeeds."
+  - Docker interactions in tests use a double with asserted request bodies/paths, one hand-verified mutation per new guard.
+  - Verification commands are cargo fmt --check, cargo clippy -p hexcell-admin --tests -- -D warnings, cargo test -p hexcell-admin.
+  - "If the complexity band comes out L, split into child a (D1 re-run reconciliation + D2 best-effort close + D4 Docker client merge) and child b (D3 rebind resume fix + D5 three DISC tests); docs (D6) travel with whichever child closes last."
+  - "Human-authorized amendment (2026-09-24, blueprint): AC-21..AC-26 appended (orphan-volume handling and partial terminate as an extension of D1); on a split they belong to child a and are never dropped. crates/hexcell-admin/tests/ciclo_de_vida.rs and crates/hexcell-admin/tests/comun/mod.rs join the scope as mechanical consequences of D2 and of the partial terminate."

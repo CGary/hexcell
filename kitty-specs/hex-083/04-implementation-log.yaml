@@ -1,0 +1,222 @@
+task_id: HEX-083
+summary: 'Control-plane SQLite store plus real cell list/status; review fix loop: 34 mutations applied, 34 named tests red,
+  0 survivors.'
+entries:
+- changed_files:
+  - crates/hexcell-admin/src/almacen_plano_de_control.rs
+  - crates/hexcell-admin/migraciones/0001-plano-de-control.sql
+  - crates/hexcell-admin/src/docker/inventario.rs
+  - crates/hexcell-admin/src/docker/mod.rs
+  - crates/hexcell-admin/src/comandos.rs
+  - crates/hexcell-admin/src/ciclo_de_vida.rs
+  - crates/hexcell-admin/src/main.rs
+  - crates/hexcell-admin/src/lib.rs
+  - crates/hexcell-admin/Cargo.toml
+  - Cargo.lock
+  notes:
+  - SQLite store with include_str! migration plus PRAGMA user_version in one transaction, mirroring crates/hexcell-storage.
+  - Store path only from env var HEXCELL_ADMIN_ALMACEN, read in main.rs and injected into ejecutar_con_efectos. No new CLI
+    flag.
+  - Transition validated against EstadoDeCelula::transitar before any Docker request; transition written only after Docker
+    returned Ok.
+  - New Docker read (GET /containers/json?all=true) lives in the new docker/inventario.rs over the public ConexionDocker;
+    cliente.rs untouched.
+  - rusqlite declared on exactly ONE line as workspace = true; no [dev-dependencies] table, no temp-dir crate.
+  verify_pending: false
+- changed_files:
+  - crates/hexcell-admin/src/comandos.rs
+  notes:
+  - 'Fix (review fix_task status-report-docker-source-failure): an inspect failing with anything other than NoEncontrado no
+    longer becomes an estado_de_inspeccion("error") sentinel. ejecutar_estado now emits a diagnostic naming the Docker source
+    and the container (constant TEXTO_DE_FUENTE_DOCKER_FALLIDA) and returns Fallo, emitting no DISC code at all.'
+  - 'Renamed and recomputed the discrepancy flags: ambos_presentes (computed with ||, name lying) is gone. ambos_ausentes
+    and alguno_presente are exact complements, so DISC-04 needs both containers unknown to Docker and DISC-05 needs at least
+    one known.'
+  - estado_de_inspeccion now maps every Err to None, which is sound only because the source-failure guard aborts first; documented
+    in place.
+  verify_pending: false
+- changed_files:
+  - crates/hexcell-admin/src/almacen_plano_de_control.rs
+  - crates/hexcell-admin/src/comandos.rs
+  notes:
+  - 'Fix (review fix_task status-list-open-store-read-only): added AlmacenDelPlanoDeControl::abrir_solo_lectura, which opens
+    with SQLITE_OPEN_READ_ONLY (no CREATE), applies no migration, rejects a missing file as ArchivoAusente and a wrong schema
+    version as EsquemaSinMigrar. ejecutar_estado and ejecutar_listado both use it, so status/list cannot write by construction.'
+  - Extracted the parent-directory check into exigir_directorio, shared by abrir and abrir_solo_lectura; hexcell-admin still
+    never creates the directory.
+  - 'Removed the public pub fn conexion() accessor: it leaked the WRITABLE connection into the public API for the tests''
+    benefit. Tests now open their own rusqlite read-only connection instead.'
+  verify_pending: false
+- changed_files:
+  - crates/hexcell-admin/tests/comun/mod.rs
+  notes:
+  - 'Replaced ruta_db_temporal (which leaked one /tmp file per run) with AlmacenTemporal: RAII, removes the .db and its -wal/-shm
+    on Drop, and exposes bytes() and modificado() for the read-only guards.'
+  - Added ruta_directorio_inexistente, built from temp_dir() + process::id() + SECUENCIA, so no fixture path is a fixed literal
+    that may really exist on the host.
+  - 'Added servir_guiones / recibir / secuencia_recibida / exigir_silencio: every Docker expectation is read over an mpsc
+    channel with recv_timeout. No blind join remains in any test of this task.'
+  verify_pending: false
+- changed_files:
+  - crates/hexcell-admin/tests/almacen_plano_de_control.rs
+  - crates/hexcell-admin/tests/estado_y_listado.rs
+  - crates/hexcell-admin/tests/comandos.rs
+  notes:
+  - 'Fix (fix-vacuous-directory-guard): the directory test now asserts matches!(err, DirectorioInaccesible{directorio}) with
+    the exact path, that Display names it, and that the directory and the file are both still absent. Added las_tres_tablas_declaran_exactamente_sus_columnas,
+    a PRAGMA table_info assertion over all three tables including the DEFAULT '''' of celulas.motivo.'
+  - 'Fix (tests-ac3-zero-docker-on-illegal-transition): unpause on stored Retirada and pause on stored Suspendida each assert
+    the exact TransicionInvalida Display text and observe ZERO Docker requests via exigir_silencio (recv_timeout against a
+    bound socket with an unconsumed script), plus a byte-for-byte unchanged store.'
+  - 'Fix (tests-ac2-ac4-command-level-persistence): pause/unpause now assert the celulas row (estado, motivo, actualizado_ms
+    == injected clock) and the transiciones rows (exactly one, de/a/motivo/registrado_ms). Fixtures seed celulas directly
+    via rusqlite so transiciones starts empty. Docker 500 on the first stop asserts Fallo plus a byte-identical store and
+    zero transiciones rows. Row-less pause and unpause both assert motivo alta_implicita through ejecutar_con_efectos.'
+  - 'Fix (tests-disc-codes-both-cases): DISC-01..DISC-05 each have a triggering and a non-triggering fixture, and each asserts
+    its own code present AND the other four absent, which is what kills an always-push implementation. Added the exact five
+    printed fields (full stdout equality), the substitutions history empty and non-empty, the ack/acuse/ratio/silencio/ventana
+    token-absence guard over both sinks of two fixtures, the failing-Docker-source diagnostic and the missing-store diagnostic
+    for status and for list.'
+  - 'Fix (tests-list-exact-sequence-and-read-only): cell list compares stdout in full (both lines, estado=/nucleo=/sidecar=,
+    sin_fila included) instead of the old tautological contains("sin_fila") || contains("c2"), asserts exactly one GET /containers/json?all=true
+    followed by silence, and status_y_list_no_escriben_en_el_almacen compares file bytes, mtime and the three tables'' row
+    counts before and after both commands, on the DISC-05 no-row case.'
+  verify_pending: false
+- changed_files:
+  - docs/adr/adr-0039-almacen-del-plano-de-control.md
+  - docs/adr/README.md
+  - README.md
+  - docs/plan/fase-a-6-empaquetado-cli.md
+  - docs/bitacora-de-descartes.md
+  notes:
+  - 'Fix (docs-nits-d58-and-chain-deviation): D-58 no longer cites seaography-orm, which is a GraphQL layer and not a migrations
+    crate. Exact-literal replacement by the migrate! macro of sqlx.'
+  - 'Fix (docs-nits-d58-and-chain-deviation): the execution-chain bullet now states explicitly that 14 closed BEFORE 13, against
+    the declared ''14 despues de 13'' constraint, and why an empty sustituciones history is legitimate (this task creates
+    the table and only reads it; an empty history is the real state of a cell that was never rebound).'
+  - 'README: the new CLI section was moved to the END as section 7 and ''### 6. Composicion de la celula'' was restored, so
+    the README edit is strictly append-only. AC-10 asked for an append and the earlier insertion renumbered an existing heading.'
+  - ADR-0039 extended with the read-only-by-construction rule and the failing-source-vs-discrepancy rule, which the first
+    draft did not describe.
+  - 'Numbering re-confirmed from disk at commit time: adr-0039 and D-58 are free in main and in the three sibling worktrees
+    (HEX-082, HEX-082-a, HEX-084 all top out at adr-0038 / D-57). Rows appended, never reordered. Only one deleted line across
+    docs and README: the bitacora ''Ultima actualizacion'' literal, a deliberate exact-literal replacement.'
+  verify_pending: false
+- changed_files:
+  - crates/hexcell-admin/src/almacen_plano_de_control.rs
+  notes:
+  - 'Reported gap, stage A-6 task 12 (cell terminate): re-checked main at implement time. main is at 8e96776, docs/plan/fase-a-6-empaquetado-cli.md
+    has no task-12 closure line, and comandos.rs still routes Subcomando::Retirar to the NoImplementadoTodavia arm. Task 12
+    is therefore NOT merged.'
+  - 'Consequence: the Retirada / sesion_cerrada transition stays an INERT hook. MOTIVO_DE_SESION_CERRADA is declared in almacen_plano_de_control.rs
+    with a comment naming task 12 as its future caller, and no terminate behaviour is implemented against unmerged code. The
+    constant is currently unused by production; task 12 consumes it when it lands.'
+  - 'Not implemented on purpose, per contract forbid.behaviors: cell rebind, any write to sustituciones (task 13), idempotent
+    re-execution and the detener_contenedor merge (task 15), and any metric surface such as ack ratio or silence window (task
+    20).'
+  verify_pending: false
+- changed_files:
+  - .ai/tasks/active/HEX-083-new-spec/02-contract.yaml
+  notes:
+  - 'CONTRACT DEVIATIONS, flagged for the human gate and not resolved unilaterally:'
+  - 'limits.max_diff_lines: limit 2400, actual 2798. The review verdict demanded 13 additional test scenarios (five DISC codes
+    with a triggering AND a non-triggering fixture each, the five printed fields, the substitutions history empty and non-empty,
+    the token-absence guard, the failing-source diagnostic, the whole-sequence cell list assertion, the read-only guard, the
+    column-level PRAGMA assertion, and four command-level persistence cases) plus two production fixes. The delegate tree
+    was already at ~1460 lines. Test files were compressed twice (row assertions collapsed to compact strings, shared Corrida/correr
+    helpers, doc prose trimmed) which took the diff from 2995 to 2798, and all 34 mutations were re-verified red after the
+    compression. Going below 2400 would mean deleting guards the review required or the Spanish doc comments CLAUDE.md expects.
+    max_files_changed is respected: 19 of 20, no file added beyond the set already in the tree. Flagged for the human gate,
+    not resolved unilaterally.'
+  - touch omits Cargo.lock, docs/adr/adr-0039-almacen-del-plano-de-control.md. Both are outside the contract touch globs and
+    both were already identified by the review as contract-authoring gaps rather than defects. Cargo.lock is the mechanical
+    consequence of the rusqlite edge the contract itself mandates (it adds only the rusqlite entry under hexcell-admin and
+    rusqlite stays 0.39.0). The ADR file is required by AC-9, which the contract's touch list omitted. The ADR was extended
+    in this pass with the read-only-by-construction rule and the failing-source-vs-discrepancy rule.
+  verify_pending: false
+- changed_files:
+  - crates/hexcell-admin/src/almacen_plano_de_control.rs
+  - crates/hexcell-admin/src/comandos.rs
+  - crates/hexcell-admin/src/docker/inventario.rs
+  - crates/hexcell-admin/migraciones/0001-plano-de-control.sql
+  notes:
+  - 'MUTATION EVIDENCE. Method: One mutation at a time, applied to production code by a script that ASSERTS the literal matched
+    exactly once and that the file content changed, then runs exactly one named test under the same cargo test profile, then
+    restores the file and asserts the restore is byte-identical. A sed that matches nothing would be reported as MUTACION_NO_APLICABLE,
+    never silently skipped.'
+  - 'Totals: 34 mutations applied, 34 named tests turned red, 0 survivors, 0 mutations that failed to apply.'
+  - 'Gates after restore: cargo fmt --check 0, cargo clippy --workspace -- -D warnings 0, cargo test --workspace 0, go vet
+    ./... 0, go test ./... -count=1 0.'
+  - 'mutation: exigir_directorio body replaced by Ok(()), deleting the parent-directory check -> RED test: almacen_plano_de_control::abrir_bajo_directorio_inexistente_devuelve_error_tipado_y_no_lo_crea
+    (restored byte-identical). This is the mutation the reviewer used to prove the OLD test vacuous; the repaired test now
+    fails on it.'
+  - 'mutation: abrir_solo_lectura loses its !ruta.is_file() check -> RED test: almacen_plano_de_control::abrir_solo_lectura_sobre_un_archivo_ausente_no_lo_crea
+    (restored byte-identical)'
+  - 'mutation: abrir_solo_lectura opens with SQLITE_OPEN_READ_WRITE | SQLITE_OPEN_CREATE -> RED test: almacen_plano_de_control::una_escritura_sobre_el_almacen_de_solo_lectura_falla
+    (restored byte-identical)'
+  - 'mutation: abrir_solo_lectura loses its user_version check -> RED test: almacen_plano_de_control::abrir_solo_lectura_sobre_un_esquema_sin_migrar_se_rechaza
+    (restored byte-identical)'
+  - 'mutation: etiqueta_persistida(EnEjecucion) returns the accented Display label "en ejecucion" -> RED test: almacen_plano_de_control::el_codec_de_etiquetas_redondea_las_cinco_variantes_en_ascii
+    (restored byte-identical)'
+  - 'mutation: estado_desde_etiqueta accepts an unknown label as Aprovisionada instead of erroring -> RED test: almacen_plano_de_control::una_etiqueta_desconocida_se_rechaza
+    (restored byte-identical)'
+  - 'mutation: leer_sustituciones orders by registrado_ms DESC -> RED test: almacen_plano_de_control::leer_sustituciones_devuelve_el_historial_ordenado
+    (restored byte-identical)'
+  - 'mutation: migration drops DEFAULT '''' from celulas.motivo -> RED test: almacen_plano_de_control::las_tres_tablas_declaran_exactamente_sus_columnas
+    (restored byte-identical). Column-level mutation that only the PRAGMA table_info assertion catches; the table-name assertion
+    stays green.'
+  - 'mutation: the transitar validation block is deleted from ejecutar_con_efectos -> RED test: comandos::cell_unpause_sobre_retirada_falla_sin_emitir_ninguna_peticion_docker
+    (restored byte-identical). Proves both the diagnostic and the zero-request observation; the Docker double receives a request.'
+  - 'mutation: the transitar validation block is deleted from ejecutar_con_efectos -> RED test: comandos::cell_pause_sobre_suspendida_falla_sin_emitir_ninguna_peticion_docker
+    (restored byte-identical)'
+  - 'mutation: registrar_transicion is also called BEFORE the Docker call -> RED test: comandos::cell_pause_no_escribe_nada_cuando_docker_falla
+    (restored byte-identical)'
+  - 'mutation: the alta_implicita motivo is replaced by the empty string -> RED test: comandos::cell_pause_sin_fila_da_de_alta_con_alta_implicita
+    (restored byte-identical)'
+  - 'mutation: the alta_implicita motivo is replaced by the empty string -> RED test: comandos::cell_unpause_sin_fila_da_de_alta_con_alta_implicita
+    (restored byte-identical)'
+  - 'mutation: registrar_transicion receives 0 instead of the injected ahora_ms -> RED test: comandos::cell_pause_persiste_suspendida_y_una_sola_transicion
+    (restored byte-identical)'
+  - 'mutation: registrar_transicion receives None instead of the stored previous state -> RED test: comandos::cell_unpause_persiste_en_ejecucion_tras_la_secuencia_completa
+    (restored byte-identical)'
+  - 'mutation: the failing-Docker-source guard loop is deleted from ejecutar_estado -> RED test: estado_y_listado::una_fuente_docker_que_falla_se_nombra_y_no_se_convierte_en_discrepancia
+    (restored byte-identical). Without the guard the 500 is read as "container absent" and the command prints DISC-04, which
+    is the defect the review found.'
+  - 'mutation: ejecutar_estado opens the store with abrir instead of abrir_solo_lectura -> RED test: estado_y_listado::un_almacen_ausente_se_nombra_y_no_se_crea
+    (restored byte-identical)'
+  - 'mutation: ejecutar_listado opens the store with abrir instead of abrir_solo_lectura -> RED test: estado_y_listado::un_almacen_ausente_se_nombra_y_no_se_crea
+    (restored byte-identical). Needed a second command in that test; status alone left the list read-only rule unguarded.'
+  - 'mutation: DISC-01 condition uses && instead of || over the two running flags -> RED test: estado_y_listado::disc_01_se_dispara_con_el_almacen_en_ejecucion_y_un_contenedor_detenido
+    (restored byte-identical)'
+  - 'mutation: DISC-01 condition over the running flags replaced by true -> RED test: estado_y_listado::disc_01_no_aparece_cuando_ambos_contenedores_corren
+    (restored byte-identical)'
+  - 'mutation: DISC-02 condition uses && instead of || over the two running flags -> RED test: estado_y_listado::disc_02_se_dispara_con_el_almacen_suspendido_y_un_contenedor_corriendo
+    (restored byte-identical)'
+  - 'mutation: DISC-02 condition over the running flags replaced by true -> RED test: estado_y_listado::disc_02_no_aparece_cuando_la_celula_pausada_tiene_los_dos_contenedores_detenidos
+    (restored byte-identical)'
+  - 'mutation: DISC-03 compares disponibilidad == Listo instead of != Listo -> RED test: estado_y_listado::disc_03_se_dispara_cuando_la_sonda_no_confirma_disponibilidad
+    (restored byte-identical)'
+  - 'mutation: DISC-03 drops the disponibilidad term entirely -> RED test: estado_y_listado::disc_03_no_aparece_cuando_la_sonda_confirma_disponibilidad
+    (restored byte-identical)'
+  - 'mutation: DISC-04 condition negates ambos_ausentes -> RED test: estado_y_listado::disc_04_se_dispara_con_fila_en_el_almacen_y_sin_contenedores_en_docker
+    (restored byte-identical)'
+  - 'mutation: DISC-04 drops the ambos_ausentes term, firing on any row -> RED test: estado_y_listado::disc_04_no_aparece_cuando_los_contenedores_existen_detenidos
+    (restored byte-identical)'
+  - 'mutation: DISC-05 condition negates alguno_presente -> RED test: estado_y_listado::disc_05_se_dispara_con_contenedores_en_docker_y_sin_fila_en_el_almacen
+    (restored byte-identical)'
+  - 'mutation: DISC-05 drops the fila.is_none() term, firing with a row present -> RED test: estado_y_listado::disc_05_no_aparece_cuando_la_fila_existe
+    (restored byte-identical)'
+  - 'mutation: the "salud:" output line is deleted from ejecutar_estado -> RED test: estado_y_listado::cell_status_imprime_los_cinco_campos_y_sale_exito
+    (restored byte-identical)'
+  - 'mutation: the substitutions branch always prints the empty marker -> RED test: estado_y_listado::cell_status_imprime_el_historial_de_sustituciones_cuando_lo_hay
+    (restored byte-identical)'
+  - 'mutation: a "ratio de acuses" line (task 20 surface) is added to cell status output -> RED test: estado_y_listado::cell_status_no_reporta_ratio_de_acuses_ni_ventana_de_silencio
+    (restored byte-identical)'
+  - 'mutation: the health probe is launched unconditionally, even with a container not running -> RED test: estado_y_listado::disc_01_se_dispara_con_el_almacen_en_ejecucion_y_un_contenedor_detenido
+    (restored byte-identical). Caught by the whole-sequence assertion plus exigir_silencio, not by the exit code.'
+  - 'mutation: the listing label sin_fila is renamed to desconocido -> RED test: estado_y_listado::cell_list_imprime_la_union_entera_de_almacen_y_docker
+    (restored byte-identical). The old assertion contains("sin_fila") || contains("c2") survived this; the full stdout equality
+    does not.'
+  - 'mutation: inventario requests /containers/json without all=true -> RED test: estado_y_listado::cell_list_imprime_la_union_entera_de_almacen_y_docker
+    (restored byte-identical)'
+  verify_pending: false

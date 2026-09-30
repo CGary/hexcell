@@ -1,0 +1,98 @@
+{
+  "commands": [
+    {
+      "command": "bash -c 'test -z \"$(git diff --name-only main...HEAD | grep -vE \"^(crates/hexcell-admin/src/ciclo_de_vida\\.rs|crates/hexcell-admin/src/comandos\\.rs|crates/hexcell-admin/tests/ciclo_de_vida\\.rs|crates/hexcell-admin/tests/comandos\\.rs|docs/plan/fase-a-6-empaquetado-cli\\.md|README\\.md)$\")\"'",
+      "duration_s": 0.01,
+      "exit_code": 0,
+      "output_excerpt": "sin salida: los archivos tocados (incluido el commit del bucle de correccion 0cab225) siguen dentro de la lista permitida."
+    },
+    {
+      "command": "bash -c 'test -z \"$(git diff --name-only main...HEAD -- crates/hexcell-admin/src/docker/cliente.rs crates/hexcell-admin/src/argumentos.rs crates/hexcell-admin/src/codigo_de_salida.rs crates/hexcell-admin/src/estado_de_celula.rs crates/hexcell-admin/src/salida.rs crates/hexcell-admin/tests/comun/mod.rs)\"'",
+      "duration_s": 0.01,
+      "exit_code": 0,
+      "output_excerpt": "sin salida: ninguno de los archivos prohibidos fue tocado."
+    },
+    {
+      "command": "bash -c 'test -z \"$(grep -rnE \"orden_cierre_de_sesion|acuse_cierre_de_sesion|sidecar\\.sock|HEXCELL_SOCKET_IPC\" crates/hexcell-admin/src)\"'",
+      "duration_s": 0.01,
+      "exit_code": 0,
+      "output_excerpt": "sin salida: ninguno de los cuatro literales prohibidos aparece bajo crates/hexcell-admin/src."
+    },
+    {
+      "command": "bash -c 'grep -q \"la célula está pausada: ejecute cell unpause antes de cell terminate\" crates/hexcell-admin/src/ciclo_de_vida.rs'",
+      "duration_s": 0.01,
+      "exit_code": 0,
+      "output_excerpt": "el literal exacto está presente en ciclo_de_vida.rs."
+    },
+    {
+      "command": "bash -c 'test \"$(grep -c \"/var/lib/hexcell\" crates/hexcell-admin/src/ciclo_de_vida.rs)\" = \"1\"'",
+      "duration_s": 0.01,
+      "exit_code": 0,
+      "output_excerpt": "el literal /var/lib/hexcell aparece exactamente una vez (RUTA_DE_DATOS_DE_CELULA)."
+    },
+    {
+      "command": "bash -c 'test -z \"$(grep -nE \"detener_contenedor\\(\u0026\" crates/hexcell-admin/src/ciclo_de_vida.rs | grep -v detener_contenedor_sin_plazo)\"'",
+      "duration_s": 0.01,
+      "exit_code": 0,
+      "output_excerpt": "sin salida: no hay llamadas a detener_contenedor con t=30, solo a detener_contenedor_sin_plazo."
+    },
+    {
+      "command": "bash -c 'test -z \"$(grep -nE \"^[[:space:]]*(8082|9099)\" crates/hexcell-admin/tests/ciclo_de_vida.rs crates/hexcell-admin/tests/comandos.rs)\"'",
+      "duration_s": 0.01,
+      "exit_code": 0,
+      "output_excerpt": "sin salida: los fixtures usan 7070/7071, distintos de 8082 (producción) y 9099 (fixture existente de unpause)."
+    },
+    {
+      "command": "bash -c 'd=\"$(git diff main...HEAD -- docs README.md)\"; mapfile -t dels \u003c \u003c(printf \"%s\\n\" \"$d\" | grep \"^-\" | grep -v \"^---\" | sed \"s/^-//\"); mapfile -t adds \u003c \u003c(printf \"%s\\n\" \"$d\" | grep \"^+\" | grep -v \"^+++\" | sed \"s/^+//\"); for x in \"${dels[@]}\"; do [ -z \"$x\" ] \u0026\u0026 continue; ok=0; for y in \"${adds[@]}\"; do [ \"${y:0:${#x}}\" = \"$x\" ] \u0026\u0026 { ok=1; break; }; done; [ \"$ok\" -eq 0 ] \u0026\u0026 exit 1; done; exit 0'",
+      "duration_s": 0.01,
+      "exit_code": 0,
+      "output_excerpt": "sigue en verde tras FIX 2: la unica linea borrada de docs/plan/fase-a-6-empaquetado-cli.md (la vieja frase del seguimiento 2026-09-22 con --forzar) fue reemplazada integra por una linea anadida cuyo prefijo exacto coincide (reemplazo de literal exacto, no borrado neto)."
+    },
+    {
+      "command": "bash -c 'test -z \"$(git log main..HEAD --format=%B | grep -iE \"co-authored-by|generated with|claude-session|claude\\.ai/code\")\"'",
+      "duration_s": 0.01,
+      "exit_code": 0,
+      "output_excerpt": "sin salida: ninguno de los dos commits del branch (1657977, 0cab225) lleva atribución de IA."
+    },
+    {
+      "command": "cargo fmt --check",
+      "duration_s": 0.03,
+      "exit_code": 0,
+      "output_excerpt": "sin salida: formato conforme (cargo fmt -p hexcell-admin aplicado tras FIX 1 para colapsar la declaración de `cuerpo` en una sola línea)."
+    },
+    {
+      "command": "cargo clippy --workspace -- -D warnings",
+      "duration_s": 0.15,
+      "exit_code": 0,
+      "output_excerpt": "Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.15s, sin warnings."
+    },
+    {
+      "command": "cargo test -p hexcell-admin --test ciclo_de_vida",
+      "duration_s": 0.03,
+      "exit_code": 0,
+      "output_excerpt": "test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out (incluye la aserción de cuerpo reforzada de retirar_ejecuta_la_secuencia_completa_en_orden_estricto)."
+    },
+    {
+      "command": "cargo test -p hexcell-admin --test comandos",
+      "duration_s": 0.05,
+      "exit_code": 0,
+      "output_excerpt": "test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out"
+    },
+    {
+      "command": "cargo test --workspace",
+      "duration_s": 3,
+      "exit_code": 0,
+      "output_excerpt": "todos los tests del workspace (incluidos doctests de hexcell-meta y hexcell-storage) en verde; 0 failed."
+    },
+    {
+      "command": "bash -c 'cd sidecar \u0026\u0026 go vet ./... \u0026\u0026 go test ./... -count=1'",
+      "duration_s": 0.2,
+      "exit_code": 0,
+      "output_excerpt": "ok  \tgithub.com/CGary/hexcell/sidecar\t...\n(los ocho paquetes del sidecar en verde)"
+    }
+  ],
+  "executed_at": "2026-09-22T00:00:00-04:00",
+  "overall_result": "passed",
+  "summary": "Bucle de correccion tras review revise: 15/15 comandos en verde. FIX 1 aserta el cuerpo de la sonda de cierre; FIX 2 desnombra la bandera del seguimiento de la tarea 15.",
+  "task_id": "HEX-082-b"
+}

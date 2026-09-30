@@ -1,0 +1,322 @@
+task_id: HEX-082
+summary: >-
+  Real cell terminate in hexcell-admin plus the channel-agnostic POST /admin/sesion/cierre route on
+  the core. Destructive and irreversible: abort before destroying anything.
+goal: >-
+  Replace the NoImplementadoTodavia stub of `cell terminate --id <id> --confirmar` with a real,
+  strictly ordered, abort-on-first-failure sequence, and give the core the route that sequence needs.
+  On the core: crates/hexcell/src/admin.rs gains POST /admin/sesion/cierre, WITHOUT authentication -
+  its Spanish doc comment states that the security boundary is the cell's internal network, exactly
+  like /admin/ingesta - answering 200 {"resultado":"completado"} on a completado acuse, 502
+  {"resultado":"fallido","motivo":...} on a fallido acuse, and 504 when no acuse arrives within the
+  deadline. admin.rs stays channel-agnostic: the route calls a seam (a boxed async closure held in a
+  OnceCell) that main.rs registers from the Whatsmeow branch using a NEW cloneable AsaDeSesion handle
+  taken from the adapter BEFORE Motor::nuevo consumes it; that handle sends the already existing wire
+  6 `orden_cierre_de_sesion` with motivo "cell terminate" and awaits `acuse_cierre_de_sesion`. The
+  wire format does not change and the sidecar is not touched. deploy/cell.compose.yml must set
+  HEXCELL_DIRECCION_ADMIN=0.0.0.0:8082 on the nucleo service, because the admin listener defaults to
+  loopback and a sibling container could otherwise never reach the route. On the CLI:
+  ciclo_de_vida::retirar inspects nucleo then sidecar, resolves the volume name from the core's
+  Mounts[].Name for /var/lib/hexcell (never by convention), aborts with the exact pause literal if the
+  core is not running, POSTs the close through an alpine:3 sibling container inside the cell network
+  with `wget -q -O - --post-data ''` and aborts destroying NOTHING if that container exits non-zero,
+  then stops sidecar and nucleo reusing the same no-deadline stop as `cell pause`, removes both
+  containers and removes the volume, printing three stdout lines and exiting 0. Idempotence is task
+  15, persisting the Retirada state is task 14, the forced-terminate variant for banned devices is a
+  written follow-up on task 15. No new CLI flag, no new exit code, no new dependency.
+read:
+  - .ai/tasks/active/HEX-082-new-spec/00-spec.yaml
+  - .ai/tasks/active/HEX-082-new-spec/01-blueprint.yaml
+  - CLAUDE.md
+  - crates/hexcell/src/configuracion.rs
+  - crates/hexcell/src/salud.rs
+  - crates/hexcell/tests/comun/mod.rs
+  - crates/hexcell-core/src/canal.rs
+  - crates/hexcell-canal-whatsmeow/src/mensajes.rs
+  - crates/hexcell-canal-whatsmeow/src/error.rs
+  - crates/hexcell-canal-whatsmeow/tests/comun/mod.rs
+  - crates/hexcell-admin/src/argumentos.rs
+  - crates/hexcell-admin/src/codigo_de_salida.rs
+  - crates/hexcell-admin/src/salida.rs
+  - crates/hexcell-admin/src/estado_de_celula.rs
+  - crates/hexcell-admin/src/docker/cliente.rs
+  - crates/hexcell-admin/src/docker/error.rs
+  - crates/hexcell-admin/src/main.rs
+  - crates/hexcell-admin/tests/comun/mod.rs
+  - crates/hexcell-admin/tests/cliente_docker.rs
+  - deploy/verificar_endurecimiento.sh
+  - deploy/verificar_limites.sh
+  - docs/plan/fase-a-6-empaquetado-cli.md
+  - docs/protocolo-ipc-nucleo-sidecar.md
+  - docs/adr/adr-0032-protocolo-ipc-version-de-cable-6.md
+  - docs/adr/adr-0036-contrato-de-analisis-de-argumentos-y-modo-de-simulacion.md
+  - docs/bitacora-de-descartes.md
+  - README.md
+touch:
+  - crates/hexcell/src/admin.rs
+  - crates/hexcell/src/main.rs
+  - crates/hexcell/tests/admin_http.rs
+  - crates/hexcell-canal-whatsmeow/src/adaptador.rs
+  - crates/hexcell-canal-whatsmeow/tests/cierre_de_sesion.rs
+  - crates/hexcell-admin/src/ciclo_de_vida.rs
+  - crates/hexcell-admin/src/comandos.rs
+  - crates/hexcell-admin/tests/ciclo_de_vida.rs
+  - crates/hexcell-admin/tests/comandos.rs
+  - deploy/cell.compose.yml
+  - docs/plan/fase-a-6-empaquetado-cli.md
+  - README.md
+forbid:
+  files:
+    - sidecar/**
+    - docs/protocolo-ipc-nucleo-sidecar.md
+    - crates/hexcell-admin/src/docker/cliente.rs
+    - crates/hexcell-admin/src/estado_de_celula.rs
+    - Cargo.toml
+    - Cargo.lock
+    - crates/hexcell/Cargo.toml
+    - crates/hexcell-admin/Cargo.toml
+    - crates/hexcell-canal-whatsmeow/Cargo.toml
+    - crates/hexcell-core/**
+    - crates/hexcell-storage/**
+    - crates/hexcell-canal-simulado/**
+    - crates/hexcell-canal-contrato/**
+    - crates/hexcell-meta/**
+    - crates/hexcell/src/configuracion.rs
+    - crates/hexcell/src/salud.rs
+    - crates/hexcell/src/motor.rs
+    - crates/hexcell/src/emparejar.rs
+    - crates/hexcell/tests/comun/mod.rs
+    - crates/hexcell-admin/src/argumentos.rs
+    - crates/hexcell-admin/src/codigo_de_salida.rs
+    - crates/hexcell-admin/src/salida.rs
+    - crates/hexcell-admin/src/docker/error.rs
+    - crates/hexcell-admin/src/docker/transporte.rs
+    - crates/hexcell-admin/src/docker/mod.rs
+    - crates/hexcell-admin/src/main.rs
+    - crates/hexcell-admin/tests/comun/mod.rs
+    - crates/hexcell-admin/tests/argumentos.rs
+    - crates/hexcell-admin/tests/cliente_docker.rs
+    - crates/hexcell-admin/tests/codigo_de_salida.rs
+    - crates/hexcell-admin/tests/salida.rs
+    - crates/hexcell-admin/tests/estado_de_celula.rs
+    - crates/hexcell-canal-whatsmeow/tests/comun/mod.rs
+    - crates/hexcell-canal-whatsmeow/tests/protocolo.rs
+    - crates/hexcell-canal-whatsmeow/tests/contrato_del_puerto.rs
+    - deploy/verificar_endurecimiento.sh
+    - deploy/verificar_limites.sh
+    - deploy/verificar_renderizado_configuracion.sh
+    - deploy/celula.env.ejemplo
+    - Dockerfile
+    - docs/PRD.md
+    - docs/STATUS.md
+    - docs/adr/**
+    - docs/bitacora-de-descartes.md
+    - docs/plantilla-celula.md
+    - .github/workflows/ci.yml
+  behaviors:
+    - >-
+      LA SECUENCIA ES NORMATIVA Y ES LO UNICO QUE ESTA TAREA EXISTE PARA GARANTIZAR. Orden exacto:
+      (1) inspeccionar el contenedor del nucleo y DESPUES el del sidecar; (2) resolver el nombre del
+      volumen, la red y el puerto de administracion de esa inspeccion; (3) POST del cierre de sesion
+      por contenedor hermano; (4) parar sidecar y DESPUES nucleo; (5) eliminar contenedor del
+      sidecar, eliminar contenedor del nucleo, eliminar el volumen; (6) tres lineas por salida
+      estandar y Exito=0. Se aborta en el PRIMER fallo con Fallo=1 y diagnostico por el sumidero de
+      diagnostico, y NINGUN paso posterior se emite. PROHIBIDO ABSOLUTO emitir cualquier parada,
+      cualquier eliminacion de contenedor o cualquier eliminacion de volumen si el paso 3 no ha
+      devuelto exito: nunca se borra un volumen con la sesion todavia vinculada. Este es el fallo que
+      la tarea existe para impedir.
+    - >-
+      El nombre del volumen se OBTIENE, no se inventa: sale de la entrada de Mounts[] de la
+      inspeccion del nucleo cuyo Destination es /var/lib/hexcell, leyendo su campo Name. PROHIBIDO
+      derivarlo del --id, del nombre del contenedor, del id del contenedor o de cualquier convencion,
+      y PROHIBIDO codificar el literal del punto de montaje en mas de un sitio. Igual que en
+      cell unpause: la red sale de la clave de NetworkSettings.Networks y el puerto de la variable
+      HEXCELL_DIRECCION_ADMIN dentro de Config.Env; PROHIBIDO codificar 8082 como literal en el
+      camino de produccion. Los nombres de contenedor SI se derivan del --id como {id}-nucleo y
+      {id}-sidecar, porque deploy/cell.compose.yml los fija asi en container_name.
+    - >-
+      Si el contenedor del nucleo no esta en estado running, se aborta con el literal EXACTO
+      "la celula esta pausada: ejecute cell unpause antes de cell terminate" (con sus tildes tal y
+      como lo fija el spec) y NO se arranca absolutamente nada. Si cualquiera de los dos contenedores
+      no existe, se aborta con "celula no encontrada". PROHIBIDO implementar idempotencia,
+      reanudacion tras fallo parcial o deteccion del punto en que quedo la secuencia: eso es la tarea
+      15 del plan, no esta.
+    - >-
+      deploy/cell.compose.yml DEBE fijar HEXCELL_DIRECCION_ADMIN a 0.0.0.0:8082 en el servicio
+      nucleo, con comentario en espanol que espeje el de HEXCELL_DIRECCION_SALUD y que diga la
+      consecuencia: el listener de administracion pasa a ser alcanzable desde la red interna de la
+      celula, que es justamente la frontera de seguridad declarada. Sin esa linea la ruta es
+      INALCANZABLE desde un contenedor hermano, porque DIRECCION_ADMIN_POR_DEFECTO es 127.0.0.1:8082.
+      PROHIBIDO en cambio cambiar ese valor por omision en crates/hexcell/src/configuracion.rs,
+      PROHIBIDO publicar el puerto al anfitrion con `ports:`, y PROHIBIDO introducir cualquier forma
+      de bind mount en la plantilla.
+    - >-
+      PROHIBIDO ABSOLUTO abrir una SEGUNDA conexion IPC con el sidecar, desde donde sea. El protocolo
+      admite UNA sola conexion activa y releva a la anterior al conectar una nueva
+      (sidecar/internal/servidor/manejo.go), de modo que una conexion nueva expulsaria al nucleo de
+      su propio sidecar en mitad de una operacion destructiva. La ruta alcanza al sidecar UNICAMENTE
+      a traves del adaptador que ya posee el Motor, mediante el asa clonable tomada antes de que
+      Motor::nuevo lo consuma. PROHIBIDO replicar en admin.rs el patron de
+      crates/hexcell/src/emparejar.rs, que construye su propio AdaptadorWhatsmeow. La CLI NO abre
+      ningun socket IPC (D-57) y ningun archivo de crates/hexcell-admin puede nombrar
+      orden_cierre_de_sesion, acuse_cierre_de_sesion, sidecar.sock ni HEXCELL_SOCKET_IPC.
+    - >-
+      crates/hexcell/src/admin.rs SE MANTIENE AGNOSTICO DEL CANAL: PROHIBIDO importar o nombrar
+      hexcell_canal_whatsmeow, AdaptadorWhatsmeow, ErrorCanalWhatsmeow o cualquier tipo del cable IPC
+      en ese archivo. La costura es un tipo propio de admin.rs (cierre como cierre asincrono
+      encajonado, sostenido en un OnceCell) que main.rs rellena. El plazo de espera del acuse es un
+      PARAMETRO de la funcion bajo prueba, no una constante que la prueba pueda importar; la
+      constante de 30 s existe solo como valor por omision de produccion.
+    - >-
+      La ruta responde EXACTAMENTE: 200 con cuerpo {"resultado":"completado"}; 502 con cuerpo
+      {"resultado":"fallido","motivo":...} llevando el motivo REAL del acuse; 504 si el acuse no
+      llega dentro del plazo. Sin autenticacion, y el comentario de documentacion de la ruta dice en
+      espanol que la frontera de seguridad es la red interna de la celula, igual que /admin/ingesta.
+      Cuando no hay ningun cierre registrado -canal simulado, que no implementa CicloDeVidaSesion-
+      la ruta FALLA CERRADO con 502, nunca con 200: un comando destructivo no destruye sobre un
+      cierre de sesion no verificado. PROHIBIDO introducir cualquier otro codigo de estado nuevo,
+      cualquier cabecera de autenticacion, cualquier token y cualquier lista de direcciones
+      permitidas. GET /admin/sesion/cierre sigue siendo NoEncontrada y los dos brazos de
+      /admin/ingesta no se tocan.
+    - >-
+      servir_servicios_http SIGUE DEVOLVIENDO UN SOLO futuro combinado y se sigue invocando UNA SOLA
+      VEZ, antes del match sobre CanalSeleccionado. PROHIBIDO moverlo o duplicarlo dentro de las
+      ramas del canal: el comentario de documentacion de esa funcion explica que una lista de futuros
+      enumerada a mano por rama se puede omitir a medias y dejar un endpoint inexistente en silencio.
+      Por eso el registro del cierre es de vinculacion tardia.
+    - >-
+      En crates/hexcell-canal-whatsmeow/src/adaptador.rs se extrae un asa CLONABLE sobre los Arc de
+      escritor_compartido y pendientes_de_sesion, parametrizada por motivo, y
+      ordenar_cierre_de_sesion delega en ella sin duplicar el cuerpo. El metodo del trait
+      CicloDeVidaSesion::cerrar_sesion SIGUE enviando motivo "" para no romper las aserciones de
+      HEX-071. PROHIBIDO tocar el formato de cable: no se anade, quita ni renombra ningun campo ni
+      ningun tipo del protocolo, no se toca VERSION_PROTOCOLO, y no se modifica
+      docs/protocolo-ipc-nucleo-sidecar.md ni ningun ADR. Poner un valor en el campo motivo, que el
+      cable 6 ya define, NO es un cambio de protocolo.
+    - >-
+      La parada de los pasos 4 reutiliza la MISMA operacion sin plazo que usa cell pause
+      (detener_contenedor_sin_plazo), a traves de una funcion comun extraida en ciclo_de_vida.rs que
+      pausar tambien pasa a llamar. PROHIBIDO duplicar la secuencia, PROHIBIDO usar
+      detener_contenedor con t=30, PROHIBIDO pasar el parametro t y PROHIBIDO tocar
+      crates/hexcell-admin/src/docker/cliente.rs: la fusion de las dos operaciones de parada es de la
+      tarea 15. eliminar_contenedor, eliminar_volumen, inspeccionar_contenedor, esperar_contenedor y
+      crear_e_iniciar_contenedor_con_opciones se consumen SIN modificar.
+    - >-
+      El POST del cierre se emite SIEMPRE desde un contenedor hermano alpine:3 dentro de la red de la
+      celula, reutilizando DatosDeSondeo y OpcionesDeContenedor, NUNCA desde el proceso de la CLI.
+      PROHIBIDO abrir un TcpStream o cualquier conexion de red desde hexcell-admin hacia el nucleo,
+      publicar un puerto o usar docker exec. El guion es de UN SOLO disparo -wget -q -O - con
+      --post-data y un -T explicito-, NO el bucle de reintentos de guion_de_sonda, que no se modifica
+      ni se reutiliza para esto. El contenedor hermano se elimina SIEMPRE, tambien por el camino de
+      fallo. Su codigo de salida decide: 0 es completado, cualquier otro aborta.
+    - >-
+      En comandos.rs el brazo de Subcomando::Retirar se mueve al grupo con efectos con UNA SOLA LINEA
+      de cambio en cada uno de los dos brazos ya existentes y SIN reordenar ninguno: las tareas 12,
+      14 y 23 corren en paralelo sobre ese mismo match y la rama se rebasa sobre main antes de
+      fusionar. comandos::ejecutar conserva su firma y su cuerpo; --simular sigue siendo asunto
+      exclusivo del analizador de argumentos y corta antes de construir ningun ClienteDocker. El exito
+      de terminate imprime EXACTAMENTE las tres lineas del spec y NO la linea generica
+      "cell ... completado" de pause/unpause.
+    - >-
+      PROHIBIDO anadir un flag de CLI, un subcomando, una variante de CodigoDeSalida o una dependencia
+      de cualquier crate, y PROHIBIDO modificar cualquier Cargo.toml o Cargo.lock. hexcell-admin sigue
+      en serde + serde_json sin tokio ni pila HTTP asincrona; hexcell-core conserva sus cero
+      dependencias externas. PROHIBIDO tocar la tabla de transiciones de estado_de_celula.rs: el
+      estado destino Retirada ya lo nombra comandos::estado_objetivo y NO se persiste en esta tarea.
+    - >-
+      DIFERIDO A PROPOSITO, y por tanto NO es un hueco: la idempotencia y la reejecucion tras fallo
+      parcial son la tarea 15; la persistencia de Retirada con motivo sesion_cerrada es la tarea 14,
+      que crea el almacen del plano de control; la variante forzada de terminate para celulas cuyo
+      dispositivo ya fue baneado y no puede cerrar sesion queda como seguimiento escrito en la tarea
+      15, sin flag nuevo; y la fusion de detener_contenedor con detener_contenedor_sin_plazo es
+      tambien de la tarea 15.
+    - >-
+      CADA PRUEBA NUEVA TIENE QUE PODER PONERSE ROJA CON UNA MUTACION A MANO, y la mutacion se hace y
+      se deja por escrito en el informe. Reglas concretas: el orden de peticiones se afirma sobre la
+      POSICION en la secuencia recibida, nunca con aserciones independientes de presencia, que
+      pasarian con el orden invertido; ningun archivo bajo tests/ importa la constante de produccion
+      que la asercion fija (plazo, puerto, cadencia); el nombre del volumen del accesorio no es
+      derivable ni del --id ni del id del contenedor; el puerto del accesorio no es 8082 ni 9099; el
+      motivo del acuse fallido es un literal distintivo que no aparece en produccion; y ninguna espera
+      es un join ciego: se usa recv_timeout finito para que una peticion que falta ponga la prueba
+      roja en vez de colgarla.
+    - >-
+      PROHIBIDO cualquier prueba contra un demonio Docker real, un contenedor real, la red o un
+      sidecar real. TODA la verificacion de la mitad CLI corre sobre el demonio falso de
+      crates/hexcell-admin/tests/comun/mod.rs, que NO se modifica y al que no se le anaden variantes:
+      sus guiones ConCuerpo, SinCuerpo, Troceado y Mudo cubren 200, 201, 204, 304, 404 y el silencio.
+      NO se crea ningun FakeDocker. La mitad del nucleo se prueba con cierres inyectados y, para el
+      cableado, con el binario real sobre el canal simulado.
+    - >-
+      Ningun camino de produccion puede terminar en panic, unwrap, expect, indexado fuera de rango ni
+      std::process::exit: el perfil de release fija panic = "abort". La salida legible va SOLO al
+      sumidero estandar y los diagnosticos SOLO al de diagnostico, a traves de Salida: nada de
+      println!, eprintln!, print! ni write! contra los flujos del proceso en crates/hexcell-admin.
+    - >-
+      DOCUMENTACION SOLO POR APENDICE O REEMPLAZO DE LITERAL EXACTO: `git diff main...HEAD -- docs
+      README.md | grep "^-"` no puede mostrar ninguna linea borrada salvo el literal reemplazado.
+      Entregables exactos: (1) parrafo de cierre al final de la entrada de la tarea 12 del plan, con
+      la forma "**Cerrada el AAAA-MM-DD con HEX-082.**", que aclara que el estado destino es
+      `Retirada` con motivo `sesion_cerrada` y que NO se persiste aqui porque el almacen lo crea la
+      tarea 14; (2) una frase anadida a la nota 2026-09-21 de la tarea 14: "tambien persiste
+      `Retirada` con motivo `sesion_cerrada` tras `cell terminate` (tarea 12)"; (3) un seguimiento
+      escrito en la tarea 15 sobre la variante forzada para dispositivos ya baneados, sin flag nuevo;
+      (4) una vinneta nueva al final de la cadena de ejecucion, RELEYENDO la cadena vigente del disco
+      y recalculandola; (5) una frase anadida a la linea de estado de la seccion de CLI del README
+      diciendo que `cell terminate` es real desde HEX-082 y que rebind, list y status siguen
+      devolviendo el codigo 3. NO nace ningun ADR (D-57 ya decidio la via CLI->nucleo->sidecar) y NO
+      se anade ninguna entrada a la bitacora: esta tarea no descarta nada nuevo. Si durante la
+      implementacion aparece un descarte genuino, se PARA y se escala, no se anade en silencio.
+    - >-
+      Todo el contenido del repositorio va en espanol -identificadores, comentarios, comentarios de
+      documentacion, mensajes al operador y documentacion-, como fija CLAUDE.md; solo los nombres de
+      cable de la CLI (cell, terminate, pause, unpause) y las banderas --id, --confirmar y --simular
+      se quedan como los fijan docs/PRD.md y README.md. El mensaje de commit es un commit convencional
+      en espanol SIN ninguna linea de atribucion de IA de ningun tipo: ni Co-Authored-By, ni Generated
+      with, ni Claude-Session. Las fechas escritas en codigo o documentacion son absolutas
+      (2026-09-22), nunca relativas. Los numeros de ADR y de D, si alguna vez hicieran falta, se leen
+      del disco en el momento del commit, nunca se reservan por adelantado.
+verify:
+  commands:
+    - 'bash -c ''test -z "$(git diff --name-only main...HEAD | grep -E "^(sidecar/|docs/protocolo-ipc-nucleo-sidecar\.md|docs/adr/|docs/bitacora-de-descartes\.md|crates/hexcell-admin/src/docker/|crates/hexcell-admin/src/estado_de_celula\.rs|crates/hexcell-core/|crates/hexcell-storage/)")"'''
+    - 'bash -c ''test -z "$(git diff main...HEAD -- Cargo.toml Cargo.lock crates/hexcell/Cargo.toml crates/hexcell-admin/Cargo.toml crates/hexcell-canal-whatsmeow/Cargo.toml crates/hexcell-admin/src/codigo_de_salida.rs crates/hexcell-admin/src/argumentos.rs crates/hexcell-admin/tests/comun/mod.rs)"'''
+    - 'bash -c ''test -z "$(git diff main...HEAD -- docs README.md | grep "^-" | grep -v "^---")"'''
+    - 'bash -c ''test -z "$(grep -rnE "orden_cierre_de_sesion|acuse_cierre_de_sesion|sidecar\.sock|HEXCELL_SOCKET_IPC" crates/hexcell-admin --include=*.rs)"'''
+    - 'bash -c ''test -z "$(grep -rnE "hexcell_canal_whatsmeow|AdaptadorWhatsmeow" crates/hexcell/src/admin.rs)"'''
+    - 'bash -c ''grep -q "HEXCELL_DIRECCION_ADMIN" deploy/cell.compose.yml'''
+    - 'bash -c ''test -z "$(git log main..HEAD --format=%B | grep -iE "co-authored-by|generated with|claude-session|claude\.ai/code")"'''
+    - cargo fmt --check
+    - cargo clippy --workspace -- -D warnings
+    - cargo test -p hexcell-admin
+    - cargo test -p hexcell --test admin_http
+    - cargo test -p hexcell-canal-whatsmeow --test cierre_de_sesion
+  target_s: 60
+acceptance:
+  bdd_suite: 'cargo fmt --check && cargo clippy --workspace -- -D warnings && cargo test --workspace && cd sidecar && go vet ./... && go test ./... -count=1'
+  human_gate: true
+limits:
+  max_files_changed: 12
+  max_diff_lines: 1900
+  per_class:
+    - glob: crates/hexcell/src/**
+      max_diff_lines: 250
+    - glob: crates/hexcell/tests/**
+      max_diff_lines: 260
+    - glob: crates/hexcell-canal-whatsmeow/**
+      max_diff_lines: 280
+    - glob: crates/hexcell-admin/src/**
+      max_diff_lines: 340
+    - glob: crates/hexcell-admin/tests/**
+      max_diff_lines: 560
+    - glob: deploy/**
+      max_diff_lines: 30
+    - glob: docs/**
+      max_diff_lines: 50
+    - glob: README.md
+      max_diff_lines: 20
+execution:
+  mode: worktree_edit
+  branch: ai/HEX-082
+retry_policy:
+  max_attempts: 2
+  escalate_after: 2

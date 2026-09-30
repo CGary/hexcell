@@ -1,0 +1,26 @@
+{
+  "commands": [
+    {
+      "command": "cargo fmt --check",
+      "duration_s": 0.4,
+      "exit_code": 0,
+      "output_excerpt": "sin diferencias de formato"
+    },
+    {
+      "command": "cargo clippy --workspace -- -D warnings",
+      "duration_s": 30,
+      "exit_code": 0,
+      "output_excerpt": "clippy --workspace --tests (informativo, no es compuerta): worktree 36 errores en 14 archivos, main 7b72405 36 errores en 14 archivos, conjunto por archivo idéntico; archivos tocados por HEX-087: tests/comandos.rs 6 en ambos, sin crecimiento."
+    },
+    {
+      "command": "cargo test -p hexcell-admin",
+      "duration_s": 5,
+      "exit_code": 0,
+      "output_excerpt": "todas las suites en verde"
+    }
+  ],
+  "executed_at": "2026-09-26T19:35:10Z",
+  "overall_result": "passed",
+  "summary": "Rebased on main 7b72405: fmt, CI clippy --workspace and hexcell-admin tests pass.",
+  "task_id": "HEX-087"
+}

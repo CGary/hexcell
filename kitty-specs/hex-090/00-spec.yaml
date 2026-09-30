@@ -1,0 +1,69 @@
+task_id: HEX-090
+summary: Settle the clippy --tests debt of A-6 task 15 and wire cargo clippy --all-targets into CI in the same commit. Chore, no plan task. Risk low.
+goal: >-
+  Make `cargo clippy --workspace --all-targets -- -D warnings` pass on main and make CI run exactly
+  that command. Fact checked 2026-09-29: `cargo clippy --workspace --tests -- -D warnings` fails on main
+  because of clippy::approx_constant (deny by default) at crates/hexcell-core/tests/embeddings.rs:71
+  (`3.14159f32`); that error aborts compilation before the tests of the other crates are linted, so the
+  total lint count is unknown until clippy runs clean-through (N lints in M files, measured at implement
+  time). CI (.github/workflows/ci.yml lines 28-29) only runs `clippy --workspace`. Fix embeddings.rs:71
+  with a value that does not approximate PI (or std::f32::consts::PI if the test wants PI), iterate
+  `cargo clippy --workspace --all-targets -- -D warnings` fixing each lint in place (useless_vec,
+  let_and_return, needless_borrow, unused imports, etc.), change ci.yml lines 28-29 to
+  `cargo clippy --workspace --all-targets -- -D warnings` in the SAME commit, update the Commands line
+  of CLAUDE.md the same way, and append the settlement note to task 15 in
+  docs/plan/fase-a-6-empaquetado-cli.md. Chore that settles the "Deuda registrada" of task 15.
+invariants:
+  - >-
+    Only test code is edited (tests/**, benches, #[cfg(test)] modules); no behavior change, so the `cargo test --workspace` passed/ignored counts are identical before and after.
+  - >-
+    Any #[allow(clippy::...)] is per line or per item with a comment explaining why the fix worsens the test; no #![allow in any touched file, at file or crate header.
+  - >-
+    The CI clippy step and the CLAUDE.md Commands line both read `cargo clippy --workspace --all-targets -- -D warnings`, changed in the same commit as the lint fixes.
+  - In ci.yml only the clippy step lines are touched, because task 19-a (HEX-089, active) appends a job at the end of the file in different hunks.
+  - The number of lints is never asserted in advance; the settlement note carries the figures measured at implement time.
+acceptance:
+  - id: AC-1
+    statement: 'The command cargo clippy --workspace --all-targets -- -D warnings exits 0 on the task branch.'
+    given: >-
+      main where `clippy --workspace --tests` fails on clippy::approx_constant at crates/hexcell-core/tests/embeddings.rs:71
+    when: >-
+      embeddings.rs:71 is fixed and every remaining lint is fixed in place, iterating until clippy runs clean-through
+    then: >-
+      the command exits 0 and the N lints in M files are recorded from the measured run
+  - id: AC-2
+    statement: >-
+      The `cargo test --workspace` passed and ignored counts are identical before and after the change, and both are shown in the validation output_excerpt.
+  - id: AC-3
+    statement: >-
+      No touched file contains `#![allow`, and every `#[allow(clippy::` is per line or per item with an explanatory comment.
+  - id: AC-4
+    statement: >-
+      .github/workflows/ci.yml clippy step lines 28-29 are exactly `cargo clippy --workspace --all-targets -- -D warnings` (name and run), guarded by an exact grep of that line; reverting it to `cargo clippy --workspace -- -D warnings` turns the guard red (mutation).
+    given: >-
+      the modified ci.yml
+    when: >-
+      the step line is reverted by the mutation
+    then: >-
+      the exact-grep guard fails, and it passes again on the unmodified change
+  - id: AC-5
+    statement: >-
+      The Commands line of CLAUDE.md reads `cargo clippy --workspace --all-targets -- -D warnings`.
+  - id: AC-6
+    statement: >-
+      The note of task 15 in docs/plan/fase-a-6-empaquetado-cli.md is appended (not replaced) with «Deuda saldada el <date> con HEX-090: N lints en M archivos; --all-targets cableado en la CI», where the date is absolute and N and M are the measured values.
+  - id: AC-7
+    statement: >-
+      Only test files, .github/workflows/ci.yml, CLAUDE.md and docs/plan/fase-a-6-empaquetado-cli.md are modified; crates/*/src/** outside #[cfg(test)] blocks, Cargo.lock, deploy/**, sidecar/** and any other docs/** file are untouched.
+risk: low
+non_goals:
+  - Do not change production code, behavior or public APIs of any crate.
+  - Do not touch the job that HEX-089 appends at the end of ci.yml, nor any other CI step.
+  - Do not change lint levels globally (no clippy.toml or workspace lint table) nor add file-level or crate-level allow attributes.
+  - Do not modify Cargo.lock, deploy/**, sidecar/** or docs/** other than docs/plan/fase-a-6-empaquetado-cli.md.
+constraints:
+  - All repository content (code, comments, docs, commit messages) is written in Spanish; dates are absolute (2026-09-30); commits carry no AI attribution.
+  - >-
+    The verification command of the contract is `cargo clippy --workspace --all-targets -- -D warnings`, not bare `--workspace`.
+  - The lint count is unknown and must be stated as N lints in M files, measured at implement time.
+  - Fleet-eligible, band S; coordinate with HEX-089 (task 19-a) by editing only the clippy step lines of ci.yml.

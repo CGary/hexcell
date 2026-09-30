@@ -1,0 +1,38 @@
+{
+  "commands": [
+    {
+      "command": "cargo fmt --check",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "sin salida"
+    },
+    {
+      "command": "cargo clippy --workspace -- -D warnings",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "sin advertencias"
+    },
+    {
+      "command": "cargo test --workspace",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "91 suites, 576 pruebas; almacen=13 comandos=20 estado_y_listado=17; 0 failures"
+    },
+    {
+      "command": "cd sidecar \u0026\u0026 go vet ./...",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "sin salida"
+    },
+    {
+      "command": "cd sidecar \u0026\u0026 go test ./... -count=1",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "ok outbox/registro/servidor"
+    }
+  ],
+  "executed_at": "2026-09-22T01:30:00Z",
+  "overall_result": "passed",
+  "summary": "Cinco comandos en 0 sobre ai/HEX-083 (c313add) tras el bucle de arreglo del review.",
+  "task_id": "HEX-083"
+}

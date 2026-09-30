@@ -1,0 +1,50 @@
+{
+  "commands": [
+    {
+      "command": "cargo clippy --workspace --all-targets -- -D warnings",
+      "duration_s": 0.1,
+      "exit_code": 0,
+      "output_excerpt": "Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.04s"
+    },
+    {
+      "command": "cargo fmt --check",
+      "duration_s": 0.3,
+      "exit_code": 0,
+      "output_excerpt": "sin diferencias de formato"
+    },
+    {
+      "command": "bash -s \u003c\u003c'EOS'\nset -uo pipefail\n# Baseline medida en main 9b59ba9: 704 passed, 0 failed, 6 ignored, 93 lineas \"test result\".\nOUT=$(mktemp)\nif ! cargo test --workspace \u003e \"$OUT\" 2\u003e\u00261; then tail -40 \"$OUT\"; echo \"FALLA: cargo test --workspace no sale en 0\"; exit 1; fi\nP=$(grep -E \"^test result\" \"$OUT\" | awk '{p+=$4} END{print p+0}')\nF=$(grep -E \"^test result\" \"$OUT\" | awk '{f+=$6} END{print f+0}')\nI=$(grep -E \"^test result\" \"$OUT\" | awk '{i+=$8} END{print i+0}')\nS=$(grep -cE \"^test result\" \"$OUT\")\necho \"medido: passed=$P failed=$F ignored=$I suites=$S (baseline 704/0/6/93)\"\nrc=0\n[ \"$P\" -eq 704 ] || { echo \"FALLA: passed=$P distinto de la base 704\"; rc=1; }\n[ \"$F\" -eq 0 ] || { echo \"FALLA: failed=$F\"; rc=1; }\n[ \"$I\" -eq 6 ] || { echo \"FALLA: ignored=$I distinto de la base 6\"; rc=1; }\n[ \"$S\" -eq 93 ] || { echo \"FALLA: suites=$S distinto de la base 93\"; rc=1; }\nexit $rc\nEOS",
+      "duration_s": 15.7,
+      "exit_code": 0,
+      "output_excerpt": "medido: passed=704 failed=0 ignored=6 suites=93 (baseline 704/0/6/93)"
+    },
+    {
+      "command": "bash -s \u003c\u003c'EOS'\nset -uo pipefail\nF=.github/workflows/ci.yml\nNEW=\"cargo clippy --workspace --all-targets -- -D warnings\"\nOLD=\"cargo clippy --workspace -- -D warnings\"\nGUARD_FAILS=\"\"\nguard() {\n  GUARD_FAILS=\"\"\n  local t\n  t=$(sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//' \"$1\")\n  printf '%s\\n' \"$t\" | grep -Fxq -- \"- name: $NEW\" || GUARD_FAILS=\"$GUARD_FAILS CHK_NAME\"\n  printf '%s\\n' \"$t\" | grep -Fxq -- \"run: $NEW\" || GUARD_FAILS=\"$GUARD_FAILS CHK_RUN\"\n  if printf '%s\\n' \"$t\" | grep -Fxq -- \"run: $OLD\"; then GUARD_FAILS=\"$GUARD_FAILS CHK_OLDRUN\"; fi\n  [ \"$(printf '%s\\n' \"$t\" | grep -cE '^run: cargo clippy')\" -eq 1 ] || GUARD_FAILS=\"$GUARD_FAILS CHK_COUNT\"\n  [ -z \"$GUARD_FAILS\" ]\n}\nTMP=$(mktemp -d)\n# Mutacion M1: revertir solo la linea run.\nsed -E 's/^( *run: cargo clippy --workspace) --all-targets/\\1/' \"$F\" \u003e \"$TMP/m1.yml\"\nif cmp -s \"$F\" \"$TMP/m1.yml\"; then echo \"FALLA: la mutacion M1 no se aplico (sed no matcheo)\"; exit 1; fi\nif guard \"$TMP/m1.yml\"; then echo \"FALLA: la guarda queda verde con la linea run revertida\"; exit 1; fi\ncase \"$GUARD_FAILS\" in *CHK_RUN*) ;; *) echo \"FALLA: M1 no puso rojo CHK_RUN (dio:$GUARD_FAILS)\"; exit 1 ;; esac\ncase \"$GUARD_FAILS\" in *CHK_NAME*) echo \"FALLA: M1 puso rojo CHK_NAME; la guarda no discrimina\"; exit 1 ;; esac\n# Mutacion M2: revertir solo la linea name.\nsed -E 's/^( *- name: cargo clippy --workspace) --all-targets/\\1/' \"$F\" \u003e \"$TMP/m2.yml\"\nif cmp -s \"$F\" \"$TMP/m2.yml\"; then echo \"FALLA: la mutacion M2 no se aplico (sed no matcheo)\"; exit 1; fi\nif guard \"$TMP/m2.yml\"; then echo \"FALLA: la guarda queda verde con la linea name revertida\"; exit 1; fi\ncase \"$GUARD_FAILS\" in *CHK_NAME*) ;; *) echo \"FALLA: M2 no puso rojo CHK_NAME (dio:$GUARD_FAILS)\"; exit 1 ;; esac\ncase \"$GUARD_FAILS\" in *CHK_RUN*) echo \"FALLA: M2 puso rojo CHK_RUN; la guarda no discrimina\"; exit 1 ;; esac\n# Cambio real.\nif ! guard \"$F\"; then echo \"FALLA CI ($GUARD_FAILS ): ci.yml no ejecuta exactamente: $NEW\"; exit 1; fi\n# Solo el hunk de las lineas 28-29; un diff vacio dejaria la guarda muerta.\nBASE=$(git merge-base main HEAD)\nH=$(git diff -U0 \"$BASE\" -- \"$F\" | grep '^@@' || true)\n[ -n \"$H\" ] || { echo \"FALLA: ci.yml sin cambios respecto a la base; la guarda estaria muerta\"; exit 1; }\nBAD=$(printf '%s\\n' \"$H\" | grep -vE '^@@ -28,2 \\+28,2 @@' || true)\n[ -z \"$BAD\" ] || { echo \"FALLA: ci.yml cambia fuera de las lineas 28-29: $BAD\"; exit 1; }\necho \"OK: ci.yml ejecuta el clippy con --all-targets, mutaciones M1/M2 detectadas, solo lineas 28-29\"\nEOS",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "OK: ci.yml ejecuta el clippy con --all-targets, mutaciones M1/M2 detectadas, solo lineas 28-29"
+    },
+    {
+      "command": "bash -s \u003c\u003c'EOS'\nset -uo pipefail\nC=CLAUDE.md\nNEW=\"cargo clippy --workspace --all-targets -- -D warnings\"\nOLD=\"cargo clippy --workspace -- -D warnings\"\nchk() { # $1 = archivo; devuelve rojo si no hay exactamente una linea nueva o queda la vieja\n  [ \"$(grep -Fxc -- \"$NEW\" \"$1\")\" -eq 1 ] \u0026\u0026 [ \"$(grep -Fxc -- \"$OLD\" \"$1\")\" -eq 0 ]\n}\nTMP=$(mktemp)\nsed -E 's/^(cargo clippy --workspace) --all-targets/\\1/' \"$C\" \u003e \"$TMP\"\nif cmp -s \"$C\" \"$TMP\"; then echo \"FALLA: la mutacion de CLAUDE.md no se aplico\"; exit 1; fi\nif chk \"$TMP\"; then echo \"FALLA: la guarda de CLAUDE.md queda verde con la linea revertida\"; exit 1; fi\nchk \"$C\" || { echo \"FALLA: la linea de Comandos de CLAUDE.md no es exactamente: $NEW\"; exit 1; }\nBASE=$(git merge-base main HEAD)\nD=$(git diff -U0 \"$BASE\" -- \"$C\" | grep -E '^[-+][^-+]' || true)\n[ \"$(printf '%s\\n' \"$D\" | grep -c '^-')\" -eq 1 ] \u0026\u0026 [ \"$(printf '%s\\n' \"$D\" | grep -c '^+')\" -eq 1 ] || { echo \"FALLA: CLAUDE.md debe cambiar exactamente una linea\"; printf '%s\\n' \"$D\"; exit 1; }\necho \"OK: CLAUDE.md cambia una sola linea y coincide\"\nEOS",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "OK: CLAUDE.md cambia una sola linea y coincide"
+    },
+    {
+      "command": "bash -s \u003c\u003c'EOS'\nset -uo pipefail\nBASE=$(git merge-base main HEAD)\n# Alcance: diff contra la base (cubre lo commiteado y lo no commiteado) mas archivos nuevos sin seguir.\nCAMBIADOS=$( { git diff --name-only \"$BASE\"; git ls-files --others --exclude-standard; } | grep -v '^\\.ai/' | sort -u )\n[ -n \"$CAMBIADOS\" ] || { echo \"FALLA: no hay cambios respecto a la base\"; exit 1; }\nFUERA=$(printf '%s\\n' \"$CAMBIADOS\" | grep -vE '^(crates/[^/]+/tests/.+\\.rs|\\.github/workflows/ci\\.yml|CLAUDE\\.md|docs/plan/fase-a-6-empaquetado-cli\\.md)$' || true)\n[ -z \"$FUERA\" ] || { echo \"FALLA: archivos fuera del alcance:\"; printf '%s\\n' \"$FUERA\"; exit 1; }\n# Sin #![allow anadido; cada #[allow(clippy:: anadido lleva comentario en su linea o la anterior.\nANADIDAS=$(git diff -U0 \"$BASE\" | grep -E '^\\+[^+]' || true)\nif printf '%s\\n' \"$ANADIDAS\" | grep -F '#![allow'; then echo \"FALLA: se anadio #![allow\"; exit 1; fi\ngit diff -U1 \"$BASE\" -- crates | awk '\n  /^(\\+\\+\\+|---) /{next}\n  /^[ +]/{cur=substr($0,2)\n    if (substr($0,1,1)==\"+\" \u0026\u0026 cur ~ /#\\[allow\\(clippy::/ \u0026\u0026 cur !~ /\\/\\// \u0026\u0026 prev !~ /^[ \\t]*\\/\\//) {print \"SIN COMENTARIO: \" cur; bad=1}\n    prev=cur; next}\n  END{exit bad}' || { echo \"FALLA: #[allow(clippy:: sin comentario explicativo\"; exit 1; }\n# Sin atribucion de IA en los commits de la rama.\nif git log \"$BASE\"..HEAD --format=%B | grep -iE 'co-authored-by|generated with|claude'; then echo \"FALLA: atribucion de IA en un commit\"; exit 1; fi\necho \"OK: alcance, sin #![allow anadido, allows comentados, sin atribucion de IA\"\nEOS",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "OK: alcance, sin #![allow anadido, allows comentados, sin atribucion de IA"
+    },
+    {
+      "command": "bash -s \u003c\u003c'EOS'\nset -uo pipefail\nP=docs/plan/fase-a-6-empaquetado-cli.md\nBASE=$(git merge-base main HEAD)\nBORRADAS=$(git diff -U0 \"$BASE\" -- \"$P\" | grep -c '^-[^-]' || true)\n[ \"$BORRADAS\" -eq 0 ] || { echo \"FALLA: $BORRADAS lineas borradas o reemplazadas en $P (solo se anexa)\"; exit 1; }\nANADIDAS=$(git diff -U0 \"$BASE\" -- \"$P\" | grep -E '^\\+[^+]' || true)\n[ -n \"$ANADIDAS\" ] || { echo \"FALLA: la nota de deuda saldada no esta anexada al plan\"; exit 1; }\nRE='Deuda saldada el 20[0-9]{2}-[0-9]{2}-[0-9]{2} con HEX-090: [0-9]+ lints en [0-9]+ archivos; --all-targets cableado en la CI'\n[ \"$(printf '%s\\n' \"$ANADIDAS\" | grep -cE \"$RE\")\" -eq 1 ] || { echo \"FALLA: falta exactamente una linea anadida con la forma: $RE\"; exit 1; }\nLN=$(grep -nE \"$RE\" \"$P\" | head -1 | cut -d: -f1)\nL15=$(grep -nE '^15\\. ' \"$P\" | head -1 | cut -d: -f1)\nL18=$(grep -nE '^18\\. ' \"$P\" | head -1 | cut -d: -f1)\n{ [ \"$L15\" -lt \"$LN\" ] \u0026\u0026 [ \"$LN\" -lt \"$L18\" ]; } || { echo \"FALLA: la nota (linea $LN) no esta en la tarea 15 (lineas $L15-$L18)\"; exit 1; }\nN=$(grep -E \"$RE\" \"$P\" | head -1 | sed -E 's/.*HEX-090: ([0-9]+) lints en ([0-9]+) archivos.*/\\1/')\nM=$(grep -E \"$RE\" \"$P\" | head -1 | sed -E 's/.*HEX-090: ([0-9]+) lints en ([0-9]+) archivos.*/\\2/')\nREAL=$(git diff --name-only \"$BASE\" | grep -c '^crates/' || true)\n[ \"$M\" -eq \"$REAL\" ] || { echo \"FALLA: la nota dice $M archivos y el diff toca $REAL bajo crates/\"; exit 1; }\n[ \"$N\" -ge \"$M\" ] || { echo \"FALLA: N=$N lints menor que M=$M archivos\"; exit 1; }\necho \"OK: nota anexada en la tarea 15 (N=$N lints, M=$M archivos), sin lineas borradas\"\nEOS",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "OK: nota anexada en la tarea 15 (N=39 lints, M=19 archivos), sin lineas borradas"
+    }
+  ],
+  "executed_at": "2026-09-30T05:52:45Z",
+  "overall_result": "passed",
+  "summary": "Clippy, fmt, workspace tests, CI guard, CLAUDE.md guard, scope guard, and plan note all pass. 39 lints en 19 archivos.",
+  "task_id": "HEX-090"
+}

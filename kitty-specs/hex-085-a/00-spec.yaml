@@ -1,0 +1,84 @@
+task_id: HEX-085-a
+parent_task: HEX-085
+depends_on: []
+summary: Core admin HTTP routes (D2), generalized session registry (D3), real whatsmeow pairing (D4). Covers AC-1..AC-5 and its share of AC-16.
+goal: >
+  Child of HEX-085 (plan A-6 task 13, "Implementar `cell rebind`", docs/plan/fase-a-6-empaquetado-cli.md
+  lines 304-322, FR-12/FR-13). This child delivers only the core+adapter half: three admin HTTP
+  routes on hexcell (send pause, pairing, session status) under the HTTP contract frozen below
+  (D2, with the blueprint's clarifications that expira_en_ms is an absolute Unix instant and that
+  ya_emparejada is translated at the composition point), the generalization of the composition
+  registry from a single CierreDeSesion type to a four-operation session registry (D3), and real
+  device pairing in the whatsmeow adapter replacing the A-3 stub (D4). The CLI half (the ten-step
+  destructive sequence, --metodo flag, sustituciones write) is HEX-085-b, built independently
+  against this frozen contract and not waited on by this child. The real Docker smoke test,
+  README/plan doc updates, and the merge of both children are done by the parent HEX-085.
+invariants:
+  - sessions.db, knowledge_live.db and adapter_identity.db content is never mutated by cell
+    rebind; verified by checksum in the parent smoke test.
+  - hexcell-core and hexcell-canal-simulado are not modified; sin sesión (SinSesion) answers
+    canal_sin_sesion on all four session operations.
+  - The IPC protocol (docs/protocolo-ipc-nucleo-sidecar.md) is not modified.
+acceptance:
+  - id: AC-1
+    statement: >
+      POST /admin/envio/pausa accepts {"accion":"pausar"|"reanudar"} and returns 200 with
+      resultado aplicado or fallido (plus accion and optional motivo), or 200
+      {"resultado":"canal_sin_sesion"} when there is no session; invalid accion returns 400.
+  - id: AC-2
+    statement: >
+      POST /admin/sesion/emparejamiento accepts {"metodo":"qr"|"codigo_de_vinculacion"} and
+      returns 200 {"resultado":"codigo","metodo":...,"valor":...,"expira_en_ms":N} on success,
+      200 {"resultado":"fallido","motivo":"sin_conexion"|"ya_emparejada"|"<otro>"} on failure,
+      or 200 {"resultado":"canal_sin_sesion"} when there is no session; invalid metodo returns
+      400. The pairing-code wait deadline is 30 s. expira_en_ms is an absolute Unix-epoch
+      instant, passed through unchanged by the route.
+  - id: AC-3
+    statement: >
+      GET /admin/sesion returns 200 {"estado":"activa"|"reconectando"|"desvinculada"|"pausada"}
+      sourced from estado_sesion(); the simulated channel answers
+      {"estado":"canal_sin_sesion"}.
+  - id: AC-4
+    statement: >
+      The composition point generalizes the current CierreDeSesion-only registry into a single
+      session registry exposing four operations (cerrar, pausar_envio, emparejar, estado) with
+      SinSesion/ConSesion variants, without modifying hexcell-core or hexcell-canal-simulado;
+      with SinSesion, all four routes answer canal_sin_sesion.
+  - id: AC-5
+    statement: >
+      hexcell-canal-whatsmeow implements a real iniciar_emparejamiento (removing the A-3 TODO),
+      adding MetodoDeEmparejamiento { Qr, CodigoDeVinculacion } and a public
+      iniciar_emparejamiento_con(metodo, plazo); the parameterless trait method delegates to
+      Qr; it returns on codigo_emparejamiento while acuse_emparejamiento and later
+      estado_sesion updates the state receiver without blocking the caller. Covered by adapter
+      tests against the crate's IPC test double for the happy, expired, and no-connection
+      paths.
+  - id: AC-16
+    statement: >
+      Minimum test coverage exists per decision D8: each session route (POST
+      /admin/envio/pausa, POST /admin/sesion/emparejamiento, GET /admin/sesion) is tested with
+      SinSesion and with ConSesion (fake registered close), plus 400 for invalid
+      metodo/accion; the whatsmeow adapter's pairing is tested for the happy, expired, and
+      no-connection paths against the crate's IPC test double.
+risk: medium
+non_goals:
+  - No new ADR is written; D6 is recorded as a plan note, not an ADR, and is written by the
+    parent.
+  - No new decarte (bitácora) entry unless a studied alternative is explicitly rejected during
+    implementation.
+  - The operations runbook update belongs to task 21, not this task.
+  - Task 18 (.github/workflows/ci.yml, deploy/, Dockerfiles) runs in parallel and is out of
+    scope here.
+  - The CLI (crates/hexcell-admin), its ten-step rebind sequence, the --metodo flag wiring,
+    and the sustituciones write are HEX-085-b's scope, not this child's.
+  - The real-Docker smoke test with checksums (AC-17), the README and plan doc updates
+    (AC-18/AC-19), and merging both children are the parent HEX-085's job.
+constraints:
+  - Difficulty tier is logic-on-existing-skeleton; no new runtime dependency without naming it
+    in the blueprint.
+  - Every blueprint test_scenarios entry must be an object with statement and covers:["AC-N"],
+    never a plain string.
+  - Every new guard/assertion is mutated by hand once and confirmed red before being trusted.
+  - "Frozen HTTP contract (D2), unauthenticated like the rest of the admin listener: this
+    child's own responsibility is to implement AC-1..AC-3 exactly as stated; HEX-085-b depends
+    on this contract and does not wait for this child to merge before building against it."

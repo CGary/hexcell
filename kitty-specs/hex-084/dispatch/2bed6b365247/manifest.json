@@ -1,0 +1,73 @@
+{
+  "task_id": "HEX-084",
+  "bundle_hash": "2bed6b365247b34d8ec997643532d9d8483c89cba62395dd5459a621d5664571",
+  "files": [
+    ".ai/tasks/active/HEX-084-new-spec/00-spec.yaml",
+    ".ai/tasks/active/HEX-084-new-spec/01-blueprint.yaml",
+    "Cargo.toml",
+    "README.md",
+    "crates/hexcell-admin/Cargo.toml",
+    "crates/hexcell-admin/src/argumentos.rs",
+    "crates/hexcell-admin/src/codigo_de_salida.rs",
+    "crates/hexcell-admin/src/comandos.rs",
+    "crates/hexcell-admin/src/estado_de_celula.rs",
+    "crates/hexcell-admin/src/lib.rs",
+    "crates/hexcell-admin/src/main.rs",
+    "crates/hexcell-admin/src/salida.rs",
+    "crates/hexcell-admin/tests/argumentos.rs",
+    "crates/hexcell-admin/tests/comandos.rs",
+    "crates/hexcell-admin/tests/comun/mod.rs",
+    "crates/hexcell-core/src/identidad.rs",
+    "crates/hexcell-core/src/presupuesto.rs",
+    "crates/hexcell-storage/migraciones/sesiones/0004-reservas-sin-conversacion.sql"
+  ],
+  "protocol_version": "fleet-bundle-protocol/v2",
+  "created_at": "2026-09-22T04:30:55Z",
+  "dropped": [
+    {
+      "component": "code_slice",
+      "path": "docs/plan/fase-a-6-empaquetado-cli.md",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "docs/bitacora-de-descartes.md",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "docs/STATUS.md",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "crates/hexcell-storage/tests/presupuesto.rs",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "crates/hexcell-storage/src/tiempo.rs",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "crates/hexcell-storage/src/respaldo.rs",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "crates/hexcell-storage/src/presupuesto.rs",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "crates/hexcell-storage/src/pools.rs",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "crates/hexcell-storage/src/lib.rs",
+      "reason": "bundle exceeded max_bytes budget"
+    }
+  ]
+}

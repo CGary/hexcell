@@ -1,0 +1,24 @@
+{
+  "task_id": "HEX-088",
+  "summary": "Re-review after fix commit 1d7f61c: all five functional defects and the minors are corrected against the real code; no regression; contract and validation green.",
+  "verdict": "approve",
+  "contract_compliance": true,
+  "forbidden_files_touched": [],
+  "unrequested_refactor": false,
+  "missing_tests": [],
+  "functional_risk": "low",
+  "notes": [
+    "contract-check ok=true (3 files, +412/-0; runbook 400/400 per-class ceiling, total 412/430); not_checked: forbid.behaviors (checked by hand).",
+    "acceptance-coverage status=pass, 0 gaps. Fix commit 1d7f61c touches only docs/runbook-operacion.md, Spanish, no AI attribution; README/plan appends unchanged and still deletion-free.",
+    "05-validation.json on disk: overall_result=passed, 4/4 exit 0 (excerpt still reports 23 invocations from the first run; orchestrator reports the re-run on 1d7f61c at 24 invocations, none exit 2 — the artifact should be refreshed by q-verify before accept, not a blocker).",
+    "Finding 1 (terminate verification, DISC-04) FIXED: lines 145-146 now state DISC-04 + exit 1 as the expected post-terminate output, matching comandos.rs:720-723 (no exemption for retirada). Nit: the other four codes are no longer listed as must-not-appear; they are impossible with fila=retirada and both containers absent, so not blocking.",
+    "Finding 2 (48m/32m literal) FIXED: no memory figure remains anywhere in the runbook (grep for 48m/32m and 7+ digits is empty); Escalar keeps the deferral to plan task 6 / docs/STATUS.md.",
+    "Finding 3 (limit origin) FIXED: Registrar now says deploy/cell.compose.yml declares mem_limit as ${HEXCELL_NUCLEO_LIMITE_MEMORIA} (line 106) / ${HEXCELL_SIDECAR_LIMITE_MEMORIA} (line 174) — both line numbers verified — and points to the cell env file (referent deploy/celula.env.ejemplo) or docker inspect --format '{{.HostConfig.Memory}}' for the effective value.",
+    "Finding 4 (terminate on paused cell) FIXED: precondition paragraph and situation-table note added; message literal matches ciclo_de_vida.rs:176, the check happens at retirar() step 1 (:531-533) before any mutation; Suspendida -> Retirada is legal in estado_de_celula.rs:87-90 so the store pre-validation does not mask it — the runbook's 'sin tocar nada' and 'unpause primero' are accurate.",
+    "Finding 5 (Reejecucion over-claim) FIXED: stub now restricts resume to cell rebind (Reemparejando, step 7 in the runbook's own numbering) and explicitly says terminate has no resume, deferred to plan task 15; stub remains ~3 lines; terminate exit-1 row no longer promises re-execution.",
+    "Minors FIXED: HEXCELL_IMAGEN_SONDA now lists the readiness probe use by unpause/status and the docker pull precondition (ImagenDeSondaNoEncontrada at ciclo_de_vida.rs:337); unpause exit-1 row lists missing image and probe timeout; OOM detect says exited not ausente; cell list exit 2 corrected (argumentos.rs:62-64); typos at former lines 15/25/210 and duplicate bullet removed.",
+    "Regression check: no new command literals beyond the existing grammar (24 invocations pass the exactness guard); no new figures, counts, prices or identifiers; ban framing, Fase A/B wording and no-folklore rules unchanged; rebind/ban-runbook deferral untouched.",
+    "External advisory pre-read skipped: docs-only diff read in full by the reviewer; verdict is Claude's."
+  ],
+  "fix_tasks": []
+}

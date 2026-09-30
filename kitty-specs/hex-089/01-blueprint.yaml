@@ -1,0 +1,119 @@
+task_id: HEX-089
+summary: "A-6 task 19 part (a): runbook rollout section, bash-only static guard with mutation self-test, CI job, plan closing note."
+affected_files:
+  - docs/runbook-canal-whatsmeow.md
+  - deploy/verificar_despliegue_escalonado.sh
+  - .github/workflows/ci.yml
+  - docs/plan/fase-a-6-empaquetado-cli.md
+symbols:
+  - "verificar_flujos_de_trabajo <dir_workflows> (Validator, check id CI-COMPOSE: in every job except the exact job key imagenes, a non-comment logical line with token docker followed by token compose, or the single token docker-compose, must not carry a later token exactly equal to up, pull or restart)"
+  - "verificar_scripts_invocados <dir_workflows> (Validator, check id CI-SCRIPT: a deploy/*.sh script named by a run line of a job other than imagenes is red when its own non-comment logical lines trip the CI-COMPOSE token rule, or when its basename stem is exactly deploy, desplegar, update or actualizar)"
+  - "verificar_argumentos <ruta_argumentos_rs> (Validator, check ids CLI-SUBCOMANDO and CLI-USO: quoted literals on non-comment lines that carry => or == must not equal update, deploy, actualizar or desplegar; first token of each TEXTO_DE_USO line and the token after 'hexcell-admin <grupo>' must not equal them)"
+  - "tokenizar_linea_logica (shared helper: joins lines ending in a backslash, drops full-line comments, splits on whitespace, quotes, semicolons, ampersands and pipes, lowercases; equality is always case/exact string equality, never contains)"
+  - "mutar_y_verificar <etiqueta> <id_esperado> <ids_prohibidos> (Application service of --autoprueba: copies pristine inputs to a mktemp dir, applies one mutation, proves the copy changed with cmp, runs the checks on the copy, demands the expected FALLA[<id>] line and the absence of the other ids)"
+  - "modo --autoprueba (clean copy stays green; four independent mutations; positive exemption case: compose up injected inside job imagenes stays green)"
+  - "ci.yml job guardas-despliegue (two steps: guard, --autoprueba; checkout only, no toolchain)"
+  - "runbook-canal-whatsmeow.md section 'Despliegue escalonado en cartera' (bullet at line 30 replaced by exact literal, new section before Referencias)"
+dependencies:
+  - deploy/verificar_limites.sh
+  - deploy/verificar_senales.sh
+  - crates/hexcell-admin/src/argumentos.rs
+  - docs/plan/fase-a-6-empaquetado-cli.md
+  - docs/runbook-operacion.md
+  - docs/adr/adr-0015-politica-de-convivencia-con-el-baneo.md
+  - docs/STATUS.md
+test_scenarios:
+  - statement: "Base run: bash deploy/verificar_despliegue_escalonado.sh with no arguments exits 0 on the unmodified tree, printing one OK line per check id (CI-COMPOSE, CI-SCRIPT, CLI-SUBCOMANDO, CLI-USO). Executed and seen green BEFORE the self-test is written; the run includes the guard itself as a script referenced by job guardas-despliegue."
+    covers:
+      - AC-4
+  - statement: "Real inputs are read-only: the guard reads .github/workflows/*.yml, the deploy/*.sh scripts named by run lines, and crates/hexcell-admin/src/argumentos.rs (TEXTO_DE_USO at lines 416-438, dispatch arms at 467-480 as of bf1e088); it writes nothing outside a mktemp dir and opens no network connection."
+    covers:
+      - AC-4
+      - AC-5
+  - statement: "CLI check, clean side: the pristine argumentos.rs copy yields no CLI-SUBCOMANDO and no CLI-USO line (the real subcommands pause, unpause, terminate, rebind, list, status and groups config, reporte, cell are not flagged)."
+    covers:
+      - AC-5
+  - statement: "Mutation M1 (CI-COMPOSE): a copy of ci.yml with a step running 'docker compose -f deploy/cell.compose.yml up -d' appended to job guardas-limites. cmp proves the copy differs from the original; the guard exits nonzero and prints FALLA[CI-COMPOSE]; the output contains none of the other three ids."
+    covers:
+      - AC-6
+      - AC-7
+  - statement: "Mutation M2 (CLI-SUBCOMANDO): a copy of argumentos.rs with a match arm '\"deploy\" => Subcomando::Estado,' inserted next to the status arm. cmp proves the change; the guard prints FALLA[CLI-SUBCOMANDO] and no other id."
+    covers:
+      - AC-5
+      - AC-6
+      - AC-7
+  - statement: "Mutation M3 (CLI-USO): a copy of argumentos.rs with a line whose first token is 'actualizar' added inside the TEXTO_DE_USO constant. cmp proves the change; the guard prints FALLA[CLI-USO] and no other id (the match arms are untouched, so CLI-SUBCOMANDO must stay silent)."
+    covers:
+      - AC-5
+      - AC-7
+  - statement: "Mutation M4 (CI-SCRIPT): a copy of the workflows dir plus a scratch deploy/ script containing a docker compose up line, referenced by a run line of a job other than imagenes. cmp proves the change; the guard prints FALLA[CI-SCRIPT]."
+    covers:
+      - AC-4
+      - AC-7
+  - statement: "Non-trigger cases keep the discriminant non-constant: (a) the unmodified copies stay green with exit 0 inside --autoprueba; (b) 'docker compose up' injected into job imagenes only stays green; (c) 'docker compose config' and 'docker compose -f x pull' shapes: config stays green, pull turns red; (d) a comment line and a step name: containing the words are ignored."
+    covers:
+      - AC-4
+      - AC-6
+  - statement: "Self-test integrity: --autoprueba exits 0 only if every mutation changed its copy (cmp), turned the guard red with exactly the expected FALLA[id], and left the other ids silent; a mutation whose sed pattern no longer matches, or a guard that stays green, or a red without the expected id, makes --autoprueba exit 1 with a FALLA line naming the case. Proven by hand-mutating the guard (disable one check) and the mutation patterns, and seeing --autoprueba go red, then reverting."
+    covers:
+      - AC-6
+      - AC-7
+  - statement: "ci.yml job guardas-despliegue: runs on ubuntu-latest, steps are actions/checkout@v4, 'bash deploy/verificar_despliegue_escalonado.sh' and 'bash deploy/verificar_despliegue_escalonado.sh --autoprueba'; no toolchain step, no docker, no python, no yq; comments cite docs/plan/fase-a-6-empaquetado-cli.md lines 676-679. The guard itself passes on the modified ci.yml (job guardas-despliegue contains no compose verb)."
+    covers:
+      - AC-4
+      - AC-8
+  - statement: "Runbook: 'diferido a etapa A-6' no longer occurs in docs/runbook-canal-whatsmeow.md; the new section contains the literal 'nunca actualizar todas las células el mismo día', the 72 h sentinel run, batch rollout over the portfolio, the sentinel as testing ground for unproven measures (Meta Verified named as an example), no invented client/cell/portfolio/price figures, and the sentinel registration marked pending on the own-number decision in docs/STATUS.md."
+    covers:
+      - AC-1
+      - AC-3
+  - statement: "Runbook procedure content: stop conditions for the next batch (bans, anomalous disconnections, Client outdated (405)); per-batch log fields date, cells, version, result; batch size stated as a parameter whose default (one cell per batch) is justified by existing docs; only cell pause, cell unpause and cell status named as commands, with an explicit statement that hexcell-admin has no update or deploy command."
+    covers:
+      - AC-2
+      - AC-3
+  - statement: "Plan note: a 'Nota de cierre parcial' paragraph is appended after the task 19 item (after line 484 as of bf1e088) stating the procedure and guard are delivered and part b (sentinel registration and the real 72 h run) stays pending until the STATUS.md entry at line 592 becomes Definido. Existing plan lines are byte-identical (git diff shows only added lines in that hunk)."
+    covers:
+      - AC-9
+  - statement: "Scope: git status shows no change under crates/, sidecar/, deploy/cell.compose.yml or docs/STATUS.md; no sentinel number and no new business figure appears in any added line."
+    covers:
+      - AC-1
+      - AC-3
+      - AC-9
+strategy:
+  - step: 1
+    action: "Discovery already done at bf1e088: the only workflow is .github/workflows/ci.yml; no step outside job imagenes contains docker compose up|pull|restart or a deploy script (only 'docker compose config' style scripts are run, via bash deploy/verificar_*.sh); the CI-run scripts (senales, aislamiento_estatica, ping_de_vigilancia, limites, renderizado_configuracion) have zero non-comment lines with docker compose plus up|pull|restart. Implementer re-confirms with the guard itself on the base before writing anything else."
+    files:
+      - .github/workflows/ci.yml
+  - step: 2
+    action: "Validator: write deploy/verificar_despliegue_escalonado.sh in bash+grep+awk+sed+cmp+mktemp only, mirroring verificar_limites.sh (Spanish header with POR QUE and USO and DEPENDENCIAS blocks, set -u, --autoprueba first-argument mode, trap-cleaned mktemp dir, per-case PASA/FALLA lines, final resumen, exit 0 only when all cases pass). Normal mode runs the four checks over the real repo inputs, each failure printed as 'FALLA[<ID>]: <motivo>' with distinct ids CI-COMPOSE, CI-SCRIPT, CLI-SUBCOMANDO, CLI-USO, and 'OK[<ID>]' lines on success. Build the mutation payload strings from separate variables so the script has no literal 'docker compose ... up' line and needs no self-exemption. The exemption is exactly the job key imagenes (string equality on the job key), never a name pattern."
+    files:
+      - deploy/verificar_despliegue_escalonado.sh
+  - step: 3
+    action: "Run the guard on the base (expect exit 0, four OK lines) BEFORE writing the self-test; record the output in the implementation log. Then add --autoprueba: mutate COPIES only (ci.yml copy under a temp .github/workflows, argumentos.rs copy, a scratch deploy script), cmp each copy against its original, run the checks on the copy, and demand FALLA[expected-id] and no other id; add the clean-copy-stays-green and imagenes-exempt positive cases. Hand-mutate the guard (comment out one check; break one sed pattern) and see --autoprueba go red for that case, then revert."
+    files:
+      - deploy/verificar_despliegue_escalonado.sh
+  - step: 4
+    action: "CI wiring (mirror ci.yml lines 132-148 = job guardas-deploy): add job guardas-despliegue after guardas-limites and before the imagenes comment block, steps checkout@v4 + guard + --autoprueba, comments in Spanish citing docs/plan/fase-a-6-empaquetado-cli.md lines 676-679 and saying why no toolchain step exists (the guard is bash/grep/awk/sed/cmp only, all present on ubuntu-latest). Do not add rust-toolchain, docker, python or yq steps."
+    files:
+      - .github/workflows/ci.yml
+  - step: 5
+    action: "Docs: (i) replace by exact literal the whole bullet at runbook line 30 ('Despliegue escalonado en cartera (diferido a etapa A-6): ... pertenece a la etapa A-6.') with a short bullet that points to the new section; (ii) add a new section 'Despliegue escalonado en cartera' between section 6 and Referencias (numbered 7, or unnumbered if the numbering would clash) holding: 72 h sentinel run, batch rollout, literal prohibition, sentinel as testing ground for unproven measures, stop conditions, per-batch log table (date, cells, version, result), batch-size parameter (default one cell per batch, justified from adr-0015 / plan task 19 as the smallest step that is not the whole portfolio; the portfolio ceiling is a pending business decision so no figure is invented), command list limited to cell pause/unpause/status with the explicit no-update/no-deploy statement, sentinel registration pending on the own-number decision in STATUS.md, and the guard and its CI job as the mechanical backstop; (iii) leave the Aviso at lines 63-65 untouched (still true) and optionally append one blockquote line after it pointing to the new section; (iv) add the guard and plan task 19 to the Referencias list by appending bullets."
+    files:
+      - docs/runbook-canal-whatsmeow.md
+  - step: 6
+    action: "Plan: APPEND-only. After the task 19 item (ends at line 484 as of bf1e088) add an indented 'Nota de cierre parcial' paragraph in the style of the task 23 note (lines 601-612): procedure and guard delivered, absolute date, part b (sentinel registration and real 72 h run) pending until the STATUS.md entry 'Número propio de WhatsApp para el centinela' (line 592) becomes Definido. Do not edit any existing line; do not touch the criterion at lines 676-679 or the risks table."
+    files:
+      - docs/plan/fase-a-6-empaquetado-cli.md
+risks:
+  - "Spec line reference drift: the canary acceptance criterion lives at docs/plan/fase-a-6-empaquetado-cli.md:676-679 (verified at bf1e088; 'Una actualizacion de whatsmeow no llega...'), not :656-659. Task 19 body is lines 477-484; STATUS.md line 592 is the 'Numero propio de WhatsApp para el centinela' entry (verified)."
+  - "Real workflow file check at bf1e088: exactly one workflow (.github/workflows/ci.yml). Docker appears only in job imagenes (docker/setup-buildx-action, docker/build-push-action with push:false, load:true, and 'bash deploy/verificar_imagenes.sh'). No step anywhere runs docker compose up, pull or restart, so the guard is green on main. Other jobs only run 'bash deploy/verificar_*.sh' static guards; those five scripts contain no non-comment docker compose + up|pull|restart line (checked with a joined-continuation awk scan). Base would NOT be red; no human decision needed on this point."
+  - "Exemption precision: the spec says every job other than imagenes, so the exemption must be the exact job key imagenes, and CI-SCRIPT must NOT flag deploy/verificar_imagenes.sh (it runs only in imagenes). Non-CI scripts deploy/verificar_aislamiento.sh, verificar_apagado_ordenado.sh and medir_memoria_y_imagenes.sh do contain docker compose up but are not referenced by any workflow; the transitive CI-SCRIPT check would turn red the day a workflow job other than imagenes starts calling them, which is the intent."
+  - "Blind spots (accepted, documented in the script header): the guard is static and line-based, not a YAML parser. It cannot see a compose verb reached through a variable, a third-party action (uses:) that deploys, or a script invoked indirectly two levels deep. yq and PyYAML are deliberately not used: no toolchain step is needed in the job, which avoids the 'guard in a job without its toolchain can never pass' failure (memory note)."
+  - "CI toolchain: job guardas-despliegue needs only bash, grep, awk, sed, cmp, mktemp, cp (all preinstalled on ubuntu-latest). Contrast with job guardas-limites, which needs docker compose and PyYAML for verificar_limites.sh and cargo for the renderizado guard. The new job must not copy those extra steps."
+  - "Similar job names: existing job guardas-deploy (HEX-075, signals) vs the new guardas-despliegue mandated by AC-8. Keep the human-readable name: line distinct (mention HEX-089 and 'despliegue escalonado') to avoid confusion."
+  - "CLI check locations: TEXTO_DE_USO is a const in crates/hexcell-admin/src/argumentos.rs at lines 416-438 (comandos.rs only imports it), so both AC-5 checks read one file. Dispatch is: grupo checks 'config' and 'reporte' via '==' comparisons (lines 453-461) and a match on argumentos[1] at lines 467-480 with arms pause, unpause, terminate, rebind, list, status. The '==' form is why CLI-SUBCOMANDO must scan both => and == lines, otherwise 'if grupo == \"update\"' evades it. Verified no occurrence of update, deploy, actualizar or desplegar as a quoted literal or usage token in crates/hexcell-admin/src (only SQL 'DO UPDATE' and Spanish error context strings in almacen_plano_de_control.rs, out of the guard's scope), so the base is green."
+  - "Forbidden crates/** is read-only for this task: the guard reads argumentos.rs but the contract puts crates/** in forbid.files. The implementer must not open the file for edit; verify.commands include a status/diff check proving zero changes there."
+  - "Documentation tension to surface, not resolve: plan task 19 (line 483) and the spec make the sentinel the testing ground for unproven measures 'el experimento con Meta Verified, entre ellas', while adr-0015 (line 187-190) and docs/plan/fase-a-7-pilotos.md (lines 129, 325) place the Meta Verified experiment on piloto-01. The runbook must state the task-19 wording as the sentinel's role and must not claim Meta Verified is proven; reconciling which cell hosts the experiment is a human/STATUS matter and is out of scope (STATUS.md is forbidden)."
+  - "Batch-size default: no existing doc fixes a number of cells per batch, the portfolio ceiling is a pending business decision (CLAUDE.md), and the ADR/plan only say 'por lotes'. The default of one cell per batch is a procedural choice justified as the smallest step that is not the whole portfolio and by adr-0015's stated risk (a defective candidate takes all clients at once); it is written as a parameter with that default and no cohort-size or calendar figure is invented. If a reviewer reads this as an invented figure the fallback is to state the default as 'un lote es un subconjunto estricto de la cartera, sin llegar a toda ella' plus the parameter, which still satisfies AC-2."
+  - "Runbook hygiene: the runbook section 3 step 4 (redesplegar el sidecar en las celulas) and the Aviso at lines 63-65 stay unchanged; other 'etapa A-6' mentions (line 84 lab packaging, line 108 reference) are not the deferred-staggering text and are not touched. Edits to the runbook are exact-literal replacement of line 30 plus appended blocks only."
+  - "Guard lessons encoded (memory): mutate copies and demand red on each mutation independently; identify WHICH check turned red by matching the FALLA[id] text (not the exit code); prove each mutation changed its copy with cmp before running; exact token equality, never grep contains joined with ||; assert the non-trigger (clean copy and imagenes-exempt case stay green) so the discriminant is not constant; no network; base run first; the sed mutation that never applies is caught by cmp."
+  - "Complexity: two production-counted files (deploy/verificar_despliegue_escalonado.sh, .github/workflows/ci.yml); .md files are noncounted. public_api, schema_change and migration are false, so no L signal. Diff estimate: script 300-380 lines including the Spanish header, ci.yml about 25, runbook 90-130, plan note about 20."

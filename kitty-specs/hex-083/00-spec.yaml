@@ -1,0 +1,159 @@
+task_id: HEX-083
+summary: Create the control-plane SQLite store in hexcell-admin and implement cell list and cell status (task 14 of stage A-6).
+goal: >
+  Add a persisted control-plane store (crates/hexcell-admin/src/almacen_plano_de_control.rs, SQLite
+  via the workspace-pinned rusqlite 0.39, embedded migrations with include_str! + PRAGMA
+  user_version following the same pattern as crates/hexcell-storage) so that cell pause and cell
+  unpause record real state transitions after their Docker operation succeeds, and implement
+  cell status --id <id> and cell list, which read that store together with docker inspect and
+  /health/ready to report cell state, discrepancies, and substitution history. This closes the gap
+  left by HEX-080 (task 11), which stopped short of persisting Suspendida/EnEjecucion because no
+  store existed yet.
+invariants:
+  - The control-plane database path comes only from the env var HEXCELL_ADMIN_ALMACEN (default
+    /var/lib/hexcell-admin/plano_de_control.db), read in main.rs and injected into
+    ejecutar_con_efectos; no new CLI flag is introduced for it.
+  - If the configured database directory does not exist, the command returns Fallo with a clear
+    diagnostic; hexcell-admin never creates that directory itself.
+  - The store never persists a transport identifier or a phone number; only the cell id and its
+    control-plane state/metadata are stored.
+  - Every transition is validated against the currently stored state via
+    EstadoDeCelula::transiciones_permitidas (crates/hexcell-admin/src/estado_de_celula.rs) before any
+    Docker request is issued for pause/unpause/terminate; an illegal transition returns Fallo with a
+    diagnostic and issues zero Docker requests.
+  - A transition row is written to the store only AFTER the corresponding Docker operation has
+    already succeeded, never before and never on failure.
+  - "cell pause persists state Suspendida; cell unpause persists state EnEjecucion; cell terminate
+    persists state Retirada with motivo 'sesion_cerrada', but only if stage A-6 task 12 (cell
+    terminate) is already merged into main by the time this task implements it -- otherwise the
+    terminate transition hook is left wired but inert, and that gap is reported rather than
+    silently implemented against unmerged code."
+  - If a cell has no existing row in celulas, pause/unpause proceed normally and on completion
+    INSERT a new row with the resulting state and motivo 'alta_implicita'.
+  - cell status and cell list never write to the store under any circumstance.
+  - "The schema is exactly three tables -- celulas(id TEXT PRIMARY KEY, estado TEXT NOT NULL, motivo
+    TEXT NOT NULL DEFAULT '', actualizado_ms INTEGER NOT NULL); transiciones(id INTEGER PRIMARY KEY,
+    id_celula TEXT NOT NULL, de TEXT NOT NULL, a TEXT NOT NULL, motivo TEXT NOT NULL,
+    registrado_ms INTEGER NOT NULL); sustituciones(id INTEGER PRIMARY KEY, id_celula TEXT NOT NULL,
+    motivo TEXT NOT NULL, registrado_ms INTEGER NOT NULL). This task creates sustituciones but only
+    reads it; stage A-6 task 13 (cell rebind) is the one that writes to it."
+  - "--simular belongs only to the argument parser and short-circuits before any Docker or store
+    access; no FakeDocker abstraction is introduced, the only Docker double is the temporary Unix
+    socket test double in crates/hexcell-admin/tests/comun/mod.rs."
+  - The five exit codes remain exactly Exito=0, Fallo=1, UsoIncorrecto=2, NoImplementadoTodavia=3;
+    none are added or removed.
+  - The transition table in estado_de_celula.rs, sidecar/, docs/protocolo-ipc-nucleo-sidecar.md, and
+    crates/hexcell-admin/src/docker/cliente.rs (stop-merging is reserved for task 15) are not
+    modified by this task.
+  - All repository content this task writes (Rust identifiers, comments, docs, commit messages) is
+    in Spanish, with no AI attribution in commit messages, per CLAUDE.md.
+  - Documentation edits are append-only or exact-literal replacement; no existing documentation
+    lines are deleted except a literal being replaced.
+acceptance:
+  - id: AC-1
+    statement: Running the embedded migration against an empty database file creates the three
+      tables (celulas, transiciones, sustituciones) with PRAGMA user_version set, following the same
+      include_str! migration pattern as crates/hexcell-storage.
+    given: a fresh, empty SQLite file at a tempdir path
+    when: the control-plane store is opened for the first time
+    then: the three tables exist with the exact declared columns and the schema version is recorded
+  - id: AC-2
+    statement: cell pause persists Suspendida and cell unpause persists EnEjecucion in the celulas
+      table, written only after the Docker operation succeeds.
+    given: a cell with an existing celulas row in state EnEjecucion and a working Docker double
+    when: cell pause is run to completion and then cell unpause is run to completion
+    then: after pause the row reads estado=Suspendida, and after unpause it reads estado=EnEjecucion,
+      each row's actualizado_ms reflecting the transition time
+  - id: AC-3
+    statement: An illegal transition (per transiciones_permitidas) is rejected before any Docker
+      request is made.
+    given: a cell whose stored estado has no legal transition to the target command's state
+    when: the corresponding cell subcommand is invoked
+    then: the command returns Fallo with a diagnostic naming the illegal transition, and the Docker
+      test double receives zero requests
+  - id: AC-4
+    statement: A cell with no existing row is created implicitly on the first successful
+      pause/unpause with motivo alta_implicita.
+    given: a cell id absent from the celulas table
+    when: cell pause or cell unpause completes successfully against it
+    then: a new row is inserted with the resulting state and motivo=alta_implicita
+  - id: AC-5
+    statement: cell status --id <id> crosses the store, docker inspect of both containers, and
+      /health/ready, and reports each of the five discrepancy codes (DISC-01..DISC-05) under its
+      triggering scenario and does not report it under a non-triggering scenario.
+    given: "store/Docker/health-probe fixtures for each scenario: DISC-01 (store EnEjecucion, a
+      container not running), DISC-02 (store Suspendida, a container running), DISC-03 (containers
+      running, /health/ready not ready), DISC-04 (store row, no containers in Docker), DISC-05
+      (containers in Docker, no store row) -- plus one non-triggering fixture per code"
+    when: cell status --id <id> is run against each fixture
+    then: the triggering fixture prints the matching DISC-0N code and the command exits Fallo; the
+      non-triggering fixture prints no discrepancy for that code
+  - id: AC-6
+    statement: cell status prints stored state, docker state of núcleo and sidecar, health
+      (listo|no_listo|inalcanzable), and the substitutions history (possibly empty), and exits Exito
+      only when there are no discrepancies.
+    given: a cell with matching store/Docker/health state and no rows or some rows in sustituciones
+    when: cell status --id <id> is run
+    then: output includes all five fields (stored state, núcleo docker state, sidecar docker state,
+      health, substitutions history) and the command exits Exito
+  - id: AC-7
+    statement: cell status does not report ack ratio or silence window (out of scope, reserved for
+      task 20).
+    given: any cell status invocation
+    when: the output is inspected
+    then: no ack-ratio or silence-window field appears anywhere in the output
+  - id: AC-8
+    statement: cell list prints one line per known cell, the union of store rows and Docker
+      container pairs, with id, stored state or sin_fila, and docker state of núcleo and sidecar,
+      without probing health, and always exits Exito once the list is produced.
+    given: one cell known only via a celulas row and a second cell known only via Docker containers
+    when: cell list is run
+    then: both cells appear, the store-only cell shows its stored state with no health probe issued,
+      the Docker-only cell shows sin_fila, and the command exits Exito
+  - id: AC-9
+    statement: A new ADR documents the control-plane store schema, its path, and the rule that
+      status/list never write, numbered from what is on disk at commit time, with a corresponding row
+      appended to docs/adr/README.md.
+    given: the ADR and bitácora numbering on disk at commit time
+    when: the ADR is authored and committed
+    then: docs/adr/adr-NNNN-almacen-del-plano-de-control.md exists (NNNN read from disk at commit
+      time, never reused or reordered) and docs/adr/README.md has one new appended row for it
+  - id: AC-10
+    statement: README.md gains an appended CLI section documenting the real (non-simulated) behavior
+      of cell list and cell status, and docs/plan/fase-a-6-empaquetado-cli.md gets the task-14
+      closure paragraph and an updated execution-chain bullet, both appended, with no existing lines
+      deleted.
+    given: the current README.md and docs/plan/fase-a-6-empaquetado-cli.md on disk
+    when: this task's documentation is committed
+    then: "git diff -- docs README.md | grep '^-'  shows no deleted lines except a replaced literal,
+      the plan file's task 14 entry ends with a literal '**Cerrada el AAAA-MM-DD con HEX-083.**' line,
+      and the execution chain at the end of the plan file has a new bullet reflecting it"
+  - All required guard commands pass or their evidence is recorded as a blocker if not runnable in
+    this environment cargo fmt --check, cargo clippy --workspace -- -D warnings, cargo test
+    --workspace, and cd sidecar && go vet ./... && go test ./... -count=1.
+  - Every new automated test is demonstrated red under a manual mutation and green again after
+    restoring the code, with that evidence recorded in the implementation report.
+risk: medium
+non_goals:
+  - Implementing cell terminate's full behavior or the IPC session-close orchestration (stage A-6
+    task 12); this task only wires the Retirada transition hook if task 12 is already in main.
+  - Implementing cell rebind or writing to the sustituciones table (stage A-6 task 13).
+  - Idempotency/recovery of partially failed command sequences (stage A-6 task 15), including the
+    detener_contenedor/detener_contenedor_sin_plazo merge noted as a follow-up there.
+  - Ack-ratio, silence-window, or any other metric/alerting surface (stage A-6 task 20).
+  - Any change to sidecar/, docs/protocolo-ipc-nucleo-sidecar.md, or
+    crates/hexcell-admin/src/docker/cliente.rs.
+  - Any change to the transition table in estado_de_celula.rs or to Fase B / official-channel scope.
+constraints:
+  - rusqlite stays pinned at the workspace version 0.39 (see the note in the root Cargo.toml); it is
+    not bumped by this task.
+  - No new CLI flags beyond what already exists for list --simular and status --id <id> --simular.
+  - "Parallel-branch hazard: crates/hexcell-admin/src/comandos.rs's match is touched by three
+    parallel tasks (12, 14, 23); this task's new arm must be added as a single line without
+    reordering existing arms. Task 23 also adds rusqlite to crates/hexcell-admin/Cargo.toml; keep a
+    single dependency line on rebase."
+  - New tests live under crates/hexcell-admin/tests/, snake_case descriptive names, using a tempdir
+    for the .db file and the existing Unix-socket Docker double in tests/comun/mod.rs.
+  - ADR and bitácora entry numbers (currently at most adr-0038 and D-57) are read from disk at
+    commit time, not hardcoded, since sibling branches run in parallel.
+  - Dates written into documentation are absolute (e.g. 2026-09-22), never relative.

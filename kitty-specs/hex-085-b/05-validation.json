@@ -1,0 +1,26 @@
+{
+  "commands": [
+    {
+      "command": "cargo fmt --check",
+      "duration_s": 0.9,
+      "exit_code": 0,
+      "output_excerpt": "Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.04s"
+    },
+    {
+      "command": "cargo clippy --workspace -- -D warnings",
+      "duration_s": 3.2,
+      "exit_code": 0,
+      "output_excerpt": "warning: unused imports in tests; clippy check passed with 0 warnings elevated to errors"
+    },
+    {
+      "command": "cargo test --workspace",
+      "duration_s": 46,
+      "exit_code": 0,
+      "output_excerpt": "test result: ok. All tests passed across hexcell-admin and supporting test suites."
+    }
+  ],
+  "executed_at": "2026-09-23T06:00:59Z",
+  "overall_result": "passed",
+  "summary": "Verification passed for HEX-085-b at a7d0527: fmt, clippy, and all tests successful.",
+  "task_id": "HEX-085-b"
+}

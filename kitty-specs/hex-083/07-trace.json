@@ -1,0 +1,244 @@
+{
+  "attempts": [
+    {
+      "duration_s": 0,
+      "notes": "01-blueprint.yaml and 02-contract.yaml written and validated (quorum validate rc=0 on both).",
+      "phase": "blueprint",
+      "result": "passed"
+    },
+    {
+      "duration_s": 749.82779396,
+      "model": "opencode-go/qwen3.7-plus",
+      "notes": "{\"type\":\"step_start\",\"timestamp\":1790051423754,\"sessionID\":\"ses_f389f015fffeqYwSRrkAt1Fm83\",\"part\":{\"id\":\"prt_0c7611605001YKBGa2Dz4vVhoc\",\"messageID\":\"msg_0c760ff95001EplL44o4Ft3P36\",\"sessionID\":\"ses_f389f015fffeqYwSRrkAt1Fm83\",\"snapshot\":\"53fe33363db9e544f161484922871521baaea62d\",\"type\":\"step-start\"}} {\"type\":\"tool_use\",\"timestamp\":1790051425938,\"sessionID\":\"ses_f389f015fffeqYwSRrkAt1Fm83\",\"part\":{\"type\":\"tool\",\"tool\":\"read\",\"callID\":\"call_4c0f4b98b69d4d0ebb26204f\",\"state\":{\"status\":\"completed\",\"input\":{\"filePath\":\"/home/gary/dev/hexcell/worktrees/HEX-083/crates/hexcell-storage/src/migraciones.rs\"},\"output\":\"\u003cpath\u003e/home/gary/dev/hexcell/worktrees/HEX-083/crates/hexcell-storage/src/migraciones.rs\u003c/path\u003e\\n\u003ctype\u003efile\u003c/type\u003e\\n\u003ccontent\u003e\\n1: //! Migraciones versionadas con `PRAGMA user_version`.\\n2: //!\\n3: //! # Por qué no hay ningún crate de migraciones\\n4: //!\\n5: //! SQLite ya guarda un entero de 32 bits en la cabecera del archivo, `user_version`, que ninguna\\n6: //! otra parte del motor usa y que cambia **dentro de la misma transacción** que el esquema. Un\\n7: //! crate de migraciones añadiría una tabla de versiones que duplica exactamente ese dato, con la\\n8: //! diferencia de que la tabla puede quedar desincronizada del esquema y la cabecera no.\\n9: //!\\n10: //! # Por qué el corredor es una escalera de pasos\\n11: //!\\n12: //! En lugar de aplicar un único guion monolítico que solo alcance una versión fija, el corredor\\n13: //! recorre una secuencia ordenada de pasos (`PasoDeMigracion`). Para cada paso cuya versión sea\\n14: //! estrictamente mayor que la `user_version` actual de la base de datos, se ejecuta su guion SQL y\\n15: //! se incrementa la `user_version` a la de dicho paso en la **misma** transacción. Esto permite que\\n16: //! bases de datos en versiones intermedias (por ejemplo, versión 1) se actualicen a versiones más\\n17: //! recientes (por ejemplo, versión 2) aplicando únicamente los pasos faltantes.\\n18: //!\\n19: //! # Por qué el guion S...",
+      "phase": "execute",
+      "result": "passed"
+    }
+  ],
+  "completed_at": null,
+  "context_overflows": [],
+  "events": [
+    {
+      "calculated": "medium",
+      "declared": "medium",
+      "event": "risk_level_calculated",
+      "level": "medium",
+      "note": "Declared risk in 00-spec.yaml equals the calculated level; no divergence event emitted.",
+      "reasons": [
+        "file_count_high: 17"
+      ],
+      "risk": "medium",
+      "signals": {
+        "files_count": 17,
+        "sensitive_matches": [],
+        "symbols_count": 0
+      }
+    },
+    {
+      "band": "L",
+      "calibrated": true,
+      "complexity_band": "L",
+      "event": "complexity_band_calculated",
+      "inputs": {
+        "files_count": 9,
+        "migration": true,
+        "public_api": true,
+        "schema_change": true,
+        "symbols_count": 19
+      },
+      "note": "Band L is structurally earned, not a file-count artifact: migration, public_api and schema_change each force L on their own. Production-only count is 9 files (tests and docs excluded by policy noncounted_globs).",
+      "signals": [
+        "migration_signal",
+        "public_api_signal",
+        "schema_change_signal",
+        "file_count_high: 9"
+      ]
+    },
+    {
+      "event": "failure_lookup_completed",
+      "matches": 0,
+      "note": "quorum analyze failure-lookup returned null; .ai/tasks/failed/ is empty."
+    },
+    {
+      "applied": false,
+      "event": "semantic_advisory_read",
+      "note": "Advisory only (ADR 0008). All results belong to the Quorum framework repo, unrelated to hexcell; nothing was copied into the blueprint or contract.",
+      "project": "quorum",
+      "results": 6,
+      "source": "hsme-cli search-fuzzy",
+      "top_score": 0.015625
+    },
+    {
+      "event": "contract_limits_set",
+      "max_diff_lines": 2400,
+      "max_files_changed": 20,
+      "note": "Sized from the real surface: ~855 production lines (new store module, embedded .sql migration, new docker inventory module, comandos.rs status/list/transition wiring, ciclo_de_vida short probe, main.rs injection), ~940 test lines (DISC-01..DISC-05 each with a triggering and a non-triggering fixture) and ~190 doc lines, plus headroom for this repo's high doc-comment density."
+    },
+    {
+      "blocked": "",
+      "candidate": {
+        "agent": "opencode_go",
+        "level": 3,
+        "model": "opencode-go/gpt-5.6-luna"
+      },
+      "dispatch_id": "",
+      "inputs_snapshot": {
+        "complexity_band": "L",
+        "control": {
+          "disabled": [
+            {
+              "at": "2026-09-09T16:46:15Z",
+              "by": "human",
+              "reason": "Antigravity/Gemini subscription retired 2026-09-09 (human decision); propagated from quorum",
+              "target": "agy"
+            },
+            {
+              "at": "2026-09-09T16:46:15Z",
+              "by": "human",
+              "reason": "Antigravity/Gemini subscription retired 2026-09-09 (human decision); propagated from quorum",
+              "target": "agy_edit"
+            }
+          ],
+          "updated_at": "2026-09-09T16:46:15Z"
+        },
+        "exclusions": null,
+        "hashes": {
+          "agents_yaml": "ea0f730316f5ee07d999731405e39b6d5a2b8040b6222489976f447ac2b8f450",
+          "config_yaml": "959b1fc9182793ab6c2a8510f82f49724db816b46ddb6ab7aa9fa8f1fb2f890e",
+          "routing_yaml": "8c3b821b2d603e67dc1c220721291fbb5130799d88712d0deaa4b90bbf5479cc"
+        },
+        "incumbent_family": "",
+        "level": 3,
+        "phase": "",
+        "risk": "medium",
+        "router_version": "fleet-route/v1"
+      },
+      "reasons": null,
+      "reroute_budget": 2,
+      "review_family_degraded": false,
+      "ts": "2026-09-22T04:29:15Z",
+      "type": "routing_decision"
+    },
+    {
+      "blocked": "",
+      "candidate": {
+        "agent": "opencode_go",
+        "level": 2,
+        "model": "opencode-go/qwen3.7-plus"
+      },
+      "dispatch_id": "",
+      "inputs_snapshot": {
+        "complexity_band": "L",
+        "control": {
+          "disabled": [
+            {
+              "at": "2026-09-09T16:46:15Z",
+              "by": "human",
+              "reason": "Antigravity/Gemini subscription retired 2026-09-09 (human decision); propagated from quorum",
+              "target": "agy"
+            },
+            {
+              "at": "2026-09-09T16:46:15Z",
+              "by": "human",
+              "reason": "Antigravity/Gemini subscription retired 2026-09-09 (human decision); propagated from quorum",
+              "target": "agy_edit"
+            }
+          ],
+          "updated_at": "2026-09-09T16:46:15Z"
+        },
+        "exclusions": [],
+        "hashes": {
+          "agents_yaml": "ea0f730316f5ee07d999731405e39b6d5a2b8040b6222489976f447ac2b8f450",
+          "config_yaml": "959b1fc9182793ab6c2a8510f82f49724db816b46ddb6ab7aa9fa8f1fb2f890e",
+          "routing_yaml": "8c3b821b2d603e67dc1c220721291fbb5130799d88712d0deaa4b90bbf5479cc"
+        },
+        "incumbent_family": "",
+        "level": 2,
+        "phase": "implement",
+        "risk": "medium",
+        "router_version": "fleet-route/v1"
+      },
+      "reasons": null,
+      "reroute_budget": 2,
+      "review_family_degraded": false,
+      "ts": "2026-09-22T04:30:05Z",
+      "type": "routing_decision"
+    },
+    {
+      "bundle_hash": "5bae9fc260ee44a049ad81186c2f72d27a753593f2153fcd02c1449e88c120fb",
+      "dispatch_id": "5bae9fc260ee",
+      "ts": "2026-09-22T04:30:17Z",
+      "type": "dispatch_started"
+    },
+    {
+      "applied": true,
+      "cause": null,
+      "diff_stat": {
+        "deletions": 63,
+        "empty": false,
+        "files_changed": 19,
+        "indeterminate": false,
+        "insertions": 1397
+      },
+      "dispatch_id": "5bae9fc260ee",
+      "forensic_ref": "refs/fleet/HEX-083/attempt-1-opencode-go-qwen3.7-plus",
+      "noop": false,
+      "outcome_class": "attempt",
+      "ts": "2026-09-22T04:42:46Z",
+      "type": "dispatch_finished",
+      "usage_source": "none"
+    },
+    {
+      "blocked": "",
+      "candidate": {
+        "agent": "opencode_go",
+        "level": 2,
+        "model": "opencode-go/qwen3.7-plus"
+      },
+      "dispatch_id": "",
+      "inputs_snapshot": {
+        "complexity_band": "L",
+        "control": {
+          "disabled": [
+            {
+              "at": "2026-09-09T16:46:15Z",
+              "by": "human",
+              "reason": "Antigravity/Gemini subscription retired 2026-09-09 (human decision); propagated from quorum",
+              "target": "agy"
+            },
+            {
+              "at": "2026-09-09T16:46:15Z",
+              "by": "human",
+              "reason": "Antigravity/Gemini subscription retired 2026-09-09 (human decision); propagated from quorum",
+              "target": "agy_edit"
+            }
+          ],
+          "updated_at": "2026-09-09T16:46:15Z"
+        },
+        "exclusions": null,
+        "hashes": {
+          "agents_yaml": "ea0f730316f5ee07d999731405e39b6d5a2b8040b6222489976f447ac2b8f450",
+          "config_yaml": "959b1fc9182793ab6c2a8510f82f49724db816b46ddb6ab7aa9fa8f1fb2f890e",
+          "routing_yaml": "8c3b821b2d603e67dc1c220721291fbb5130799d88712d0deaa4b90bbf5479cc"
+        },
+        "incumbent_family": "qwen",
+        "level": 2,
+        "phase": "review",
+        "risk": "medium",
+        "router_version": "fleet-route/v1"
+      },
+      "reasons": null,
+      "reroute_budget": 1,
+      "review_family_degraded": false,
+      "ts": "2026-09-22T04:47:50Z",
+      "type": "routing_decision"
+    }
+  ],
+  "execution_mode": "worktree_edit",
+  "human_minutes": null,
+  "outcome": null,
+  "started_at": "2026-09-22T00:19:00Z",
+  "summary": "Control-plane SQLite store in hexcell-admin plus real cell list and cell status; stage A-6 task 14.",
+  "task_id": "HEX-083",
+  "total_cost_usd": 0,
+  "violations": []
+}

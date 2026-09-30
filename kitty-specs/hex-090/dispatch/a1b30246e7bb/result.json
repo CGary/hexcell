@@ -1,0 +1,42 @@
+{
+  "schema_version": "fleet-dispatch-result/v1",
+  "dispatch_id": "a1b30246e7bb",
+  "task_id": "HEX-090-new-spec",
+  "agent": "opencode_go",
+  "model": "opencode-go/mimo-v2.5",
+  "phase": "execute",
+  "started_at": "2026-09-30T05:21:55Z",
+  "ended_at": "2026-09-30T05:39:50Z",
+  "duration_s": 1074.591437221,
+  "exit_code": 0,
+  "timed_out": false,
+  "killed": false,
+  "outcome": {
+    "class": "attempt",
+    "noop": false,
+    "cause": null,
+    "blocked": null
+  },
+  "diff": {
+    "empty": false,
+    "indeterminate": false,
+    "files_changed": 22,
+    "insertions": 106,
+    "deletions": 126
+  },
+  "forensic_ref": "refs/fleet/HEX-090-new-spec/attempt-1-opencode-go-mimo-v2.5",
+  "baseline_commit": "9b59ba95c7ecb8ec62eb0f6d0a996d9ad1381314",
+  "applied": true,
+  "usage": {
+    "source": "none",
+    "tokens_in": null,
+    "tokens_out": null,
+    "requests": null
+  },
+  "notes_path": "dispatch/a1b30246e7bb/notes.txt",
+  "trace_events": [
+    "dispatch_started",
+    "dispatch_finished"
+  ],
+  "reset_error": null
+}

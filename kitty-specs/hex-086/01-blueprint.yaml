@@ -1,0 +1,317 @@
+task_id: HEX-086
+summary: >-
+  Add `imagenes` CI job tagging both cell images (push:false, load:true) plus
+  deploy/verificar_imagenes.sh guarding non-root user and read-only cold start. Docs appends too.
+
+affected_files:
+  - .github/workflows/ci.yml
+  - deploy/verificar_imagenes.sh
+  - README.md
+  - docs/plan/fase-a-6-empaquetado-cli.md
+  - docs/STATUS.md
+
+symbols:
+  - "job:imagenes"
+  - limpiar
+  - construir_imagenes_locales_si_faltan
+  - verificar_usuario_no_root
+  - caso_usuario_rechaza_imagen_root
+  - verificar_arranque_en_frio_nucleo
+  - caso_arranque_en_frio_nucleo_sin_volumen_falla
+  - verificar_arranque_en_frio_sidecar
+
+dependencies:
+  - deploy/cell.compose.yml
+  - crates/hexcell/src/salud.rs
+  - Dockerfile
+  - sidecar/Dockerfile
+  - Cargo.toml
+  - deploy/verificar_apagado_ordenado.sh
+  - deploy/verificar_endurecimiento.sh
+  - deploy/celula.env.ejemplo
+
+test_scenarios:
+  - statement: >
+      The imagenes job in .github/workflows/ci.yml runs on ubuntu-latest with no needs, uses
+      docker/setup-buildx-action and docker/build-push-action@v6 with cache type=gha and
+      cache-to mode=max, and builds both images with push:false and load:true; no login/push
+      step exists anywhere in the job.
+    covers: ["AC-1"]
+  - statement: >
+      The job builds hexcell-nucleo from context `.` with dockerfile ./Dockerfile and
+      hexcell-sidecar from context `./sidecar` with dockerfile ./sidecar/Dockerfile, matching
+      deploy/cell.compose.yml's two build sections exactly (verified against the current file).
+    covers: ["AC-2"]
+  - statement: >
+      Both images are tagged <nombre>:<sha12> and <nombre>:<version> in the same run; <sha12> comes
+      from github.sha truncated to 12 chars in a shell step, and <version> is read from
+      [workspace.package] version in Cargo.toml by a shell step, never a literal in the YAML; both
+      images share the same version tag value.
+    covers: ["AC-3"]
+  - statement: >
+      deploy/verificar_usuario_no_root inspects `docker image inspect --format '{{.Config.User}}'`
+      for hexcell-nucleo and hexcell-sidecar and fails on anything other than the exact string
+      10001:10001, including empty. Verified empirically today (2026-09-23) against both images
+      built fresh from the current Dockerfiles: both already report exactly 10001:10001, so no
+      Dockerfile change is required.
+    covers: ["AC-4"]
+  - statement: >
+      caso_usuario_rechaza_imagen_root builds a throwaway `FROM alpine:3` image with no USER
+      instruction in a fresh temp build directory (mktemp -d, mirroring
+      deploy/verificar_endurecimiento.sh's DIR_TEMP pattern) and asserts verificar_usuario_no_root
+      reports it FALLA, proving the guard can reject, not just accept.
+    covers: ["AC-5"]
+  - statement: >
+      verificar_arranque_en_frio_nucleo starts hexcell-nucleo with --read-only --tmpfs /tmp
+      --cap-drop ALL --security-opt no-new-privileges:true, a fresh empty named volume at
+      /var/lib/hexcell, HEXCELL_ID_CELULA=ci, HEXCELL_RUTA_DATOS=/var/lib/hexcell,
+      HEXCELL_DIRECCION_SALUD=0.0.0.0:8081, on a fresh Docker network, and a sibling alpine:3
+      container wget's GET /health/live for HTTP 200 within 30s. The script comments the probe
+      choice: crates/hexcell/src/salud.rs's atender_peticion_de_salud answers /health/live with a
+      fixed 200 "viva" with no pool/session lookup, confirmed empirically today by booting the real
+      image alone (no sidecar, no HEXCELL_CANAL override) on this exact flag set — it returned 200
+      in under 2s — so the probe uses the núcleo alone, never paired with the sidecar.
+    covers: ["AC-6"]
+  - statement: >
+      verificar_arranque_en_frio_sidecar starts hexcell-sidecar with the same four hardening flags
+      and a second fresh empty named volume, no extra environment variables, and within 10s
+      `docker inspect --format '{{.State.Running}}'` is true and `docker logs` contains neither
+      "read-only file system" nor "permission denied".
+    covers: ["AC-7"]
+  - statement: >
+      caso_arranque_en_frio_nucleo_sin_volumen_falla starts hexcell-nucleo --read-only with the
+      same flags but WITHOUT mounting the data volume, and asserts the cold-start check reports
+      FALLA rather than PASA or a skip. Verified empirically today: under this exact condition the
+      container logs "no se pudo abrir la persistencia en /var/lib/hexcell: ... unable to open
+      database file: /var/lib/hexcell/sessions.db" and exits with State.Running=false, ExitCode=1
+      within ~2s — the guard must read docker inspect State.Running/ExitCode, not rely solely on
+      the wget probe timing out at 30s.
+    covers: ["AC-8"]
+  - statement: >
+      limpiar (trap on EXIT, mirroring deploy/verificar_apagado_ordenado.sh) removes every
+      container, network, and volume the script created, on both a clean exit and a forced failure
+      partway through; a run that forces one FALLA leaves no hexcell-bp-* Docker object behind.
+    covers: ["AC-9"]
+  - statement: >
+      Each of the five guard checks in AC-4 through AC-8 is mutated by hand once (e.g. flip the
+      expected user string, drop --read-only from the positive run, skip mounting the volume in the
+      positive run) and the exact check name that turned red is recorded in 05-validation.json at
+      q-verify time; this is manual mutation evidence, not a shipped --autoprueba flag — unlike the
+      other deploy/verificar_*.sh guards, this script's AC-5 and AC-8 negative cases are already
+      inline in the normal run, so no separate self-test mode is required by this spec.
+    covers: ["AC-10"]
+  - statement: >
+      README.md's "### 6. Composición de la célula" section (under "## 💻 Manual de Operación de la
+      CLI de Administración") gains one appended paragraph after its existing paragraph, describing
+      the local build command for both images with the same contexts/dockerfiles/tags CI uses and
+      what deploy/verificar_imagenes.sh checks; `git diff main...HEAD -- README.md docs | grep
+      '^-'` shows no deleted line, only literal-replacement lines if any are named in the contract.
+    covers: ["AC-11"]
+  - statement: >
+      docs/STATUS.md gains one new bullet under "## Pendiente" recording that the image registry
+      (GHCR, self-hosted, or other) remains undecided and blocks turning task 18 into a real publish
+      step, dated 2026-09-22 with HEX-086, following the existing bullet format (bold summary line,
+      one paragraph, trailing "— *Etapa ...*" tag).
+    covers: ["AC-12"]
+  - statement: >
+      docs/plan/fase-a-6-empaquetado-cli.md's task 18 bullet gains, in order, a "**Nota
+      2026-09-22:**" paragraph stating publication is a one-line change (push:true + a login step)
+      once the registry is decided, then a "**Cerrada el 2026-09-22 con HEX-086.**" closing
+      paragraph summarizing what shipped; separately, a NEW "Actualización 2026-09-22" bullet is
+      appended after the existing 2026-09-22 entries (line 196) with a recalculated "La cadena
+      restante" line. Read from git log on main at 964a994: tasks 12, 14, and 23 are closed; tasks
+      13 (cell rebind) and 15 (idempotencia) have no closing commit yet, so today's chain "13 → 15 →
+      18 → 21 → 19" loses only 18: "13 → 15 → 21 → 19". The existing 2026-09-22 bullets are never
+      edited, only a new one is appended (docs are append-only).
+    covers: ["AC-13"]
+  - statement: >
+      cargo fmt --check, cargo clippy --workspace -- -D warnings, and cargo test --workspace all
+      pass unmodified (this task touches no Rust source), and deploy/verificar_imagenes.sh passes
+      end to end against the local Docker daemon (build-push-action's load:true output or, for a
+      standalone local run, the script's own construir_imagenes_locales_si_faltan fallback), with
+      the transcript captured in 05-validation.json.
+    covers: ["AC-14"]
+
+strategy:
+  - step: 1
+    action: >
+      Add the `imagenes` job to .github/workflows/ci.yml, appended after the existing jobs (never
+      edit an existing job's name or steps). No `needs:` — it can run in parallel with rust/go/
+      guardas-*. Steps: actions/checkout@v4; docker/setup-buildx-action@v3 (pin a major matching
+      the repo's existing @v4/@v5 pinning style); a shell step "Leer version y sha cortos" that
+      exports VERSION (from `grep -m1 '^version' Cargo.toml` under [workspace.package], or a small
+      awk/sed one-liner over Cargo.toml — no toml parser dependency) and SHA12
+      (`${GITHUB_SHA:0:12}`) via $GITHUB_ENV; two docker/build-push-action@v6 steps (one per image),
+      each with context/file matching deploy/cell.compose.yml's build sections exactly, push:false,
+      load:true, cache-from/cache-to type=gha with cache-to mode=max (use a distinct cache scope per
+      image so the two builds do not collide, e.g. scope: nucleo / scope: sidecar), and
+      tags: <nombre>:${{ env.SHA12 }},<nombre>:${{ env.VERSION }}; a final step that runs `bash
+      deploy/verificar_imagenes.sh hexcell-nucleo:${{ env.SHA12 }}
+      hexcell-sidecar:${{ env.SHA12 }}` so the guard checks the exact images this job just built and
+      loaded, without rebuilding them.
+    files:
+      - .github/workflows/ci.yml
+  - step: 2
+    action: >
+      Write deploy/verificar_imagenes.sh (Validator; target 150-250 lines, modelled on the
+      set -u + trap-on-EXIT shape of deploy/verificar_apagado_ordenado.sh and the temp-build-dir
+      negative-test shape of deploy/verificar_endurecimiento.sh). Signature: two OPTIONAL
+      positional args <ref-nucleo> <ref-sidecar>; when omitted, construir_imagenes_locales_si_faltan
+      builds them itself with `docker build -t hexcell-nucleo:local .` and
+      `docker build -t hexcell-sidecar:local ./sidecar` (same contexts/dockerfiles CI uses), so the
+      README's documented local invocation (`bash deploy/verificar_imagenes.sh`, no args) and CI's
+      explicit-tag invocation both work from the same entry point. A per-run random suffix
+      (RUN_ID=$(date +%s)-$$ or similar) names every container/network/volume the script creates, so
+      concurrent CI runs and repeated local runs never collide, echoing the per-run-suffix rule
+      documented in deploy/verificar_apagado_ordenado.sh.
+    files:
+      - deploy/verificar_imagenes.sh
+  - step: 3
+    action: >
+      Implement verificar_usuario_no_root (AC-4): for each of the two image refs, run
+      `docker image inspect --format '{{.Config.User}}'` and FALLA unless the trimmed output is
+      exactly "10001:10001" (empty string included). Implement caso_usuario_rechaza_imagen_root
+      (AC-5): mktemp -d, write a minimal `FROM alpine:3` Dockerfile with no USER line, build it
+      tagged locally, run verificar_usuario_no_root against it and assert it reports FALLA (a PASA
+      here is itself a FALLA of the guard's self-test). Clean the temp dir and the throwaway image
+      in `limpiar`.
+    files:
+      - deploy/verificar_imagenes.sh
+  - step: 4
+    action: >
+      Implement verificar_arranque_en_frio_nucleo (AC-6): create a fresh named volume and network
+      (RUN_ID-suffixed), `docker run -d` the núcleo ref with the four hardening flags plus
+      HEXCELL_ID_CELULA=ci, HEXCELL_RUTA_DATOS=/var/lib/hexcell (volume mount target),
+      HEXCELL_DIRECCION_SALUD=0.0.0.0:8081 on that network; then `docker run --rm --network <red>
+      alpine:3 wget -q -O - --timeout=<budget left of 30s> http://<nucleo-container-name>:8081/health/live`
+      in a retry loop up to a 30s ceiling, FALLA if no 200 lands in time OR if
+      `docker inspect --format '{{.State.Running}}'` on the núcleo container goes false before the
+      probe succeeds (covers the AC-8 negative case sharing this same check function). Write the
+      probe-choice comment block directly above this function: cite
+      crates/hexcell/src/salud.rs's atender_peticion_de_salud (fixed 200 "viva", no pool/session
+      read) and state plainly that this was confirmed by booting the real image alone today, so the
+      sidecar is never started for this check.
+    files:
+      - deploy/verificar_imagenes.sh
+  - step: 5
+    action: >
+      Implement caso_arranque_en_frio_nucleo_sin_volumen_falla (AC-8): same flags as step 4's
+      positive run but WITHOUT the volume mount (no -v at all), same network; assert
+      verificar_arranque_en_frio_nucleo (or a thin wrapper around it) reports FALLA for this
+      container, not PASA and not a hang until the 30s ceiling — the container is expected to exit
+      almost immediately (SQLite open failure against the read-only rootfs with no writable data
+      path), so this case must read docker inspect's Running/ExitCode rather than only polling wget.
+    files:
+      - deploy/verificar_imagenes.sh
+  - step: 6
+    action: >
+      Implement verificar_arranque_en_frio_sidecar (AC-7): second fresh named volume, same four
+      hardening flags, no extra env vars beyond what the sidecar strictly needs to boot under this
+      guard (document in a comment which minimum set, if any, was required — cell.compose.yml's
+      sidecar block lists HEXCELL_ID_CELULA, HEXCELL_SOCKET_IPC, HEXCELL_VENTANA_ZONA,
+      HEXCELL_TELEFONO_CELULA, and three RUTA_* vars; verify empirically at implement time which of
+      these the binary actually requires to reach a Running state without emitting the two
+      forbidden log substrings, since AC-7's own wording says "no extra environment variables"). At
+      10s (not before), `docker inspect --format '{{.State.Running}}'` must be true and
+      `docker logs` must not contain "read-only file system" or "permission denied"; FALLA
+      otherwise.
+    files:
+      - deploy/verificar_imagenes.sh
+  - step: 7
+    action: >
+      Implement limpiar as the sole EXIT trap, registered once near the top of the script (`trap
+      limpiar EXIT`): `docker rm -f` every container name this run created (best-effort, `|| true`
+      on each), then `docker network rm` and `docker volume rm` the run's network and volumes
+      (`|| true`), then remove any mktemp -d directory from step 3. Force at least one FALLA path
+      during manual verification (e.g. run the whole script once with Docker briefly unreachable, or
+      force AC-8's expected-FALLA case) and confirm via `docker ps -a` / `docker network ls` /
+      `docker volume ls` filtered by the run's suffix that nothing remains; record that confirmation
+      in 05-validation.json per AC-9/AC-10.
+    files:
+      - deploy/verificar_imagenes.sh
+  - step: 8
+    action: >
+      Append one paragraph to README.md's existing "### 6. Composición de la célula" section, right
+      after its current single paragraph (do not touch that paragraph's text): state the local build
+      commands (`docker build -t hexcell-nucleo:local .` / `docker build -t hexcell-sidecar:local
+      ./sidecar`, same contexts and Dockerfiles CI resolves), that CI additionally tags both images
+      by short commit SHA and by the workspace version without ever pushing (push:false, load:true;
+      registry publication pending, see STATUS.md), and name what deploy/verificar_imagenes.sh
+      checks (non-root user, read-only cold start of both containers, and its own negative-test
+      self-proof) plus how to run it locally with no arguments.
+    files:
+      - README.md
+  - step: 9
+    action: >
+      Append one new bullet under docs/STATUS.md's "## Pendiente" heading, matching the existing
+      bullet format (bold summary line, one short paragraph, trailing "— *Etapa ...*"), recording
+      that the image registry destination (GHCR, self-hosted, or other) is undecided and blocks
+      turning A-6 task 18 into a real push step, dated 2026-09-22 and citing HEX-086.
+    files:
+      - docs/STATUS.md
+  - step: 10
+    action: >
+      In docs/plan/fase-a-6-empaquetado-cli.md's task 18 bullet (line 405 area), append, in order: a
+      "**Nota 2026-09-22:**" paragraph stating publication becomes a one-line change (push:true plus
+      a registry login step) once the registry decision lands — explicitly not a descarte, per the
+      human decision — followed by "**Cerrada el 2026-09-22 con HEX-086.**" with a short summary of
+      what the imagenes CI job and deploy/verificar_imagenes.sh actually deliver. Separately, append
+      a brand-new "Actualización 2026-09-22" bullet after the file's most recent such bullet (the
+      2026-09-22/HEX-082 entry near line 196) with a freshly recalculated "La cadena restante" line;
+      read task-closure state from git log on main (964a994) rather than trusting the prior bullet's
+      chain literally, since intervening merges may have changed it. As read today, tasks 13
+      (cell rebind) and 15 (idempotencia) show no closing commit, so the new chain drops only 18:
+      "13 → 15 → 21 → 19". Never edit or reorder any prior "Actualización" bullet.
+    files:
+      - docs/plan/fase-a-6-empaquetado-cli.md
+
+risks:
+  - "VERIFIED TODAY (2026-09-23) against a real local Docker daemon (29.8.1): both `docker build .`
+     and `docker build ./sidecar` succeed unmodified from the current Dockerfiles, and
+     `docker image inspect --format '{{.Config.User}}'` reports exactly `10001:10001` for both — no
+     Dockerfile change is needed for AC-4, so the non_goals 'last resort' escape hatch is not
+     exercised by this task as currently understood."
+  - "VERIFIED TODAY: booting hexcell-nucleo alone (no sidecar, no HEXCELL_CANAL override — the
+     binary logged 'canal configurado: simulado', its own default) with exactly the AC-6 flag set
+     answered GET /health/live with HTTP 200 'viva' in well under 2s. This matches
+     crates/hexcell/src/salud.rs's documented design (atender_peticion_de_salud never touches pools
+     or session state for /health/live). The AC-6 probe therefore needs only the núcleo container;
+     pairing with the sidecar is unnecessary and the script must say so in a comment, per the
+     spec's explicit instruction to record the choice."
+  - "VERIFIED TODAY: the AC-8 negative case (núcleo --read-only with the four hardening flags but NO
+     volume mounted) does not hang toward the 30s ceiling — the process fails its SQLite open
+     against /var/lib/hexcell/sessions.db and the container exits (State.Running=false,
+     ExitCode=1) within roughly 2s. The guard implementation MUST check docker inspect's
+     Running/ExitCode fields, not rely solely on the wget probe timing out, or a slow poll interval
+     could misreport this as a hang rather than a fast, clean failure."
+  - "Chain-recalculation risk: docs/plan/fase-a-6-empaquetado-cli.md's own bullets are the only
+     source consulted for 'is task N closed', cross-checked against `git log --oneline` on main at
+     964a994. As of that commit, tasks 13 and 15 have no HEX-0NN closing commit visible in the last
+     ~20 commits; if either merges between this blueprint and HEX-086's own merge, the appended
+     chain line becomes stale the moment it's written. This is accepted (docs record a point in
+     time) but the implementer must re-read git log immediately before writing the chain line, not
+     trust this blueprint's numbers days later."
+  - "The imagenes CI job adds a real `docker build` for two multi-stage images to every push/PR
+     (ubuntu-latest ships Docker; no self-hosted runner needed). cache type=gha with mode=max should
+     keep warm runs fast, but the very first run after this merges pays a full cold build for both
+     images with no cache to draw from — acceptable one-time cost, not a defect."
+  - "docker/build-push-action@v6's cache-to mode=max for TWO images sharing one job needs distinct
+     cache scopes (e.g. scope: nucleo / scope: sidecar) or the two caches will collide and each
+     build will evict the other's layers on every run; the strategy step names this but the
+     implementer must set the scope input explicitly, it is not automatic."
+  - "AC-7's 'no extra environment variables' is undertested by the spec's own wording against
+     cell.compose.yml's sidecar block, which lists HEXCELL_VENTANA_ZONA and
+     HEXCELL_TELEFONO_CELULA as needed for the SIDECAR (not the núcleo) to do useful work; whether
+     the sidecar binary reaches State.Running=true and logs cleanly with NONE of those set is not
+     yet verified against the real image (only the núcleo's cold start was verified today). The
+     implementer must check this empirically in step 6 and record what, if anything, deviates from
+     a bare hardening-flags-only run."
+  - "HSME advisory search-fuzzy for this task's summary/goal against project hexcell returned 0
+     results (ok=true, no matches). No related past task or failure to surface; proceeding without
+     semantic context, per the advisory-only rule."
+  - "quorum analyze failure-lookup returned null for this file set: no related failed task found in
+     .ai/tasks/failed/ (the directory is currently empty)."
+  - "Registry publication stays an open Pendiente decision (D1); this task adds STATUS.md's entry
+     and the plan's Nota but does not decide GHCR vs. self-hosted vs. other, and does not add any
+     push:true or login step. Any future task that flips push:true is a small, isolated change to
+     this same job per the Nota's own wording."

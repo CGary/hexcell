@@ -1,0 +1,26 @@
+{
+  "task_id": "HEX-084",
+  "summary": "Diff matches spec/blueprint/contract; formula, guard, date parser, dispatch and deps correct; 6/6 AC covered non-vacuously. Two violations are contract-authoring defects; diff overage justified.",
+  "verdict": "approve",
+  "contract_compliance": false,
+  "forbidden_files_touched": [
+    "Cargo.lock",
+    "crates/hexcell-admin/Cargo.toml"
+  ],
+  "unrequested_refactor": false,
+  "missing_tests": [],
+  "functional_risk": "low",
+  "notes": [
+    "contract-check ok=false; not_checked: forbid.behaviors",
+    "violation touch: Cargo.lock not covered by any touch glob — contract-authoring gap per HEX-073 lesson; verified git diff -- Cargo.lock shows 0 new [[package]] entries (grep -cE '^\\+\\[\\[package\\]\\]' = 0), only hexcell-admin's own dependency list gained hexcell-core/hexcell-storage/rusqlite entries for a crate already in the workspace",
+    "violation forbid_files: Cargo.lock matches forbidden pattern 'Cargo.lock' — same root cause as above, orchestrator-triaged as contract defect not implementer defect",
+    "violation forbid_files: crates/hexcell-admin/Cargo.toml matches forbidden pattern 'Cargo.toml' by basename match, while the SAME file is also listed in the contract's own touch list and blueprint step 5 mandates editing it to add rusqlite (production) and hexcell-storage/hexcell-core (dev-only) — a self-contradictory contract guard (Guardrail 7), not an implementer defect",
+    "violation max_diff_lines: 1421 lines vs limit 950 — judged justified: ~856 of 1410 insertions (61%) are test code (tests/reporte_de_consumo.rs 420, tests/argumentos.rs 282, tests/comandos.rs 152) covering all 6 AC plus edge cases (leap years, byte-safe malformed-date rejection, exact stdout comparison, Docker-bypass proof); remaining ~565 lines of production code include a mandatory hand-rolled Howard-Hinnant civil-to-days date algorithm the workspace has no crate for (D-53 precedent forbids adding one). No duplication, no unrelated scope found on full manual read of every changed file.",
+    "violation max_files_changed: 11 vs limit 10 — the 11th file over budget is Cargo.lock, an unavoidable side effect of adding a real dependency line to hexcell-admin/Cargo.toml (same root cause as the Cargo.lock touch/forbid violations above), not an independent scope expansion.",
+    "AC-1 output includes the liberada conversation's line with 0 units ('conv-c 0') rather than omitting it, because the implementation copies the migration-0004 view formula literally (GROUP BY on all id_conversacion rows, CASE zeroes non-conciliada). This differs from a literal reading of AC-1's prose ('prints one line per reconciled conversation'), but the numeric result (TOTAL excludes the liberada conversation) is correct and 01-blueprint.yaml's step-3 design explicitly mandates the single-formula-no-drift approach over a second hand-copied filter. Recorded here for visibility, not treated as a defect.",
+    "Contract-check ok=false and acceptance-coverage=pass (6/6 AC covered, no gaps) both confirmed by direct tool invocation, not only by the orchestrator's prior run.",
+    "Docs append-only verified independently: both README.md and docs/plan/fase-a-6-empaquetado-cli.md diffs contain only added lines (no '-' lines) when read in full.",
+    "No new exit code introduced; blanket Err(_) => UsoIncorrecto mapping in comandos.rs (pre-existing, untouched) confirmed to route both new ErrorDeArgumentos variants without needing changes to codigo_de_salida.rs/main.rs (both correctly left untouched, both forbidden)."
+  ],
+  "fix_tasks": []
+}

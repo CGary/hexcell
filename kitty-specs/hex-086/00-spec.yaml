@@ -1,0 +1,82 @@
+task_id: HEX-086
+summary: Add a CI job that builds and tags both cell images and a Docker-based guard that fails on root user or writable rootfs. Risk medium.
+goal: >
+  Stage A-6 task 18 ("Integrar la construcción de las imágenes en la CI",
+  docs/plan/fase-a-6-empaquetado-cli.md lines 405-408) requires reproducible image builds tagged by
+  short commit SHA and by workspace version, and a mechanical CI guard that fails if either cell image
+  (núcleo or sidecar) runs as root or without a read-only rootfs — a criterion NFR-05's hardening intent
+  already states in this stage (docs/plan/fase-a-6-empaquetado-cli.md line 547: "Ninguno de los dos
+  procesos se ejecuta como `root` y el sistema de archivos raíz es de solo lectura salvo la ruta de
+  datos") but that today has no mechanical check. Registry publication is an open decision (STATUS.md
+  Pendiente): the new CI job builds and tags both images but does not push, so it must build with
+  `load:true` and cache type=gha, then hand both loaded images to a new local verification script,
+  `deploy/verificar_imagenes.sh`, that inspects the images (non-root user 10001:10001) and boots real
+  containers with the same hardening flags cell.compose.yml already declares (read-only, cap_drop ALL,
+  no-new-privileges, tmpfs /tmp) to prove núcleo and sidecar reach a healthy cold start under those
+  constraints, including negative tests that show the guard actually rejects a root image and a
+  read-only núcleo run started without its data volume.
+invariants:
+  - The CI job never pushes images to any registry (push:false, load:true) until a registry decision is recorded.
+  - Both images (hexcell-nucleo, hexcell-sidecar) are tagged with the same two tags in the same run — the 12-character short commit SHA and the exact `[workspace.package] version` from Cargo.toml — with the version value read at CI runtime from the shell, never hardcoded in ci.yml.
+  - 'The build contexts and Dockerfile paths in the CI job match deploy/cell.compose.yml exactly: `.` + ./Dockerfile for the núcleo, `./sidecar` + ./sidecar/Dockerfile for the sidecar.'
+  - deploy/verificar_imagenes.sh fails the guard on any user other than exactly `10001:10001` reported by `docker image inspect --format '{{.Config.User}}'`, including an empty value.
+  - deploy/verificar_imagenes.sh proves the read-only-rootfs guard actually rejects a bad case (a minimal alpine:3 image built without USER in a temp directory) and that the read-only cold-start check fails when the núcleo container is started `--read-only` without its data volume mounted.
+  - All containers, networks, and volumes the script creates are removed via a trap even when a step fails partway through, leaving no leftover Docker state.
+  - No `*.db*` file or `.env*` file is ever committed, and Cargo.lock is not modified.
+  - No new Cargo or Go runtime dependency is introduced by this task.
+acceptance:
+  - id: AC-1
+    statement: A new `imagenes` job in .github/workflows/ci.yml runs on ubuntu-latest with no `needs`, uses docker/setup-buildx-action and docker/build-push-action@v6 with cache type=gha (cache-to mode=max), and builds both images with push:false and load:true — no image is ever published to a registry by this job.
+    given: the imagenes job runs in CI
+    when: it builds the núcleo and sidecar images
+    then: both artifacts stay local to the runner (load:true) and no push credential or registry login step exists in the job
+  - id: AC-2
+    statement: The job builds the núcleo image from context `.` with dockerfile ./Dockerfile as `hexcell-nucleo`, and the sidecar image from context `./sidecar` with dockerfile ./sidecar/Dockerfile as `hexcell-sidecar`, matching deploy/cell.compose.yml's build sections exactly.
+  - id: AC-3
+    statement: Both images are tagged `<nombre>:<sha12>` and `<nombre>:<versión>` in the same job run, where `<sha12>` is the 12-character short commit SHA and `<versión>` is read from `[workspace.package] version` in Cargo.toml by a shell step in ci.yml, not fixed as a literal in the YAML; both images carry the same version tag value.
+  - id: AC-4
+    statement: deploy/verificar_imagenes.sh checks, for each of hexcell-nucleo and hexcell-sidecar, that `docker image inspect --format '{{.Config.User}}'` is exactly `10001:10001`; any other value or an empty string fails the script.
+  - id: AC-5
+    statement: deploy/verificar_imagenes.sh includes an internal negative test that builds a minimal image FROM alpine:3 with no USER instruction in a temporary build directory and asserts the user guard rejects it.
+    given: a throwaway image built without a USER instruction
+    when: the guard from AC-4 runs against it
+    then: the script reports the check as failed for that image, proving the guard can reject as well as accept
+  - id: AC-6
+    statement: deploy/verificar_imagenes.sh starts the núcleo container with `docker run -d --read-only --tmpfs /tmp --cap-drop ALL --security-opt no-new-privileges:true`, a fresh empty named volume mounted at the data path, `HEXCELL_ID_CELULA=ci`, `HEXCELL_RUTA_DATOS` pointed at that mount, `HEXCELL_DIRECCION_SALUD=0.0.0.0:8081`, and a fresh Docker network, and a sibling alpine:3 container running `wget` on that same network reaches `GET /health/live` with HTTP 200 within 30 seconds; the script documents in a comment whether it probed the núcleo alone or paired it with the sidecar on the same network and volume, based on what crates/hexcell/src/salud.rs shows about whether /health/live requires a sidecar connection.
+  - id: AC-7
+    statement: 'deploy/verificar_imagenes.sh starts the sidecar container with the same hardening flags and a fresh empty named volume (no extra environment variables), and within 10 seconds `docker inspect` reports `State.Running` true and the container''s logs contain neither "read-only file system" nor "permission denied".'
+  - id: AC-8
+    statement: deploy/verificar_imagenes.sh includes a negative test that starts the núcleo container `--read-only` WITHOUT its data volume mounted and asserts the cold-start guard from AC-6 fails for that run, proving the read-only-rootfs check can reject a real regression and not just report a captured constant.
+    given: a núcleo container started read-only with no data volume mounted
+    when: the cold-start health check from AC-6 runs against it
+    then: the script reports that check as failed, not skipped or passed
+  - id: AC-9
+    statement: Every container, network, and volume deploy/verificar_imagenes.sh creates is removed by a shell trap that runs on both normal exit and failure, verified by forcing a failing step and confirming no container, network, or volume from the run remains afterward.
+  - id: AC-10
+    statement: Each new guard check added in AC-4 through AC-8 is validated by manually mutating the underlying condition (e.g. flipping the expected user string, or removing --read-only from the positive run) and confirming the specific check goes red, with the exact check name recorded in 05-validation.json.
+  - id: AC-11
+    statement: README.md gains an appended paragraph, under the deployment/images section, describing how to build both images locally with the same contexts and tags CI uses, and what deploy/verificar_imagenes.sh checks; no existing README paragraph is deleted or reworded, verified by `git diff main...HEAD -- README.md docs | grep '^-'` showing only exact-literal replacements, never deletions.
+  - id: AC-12
+    statement: docs/STATUS.md gains a new entry under Pendiente recording that the image registry (GHCR, self-hosted, or other) is not yet decided and that this decision blocks turning task 18 into a real publish step.
+  - id: AC-13
+    statement: 'docs/plan/fase-a-6-empaquetado-cli.md records, under task 18, a "Nota 2026-09-22" stating that publication is a one-line change (push:true + login) once the registry is decided, plus a closing paragraph "Cerrada el 2026-09-22 con HEX-086." summarizing what shipped, plus an updated "La cadena restante" line recalculated by reading the current state of tasks 13, 15, 21, 19 on disk/git log, with task 18 and any other already-closed task removed from the chain.'
+  - id: AC-14
+    statement: cargo fmt --check, cargo clippy --workspace -- -D warnings, and cargo test --workspace all pass, and deploy/verificar_imagenes.sh passes end to end against a local Docker daemon, with results captured in 05-validation.json.
+risk: medium
+non_goals:
+  - Do not modify ./Dockerfile or ./sidecar/Dockerfile, except as a last resort if AC-4 through AC-8 fail against the real images as built today.
+  - Do not modify deploy/cell.compose.yml or any other compose file.
+  - Do not modify anything under crates/ or sidecar/ (sidecar/ is owned by the parallel task 13).
+  - Do not modify Cargo.lock.
+  - Do not decide or implement registry publication (push:true, login, credentials); that stays an open Pendiente decision.
+  - Do not write or resolve an ADR for this task.
+  - Do not add a HEALTHCHECK instruction to either Dockerfile.
+constraints:
+  - Touch set is closed to .github/workflows/ci.yml, deploy/verificar_imagenes.sh, README.md, docs/plan/fase-a-6-empaquetado-cli.md, docs/STATUS.md.
+  - All commit messages and all touched content are in Spanish, conventional-commit style, with no AI attribution trailer of any kind.
+  - Docs edits are append-only or exact-literal replacement; no paragraph is deleted or reworded beyond an exact-literal swap.
+  - Dates written into docs are absolute (2026-09-22), never relative.
+  - No wording states or implies that Fase B replaces, substitutes, or closes Fase A, or that the sidecar is retired.
+  - No `*.db*` file or `.env*` file is versioned.
+  - No new runtime dependency (Cargo or Go) is introduced.
+  - Complexity band stays S/M on touched files; this task is not decomposed.

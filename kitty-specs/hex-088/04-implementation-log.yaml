@@ -1,0 +1,15 @@
+task_id: HEX-088
+summary: |
+    Write docs/runbook-operacion.md and append linking/closing sentences to README.md and docs/plan/fase-a-6-empaquetado-cli.md, closing A-6 plan task 21.
+entries:
+  - changed_files:
+      - path: docs/runbook-operacion.md
+    notes:
+      - "Fix-review pass on 06-review.json fix_tasks (verdict: revise), scoped to docs/runbook-operacion.md only."
+      - "terminate-verification-disc04: replaced the false 'no DISC-0N after terminate' claim with the real behavior (DISC-04 + exit 1 is expected after a successful terminate, per comandos.rs:720-723)."
+      - "oom-memory-figure-origin: removed the '48m/32m' literal from Escalar; Registrar now cites deploy/cell.compose.yml as a variable reference (lines 106/174) and points to deploy/celula.env.ejemplo or docker inspect for the effective value."
+      - "terminate-requires-running-cell: documented that cell terminate requires the core running, else exit 1 'ejecute cell unpause antes de cell terminate' (ciclo_de_vida.rs:176,531-533); added to section 3 and the situation table row."
+      - "reejecucion-stub-no-overclaim: restricted the 'resumes where it failed' claim to cell rebind's Reemparejando path; cell terminate now says recovery is plan task 15's scope."
+      - "sonda-image-precondition: noted HEXCELL_IMAGEN_SONDA is also required by cell unpause/status for the readiness probe, and added missing-image/probe-timeout as exit-1 causes of unpause."
+      - "Minors: OOM container state corrected to 'exited' (not 'ausente'); cell list --id documented as exit 2; typo/duplicate-bullet fixes at lines 15, 210, 267-268."
+    verify_pending: false

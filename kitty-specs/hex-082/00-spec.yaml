@@ -1,0 +1,168 @@
+task_id: HEX-082
+summary: Implement real `cell terminate` in hexcell-admin (session close, drain, destroy containers and volume). Risk high.
+goal: >
+  Replace the NoImplementadoTodavia stub for `cell terminate --id <id> --confirmar [--simular]`
+  with a real, ordered, abort-on-first-failure sequence that closes the sidecar's WhatsApp
+  session via a new core route, drains and removes both containers, and destroys the cell's
+  named data volume. This is a destructive, irreversible operation (deletes containers and a
+  Docker volume including credentials), so every abort point must leave the cell untouched
+  rather than partially destroyed.
+invariants:
+  - A volume is never removed while the channel session is still bound to it; the session-close
+    step must succeed before any container or volume is touched.
+  - The terminate sequence aborts at the first failing step with exit code Fallo=1 and a
+    diagnostic on stderr; no step after the failure point runs.
+  - >-
+    If the core container is not in `running` state, terminate aborts immediately with the exact
+    literal message "la célula está pausada: ejecute cell unpause antes de cell terminate" and
+    starts nothing.
+  - The volume name used for removal always comes from `docker inspect` (Mounts[].Name) of the
+    core container, never derived by naming convention.
+  - The new `POST /admin/sesion/cierre` route on the core has no authentication; the security
+    boundary is the cell's internal network, matching the existing `/admin/ingesta` route.
+  - The CLI never opens a direct IPC connection to the sidecar (per D-57); it always reaches the
+    core over HTTP through a sibling container in the cell's network, the same pattern used by
+    `cell unpause`'s readiness probe.
+  - Exit codes are limited to the existing set (Exito=0, Fallo=1, UsoIncorrecto=2,
+    NoImplementadoTodavia=3); no new exit code is introduced.
+  - No new CLI flag is introduced beyond what already exists for `cell terminate`.
+acceptance:
+  - id: AC-1
+    statement: >
+      `cell terminate --id X --confirmar` executes the six-step sequence in strict order:
+      (1) inspect both containers, (2) read the volume name from the core's docker inspect
+      Mounts[].Name, (3) POST /admin/sesion/cierre via a sibling container, (4) stop sidecar
+      then core reusing the same no-deadline stop operation used by `cell pause`, (5) remove
+      sidecar container, remove core container, remove the volume from step 2, (6) print three
+      stdout lines and exit Exito=0.
+    given: a cell with both containers running and a session bound
+    when: the operator runs `cell terminate --id X --confirmar`
+    then: >
+      Docker requests occur in exactly this order: inspect core, inspect sidecar, create+wait
+      sibling probe container for the session-close POST, stop sidecar, stop core, remove
+      sidecar container, remove core container, remove volume; stdout prints exactly three
+      lines ("sesión cerrada", "contenedores eliminados", "volumen <nombre> eliminado") and the
+      process exits 0.
+  - id: AC-2
+    statement: Step 1 aborts before any other Docker call if either container does not exist.
+    given: an --id that does not resolve to an existing core or sidecar container
+    when: "the operator runs `cell terminate --id X --confirmar`"
+    then: >
+      the command fails with "célula no encontrada" on stderr, exit code Fallo=1, and no
+      inspect/stop/rm request beyond the existence check is issued (idempotence handling is
+      explicitly out of scope, task 15).
+  - id: AC-3
+    statement: >
+      Step 1 aborts with the exact literal pause message if the core container is not in
+      `running` state, without starting anything.
+    given: a cell whose core container is `exited` (paused via `cell pause`)
+    when: "the operator runs `cell terminate --id X --confirmar`"
+    then: >
+      stderr contains exactly "la célula está pausada: ejecute cell unpause antes de cell
+      terminate", exit code is Fallo=1, and no start/stop/rm/POST request is issued.
+  - id: AC-4
+    statement: >
+      The volume name used in step 5 is read from `docker inspect`'s Mounts[].Name for the core
+      container's /var/lib/hexcell mount, never derived from the container id or a naming
+      convention.
+    given: a core container whose mounted volume name does not match any conventional
+      derivation from the container id or cell id
+    when: terminate reaches step 2 and later step 5
+    then: the volume removal request targets the exact name read from Mounts[].Name in step 2.
+  - id: AC-5
+    statement: >
+      If the sibling probe container that issues the session-close POST exits with a non-zero
+      code (session-close failed or timed out), terminate aborts before any stop/rm request and
+      destroys nothing.
+    given: the sidecar's session-close acknowledgement is fallido or absent (core route returns
+      502 or 504)
+    when: terminate reaches step 3
+    then: >
+      the sibling probe container exits non-zero, the command reports Fallo=1 with a diagnostic
+      on stderr, and no stop, no container removal, and no volume removal is issued (a volume
+      is never removed while the session is still bound).
+  - id: AC-6
+    statement: >
+      Steps 4-5 reuse the same no-deadline stop operation already used by `cell pause`
+      (sidecar first, then core) rather than duplicating it; containers are removed with
+      eliminar_contenedor and the volume with eliminar_volumen using existing Docker client
+      operations.
+  - id: AC-7
+    statement: >
+      The new core route `POST /admin/sesion/cierre` (crates/hexcell/src/admin.rs) sends the
+      existing IPC `orden_cierre_de_sesion` (version=6) to the sidecar with motivo "cell
+      terminate" and returns 200 `{"resultado":"completado"}` on a completado acuse, 502
+      `{"resultado":"fallido","motivo":...}` on a fallido acuse, and 504 if no acuse arrives
+      within 30 seconds. The route carries no authentication; its doc comment states that the
+      security boundary is the cell's internal network, matching `/admin/ingesta`.
+    given: the core process is running with a sidecar connection
+    when: an unauthenticated POST /admin/sesion/cierre request arrives
+    then: the response status and body match the completado/fallido/timeout cases above.
+  - id: AC-8
+    statement: >
+      Core route tests cover the three acuse outcomes for POST /admin/sesion/cierre: acuse
+      completado -> 200, acuse fallido -> 502, no acuse within the deadline -> 504, following
+      the existing admin.rs test pattern.
+  - id: AC-9
+    statement: >
+      hexcell-admin test suite (tests/comandos.rs, tests/ciclo_de_vida.rs) covers, against the
+      temporary Unix-socket Docker double with scripted HTTP responses, all four mandatory
+      cases (a) exact Docker request order for a full successful run: inspect x2, create+wait
+      sibling probe, stop sidecar, stop core, rm x2, rm volume; (b) sibling probe container
+      exiting non-zero emits no subsequent stop/rm request; (c) core container in `exited`
+      state yields Fallo and no request after the state check; (d) the removed volume name
+      comes from the inspect response, not from any id-derived or conventional name.
+  - id: AC-10
+    statement: >
+      Plan and README documentation deliverables land append-only or as exact-literal
+      replacement: a closing paragraph is appended to task 12's entry in
+      docs/plan/fase-a-6-empaquetado-cli.md stating the terminate target state is `Retirada`
+      with motivo `sesion_cerrada`, not persisted in this task (owned by task 14); one sentence
+      is appended to task 14's 2026-09-21 note referencing this persistence follow-up; a written
+      follow-up is added to task 15 for a forced-terminate variant covering banned devices with
+      no session to close; and the README's CLI section is appended noting that `terminate` is
+      real as of HEX-082.
+  - All verification commands pass cleanly for the changed workspace and sidecar (cargo
+    fmt --check, cargo clippy --workspace -- -D warnings, cargo test --workspace, and cd
+    sidecar && go vet ./... && go test ./... -count=1), and every new test is demonstrated red
+    under a hand-applied mutation before being restored green.
+risk: high
+non_goals:
+  - Idempotent re-execution of `cell terminate` after a partial failure (owned by task 15).
+  - Persisting the `Retirada` state with motivo `sesion_cerrada` to a control-plane store (owned
+    by task 14, which creates that store).
+  - A forced-terminate variant for cells whose device is already banned and cannot close a
+    session (deferred as a written follow-up to task 15; no new flag in this task).
+  - Any new CLI flag beyond the existing `--id`, `--confirmar`, `--simular` for `terminate`.
+  - Any new process exit code.
+  - Any change to the core<->sidecar IPC protocol or wire format (the transport is already
+    settled by D-57; only a new HTTP route on the core is added).
+constraints:
+  - Do not modify sidecar/ or docs/protocolo-ipc-nucleo-sidecar.md.
+  - Do not modify crates/hexcell-admin/src/docker/cliente.rs (stop-operation consolidation is
+    reserved for task 15).
+  - Do not modify the state transition table in estado_de_celula.rs.
+  - All repository content produced (code, comments, commit messages, docs edits) is written in
+    Spanish, with conventional commit prefixes and no AI attribution.
+  - Documentation edits are append-only or exact-literal replacement; a diff review must show no
+    deleted lines other than the exact literal being replaced.
+  - New hexcell-admin tests live under crates/hexcell-admin/tests/ with descriptive snake_case
+    names, using the existing temporary Unix-socket Docker double in tests/comun/mod.rs; no
+    FakeDocker type is introduced.
+  - "`--simular` remains exclusively an argument-parser concern that short-circuits before any
+    Docker call; terminate's real behavior is never gated behind it in the business logic."
+  - Three parallel tasks (12, 14, 23) touch the command match in comandos.rs; this task's branch
+    of the match is added as a single line without reordering the others, and the branch is
+    rebased onto main before merge.
+decomposition:
+  - child_id: HEX-082-a
+    summary: >-
+      Core side: POST /admin/sesion/cierre with a channel-agnostic seam, the whatsmeow motivo
+      handle, the simulated-channel close policy, and the admin listener line in cell.compose.yml.
+    depends_on: []
+  - child_id: HEX-082-b
+    summary: >-
+      CLI side: the real six-step destructive cell terminate sequence in hexcell-admin, its four
+      mandatory Docker-double tests, and the plan/README documentation deliverables.
+    depends_on:
+      - HEX-082-a

@@ -1,0 +1,93 @@
+{
+  "task_id": "HEX-083",
+  "bundle_hash": "5bae9fc260ee44a049ad81186c2f72d27a753593f2153fcd02c1449e88c120fb",
+  "files": [
+    ".ai/tasks/active/HEX-083-new-spec/00-spec.yaml",
+    ".ai/tasks/active/HEX-083-new-spec/01-blueprint.yaml",
+    "CLAUDE.md",
+    "Cargo.toml",
+    "README.md",
+    "crates/hexcell-admin/Cargo.toml",
+    "crates/hexcell-admin/src/argumentos.rs",
+    "crates/hexcell-admin/src/ciclo_de_vida.rs",
+    "crates/hexcell-admin/src/codigo_de_salida.rs",
+    "crates/hexcell-admin/src/comandos.rs",
+    "crates/hexcell-admin/src/docker/cliente.rs",
+    "crates/hexcell-admin/src/docker/mod.rs",
+    "crates/hexcell-admin/src/docker/transporte.rs"
+  ],
+  "protocol_version": "fleet-bundle-protocol/v2",
+  "created_at": "2026-09-22T04:30:12Z",
+  "dropped": [
+    {
+      "component": "code_slice",
+      "path": "docs/plan/fase-a-6-empaquetado-cli.md",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "docs/bitacora-de-descartes.md",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "docs/adr/README.md",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "crates/hexcell-storage/src/migraciones.rs",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "crates/hexcell-storage/migraciones/sesiones/0001-esquema-inicial.sql",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "crates/hexcell-admin/tests/estado_de_celula.rs",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "crates/hexcell-admin/tests/comun/mod.rs",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "crates/hexcell-admin/tests/comandos.rs",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "crates/hexcell-admin/tests/cliente_docker.rs",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "crates/hexcell-admin/tests/ciclo_de_vida.rs",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "crates/hexcell-admin/src/salida.rs",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "crates/hexcell-admin/src/main.rs",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "crates/hexcell-admin/src/lib.rs",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "crates/hexcell-admin/src/estado_de_celula.rs",
+      "reason": "bundle exceeded max_bytes budget"
+    }
+  ]
+}

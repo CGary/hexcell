@@ -1,0 +1,182 @@
+task_id: HEX-082-a
+summary: >-
+  Core half of cell terminate (R5): POST /admin/sesion/cierre fed by a compile-time CierreDeSesion
+  enum, a cloneable whatsmeow session handle with motivo, and the admin bind in the compose template.
+goal: >-
+  Leave the core with the session-close surface that `cell terminate` (sibling HEX-082-b) will call,
+  and nothing else. crates/hexcell/src/admin.rs gains POST /admin/sesion/cierre; the composition root
+  in crates/hexcell/src/main.rs hands it CierreDeSesion::ConSesion(asa) on whatsmeow and
+  CierreDeSesion::SinSesion on the simulated channel, decided at COMPILE TIME;
+  crates/hexcell-canal-whatsmeow/src/adaptador.rs exposes AsaDeSesion, a cloneable handle taken before
+  Motor::nuevo consumes the adapter, that sends the already-existing wire-6 orden_cierre_de_sesion with
+  motivo "cell terminate"; deploy/cell.compose.yml sets HEXCELL_DIRECCION_ADMIN=0.0.0.0:8082 with a
+  comment twinning the HEXCELL_DIRECCION_SALUD one. hexcell-core, hexcell-canal-simulado, the IPC wire
+  format, the sidecar, the CLI crate and every document stay untouched.
+read:
+  - .ai/tasks/active/HEX-082-a/00-spec.yaml
+  - .ai/tasks/active/HEX-082-a/01-blueprint.yaml
+  - crates/hexcell-core/src/canal.rs
+  - crates/hexcell/src/admin.rs
+  - crates/hexcell/src/main.rs
+  - crates/hexcell/src/salud.rs
+  - crates/hexcell/src/configuracion.rs
+  - crates/hexcell/tests/admin_http.rs
+  - crates/hexcell/tests/comun/mod.rs
+  - crates/hexcell-canal-whatsmeow/src/adaptador.rs
+  - crates/hexcell-canal-whatsmeow/src/mensajes.rs
+  - crates/hexcell-canal-whatsmeow/src/error.rs
+  - crates/hexcell-canal-whatsmeow/src/lib.rs
+  - crates/hexcell-canal-whatsmeow/tests/cierre_de_sesion.rs
+  - crates/hexcell-canal-whatsmeow/tests/comun/mod.rs
+  - deploy/cell.compose.yml
+  - CLAUDE.md
+touch:
+  - crates/hexcell/src/admin.rs
+  - crates/hexcell/src/main.rs
+  - crates/hexcell-canal-whatsmeow/src/adaptador.rs
+  - deploy/cell.compose.yml
+  - crates/hexcell/tests/admin_http.rs
+  - crates/hexcell-canal-whatsmeow/tests/cierre_de_sesion.rs
+forbid:
+  files:
+    - sidecar/**
+    - docs/protocolo-ipc-nucleo-sidecar.md
+    - crates/hexcell-admin/src/docker/cliente.rs
+    - crates/hexcell-admin/src/estado_de_celula.rs
+    - crates/hexcell-core/**
+    - crates/hexcell-canal-simulado/**
+    - crates/hexcell-canal-contrato/**
+    - crates/hexcell-admin/**
+    - crates/hexcell-storage/**
+    - crates/hexcell-meta/**
+    - crates/hexcell/src/configuracion.rs
+    - crates/hexcell/src/emparejar.rs
+    - crates/hexcell-canal-whatsmeow/src/mensajes.rs
+    - crates/hexcell-canal-whatsmeow/src/lib.rs
+    - docs/**
+    - README.md
+    - Cargo.toml
+    - Cargo.lock
+    - crates/**/Cargo.toml
+    - .github/workflows/**
+    - deploy/verificar_endurecimiento.sh
+    - deploy/verificar_limites.sh
+    - deploy/verificar_renderizado_configuracion.sh
+    - deploy/celula.env.ejemplo
+    - deploy/celula.defecto.env.ejemplo
+    - deploy/celula.superposicion.env.ejemplo
+  behaviors:
+    - >-
+      Do NOT make crates/hexcell-canal-simulado implement CicloDeVidaSesion, and do not edit that
+      crate at all. Ratification R5 (2026-09-22) REPEALS the part of R3 that required it: the sub-trait
+      stays optional and reserved to adapters that bind a device. The "no session to close = completado"
+      policy lives in the CierreDeSesion::SinSesion variant that the composition root selects, and the
+      motivo literal is a constant declared beside the route, never a trait method's return value.
+    - >-
+      Do NOT change the core<->sidecar IPC wire format. Putting a value in the `motivo` field that wire
+      6 ALREADY defines is not a protocol change; adding a field, a message type, or bumping
+      VERSION_PROTOCOLO is. docs/protocolo-ipc-nucleo-sidecar.md, the protocol ADRs and sidecar/ stay
+      byte-identical, and the Go suite must still pass unmodified.
+    - >-
+      Do NOT open a SECOND IPC connection to the sidecar. The protocol admits one active connection and
+      evicts the previous one on connect, so the route reaches the sidecar only through the adapter the
+      Motor already owns, via a cloneable handle over the already-Arc'd escritor_compartido and
+      pendientes_de_sesion, taken BEFORE Motor::nuevo consumes the adapter.
+    - >-
+      Do NOT split servir_servicios_http into the per-channel branches, do not call it more than once,
+      and do not move it after the match on CanalSeleccionado. It keeps returning ONE combined future
+      bound before the channel is known; that is precisely why the close seam is late-bound through a
+      OnceLock set inside each branch before its tokio::select!.
+    - >-
+      Do NOT let crates/hexcell/src/admin.rs name hexcell_canal_whatsmeow, AdaptadorWhatsmeow,
+      AsaDeSesion or any IPC wire type. The route is channel-agnostic: it knows only CierreDeSesion and
+      the CicloDeVidaSesion bound from hexcell-core.
+    - >-
+      Do NOT edit the two pre-existing HEX-071 cases in
+      crates/hexcell-canal-whatsmeow/tests/cierre_de_sesion.rs. New coverage is ADDED beside them, and
+      AdaptadorWhatsmeow's own CicloDeVidaSesion::cerrar_sesion keeps sending motivo "" so they stay
+      green unmodified.
+    - >-
+      Do NOT let any test file import the production constants it pins: neither
+      hexcell::admin::PLAZO_DE_CIERRE_DE_SESION (30 s) nor the 8082 port literal. The 504 case uses a
+      test-supplied sub-second deadline passed into atender_cierre_de_sesion, so the guard cannot pass
+      by hanging.
+    - >-
+      Do NOT write a guard that both sides of which move under mutation, that collapses distinct values
+      through output formatting, or that a CI job without the right toolchain would run. 200 is produced
+      by TWO paths here (SinSesion and ConSesion-Ok), so every 200 guard MUST assert the presence or the
+      ABSENCE of the `motivo` key, not just the status code; the 502 guard MUST assert the fixture's own
+      distinctive error text, never a substring production code also emits. Each new test is hand-broken
+      once, seen red, restored, and the exact test name that turned red is written into the report.
+    - >-
+      Do NOT fail OPEN. An unregistered seam (OnceLock never set) answers 502, never 200: the sibling
+      command destroys a volume on a 200, so a forgotten registration must never look like a completed
+      close.
+    - >-
+      Do NOT write ANY documentation: no plan edit, no README edit, no new ADR, no bitacora entry
+      (R1 is explicit that keeping loopback as the binary default is not a discarded technique). Every
+      documentation deliverable belongs to sibling HEX-082-b, which merges LAST. If a genuine new
+      discard appears during implementation, STOP and escalate instead of adding it silently.
+    - >-
+      Do NOT add a fifth or sixth PRODUCTION file. The production touch list is exactly four:
+      crates/hexcell/src/admin.rs, crates/hexcell/src/main.rs,
+      crates/hexcell-canal-whatsmeow/src/adaptador.rs, deploy/cell.compose.yml. crates/hexcell-canal-whatsmeow/src/lib.rs
+      already declares `pub mod adaptador`, so AsaDeSesion is reachable without re-exporting it. If the
+      design seems to need another production file, STOP and escalate as human-blocking.
+    - >-
+      Do NOT add a new CLI flag, subcommand or CodigoDeSalida variant, a new HTTP status code beyond
+      200/502/504 on the new path, an authentication header, a token, an allowlist, a `ports:` block, a
+      bind mount, or a crate dependency. Do not change the loopback default in configuracion.rs.
+    - >-
+      Do NOT let any production path end in panic, unwrap, expect, out-of-range indexing or
+      std::process::exit: the release profile sets panic = "abort", so a panic leaves no usable message.
+    - >-
+      All repository content is in Spanish (identifiers, comments, doc comments, operator messages), as
+      CLAUDE.md fixes; dates written in code are absolute (2026-09-22), never relative. The commit is a
+      Spanish conventional commit with NO AI attribution of any kind: no Co-Authored-By, no "Generated
+      with", no Claude-Session.
+verify:
+  commands:
+    - 'bash -c ''test -z "$(git diff --name-only main...HEAD | grep -E "^(sidecar/|docs/|README\.md|Cargo\.(toml|lock)|\.github/|crates/hexcell-core/|crates/hexcell-canal-simulado/|crates/hexcell-canal-contrato/|crates/hexcell-admin/|crates/hexcell-storage/|crates/hexcell-meta/)")"'''
+    - 'bash -c ''test -z "$(git diff --name-only main...HEAD -- crates/hexcell/src/configuracion.rs crates/hexcell/src/emparejar.rs crates/hexcell-canal-whatsmeow/src/mensajes.rs crates/hexcell-canal-whatsmeow/src/lib.rs deploy/verificar_endurecimiento.sh deploy/verificar_limites.sh deploy/verificar_renderizado_configuracion.sh deploy/celula.env.ejemplo)"'''
+    - 'bash -c ''test -z "$(grep -rnE "hexcell_canal_whatsmeow|AdaptadorWhatsmeow|AsaDeSesion|orden_cierre_de_sesion" crates/hexcell/src/admin.rs)"'''
+    - 'bash -c ''grep -q "canal_sin_sesion" crates/hexcell/src/admin.rs'''
+    - 'bash -c ''grep -qE "^[[:space:]]+HEXCELL_DIRECCION_ADMIN:[[:space:]]*0\.0\.0\.0:8082$" deploy/cell.compose.yml'''
+    - 'bash -c ''test -z "$(grep -nE "^[[:space:]]*ports:" deploy/cell.compose.yml)"'''
+    - 'bash -c ''test -z "$(grep -nE "PLAZO_DE_CIERRE_DE_SESION|8082" crates/hexcell/tests/admin_http.rs crates/hexcell-canal-whatsmeow/tests/cierre_de_sesion.rs)"'''
+    - 'bash -c ''test -z "$(git diff main...HEAD -- crates/hexcell-canal-whatsmeow/tests/cierre_de_sesion.rs | grep -E "^-" | grep -v "^---")"'''
+    - 'bash -c ''test -z "$(git log main..HEAD --format=%B | grep -iE "co-authored-by|generated with|claude-session|claude\.ai/code")"'''
+    - cargo fmt --check
+    - cargo clippy --workspace -- -D warnings
+    - cargo test -p hexcell --test admin_http
+    - cargo test -p hexcell-canal-whatsmeow --test cierre_de_sesion
+    - cargo test --workspace
+    - 'bash -c ''cd sidecar && go vet ./... && go test ./... -count=1'''
+  target_s: 60
+acceptance:
+  bdd_suite: 'bash deploy/verificar_endurecimiento.sh deploy/cell.compose.yml && bash deploy/verificar_limites.sh deploy/cell.compose.yml && bash deploy/verificar_renderizado_configuracion.sh'
+  human_gate: true
+limits:
+  max_files_changed: 6
+  max_diff_lines: 900
+  per_class:
+    - glob: crates/hexcell/src/**
+      max_diff_lines: 240
+    - glob: crates/hexcell/tests/**
+      max_diff_lines: 300
+    - glob: crates/hexcell-canal-whatsmeow/src/**
+      # Ratificado por el humano (2026-09-22): el propio blueprint exigió mover el cuerpo de
+      # ordenar_cierre_de_sesion a una función libre compartida (AsaDeSesion delega, no duplica);
+      # ese movimiento más los comentarios de documentación exceden el techo original de 190
+      # líneas. Techo elevado a 240 para ese refactor puntual; ningún otro límite cambia.
+      max_diff_lines: 240
+    - glob: crates/hexcell-canal-whatsmeow/tests/**
+      max_diff_lines: 160
+    - glob: deploy/**
+      max_diff_lines: 25
+execution:
+  mode: worktree_edit
+  branch: ai/HEX-082-a
+retry_policy:
+  max_attempts: 2
+  escalate_after: 2

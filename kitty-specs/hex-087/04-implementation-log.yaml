@@ -1,0 +1,93 @@
+task_id: HEX-087
+summary: hexcell-admin re-run reconciliation and best-effort terminate, rebind resume fix D3, merged Docker stop D4, D5 status tests, D6 docs; revise fix closed the two vacuous D3 guards.
+entries:
+  - changed_files:
+      - crates/hexcell-admin/src/docker/cliente.rs
+      - crates/hexcell-admin/src/ciclo_de_vida.rs
+      - crates/hexcell-admin/src/comandos.rs
+      - crates/hexcell-admin/tests/cliente_docker.rs
+      - crates/hexcell-admin/tests/estado_y_listado.rs
+      - crates/hexcell-admin/tests/comandos.rs
+      - crates/hexcell-admin/tests/reemparejamiento.rs
+      - crates/hexcell-admin/tests/ciclo_de_vida.rs
+      - crates/hexcell-admin/tests/comun/mod.rs
+      - README.md
+      - docs/plan/fase-a-6-empaquetado-cli.md
+      - docs/STATUS.md
+    notes:
+      - Original implementation of D1 (pause/unpause/terminate re-run reconciliation against
+        Docker's real state and partial-terminate finish), D2 (best-effort session close on
+        terminate), D3 (rebind resume from Reemparejando checks session activity and recovers
+        once from ya_emparejada), D4 (merged the two Docker stop functions with an optional
+        deadline) and D5 (three missing cell-status failure-path tests), plus D6 documentation in
+        README.md, the A-6 plan and STATUS.md, per 01-blueprint.yaml.
+      - "Mutation M1: dropped the identity re-run branch before transitar. Red: AC-1/AC-3/AC-5
+        tests (transicion no permitida / estado retirada es terminal). Reverted."
+      - "Mutation M2: stop core without the status predicate. Red: AC-2 test (unexpected POST
+        /containers/c1-nucleo/stop) and AC-1 stdout assertion. Reverted."
+      - "Mutation M3: start both containers unconditionally on unpause re-run. Red: AC-3/AC-4
+        tests (extra /start shifts the fixture sequence). Reverted."
+      - "Mutation M4: abort session close when the close exit code is non-zero. Red: comandos
+        AC-8 test (Fallo instead of best-effort continue) and
+        ciclo_de_vida::retirar_avisa_y_continua (Configuracion(\"cierre 1\")). Reverted."
+      - "Mutation M5: dropped the sesion-activa check in rebind resume. Red: AC-9 test (Fallo,
+        pairing attempted when it should be skipped). Reverted."
+      - "Mutation M6a: skipped descartar_sqlstore in the ya_emparejada recovery. Red: AC-10
+        success test. Mutation M6b: retried the recovery twice. Red: AC-10 failure test (sixth
+        create consumed the spare probe). Both reverted."
+      - "Mutation M7a/M7b: appended ?t=30 unconditionally on None, and dropped it on Some(t). Red:
+        cliente_docker stop tests asserting the literal query string. Reverted."
+      - "Mutation M8: dropped the sidecar from the status source-failure loop. Red: AC-16 test
+        (missing DISC-01). Reverted."
+      - "Mutation M9: made alguno_presente require BOTH containers present. Red: AC-17 test
+        (missing DISC-05). Reverted."
+      - "Mutation M10: treated Disponibilidad::Inalcanzable as Listo. Red: AC-18 test. Reverted."
+      - "Mutation M11: moved the volume-name warning after destruir_restos. Red: AC-21 ordering
+        test (index 11 > 6). Reverted."
+      - "Mutation M12a/M12b: derived the volume name from --id when the core container is absent,
+        in retirar and completar_retiro. Red: AC-25 and AC-6(b) tests (wrong literal volume
+        name). Mutation M12c: made completar_retiro fail when the core is absent. Red: AC-5 and
+        AC-6(b) tests. All reverted."
+      - "Mutation M13a: mapped a store row with no containers to Fallo. Red: AC-23 test. Mutation
+        M13b: mapped no store row to success. Red: AC-7 test. Both reverted."
+      - "Mutation M14: skipped the despausar step before stopping a paused container. Red: AC-24
+        test (stop served where unpause was expected, fixture timeout). Reverted."
+    verify_pending: false
+  - changed_files:
+      - crates/hexcell-admin/tests/reemparejamiento.rs
+    notes:
+      - Revise fix for the 06-review.json revise verdict, scoped to its three fix_tasks. The two
+        surviving guards below were vacuous because the review's own re-run mutations (URL and
+        method of the GET /admin/sesion probe, and the reanudando predicate) passed all 19
+        reemparejamiento tests unnoticed.
+      - Strengthened resume_con_sesion_ya_activa_omite_el_emparejamiento_y_confirma to capture
+        the GET /admin/sesion sibling's create body and assert Image, HostConfig.NetworkMode and
+        the literal Cmd (no --post-data) instead of only checking the request-sequence labels,
+        which let the URL and method survive unasserted.
+      - Mutation sonda-sesion-url; ciclo_de_vida.rs:1137 consultar_estado_de_sesion url format,
+        changed the literal /admin/sesion path to /admin/sesion/xxx. Test
+        resume_con_sesion_ya_activa_omite_el_emparejamiento_y_confirma went RED (Cmd assertion
+        failed, left had the xxx suffix, right expected the plain /admin/sesion path). Reverted.
+      - Mutation sonda-sesion-metodo; ciclo_de_vida.rs:1144 consultar_estado_de_sesion call,
+        changed guion_de_peticion_http's second argument from None to Some of a JSON body. Test
+        resume_con_sesion_ya_activa_omite_el_emparejamiento_y_confirma went RED (Cmd assertion
+        failed, left carried a --post-data flag, right expected none). Reverted.
+      - Added secuencia_completa_con_ya_emparejada_no_activa_la_recuperacion_de_resume, a
+        full-sequence (non-resume) case seeded with no store row, where the single pairing
+        request fails with ya_emparejada; asserts Fallo, no extra Docker requests beyond the
+        planned ones (exigir_silencio), and the row left in Reemparejando, so the D3 recovery
+        stays exclusive to the resume path.
+      - Mutation reanudando-guard; comandos.rs:704 ejecutar_reemparejamiento match guard, dropped
+        the reanudando && operand so the arm matched on motivo alone. Test
+        secuencia_completa_con_ya_emparejada_no_activa_la_recuperacion_de_resume went RED (the
+        extra descartar_sqlstore_y_rearrancar plus a second pairing sibling exhausted the
+        fixture's scripted requests; diagnostico reported a Docker socket failure instead of the
+        expected Fallo). Reverted.
+      - "Verification after the fix: cargo fmt --check exit 0; cargo test -p hexcell-admin exit
+        0 (all suites green, including the two new/strengthened guards); cargo clippy -p
+        hexcell-admin --tests -- -D warnings shows only the 13 pre-existing baseline error sites
+        (comandos.rs 45/96/140/205/616, almacen_plano_de_control.rs 39/61/83/287/438,
+        argumentos.rs:60, comun/mod.rs:262, reporte_de_consumo.rs:75), identical to main
+        (141df60); zero new sites in reemparejamiento.rs or ciclo_de_vida.rs."
+    verify_pending: false
+tdd_red_runs: []

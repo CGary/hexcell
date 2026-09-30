@@ -1,0 +1,189 @@
+task_id: HEX-090
+summary: >
+  Test-only clippy fixes in 19 test files, ci.yml clippy step, CLAUDE.md line and plan task 15 note.
+goal: >
+  Make `cargo clippy --workspace --all-targets -- -D warnings` exit 0 on the task branch with test code only
+  edited, and make CI and CLAUDE.md run exactly that command in the same commit.
+read:
+  - .ai/tasks/active/HEX-090-new-spec/00-spec.yaml
+  - .github/workflows/ci.yml
+  - CLAUDE.md
+  - docs/plan/fase-a-6-empaquetado-cli.md
+  - crates/hexcell-admin/tests/reemparejamiento.rs
+touch:
+  - "crates/*/tests/**/*.rs"
+  - .github/workflows/ci.yml
+  - CLAUDE.md
+  - docs/plan/fase-a-6-empaquetado-cli.md
+forbid:
+  files:
+    - "crates/*/src/**"
+    - "crates/*/benches/**"
+    - Cargo.lock
+    - Cargo.toml
+    - "crates/*/Cargo.toml"
+    - "deploy/**"
+    - "sidecar/**"
+    - docs/STATUS.md
+    - docs/bitacora-de-descartes.md
+    - "docs/adr/**"
+    - "kitty-specs/**"
+    - clippy.toml
+    - .clippy.toml
+  behaviors:
+    - "Change production code, behavior or public APIs of any crate (only test code is edited)"
+    - "Add a file-level or crate-level allow attribute (#![allow) in any file"
+    - "Add a #[allow(clippy::...)] without a comment on the same or the preceding line explaining why the fix worsens the test"
+    - "Change lint levels globally (no clippy.toml, no [lints] table in any Cargo.toml)"
+    - "Edit ci.yml outside lines 28-29 (HEX-089 appends a job at the end of the file)"
+    - "Replace or delete any existing line of docs/plan/fase-a-6-empaquetado-cli.md (the note is appended only)"
+    - "Delete, ignore or weaken a test to silence a lint (the cargo test passed/ignored totals must stay identical)"
+    - "Add AI attribution (Co-Authored-By or generated-with trailer) to any commit message; the quality gates do not catch it"
+    - "Write repository content in a language other than Spanish (code comments, docs, commit messages); conventional commits"
+    - "Assert the lint count in advance: the note carries the N lints in M files measured at implement time"
+verify:
+  commands:
+    - cargo clippy --workspace --all-targets -- -D warnings
+    - cargo fmt --check
+    - |
+      bash -s <<'EOS'
+      set -uo pipefail
+      # Baseline medida en main 9b59ba9: 704 passed, 0 failed, 6 ignored, 93 lineas "test result".
+      OUT=$(mktemp)
+      if ! cargo test --workspace > "$OUT" 2>&1; then tail -40 "$OUT"; echo "FALLA: cargo test --workspace no sale en 0"; exit 1; fi
+      P=$(grep -E "^test result" "$OUT" | awk '{p+=$4} END{print p+0}')
+      F=$(grep -E "^test result" "$OUT" | awk '{f+=$6} END{print f+0}')
+      I=$(grep -E "^test result" "$OUT" | awk '{i+=$8} END{print i+0}')
+      S=$(grep -cE "^test result" "$OUT")
+      echo "medido: passed=$P failed=$F ignored=$I suites=$S (baseline 704/0/6/93)"
+      rc=0
+      [ "$P" -eq 704 ] || { echo "FALLA: passed=$P distinto de la base 704"; rc=1; }
+      [ "$F" -eq 0 ] || { echo "FALLA: failed=$F"; rc=1; }
+      [ "$I" -eq 6 ] || { echo "FALLA: ignored=$I distinto de la base 6"; rc=1; }
+      [ "$S" -eq 93 ] || { echo "FALLA: suites=$S distinto de la base 93"; rc=1; }
+      exit $rc
+      EOS
+    - |
+      bash -s <<'EOS'
+      set -uo pipefail
+      F=.github/workflows/ci.yml
+      NEW="cargo clippy --workspace --all-targets -- -D warnings"
+      OLD="cargo clippy --workspace -- -D warnings"
+      GUARD_FAILS=""
+      guard() {
+        GUARD_FAILS=""
+        local t
+        t=$(sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//' "$1")
+        printf '%s\n' "$t" | grep -Fxq -- "- name: $NEW" || GUARD_FAILS="$GUARD_FAILS CHK_NAME"
+        printf '%s\n' "$t" | grep -Fxq -- "run: $NEW" || GUARD_FAILS="$GUARD_FAILS CHK_RUN"
+        if printf '%s\n' "$t" | grep -Fxq -- "run: $OLD"; then GUARD_FAILS="$GUARD_FAILS CHK_OLDRUN"; fi
+        [ "$(printf '%s\n' "$t" | grep -cE '^run: cargo clippy')" -eq 1 ] || GUARD_FAILS="$GUARD_FAILS CHK_COUNT"
+        [ -z "$GUARD_FAILS" ]
+      }
+      TMP=$(mktemp -d)
+      # Mutacion M1: revertir solo la linea run.
+      sed -E 's/^( *run: cargo clippy --workspace) --all-targets/\1/' "$F" > "$TMP/m1.yml"
+      if cmp -s "$F" "$TMP/m1.yml"; then echo "FALLA: la mutacion M1 no se aplico (sed no matcheo)"; exit 1; fi
+      if guard "$TMP/m1.yml"; then echo "FALLA: la guarda queda verde con la linea run revertida"; exit 1; fi
+      case "$GUARD_FAILS" in *CHK_RUN*) ;; *) echo "FALLA: M1 no puso rojo CHK_RUN (dio:$GUARD_FAILS)"; exit 1 ;; esac
+      case "$GUARD_FAILS" in *CHK_NAME*) echo "FALLA: M1 puso rojo CHK_NAME; la guarda no discrimina"; exit 1 ;; esac
+      # Mutacion M2: revertir solo la linea name.
+      sed -E 's/^( *- name: cargo clippy --workspace) --all-targets/\1/' "$F" > "$TMP/m2.yml"
+      if cmp -s "$F" "$TMP/m2.yml"; then echo "FALLA: la mutacion M2 no se aplico (sed no matcheo)"; exit 1; fi
+      if guard "$TMP/m2.yml"; then echo "FALLA: la guarda queda verde con la linea name revertida"; exit 1; fi
+      case "$GUARD_FAILS" in *CHK_NAME*) ;; *) echo "FALLA: M2 no puso rojo CHK_NAME (dio:$GUARD_FAILS)"; exit 1 ;; esac
+      case "$GUARD_FAILS" in *CHK_RUN*) echo "FALLA: M2 puso rojo CHK_RUN; la guarda no discrimina"; exit 1 ;; esac
+      # Cambio real.
+      if ! guard "$F"; then echo "FALLA CI ($GUARD_FAILS ): ci.yml no ejecuta exactamente: $NEW"; exit 1; fi
+      # Solo el hunk de las lineas 28-29; un diff vacio dejaria la guarda muerta.
+      BASE=$(git merge-base main HEAD)
+      H=$(git diff -U0 "$BASE" -- "$F" | grep '^@@' || true)
+      [ -n "$H" ] || { echo "FALLA: ci.yml sin cambios respecto a la base; la guarda estaria muerta"; exit 1; }
+      BAD=$(printf '%s\n' "$H" | grep -vE '^@@ -28,2 \+28,2 @@' || true)
+      [ -z "$BAD" ] || { echo "FALLA: ci.yml cambia fuera de las lineas 28-29: $BAD"; exit 1; }
+      echo "OK: ci.yml ejecuta el clippy con --all-targets, mutaciones M1/M2 detectadas, solo lineas 28-29"
+      EOS
+    - |
+      bash -s <<'EOS'
+      set -uo pipefail
+      C=CLAUDE.md
+      NEW="cargo clippy --workspace --all-targets -- -D warnings"
+      OLD="cargo clippy --workspace -- -D warnings"
+      chk() { # $1 = archivo; devuelve rojo si no hay exactamente una linea nueva o queda la vieja
+        [ "$(grep -Fxc -- "$NEW" "$1")" -eq 1 ] && [ "$(grep -Fxc -- "$OLD" "$1")" -eq 0 ]
+      }
+      TMP=$(mktemp)
+      sed -E 's/^(cargo clippy --workspace) --all-targets/\1/' "$C" > "$TMP"
+      if cmp -s "$C" "$TMP"; then echo "FALLA: la mutacion de CLAUDE.md no se aplico"; exit 1; fi
+      if chk "$TMP"; then echo "FALLA: la guarda de CLAUDE.md queda verde con la linea revertida"; exit 1; fi
+      chk "$C" || { echo "FALLA: la linea de Comandos de CLAUDE.md no es exactamente: $NEW"; exit 1; }
+      BASE=$(git merge-base main HEAD)
+      D=$(git diff -U0 "$BASE" -- "$C" | grep -E '^[-+][^-+]' || true)
+      [ "$(printf '%s\n' "$D" | grep -c '^-')" -eq 1 ] && [ "$(printf '%s\n' "$D" | grep -c '^+')" -eq 1 ] || { echo "FALLA: CLAUDE.md debe cambiar exactamente una linea"; printf '%s\n' "$D"; exit 1; }
+      echo "OK: CLAUDE.md cambia una sola linea y coincide"
+      EOS
+    - |
+      bash -s <<'EOS'
+      set -uo pipefail
+      BASE=$(git merge-base main HEAD)
+      # Alcance: diff contra la base (cubre lo commiteado y lo no commiteado) mas archivos nuevos sin seguir.
+      CAMBIADOS=$( { git diff --name-only "$BASE"; git ls-files --others --exclude-standard; } | grep -v '^\.ai/' | sort -u )
+      [ -n "$CAMBIADOS" ] || { echo "FALLA: no hay cambios respecto a la base"; exit 1; }
+      FUERA=$(printf '%s\n' "$CAMBIADOS" | grep -vE '^(crates/[^/]+/tests/.+\.rs|\.github/workflows/ci\.yml|CLAUDE\.md|docs/plan/fase-a-6-empaquetado-cli\.md)$' || true)
+      [ -z "$FUERA" ] || { echo "FALLA: archivos fuera del alcance:"; printf '%s\n' "$FUERA"; exit 1; }
+      # Sin #![allow anadido; cada #[allow(clippy:: anadido lleva comentario en su linea o la anterior.
+      ANADIDAS=$(git diff -U0 "$BASE" | grep -E '^\+[^+]' || true)
+      if printf '%s\n' "$ANADIDAS" | grep -F '#![allow'; then echo "FALLA: se anadio #![allow"; exit 1; fi
+      git diff -U1 "$BASE" -- crates | awk '
+        /^(\+\+\+|---) /{next}
+        /^[ +]/{cur=substr($0,2)
+          if (substr($0,1,1)=="+" && cur ~ /#\[allow\(clippy::/ && cur !~ /\/\// && prev !~ /^[ \t]*\/\//) {print "SIN COMENTARIO: " cur; bad=1}
+          prev=cur; next}
+        END{exit bad}' || { echo "FALLA: #[allow(clippy:: sin comentario explicativo"; exit 1; }
+      # Sin atribucion de IA en los commits de la rama.
+      if git log "$BASE"..HEAD --format=%B | grep -iE 'co-authored-by|generated with|claude'; then echo "FALLA: atribucion de IA en un commit"; exit 1; fi
+      echo "OK: alcance, sin #![allow anadido, allows comentados, sin atribucion de IA"
+      EOS
+    - |
+      bash -s <<'EOS'
+      set -uo pipefail
+      P=docs/plan/fase-a-6-empaquetado-cli.md
+      BASE=$(git merge-base main HEAD)
+      BORRADAS=$(git diff -U0 "$BASE" -- "$P" | grep -c '^-[^-]' || true)
+      [ "$BORRADAS" -eq 0 ] || { echo "FALLA: $BORRADAS lineas borradas o reemplazadas en $P (solo se anexa)"; exit 1; }
+      ANADIDAS=$(git diff -U0 "$BASE" -- "$P" | grep -E '^\+[^+]' || true)
+      [ -n "$ANADIDAS" ] || { echo "FALLA: la nota de deuda saldada no esta anexada al plan"; exit 1; }
+      RE='Deuda saldada el 20[0-9]{2}-[0-9]{2}-[0-9]{2} con HEX-090: [0-9]+ lints en [0-9]+ archivos; --all-targets cableado en la CI'
+      [ "$(printf '%s\n' "$ANADIDAS" | grep -cE "$RE")" -eq 1 ] || { echo "FALLA: falta exactamente una linea anadida con la forma: $RE"; exit 1; }
+      LN=$(grep -nE "$RE" "$P" | head -1 | cut -d: -f1)
+      L15=$(grep -nE '^15\. ' "$P" | head -1 | cut -d: -f1)
+      L18=$(grep -nE '^18\. ' "$P" | head -1 | cut -d: -f1)
+      { [ "$L15" -lt "$LN" ] && [ "$LN" -lt "$L18" ]; } || { echo "FALLA: la nota (linea $LN) no esta en la tarea 15 (lineas $L15-$L18)"; exit 1; }
+      N=$(grep -E "$RE" "$P" | head -1 | sed -E 's/.*HEX-090: ([0-9]+) lints en ([0-9]+) archivos.*/\1/')
+      M=$(grep -E "$RE" "$P" | head -1 | sed -E 's/.*HEX-090: ([0-9]+) lints en ([0-9]+) archivos.*/\2/')
+      REAL=$(git diff --name-only "$BASE" | grep -c '^crates/' || true)
+      [ "$M" -eq "$REAL" ] || { echo "FALLA: la nota dice $M archivos y el diff toca $REAL bajo crates/"; exit 1; }
+      [ "$N" -ge "$M" ] || { echo "FALLA: N=$N lints menor que M=$M archivos"; exit 1; }
+      echo "OK: nota anexada en la tarea 15 (N=$N lints, M=$M archivos), sin lineas borradas"
+      EOS
+  target_s: 60
+acceptance:
+  human_gate: true
+limits:
+  max_files_changed: 24
+  max_diff_lines: 400
+  per_class:
+    - glob: "crates/*/tests/**/*.rs"
+      max_diff_lines: 320
+    - glob: "docs/plan/fase-a-6-empaquetado-cli.md"
+      max_diff_lines: 12
+    - glob: ".github/workflows/ci.yml"
+      max_diff_lines: 6
+    - glob: "CLAUDE.md"
+      max_diff_lines: 4
+execution:
+  mode: worktree_edit
+  branch: ai/HEX-090-new-spec
+retry_policy:
+  max_attempts: 2
+  escalate_after: 1

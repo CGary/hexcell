@@ -1,0 +1,50 @@
+{
+  "commands": [
+    {
+      "command": "bash -n deploy/verificar_despliegue_escalonado.sh",
+      "duration_s": 0.002,
+      "exit_code": 0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "bash deploy/verificar_despliegue_escalonado.sh",
+      "duration_s": 0.168,
+      "exit_code": 0,
+      "output_excerpt": "OK[CI-COMPOSE]\nOK[CI-SCRIPT]\nOK[CLI-SUBCOMANDO]\nOK[CLI-USO]\nOK: no existe ninguna vía —ni CI ni CLI— que actualice toda la cartera en un solo paso"
+    },
+    {
+      "command": "bash deploy/verificar_despliegue_escalonado.sh --autoprueba",
+      "duration_s": 3.788,
+      "exit_code": 0,
+      "output_excerpt": "PASA: config: línea de compose sin verbo y comentario con las palabras -\u003e el guardia sigue en verde (caso que no debe disparar)\nPASA: palabras de despliegue en comentario, name: y identificador ajeno -\u003e el guardia sigue en verde (caso que no debe disparar)\nPASA: CLI: identificador actualizar_estado y palabra deployment en línea con == -\u003e el guardia sigue en verde (caso que no debe disparar)\n\nResumen autoprueba: 21/21 casos pasan (cada mutación debe hacer fallar al guardia con su id exacto)\nOK: el guardia falla bajo cada mutación y no dispara en los casos exentos"
+    },
+    {
+      "command": "bash -c '! grep -n \"diferido a etapa A-6\" docs/runbook-canal-whatsmeow.md'",
+      "duration_s": 0.003,
+      "exit_code": 0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "grep -q 'nunca actualizar todas las células el mismo día' docs/runbook-canal-whatsmeow.md",
+      "duration_s": 0.002,
+      "exit_code": 0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "grep -q 'guardas-despliegue' .github/workflows/ci.yml",
+      "duration_s": 0.001,
+      "exit_code": 0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "bash -c 'test -z \"$(git status --porcelain -- crates sidecar deploy/cell.compose.yml docs/STATUS.md)\" \u0026\u0026 git diff --quiet main...HEAD -- crates sidecar deploy/cell.compose.yml docs/STATUS.md'",
+      "duration_s": 0.005,
+      "exit_code": 0,
+      "output_excerpt": ""
+    }
+  ],
+  "executed_at": "2026-09-30T05:55:04Z",
+  "overall_result": "passed",
+  "summary": "Verificacion rapida tras el segundo fix loop: 7/7 comandos del contrato en exit 0.",
+  "task_id": "HEX-089"
+}

@@ -1,0 +1,217 @@
+task_id: HEX-082-b
+summary: 'CLI half of cell terminate: the six-step destructive ciclo_de_vida::retirar sequence, its
+  comandos.rs dispatch, the four mandatory Docker-double tests, and every HEX-082 doc deliverable
+  (merges LAST).'
+affected_files:
+- crates/hexcell-admin/src/ciclo_de_vida.rs
+- crates/hexcell-admin/src/comandos.rs
+- crates/hexcell-admin/tests/ciclo_de_vida.rs
+- crates/hexcell-admin/tests/comandos.rs
+- docs/plan/fase-a-6-empaquetado-cli.md
+- README.md
+symbols:
+- 'hexcell_admin::ciclo_de_vida::retirar(cliente, nombres, datos) -> Result<String, ErrorDeCicloDeVida>
+  (new; Ok holds the removed volume name for comandos.rs to print the third line)'
+- 'hexcell_admin::ciclo_de_vida::guion_de_cierre_de_sesion(url) -> Vec<String> (new, beside guion_de_sonda;
+  direct wget argv, single-shot, no /bin/sh loop)'
+- 'hexcell_admin::ciclo_de_vida::ErrorDeCicloDeVida::CelulaNoEncontrada (new unit variant; Display =
+  literal "célula no encontrada")'
+- 'hexcell_admin::ciclo_de_vida::ErrorDeCicloDeVida::CelulaPausada (new unit variant; Display = the
+  exact literal "la célula está pausada: ejecute cell unpause antes de cell terminate")'
+- 'hexcell_admin::ciclo_de_vida::ErrorDeCicloDeVida::CierreDeSesionFallido { codigo: i64 } (new variant;
+  free-form diagnostic naming the probe''s exit code)'
+- 'hexcell_admin::ciclo_de_vida::detener_ambos_sin_plazo(cliente, nombres) (new private fn extracted
+  from pausar''s body; pausar and retirar both call it, satisfying AC-6''s "extract, never duplicate")'
+- 'hexcell_admin::ciclo_de_vida (private helpers extracted and reused by both reanudar and retirar:
+  a red-from-inspection reader, a port-from-Config.Env reader parametrized by variable name so reanudar
+  passes HEXCELL_DIRECCION_SALUD and retirar passes HEXCELL_DIRECCION_ADMIN, and a volume-name-from-Mounts
+  reader that hardcodes "/var/lib/hexcell" in exactly one place)'
+- 'hexcell_admin::comandos::ejecutar_con_efectos (the two-arm bucket match moves Subcomando::Retirar
+  from the read-only arm to the Pausar/Reanudar arm with a single-line edit per existing arm, no
+  reordering; a new Retirar branch calls ciclo_de_vida::retirar and prints the three fixed stdout
+  lines on success instead of the generic "cell ... completado" line)'
+dependencies:
+- crates/hexcell-admin/src/docker/cliente.rs
+- crates/hexcell-admin/src/argumentos.rs
+- crates/hexcell-admin/src/estado_de_celula.rs
+- crates/hexcell-admin/src/codigo_de_salida.rs
+- crates/hexcell-admin/src/salida.rs
+- crates/hexcell-admin/tests/comun/mod.rs
+- .ai/tasks/active/HEX-082-a/00-spec.yaml
+- .ai/tasks/active/HEX-082-a/01-blueprint.yaml
+- CLAUDE.md
+test_scenarios:
+- statement: 'retirar happy path (AC-1): inspect core, inspect sidecar, create+start+wait+delete the
+    alpine:3 probe (wget -q -O - --post-data '''' against /admin/sesion/cierre on the core''s own
+    network and HEXCELL_DIRECCION_ADMIN port), stop sidecar, stop core, remove sidecar, remove core,
+    remove volume -- asserted as ONE ordered Vec of received requests, not independent presence checks.
+    Fixture port is distinct from both 8082 (production default) and 9099 (existing unpause fixture).
+    stdout carries exactly "sesión cerrada", "contenedores eliminados", "volumen <nombre> eliminado"
+    and never the generic "cell ... completado" line; exit code is Exito=0.'
+  covers:
+  - AC-1
+- statement: 'retirar aborts with "célula no encontrada" and issues no request beyond the first inspect
+    when the core container 404s, proven with a finite recv_timeout so a missing abort turns the test
+    red instead of hanging it (idempotent re-execution is explicitly out of scope, task 15).'
+  covers:
+  - AC-2
+- statement: 'retirar aborts with the EXACT literal "la célula está pausada: ejecute cell unpause antes
+    de cell terminate" when the core''s inspected State.Status is "exited", with no start, stop, rm,
+    create, wait or POST request following the state check.'
+  covers:
+  - AC-3
+- statement: 'The volume name used for removal is read from the core inspect''s Mounts[].Name entry
+    whose Destination is /var/lib/hexcell, using a fixture volume name derivable from neither --id
+    nor the container id, so a convention-derived name (e.g. "<id>-datos") turns this test red; the
+    "/var/lib/hexcell" literal appears exactly once in ciclo_de_vida.rs.'
+  covers:
+  - AC-4
+- statement: 'When the probe container exits non-zero (the route answered 502 or 504), retirar reports
+    Fallo=1 with a diagnostic BEFORE any stop or removal request; the ONLY removal issued is the
+    probe''s own DELETE cleanup, which happens on this failure path too, and no stop, no cell-container
+    removal and no volume removal ever reaches the daemon -- this is the failure the task exists to
+    prevent.'
+  covers:
+  - AC-5
+- statement: 'pausar and retirar''s stop step both go through the SAME extracted detener_ambos_sin_plazo
+    function (sidecar then core, no `t` parameter, never detener_contenedor with t=30); retirar''s
+    removals use eliminar_contenedor and eliminar_volumen exactly as they exist today in
+    docker/cliente.rs, which stays byte-identical (asserted by the forbidden-file guard).'
+  covers:
+  - AC-6
+- statement: 'guion_de_cierre_de_sesion(url) is asserted as the exact literal argv
+    ["wget","-q","-O","-","--post-data","","<url>"], written independently in the test (no production
+    constant imported), so it cannot be confused with guion_de_sonda''s retry-loop shell script.'
+  covers:
+  - AC-1
+- statement: 'comandos::ejecutar_con_efectos dispatches "cell terminate --id X --confirmar" into
+    ciclo_de_vida::retirar (no longer the NoImplementadoTodavia branch), "cell terminate --simular"
+    still short-circuits to Exito=0 against an UNBOUND socket path (proving no ClienteDocker call is
+    even attempted), and "cell rebind"/"cell list"/"cell status" keep returning NoImplementadoTodavia=3
+    -- the existing four-subcommand NoImplementado test is edited down to these three, terminate''s
+    case removed and replaced by its own dispatch test.'
+  covers:
+  - AC-9
+- statement: 'The four mandatory Docker-double cases (a: exact order; b: probe failure emits no
+    subsequent stop/rm; c: exited core yields Fallo with no request after the state check; d: volume
+    name from inspect, not from id) live against the existing temporary Unix-socket double in
+    tests/comun/mod.rs, unmodified, with no FakeDocker type introduced anywhere.'
+  covers:
+  - AC-9
+- statement: 'docs/plan/fase-a-6-empaquetado-cli.md''s task 12 entry gets its closing paragraph
+    ("**Cerrada el 2026-MM-DD con HEX-082.**", target state Retirada/motivo sesion_cerrada NOT
+    persisted here, plus the R1 admin-surface mention); task 14''s 2026-09-21 note gains one appended
+    sentence about persisting Retirada/sesion_cerrada; task 15 gains a written forced-terminate
+    follow-up for already-banned devices with no new flag; the execution-order section gains a new
+    dated bullet recomputing the remaining chain after closing task 12; README''s CLI status line
+    gains an appended sentence saying terminate is real (with the R1 admin-surface note) while
+    rebind/list/status still exit 3 -- verified by `git diff main...HEAD -- docs README.md | grep
+    "^-"` showing zero deleted lines.'
+  covers:
+  - AC-10
+strategy:
+- step: 1
+  action: 'Extract shared inspect-JSON readers in ciclo_de_vida.rs and make reanudar call them instead
+    of its inline logic (behavior-preserving refactor): a network reader (NetworkSettings.Networks
+    first key), a port reader parametrized by env-var name (Config.Env, used today only for
+    HEXCELL_DIRECCION_SALUD), and a NEW volume-name reader over Mounts[] matching Destination against
+    a single "/var/lib/hexcell" constant. Extract detener_ambos_sin_plazo(cliente, nombres) from
+    pausar''s two-call body; pausar keeps calling it unchanged in behavior.'
+  files:
+  - crates/hexcell-admin/src/ciclo_de_vida.rs
+- step: 2
+  action: 'Add guion_de_cierre_de_sesion(url) beside guion_de_sonda: a direct wget argv (no /bin/sh
+    wrapper, no loop) -- ["wget","-q","-O","-","--post-data","","<url>"] -- whose exit code is the
+    verdict, mirroring the "wget -q -O - --post-data ''''" literal fixed by the human context.'
+  files:
+  - crates/hexcell-admin/src/ciclo_de_vida.rs
+- step: 3
+  action: 'Add three ErrorDeCicloDeVida variants (CelulaNoEncontrada, CelulaPausada,
+    CierreDeSesionFallido{codigo}) with their Display arms; the first two carry the two EXACT literals
+    the spec fixes verbatim, the third is a free-form diagnostic naming the probe''s exit code.'
+  files:
+  - crates/hexcell-admin/src/ciclo_de_vida.rs
+- step: 4
+  action: 'Add pub fn retirar(cliente, nombres, datos) -> Result<String, ErrorDeCicloDeVida>: (1)
+    inspect core -> 404 maps to CelulaNoEncontrada, else check State.Status=="running" else
+    CelulaPausada; (2) inspect sidecar -> 404 maps to CelulaNoEncontrada (sidecar''s own running state
+    is never checked); (3) resolve network, HEXCELL_DIRECCION_ADMIN port and the /var/lib/hexcell
+    volume name from the core''s already-fetched inspect JSON via step 1''s shared readers; (4) build
+    the probe URL, run it through crear_e_iniciar_contenedor_con_opciones +
+    esperar_contenedor + eliminar_contenedor exactly as reanudar''s probe lifecycle already does
+    (delete the probe in BOTH outcomes), mapping a non-zero exit code to CierreDeSesionFallido and
+    returning before touching anything else; (5) call detener_ambos_sin_plazo; (6) eliminar_contenedor
+    sidecar, eliminar_contenedor core, eliminar_volumen(nombre); return Ok(nombre).'
+  files:
+  - crates/hexcell-admin/src/ciclo_de_vida.rs
+- step: 5
+  action: 'In comandos.rs::ejecutar_con_efectos, move Subcomando::Retirar from the read-only bucket
+    arm to the Pausar/Reanudar bucket arm -- ONE line changed on each of the two existing arms, no
+    reordering of Reemparejar/Listar/Estado. Add a Retirar branch ahead of the existing
+    Pausar-vs-Reanudar if/else: on Ok(volumen) from ciclo_de_vida::retirar, write exactly the three
+    lines "sesión cerrada", "contenedores eliminados" and "volumen {volumen} eliminado" through
+    salida.linea (never the shared "cell {} completado" formatter); on Err, write the diagnostic and
+    return Fallo. linea_de_simulacion already names EstadoDeCelula::Retirada for --simular and needs
+    no change.'
+  files:
+  - crates/hexcell-admin/src/comandos.rs
+- step: 6
+  action: 'tests/ciclo_de_vida.rs: add the four mandatory cases against retirar directly (happy-path
+    full order + volume-from-inspect assertion, missing container, paused core with the exact literal,
+    probe failure destroying nothing) plus a literal test for guion_de_cierre_de_sesion. Every fixture
+    value (network, volume name, admin port) diverges from both the production default and every
+    existing fixture in this file, per this file''s own stated rule; the admin port is neither 8082
+    nor 9099.'
+  files:
+  - crates/hexcell-admin/tests/ciclo_de_vida.rs
+- step: 7
+  action: 'tests/comandos.rs: edit ejecutar_con_efectos_deja_los_otros_cuatro_subcomandos_en_no_implementado_sin_tocar_docker
+    down to three cases (drop terminate, rename accordingly); add a dispatch-level happy-path test
+    proving "cell terminate --id X --confirmar" reaches ciclo_de_vida::retirar through
+    ejecutar_con_efectos, and confirm "cell terminate --simular" still resolves through
+    comandos::ejecutar with Exito=0 against an unbound socket path (no ClienteDocker call attempted).'
+  files:
+  - crates/hexcell-admin/tests/comandos.rs
+- step: 8
+  action: 'Documentation, append-only or exact-literal replacement, re-reading each target section
+    from disk immediately before editing since sibling plan branches run in parallel: task 12''s
+    closing paragraph and the R1 admin-surface mention in docs/plan/fase-a-6-empaquetado-cli.md; the
+    one appended sentence on task 14''s 2026-09-21 note; the written forced-terminate follow-up on
+    task 15; a new dated bullet in the execution-order section recomputing the chain after closing
+    task 12; and the appended sentence on README''s CLI status line (with the R1 admin-surface note).
+    No ADR, no bitacora entry -- R1 and D-57 already cover this ground.'
+  files:
+  - docs/plan/fase-a-6-empaquetado-cli.md
+  - README.md
+risks:
+- 'Branch cut from main@8e96776, which does NOT contain HEX-082-a''s POST /admin/sesion/cierre route.
+  Verified: this child never compiles against that route -- it only formats a URL string consumed by
+  a shell-less wget argv inside a sibling container -- so there is no compile-time coupling, only a
+  DOCUMENTARY one: the README/plan claims that terminate is "real" and the R1 admin-surface note are
+  only true once HEX-082-a actually merges first with HEXCELL_DIRECCION_ADMIN spelled exactly that
+  way in deploy/cell.compose.yml and crates/hexcell/src/admin.rs answering exactly 200/502/504.'
+- 'Cross-task match conflict (expected, not a defect): tasks 12 (this), 14 and 23 of the A-6 plan all
+  touch the same two-arm bucket match in comandos.rs::ejecutar_con_efectos. This blueprint''s edit is
+  exactly one line per existing arm; 14 and 23 are independent plan tasks outside this decomposition
+  and may land their own one-line edits on main before this branch merges, requiring a rebase (already
+  called out by the human context) rather than a design change here.'
+- 'Per-class sizing lesson carried over from HEX-082-a''s review round: ciclo_de_vida.rs''s diff
+  includes a genuine refactor (shared network/port/volume readers, the stop-function extraction) on
+  top of the new retirar() sequence, which inflates removed+added line counts beyond a minimal patch.
+  The per-class ceilings below are sized against that shape.'
+- 'wget''s exit-code contract: any non-2xx response (502, 504) maps to a non-zero wget exit without
+  needing the body parsed, and a connection reset (route crash) also reads as non-zero for a different
+  reason. Both collapse to the same CierreDeSesionFallido outcome, which is correct per AC-5 (both
+  must abort identically), but the diagnostic text cannot distinguish "route said fallido" from
+  "route unreachable" -- acceptable since neither destroys anything.'
+- 'AC-9''s four mandatory Docker-order cases are placed in tests/ciclo_de_vida.rs against
+  ciclo_de_vida::retirar directly, mirroring the existing pausar/reanudar split where deep Docker-order
+  assertions live in ciclo_de_vida.rs and comandos.rs only proves dispatch plumbing (subcommand routing,
+  --simular short-circuit, the other three subcommands'' NoImplementadoTodavia). This avoids duplicating
+  the same 8-request order assertion in two files.'
+- 'AC-10 item 3 (task 15''s forced-terminate follow-up) is WRITTEN documentation only, at the CLI/plan
+  level; it invents no flag and touches no channel crate. The already-banned-device scenario belongs
+  to a future task, not to this one''s code.'
+- 'Sibling coordination: HEX-083 and HEX-084 hold live worktrees off main@8e96776 with summaries
+  unrelated to cell terminate; no touch-list overlap found from a directory-level read, but this was
+  not exhaustively diffed file-by-file and is flagged for the implementer to re-check before merge.'

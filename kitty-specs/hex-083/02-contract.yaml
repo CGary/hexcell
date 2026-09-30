@@ -1,0 +1,166 @@
+task_id: HEX-083
+summary: >-
+  Control-plane SQLite store in hexcell-admin plus real cell list and cell status; stage A-6
+  task 14.
+goal: >-
+  Create crates/hexcell-admin/src/almacen_plano_de_control.rs (SQLite over the workspace-pinned
+  rusqlite 0.39, embedded migration via include_str! + PRAGMA user_version, mirroring
+  crates/hexcell-storage/src/migraciones.rs), wire cell pause and cell unpause to validate the
+  transition against the stored state BEFORE any Docker request and to record it only AFTER the
+  Docker operation succeeds, and implement cell status --id <id> and cell list as read-only
+  commands that cross the store, docker inspect of both containers and a short /health/ready
+  probe, reporting the five discrepancy codes DISC-01..DISC-05 and the substitutions history.
+  All repository content written is in Spanish; commit messages are conventional and carry no AI
+  attribution.
+read:
+  - .ai/tasks/active/HEX-083-new-spec/00-spec.yaml
+  - .ai/tasks/active/HEX-083-new-spec/01-blueprint.yaml
+  - CLAUDE.md
+  - Cargo.toml
+  - crates/hexcell-storage/src/migraciones.rs
+  - crates/hexcell-storage/migraciones/sesiones/0001-esquema-inicial.sql
+  - crates/hexcell-admin/src/estado_de_celula.rs
+  - crates/hexcell-admin/src/docker/cliente.rs
+  - crates/hexcell-admin/src/docker/transporte.rs
+  - crates/hexcell-admin/src/argumentos.rs
+  - crates/hexcell-admin/src/salida.rs
+  - crates/hexcell-admin/src/codigo_de_salida.rs
+  - crates/hexcell-admin/tests/estado_de_celula.rs
+  - crates/hexcell-admin/tests/ciclo_de_vida.rs
+  - crates/hexcell-admin/tests/cliente_docker.rs
+  - docs/plan/fase-a-6-empaquetado-cli.md
+  - docs/adr/README.md
+  - docs/bitacora-de-descartes.md
+touch:
+  - crates/hexcell-admin/src/almacen_plano_de_control.rs
+  - crates/hexcell-admin/migraciones/0001-plano-de-control.sql
+  - crates/hexcell-admin/src/docker/inventario.rs
+  - crates/hexcell-admin/src/docker/mod.rs
+  - crates/hexcell-admin/src/comandos.rs
+  - crates/hexcell-admin/src/ciclo_de_vida.rs
+  - crates/hexcell-admin/src/main.rs
+  - crates/hexcell-admin/src/lib.rs
+  - crates/hexcell-admin/Cargo.toml
+  - crates/hexcell-admin/tests/almacen_plano_de_control.rs
+  - crates/hexcell-admin/tests/estado_y_listado.rs
+  - crates/hexcell-admin/tests/comandos.rs
+  - crates/hexcell-admin/tests/comun/mod.rs
+  - docs/adr/README.md
+  - README.md
+  - docs/plan/fase-a-6-empaquetado-cli.md
+  - docs/bitacora-de-descartes.md
+  - docs/adr/adr-0039-almacen-del-plano-de-control.md
+  - Cargo.lock
+forbid:
+  files:
+    - sidecar/
+    - docs/protocolo-ipc-nucleo-sidecar.md
+    - crates/hexcell-admin/src/docker/cliente.rs
+    - crates/hexcell-admin/src/docker/transporte.rs
+    - crates/hexcell-admin/src/estado_de_celula.rs
+    - crates/hexcell-admin/src/argumentos.rs
+    - crates/hexcell-admin/src/codigo_de_salida.rs
+    - crates/hexcell-admin/tests/estado_de_celula.rs
+    - Cargo.toml
+    - crates/hexcell-storage/
+    - docs/STATUS.md
+    - docs/PRD.md
+    - .github/workflows/ci.yml
+  behaviors:
+    - >-
+      Do not modify the transition table EstadoDeCelula::transiciones_permitidas nor any other
+      part of crates/hexcell-admin/src/estado_de_celula.rs; it is the authority on legal
+      transitions and this task only consumes it.
+    - >-
+      Do not add a container-listing, stop-merging or any other method to
+      crates/hexcell-admin/src/docker/cliente.rs, and do not merge detener_contenedor with
+      detener_contenedor_sin_plazo: that merge is reserved for stage A-6 task 15. New Docker
+      reads go in the new crates/hexcell-admin/src/docker/inventario.rs over the public
+      ConexionDocker transport.
+    - >-
+      Do not bump rusqlite off the workspace-pinned 0.39 and do not edit the root Cargo.toml.
+      hexcell-admin declares rusqlite = { workspace = true } on exactly ONE line.
+    - >-
+      Do not add any [dev-dependencies] table and do not add tempfile, tempdir or any other
+      temp-directory crate: the root Cargo.toml discards it in writing. Test temp paths are
+      built by hand from std::env::temp_dir(), std::process::id() and the SECUENCIA counter
+      already in crates/hexcell-admin/tests/comun/mod.rs.
+    - >-
+      Do not add any new CLI flag, subcommand or argument, and do not touch
+      crates/hexcell-admin/src/argumentos.rs. The store path comes only from the env var
+      HEXCELL_ADMIN_ALMACEN, defaulting to /var/lib/hexcell-admin/plano_de_control.db, read in
+      main.rs and injected into ejecutar_con_efectos.
+    - >-
+      Never create the configured database directory. A missing directory yields Fallo with a
+      diagnostic naming it, and the directory must still be absent afterwards.
+    - >-
+      Never persist a phone number or any transport identifier. The store holds the cell id and
+      control-plane state metadata only; no column named or holding jid, telefono, numero,
+      msisdn or whatsapp data.
+    - >-
+      Write a transition ONLY after the corresponding Docker operation has already returned Ok:
+      never before it, never on its failure path. Validate the transition against the stored
+      state BEFORE issuing any Docker request; an illegal transition returns Fallo with a
+      diagnostic and issues ZERO Docker requests.
+    - >-
+      cell status and cell list must never write to the store, not even to create a row for a
+      cell they observe in Docker without one (that is DISC-05, a report, not a repair).
+    - >-
+      Do not add or remove an exit-code variant. The four stay exactly Exito=0, Fallo=1,
+      UsoIncorrecto=2, NoImplementadoTodavia=3.
+    - >-
+      Do not implement cell terminate, cell rebind, idempotent re-execution or any write to the
+      sustituciones table: those are stage A-6 tasks 12, 13 and 15. The Retirada/sesion_cerrada
+      hook stays inert because task 12 is not merged into main as of 8e96776; re-check main at
+      implement time and report the gap rather than implement against unmerged code.
+    - >-
+      Do not report ack ratio, silence window or any other metric surface; those belong to stage
+      A-6 task 20 and must not appear anywhere in cell status output.
+    - >-
+      Do not introduce a FakeDocker or any other Docker abstraction layer. The only Docker double
+      is the temporary Unix socket ServidorDockerFalso in crates/hexcell-admin/tests/comun/mod.rs
+      with scripted HTTP responses. --simular belongs only to the argument parser and
+      short-circuits before any Docker or store access.
+    - >-
+      Do not weaken or delete an existing test to make the suite pass. Narrowing
+      ejecutar_con_efectos_deja_los_otros_cuatro_subcomandos_en_no_implementado_sin_tocar_docker
+      from four subcommands to the two that remain (terminate, rebind) is the one authorized
+      change, and it must keep asserting zero Docker requests for those two.
+    - >-
+      Do not add --all-targets to the clippy verify command: CI runs cargo clippy --workspace
+      without it and 38 preexisting diagnostics in workspace tests would turn verification red
+      for reasons this task did not cause.
+    - >-
+      Every test must be reachable and finite: script Docker responses on a worker thread and
+      wait with recv_timeout, never a blind join. A hung test counts as a failure.
+    - >-
+      Documentation edits are append-only or exact-literal replacement.
+      git diff -- docs README.md | grep '^-' must show no deleted line except a replaced
+      literal. Read the next free ADR number and the next free D number FROM DISK at commit time
+      (maxima on disk are adr-0038 and D-57); never reuse or reorder a number. Dates are
+      absolute, written as 2026-09-22.
+    - >-
+      All repository content written is in Spanish: identifiers, comments, doc comments, SQL
+      comments, CLI output text and documentation. Commit messages are conventional Spanish
+      (feat:, test:, docs:) and carry NO AI attribution and no Co-Authored-By line.
+    - >-
+      Do not run git merge, do not rebase onto main and do not touch any file outside the touch
+      list. Do not reorder the arms of the subcommand match in comandos.rs: tasks 12 and 23
+      touch that same match on parallel branches, so the new arms go in as single added lines.
+verify:
+  commands:
+    - cargo fmt --check
+    - cargo clippy --workspace -- -D warnings
+    - cargo test --workspace
+    - cd sidecar && go vet ./... && go test ./... -count=1
+acceptance:
+  human_gate: true
+limits:
+  max_files_changed: 20
+  max_diff_lines: 2900
+execution:
+  mode: worktree_edit
+  branch: ai/HEX-083
+retry_policy:
+  max_attempts: 2
+  escalate_after: 2

@@ -1,0 +1,138 @@
+task_id: HEX-086
+summary: >-
+  New CI job builds/tags both cell images without publishing; new deploy/verificar_imagenes.sh guards
+  non-root user and read-only cold start. Docs appends elsewhere; no Rust/Go source touched.
+
+goal: >
+  Stage A-6 task 18 requires reproducible image builds tagged by short commit SHA and by workspace
+  version, plus a mechanical guard that fails if either cell image runs as root or without a
+  read-only rootfs (NFR-05's hardening intent, already stated in the plan but never mechanically
+  checked). Add a new `imagenes` job to .github/workflows/ci.yml that builds hexcell-nucleo and
+  hexcell-sidecar with docker/build-push-action@v6, cache type=gha, push:false and load:true (no
+  registry decision exists yet, per STATUS.md Pendiente), tags both images by 12-char short SHA and
+  by `[workspace.package] version` read at CI runtime from Cargo.toml. Add deploy/verificar_imagenes.sh,
+  a local Docker guard (usable standalone or against the job's freshly loaded images) that inspects
+  `.Config.User` for exactly 10001:10001 on both images, proves that guard actually rejects a
+  throwaway root image, boots a hardened núcleo container alone (verified today: /health/live never
+  needs the sidecar) and separately a hardened sidecar container, both from fresh empty volumes and
+  networks, proves the read-only cold-start check actually rejects a núcleo run started without its
+  data volume, and removes every container/network/volume it creates via an EXIT trap even on
+  failure. Append one paragraph to README.md, one Pendiente bullet to docs/STATUS.md, and a closing
+  note plus a recalculated "La cadena restante" line to docs/plan/fase-a-6-empaquetado-cli.md's task
+  18 — all as appends or exact-literal replacements, never a rewritten or deleted paragraph.
+
+read:
+  - .ai/tasks/active/HEX-086-new-spec/00-spec.yaml
+  - .ai/tasks/active/HEX-086-new-spec/01-blueprint.yaml
+  - deploy/cell.compose.yml
+  - crates/hexcell/src/salud.rs
+  - Dockerfile
+  - sidecar/Dockerfile
+  - Cargo.toml
+  - deploy/verificar_apagado_ordenado.sh
+  - deploy/verificar_endurecimiento.sh
+  - deploy/verificar_senales.sh
+  - deploy/celula.env.ejemplo
+  - docs/plan/fase-a-6-empaquetado-cli.md
+  - docs/STATUS.md
+  - README.md
+  - CLAUDE.md
+
+touch:
+  - .github/workflows/ci.yml
+  - deploy/verificar_imagenes.sh
+  - README.md
+  - docs/plan/fase-a-6-empaquetado-cli.md
+  - docs/STATUS.md
+
+forbid:
+  files:
+    - Dockerfile
+    - sidecar/**
+    - crates/**
+    - deploy/cell.compose.yml
+    - Cargo.lock
+    - Cargo.toml
+    - deploy/celula.env.ejemplo
+    - docs/adr/**
+    - docs/bitacora-de-descartes.md
+    - .ai/tasks/active/HEX-086-new-spec/00-spec.yaml
+    - .env
+    - .env.*
+    - "**/*.db"
+    - "**/*.db-wal"
+    - "**/*.db-shm"
+  behaviors:
+    - "Never edit ./Dockerfile or ./sidecar/Dockerfile. Both were rebuilt and inspected today
+       (2026-09-23) and already report .Config.User=10001:10001 exactly, so the spec's 'last
+       resort' escape hatch does not apply; if a real mismatch is found at implement time, STOP
+       and report it instead of editing the Dockerfile silently."
+    - "Never modify deploy/cell.compose.yml or any other compose file."
+    - "Never modify anything under crates/ or sidecar/ — sidecar/ is owned by the concurrent task
+       13 (cell rebind)."
+    - "Never modify Cargo.lock or add a new Cargo or Go runtime dependency."
+    - "Never add a push:true step, a registry login step, or any registry credential anywhere in
+       .github/workflows/ci.yml. The imagenes job stays push:false + load:true; registry choice is
+       an explicit open Pendiente decision, not this task's to make."
+    - "Never hardcode the workspace version as a YAML literal in ci.yml; read it from Cargo.toml at
+       CI runtime with a shell step."
+    - "Never add a HEALTHCHECK instruction to either Dockerfile (this task does not touch the
+       Dockerfiles at all, per the file-level forbid above)."
+    - "Never delete or reword an existing paragraph in README.md, docs/STATUS.md, or
+       docs/plan/fase-a-6-empaquetado-cli.md. Every change is an appended paragraph/bullet, or an
+       exact-literal-string replacement; `git diff main...HEAD -- docs README.md | grep '^-'` must
+       show only lines that are exact-literal replacements, never a deleted line with no matching
+       replacement elsewhere in the same diff."
+    - "Never write dates into docs as relative ('hoy', 'ayer'); always absolute (2026-09-22 for the
+       closure/Nota, 2026-09-23 if a script comment cites today's local verification date)."
+    - "Never write or imply that Fase B replaces, substitutes, or closes Fase A, or that the sidecar
+       is retired, anywhere in the touched docs."
+    - "Never edit or reorder any existing 'Actualización' bullet in
+       docs/plan/fase-a-6-empaquetado-cli.md; append a new one."
+    - "Never write, resolve, or reference a new ADR for this task."
+    - "deploy/verificar_imagenes.sh must remove every container, network, and volume it creates via
+       a single EXIT trap, even when a step fails partway through; no test may leave Docker state
+       behind on either a pass or a fail."
+    - "deploy/verificar_imagenes.sh's AC-5 and AC-8 negative tests must assert the guard reports
+       FALLA for the bad case, never merely 'did not crash' or 'produced some output'; a case that
+       cannot be observed failing is not proven to guard anything."
+    - "Never assert the AC-8 negative case by waiting the full 30s ceiling and calling a timeout a
+       pass — the container is expected to exit almost immediately (verified today: ~2s,
+       State.Running=false, ExitCode=1); the check must read docker inspect, not only poll wget."
+    - "All new identifiers, comments, log/diagnostic strings, and the eventual commit message are in
+       Spanish; the commit message is conventional-commit style with no AI attribution trailer of
+       any kind (no Co-Authored-By, no 'Generated with', nothing)."
+    - "No secret, API key, or credential value is ever written into ci.yml, the new script, or any
+       touched doc."
+
+verify:
+  commands:
+    - bash deploy/verificar_imagenes.sh
+    - cargo fmt --check
+    - cargo clippy --workspace -- -D warnings
+    - cargo test --workspace
+    - "git diff main...HEAD -- docs README.md | grep '^-'"
+
+acceptance:
+  human_gate: true
+
+limits:
+  max_files_changed: 5
+  max_diff_lines: 520
+  per_class:
+    - glob: deploy/verificar_imagenes.sh
+      max_diff_lines: 300  # 2026-09-23: +20 por las guardas anti-vacuidad que exigió la revisión (fix_tasks de 06-review)
+    - glob: .github/workflows/ci.yml
+      max_diff_lines: 90
+    - glob: docs/**
+      max_diff_lines: 90
+    - glob: README.md
+      max_diff_lines: 40
+
+execution:
+  mode: worktree_edit
+  branch: ai/HEX-086
+
+retry_policy:
+  max_attempts: 2
+  escalate_after: 1

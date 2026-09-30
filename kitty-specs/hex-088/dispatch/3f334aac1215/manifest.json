@@ -1,0 +1,36 @@
+{
+  "task_id": "HEX-088",
+  "bundle_hash": "3f334aac12151e6952ff7c747b9e0009a30a016e06cfd9f2b95ed3c30f0c449b",
+  "files": [
+    ".ai/tasks/active/HEX-088-new-spec/00-spec.yaml",
+    "README.md",
+    "crates/hexcell-admin/src/argumentos.rs",
+    "crates/hexcell-admin/src/codigo_de_salida.rs",
+    "crates/hexcell-admin/src/comandos.rs",
+    "deploy/cell.compose.yml"
+  ],
+  "protocol_version": "fleet-bundle-protocol/v2",
+  "created_at": "2026-09-24T16:20:16Z",
+  "dropped": [
+    {
+      "component": "code_slice",
+      "path": "docs/runbook-vigilancia-externa.md",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "docs/runbook-restauracion-de-celula.md",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "docs/plan/fase-a-7-pilotos.md",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "docs/plan/fase-a-6-empaquetado-cli.md",
+      "reason": "bundle exceeded max_bytes budget"
+    }
+  ]
+}

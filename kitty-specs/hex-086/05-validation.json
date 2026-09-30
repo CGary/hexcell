@@ -1,0 +1,38 @@
+{
+  "commands": [
+    {
+      "command": "bash deploy/verificar_imagenes.sh",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "Mutacion M1 (comparacion de .Config.User reemplazada por = NUNCA): exit 1, rojo en 'FALLA: el guardia de usuario aceptó una imagen FROM alpine:3 sin USER'. Mutacion M2 (State.Running forzado a true y wget cortocircuitado con true ||): exit 1, rojo en 'FALLA: el guardia de arranque aceptó un núcleo --read-only sin volumen de datos'. Limpieza por trap: 0 contenedores/redes/volumenes hex tras la corrida. M3 (imagen raiz no construida): rojo en FALLA: el guardia de usuario rechazó la imagen raíz por otro motivo ... no existe. M4 (nucleo sin volumen sobre imagen inexistente): rojo en FALLA: el núcleo sin volumen no llegó a arrancar y morir (ExitCode=[])."
+    },
+    {
+      "command": "cargo fmt --check",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "exit 0"
+    },
+    {
+      "command": "cargo clippy --workspace -- -D warnings",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "exit 0"
+    },
+    {
+      "command": "cargo test --workspace",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "exit 0"
+    },
+    {
+      "command": "git diff main...HEAD -- docs README.md | grep '^-[^-]' (0 lineas)",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "exit 0"
+    }
+  ],
+  "executed_at": "2026-09-23T01:40:00Z",
+  "overall_result": "passed",
+  "summary": "Tras fix de review: script, fmt, clippy, test y guarda de docs en 0; mutaciones M1-M4 rojas",
+  "task_id": "HEX-086"
+}

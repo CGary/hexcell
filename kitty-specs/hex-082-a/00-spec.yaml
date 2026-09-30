@@ -1,0 +1,223 @@
+task_id: HEX-082-a
+parent_task: HEX-082
+depends_on: []
+risk: high
+summary: >-
+  Core side of HEX-082: POST /admin/sesion/cierre driven by a compile-time CierreDeSesion enum,
+  the whatsmeow motivo handle, and the admin listener in cell.compose.yml.
+goal: >
+  Give the core the session-close surface that `cell terminate` (sibling HEX-082-b) will call, and
+  nothing else. Concretely: (1) crates/hexcell/src/admin.rs gains an unauthenticated
+  `POST /admin/sesion/cierre` whose Spanish doc comment states the security boundary is the cell's
+  internal network, exactly like `/admin/ingesta`; the route stays CHANNEL-AGNOSTIC and consumes the
+  `CierreDeSesion` value handed to it by the composition root instead of naming any adapter type.
+  (2) crates/hexcell/src/main.rs hands the admin route the enum
+  `CierreDeSesion { ConSesion(<adapter implementing CicloDeVidaSesion>), SinSesion }`, whose variant
+  is resolved at COMPILE TIME per channel branch when the cell is built - `ConSesion` on whatsmeow,
+  `SinSesion` on the simulated channel - late-bound into the already running admin surface, without
+  moving or duplicating the single combined `servir_servicios_http` future. (3) crates/hexcell-canal-whatsmeow/src/adaptador.rs exposes a cloneable session handle
+  taken before `Motor::nuevo` consumes the adapter, parameterised by `motivo`, so the registered
+  closer can send the ALREADY EXISTING wire-6 `orden_cierre_de_sesion` with motivo "cell terminate"
+  and await `acuse_cierre_de_sesion`. (4) the `SinSesion` variant carries the ratified policy
+  "no session to close = completado" with motivo `canal_sin_sesion`, a constant declared beside the
+  route and supplied by the composition point, so terminate is not dead outside whatsmeow WITHOUT
+  the simulated adapter implementing any session trait (ratification R5, 2026-09-22, which repeals
+  that part of R3: crates/hexcell-canal-simulado and crates/hexcell-core are both untouched). (5)
+  deploy/cell.compose.yml sets `HEXCELL_DIRECCION_ADMIN=0.0.0.0:8082` on the nucleo service with a
+  comment twinning the existing `HEXCELL_DIRECCION_SALUD` one, because the admin listener defaults
+  to loopback and a sibling container could otherwise never reach the route. The IPC wire format,
+  the sidecar, hexcell-core, the simulated channel crate and the CLI are NOT touched. The CLI half of terminate and every
+  documentation deliverable belong to HEX-082-b.
+invariants:
+  - >-
+    The route never reports success unless the session is provably not bound: 200 is produced only
+    from `Ok(())` of `cerrar_sesion` on the `ConSesion` variant, or from the `SinSesion` variant the
+    composition root selected at compile time for a channel that binds no device. Any transport
+    failure or absent reply is 502 or 504, so the destructive sibling command can never destroy a
+    volume whose session is still bound.
+  - The new `POST /admin/sesion/cierre` route on the core has no authentication; the security
+    boundary is the cell's internal network, matching the existing `/admin/ingesta` route.
+  - >-
+    No component opens a SECOND IPC connection to the sidecar. The protocol admits one active
+    connection and evicts the previous one on connect, so the route reaches the sidecar only through
+    the adapter the Motor already owns, via a handle taken before `Motor::nuevo` consumes it.
+  - >-
+    The core<->sidecar IPC wire format does not change: putting a value in the `motivo` field that
+    wire 6 already defines is not a protocol change. `docs/protocolo-ipc-nucleo-sidecar.md`, the
+    protocol ADRs, `VERSION_PROTOCOLO` and `sidecar/` stay untouched.
+  - >-
+    `crates/hexcell-core` is not modified and keeps its zero external dependencies (acceptance
+    criterion verifiable with `cargo tree -p hexcell-core`); `CicloDeVidaSesion` already lives in
+    `crates/hexcell-core/src/canal.rs`, its declaration is not changed, and it stays an OPTIONAL
+    sub-trait reserved to adapters that bind a device - no adapter gains a new implementation of it
+    in this child (R5).
+  - >-
+    No new HTTP status code, no authentication header, no token and no allowlist is introduced; only
+    200, 502 and 504 on the new path, and every existing route keeps its current behaviour.
+acceptance:
+  - id: AC-7
+    statement: >
+      The new core route `POST /admin/sesion/cierre` (crates/hexcell/src/admin.rs) is
+      channel-agnostic: it consumes the `CierreDeSesion` value supplied by the composition root and
+      translates the outcome (R5, 2026-09-22). `SinSesion` -> 200 with exactly
+      `{"resultado":"completado","motivo":"canal_sin_sesion"}`, that literal being a constant
+      declared beside the route and contributed by the composition point, never by the trait.
+      `ConSesion(adaptador)` calls `cerrar_sesion()`: `Ok(())` -> 200 with
+      `{"resultado":"completado"}` and NO motivo field at all; `Err(e)` -> 502 with
+      `{"resultado":"fallido","motivo": e.to_string()}` carrying the REAL error text; no reply
+      within 30 s -> 504. On the whatsmeow channel the handle sends the existing wire-6
+      `orden_cierre_de_sesion` with motivo "cell terminate". The route carries no authentication; its Spanish doc comment states that the
+      security boundary is the cell's internal network, matching `/admin/ingesta`. admin.rs never
+      names `hexcell_canal_whatsmeow`, `AdaptadorWhatsmeow` or any IPC wire type.
+    given: the core process is running with a CierreDeSesion value handed over by the composition root
+    when: an unauthenticated POST /admin/sesion/cierre request arrives
+    then: the response status and body match the completado/fallido/timeout cases above.
+  - id: AC-8
+    statement: >
+      Core route tests for POST /admin/sesion/cierre run with an INJECTED deadline (never the
+      production 30 s constant, which no test file imports) and cover: (a) `CierreDeSesion::SinSesion`
+      -> 200 whose body carries motivo `canal_sin_sesion`; (b) `CierreDeSesion::ConSesion` over a
+      DOUBLE implementing `CicloDeVidaSesion` declared in the test crate, exercising all three
+      outcomes - completado -> 200 with no motivo field, fallido -> 502 carrying a distinctive
+      fixture motivo that does not appear in production code, and a double that never resolves ->
+      504 (ausente) within a sub-second test deadline. A routing guard asserts `(POST, /admin/sesion/cierre)` maps to the new variant
+      while `(GET, /admin/sesion/cierre)` and every other method/path still map to NoEncontrada, and
+      the two `/admin/ingesta` arms are unchanged.
+  - id: AC-11
+    statement: >
+      deploy/cell.compose.yml sets `HEXCELL_DIRECCION_ADMIN=0.0.0.0:8082` on the nucleo service with
+      a Spanish comment twinning the existing `HEXCELL_DIRECCION_SALUD` comment (around line 28) and
+      stating the consequence: the admin surface, `/admin/ingesta` included, becomes reachable from
+      the cell's own network, which is exactly the declared security boundary. The loopback default
+      in crates/hexcell/src/configuracion.rs is NOT changed, no port is published to the host with
+      `ports:`, and no bind mount is introduced.
+    given: the deployed cell template
+    when: the rendered compose template and the existing deploy guards are inspected
+    then: >
+      the nucleo service carries the variable with its twin comment, and
+      deploy/verificar_endurecimiento.sh, deploy/verificar_limites.sh and
+      deploy/verificar_renderizado_configuracion.sh still pass when RUN (not merely read).
+  - id: AC-12
+    statement: >
+      crates/hexcell-canal-whatsmeow/src/adaptador.rs exposes a CLONEABLE session handle over the
+      Arc'd writer and pending-acknowledgement maps, parameterised by `motivo`, taken from the
+      adapter before `Motor::nuevo` consumes it (the existing precedent of `contadores_de_acuse()`
+      and `suscribir_estado_con_expiracion()`); the existing body is delegated, not duplicated. The
+      trait method `CicloDeVidaSesion::cerrar_sesion` keeps sending motivo "" so the HEX-071
+      assertions in crates/hexcell-canal-whatsmeow/tests/cierre_de_sesion.rs stay green unmodified.
+    given: the existing SidecarSimulado harness
+    when: the handle is used to order a close with motivo "cell terminate"
+    then: >
+      the emitted line carries version 6 and that exact motivo and resolves on a completado acuse,
+      while the pre-existing HEX-071 cases still pass without being edited.
+  - id: AC-13
+    statement: >
+      Per ratification R5 (2026-09-22, which REPEALS the part of R3 that made the simulated adapter
+      implement the sub-trait), crates/hexcell-canal-simulado is NOT touched and does NOT implement
+      `CicloDeVidaSesion`. Instead the composition root in crates/hexcell/src/main.rs selects
+      `CierreDeSesion::SinSesion` for the Simulado branch at COMPILE TIME, carrying the ratified
+      policy "no session to close = completado" with motivo `canal_sin_sesion`, so
+      `POST /admin/sesion/cierre` on a core started with the simulated channel answers 200 carrying
+      that motivo, never 502. The route itself does not distinguish channels: the variant is the
+      composition point's decision, the translation is the route's.
+    given: a core binary started on the simulated channel
+    when: an unauthenticated POST /admin/sesion/cierre reaches it through the real HTTP surface
+    then: >
+      the response is 200 and its body carries motivo `canal_sin_sesion`, proving both the
+      composition-time selection and that the route is really wired into servir_admin rather than
+      only unit-reachable, while `git diff --stat main...HEAD` shows no change at all under
+      crates/hexcell-canal-simulado/ or crates/hexcell-core/.
+  - All verification commands pass cleanly (cargo fmt --check, cargo clippy --workspace -D warnings,
+    cargo test --workspace, and cd sidecar && go vet ./... && go test ./... -count=1), and every new
+    test is demonstrated RED under a hand-applied mutation before being restored green, with the
+    mutation and the exact test that turned red written into the report.
+non_goals:
+  - >-
+    The CLI half of `cell terminate` - the six-step destructive sequence, the sibling probe
+    container, the volume resolution and the hexcell-admin tests - which is sibling HEX-082-b. This
+    child touches no file under crates/hexcell-admin/.
+  - >-
+    EVERY documentation deliverable (plan closing paragraph, task 14 note, task 15 follow-up, README
+    CLI append, execution-chain bullet). They belong to HEX-082-b, which merges LAST, so they are
+    never written twice and the README claim "terminate is real" is only made once it is true.
+  - The end-to-end smoke test of terminate over a simulated cell, which the parent HEX-082 runs after
+    both children are merged.
+  - Idempotent re-execution of `cell terminate` after a partial failure (task 15 of the plan).
+  - Persisting the `Retirada` state with motivo `sesion_cerrada` (task 14, which creates the store).
+  - A forced-terminate variant for cells whose device is already banned (written follow-up on task
+    15, owned by HEX-082-b; no new flag anywhere).
+  - >-
+    Any change to the core<->sidecar IPC protocol or wire format, to `crates/hexcell-core`, to
+    `crates/hexcell-canal-simulado` (R5 leaves the simulated adapter implementing no session
+    sub-trait and unedited), to the CLI contract, to any Cargo.toml/Cargo.lock, or any new crate
+    dependency.
+constraints:
+  - >-
+    FORBIDDEN PATHS (inherited, must appear verbatim in this child's 02-contract forbid list):
+    sidecar/**, docs/protocolo-ipc-nucleo-sidecar.md, crates/hexcell-admin/src/docker/cliente.rs,
+    and the state transition table in crates/hexcell-admin/src/estado_de_celula.rs. Additionally for
+    this child: crates/hexcell-core/** and crates/hexcell-canal-simulado/** (both left entirely
+    untouched by R5), crates/hexcell-admin/** (the whole CLI crate is the sibling's
+    surface), crates/hexcell/src/configuracion.rs, crates/hexcell/src/emparejar.rs, docs/**,
+    README.md, and every Cargo.toml / Cargo.lock.
+  - >-
+    PRODUCTION TOUCH LIST IS EXACTLY FOUR FILES and pinning it is what keeps this child inside the
+    fleet: crates/hexcell/src/admin.rs, crates/hexcell/src/main.rs,
+    crates/hexcell-canal-whatsmeow/src/adaptador.rs, deploy/cell.compose.yml. The cut in
+    .agents/policies/complexity.yaml is l_max_files=5, so a SIXTH production file flips this child
+    back to band L and expels it from the fleet. R5 freed one slot by removing the simulated
+    adapter; if the blueprint finds a FIFTH production file genuinely unavoidable it may use that
+    slot, and if it finds a sixth it must STOP and escalate as human-blocking rather than adding it
+    silently. Test files (crates/hexcell/tests/admin_http.rs,
+    crates/hexcell-canal-whatsmeow/tests/cierre_de_sesion.rs) are not counted.
+  - >-
+    The blueprint declares migration=false, public_api=false and schema_change=false. Justification,
+    so it is not silently flipped: no versioned or externally consumed contract changes here - the
+    hexcell-core channel port, the wire-6 IPC protocol, the CLI flags and the exit codes are all
+    explicitly forbidden - and the new endpoint is additive on a listener that is never published to
+    the host. Any of those flags set true forces band L regardless of file count.
+  - >-
+    No new CLI flag, no new subcommand, no new CodigoDeSalida variant (Exito=0, Fallo=1,
+    UsoIncorrecto=2, NoImplementadoTodavia=3 stay as they are), no new HTTP status code beyond 200 /
+    502 / 504 on the new path, and no new crate dependency.
+  - >-
+    VERIFY COMMANDS, fast and deterministic only: `cargo fmt --check`;
+    `cargo clippy --workspace -- -D warnings`; `cargo test --workspace`;
+    `(cd sidecar && go vet ./... && go test ./... -count=1)`. No test may hit a real Docker daemon,
+    a real container, the network or a real sidecar.
+  - >-
+    MUTATION-PROVABILITY IS A HARD GATE. No test file imports the production constant it pins (the
+    30 s deadline, the 8082 port); the 502 case asserts the acuse's own distinctive motivo so a
+    collapsed generic message goes red; the 504 case uses a test-supplied sub-second deadline so the
+    guard cannot pass by hanging; no assertion may move both of its sides under mutation; no guard
+    may collapse distinct values through output formatting; and no guard may be wired into a CI job
+    that cannot run its toolchain. Each new test is hand-broken once and the exact test that turned
+    red is named in the report.
+  - >-
+    This child writes NO documentation: no plan edit, no README edit, no ADR and no bitacora entry
+    (ratification R1 is explicit that keeping loopback as the binary default is not a discarded
+    technique and earns no bitacora entry). If a genuine new discard appears during implementation,
+    STOP and escalate instead of adding it silently. ADR and bitacora numbers, if they were ever
+    needed, are read from disk AT COMMIT TIME because sibling branches run in parallel.
+  - >-
+    `servir_servicios_http` keeps returning ONE combined future and keeps being called ONCE, before
+    the match on CanalSeleccionado; its own doc comment forbids splitting it into the per-channel
+    branches. That is why the session-close registration is late-bound.
+  - >-
+    RESOLVED BY R5, not a gap to reopen: `CicloDeVidaSesion::cerrar_sesion` returns
+    `Result<(), Self::Error>` and carries NO motivo, so the `canal_sin_sesion` literal of AC-13
+    cannot come out of the trait method - it is a constant declared beside the route and contributed
+    by the `SinSesion` variant the composition root picks at compile time. The simulated adapter
+    therefore implements nothing new, needs no `iniciar_emparejamiento` / `estado_sesion`, and needs
+    no take-the-handle-first treatment; only the whatsmeow adapter does, because only it can be
+    `ConSesion`. `CicloDeVidaSesion` is READ ONLY in crates/hexcell-core/src/canal.rs.
+    crates/hexcell-canal-contrato and crates/hexcell-canal-simulado are forbidden: if the design
+    would force a change in either, STOP and escalate as human-blocking.
+  - All repository content produced (identifiers, comments, doc comments, operator messages) is in
+    Spanish, as CLAUDE.md fixes; only the CLI wire names and flags stay as the PRD and README fix
+    them. Dates written in code are absolute (2026-09-22), never relative. The commit message is a
+    Spanish conventional commit with NO AI attribution line of any kind - no Co-Authored-By, no
+    Generated with, no Claude-Session.
+  - >-
+    No production path may end in panic, unwrap, expect, out-of-range indexing or
+    std::process::exit: the release profile sets panic = "abort".

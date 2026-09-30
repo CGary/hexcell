@@ -1,0 +1,180 @@
+task_id: HEX-082-b
+summary: 'CLI half of cell terminate: the six-step destructive ciclo_de_vida::retirar sequence, its
+  comandos.rs dispatch, the four mandatory Docker-double tests, and every HEX-082 doc deliverable
+  (merges LAST).'
+goal: >-
+  Replace the NoImplementadoTodavia stub of `cell terminate --id <id> --confirmar [--simular]` with
+  the real, strictly ordered, abort-on-first-failure sequence in
+  crates/hexcell-admin/src/ciclo_de_vida.rs: inspect core then sidecar (missing -> "célula no
+  encontrada", core not running -> the exact literal pause message), resolve the volume name from the
+  core's own docker inspect Mounts[].Name, POST /admin/sesion/cierre through an alpine:3 sibling
+  container whose exit code decides completado/fallido, stop sidecar then core through the SAME
+  no-deadline function `pausar` uses, remove both containers and the volume, and print exactly three
+  stdout lines. Wire the Retirar arm into comandos.rs's effectful dispatch with a single-line edit per
+  existing match arm. Own every HEX-082 documentation deliverable, append-only or exact-literal
+  replacement, because this child merges LAST. Depends on sibling HEX-082-a (the route) only at the
+  documentation and end-to-end level, never at compile time.
+read:
+  - .ai/tasks/inbox/HEX-082-b/00-spec.yaml
+  - .ai/tasks/inbox/HEX-082-b/01-blueprint.yaml
+  - .ai/tasks/active/HEX-082-a/00-spec.yaml
+  - .ai/tasks/active/HEX-082-a/01-blueprint.yaml
+  - crates/hexcell-admin/src/ciclo_de_vida.rs
+  - crates/hexcell-admin/src/comandos.rs
+  - crates/hexcell-admin/src/docker/cliente.rs
+  - crates/hexcell-admin/src/argumentos.rs
+  - crates/hexcell-admin/src/estado_de_celula.rs
+  - crates/hexcell-admin/src/codigo_de_salida.rs
+  - crates/hexcell-admin/src/salida.rs
+  - crates/hexcell-admin/tests/ciclo_de_vida.rs
+  - crates/hexcell-admin/tests/comandos.rs
+  - crates/hexcell-admin/tests/comun/mod.rs
+  - docs/plan/fase-a-6-empaquetado-cli.md
+  - README.md
+  - CLAUDE.md
+touch:
+  - crates/hexcell-admin/src/ciclo_de_vida.rs
+  - crates/hexcell-admin/src/comandos.rs
+  - crates/hexcell-admin/tests/ciclo_de_vida.rs
+  - crates/hexcell-admin/tests/comandos.rs
+  - docs/plan/fase-a-6-empaquetado-cli.md
+  - README.md
+forbid:
+  files:
+    - sidecar/**
+    - docs/protocolo-ipc-nucleo-sidecar.md
+    - crates/hexcell-admin/src/docker/cliente.rs
+    - crates/hexcell-admin/src/estado_de_celula.rs
+    - crates/hexcell-admin/src/argumentos.rs
+    - crates/hexcell-admin/src/codigo_de_salida.rs
+    - crates/hexcell-admin/src/salida.rs
+    - crates/hexcell-admin/src/lib.rs
+    - crates/hexcell-admin/src/main.rs
+    - crates/hexcell-admin/tests/comun/mod.rs
+    - crates/hexcell/**
+    - crates/hexcell-core/**
+    - crates/hexcell-canal-whatsmeow/**
+    - crates/hexcell-canal-simulado/**
+    - crates/hexcell-canal-contrato/**
+    - crates/hexcell-storage/**
+    - crates/hexcell-meta/**
+    - deploy/**
+    - docs/adr/**
+    - docs/bitacora-de-descartes.md
+    - Cargo.toml
+    - Cargo.lock
+    - crates/**/Cargo.toml
+    - .github/workflows/**
+  behaviors:
+    - >-
+      Do NOT derive the removed volume's name by convention, from --id or from the container id. It
+      must come from the core's own `docker inspect` Mounts[] entry whose Destination is
+      /var/lib/hexcell, read at step 2 and reused unchanged at step 5; that literal path string is
+      hardcoded in exactly one place in ciclo_de_vida.rs.
+    - >-
+      Do NOT remove a container or the volume before the session-close probe container reports exit
+      code 0. A non-zero probe exit aborts immediately with Fallo=1 and a diagnostic; the ONLY removal
+      request that may still reach the daemon after that is the probe's OWN cleanup DELETE, which the
+      existing reanudar-style probe lifecycle already issues on both outcomes.
+    - >-
+      Do NOT start anything, and do NOT emit any stop/rm/create/wait/POST request, when the core
+      container's State.Status is not "running": abort immediately with the EXACT literal "la célula
+      está pausada: ejecute cell unpause antes de cell terminate" on the diagnostic sink.
+    - >-
+      Do NOT duplicate the no-deadline stop sequence that `pausar` already uses. Extract a shared
+      function inside ciclo_de_vida.rs that both `pausar` and `retirar` call (sidecar then core, no `t`
+      parameter); do NOT call detener_contenedor (the t=30 variant) anywhere, and do NOT modify
+      docker/cliente.rs to merge the two stop operations (task 15's, not this child's).
+    - >-
+      Do NOT open a direct IPC connection to the sidecar and do NOT open any network connection of the
+      CLI's own to the core. The session-close reaches the core only through an alpine:3 sibling
+      container in the cell's network running `wget -q -O - --post-data ''` against
+      /admin/sesion/cierre, the same pattern `cell unpause`'s readiness probe already uses. No file
+      under crates/hexcell-admin may name orden_cierre_de_sesion, acuse_cierre_de_sesion, sidecar.sock
+      or HEXCELL_SOCKET_IPC (D-57).
+    - >-
+      Do NOT print the generic "cell {subcomando} completado para «{id}»" line for `cell terminate`.
+      On success it prints exactly three lines -- "sesión cerrada", "contenedores eliminados", "volumen
+      <nombre> eliminado" -- through Salida::linea, in that order, and nothing else on the standard
+      sink.
+    - >-
+      Do NOT gate terminate's real behaviour behind `--simular` in the business logic; `--simular`
+      stays exclusively an argument-parser concern in argumentos.rs (not touched here) that short-
+      circuits in comandos::ejecutar before any ClienteDocker is constructed. comandos::ejecutar keeps
+      its current signature and body.
+    - >-
+      Do NOT reorder Subcomando::Reemparejar, Subcomando::Listar or Subcomando::Estado in the two-arm
+      bucket match in comandos.rs::ejecutar_con_efectos. Moving Subcomando::Retirar into the effectful
+      arm is exactly one line changed per existing arm; this branch is rebased onto main before merge
+      because tasks 14 and 23 touch the same match independently.
+    - >-
+      Do NOT introduce any new CLI flag, subcommand, or CodigoDeSalida variant beyond the existing
+      Exito=0/Fallo=1/UsoIncorrecto=2/NoImplementadoTodavia=3. Do NOT introduce a FakeDocker type or
+      modify tests/comun/mod.rs; every new hexcell-admin test uses the existing temporary Unix-socket
+      double, scripted per test.
+    - >-
+      Do NOT write any mechanical guard's request-order assertion as independent presence checks that
+      would also pass with the order inverted; assert the full received Vec/sequence instead. Do NOT
+      let any test file import the production port, deadline or cadence constants it pins -- the
+      fixture admin port must equal neither 8082 nor 9099, and the fixture volume name must be
+      derivable from neither --id nor the container id. Any blocking wait uses a finite recv_timeout,
+      never a blind join. Each new test is hand-broken once, seen red, restored, and the exact test
+      name that turned red goes in the report.
+    - >-
+      Do NOT touch docs or README except as an APPEND or an exact-literal replacement:
+      `git diff main...HEAD -- docs README.md | grep "^-"` must show zero deleted lines. Do NOT add a
+      new ADR or a new bitacora entry -- R1 and D-57 already cover this ground; if a genuine new
+      discard appears during implementation, STOP and escalate instead of adding it silently.
+    - >-
+      Do NOT let any production path end in panic, unwrap, expect, out-of-range indexing or
+      std::process::exit (the release profile sets panic = "abort"); readable output goes only through
+      Salida::linea and diagnostics only through Salida::diagnostico, never println!/eprintln!/print!/
+      write! against the process streams.
+    - >-
+      All repository content produced (identifiers, comments, doc comments, operator messages,
+      documentation) is in Spanish, as CLAUDE.md fixes; dates written into documentation are absolute
+      (2026-09-22 or the actual merge date), never relative. The commit message is a Spanish
+      conventional commit with NO AI attribution line of any kind: no Co-Authored-By, no "Generated
+      with", no Claude-Session.
+verify:
+  commands:
+    - 'bash -c ''test -z "$(git diff --name-only main...HEAD | grep -vE "^(crates/hexcell-admin/src/ciclo_de_vida\.rs|crates/hexcell-admin/src/comandos\.rs|crates/hexcell-admin/tests/ciclo_de_vida\.rs|crates/hexcell-admin/tests/comandos\.rs|docs/plan/fase-a-6-empaquetado-cli\.md|README\.md)$")"'''
+    - 'bash -c ''test -z "$(git diff --name-only main...HEAD -- crates/hexcell-admin/src/docker/cliente.rs crates/hexcell-admin/src/argumentos.rs crates/hexcell-admin/src/codigo_de_salida.rs crates/hexcell-admin/src/estado_de_celula.rs crates/hexcell-admin/src/salida.rs crates/hexcell-admin/tests/comun/mod.rs)"'''
+    - 'bash -c ''test -z "$(grep -rnE "orden_cierre_de_sesion|acuse_cierre_de_sesion|sidecar\.sock|HEXCELL_SOCKET_IPC" crates/hexcell-admin/src)"'''
+    - 'bash -c ''grep -q "la célula está pausada: ejecute cell unpause antes de cell terminate" crates/hexcell-admin/src/ciclo_de_vida.rs'''
+    - 'bash -c ''test "$(grep -c "/var/lib/hexcell" crates/hexcell-admin/src/ciclo_de_vida.rs)" = "1"'''
+    - 'bash -c ''test -z "$(grep -nE "detener_contenedor\(&" crates/hexcell-admin/src/ciclo_de_vida.rs | grep -v detener_contenedor_sin_plazo)"'''
+    - 'bash -c ''test -z "$(grep -nE "^[[:space:]]*(8082|9099)" crates/hexcell-admin/tests/ciclo_de_vida.rs crates/hexcell-admin/tests/comandos.rs)"'''
+    - 'bash -c ''d="$(git diff main...HEAD -- docs README.md)"; mapfile -t dels < <(printf "%s\n" "$d" | grep "^-" | grep -v "^---" | sed "s/^-//"); mapfile -t adds < <(printf "%s\n" "$d" | grep "^+" | grep -v "^+++" | sed "s/^+//"); for x in "${dels[@]}"; do [ -z "$x" ] && continue; ok=0; for y in "${adds[@]}"; do [ "${y:0:${#x}}" = "$x" ] && { ok=1; break; }; done; [ "$ok" -eq 0 ] && exit 1; done; exit 0'''
+    - 'bash -c ''test -z "$(git log main..HEAD --format=%B | grep -iE "co-authored-by|generated with|claude-session|claude\.ai/code")"'''
+    - cargo fmt --check
+    - cargo clippy --workspace -- -D warnings
+    - cargo test -p hexcell-admin --test ciclo_de_vida
+    - cargo test -p hexcell-admin --test comandos
+    - cargo test --workspace
+    - 'bash -c ''cd sidecar && go vet ./... && go test ./... -count=1'''
+  target_s: 60
+acceptance:
+  human_gate: true
+limits:
+  max_files_changed: 6
+  max_diff_lines: 1250
+  per_class:
+    - glob: crates/hexcell-admin/src/ciclo_de_vida.rs
+      max_diff_lines: 420
+    - glob: crates/hexcell-admin/src/comandos.rs
+      max_diff_lines: 180
+    - glob: crates/hexcell-admin/tests/ciclo_de_vida.rs
+      max_diff_lines: 480
+    - glob: crates/hexcell-admin/tests/comandos.rs
+      max_diff_lines: 280
+    - glob: docs/plan/fase-a-6-empaquetado-cli.md
+      max_diff_lines: 90
+    - glob: README.md
+      max_diff_lines: 40
+execution:
+  mode: worktree_edit
+  branch: ai/HEX-082-b
+retry_policy:
+  max_attempts: 2
+  escalate_after: 2

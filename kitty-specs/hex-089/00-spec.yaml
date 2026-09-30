@@ -1,0 +1,51 @@
+task_id: HEX-089
+summary: Staggered rollout procedure and static guard for whatsmeow updates (A-6 task 19, part a); sentinel cell registration deferred. Risk medium.
+goal: >-
+  Deliver part (a) of A-6 task 19: a written canary and staggered-rollout procedure for whatsmeow
+  library updates, plus a static guard with a mutation self-test, wired into CI, that proves no
+  path updates the whole cell portfolio in one step. The sentinel cell registration and the real
+  72 h run (part b) are out of scope.
+invariants:
+  - No CI job or step other than job imagenes (which only builds) runs docker compose up, pull or restart, nor a deploy script.
+  - The hexcell-admin CLI exposes no update, deploy, actualizar or desplegar subcommand.
+  - The procedure states the operational prohibition literally as "nunca actualizar todas las células el mismo día".
+  - The procedure uses only commands that exist today (cell pause, unpause, status); batch size is a parameter with a default justified from existing docs, with no invented client, cell or portfolio figures.
+  - The guard compares tokens by exact equality, never by contains combined with ||, and does not depend on the network.
+  - docs/STATUS.md, crates/**, deploy/cell.compose.yml and sidecar/** are not modified; no sentinel number is invented.
+acceptance:
+  - id: AC-1
+    statement: docs/runbook-canal-whatsmeow.md has a new section replacing by exact literal the "diferido a etapa A-6" staggering text, with the 72 h sentinel run, batch rollout over the portfolio, the literal prohibition and the sentinel as testing ground for unproven measures (e.g. Meta Verified).
+    given: the runbook before the change
+    when: the section is written
+    then: the deferred-to-A-6 wording is gone and every listed element is present, with no invented business figures
+  - id: AC-2
+    statement: The procedure defines stop conditions for the next batch (bans, anomalous disconnections, Client outdated (405)), a per-batch log (date, cells, version, result), and batch size as a parameter with a default justified from existing docs.
+  - id: AC-3
+    statement: The procedure references only existing commands (cell pause/unpause/status) and states that no update or deploy command exists; the sentinel registration is marked pending on the own-number decision in STATUS.
+  - id: AC-4
+    statement: deploy/verificar_despliegue_escalonado.sh exits 0 on the unmodified base and checks that no workflow job other than imagenes runs docker compose up, pull or restart or a deploy script.
+    given: main with the current workflows
+    when: the guard runs
+    then: it exits 0 (verified on the base before the self-test is written)
+  - id: AC-5
+    statement: The guard also checks that argumentos.rs and TEXTO_DE_USO expose no update, deploy, actualizar or desplegar subcommand, by exact token equality.
+  - id: AC-6
+    statement: The --autoprueba mode mutates copies only, injecting a docker compose up step into a copied workflow and a deploy subcommand into a copy of argumentos.rs, and demands red on each mutation independently.
+    given: pristine copies of the workflows and argumentos.rs
+    when: each mutation is applied separately
+    then: the guard fails for that mutation and reports which check tripped, and the self-test fails if a mutation did not change the copy
+  - id: AC-7
+    statement: The self-test identifies WHICH mutation turned the guard red (distinct failure identity per check), so a nonzero exit code alone is never accepted, and a guard that stays green on a mutation makes --autoprueba fail.
+  - id: AC-8
+    statement: .github/workflows/ci.yml has a job guardas-despliegue with two steps (guard and --autoprueba), with comments citing the plan criterion at fase-a-6 lines 676-679, and the job has the toolchain the guard needs.
+  - id: AC-9
+    statement: A partial closing note is appended to task 19 in docs/plan/fase-a-6-empaquetado-cli.md stating the procedure and guard are delivered and part b (sentinel registration and 72 h run) is pending until STATUS.md line 592 becomes Definido.
+risk: medium
+non_goals:
+  - Do not register the sentinel cell nor run the real 72 h canary (part b, blocked by the pending own WhatsApp number in STATUS).
+  - Do not add update or deploy commands to hexcell-admin, nor any automation of the rollout.
+  - Do not modify docs/STATUS.md, docs/bitacora-de-descartes.md, crates/**, sidecar/** or deploy/cell.compose.yml.
+constraints:
+  - All repository content is written in Spanish; dates are absolute; commits carry no AI attribution.
+  - The guard mirrors the pattern of deploy/verificar_limites.sh and the CI job pattern at ci.yml lines 132-148.
+  - Deferred by design, not a gap - sentinel cell registration with its own number and the actual 72 h run (19-b), blocked by STATUS.md line 592.

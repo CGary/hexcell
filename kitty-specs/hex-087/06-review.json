@@ -1,0 +1,24 @@
+{
+  "task_id": "HEX-087",
+  "summary": "Re-review after fix commit ee0d51d: the three fix_tasks are closed, the three previously surviving mutations now go red for the right reason, no new defect; approve.",
+  "verdict": "approve",
+  "contract_compliance": true,
+  "forbidden_files_touched": [],
+  "unrequested_refactor": false,
+  "missing_tests": [],
+  "functional_risk": "low",
+  "notes": [
+    "contract-check ok=true after ee0d51d (11 files <= 12; +2230/-274 = 2504 <= 3420; src 825/950 unchanged, tests 1614/2300, README 22/50, docs 43/120); not_checked: forbid.behaviors (checked by hand: fix commit touches only crates/hexcell-admin/tests/reemparejamiento.rs, inside touch; Spanish Conventional Commit, no AI attribution).",
+    "acceptance-coverage status=pass, 0 gaps (spec and blueprint unchanged since the first review).",
+    "Fix 1 (asertar-cuerpo-de-la-sonda-de-sesion-d3) CLOSED: resume_con_sesion_ya_activa_omite_el_emparejamiento_y_confirma now reads the session sibling's create body and asserts Image, HostConfig.NetworkMode and the literal Cmd [wget -q -O - -T 40 http://c1-nucleo:5080/admin/sesion] (literal, not the production helper). Re-applied mutations: URL /admin/sesion -> /admin/sesion/xxx at ciclo_de_vida.rs:1137 -> RED at reemparejamiento.rs:1974 (Cmd left carries /xxx); None -> Some(\"{}\") body at ciclo_de_vida.rs:1144 -> RED at :1974 (Cmd left carries --post-data). Both patches matched exactly one site (diff --stat 1/1) and were reverted.",
+    "Fix 2 (guarda-ya-emparejada-solo-en-la-reanudacion) CLOSED: new secuencia_completa_con_ya_emparejada_no_activa_la_recuperacion_de_resume (no store row, full sequence, single pairing returns ya_emparejada) asserts Fallo, exact request count + exigir_silencio, row Reemparejando, no sustituciones. Re-applied mutation: dropped `reanudando &&` at comandos.rs:704 -> RED at reemparejamiento.rs:2101 (the extra descartar_sqlstore + second pairing sibling exhaust the fixture; diagnostico reports the Docker socket instead of ya_emparejada). Reverted.",
+    "Fix 3 (registrar-mutaciones-en-el-log-de-implementacion) CLOSED: 04-implementation-log.yaml now carries two entries with the 14 original mutation groups (M1..M14, red test names) and the three revise-fix mutations with file:line and red reason.",
+    "New code inspected for new defects: none. Minor, non-blocking: the strengthened AC-9 test skips the first two inspections and the session sibling's start/wait/logs/delete by count instead of by label (structural drift there is still caught by the labeled sonda-1 sequence and exigir_silencio); the full-sequence test asserts count + silence rather than labels, which is sufficient for its claim.",
+    "Clippy re-run by the reviewer on ee0d51d: the same 15 warning sites as main (tests/comandos.rs 45/96/140/205/616, almacen_plano_de_control.rs 39/61/83/287/438, argumentos.rs:60, comun/mod.rs:262, reporte_de_consumo.rs:75), none in lines this diff adds, zero in reemparejamiento.rs; orchestrator reports fmt 0, test 0, CI clippy --workspace 0. Baseline ruled not counted against the diff.",
+    "05-validation.json on disk still dates from 2026-09-25 (95 tests, pre-fix); the orchestrator re-ran the three commands on ee0d51d with fmt 0 / test 0 / clippy 101 baseline-only. Not a blocker for this verdict, but q-verify should refresh the artifact before q-accept (same handling as HEX-088).",
+    "First-review evidence stands: 20 hand mutations over D1/D2/D4/D5 and AC-21..AC-25 killed (see 04-implementation-log.yaml); invariants (transition table untouched, identity re-run never writes the store, store written only after Docker success, no new flag/exit code/dependency, volume name never derived) verified by reading; docs append-only with absolute dates.",
+    "Residual design risk (blueprint-conformant, not a defect): reconciliar_reanudacion issues /start to a Docker-frozen ('paused') container on a cell unpause re-run; persisted motivo stays sesion_cerrada when the close was skipped or failed.",
+    "Worktree left clean at ee0d51d after every mutation. External advisory pre-read (opencode_go) skipped: adversarial hand review with mutation runs mandated by the orchestrator; verdict is Claude's."
+  ],
+  "fix_tasks": []
+}

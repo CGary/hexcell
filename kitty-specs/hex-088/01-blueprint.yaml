@@ -1,0 +1,193 @@
+task_id: HEX-088
+summary: >
+  Write docs/runbook-operacion.md for hexcell-admin (closing A-6 plan task 21), append a
+  link in README.md's CLI manual intro, and append the task-21 closure to the plan file.
+affected_files:
+  - docs/runbook-operacion.md
+  - README.md
+  - docs/plan/fase-a-6-empaquetado-cli.md
+symbols: []
+dependencies:
+  - docs/runbook-restauracion-de-celula.md
+  - docs/runbook-vigilancia-externa.md
+  - crates/hexcell-admin/src/comandos.rs
+  - crates/hexcell-admin/src/argumentos.rs
+  - crates/hexcell-admin/src/codigo_de_salida.rs
+  - deploy/cell.compose.yml
+  - docs/plan/fase-a-7-pilotos.md
+test_scenarios:
+  - statement: >
+      docs/runbook-operacion.md exists and opens with "# Runbook: ..." followed by
+      "* **Fecha de esta versión:** 2026-09-24.", then "## Qué es esto", "## Antes de
+      empezar", a numbered situation-to-command table, one subsection per command,
+      "## Reejecución de un comando", an OOMKilled procedure, and "## Referencias" in order.
+    covers: [AC-1]
+  - statement: >
+      "Qué es esto" states scope and explicitly excludes restoration/monitoring/channel
+      operation, linking docs/runbook-restauracion-de-celula.md and
+      docs/runbook-vigilancia-externa.md.
+    covers: [AC-2]
+  - statement: >
+      "Antes de empezar" documents where hexcell-admin runs, the Docker socket dependency,
+      HEXCELL_IMAGEN_SONDA, and the control-plane store.
+    covers: [AC-3]
+  - statement: >
+      A single table maps the seven listed operator situations to the exact hexcell-admin
+      command.
+    covers: [AC-4]
+  - statement: >
+      Each of the eight commands (cell pause/unpause/terminate/rebind/list/status, reporte
+      tokens, config render) has its own subsection with cuándo, exact command, effect,
+      verification (expected cell status output plus DISC codes that must not appear), and
+      common failures by exit code (0, 1, 2, noting 3 is reserved).
+    covers: [AC-5]
+  - statement: >
+      An unversioned verify-phase shell script extracts every hexcell-admin invocation shown
+      in docs/runbook-operacion.md, runs each against the real built binary (with --simular,
+      and --id ejemplo --confirmar where required) and fails naming the offending line if any
+      exits 2; all eight commands already probed manually returned exit 0 with --simular.
+    covers: [AC-6]
+  - statement: >
+      The cell rebind subsection documents only the HOW from HEX-085/plan task 13 and its
+      2026-09-22 note, and separately states the ban runbook (WHETHER) is pending, pointing
+      to docs/plan/fase-a-7-pilotos.md's "Runbook de baneo" entry without linking a
+      nonexistent file.
+    covers: [AC-7]
+  - statement: >
+      "## Reejecución de un comando" is a provisional three-line subsection pointing to plan
+      task 15 as the source of the final procedure.
+    covers: [AC-8]
+  - statement: >
+      The OOMKilled procedure has detectar/contener/registrar/escalar steps, cites
+      deploy/cell.compose.yml live for every memory figure, and defers limit changes to plan
+      task 6 / docs/STATUS.md.
+    covers: [AC-9]
+  - statement: >
+      "## Referencias" lists plan task 21, HEX-085/plan task 13, comandos.rs,
+      deploy/cell.compose.yml, fase-a-7-pilotos.md, and the two existing runbooks.
+    covers: [AC-10]
+  - statement: >
+      README.md's "## 💻 Manual de Operación de la CLI de Administración" intro paragraph
+      gains exactly one appended sentence linking to docs/runbook-operacion.md, with no
+      existing sentence removed or rewritten (git diff main...HEAD has zero deleted lines on
+      this file).
+    covers: [AC-11]
+  - statement: >
+      docs/plan/fase-a-6-empaquetado-cli.md records plan task 21's closure by appending to
+      the existing status chain recalculated from disk (currently "15 → 21 → 19" per the
+      2026-09-22 HEX-085 entry), without deleting or rewriting prior entries (zero deleted
+      lines in the diff for this file).
+    covers: [AC-12]
+  - statement: >
+      No content in the diff states or implies Fase B replaces/retires Fase A or the sidecar,
+      frames a ban as a failure, introduces jitter/warm-up/proxy/VPN/IP-rotation guidance, or
+      invents client/cell counts, prices, transport identifiers, or phone numbers; grep guard
+      confirms absence of these tokens across the three touched files.
+    covers: [AC-13]
+  - statement: >
+      Only docs/runbook-operacion.md, README.md, and docs/plan/fase-a-6-empaquetado-cli.md
+      appear in the diff; nothing under crates/, deploy/, docs/STATUS.md,
+      docs/bitacora-de-descartes.md, or kitty-specs/ is touched.
+    covers: [AC-13]
+strategy:
+  - step: 1
+    action: >
+      Write docs/runbook-operacion.md following the structural convention of the two existing
+      runbooks (title line, version-date line, "## Qué es esto" with explicit exclusions and
+      links, "## Antes de empezar" covering the Docker socket dependency, HEXCELL_IMAGEN_SONDA
+      and the control-plane store path), a single numbered situation-to-command table for the
+      seven listed operator situations, then one subsection per hexcell-admin command
+      (pause/unpause/terminate/rebind/list/status/reporte tokens/config render) reusing the
+      exact invocations already documented in README.md sections 1-8 and already exercised
+      manually with --simular (all exit 0), each with cuándo, comando, efecto, verificación
+      (expected cell status text plus the five DISC-0N codes from comandos.rs that must be
+      absent) and exit-code table (0/1/2, noting 3 is reserved per
+      codigo_de_salida.rs/README's 2026-09-22 status note).
+    files:
+      - docs/runbook-operacion.md
+  - step: 2
+    action: >
+      Write the "cell rebind" subsection narrowly to the HOW already closed by HEX-085 (plan
+      task 13, 2026-09-22 note): send pause, best-effort session close, persist
+      Reemparejando, discard sqlstore via sidecar container, restart sidecar with pause
+      reapplied, pairing (QR or code on stdout for an external renderer), poll until active,
+      resume send, persist EnEjecucion with substitution row; note a cell left in
+      Reemparejando resumes with the same rebind command. Add a one-paragraph WHETHER
+      deferral naming docs/plan/fase-a-7-pilotos.md's "Runbook de baneo" bullet in its own
+      words (ban classifier, no-loop-reconnect, appeal script, client template, primary phone
+      requirement) without linking a nonexistent runbook file, and explicitly stating that
+      file does not exist yet.
+    files:
+      - docs/runbook-operacion.md
+  - step: 3
+    action: >
+      Write "## Reejecución de un comando" as a three-line provisional stub pointing to plan
+      task 15 (in progress) as owner of the final idempotent-retry procedure; no invented
+      mechanism.
+    files:
+      - docs/runbook-operacion.md
+  - step: 4
+    action: >
+      Write the OOMKilled procedure (detectar: cell status showing DISC-01, docker inspect
+      --format '{{.State.OOMKilled}}' <contenedor>, docker logs --tail; contener: docker
+      start on the dead container only, verify /health/ready via cell status, confirm sidecar
+      session returns to active if it died; registrar: absolute date, container, current
+      limit read live from deploy/cell.compose.yml citing that file; escalar: repeating
+      within 24h means limit revision belongs to plan task 6 / docs/STATUS.md, never changed
+      here). No hardcoded memory numbers — placeholder language pointing at the live file.
+    files:
+      - docs/runbook-operacion.md
+  - step: 5
+    action: >
+      Write "## Referencias" listing plan task 21, HEX-085/plan task 13, comandos.rs,
+      deploy/cell.compose.yml, fase-a-7-pilotos.md, and the two existing runbooks.
+    files:
+      - docs/runbook-operacion.md
+  - step: 6
+    action: >
+      Append exactly one sentence to README.md's "## 💻 Manual de Operación de la CLI de
+      Administración" intro paragraph (the first paragraph after the heading, ending "...API
+      local de administración en memoria de Caddy (http://localhost:2019).") linking to
+      docs/runbook-operacion.md; do not touch any other existing sentence in that section.
+    files:
+      - README.md
+  - step: 7
+    action: >
+      Append a new bullet to docs/plan/fase-a-6-empaquetado-cli.md's status chain (after the
+      2026-09-22 HEX-085 line closing task 13, chain "15 → 21 → 19") recording task 21's
+      closure with HEX-088, recalculating the remaining chain from disk state at edit time,
+      and updating task 21's own numbered-list entry with a closing note; do not delete or
+      rewrite any prior chain entry.
+    files:
+      - docs/plan/fase-a-6-empaquetado-cli.md
+  - step: 8
+    action: >
+      Write an unversioned verify-phase shell script (outside the repository tree, e.g. under
+      the task's scratch area) that greps docs/runbook-operacion.md for every literal
+      `hexcell-admin ...` invocation, runs each against `cargo build -p hexcell-admin` then
+      the built binary (appending --simular, and --id ejemplo --confirmar where the real
+      parser demands confirmation per argumentos.rs), fails naming the offending source line
+      if any exits 2, and is referenced (not committed) from 02-contract.yaml verify.commands.
+    files: []
+risks:
+  - >
+    README.md's CLI manual section already documents cell pause/unpause/terminate/rebind,
+    config render, cell list/status, and reporte tokens in detail (sections 1-8); the runbook
+    must reuse those confirmed invocations rather than re-deriving new command forms, to avoid
+    drift between the two documents.
+  - >
+    Neither existing runbook (restauración, vigilancia-externa) actually closes with a
+    "## Referencias" section in practice, even though the spec's invariant requires one for
+    this new runbook — this is a deliberate stricter convention for HEX-088, not an exact
+    structural mirror of the two precedents; flagged so implementation doesn't try to force
+    an exact structural copy that doesn't exist on disk.
+  - >
+    docs/plan/fase-a-6-empaquetado-cli.md's status chain must be read fresh at edit time
+    (currently ends "...15 → 21 → 19" per the 2026-09-22 HEX-085 line) since parallel task 15
+    work could change the chain before this task lands; the append must recalculate from disk,
+    not from this blueprint's snapshot.
+  - >
+    All eight hexcell-admin invocations were manually verified against the real built binary
+    with --simular (cell pause/unpause/terminate/rebind/list/status, reporte tokens, config
+    render) and all returned exit 0; --id ejemplo --confirmar was required for terminate and
+    rebind per argumentos.rs's requiere_confirmar(). No argument-parser mismatch found.
