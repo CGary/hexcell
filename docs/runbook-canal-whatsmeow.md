@@ -119,15 +119,27 @@ como probada mientras no lo esté.
 
 ### Escalonado por lotes sobre la cartera
 
-Superadas las 72 horas sin incidencias, la actualización avanza por lotes:
+Superadas las 72 horas sin incidencias, la actualización avanza por lotes.
 
-1. **Pausar la célula del lote:** `hexcell-admin cell pause --id <cell_id>`.
-2. **Actualizar el commit fijado** en `sidecar/go.mod` y reconstruir la imagen del sidecar
-   (secciones 1 y 3).
-3. **Reanudar la célula:** `hexcell-admin cell unpause --id <cell_id>` y comprobar con
-   `hexcell-admin cell status --id <cell_id>` que el websocket reconecta sin
-   `Client outdated (405)`.
-4. **Registrar el lote** en el registro de despliegue (tabla más abajo).
+**Una vez por candidato, antes de la corrida de la centinela** (no dentro de cada lote): actualizar
+el commit fijado en `sidecar/go.mod`, ejecutar `go test ./...` y construir la imagen del sidecar
+(secciones 1 y 3). La misma imagen candidata que corrió 72 horas en la centinela es la que recibe
+cada lote; no se reconstruye entre lotes.
+
+**Por cada lote, célula por célula:**
+
+1. **Pausar la célula:** `hexcell-admin cell pause --id <cell_id>`.
+2. **Recrear el contenedor del sidecar de esa célula con la imagen candidata** (paso 4 de la sección
+   3, una célula a la vez): con `docker compose` sobre el proyecto de **esa única célula**,
+   apuntando `HEXCELL_IMAGEN_SIDECAR` de su archivo de entorno a la imagen candidata y ejecutando
+   `docker compose -f deploy/cell.compose.yml --env-file <entorno_de_la_celula> create
+   --force-recreate sidecar`. Nunca se ejecuta sobre las demás células ni sobre la cartera entera.
+3. **Reanudar la célula:** `hexcell-admin cell unpause --id <cell_id>`. Este comando solo arranca
+   los contenedores existentes de la célula: **por sí solo no cambia la imagen**; la imagen nueva
+   llega únicamente por la recreación del paso 2.
+4. **Comprobar** con `hexcell-admin cell status --id <cell_id>` que la célula queda en ejecución y
+   que el websocket reconecta sin `Client outdated (405)`.
+5. **Registrar el lote** en el registro de despliegue (tabla más abajo).
 
 **Prohibición operativa literal: nunca actualizar todas las células el mismo día.**
 

@@ -230,11 +230,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # AC-4/AC-8: el criterio de la tarea 19 (docs/plan/fase-a-6-empaquetado-cli.md,
-      # líneas 676-679) exige que ninguna vía —ni la CI ni la CLI— actualice toda la
-      # cartera en un solo paso. Este guardia comprueba que ningún trabajo distinto de
-      # `imagenes` ejecuta docker compose up/pull/restart ni un script de despliegue, y
-      # que hexcell-admin no expone subcomandos de actualización. No lleva paso de
+      # AC-4/AC-8: el criterio de aceptación de la tarea 19 (docs/plan/fase-a-6-empaquetado-cli.md,
+      # «Una actualización de whatsmeow no llega a ninguna célula de cliente…») exige que
+      # ninguna vía —ni la CI ni la CLI— actualice toda la cartera en un solo paso.
+      # Este guardia comprueba que ningún trabajo distinto de `imagenes` ejecuta
+      # docker compose up/pull/restart ni un script de despliegue, y que
+      # hexcell-admin no expone subcomandos de actualización. No lleva paso de
       # toolchain a propósito: el guardia usa solo bash, grep, awk, sed, cmp, mktemp y
       # cp, todos presentes en ubuntu-latest (contraste con guardas-limites, que sí
       # necesita docker compose, PyYAML y cargo para sus guardias).

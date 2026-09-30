@@ -2,15 +2,16 @@
 # ============================================================================
 # Guardia estático del despliegue escalonado de whatsmeow (HEX-089, tarea 19 A-6)
 # Comprueba que ninguna vía —ni la CI ni la CLI— actualiza toda la cartera en
-# un solo paso (criterio de la tarea 19 de la etapa A-6, líneas 676-679 del plan).
+# un solo paso (criterio de aceptación de la tarea 19 de la etapa A-6: «Una
+# actualización de whatsmeow no llega a ninguna célula de cliente…»).
 # CUATRO COMPROBACIONES (ids fijos; FALLA[<id>]/OK[<id>]):
 #   CI-COMPOSE     — ningún trabajo distinto de `imagenes` (igualdad de clave,
 #                    nunca patrón; construye con push:false) ejecuta línea
 #                    lógica con `docker`+`compose` (o `docker-compose`) y un
 #                    token posterior `up`/`pull`/`restart`.
-#   CI-SCRIPT      — los deploy/*.sh invocados fuera de `imagenes` no se llaman
-#                    con tallo `deploy`/`desplegar`/`update`/`actualizar` ni
-#                    contienen la regla CI-COMPOSE.
+#   CI-SCRIPT      — los deploy/*.sh nombrados fuera de `imagenes` (con `bash`,
+#                    `sh`, `./` o sin prefijo) no se llaman con tallo `deploy`/
+#                    `desplegar`/`update`/`actualizar` ni contienen CI-COMPOSE.
 #   CLI-SUBCOMANDO — argumentos.rs sin literales `update`/`deploy`/`actualizar`/
 #                    `desplegar` en líneas con `=>` o `==`.
 #   CLI-USO        — TEXTO_DE_USO: sin esas palabras al inicio de línea ni tras
@@ -24,8 +25,11 @@
 # cada mutación cambió su copia y exige rojo con el id EXACTO y sin otros.
 # USO: <script> [<dir-workflows> <ruta-argumentos.rs>] | <script> --autoprueba
 # DEPENDENCIAS: bash, grep, awk, sed, cmp, mktemp, cp, rm (ubuntu-latest).
+# Se escanean los flujos *.yml y *.yaml.
 # PUNTOS CIEGOS (estático por líneas, no parser de YAML): verbos por variable,
-# `uses:` de terceros, scripts indirectos o en `run: |`; aceptados sin toolchain.
+# `uses:` de terceros, scripts indirectos y escalares plegados (`run: >`) que
+# parten `docker compose` de su verbo en líneas físicas distintas (solo se unen
+# las continuaciones con `\`); aceptados sin toolchain.
 # ============================================================================
 
 set -u
@@ -118,15 +122,26 @@ comprobar_regla_compose() {
     return 0
 }
 
+# listar_flujos <dir>: deja en FLUJOS los *.yml y *.yaml existentes (GitHub
+# Actions carga ambas extensiones).
+declare -a FLUJOS=()
+listar_flujos() {
+    local f
+    FLUJOS=()
+    for f in "$1"/*.yml "$1"/*.yaml; do
+        [ -e "$f" ] && FLUJOS+=("$f")
+    done
+}
+
 verificar_flujos_de_trabajo() {
     local dir_workflows="$1"
-    local -a archivos=("$dir_workflows"/*.yml)
-    if [ ! -e "${archivos[0]}" ]; then
-        echo "FALLA[CI-COMPOSE]: no hay flujos de trabajo (*.yml) en $dir_workflows"
+    listar_flujos "$dir_workflows"
+    if [ "${#FLUJOS[@]}" -eq 0 ]; then
+        echo "FALLA[CI-COMPOSE]: no hay flujos de trabajo (*.yml, *.yaml) en $dir_workflows"
         return 1
     fi
     local fallas=0 archivo job num linea
-    for archivo in "${archivos[@]}"; do
+    for archivo in "${FLUJOS[@]}"; do
         while IFS=$'\037' read -r job num linea; do
             [ "$job" = "imagenes" ] && continue
             [[ "$linea" =~ ^[[:space:]]*(-[[:space:]]*)?name: ]] && continue
@@ -138,23 +153,25 @@ verificar_flujos_de_trabajo() {
     [ "$fallas" -eq 0 ]
 }
 
-# extraer_referencias <dir-workflows>: deploy/*.sh invocadas con
-# `bash deploy/<script>.sh` fuera de `imagenes`, sin duplicados.
+# extraer_referencias <dir-workflows>: deploy/*.sh nombrados por cualquier token
+# `deploy/<x>.sh` o `./deploy/<x>.sh` (da igual el token previo: bash, sh, -x,
+# ninguno) fuera de `imagenes`, sin `./` y sin duplicados.
 declare -a SCRIPTS_EXTRAIDOS=()
 extraer_referencias() {
     local dir_workflows="$1"
     SCRIPTS_EXTRAIDOS=()
-    local archivo job num linea i n
-    local -a archivos=("$dir_workflows"/*.yml)
-    for archivo in "${archivos[@]}"; do
+    local archivo job num linea i n t
+    listar_flujos "$dir_workflows"
+    for archivo in "${FLUJOS[@]}"; do
         while IFS=$'\037' read -r job num linea; do
             [ "$job" = "imagenes" ] && continue
             [[ "$linea" =~ ^[[:space:]]*(-[[:space:]]*)?name: ]] && continue
             tokenizar_linea "$linea"
             n=${#TOKENS[@]}
-            for (( i = 0; i + 1 < n; i++ )); do
-                if [ "${TOKENS[$i]}" = "bash" ] && [[ "${TOKENS[$((i + 1))]}" == deploy/*.sh ]]; then
-                    SCRIPTS_EXTRAIDOS+=("${TOKENS[$((i + 1))]}")
+            for (( i = 0; i < n; i++ )); do
+                t="${TOKENS[$i]#./}"
+                if [[ "$t" == deploy/*.sh ]]; then
+                    SCRIPTS_EXTRAIDOS+=("$t")
                 fi
             done
         done < <(lineas_logicas "$archivo" "si")
@@ -340,17 +357,31 @@ insertar_antes_de() {
     mv "$tmp" "$archivo"
 }
 
-# Cargas de mutación compuestas en tiempo de ejecución (este script no
-# contiene líneas lógicas no comentadas con las palabras juntas).
-PASO_MUTACION_COMPOSE="      - name: Ejecutar ${TOKEN_DOCKER} ${TOKEN_COMPOSE} ${VERBO_SUBIR} (mutación de prueba)
-        run: ${TOKEN_DOCKER} ${TOKEN_COMPOSE} -f deploy/cell.compose.yml ${VERBO_SUBIR} -d"
-BLOQUE_CONFIG="      # comentario con ${TOKEN_DOCKER} ${TOKEN_COMPOSE} ${VERBO_SUBIR} (no debe disparar)
-      - name: Ejecutar ${TOKEN_DOCKER} ${TOKEN_COMPOSE} config (no dispara)
-        run: ${TOKEN_DOCKER} ${TOKEN_COMPOSE} config"
-PASO_MUTACION_SCRIPT="      - name: Invocar un script de despliegue de prueba (mutación de prueba)
-        run: bash deploy/verificar_despliegue_mutado.sh"
+# Cargas de mutación. Se arman con fragmentos LIT_* INDEPENDIENTES de las
+# constantes de detección (TOKEN_*, VERBO_*, PALABRA_*): si una constante se
+# corrompe, la carga sigue siendo la real y la autoprueba se pone roja. Además,
+# ninguna línea no comentada de este script reúne las palabras juntas (CI-SCRIPT
+# lo escanea), así que no necesita autoexención.
+LIT_DOCKER="do""cker"
+LIT_COMPOSE="com""pose"
+LIT_DOCKER_COMPOSE="${LIT_DOCKER}-${LIT_COMPOSE}"
+LIT_UP="u""p"
+LIT_PULL="pu""ll"
+LIT_RESTART="re""start"
+LIT_UPDATE="up""date"
+
+# paso_yaml <comando>: paso YAML (a 6 espacios) que ejecuta <comando>.
+paso_yaml() {
+    printf '      - name: Paso de prueba (mutación)\n        run: %s\n' "$1"
+}
+COMANDO_COMPOSE_BASE="-f deploy/cell.compose.yml"
+BLOQUE_CONFIG="      # comentario con ${LIT_DOCKER} ${LIT_COMPOSE} ${LIT_UP} (no debe disparar)
+      - name: Ejecutar ${LIT_DOCKER} ${LIT_COMPOSE} ${LIT_UP} (no dispara)
+        run: ${LIT_DOCKER} ${LIT_COMPOSE} config"
 LINEA_ARM_MUTADO='        "deploy" => Subcomando::Estado,'
 LINEA_USO_MUTADO='  actualizar     --id <cell_id>                Subcomando mutado de prueba.'
+# Script mutado invocado por CI-SCRIPT (nombre sin palabra de despliegue).
+SCRIPT_MUTADO="verificar_despliegue_mutado.sh"
 TOTAL=0
 ACIERTOS=0
 
@@ -361,9 +392,11 @@ ACIERTOS=0
 correr_caso() {
     local etiqueta="$1" esperado="${2:-}" dir_caso="${3:-}" mutado="${4:-}" pristino="${5:-}"
     TOTAL=$((TOTAL + 1))
-    if [ -n "$mutado" ] && cmp -s "$mutado" "$pristino"; then
-        echo "FALLA: $etiqueta -> la mutación no cambió el archivo; no es una prueba"
-        return
+    if [ -n "$mutado" ]; then
+        if [ ! -s "$mutado" ] || { [ -e "$pristino" ] && cmp -s "$mutado" "$pristino"; }; then
+            echo "FALLA: $etiqueta -> la mutación no cambió el archivo; no es una prueba"
+            return
+        fi
     fi
     local salida estado ok=1 o
     salida="$(verificar_todo "$dir_caso/.github/workflows" "$dir_caso/argumentos.rs" 2>&1)"
@@ -401,25 +434,65 @@ correr_caso() {
 }
 
 echo "Modo --autoprueba: cada comprobación, una por vez, debe detectar su mutación con su id exacto; los casos exentos deben quedar verdes."
+CI="$ORIGINAL_WORKFLOW"
 correr_caso "copias limpias (espejo base)" "" "$BASE"
-CASO="$(preparar_caso "m1-ci-compose")"; insertar_paso_en_trabajo "$CASO/.github/workflows/ci.yml" "guardas-limites" "$PASO_MUTACION_COMPOSE"
-correr_caso "M1: inyectar un paso de compose con verbo de subida en guardas-limites" "CI-COMPOSE" "$CASO" "$CASO/.github/workflows/ci.yml" "$ORIGINAL_WORKFLOW"
+
+# caso_compose <nombre> <etiqueta> <comando>: inserta un paso con <comando> en
+# guardas-limites de ci.yml y exige rojo CI-COMPOSE.
+caso_compose() {
+    local nombre="$1" etiqueta="$2" comando="$3"
+    CASO="$(preparar_caso "$nombre")"
+    insertar_paso_en_trabajo "$CASO/.github/workflows/ci.yml" "guardas-limites" "$(paso_yaml "$comando")"
+    correr_caso "$etiqueta" "CI-COMPOSE" "$CASO" "$CASO/.github/workflows/ci.yml" "$CI"
+}
+caso_compose "m1-up" "M1: ${LIT_DOCKER} ${LIT_COMPOSE} ${LIT_UP} en guardas-limites" "${LIT_DOCKER} ${LIT_COMPOSE} $COMANDO_COMPOSE_BASE ${LIT_UP} -d"
+caso_compose "m1-pull" "M1: ${LIT_DOCKER} ${LIT_COMPOSE} ${LIT_PULL} en guardas-limites" "${LIT_DOCKER} ${LIT_COMPOSE} $COMANDO_COMPOSE_BASE ${LIT_PULL}"
+caso_compose "m1-restart" "M1: ${LIT_DOCKER} ${LIT_COMPOSE} ${LIT_RESTART} en guardas-limites" "${LIT_DOCKER} ${LIT_COMPOSE} $COMANDO_COMPOSE_BASE ${LIT_RESTART}"
+caso_compose "m1-guion" "M1: ${LIT_DOCKER_COMPOSE} ${LIT_UP} (forma con guion) en guardas-limites" "${LIT_DOCKER_COMPOSE} $COMANDO_COMPOSE_BASE ${LIT_UP} -d"
+
+# Segundo flujo de trabajo con extensión .yaml: GitHub Actions también lo carga.
+CASO="$(preparar_caso "m1-yaml")"
+printf 'name: otro\non: push\njobs:\n  otro:\n    runs-on: ubuntu-latest\n    steps:\n%s' "$(paso_yaml "${LIT_DOCKER} ${LIT_COMPOSE} $COMANDO_COMPOSE_BASE ${LIT_UP} -d")" > "$CASO/.github/workflows/otro.yaml"
+correr_caso "M1: ${LIT_DOCKER} ${LIT_COMPOSE} ${LIT_UP} en un segundo flujo otro.yaml" "CI-COMPOSE" "$CASO" "$CASO/.github/workflows/otro.yaml" "$BASE/.github/workflows/otro.yaml"
+
 CASO="$(preparar_caso "m2-cli-subcomando")"; insertar_antes_de "$CASO/argumentos.rs" '^[[:space:]]*"status"[[:space:]]*=>' "$LINEA_ARM_MUTADO"
 correr_caso "M2: inyectar un brazo de subcomando en el match" "CLI-SUBCOMANDO" "$CASO" "$CASO/argumentos.rs" "$ORIGINAL_ARGUMENTOS"
 CASO="$(preparar_caso "m3-cli-uso")"; insertar_antes_de "$CASO/argumentos.rs" '^[[:space:]]*status[[:space:]]+--id' "$LINEA_USO_MUTADO"
 correr_caso "M3: inyectar una línea que comienza con palabra de despliegue en el texto de uso" "CLI-USO" "$CASO" "$CASO/argumentos.rs" "$ORIGINAL_ARGUMENTOS"
-CASO="$(preparar_caso "m4-ci-script")"; mkdir -p "$CASO/deploy"
-cat > "$CASO/deploy/verificar_despliegue_mutado.sh" <<EOF
-#!/usr/bin/env bash
-# script de prueba mutado para la comprobación CI-SCRIPT
-${TOKEN_DOCKER} ${TOKEN_COMPOSE} -f deploy/cell.compose.yml ${VERBO_SUBIR} -d
-EOF
-insertar_paso_en_trabajo "$CASO/.github/workflows/ci.yml" "guardas-limites" "$PASO_MUTACION_SCRIPT"
-correr_caso "M4: invocar un script que ejecuta la regla compose" "CI-SCRIPT" "$CASO" "$CASO/.github/workflows/ci.yml" "$ORIGINAL_WORKFLOW"
-CASO="$(preparar_caso "exento-imagenes")"; insertar_paso_en_trabajo "$CASO/.github/workflows/ci.yml" "imagenes" "$PASO_MUTACION_COMPOSE"
-correr_caso "exención: paso de compose dentro del trabajo imagenes" "" "$CASO" "$CASO/.github/workflows/ci.yml" "$ORIGINAL_WORKFLOW"
+
+# caso_script <nombre> <etiqueta> <invocacion>: crea un script mutado con la
+# regla compose y lo invoca desde guardas-limites con <invocacion>.
+caso_script() {
+    local nombre="$1" etiqueta="$2" invocacion="$3"
+    CASO="$(preparar_caso "$nombre")"; mkdir -p "$CASO/deploy"
+    printf '#!/usr/bin/env bash\n# script de prueba mutado para CI-SCRIPT\n%s %s %s %s -d\n' \
+        "$LIT_DOCKER" "$LIT_COMPOSE" "$COMANDO_COMPOSE_BASE" "$LIT_UP" > "$CASO/deploy/$SCRIPT_MUTADO"
+    insertar_paso_en_trabajo "$CASO/.github/workflows/ci.yml" "guardas-limites" "$(paso_yaml "$invocacion deploy/$SCRIPT_MUTADO")"
+    correr_caso "$etiqueta" "CI-SCRIPT" "$CASO" "$CASO/.github/workflows/ci.yml" "$CI"
+}
+caso_script "m4-bash" "M4: bash deploy/<script> cuyo contenido ejecuta la regla compose" "bash"
+caso_script "m4-sh" "M4: sh deploy/<script> cuyo contenido ejecuta la regla compose" "sh"
+CASO="$(preparar_caso "m4-punto")"; mkdir -p "$CASO/deploy"
+printf '#!/usr/bin/env bash\n%s %s %s %s -d\n' "$LIT_DOCKER" "$LIT_COMPOSE" "$COMANDO_COMPOSE_BASE" "$LIT_UP" > "$CASO/deploy/$SCRIPT_MUTADO"
+insertar_paso_en_trabajo "$CASO/.github/workflows/ci.yml" "guardas-limites" "$(paso_yaml "./deploy/$SCRIPT_MUTADO")"
+correr_caso "M4: ./deploy/<script> cuyo contenido ejecuta la regla compose" "CI-SCRIPT" "$CASO" "$CASO/.github/workflows/ci.yml" "$CI"
+CASO="$(preparar_caso "m4-tallo")"
+insertar_paso_en_trabajo "$CASO/.github/workflows/ci.yml" "guardas-limites" "$(paso_yaml "bash deploy/${LIT_UPDATE}.sh")"
+correr_caso "M4: script con tallo de despliegue (${LIT_UPDATE}.sh)" "CI-SCRIPT" "$CASO" "$CASO/.github/workflows/ci.yml" "$CI"
+
+# Casos que NO deben disparar.
+CASO="$(preparar_caso "exento-imagenes")"; insertar_paso_en_trabajo "$CASO/.github/workflows/ci.yml" "imagenes" "$(paso_yaml "${LIT_DOCKER} ${LIT_COMPOSE} $COMANDO_COMPOSE_BASE ${LIT_UP} -d")"
+correr_caso "exención: paso de compose dentro del trabajo imagenes" "" "$CASO" "$CASO/.github/workflows/ci.yml" "$CI"
 CASO="$(preparar_caso "config-no-dispara")"; insertar_paso_en_trabajo "$CASO/.github/workflows/ci.yml" "guardas-limites" "$BLOQUE_CONFIG"
-correr_caso "config: línea de compose sin verbo y comentario con las palabras" "" "$CASO" "$CASO/.github/workflows/ci.yml" "$ORIGINAL_WORKFLOW"
+correr_caso "config: línea de compose sin verbo y comentario con las palabras" "" "$CASO" "$CASO/.github/workflows/ci.yml" "$CI"
+CASO="$(preparar_caso "palabra-en-otro-contexto")"
+insertar_paso_en_trabajo "$CASO/.github/workflows/ci.yml" "guardas-limites" "      # despliegue: la palabra deployment y actualizar_estado no son verbos
+      - name: Reportar deployment y actualizar_estado (no dispara)
+        run: echo actualizar_estado deployment"
+correr_caso "palabras de despliegue en comentario, name: y identificador ajeno" "" "$CASO" "$CASO/.github/workflows/ci.yml" "$CI"
+CASO="$(preparar_caso "cli-identificador-ajeno")"
+insertar_antes_de "$CASO/argumentos.rs" '^[[:space:]]*"status"[[:space:]]*=>' '        "estado" if actualizar_estado == deployment => Subcomando::Estado,'
+correr_caso "CLI: identificador actualizar_estado y palabra deployment en línea con ==" "" "$CASO" "$CASO/argumentos.rs" "$ORIGINAL_ARGUMENTOS"
 
 echo ""
 echo "Resumen autoprueba: $ACIERTOS/$TOTAL casos pasan (cada mutación debe hacer fallar al guardia con su id exacto)"
