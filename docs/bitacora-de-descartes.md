@@ -1,6 +1,6 @@
 # Bitácora de descartes
 
-> Registro de lo que se consideró y **no** se hizo. Última actualización: 2026-09-22 (D-58).
+> Registro de lo que se consideró y **no** se hizo. Última actualización: 2026-09-30 (D-59).
 
 ## Para qué sirve este documento
 
@@ -91,6 +91,7 @@ se apoya en un principio de diseño, no.
 | [D-55](#d-55) | Reutilizar `crates/hexcell/tests/carga.rs` como generador externo de carga contra la célula compuesta en vivo (HEX-079) | Reabrible si cambia un hecho del árbol |
 | [D-56](#d-56) | Parser externo para la configuración de células | Principio de diseño, no reabrir |
 | [D-57](#d-57) | `hexcell-admin` abre una conexión IPC directa con el sidecar | Reabrir si el protocolo IPC admite un canal de control separado o multiplexación |
+| [D-59](#d-59) | Contenedor hermano con `sqlite3` para restablecer contactos | Reabrir si la imagen de la sonda incorpora una herramienta aprobada y un ADR nuevo autoriza el acceso externo a `identidad.db` |
 
 ---
 
@@ -909,6 +910,32 @@ suficiente y evita una dependencia nueva.
 
 Que el esquema del plano de control crezca hasta requerir migraciones condicionales complejas
 (múltiples ramas, rollback automático), lo cual no es el caso actual.
+
+---
+
+### D-59: Contenedor hermano con `sqlite3` para restablecer contactos
+
+**Descartado el:** 2026-09-30  
+**Decisión registrada en:** HEX-091
+
+### Qué se consideró
+
+Restablecer el estado de un contacto (`cortacircuitos`, `presentacion_de_conversacion` y, con bandera
+explícita, `baja_de_contacto`) desde el anfitrión lanzando un contenedor hermano que monte el volumen
+de la célula y ejecute `sqlite3` contra `identidad.db`.
+
+### Por qué se descartó
+
+La imagen de la sonda no trae `sqlite3`. Además, un contenedor que abre `identidad.db` lee y escribe
+una base que pertenece al sidecar dentro de su propio volumen: `adr-0022` fija que el núcleo nunca la
+abre ni siquiera de solo lectura y que solo se respalda por IPC. La alternativa repite además el
+camino de vigilancia externa ya descartado en D-51 y D-57. El restablecimiento se hace en el sidecar, en una sola
+transacción, por una orden IPC nueva (`adr-0040`).
+
+### Qué tendría que cambiar para reabrirlo
+
+Que la imagen de la sonda incorporase una herramienta aprobada y que un ADR nuevo autorizase de forma
+explícita el acceso de escritura externo a `identidad.db`, sin reintroducir vigilancia externa.
 
 ---
 
