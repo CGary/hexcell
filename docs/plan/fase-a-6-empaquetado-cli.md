@@ -646,7 +646,8 @@ Las entradas conservan su numeración; esta sección es la autoridad sobre el or
     célula está pausada» de terminate, en el comportamiento previo a HEX-087, se emitía para
     cualquier núcleo no `running`, también para uno caído con el almacén en `EnEjecucion`, y el
     runbook no lo advierte; (4) los artefactos de HEX-088 siguen en
-    `.ai/tasks/done/` a la espera del `chore: archivar` conjunto con HEX-082..086.
+    `.ai/tasks/done/` a la espera del `chore: archivar` conjunto con HEX-082..086. Deudas (1), (2) y (3) saldadas el 2026-09-30 con el commit `docs:` de
+    alineación del runbook tras la fusión de HEX-087 (`9b59ba9`).
 22. **Configuración por célula como archivos** (1 día). Implementar la gestión de configuración basada en archivos (valores por defecto compartidos y superposiciones o overlays por célula) con validación de fallo cerrado al arrancar (concretando la tarea 8 sin editarla), gestionada de forma centralizada por `hexcell-admin` y versionable en git.
 
     **Cerrada el 2026-09-21 con HEX-081.**
