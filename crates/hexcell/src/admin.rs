@@ -182,6 +182,10 @@ pub enum RutaAdmin {
     CerrarSesion,
     /// Petición `POST /admin/contacto/restablecer` para limpiar el estado operativo de un contacto.
     RestablecerContacto,
+    /// Petición `GET /admin/epocas/sospechosas` para listar las marcas de época sospechosa.
+    ListarMarcasDeEpoca,
+    /// Petición `POST /admin/epocas/sospechosas/archivar` para archivar una marca con certificación.
+    ArchivarMarcaDeEpoca,
     /// Ruta o método no reconocido.
     NoEncontrada,
 }
@@ -196,6 +200,8 @@ pub fn enrutar_admin(metodo: &Method, ruta: &str) -> RutaAdmin {
         (&Method::GET, "/admin/sesion") => RutaAdmin::ConsultarSesion,
         (&Method::POST, "/admin/sesion/cierre") => RutaAdmin::CerrarSesion,
         (&Method::POST, "/admin/contacto/restablecer") => RutaAdmin::RestablecerContacto,
+        (&Method::GET, "/admin/epocas/sospechosas") => RutaAdmin::ListarMarcasDeEpoca,
+        (&Method::POST, "/admin/epocas/sospechosas/archivar") => RutaAdmin::ArchivarMarcaDeEpoca,
         _ => RutaAdmin::NoEncontrada,
     }
 }
@@ -222,6 +228,26 @@ pub struct RestablecerContactoEntrante {
     /// Si es `true`, el restablecimiento también borra la baja (consentimiento de STOP).
     #[serde(default)]
     pub incluir_baja: bool,
+}
+
+/// DTO de entrada del `POST /admin/epocas/sospechosas/archivar`.
+///
+/// `certifico` y `motivo` llevan `#[serde(default)]` a propósito: un cuerpo sin esos campos
+/// deserializa con cadenas vacías y llega a la compuerta de validación de la capa de persistencia,
+/// que es la única puerta de rechazo (400). Si la ausencia muriera en `serde`, la guarda m2 de la
+/// capa de almacenamiento nunca se ejercitaría desde HTTP. Un campo desconocido o un
+/// `numero_de_epoca` ausente sí mueren en `serde`, con 400.
+#[derive(Clone, Debug, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ArchivarMarcaEntrante {
+    /// Número de época cuya marca se quiere archivar.
+    pub numero_de_epoca: i64,
+    /// Operador que certifica el archivo; vacío o ausente se rechaza con 400.
+    #[serde(default)]
+    pub certifico: String,
+    /// Motivo del archivo; vacío o ausente se rechaza con 400.
+    #[serde(default)]
+    pub motivo: String,
 }
 
 /// DTO de entrada para deserializar el cuerpo JSON del POST de ingesta.
@@ -832,6 +858,144 @@ pub async fn atender_restablecimiento_de_contacto(
     }
 }
 
+/// Servicio de aplicación puro del listado de marcas de época sospechosa, bajo prueba directa.
+///
+/// Un fallo de `read_dir` es el único caso de 500: una marca ilegible o con número discrepante
+/// aparece como entrada `ilegible` con su nombre de error, y el resto del listado se devuelve
+/// igual (el listado tolerante de la capa de persistencia nunca convierte una marca mala en un
+/// error).
+pub fn atender_listado_de_marcas(ruta_datos: &Path) -> (StatusCode, serde_json::Value) {
+    match hexcell_storage::retencion::listar_marcas_de_epoca_sospechosa(ruta_datos) {
+        Ok(entradas) => {
+            let marcas: Vec<serde_json::Value> =
+                entradas.iter().map(entrada_de_marca_a_json).collect();
+            (StatusCode::OK, serde_json::json!({ "marcas": marcas }))
+        }
+        Err(error) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            serde_json::json!({ "resultado": "fallido", "motivo": error.to_string() }),
+        ),
+    }
+}
+
+/// Vuelca una entrada del listado de marcas al JSON del contrato HTTP.
+///
+/// Vigente/archivada: `numero_de_epoca`, `motivo`, `fecha_absoluta`, `estado` y `certificacion`
+/// (null u objeto). Ilegible: `numero_de_epoca` (null si el nombre no lo declara), `estado` y el
+/// nombre del variante de error.
+fn entrada_de_marca_a_json(
+    entrada: &hexcell_storage::retencion::EntradaDeMarcaListada,
+) -> serde_json::Value {
+    use hexcell_storage::retencion::EstadoDeMarca;
+    match &entrada.estado {
+        EstadoDeMarca::Vigente | EstadoDeMarca::Archivada => {
+            let marca = entrada
+                .marca
+                .as_ref()
+                .expect("toda entrada vigente o archivada lleva su marca interpretada");
+            let estado = if matches!(entrada.estado, EstadoDeMarca::Vigente) {
+                "vigente"
+            } else {
+                "archivada"
+            };
+            let certificacion = entrada.certificacion.as_ref().map(|c| {
+                serde_json::json!({
+                    "certifico": c.certifico,
+                    "motivo": c.motivo,
+                    "fecha_absoluta": c.fecha_absoluta,
+                })
+            });
+            serde_json::json!({
+                "numero_de_epoca": marca.numero_de_epoca,
+                "motivo": marca.motivo,
+                "fecha_absoluta": marca.fecha_absoluta,
+                "estado": estado,
+                "certificacion": certificacion,
+            })
+        }
+        EstadoDeMarca::Ilegible { error } => serde_json::json!({
+            "numero_de_epoca": entrada.numero_de_epoca,
+            "estado": "ilegible",
+            "error": error,
+        }),
+    }
+}
+
+/// Servicio de aplicación puro del archivo de una marca de época sospechosa, bajo prueba directa.
+///
+/// Esta capa NO valida `certifico` ni `motivo`: la capa de persistencia es la única compuerta, de
+/// modo que la guarda m2 (archivar sin certificación) se ejercita desde las dos capas. Mapeo de
+/// desenlaces: Archivada → 200, SinCambios → 200, MarcaInexistente → 404, Rechazada → 400,
+/// error de almacenamiento → 500.
+pub fn atender_archivo_de_marca(
+    ruta_datos: &Path,
+    entrada: ArchivarMarcaEntrante,
+) -> (StatusCode, serde_json::Value) {
+    use hexcell_storage::retencion::DesenlaceDeArchivoDeMarca;
+
+    let certificacion = hexcell_storage::retencion::CertificacionDeArchivo {
+        certifico: entrada.certifico,
+        motivo: entrada.motivo,
+    };
+    match hexcell_storage::retencion::archivar_marca_de_epoca_sospechosa(
+        ruta_datos,
+        entrada.numero_de_epoca,
+        &certificacion,
+    ) {
+        Ok(DesenlaceDeArchivoDeMarca::Archivada { certificacion, .. }) => (
+            StatusCode::OK,
+            serde_json::json!({
+                "resultado": "archivada",
+                "numero_de_epoca": entrada.numero_de_epoca,
+                "certificacion": {
+                    "certifico": certificacion.certifico,
+                    "motivo": certificacion.motivo,
+                    "fecha_absoluta": certificacion.fecha_absoluta,
+                },
+            }),
+        ),
+        Ok(DesenlaceDeArchivoDeMarca::SinCambios { .. }) => (
+            StatusCode::OK,
+            serde_json::json!({
+                "resultado": "sin_cambios",
+                "numero_de_epoca": entrada.numero_de_epoca,
+            }),
+        ),
+        Ok(DesenlaceDeArchivoDeMarca::MarcaInexistente) => (
+            StatusCode::NOT_FOUND,
+            serde_json::json!({
+                "resultado": "marca_inexistente",
+                "numero_de_epoca": entrada.numero_de_epoca,
+            }),
+        ),
+        Ok(DesenlaceDeArchivoDeMarca::Rechazada { motivo }) => (
+            StatusCode::BAD_REQUEST,
+            serde_json::json!({
+                "resultado": "fallido",
+                "motivo": motivo_de_rechazo_de_archivo_a_texto(&motivo),
+            }),
+        ),
+        Err(error) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            serde_json::json!({ "resultado": "fallido", "motivo": error.to_string() }),
+        ),
+    }
+}
+
+/// Traduce un motivo de rechazo de archivo al literal legible del 400.
+fn motivo_de_rechazo_de_archivo_a_texto(
+    motivo: &hexcell_storage::retencion::MotivoDeRechazoDeArchivo,
+) -> String {
+    use hexcell_storage::retencion::MotivoDeRechazoDeArchivo;
+    match motivo {
+        MotivoDeRechazoDeArchivo::CertificoVacio => "certifico vacío".to_string(),
+        MotivoDeRechazoDeArchivo::MotivoVacio => "motivo vacío".to_string(),
+        MotivoDeRechazoDeArchivo::CaracterDeControl { campo } => {
+            format!("{campo} contiene caracteres de control")
+        }
+    }
+}
+
 /// Servicio de aplicación puro para el emparejamiento, bajo prueba directa.
 ///
 /// `metodo` ya fue validada por la ruta (Qr o CodigoDeVinculacion); `plazo` lo inyecta la ruta.
@@ -1165,6 +1329,42 @@ where
         RutaAdmin::CerrarSesion => {
             let (estado_http, cuerpo) =
                 atender_cierre_de_sesion(registro_sesion, plazos.cierre).await;
+            respuesta_json(estado_http, cuerpo)
+        }
+        // GET /admin/epocas/sospechosas: listado de marcas de época sospechosa.
+        //
+        // NO lleva autenticación: la frontera de seguridad es la red interna de la célula, como
+        // las demás rutas administrativas. No lleva cuerpo. Una marca ilegible no convierte el
+        // listado en un 500: aparece como entrada con estado ilegible y el nombre del error.
+        RutaAdmin::ListarMarcasDeEpoca => {
+            let (estado_http, cuerpo) = atender_listado_de_marcas(ruta_datos);
+            respuesta_json(estado_http, cuerpo)
+        }
+        // POST /admin/epocas/sospechosas/archivar: archiva una marca de época sospechosa.
+        //
+        // NO lleva autenticación: la frontera de seguridad es la red interna de la célula.
+        // Archivar renombra `knowledge_epoch_N.sospechosa` a `.sospechosa.archivada` y anexa la
+        // certificación del operador; la marca nunca se borra y el número sigue reservado. Un
+        // cuerpo sin certifico/motivo, vacío, con caracteres de control, desconocido o no JSON se
+        // resuelve con 400 ANTES de tocar ningún archivo; la validación de la certificación vive
+        // en la capa de persistencia (única compuerta).
+        RutaAdmin::ArchivarMarcaDeEpoca => {
+            let bytes = match acumular_cuerpo_acotado(peticion, limite_cuerpo_bytes).await {
+                Ok(b) => b,
+                Err(codigo) => return respuesta_texto(codigo, "cuerpo demasiado grande"),
+            };
+
+            let entrada: ArchivarMarcaEntrante = match serde_json::from_slice(&bytes) {
+                Ok(e) => e,
+                Err(_) => {
+                    return respuesta_json(
+                        StatusCode::BAD_REQUEST,
+                        serde_json::json!({ "resultado": "fallido", "motivo": "cuerpo JSON inválido" }),
+                    );
+                }
+            };
+
+            let (estado_http, cuerpo) = atender_archivo_de_marca(ruta_datos, entrada);
             respuesta_json(estado_http, cuerpo)
         }
         RutaAdmin::NoEncontrada => respuesta_texto(StatusCode::NOT_FOUND, ""),

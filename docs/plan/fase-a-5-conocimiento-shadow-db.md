@@ -110,6 +110,7 @@ motor de conocimiento es idéntico en ambas fases y sobrevive intacto al cambio 
    producción permanece en la época vigente. Revertir a una época defectuosa sin esa comprobación
    pasaría como "reversión exitosa": el mismo patrón de confundir que la operación terminó con que
    el resultado es correcto que esta etapa combate en la promoción.
+   Saneamiento de marcas de época sospechosa (HEX-093, `adr-0041`): una marca `.sospechosa` se archiva renombrando a `.sospechosa.archivada` y anexando la certificación del operador —nunca se borra— y el número de la época archivada sigue reservado; la superficie del núcleo es `GET /admin/epocas/sospechosas` y `POST /admin/epocas/sospechosas/archivar`, y el subcomando de `hexcell-admin` queda para una tarea posterior.
 9. **Implementar el motor de recuperación RAG** (1,5 días). Búsqueda por similitud sobre el pool
    vigente, selección de los fragmentos más relevantes y construcción del contexto del prompt.
 10. **Exponer el endpoint interno de actualización** (0,5 días). Ruta administrativa de la célula,
