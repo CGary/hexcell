@@ -651,6 +651,7 @@ fn sesion_de_espia(
             let e = estado;
             Box::pin(async move { e })
         }),
+        restablecer_contacto: hexcell::admin::restablecimiento_no_disponible(),
     };
 
     (
@@ -776,6 +777,7 @@ async fn pausa_de_envio_que_nunca_resuelve_con_plazo_corto_devuelve_200_fallido(
             })
         }),
         estado: Box::new(|| Box::pin(async move { EstadoSesion::Activa })),
+        restablecer_contacto: hexcell::admin::restablecimiento_no_disponible(),
     });
     let _ = sesion.registrar(&registro);
 
@@ -915,6 +917,7 @@ fn operaciones_espia_codigo() -> (OperacionesDeSesion, Arc<Mutex<Option<MetodoSo
             })
         }),
         estado: Box::new(|| Box::pin(async move { EstadoSesion::Activa })),
+        restablecer_contacto: hexcell::admin::restablecimiento_no_disponible(),
     };
     (operaciones, metodo_recibido)
 }
@@ -933,6 +936,7 @@ async fn emparejamiento_con_fallido_sin_conexion_devuelve_200_fallido() {
             })
         }),
         estado: Box::new(|| Box::pin(async move { EstadoSesion::Activa })),
+        restablecer_contacto: hexcell::admin::restablecimiento_no_disponible(),
     });
     let _ = sesion.registrar(&registro);
 
@@ -1008,6 +1012,7 @@ async fn emparejamiento_que_nunca_resuelve_con_plazo_corto_devuelve_200_fallido(
             Box::pin(async move { std::future::pending::<DesenlaceDeEmparejamiento>().await })
         }),
         estado: Box::new(|| Box::pin(async move { EstadoSesion::Activa })),
+        restablecer_contacto: hexcell::admin::restablecimiento_no_disponible(),
     });
     let _ = sesion.registrar(&registro);
 

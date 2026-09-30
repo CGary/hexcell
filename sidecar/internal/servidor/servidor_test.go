@@ -278,7 +278,7 @@ func TestSaludoDesajusteDeVersionCierraConexionYRegistraAmbas(t *testing.T) {
 
 	// Verificar que el registro contiene ambas versiones (3 y 5)
 	salidaLog := buf.String()
-	if !strings.Contains(salidaLog, "recibida 3") || !strings.Contains(salidaLog, "esperada 6") {
+	if !strings.Contains(salidaLog, "recibida 3") || !strings.Contains(salidaLog, "esperada 7") {
 		t.Fatalf("el registro no contiene ambas versiones: %s", salidaLog)
 	}
 }

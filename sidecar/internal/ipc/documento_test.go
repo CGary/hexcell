@@ -63,7 +63,7 @@ func TestElDocumentoDelProtocoloEstaVersionadoYFechadoEnAbsoluto(t *testing.T) {
 	t.Parallel()
 
 	documento := leerDocumento(t)
-	if !strings.Contains(documento, "**Versión de este protocolo:** 1.5, fijada el 2026-09-11.") {
+	if !strings.Contains(documento, "**Versión de este protocolo:** 1.6, fijada el 2026-09-30.") {
 		t.Errorf("el documento no lleva cabecera de versión con fecha absoluta")
 	}
 	if !strings.Contains(documento, "docs/contrato-ipc-respaldo-del-sqlstore.md") {

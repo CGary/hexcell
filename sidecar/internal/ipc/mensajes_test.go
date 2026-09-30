@@ -97,6 +97,20 @@ func cuerposDeMuestra() map[ipc.TipoMensaje]ipc.Cuerpo {
 			Resultado: ipc.ResultadoPausaAplicado,
 			Motivo:    "",
 		},
+		ipc.TipoOrdenRestablecerContacto: ipc.OrdenRestablecerContacto{
+			Contacto:    "ct-0123456789abcdef0123456789abcdef",
+			IncluirBaja: ipc.ValorNo,
+		},
+		ipc.TipoAcuseRestablecerContacto: ipc.AcuseRestablecerContacto{
+			Contacto:                   "ct-0123456789abcdef0123456789abcdef",
+			IncluirBaja:                ipc.ValorSi,
+			Resultado:                  ipc.ResultadoRestablecimientoAplicado,
+			Existe:                     ipc.ValorSi,
+			Cortacircuitos:             1,
+			PresentacionDeConversacion: 2,
+			BajaDeContacto:             3,
+			Motivo:                     "",
+		},
 	}
 }
 
@@ -198,7 +212,7 @@ func TestDecodificarRechazaUnaVersionIncompatible(t *testing.T) {
 func TestDecodificarRechazaUnTipoDesconocido(t *testing.T) {
 	t.Parallel()
 
-	linea := []byte(`{"version":6,"tipo":"tipo_inexistente","texto":"hola"}` + "\n")
+	linea := []byte(`{"version":7,"tipo":"tipo_inexistente","texto":"hola"}` + "\n")
 	if _, err := ipc.Decodificar(linea); !errors.Is(err, ipc.ErrTipoDesconocido) {
 		t.Fatalf("error = %v, se esperaba ErrTipoDesconocido", err)
 	}
@@ -229,7 +243,7 @@ func TestDecodificarRechazaLaVersionAnteriorCinco(t *testing.T) {
 		t.Fatalf("error = %v, se esperaba ErrVersionIncompatible", err)
 	}
 	mensaje := err.Error()
-	if !strings.Contains(mensaje, "recibida 5") || !strings.Contains(mensaje, "esperada 6") {
+	if !strings.Contains(mensaje, "recibida 5") || !strings.Contains(mensaje, "esperada 7") {
 		t.Fatalf("el error debe nombrar ambas versiones: %s", mensaje)
 	}
 }
@@ -253,8 +267,8 @@ func TestDecodificarRechazaLineasMalformadasSinEntrarEnPanico(t *testing.T) {
 		{"valor booleano", `{"version":4,"tipo":"saludo","emisor":true,"id_celula":"c"}` + "\n", ipc.ErrValorNoEscalar},
 		{"valor nulo", `{"version":4,"tipo":"saludo","emisor":null,"id_celula":"c"}` + "\n", ipc.ErrValorNoEscalar},
 		{"entero con coma", `{"version":4,"tipo":"confirmacion","id_deduplicacion":"d","extra":1.5}` + "\n", ipc.ErrValorNoEscalar},
-		{"campo ausente", `{"version":6,"tipo":"saludo","emisor":"nucleo"}` + "\n", ipc.ErrCampoAusente},
-		{"campo desconocido", `{"version":6,"tipo":"confirmacion","id_deduplicacion":"d","secuencia":7}` + "\n", ipc.ErrCampoDesconocido},
+		{"campo ausente", `{"version":7,"tipo":"saludo","emisor":"nucleo"}` + "\n", ipc.ErrCampoAusente},
+		{"campo desconocido", `{"version":7,"tipo":"confirmacion","id_deduplicacion":"d","secuencia":7}` + "\n", ipc.ErrCampoDesconocido},
 	}
 
 	for _, caso := range casos {
