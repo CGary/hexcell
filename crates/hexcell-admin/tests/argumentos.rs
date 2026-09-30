@@ -36,6 +36,10 @@ fn ausencia_de_argumentos_y_grupo() {
 
 /// Recorrido exhaustivo de los seis nombres declarados: coincidencia sin brazo por
 /// defecto, de modo que renombrar o quitar un nombre deja de compilar.
+// El `match` de identidad sin brazo por defecto es una guarda deliberada de
+// exhaustividad: la corrección que sugiere clippy (devolver el valor directo)
+// perdería el error de compilación al añadir una variante nueva de `Subcomando`.
+#[allow(clippy::needless_match)]
 fn subcomando_para(nombre: &str) -> Subcomando {
     let invocacion = match nombre {
         "pause" => analizar(&args(&["cell", "pause", "--id", "c1"])).unwrap(),
@@ -57,7 +61,14 @@ fn subcomando_para(nombre: &str) -> Subcomando {
         "status" => analizar(&args(&["cell", "status", "--id", "c1"])).unwrap(),
         otro => panic!("nombre no reconocido: {otro}"),
     };
-    invocacion.subcomando().unwrap()
+    match invocacion.subcomando().unwrap() {
+        Subcomando::Pausar => Subcomando::Pausar,
+        Subcomando::Reanudar => Subcomando::Reanudar,
+        Subcomando::Retirar => Subcomando::Retirar,
+        Subcomando::Reemparejar => Subcomando::Reemparejar,
+        Subcomando::Listar => Subcomando::Listar,
+        Subcomando::Estado => Subcomando::Estado,
+    }
 }
 
 #[test]
