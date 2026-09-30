@@ -1,0 +1,42 @@
+task_id: HEX-091-a
+summary: Completed the delegate pass (store tests, IPC tests, handler tests, adapter tests, route tests, adr-0040, D-59, protocol doc 1.6); BLOCKED on 44 enviar_saludo(6, ...) fixture sites outside the ratified exception.
+tdd_red_runs: []
+mutations:
+  - {name: M-store-baja-siempre, red: TestRestablecerContacto_SinIncluirBajaConservaLaBaja}
+  - {name: M-store-baja-nunca, red: TestRestablecerContacto_IncluyendoBajaLaBorraYConservaElResto}
+  - {name: M-existe-1, red: TestRestablecerContacto_ContactoExistenteSinFilasEsExitoConContadoresEnCero}
+  - {name: M-existe-2, red: TestRestablecerContacto_IdAusenteDeIdentidadNoExisteYNoTocaNada}
+  - {name: M-tx, red: TestRestablecerContacto_EsAtomicoSiFallaUnDelete}
+  - {name: M-version-go, red: TestLaVersionDeCableDelSobreCoincideConElDocumentoYEsSiete}
+  - {name: M-doc-row, red: TestLaVersionDeCableDelSobreCoincideConElDocumentoYEsSiete}
+  - {name: M-flag-true, red: TestOrdenRestablecerContactoSinBajaConservaLaBajaDelContacto}
+  - {name: M-flag-false, red: TestOrdenRestablecerContactoConBajaLaBorra}
+  - {name: M-infer-existe-go, red: TestOrdenRestablecerContactoDesconocidoYExistenteSinFilas}
+  - {name: M-adapt-true, red: incluir_baja_false_viaja_como_no_y_el_acuse_se_devuelve_campo_a_campo}
+  - {name: M-adapt-false, red: incluir_baja_true_viaja_como_si}
+  - {name: M-version-rust, red: la_version_de_cable_del_sobre_emitido_coincide_con_el_documento_y_es_siete}
+  - {name: M-doc-row-rust, red: la_version_de_cable_del_sobre_emitido_coincide_con_el_documento_y_es_siete}
+  - {name: M-ruta-true, red: incluir_baja_ausente_llega_como_false_y_true_llega_como_true}
+  - {name: M-infer-existe-rust, red: aplicado_con_existe_si_y_contadores_en_cero_es_aplicado}
+blocker: >-
+  44 lines of the form sidecar.enviar_saludo(6, "...") in 9 test files (cierre_de_sesion, emparejamiento,
+  protocolo, salida in the ratified list; contrato_del_puerto, privacidad, reconexion,
+  respaldo_sqlstore, senales_de_alerta outside both touch and the ratified list) are not covered by
+  the four ratified forms. With wire version 7 the adapter handshake rejects the version-6 greeting
+  and ~20 tests time out. Applying the edit makes cargo test --workspace exit 0 (95 binaries ok) but
+  turns the fixture guard red and violates touch. Patch kept outside the repo for the human to apply
+  after ratifying a fifth form.
+entries:
+  - changed_files:
+      - sidecar/internal/identidad/restablecimiento.go
+      - sidecar/internal/identidad/restablecimiento_test.go
+      - sidecar/internal/ipc/restablecimiento_test.go
+      - sidecar/internal/servidor/restablecimiento_test.go
+      - crates/hexcell-canal-whatsmeow/tests/restablecimiento_de_contacto.rs
+      - crates/hexcell/tests/restablecimiento_de_contacto_http.rs
+      - docs/adr/adr-0040-protocolo-ipc-version-de-cable-7.md
+      - docs/bitacora-de-descartes.md
+      - docs/protocolo-ipc-nucleo-sidecar.md
+    notes:
+      - Added the missing test files, doc version cells 6 to 7, real header date 2026-09-30, D-59 citing adr-0022.
+    verify_pending: true

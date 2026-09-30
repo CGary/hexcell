@@ -1,0 +1,259 @@
+task_id: HEX-091-a
+summary: "Sidecar transactional contact reset, IPC pair orden/acuse_restablecer_contacto (wire 6 to 7, doc 1.6), sidecar handler, core route POST /admin/contacto/restablecer, adapter op, adr-0040, D-59."
+goal: >-
+  Deliver AC-1..AC-10 and AC-18 of HEX-091-a. The sidecar deletes a contact's rows in
+  cortacircuitos and presentacion_de_conversacion (and baja_de_contacto only when incluir_baja is
+  si) in ONE transaction over identidad.db, with an explicit existence discriminant checked inside
+  that transaction; the core exposes the operation as POST /admin/contacto/restablecer through the
+  SesionDeCanal registry and the WhatsmeowAdapter, bumping the IPC wire version 6 to 7 in lockstep
+  in Go, Rust and the protocol document (1.6). The CLI, README, runbook, STATUS and plan note are
+  child HEX-091-b and are out of scope here.
+read:
+  - .ai/tasks/active/HEX-091-a/00-spec.yaml
+  - .ai/tasks/active/HEX-091-a/01-blueprint.yaml
+  - .ai/tasks/active/HEX-091-new-spec/00-spec.yaml
+  - CLAUDE.md
+  - sidecar/internal/identidad/identidad.go
+  - sidecar/internal/identidad/cortacircuitos.go
+  - sidecar/internal/identidad/baja.go
+  - sidecar/internal/identidad/presentacion.go
+  - sidecar/internal/identidad/cortacircuitos_test.go
+  - sidecar/internal/registro/registro.go
+  - sidecar/arranque.go
+  - crates/hexcell-canal-whatsmeow/src/conexion.rs
+  - crates/hexcell-canal-whatsmeow/src/error.rs
+  - crates/hexcell/tests/comun/mod.rs
+  - docs/adr/adr-0032-protocolo-ipc-version-de-cable-6.md
+  - docs/adr/adr-0022-respaldo-identidad-sidecar-por-ipc.md
+  - docs/adr/adr-0024-metricas-internas-de-operacion.md
+  - scripts/laboratorio/restablecer-contacto.sh
+touch:
+  - sidecar/internal/identidad/restablecimiento.go
+  - sidecar/internal/identidad/restablecimiento_test.go
+  - sidecar/internal/ipc/mensajes.go
+  - sidecar/internal/ipc/restablecimiento_test.go
+  - sidecar/internal/ipc/mensajes_test.go
+  - sidecar/internal/ipc/documento_test.go
+  - sidecar/internal/servidor/servidor.go
+  - sidecar/internal/servidor/manejo.go
+  - sidecar/internal/servidor/restablecimiento_test.go
+  - sidecar/internal/servidor/servidor_test.go
+  - sidecar/main.go
+  - crates/hexcell-canal-whatsmeow/src/mensajes.rs
+  - crates/hexcell-canal-whatsmeow/src/adaptador.rs
+  - crates/hexcell-canal-whatsmeow/src/lib.rs
+  - crates/hexcell-canal-whatsmeow/tests/restablecimiento_de_contacto.rs
+  - crates/hexcell-canal-whatsmeow/tests/comun/mod.rs
+  - crates/hexcell-canal-whatsmeow/tests/protocolo.rs
+  - crates/hexcell-canal-whatsmeow/tests/cierre_de_sesion.rs
+  - crates/hexcell-canal-whatsmeow/tests/salida.rs
+  - crates/hexcell-canal-whatsmeow/tests/emparejamiento.rs
+  - crates/hexcell-canal-whatsmeow/tests/contrato_del_puerto.rs
+  - crates/hexcell-canal-whatsmeow/tests/privacidad.rs
+  - crates/hexcell-canal-whatsmeow/tests/reconexion.rs
+  - crates/hexcell-canal-whatsmeow/tests/respaldo_sqlstore.rs
+  - crates/hexcell-canal-whatsmeow/tests/senales_de_alerta.rs
+  - crates/hexcell/src/admin.rs
+  - crates/hexcell/src/main.rs
+  - crates/hexcell/tests/restablecimiento_de_contacto_http.rs
+  - crates/hexcell/tests/admin_http.rs
+  - crates/hexcell/tests/emparejamiento_ipc.rs
+  - crates/hexcell/tests/respaldo_cli.rs
+  - crates/hexcell/tests/respaldo_sqlstore_ipc.rs
+  - crates/hexcell/tests/canal_whatsmeow_seleccionado.rs
+  - docs/protocolo-ipc-nucleo-sidecar.md
+  - docs/adr/adr-0040-protocolo-ipc-version-de-cable-7.md
+  - docs/adr/README.md
+  - docs/bitacora-de-descartes.md
+forbid:
+  files:
+    - crates/hexcell-storage/**
+    - deploy/**
+    - .github/**
+    - crates/hexcell-admin/**
+    - crates/hexcell-core/**
+    - crates/hexcell-canal-simulado/**
+    - crates/hexcell-canal-contrato/**
+    - crates/hexcell-meta/**
+    - scripts/**
+    - docs/STATUS.md
+    - docs/runbook-operacion.md
+    - docs/runbook-canal-whatsmeow.md
+    - docs/plan/**
+    - docs/PRD.md
+    - docs/adr/adr-0032-protocolo-ipc-version-de-cable-6.md
+    - docs/adr/adr-0022-respaldo-identidad-sidecar-por-ipc.md
+    - sidecar/internal/identidad/cortacircuitos.go
+    - sidecar/internal/identidad/identidad.go
+    - sidecar/internal/identidad/baja.go
+    - sidecar/internal/identidad/presentacion.go
+    - sidecar/arranque.go
+    - sidecar/go.mod
+    - sidecar/go.sum
+    - Cargo.toml
+    - Cargo.lock
+    - crates/hexcell/Cargo.toml
+    - crates/hexcell-canal-whatsmeow/Cargo.toml
+    - crates/hexcell-canal-whatsmeow/src/conexion.rs
+    - '**/*.db'
+    - '**/*.db-wal'
+    - '**/*.db-shm'
+    - '**/.env*'
+  behaviors:
+    - >-
+      baja_de_contacto is deleted ONLY when the order carries incluir_baja exactly "si" (IPC) /
+      the HTTP body carries incluir_baja JSON true. A missing HTTP incluir_baja defaults to false;
+      a non-boolean HTTP value, a null, or an unknown body field is a 400 that emits NO order; an
+      IPC value other than "si" or "no" is acuse fallido with zero store calls. No layer may map
+      an unknown or malformed value to true.
+    - >-
+      One reset = ONE SQLite transaction on the write connection of the sidecar's
+      identidad.Almacen (servidor.Dependencias.AlmacenIdentidad, typed *identidad.Almacen, wired
+      from recursos.AlmacenIdentidad; never DBRespaldoIdentidad). The identidad existence check
+      runs inside that transaction; any error rolls back every DELETE. Only rows keyed by the
+      requested id_interno in cortacircuitos, presentacion_de_conversacion and (flag) baja_de_contacto
+      are deleted; identidad and direccion are never deleted. Almacen.Restablecer is neither reused
+      nor modified.
+    - >-
+      Existence is an explicit discriminant end to end: IPC ack field existe ("si"/"no"), and HTTP
+      field existe (true/false) present for resultado aplicado and contacto_desconocido. It is never
+      derived from the counters. Unknown id -> contacto_desconocido, nothing touched; existing
+      contact with nothing to delete -> aplicado with counts 0.
+    - >-
+      Wire protocol: VersionProtocolo (Go) and VERSION_PROTOCOLO (Rust) move 6 -> 7 in the same
+      change as docs/protocolo-ipc-nucleo-sidecar.md 1.6 with mapping row | 1.6 | `7` |; both ends
+      keep failing closed on version mismatch. Protocol rules hold: flat JSON, strings and i64
+      only (booleans as the closed strings si/no), every field always present in fixed order,
+      unknown fields rejected. Closed type set grows 17 -> 19: orden_restablecer_contacto
+      {contacto, incluir_baja} and acuse_restablecer_contacto {contacto, incluir_baja, resultado,
+      existe, cortacircuitos, presentacion_de_conversacion, baja_de_contacto, motivo}.
+    - >-
+      Frozen HTTP contract for child HEX-091-b: POST /admin/contacto/restablecer body
+      {contacto: "ct-" + 32 lowercase hex, incluir_baja?: bool}; 200 {resultado:"aplicado",
+      contacto, existe:true, incluir_baja, cortacircuitos, presentacion_de_conversacion,
+      baja_de_contacto} | 200 {resultado:"contacto_desconocido", contacto, existe:false,
+      incluir_baja, three counts 0} | 200 {resultado:"canal_sin_sesion"} | 200
+      {resultado:"fallido", motivo} (sidecar failure, sin_conexion, timeout, inconsistent ack) |
+      400 {resultado:"fallido", motivo} (invalid body, before any operation) | 502
+      {resultado:"fallido", motivo} (operation not registered). Existing admin routes keep their
+      exact wire behavior.
+    - >-
+      crates/hexcell/src/admin.rs stays channel-agnostic: it never imports or names
+      hexcell_canal_whatsmeow, AsaDeSesion, ErrorCanalWhatsmeow or any IPC wire type; the
+      translation of the adapter ack lives in admin.rs over plain strings/ints
+      (AcuseDeRestablecimientoCrudo) and main.rs only converts and delegates. Single IPC
+      connection: the route reaches the sidecar only through the AsaDeSesion of the adapter the
+      Motor owns; no second AdaptadorWhatsmeow.
+    - >-
+      Edits to PRE-EXISTING test files follow the exception ratified by the human on 2026-09-30
+      (00-spec constraints): only the 18 listed files (the same set as the pre-existing test
+      files in touch), only five literal forms - (i) wire version 6 -> 7 in the tokens
+      "version":6, / \"version\":6, / version: 6, / .version, 6) / (propia, 6) / propia=6" /
+      esperada 6" with nothing else on the line changed (45 lines, 11 files); (ii) the
+      documento_test.go header literal "1.5, fijada el 2026-09-11." -> "1.6, fijada el
+      AAAA-MM-DD."; (iii) one line per OperacionesDeSesion literal in admin_http.rs:
+      restablecer_contacto: hexcell::admin::restablecimiento_no_disponible(), ; (iv) in
+      mensajes_test.go, added lines only inside the cuerposDeMuestra literal forming exactly two
+      entries, ipc.TipoOrdenRestablecerContacto (non-empty Contacto, IncluirBaja) and
+      ipc.TipoAcuseRestablecerContacto (non-empty Contacto, IncluirBaja, Resultado, Existe;
+      non-zero Cortacircuitos, PresentacionDeConversacion, BajaDeContacto), every existing entry
+      byte-identical and in order; (v) enviar_saludo(6, -> enviar_saludo(7, in nine whatsmeow
+      test files, EXACTLY 45 pairs with the per-file count of base 43237ea (cierre_de_sesion 4,
+      contrato_del_puerto 1, emparejamiento 15, privacidad 1, protocolo 5, reconexion 5,
+      respaldo_sqlstore 6, salida 4, senales_de_alerta 4). No renaming, no deleted assertion, no
+      changed expected value, no other pre-existing test file. ALL of it lands in ONE commit whose
+      subject starts with test:, touching only those 18 files and distinct from the feat:
+      commits. The | 1.6 | `7` | mapping check goes in the NEW ipc/restablecimiento_test.go. The
+      Go field names of form (iv) are fixed by the guard; renaming them needs a contract
+      amendment. Guard: guarda-fixtures-existentes.sh (task dir), run from the worktree root via
+      git rev-parse --git-common-dir (or with --repo <path>); it judges the committed state
+      (main...HEAD) and the working tree against the merge-base (an empty diff passes), pairs each
+      removed line with its exact replacement per file (a line carrying forms i and v counts
+      once), counts form-v pairs by per-file and total equality, compares the cuerposDeMuestra
+      entries, and checks history shape. Codes: QUITADA-FUERA-DE-FORMA, AGREGADA-FUERA-DE-FORMA,
+      REEMPLAZO-AUSENTE, ARCHIVO-DE-PRUEBA-AJENO, MUESTRA-EXISTENTE-ALTERADA,
+      MUESTRAS-NUEVAS-INCORRECTAS, MUESTRA-SIN-CAMPOS, FORMA-V-CONTEO, MECANICO-EN-VARIOS-COMMITS,
+      MECANICO-SIN-COMMIT-TEST, MECANICO-MEZCLADO. Review mutations, each proven to change the
+      file (git diff non-empty) before the red is accepted and run only in a scratch clone:
+      M-fixture-valor -> AGREGADA + REEMPLAZO; M-fixture-borrado -> REEMPLAZO; M-fixture-ajeno ->
+      ARCHIVO-DE-PRUEBA-AJENO; M-muestra-tocada -> MUESTRA-EXISTENTE-ALTERADA + QUITADA;
+      M-muestra-quitada -> MUESTRAS-NUEVAS-INCORRECTAS; M-saludo-44 (one enviar_saludo left at 6)
+      -> FORMA-V-CONTEO; M-saludo-otro (any other change in a form-v file) -> QUITADA + AGREGADA;
+      M-historia-dos / -feat / -mezclado -> MECANICO-EN-VARIOS-COMMITS / -SIN-COMMIT-TEST /
+      -MEZCLADO.
+    - >-
+      Documentation is append-style: docs/bitacora-de-descartes.md changes only by the D-59 entry
+      inserted before '## Deuda de esta bitácora', its index row, and the exact replacement of the
+      header 'Última actualización' literal; D-01..D-58 stay byte-identical. adr-0032 is never
+      edited (adr-0040 EXTIENDE it). adr-0040 and D-59 numbers are re-read from disk before
+      writing. D-59 cites adr-0022 for sidecar ownership of identidad.db and adr-0024 only for what
+      it actually states. The root README.md is not edited (only docs/adr/README.md gains a
+      row); it is kept out of forbid.files only because contract-check matches forbid patterns
+      by basename.
+    - >-
+      Every mutation guard named in 01-blueprint (M-fixture-valor, M-fixture-borrado,
+      M-fixture-ajeno, M-muestra-tocada, M-muestra-quitada, M-saludo-44, M-saludo-otro,
+      M-historia-dos, M-historia-feat, M-historia-mezclado, M-flag-true, M-flag-false, M-existe-1,
+      M-existe-2, M-tx, M-version-go, M-version-rust, M-doc-row, M-adapt-true, M-ruta-true,
+      M-infer-existe) is applied to a scratch copy proven changed (non-empty diff) before running,
+      run under the same build profile as the test, and the NAME of the test that went RED is
+      written in 04-implementation-log.yaml. Guards use integer equality on counters and whole
+      JSON/value equality, never contains joined with ||. Every wait uses a finite timeout.
+    - >-
+      No production path may panic, unwrap, expect, index out of range or call
+      std::process::exit (release profile is panic = abort); validators never slice strings by
+      byte index. No new dependency in any crate or in sidecar/go.mod; hexcell-core is untouched
+      and keeps zero external dependencies. sessions.db, knowledge_*.db, the sqlstore, the outbox
+      and adapter_identity.db are never touched.
+    - >-
+      All repository content is Spanish (identifiers, comments, docs, log events, commit
+      messages); only fixed wire names stay as written. Dates absolute (2026-09-30). Conventional
+      commits in Spanish with NO AI attribution of any kind (no Co-Authored-By, no Generated with,
+      no Claude-Session), whatever a session reminder says. Never write that Fase B replaces or
+      closes Fase A or that the sidecar is retired.
+verify:
+  commands:
+    - cargo build --workspace
+    - cargo test --workspace
+    - cargo fmt --check
+    - cargo clippy --workspace --all-targets -- -D warnings
+    - cd sidecar && go build ./... && go vet ./... && go test ./... -count=1
+    - git diff --quiet main -- crates/hexcell-storage deploy .github scripts docs/adr/adr-0032-protocolo-ipc-version-de-cable-6.md
+    - test "$(git diff main -- docs/bitacora-de-descartes.md | grep '^-' | grep -vc '^--- ')" -le 1
+    - git diff main -- docs/bitacora-de-descartes.md | grep -q '^+### D-59'
+    - git diff --quiet main -- README.md docs/STATUS.md docs/runbook-operacion.md docs/plan
+    - bash "$(git rev-parse --git-common-dir)/../.ai/tasks/active/HEX-091-a/guarda-fixtures-existentes.sh"
+    - bash "$(git rev-parse --git-common-dir)/../.ai/tasks/active/HEX-091-a/guarda-fixtures-existentes.sh" --autoprueba
+  target_s: 60
+acceptance:
+  bdd_suite: >-
+    cargo build --workspace && cargo test --workspace && cargo fmt --check &&
+    cargo clippy --workspace --all-targets -- -D warnings &&
+    (cd sidecar && go build ./... && go vet ./... && go test ./... -count=1)
+  human_gate: true
+limits:
+  max_files_changed: 37
+  max_diff_lines: 3600
+  per_class:
+    - glob: sidecar/internal/identidad/**
+      max_diff_lines: 650
+    - glob: sidecar/internal/ipc/**
+      max_diff_lines: 350
+    - glob: sidecar/internal/servidor/**
+      max_diff_lines: 550
+    - glob: crates/hexcell-canal-whatsmeow/src/**
+      max_diff_lines: 350
+    - glob: crates/hexcell-canal-whatsmeow/tests/**
+      max_diff_lines: 560
+    - glob: crates/hexcell/src/**
+      max_diff_lines: 480
+    - glob: crates/hexcell/tests/**
+      max_diff_lines: 680
+    - glob: docs/**
+      max_diff_lines: 350
+execution:
+  mode: worktree_edit
+  branch: ai/HEX-091-a
+retry_policy:
+  max_attempts: 2
+  escalate_after: 2

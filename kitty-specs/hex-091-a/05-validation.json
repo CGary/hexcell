@@ -1,0 +1,74 @@
+{
+  "commands": [
+    {
+      "command": "cargo build --workspace",
+      "duration_s": 0.85,
+      "exit_code": 0,
+      "output_excerpt": "    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.04s"
+    },
+    {
+      "command": "cargo test --workspace",
+      "duration_s": 1.24,
+      "exit_code": 0,
+      "output_excerpt": "\ntest result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n"
+    },
+    {
+      "command": "cargo fmt --check",
+      "duration_s": 0.12,
+      "exit_code": 0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "cargo clippy --workspace --all-targets -- -D warnings",
+      "duration_s": 3.47,
+      "exit_code": 0,
+      "output_excerpt": "    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.04s"
+    },
+    {
+      "command": "cd sidecar \u0026\u0026 go build ./... \u0026\u0026 go vet ./... \u0026\u0026 go test ./... -count=1",
+      "duration_s": 5.62,
+      "exit_code": 0,
+      "output_excerpt": "ok  github.com/CGary/hexcell/sidecar/internal/outbox 0.038s\nok  github.com/CGary/hexcell/sidecar/internal/registro 0.002s\nok  github.com/CGary/hexcell/sidecar/internal/servidor 0.031s"
+    },
+    {
+      "command": "git diff --quiet main -- crates/hexcell-storage deploy .github scripts docs/adr/adr-0032-protocolo-ipc-version-de-cable-6.md",
+      "duration_s": 0.08,
+      "exit_code": 0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "test \"$(git diff main -- docs/bitacora-de-descartes.md | grep '^-' | grep -vc '^--- ')\" -le 1",
+      "duration_s": 0.05,
+      "exit_code": 0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "git diff main -- docs/bitacora-de-descartes.md | grep -q '^+### D-59'",
+      "duration_s": 0.04,
+      "exit_code": 0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "git diff --quiet main -- README.md docs/STATUS.md docs/runbook-operacion.md docs/plan",
+      "duration_s": 0.07,
+      "exit_code": 0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "bash \"$(git rev-parse --git-common-dir)/../.ai/tasks/active/HEX-091-a/guarda-fixtures-existentes.sh\"",
+      "duration_s": 0.31,
+      "exit_code": 0,
+      "output_excerpt": "OK: los archivos de prueba preexistentes solo llevan las cinco formas mecánicas ratificadas, en un solo commit test:"
+    },
+    {
+      "command": "bash \"$(git rev-parse --git-common-dir)/../.ai/tasks/active/HEX-091-a/guarda-fixtures-existentes.sh\" --autoprueba",
+      "duration_s": 0.48,
+      "exit_code": 0,
+      "output_excerpt": "ok N03 otra prueba preexistente modificada: esperados=['ARCHIVO-DE-PRUEBA-AJENO'] obtenidos=['ARCHIVO-DE-PRUEBA-AJENO']\nok N04 archivo de la lista borrado: esperados=['ARCHIVO-DE-PRUEBA-AJENO'] obtenidos=['ARCHIVO-DE-PRUEBA-AJENO']\nOK: autoprueba completa, 38 casos, cada uno dio exactamente sus códigos esperados"
+    }
+  ],
+  "executed_at": "2026-09-30T18:56:43Z",
+  "overall_result": "passed",
+  "summary": "11/11 verify commands exit 0 on HEAD 043c03f (re-run by orchestrator after the fix commit).",
+  "task_id": "HEX-091-a"
+}

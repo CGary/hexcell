@@ -1,0 +1,209 @@
+{
+  "task_id": "HEX-091-a",
+  "bundle_hash": "9ecf98a3127bf3406dd2e6d43fe428ecab9f3dd3a5f6128bcb2b73888ec053fe",
+  "files": [
+    ".ai/tasks/active/HEX-091-a/00-spec.yaml",
+    ".ai/tasks/active/HEX-091-a/01-blueprint.yaml",
+    ".ai/tasks/active/HEX-091-new-spec/00-spec.yaml",
+    "CLAUDE.md"
+  ],
+  "protocol_version": "fleet-bundle-protocol/v2",
+  "created_at": "2026-09-30T17:27:19Z",
+  "dropped": [
+    {
+      "component": "code_slice",
+      "path": "sidecar/main.go",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "sidecar/internal/servidor/servidor_test.go",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "sidecar/internal/servidor/servidor.go",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "sidecar/internal/servidor/manejo.go",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "sidecar/internal/registro/registro.go",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "sidecar/internal/ipc/mensajes_test.go",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "sidecar/internal/ipc/mensajes.go",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "sidecar/internal/ipc/documento_test.go",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "sidecar/internal/identidad/presentacion.go",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "sidecar/internal/identidad/identidad.go",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "sidecar/internal/identidad/cortacircuitos_test.go",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "sidecar/internal/identidad/cortacircuitos.go",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "sidecar/internal/identidad/baja.go",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "sidecar/arranque.go",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "scripts/laboratorio/restablecer-contacto.sh",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "docs/protocolo-ipc-nucleo-sidecar.md",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "docs/bitacora-de-descartes.md",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "docs/adr/adr-0032-protocolo-ipc-version-de-cable-6.md",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "docs/adr/adr-0024-metricas-internas-de-operacion.md",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "docs/adr/adr-0022-respaldo-identidad-sidecar-por-ipc.md",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "docs/adr/README.md",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "crates/hexcell/tests/respaldo_sqlstore_ipc.rs",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "crates/hexcell/tests/respaldo_cli.rs",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "crates/hexcell/tests/emparejamiento_ipc.rs",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "crates/hexcell/tests/comun/mod.rs",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "crates/hexcell/tests/canal_whatsmeow_seleccionado.rs",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "crates/hexcell/tests/admin_http.rs",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "crates/hexcell/src/main.rs",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "crates/hexcell/src/admin.rs",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "crates/hexcell-canal-whatsmeow/tests/salida.rs",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "crates/hexcell-canal-whatsmeow/tests/protocolo.rs",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "crates/hexcell-canal-whatsmeow/tests/emparejamiento.rs",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "crates/hexcell-canal-whatsmeow/tests/comun/mod.rs",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "crates/hexcell-canal-whatsmeow/tests/cierre_de_sesion.rs",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "crates/hexcell-canal-whatsmeow/src/mensajes.rs",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "crates/hexcell-canal-whatsmeow/src/lib.rs",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "crates/hexcell-canal-whatsmeow/src/error.rs",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "crates/hexcell-canal-whatsmeow/src/conexion.rs",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "crates/hexcell-canal-whatsmeow/src/adaptador.rs",
+      "reason": "bundle exceeded max_bytes budget"
+    }
+  ]
+}

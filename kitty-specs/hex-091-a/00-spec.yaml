@@ -1,0 +1,117 @@
+acceptance:
+- given: a contact with one row in each of cortacircuitos, presentacion_de_conversacion and baja_de_contacto, plus a second contact with the same three rows
+  id: AC-1
+  statement: '[a] A new sidecar store method (proposed `RestablecerContacto(ctx, idInterno, incluirBaja)`) deletes the contact''s rows in cortacircuitos and presentacion_de_conversacion in ONE transaction and returns the rows affected per table; with incluirBaja=false the baja_de_contacto rows of that contact SURVIVE. Test both sides with a real temporary identidad.db.'
+  then: the first contact's cortacircuitos and presentacion rows are gone, its baja row still exists, the counts report 1, 1 and not-touched, and the second contact's rows are all intact
+  when: the store resets the first contact with incluirBaja=false
+- given: the same fixture as AC-1
+  id: AC-2
+  statement: '[a] With incluirBaja=true the same method also deletes the contact''s baja_de_contacto row and reports its count; `identidad` and `direccion` rows of the contact and every row of other contacts stay intact.'
+  then: all three tables are cleared for that contact with counts 1, 1 and 1, and identidad, direccion and the second contact are untouched
+  when: the store resets the first contact with incluirBaja=true
+- id: AC-3
+  statement: '[a] The reset is atomic and fails closed: a failure in any DELETE rolls back the others; the existence check on `identidad` runs INSIDE the same transaction: an `id_interno` with no row in `identidad` yields the distinct outcome `contacto_desconocido` and deletes nothing, while an existing contact with no rows to delete succeeds with counts 0 (see AC-18); a closed store returns the existing ErrAlmacenCerrado. A test forces a mid-transaction failure (for example a trigger or dropped table in a scratch database) and asserts that no table changed.'
+- id: AC-4
+  statement: '[a] IPC contract: a new order/ack pair (proposed `orden_restablecer_contacto` / `acuse_restablecer_contacto`) is added to the closed message set (17 to 19 types) in docs/protocolo-ipc-nucleo-sidecar.md (version 1.6, mapping row `1.6 | 7`), sidecar/internal/ipc/mensajes.go and crates/hexcell-canal-whatsmeow/src/mensajes.rs, with the order carrying `contacto` and `incluir_baja` and the ack carrying `resultado`, an explicit boolean `existe` (contact present in `identidad`), the per-table counts and an optional `motivo`. The existing documento_test.go contract test and a new Rust protocol test round-trip both messages. A new ADR extending adr-0032 records the 6 to 7 bump; its number is READ from disk at blueprint time (next free expected adr-0040) and adr/README.md gains its row.'
+- given: the change is complete and the tests are green
+  id: AC-5
+  statement: '[a] Guard, mutation-proven: a test asserts the wire version is 7 in Go and in Rust and that the document''s mapping table has the row for 1.6 with 7, comparing against the DOCUMENT text and the encoded envelope''s `version` field (not against the constant itself). Mutating either constant back to 6, or removing the doc row, turns a named test RED; the mutation is proven to change the file (diff non-empty) before the RED is accepted.'
+  then: at least one named version test fails and the failing test is identified (a bare nonzero exit is not accepted)
+  when: VersionProtocolo (Go) or VERSION_PROTOCOLO (Rust) is set to 6 in a scratch copy
+- id: AC-6
+  statement: '[a] Guard, mutation-proven, sidecar side: a test proves `incluir_baja` is what gates baja_de_contacto in the sidecar handler end to end (order in, rows out). Mutating the handler or store so that baja_de_contacto is deleted regardless of the flag turns a named test RED; a second mutation that ignores the flag in the opposite direction (never deletes baja) also turns a named test RED.'
+- id: AC-7
+  statement: '[a] The sidecar dispatch (servidor/manejo.go) handles the new order by calling the write-side identity store (a new field in servidor.Dependencias wired from recursos.AlmacenIdentidad in main.go, never the read-only DBRespaldoIdentidad), replies with the ack, emits a structured log event with the contact id and whether baja was included, and emits a distinct, louder event when baja rows were deleted. An absent store or an empty/malformed contact replies `fallido` with a motivo and touches nothing.'
+- id: AC-8
+  statement: '[a] Core route `POST /admin/contacto/restablecer` (crates/hexcell/src/admin.rs, RutaAdmin plus enrutar_admin, wired in main.rs) accepts `{contacto, incluir_baja}`: `contacto` is required and must match `ct-` + 32 lowercase hex, `incluir_baja` is optional boolean defaulting to false and any other type is a 400; an invalid body returns 400 and emits NO IPC order. SinSesion returns 200 `canal_sin_sesion`, an unregistered operation returns 502 `fallido` (fail closed), a plazo timeout returns `fallido`, and a sidecar ack maps to a JSON body that carries the explicit `existe` discriminant and the per-table counts (`contacto_desconocido` is reported when `existe` is false). Tests live in a new file under crates/hexcell/tests/.'
+- id: AC-9
+  statement: '[a] The Rust WhatsmeowAdapter (crates/hexcell-canal-whatsmeow/src/adaptador.rs) exposes the operation, serialises the order preserving `incluir_baja` verbatim, correlates the ack, and returns `fallido` on SinConexion, on an orphan ack and on timeout. Guard, mutation-proven: forcing `incluir_baja=true` in the adapter or in the route turns a named test RED. Contract tests go in a NEW file in crates/hexcell-canal-whatsmeow/tests/.'
+- id: AC-10
+  statement: '[a] docs/bitacora-de-descartes.md gains, in the same commit as the design that discards it, the next free entry (D-59 confirmed on disk: last entry is D-58 on main and in all worktrees; re-read at blueprint time) recording that the sibling-container-with-sqlite3 alternative was discarded on 2026-09-30, with its reason (the probe image has no sqlite3, a container that opens identidad.db reads and writes a database owned by the sidecar in its volume against adr-0024, and it repeats the external-surveillance path of D-51/D-57) and its reopening condition. Existing entries are untouched; the change is append-only.'
+- given: one existing contact without rows in the three tables and one `ct-` id that is not in identidad
+  id: AC-18
+  statement: '[a] Guard, mutation-proven, contact existence: the sidecar transaction distinguishes (i) `id_interno` absent from `identidad` gives `existe=false` and `contacto_desconocido`, nothing touched, and (ii) an existing contact with no rows in cortacircuitos, presentacion_de_conversacion (nor baja_de_contacto if requested) gives `existe=true`, `aplicado` and counts 0. Re-running the reset on a real contact is idempotent. The discriminant travels in the IPC ack and the HTTP response, never inferred from zero counters.'
+  then: the existing contact yields existe true with zero counts and success, the absent id yields existe false and contacto_desconocido, and a second run on the existing contact is identical
+  when: the store, the route and the adapter handle a reset for each
+constraints:
+- Repository content is Spanish (identifiers, comments, docs, commit messages, conventional commits, no AI attribution); dates are absolute (2026-09-30); this spec's field values are English per the Quorum spec protocol.
+- 'Difficulty tier: logic on an existing skeleton; HEX-085 (route, IPC pair, sibling-container probe) is the template, mirroring GET /admin/sesion in ciclo_de_vida.rs and atender_pausa_de_envio in admin.rs.'
+- 'Decomposition split for /q-decompose: (a) = sidecar store method, IPC pair with version bump 6 to 7, protocol doc 1.6, new ADR, D-59, core route and Rust adapter, with Go tests and IPC contract tests (AC-1..AC-10 and AC-18); (b) = CLI parser, execution, output and exit codes, README, runbook, STATUS append, plan note, with Guion-based tests (AC-11..AC-17 and AC-19..AC-22). (b) depends on (a) only for the route''s request/response shape, fixed here: request `{contacto, incluir_baja}`; response `resultado` in aplicado, contacto_desconocido, canal_sin_sesion, fallido, plus the explicit boolean `existe` and the counts `cortacircuitos`, `presentacion_de_conversacion`, `baja_de_contacto` and an optional `motivo`. Children must renumber their own ids (quorum task split strips object criteria).'
+- 'Guard rules: each mutation-proven guard must show its mutation changes the copy, must identify WHICH named test went RED, and must be run under the same build profile as the test; a guard that can only turn red (constant discriminator) does not count.'
+- 'Risk (to re-check at blueprint time): the proposed message names, the response field names and the ADR number are placeholders confirmed against disk then; the next free ADR and D-number can age between parallel sibling tasks (HEX-089, HEX-090).'
+- 'Resolved by the human (2026-09-30): `--incluir-baja` also requires `--confirmar`; an unknown `id_interno` is a failure with an explicit discriminant; README gets a new section 10 (section 9 is taken by «Reejecución»); the spec stays in English.'
+- 'Risk: the route is only reachable when the core has a registered session operation set (SesionDeCanal::ConSesion); a cell on a channel without session returns `canal_sin_sesion`, and a reset while the sidecar IPC is disconnected fails closed.'
+- 'Base: main 43237ea (HEX-087/089/090 merged, 935cfc9 is an ancestor); D-59 and adr-0040 re-checked free on that tree. Acceptance commands use `cargo clippy --workspace --all-targets -- -D warnings` per the current CLAUDE.md.'
+- >-
+  Ratified exception (human decisions, 2026-09-30) to the non-goal "do not edit existing test
+  files", MECHANICAL ONLY. Exactly these 18 pre-existing test files may change, and this set is
+  identical to the pre-existing test files in the contract touch list. Form (i) - 11 files:
+  sidecar/internal/ipc/mensajes_test.go, sidecar/internal/servidor/servidor_test.go,
+  crates/hexcell-canal-whatsmeow/tests/comun/mod.rs,
+  crates/hexcell-canal-whatsmeow/tests/protocolo.rs,
+  crates/hexcell-canal-whatsmeow/tests/cierre_de_sesion.rs,
+  crates/hexcell-canal-whatsmeow/tests/salida.rs,
+  crates/hexcell-canal-whatsmeow/tests/emparejamiento.rs,
+  crates/hexcell/tests/emparejamiento_ipc.rs, crates/hexcell/tests/respaldo_cli.rs,
+  crates/hexcell/tests/respaldo_sqlstore_ipc.rs and
+  crates/hexcell/tests/canal_whatsmeow_seleccionado.rs. Form (ii) - 1 file:
+  sidecar/internal/ipc/documento_test.go. Form (iii) - 1 file: crates/hexcell/tests/admin_http.rs.
+  Form (iv) - 1 file: sidecar/internal/ipc/mensajes_test.go. Form (v) - 9 files under
+  crates/hexcell-canal-whatsmeow/tests/: cierre_de_sesion.rs, contrato_del_puerto.rs,
+  emparejamiento.rs, privacidad.rs, protocolo.rs, reconexion.rs, respaldo_sqlstore.rs, salida.rs
+  and senales_de_alerta.rs (4 of them already in form i, 5 new: contrato_del_puerto.rs,
+  privacidad.rs, reconexion.rs, respaldo_sqlstore.rs, senales_de_alerta.rs). The five allowed
+  edit forms, as literal patterns: (i) the wire version literal 6 -> 7 with nothing else on the
+  line changed, in exactly these tokens - `"version":6,` -> `"version":7,`;
+  `\"version\":6,` -> `\"version\":7,`; `version: 6,` -> `version: 7,`; `.version, 6)` ->
+  `.version, 7)`; `(propia, 6)` -> `(propia, 7)`; `propia=6"` -> `propia=7"`; `esperada 6"` ->
+  `esperada 7"` (45 lines in 11 files); (ii) the IPC document header literal in
+  documento_test.go - `**Versión de este protocolo:** 1.5, fijada el 2026-09-11.` ->
+  `**Versión de este protocolo:** 1.6, fijada el AAAA-MM-DD.` (1 line); (iii) one added line per
+  OperacionesDeSesion struct literal in admin_http.rs with the field's default value -
+  `restablecer_contacto: hexcell::admin::restablecimiento_no_disponible(),` (5 lines); (iv) in
+  mensajes_test.go, ADDED lines only, all inside the `cuerposDeMuestra` map literal, forming
+  EXACTLY two new entries - `ipc.TipoOrdenRestablecerContacto: ipc.OrdenRestablecerContacto{...}`
+  with non-empty `Contacto` and `IncluirBaja`, and `ipc.TipoAcuseRestablecerContacto:
+  ipc.AcuseRestablecerContacto{...}` with non-empty `Contacto`, `IncluirBaja`, `Resultado` and
+  `Existe` and non-zero `Cortacircuitos`, `PresentacionDeConversacion` and `BajaDeContacto` -
+  while every existing entry stays byte-identical and in order (the only removed lines allowed
+  in that file are its 4 form-(i) lines, outside the literal); (v) `enviar_saludo(6,` ->
+  `enviar_saludo(7,` with nothing else on the line changed, EXACTLY 45 pairs with this per-file
+  count on base 43237ea - cierre_de_sesion.rs 4, contrato_del_puerto.rs 1, emparejamiento.rs 15,
+  privacidad.rs 1, protocolo.rs 5, reconexion.rs 5, respaldo_sqlstore.rs 6, salida.rs 4,
+  senales_de_alerta.rs 4 (these figures sum to 45; the "44" first reported was an arithmetic
+  slip, checked with git grep and by an empirical rewrite whose full Rust and Go suites went
+  green). A file in both form (i) and form (v) accepts both; each changed line counts once.
+  Nothing else - no renaming, no deleted assertion, no changed expected value, no other
+  pre-existing test file. ALL mechanical edits of the five forms land in ONE separate commit
+  whose subject starts with `test:`, distinct from the `feat:` commit(s), touching only these 18
+  files, so review can check the pattern on that diff alone. Enforced by the contract's verify
+  guard guarda-fixtures-existentes.sh (line forms, exact form-v count, form-iv content and the
+  single-commit rule).
+- >-
+  Ratified (human decision, 2026-09-30): a wire version bump today touches existing test files
+  because they duplicate the protocol literal instead of reading VersionProtocolo /
+  VERSION_PROTOCOLO. Reconciled count for 6 -> 7: 18 pre-existing test files - 45 form-(i) lines
+  in 11 files, 45 `enviar_saludo(6,` pairs in 9 files, 1 header line, 5 struct-literal lines and
+  the 2 structural samples of form (iv). This feeds the later chore «pruebas leen la constante de
+  versión IPC» (band S, fleet eligible); it is NOT in scope for HEX-091-a.
+depends_on: []
+goal: 'Subset of HEX-091: Sidecar transactional reset store method, IPC order/ack pair (wire 6 to 7, doc 1.6), sidecar handler, core route POST /admin/contacto/restablecer, Rust adapter, adr-0040, D-59.'
+invariants:
+- baja_de_contacto (the STOP/consent list) is never modified by default and reviving a baja is an irreversible action. It requires BOTH `--incluir-baja` and `--confirmar` (the same marker of irreversible actions as `cell terminate` and `cell rebind`). Without `--incluir-baja` every layer (CLI body, core route, IPC order, sidecar transaction) carries `incluir_baja=false`, and a missing or non-boolean `incluir_baja` is treated as false or rejected, never as true.
+- The sidecar executes the DELETEs of one reset inside ONE SQLite transaction on the write connection of identidad.db; any failure rolls back all tables (no partial reset). Only rows keyed by the requested `id_interno` in cortacircuitos, presentacion_de_conversacion and (with the flag) baja_de_contacto are deleted; `identidad` and `direccion` rows are never deleted.
+- The IPC change bumps the wire version 6 to 7 in lockstep in Go (`VersionProtocolo`) and Rust (`VERSION_PROTOCOLO`), updates docs/protocolo-ipc-nucleo-sidecar.md to version 1.6 with its version-mapping row, and both ends keep failing closed on version mismatch.
+- The reply to a reset carries an EXPLICIT discriminant of whether the contact exists in `identidad` (both in the IPC ack and in the HTTP response); existence is never inferred from zero counters. A known contact with nothing to delete is a success; an unknown one is a failure.
+- Forbidden paths stay untouched - crates/hexcell-storage/**, deploy/** and .github/**; scripts/laboratorio/restablecer-contacto.sh is left as is (it still does not touch baja_de_contacto).
+non_goals:
+- Do not reset anything beyond the three named tables of identidad.db; sessions.db, knowledge_*.db, the sqlstore, the outbox and adapter_identity.db are out of scope.
+- Do not add a contact listing or discovery surface; the operator obtains the `ct-...` id from the logs or the laboratory script, as today.
+- Do not build the remote operator surface for SolicitarCodigoDeVinculacion (a separate pending item that shares the STATUS.md:570 entry) and do not touch the emparejamiento flow.
+- Do not adopt the sibling-container-with-sqlite3 alternative, an IPC connection from hexcell-admin, or any hot read or write of identidad.db from the host (D-57, adr-0024).
+- Do not modify crates/hexcell-storage/**, deploy/** or .github/**, and do not edit existing test files (HEX-090 is fixing lints there; 19-a is HEX-089).
+- Do not revive contacts as a default side effect and do not invent client, cell or portfolio figures.
+parent_task: HEX-091
+risk: high
+summary: Sidecar transactional reset store method, IPC order/ack pair (wire 6 to 7, doc 1.6), sidecar handler, core route POST /admin/contacto/restablecer, Rust adapter, adr-0040, D-59.
+task_id: HEX-091-a
