@@ -1,0 +1,78 @@
+task_id: HEX-092
+summary: Release orphaned active budget reservations older than the drain limit at cell startup, restoring saldo, before HTTP serving begins. Risk medium.
+goal: >-
+  Close the orphaned-reservation leak recorded in STATUS (HEX-051-a, updated by HEX-063).
+  Add a sweep on the session repository (aggregate owning reservas and saldo) that, in one
+  transaction, releases every reservation in state 'activa' whose creada_ms is older than
+  now minus a maximum age, applying exactly the same state transition and saldo accounting as
+  the existing single-reservation release (reservado decreases and disponible increases by the
+  reserved amount, resuelta_ms set, actualizado_ms updated, movement recorded if the existing
+  release records one). Invoke it once at cell binary startup, after persistence is opened and
+  migrated and before the HTTP services start accepting traffic, with the maximum age equal to
+  the existing shutdown drain limit (HEXCELL_LIMITE_DE_DRENAJE_SEGUNDOS, no new variable).
+  Emit a structured startup event reservas_huerfanas_liberadas with detail recuento=N monto=M,
+  or a "sin cambios" detail when N is 0. A sweep error is logged as a warning and startup
+  continues. Update STATUS (pending to defined), the plan note and, only if it documents cell
+  startup, the README, by append only.
+invariants:
+  - A reservation in a state other than 'activa', or with creada_ms greater than or equal to the threshold, is never modified by the sweep.
+  - After a sweep, saldo.reservado plus saldo.disponible is unchanged, saldo.reservado never goes below 0 and saldo.disponible only grows by the released amounts (existing CHECK constraints hold).
+  - The sweep reuses the accounting of the existing single-reservation release; it does not reinvent it and does not change any public signature.
+  - The sweep is atomic (one transaction), so a failure leaves reservas and saldo untouched.
+  - No schema change, no new migration, no new environment variable; the maximum age is the existing drain limit.
+  - A failing sweep never prevents the cell from starting and serving.
+  - Reservations that are not in any way orphaned (resolved ones) keep their resuelta_ms and state.
+acceptance:
+  - id: AC-1
+    statement: The store exposes liberar_reservas_huerfanas(ahora, antiguedad_maxima) returning a summary with reservas_liberadas (u64) and monto_liberado (i64), running in a single transaction and selecting candidates by estado and creada_ms.
+    given: a session store with an 'activa' reservation created at t0 and saldo with that amount reserved
+    when: the sweep runs with ahora = t0 + 21 s and antiguedad_maxima = 20 s
+    then: the reservation becomes 'liberada' with resuelta_ms = ahora, saldo.reservado decreases and saldo.disponible increases by the reserved amount, and the summary reports 1 reservation and that amount
+  - id: AC-2
+    statement: A young 'activa' reservation is left untouched.
+    given: an 'activa' reservation created at t0
+    when: the sweep runs with ahora = t0 + 19 s and antiguedad_maxima = 20 s
+    then: the reservation stays 'activa', saldo is unchanged and the summary is 0 and 0
+  - id: AC-3
+    statement: Only old 'activa' reservations change when mixed with others.
+    given: an old 'activa' reservation, a young 'activa' reservation and an old 'conciliada' reservation
+    when: the sweep runs
+    then: only the old 'activa' reservation is released; the other two keep their state and resuelta_ms, and saldo reflects only the released amount
+  - id: AC-4
+    statement: A sweep over a store with no reservations returns an empty summary.
+    given: a session store with no reservations
+    when: the sweep runs
+    then: the summary is 0 reservations and 0 amount and saldo is unchanged
+  - id: AC-5
+    statement: At startup the binary runs the sweep after opening persistence and before the HTTP services accept traffic, with antiguedad_maxima equal to configuracion.limite_de_drenaje and ahora equal to the current time.
+    given: a sessions.db prepared with an old 'activa' reservation before launching the cell binary
+    when: the binary starts
+    then: through the store the reservation is 'liberada' and saldo is restored (integration test in crates/hexcell/tests/barrido_de_reservas.rs)
+  - id: AC-6
+    statement: Startup emits the structured event reservas_huerfanas_liberadas via registro::emitir with detail recuento=N monto=M, or with a "sin cambios" detail when N is 0.
+  - id: AC-7
+    statement: A sweep error is logged as a warning and startup continues; the plan note justifies this choice (the cell must be able to serve even if sanitation fails).
+  - id: AC-8
+    statement: "Mutation guard m1: removing the creada_ms < threshold filter from the sweep makes the store test for the young reservation (AC-2 case, and the mixed case of AC-3) turn red; the review names the exact test that fails."
+  - id: AC-9
+    statement: "Mutation guard m2: removing the sweep call from main.rs makes the binary integration test in crates/hexcell/tests/barrido_de_reservas.rs turn red; the review names that test."
+  - id: AC-10
+    statement: "Mutation guard m3: releasing a reservation without returning the amount to saldo.disponible makes the store test of AC-1 (saldo restored) turn red; the review names that test."
+  - id: AC-11
+    statement: docs/STATUS.md entry at line 470 is moved to Defined by appending the decision text at the end of the entry without deleting anything; a one-sentence append goes in the plan note of the budget task (HEX-051-a, stage A-2 file or where the brief locates it) and in the HEX-063 note of A-5 if it exists; README gets one appended sentence only if it documents cell startup.
+  - id: AC-12
+    statement: "Contract verification passes - cargo fmt --check, cargo clippy --workspace --all-targets -- -D warnings, cargo test --workspace, cargo tree -p hexcell-core shows no external dependencies, and no commit message on the branch contains co-authored or claude."
+risk: medium
+non_goals:
+  - Do not add or change any database schema or migration.
+  - Do not add a new environment variable or change configuracion.rs or apagado.rs.
+  - Do not touch hexcell-admin, hexcell-core, the Go sidecar, deploy, CI or the operations runbook.
+  - Do not add a periodic or runtime sweep; only one sweep at startup.
+  - Do not change the signature of liberar_presupuesto or any other public function.
+constraints:
+  - All repository content, comments, identifiers and commit messages are in Spanish; conventional commits with no AI attribution.
+  - Dates are absolute (2026-09-30).
+  - Docs edits are append-only and never delete existing text.
+  - If the existing release accounting cannot be reused without changing a public signature, stop and ask the human.
+  - If a schema migration appears necessary, stop and ask the human (it would be band L).
+  - Store tests go in the existing tests file (add cases only) or a new crates/hexcell-storage/tests/barrido_de_reservas.rs; binary test in a new crates/hexcell/tests/barrido_de_reservas.rs using the helpers of crates/hexcell/tests/admin_http.rs.

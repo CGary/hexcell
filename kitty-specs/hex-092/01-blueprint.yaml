@@ -1,0 +1,89 @@
+task_id: HEX-092
+summary: "Startup sweep of orphaned 'activa' budget reservations: store method with shared release accounting, one call in main.rs before HTTP serving, tests, append-only docs."
+affected_files:
+  - crates/hexcell-storage/src/presupuesto.rs
+  - crates/hexcell/src/main.rs
+  - crates/hexcell-storage/tests/barrido_de_reservas.rs
+  - crates/hexcell/tests/barrido_de_reservas.rs
+  - docs/STATUS.md
+  - docs/plan/fase-a-4-admision-presupuesto.md
+symbols:
+  - "RepositorioDeSesiones::liberar_reservas_huerfanas(&self, ahora: SystemTime, antiguedad_maxima: Duration) -> Result<ResumenDeBarridoDeReservas, ErrorDeAlmacen> (new pub method; workspace-internal API)"
+  - "ResumenDeBarridoDeReservas { pub reservas_liberadas: u64, pub monto_liberado: i64 } (new pub value object; derives Clone, Copy, Debug, PartialEq, Eq; reachable as hexcell_storage::presupuesto::ResumenDeBarridoDeReservas, no lib.rs re-export needed)"
+  - "private helper in presupuesto.rs applying the release of ONE already-selected active reservation inside an open transaction (UPDATE reservas -> 'liberada' + resuelta_ms, UPDATE saldo, SELECT disponible, INSERT movimientos clase 'liberacion'); liberar_presupuesto and the sweep both call it, liberar_presupuesto keeps its public signature"
+  - "main.rs composition root: one sweep call after the repositorio is built and the initial-budget block, before servir_servicios_http; emits registro event reservas_huerfanas_liberadas (Info, detail 'recuento=N monto=M' or 'sin cambios'), Aviso with the error on failure"
+dependencies:
+  - crates/hexcell-storage/src/tiempo.rs
+  - crates/hexcell-storage/src/sesiones.rs
+  - crates/hexcell-storage/migraciones/sesiones/0004-reservas-sin-conversacion.sql
+  - crates/hexcell/src/configuracion.rs
+  - crates/hexcell/src/registro.rs
+  - crates/hexcell/tests/comun/mod.rs
+  - crates/hexcell-storage/tests/comun/mod.rs
+  - crates/hexcell-storage/tests/presupuesto.rs
+  - docs/bitacora-de-descartes.md
+test_scenarios:
+  - statement: "storage: aportar 10 at epoch, reservar 3 at t0 (UNIX_EPOCH), sweep with ahora = t0 + 21 s and antiguedad 20 s -> summary 1 / 3, saldo disponible 10 and reservado 0, one extra movimiento clase 'liberacion' with monto 3 and saldo_resultante 10 referencing the reserva id. Red if the release does not return the amount to saldo.disponible (mutation m3)."
+    covers: [AC-1, AC-10]
+  - statement: "storage: same reservation, ahora = t0 + 19 s -> summary 0 / 0, saldo unchanged (disponible 7, reservado 3), movimientos count unchanged. Red if the creada_ms < threshold filter is removed (mutation m1)."
+    covers: [AC-2, AC-8]
+  - statement: "storage: boundary case creada_ms exactly equal to the threshold (ahora - antiguedad == creada) stays activa (strict less-than)."
+    covers: [AC-2]
+  - statement: "storage: old activa + young activa + old conciliada (conciliada through conciliar_presupuesto at an old instant) -> only the first is released; summary 1 / its amount; saldo reflects only that amount; the other two keep state and resuelta_ms (checked with a raw SELECT through rusqlite Connection on NOMBRE_DE_ARCHIVO_DE_SESIONES). Red under mutation m1 (young activa released)."
+    covers: [AC-3, AC-8]
+  - statement: "storage: store with no reservations (only aporte) -> summary 0 / 0 and saldo unchanged."
+    covers: [AC-4]
+  - statement: "storage: two old activa reservations plus a hand-made trigger (rusqlite Connection) that aborts UPDATE reservas for the second id -> the sweep returns Err and BOTH reservations stay activa and saldo is unchanged (single transaction, rollback)."
+    covers: [AC-1]
+  - statement: "storage: reservation without conversation (reservar_presupuesto_de_ingesta, id_conversacion NULL) is swept and its movimiento keeps id_conversacion NULL."
+    covers: [AC-1]
+  - statement: "binary: prepare sessions.db with aportar_presupuesto(10) and an old activa reservation (reservar at UNIX_EPOCH) through abrir_persistencia, DROP the pools, launch with lanzar_binario_con_ruta_de_datos, reopen the store: saldo.reservado == 0 and disponible == 10; the captured stdout has the reservas_huerfanas_liberadas line containing 'recuento=1 monto=3' BEFORE the salud_vinculada line. Red if the call is removed from main.rs (mutation m2) and if it is moved after servir_servicios_http."
+    covers: [AC-5, AC-6, AC-9]
+  - statement: "binary: fresh data dir (no reservations) -> the reservas_huerfanas_liberadas line carries 'sin cambios' and no 'recuento='."
+    covers: [AC-6]
+  - statement: "binary: a young activa reservation (reservar at SystemTime::now()) survives startup: saldo.reservado stays 3."
+    covers: [AC-5]
+  - statement: "verify: fmt, clippy all targets, workspace tests, cargo tree -p hexcell-core has no external deps, git log main..HEAD has no co-authored/claude trailer."
+    covers: [AC-12]
+  - statement: "docs: git diff of docs/STATUS.md and the plan file shows only added lines; the STATUS entry at the HEX-051-a text gains the Definido suffix; no line deleted."
+    covers: [AC-11]
+  - statement: "review-time reading: the main.rs sweep match arm on Err emits NivelDeRegistro::Aviso and execution continues (no return); the plan note justifies it. Not executable in the binary without a rusqlite dev-dependency in crates/hexcell (see risks)."
+    covers: [AC-7]
+strategy:
+  - step: 1
+    action: "Application service in presupuesto.rs: extract the body that releases ONE active reservation (state UPDATE, saldo UPDATE, SELECT disponible, INSERT movimiento 'liberacion') into a private helper taking the open transaction (&Connection via Deref), the reservation id, id_conversacion, monto and marca_ms. Make liberar_presupuesto call it; its public signature and observable behaviour do not change (existing tests/presupuesto.rs must stay green untouched)."
+    files:
+      - crates/hexcell-storage/src/presupuesto.rs
+  - step: 2
+    action: "Add ResumenDeBarridoDeReservas (value object) and liberar_reservas_huerfanas. Compute umbral_ms = a_milisegundos(ahora) saturating-minus antiguedad_maxima.as_millis() (i64, no underflow panic). Inside con_escritura + unchecked_transaction: SELECT id, id_conversacion, monto_reservado FROM reservas WHERE estado = 'activa' AND creada_ms < ?1 ORDER BY creada_ms, id (uses idx_reservas_activas), collect into a Vec, call the helper per row with resuelta_ms = a_milisegundos(ahora), sum count and monto, commit once. Any error drops the transaction (rollback). No schema change."
+    files:
+      - crates/hexcell-storage/src/presupuesto.rs
+  - step: 3
+    action: "Store tests in a NEW file tests/barrido_de_reservas.rs (mod comun; same repositorio(&DirectorioTemporal) helper shape as tests/presupuesto.rs). Reservations at old instants are created through the public API with SystemTime::UNIX_EPOCH + Duration; raw SELECTs/trigger through rusqlite Connection::open on NOMBRE_DE_ARCHIVO_DE_SESIONES as tests/presupuesto.rs already does. Literal expected values, never the production path's own computation."
+    files:
+      - crates/hexcell-storage/tests/barrido_de_reservas.rs
+  - step: 4
+    action: "Composition root in main.rs: after the initial-budget block and before receptor_apagado/servir_servicios_http, call repositorio.liberar_reservas_huerfanas(SystemTime::now(), configuracion.limite_de_drenaje). Ok(n>0) -> registro::emitir Info reservas_huerfanas_liberadas detail 'recuento=N monto=M'; Ok(0) -> same event, detail 'sin cambios'; Err -> registro::emitir Aviso reservas_huerfanas_liberadas with the error text (plus eprintln like neighbouring startup failures) and continue. Keep it inline or as one small private fn in main.rs; no new module, no configuracion.rs/apagado.rs change."
+    files:
+      - crates/hexcell/src/main.rs
+  - step: 5
+    action: "Binary tests in a NEW file tests/barrido_de_reservas.rs using comun::{DirectorioTemporal, abrir_persistencia, lanzar_binario_con_ruta_de_datos}: seed, drop pools (scope block), launch (the launcher already blocks until salud_vinculada/admin_vinculada are printed, so the sweep has run), reopen the store with abrir_persistencia and read repositorio.saldo(); assert the event line order with BinarioDePrueba::salida_capturada (position of reservas_huerfanas_liberadas < position of salud_vinculada). Seeding aportar_presupuesto first makes presupuesto_sin_iniciar() false so the launcher's HEXCELL_PRESUPUESTO_INICIAL_UNIDADES=1000 does not add a second aporte."
+    files:
+      - crates/hexcell/tests/barrido_de_reservas.rs
+  - step: 6
+    action: "Docs, append only. STATUS.md: add the '*(Definido 2026-09-30, HEX-092: ...)*' suffix at the end of the HEX-051-a 'Barrido y liberacion de reservas huerfanas' entry (cite by text; it sits after the HEX-063 update, ending in '*Etapa A-5 / A-6.*'). Plan: append one short Nota paragraph at the end of docs/plan/fase-a-4-admision-presupuesto.md (budget stage; no plan file carries an HEX-051-a or HEX-063 note) stating the sweep and justifying why a sweep failure warns and startup continues. README not touched: it does not describe cell startup sequencing."
+    files:
+      - docs/STATUS.md
+      - docs/plan/fase-a-4-admision-presupuesto.md
+risks:
+  - "Spec/task facts verified at HEAD 92bffc8 and all matched: presupuesto.rs liberar_presupuesto at :375 with its state UPDATE at :402; 0004 migration has the estado CHECK, creada_ms column and idx_reservas_activas; zero hits for huerfan/barrido in presupuesto.rs and main.rs; main.rs :270 GestorDePools::abrir, repositorio built ~:295, servir_servicios_http at ~:380; limite_de_drenaje at configuracion.rs:169 and its env read at :525."
+  - "Accounting is NOT just the state/saldo UPDATEs: liberar_presupuesto also SELECTs disponible and INSERTs a movimientos row (clase 'liberacion', monto = monto_reservado, saldo_resultante, registrado_ms, id_reserva, id_conversacion which may be NULL since 0004). The sweep must record one movement per swept reservation, with saldo_resultante progressive inside the single transaction. A sweep that only flips state and saldo would drift from the ledger (suma de movimientos == disponible, see tests/presupuesto.rs:371)."
+  - "Reuse needs no public signature change: a private helper over the open transaction is enough, so the human-question stop condition is NOT triggered. liberar_presupuesto keeps ReservaNoActiva semantics (its own re-SELECT by id AND estado='activa' stays in the public method)."
+  - "Plan note location: no docs/plan file mentions HEX-051-a or HEX-063 (they appear only in STATUS.md, adr-0025 and the bitacora). The spec's 'plan note of the budget task' is therefore placed at the end of fase-a-4-admision-presupuesto.md (budget stage; A-5 depends on it). AC-11's 'HEX-063 note of A-5 if it exists' does not exist, so no A-5 edit. README has no startup-sequence text (only unrelated 'arranca' at cell unpause), so it is untouched; README is omitted from touch."
+  - "AC-7 (sweep error only warns) cannot be exercised end to end: crates/hexcell has no rusqlite dependency (manifest says SQLite stays behind the repository) and every public path keeps saldo consistent, so a failing sweep cannot be induced from the binary test. Adding a dev-dependency would touch crates/hexcell/Cargo.toml and Cargo.lock (forbidden). Coverage: storage rollback test (Err, nothing changed) + review reading of the Aviso arm + plan note. If the human wants a binary-level test, that needs a separate decision."
+  - "Mutation guards must name the red test: m1 (drop the creada_ms filter) -> the young-reservation storage test and the mixed-case test, plus the binary young-survives test; m2 (drop the main.rs call) -> binary tests for old-released and the event line; m3 (release without returning the amount to disponible) -> the AC-1 storage test (saldo disponible assertion) and the binary saldo assertion. Also mutate the ordering (move the call after servir_servicios_http) -> the event-order assertion is red. Apply mutations under the test profile (cargo test), the profile in which the guards run."
+  - "Threshold comparison is strict (creada_ms < umbral). a_milisegundos saturates to 0 before the epoch; if ahora < antiguedad the threshold is <= 0 and nothing matches. Use saturating i64 arithmetic on milliseconds (as_millis is u128: convert with i64::try_from(...).unwrap_or(i64::MAX))."
+  - "Binary test: the sessions.db is opened by the test, then by the binary, then again by the test while the binary still runs (WAL, multi-process). Drop the seeding pools before launching and read the result with a fresh abrir_persistencia; the launcher's 5 s wait for salud_vinculada bounds the sweep. No sleeps are needed: the event line is printed before salud_vinculada, which the launcher already waits for."
+  - "Clock: SystemTime::now() in main.rs; reservations created by the old binary at creada_ms=epoch-relative values in tests are always far older than the 20 s default drain limit. The young-survives binary test uses SystemTime::now() at seed time (launch latency is well under 20 s)."
+  - "Concurrent sweep risk (another live process on the same sessions.db) is out of scope: one cell, one core process. Reservations of a still-live previous process cannot exist at startup of the replacement; the drain limit is the stated safety margin."
+  - "Overlap: HEX-091-b (hexcell-admin) and S2 (admin.rs/retencion.rs) are file-disjoint; STATUS.md and the plan are shared only by append at different entries, so rebase conflicts on those two .md files are possible but mechanical."

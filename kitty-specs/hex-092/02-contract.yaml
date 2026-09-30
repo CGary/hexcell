@@ -1,0 +1,100 @@
+task_id: HEX-092
+summary: "Startup sweep of orphaned 'activa' budget reservations older than the drain limit; store method, one main.rs call, tests, append-only docs."
+goal: >-
+  Add RepositorioDeSesiones::liberar_reservas_huerfanas(ahora, antiguedad_maxima) in
+  crates/hexcell-storage/src/presupuesto.rs, releasing in ONE transaction every 'activa' reservation
+  with creada_ms < ahora - antiguedad_maxima through a private helper shared with liberar_presupuesto
+  (same state transition, saldo accounting and 'liberacion' movement), and call it once from
+  crates/hexcell/src/main.rs after persistence and the initial budget are ready and before
+  servir_servicios_http, with antiguedad_maxima = configuracion.limite_de_drenaje. Emit the
+  reservas_huerfanas_liberadas event (recuento=N monto=M, or sin cambios); a sweep error is an Aviso
+  and startup continues. Add store and binary tests and append the STATUS and plan notes, following
+  01-blueprint.yaml.
+read:
+  - .ai/tasks/active/HEX-092-new-spec/00-spec.yaml
+  - .ai/tasks/active/HEX-092-new-spec/01-blueprint.yaml
+  - CLAUDE.md
+  - crates/hexcell-storage/src/presupuesto.rs
+  - crates/hexcell-storage/src/tiempo.rs
+  - crates/hexcell-storage/src/lib.rs
+  - crates/hexcell-storage/migraciones/sesiones/0002-saldo-y-movimientos.sql
+  - crates/hexcell-storage/migraciones/sesiones/0004-reservas-sin-conversacion.sql
+  - crates/hexcell-storage/tests/presupuesto.rs
+  - crates/hexcell-storage/tests/comun/mod.rs
+  - crates/hexcell/src/main.rs
+  - crates/hexcell/src/registro.rs
+  - crates/hexcell/tests/comun/mod.rs
+  - crates/hexcell/tests/admin_http.rs
+  - docs/plan/fase-a-4-admision-presupuesto.md
+touch:
+  - crates/hexcell-storage/src/presupuesto.rs
+  - crates/hexcell/src/main.rs
+  - crates/hexcell-storage/tests/barrido_de_reservas.rs
+  - crates/hexcell/tests/barrido_de_reservas.rs
+  - docs/STATUS.md
+  - docs/plan/fase-a-4-admision-presupuesto.md
+forbid:
+  files:
+    - crates/hexcell-storage/migraciones/**
+    - crates/hexcell-storage/src/lib.rs
+    - crates/hexcell-storage/tests/presupuesto.rs
+    - crates/hexcell-admin/**
+    - crates/hexcell-core/**
+    - crates/hexcell-canal-whatsmeow/**
+    - crates/hexcell-canal-simulado/**
+    - crates/hexcell-canal-contrato/**
+    - crates/hexcell-meta/**
+    - crates/hexcell/src/apagado.rs
+    - crates/hexcell/src/configuracion.rs
+    - crates/hexcell/Cargo.toml
+    - crates/hexcell-storage/Cargo.toml
+    - sidecar/**
+    - deploy/**
+    - .github/**
+    - docs/runbook-operacion.md
+    - docs/bitacora-de-descartes.md
+    - docs/adr/**
+    - README.md
+    - Cargo.toml
+    - Cargo.lock
+  behaviors:
+    - "Do not change the signature or observable behaviour of liberar_presupuesto or any other public function; extract a PRIVATE helper over the open transaction and make both callers use it. If reuse seems to need a public signature change, stop and ask the human."
+    - "The sweep must reproduce the complete release accounting: reservas UPDATE to 'liberada' with resuelta_ms, saldo UPDATE (disponible + monto, reservado - monto, actualizado_ms), and one movimientos INSERT clase 'liberacion' per reservation with progressive saldo_resultante; a sweep that skips the movement breaks the ledger sum."
+    - "One transaction for the whole sweep: candidates are selected and released inside it, and any error rolls everything back. Select by estado = 'activa' AND creada_ms < umbral (strict less-than), never modify reservations at or above the threshold or in another state."
+    - "No new environment variable, no schema change or migration, no change to configuracion.rs or apagado.rs; the maximum age is configuracion.limite_de_drenaje."
+    - "The main.rs call sits after the repositorio exists and before servir_servicios_http; a sweep Err emits NivelDeRegistro::Aviso and continues (no return ExitCode::FAILURE, no panic, no unwrap/expect on the sweep result)."
+    - "Emit the event through registro::emitir(EntradaDeRegistro::nueva(..., \"reservas_huerfanas_liberadas\").con_detalle(..)) with detail 'recuento=N monto=M' when N > 0 and a detail containing 'sin cambios' when N == 0."
+    - "Do not add a periodic or runtime sweep; exactly one call at startup."
+    - "Do not add rusqlite or any dependency to crates/hexcell; binary tests use only the repository public API (abrir_persistencia, aportar_presupuesto, reservar_presupuesto, saldo)."
+    - "Test expectations use literals (for example the literal 'recuento=1 monto=3'), never the production code's own computation or constants under test."
+    - "Every guard must be seen failing under one hand mutation applied in the test profile and then reverted; record each mutation and the exact red test name in 04-implementation-log.yaml: m1 (remove the creada_ms < umbral filter), m2 (remove the main.rs call), m3 (release without adding the amount back to saldo.disponible), m4 (move the call after servir_servicios_http, red on the event-order assertion). A mutation whose sed did not match does not count."
+    - "The binary test must drop the seeding pools before launching the binary and read the result through a fresh abrir_persistencia; it must not sleep."
+    - "Docs edits are append-only: STATUS.md keeps the whole HEX-051-a entry and gains a '*(Definido 2026-09-30, HEX-092: ...)*' suffix at its end; the plan file only gains one new paragraph at its end. No line is deleted or reworded. Absolute dates only."
+    - "All identifiers, comments, docs and commit messages in Spanish; Conventional Commits; never add Co-Authored-By or any AI attribution line."
+verify:
+  commands:
+    - cargo fmt --check
+    - cargo clippy --workspace --all-targets -- -D warnings
+    - cargo test --workspace
+    - test -z "$(cargo tree -p hexcell-core --edges normal --prefix none | tail -n +2)"
+    - test -z "$(git log main..HEAD --format=%B | grep -iE 'co-authored|claude')"
+  target_s: 60
+acceptance:
+  human_gate: true
+limits:
+  max_files_changed: 6
+  max_diff_lines: 830  # enmienda 2026-09-30: ratificada por el humano tras la revisión (diff real 822; amplitud de pruebas justificada: umbral exacto, reversión, ingesta sin conversación)
+  max_cost_usd: 4.0
+  per_class:
+    - glob: crates/*/src/**
+      max_diff_lines: 200
+    - glob: crates/*/tests/**
+      max_diff_lines: 460  # enmienda 2026-09-30: ratificada por el humano (tests de almacén 456 líneas)
+    - glob: docs/**
+      max_diff_lines: 30
+execution:
+  mode: worktree_edit
+  branch: ai/HEX-092
+retry_policy:
+  max_attempts: 2
+  escalate_after: 2

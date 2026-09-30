@@ -1,0 +1,3 @@
+entries: []
+summary: Startup sweep of orphaned 'activa' budget reservations older than the drain limit; store method, one main.rs call, tests, append-only docs.
+task_id: HEX-092
