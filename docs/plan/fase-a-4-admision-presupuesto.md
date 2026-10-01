@@ -192,3 +192,13 @@ drenaje (`HEXCELL_LIMITE_DE_DRENAJE_SEGUNDOS`), reutilizando la contabilidad de 
 el arranque, tras abrir la persistencia y antes de que el HTTP acepte tráfico. Un fallo del barrido
 solo se registra como aviso y el arranque continúa: la célula debe poder servir aunque el
 saneamiento falle, porque las reservas huérfanas bloquean saldo pero no impiden atender tráfico.
+
+Deudas de la ejecución (registradas el 2026-10-01): (1) el criterio «el barrido falla y la célula
+arranca igual» no tiene prueba de extremo a extremo sobre el binario, porque forzar el fallo exigía
+tocar `Cargo.toml`/`Cargo.lock` (prohibidos por el contrato); queda cubierto por la prueba de
+rollback de la transacción en `hexcell-storage` y por la lectura del `match` de `main.rs`. (2) La
+guarda que demuestra «antes de que el HTTP acepte tráfico» comprueba el orden de las líneas de
+registro (`reservas_huerfanas_liberadas` antes de `salud_vinculada`), no el instante del `bind` del
+puerto. El evento y sus tres desenlaces quedaron documentados para el operador en
+`docs/runbook-operacion.md`, sección «Arranque de la célula: barrido de reservas huérfanas de
+presupuesto» (2026-10-01).

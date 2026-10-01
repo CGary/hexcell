@@ -380,6 +380,20 @@ Los cuatro comandos de ciclo de vida son reejecutables desde HEX-087 (tarea 15 d
 
 La única excepción es la ausencia de recursos: `cell pause` y `cell unpause` sobre una célula a la que le falta el núcleo o el sidecar fallan con «célula no encontrada» (código 1), y `cell terminate` sin fila y sin contenedores falla igual.
 
+## Arranque de la célula: barrido de reservas huérfanas de presupuesto
+
+Desde HEX-092 (2026-09-30) cada arranque del núcleo —primer despliegue, `cell unpause` o cualquier otro reinicio del contenedor del núcleo— libera en una única transacción toda reserva de presupuesto en estado `'activa'` más antigua que el límite de drenaje (`HEXCELL_LIMITE_DE_DRENAJE_SEGUNDOS`, 20 s por omisión): el monto vuelve a `saldo.disponible` y queda un movimiento `'liberacion'`. El barrido corre tras abrir la persistencia y antes de que el HTTP acepte tráfico; ninguna acción del operador lo dispara ni lo evita.
+
+Qué ver en el registro del núcleo (evento `reservas_huerfanas_liberadas`):
+
+| Nivel | Detalle | Significado |
+|---|---|---|
+| `Info` | `recuento=N monto=M` | Se liberaron N reservas por M unidades: hubo una caída abrupta entre una reserva y su resolución. |
+| `Info` | `sin cambios` | No había reservas huérfanas; es la línea esperada en un arranque normal. |
+| `Aviso` | texto del error | El barrido falló y el arranque **continuó** (también sale por stderr «hexcell: no se pudo barrer las reservas huérfanas de presupuesto: …»). El saldo reservado sigue bloqueado hasta el próximo arranque; si se repite, revisar `sessions.db` con el procedimiento de la sección 7. |
+
+Un `recuento` alto tras un `OOMKilled` no es un defecto del barrido: es la medida de lo que la caída dejó a medias. Regístrelo en el incidente junto con el procedimiento de la sección siguiente.
+
 ---
 
 ## Procedimiento: respuesta ante OOMKilled
