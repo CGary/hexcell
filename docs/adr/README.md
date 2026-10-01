@@ -49,6 +49,7 @@ escriban los registros no coincida con el orden numérico.
 | `adr-0038-segundo-grupo-config-render-en-hexcell-admin.md` | **Grupo `config render` para combinar defaults y overlay KEY=VALUE contra una lista cerrada no secreta, con validación previa, salida estable, `--simular` sin efectos laterales y `Fallo` para contenido inválido.** | A-6 | **Vigente** (2026-09-19) |
 | `adr-0039-almacen-del-plano-de-control.md` | **Almacén SQLite del plano de control en `hexcell-admin` con migración versionada por `PRAGMA user_version`, ruta configurable por variable de entorno, codec de etiquetas ASCII snake_case, y reglas de escritura que validan transiciones antes de Docker y persisten sólo tras éxito.** | A-6 | **Vigente** (2026-09-22) |
 | `adr-0040-protocolo-ipc-version-de-cable-7.md` | **Extiende `adr-0032`: sube el protocolo IPC de 6 a 7 para restablecer contactos con existencia explícita y conteos transaccionales.** | A-6 | **Vigente** (2026-09-30) |
+| `adr-0041-archivo-certificado-de-marcas-de-epoca-sospechosa.md` | **Extiende `adr-0027`: archivar una marca de época sospechosa es renombrar a `.sospechosa.archivada` y anexar la certificación del operador —nunca borrar—; el número de la época sigue reservado, la época archivada sigue sin protección de recencia y sigue siendo un destino de reversión inválido.** | A-5 | **Vigente** (2026-09-30) |
 
 Estos ADR registran lo que se **decidió**. Las alternativas evaluadas y no elegidas, las decisiones
 derogadas y los supuestos que se demostraron falsos se recogen además en

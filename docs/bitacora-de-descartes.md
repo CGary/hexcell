@@ -1,6 +1,6 @@
 # Bitácora de descartes
 
-> Registro de lo que se consideró y **no** se hizo. Última actualización: 2026-09-30 (D-59).
+> Registro de lo que se consideró y **no** se hizo. Última actualización: 2026-09-30 (D-60).
 
 ## Para qué sirve este documento
 
@@ -92,6 +92,7 @@ se apoya en un principio de diseño, no.
 | [D-56](#d-56) | Parser externo para la configuración de células | Principio de diseño, no reabrir |
 | [D-57](#d-57) | `hexcell-admin` abre una conexión IPC directa con el sidecar | Reabrir si el protocolo IPC admite un canal de control separado o multiplexación |
 | [D-59](#d-59) | Contenedor hermano con `sqlite3` para restablecer contactos | Reabrir si la imagen de la sonda incorpora una herramienta aprobada y un ADR nuevo autoriza el acceso externo a `identidad.db` |
+| [D-60](#d-60) | Borrar la marca de época sospechosa al archivarla | Reabrir si la política de retención de evidencia cambia y un ADR nuevo autoriza la destrucción de marcas |
 
 ---
 
@@ -936,6 +937,35 @@ transacción, por una orden IPC nueva (`adr-0040`).
 
 Que la imagen de la sonda incorporase una herramienta aprobada y que un ADR nuevo autorizase de forma
 explícita el acceso de escritura externo a `identidad.db`, sin reintroducir vigilancia externa.
+
+---
+
+### D-60: Borrar la marca de época sospechosa al archivarla
+
+**Descartado el:** 2026-09-30  
+**Decisión registrada en:** adr-0041
+
+### Qué se consideró
+
+Que el archivo de una marca de época sospechosa (HEX-093) pudiera **eliminar** la marca
+`knowledge_epoch_N.sospechosa` en lugar de renombrarla a `.sospechosa.archivada`, liberando así el
+directorio de datos de un archivo que el operador ya certificó como irrelevante.
+
+### Por qué se descartó
+
+La marca es evidencia forense de una reversión por defecto, y la doctrina de `adr-0027` la declara
+permanente e inmune a la purga. Borrarla al archivarla rompería esa inmunidad por una puerta nueva:
+el operador podría certificar una época defectuosa solo para destruir el rastro de que existió. El
+renombrado a `.sospechosa.archivada` con la certificación anexada logra el objetivo operativo —
+separar lo vigente de lo ya saneado— sin perder ni un byte del contenido original, y el número de
+la época sigue reservado, así que tampoco se gana espacio ni números reutilizables. El coste de
+conservar la marca archivada es un archivo de texto diminuto por época saneada.
+
+### Qué tendría que cambiar para reabrirlo
+
+Que la política de retención de evidencia cambiara y un ADR nuevo autorizara explícitamente la
+destrucción de marcas —p. ej. por un límite reglamentario de retención—, con la condición de
+reapertura registrada aquí.
 
 ---
 

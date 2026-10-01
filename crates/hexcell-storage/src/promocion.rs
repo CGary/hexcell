@@ -152,6 +152,42 @@ pub enum DesenlaceDePromocion {
     },
 }
 
+/// Lista las rutas candidatas a escanear para numerar la siguiente época.
+///
+/// Único punto del sitio de numeración que lista y filtra nombres: el escaneo posterior itera
+/// esta lista y deja en el bucle la apertura SQLite y la consulta. Un fallo de `read_dir` mapea a
+/// [`ErrorDeAlmacen::RutaDeDatosInaccesible`]; los de entrada se omiten. Una marca archivada queda
+/// fuera igual que una activa: jamás se confunde con una base de datos de época.
+pub(crate) fn rutas_de_epoca_a_escanear_para_numerar(
+    ruta_datos: &Path,
+) -> Result<Vec<PathBuf>, ErrorDeAlmacen> {
+    let entradas =
+        std::fs::read_dir(ruta_datos).map_err(|causa| ErrorDeAlmacen::RutaDeDatosInaccesible {
+            ruta: ruta_datos.to_path_buf(),
+            causa,
+        })?;
+
+    let mut rutas = Vec::new();
+    for entrada_res in entradas {
+        let entrada = match entrada_res {
+            Ok(e) => e,
+            Err(_) => continue,
+        };
+        let ruta = entrada.path();
+        if std::fs::metadata(&ruta).is_ok_and(|m| m.is_dir()) {
+            continue;
+        }
+        let Some(nombre) = ruta.file_name().and_then(|n| n.to_str()) else {
+            continue;
+        };
+        if crate::retencion::es_nombre_ajeno_al_escaneo_de_epocas(nombre) {
+            continue;
+        }
+        rutas.push(ruta);
+    }
+    Ok(rutas)
+}
+
 /// Obtiene el siguiente número de época determinista a partir del contenido interno de los archivos.
 ///
 /// Recorre el directorio de datos buscando archivos de base de datos SQLite, abre cada candidato
@@ -160,38 +196,9 @@ pub enum DesenlaceDePromocion {
 /// silenciosamente en vez de abortar el escaneo. Devuelve el número máximo observado más uno,
 /// o 1 si no existe ninguna época sellada previa.
 pub fn numero_de_epoca_siguiente(ruta_datos: &Path) -> Result<i64, ErrorDeAlmacen> {
-    let entradas =
-        std::fs::read_dir(ruta_datos).map_err(|causa| ErrorDeAlmacen::RutaDeDatosInaccesible {
-            ruta: ruta_datos.to_path_buf(),
-            causa,
-        })?;
-
     let mut maxima_epoca_observada: i64 = 0;
 
-    for entrada_res in entradas {
-        let entrada = match entrada_res {
-            Ok(e) => e,
-            Err(_) => continue,
-        };
-
-        let ruta = entrada.path();
-        if std::fs::metadata(&ruta).is_ok_and(|m| m.is_dir()) {
-            continue;
-        }
-        if ruta
-            .file_name()
-            .and_then(|n| n.to_str())
-            .is_some_and(|nombre| {
-                nombre == NOMBRE_DE_ARCHIVO_DE_CONOCIMIENTO_EN_SOMBRA
-                    || nombre.starts_with('.')
-                    || nombre.ends_with("-wal")
-                    || nombre.ends_with("-shm")
-                    || nombre.ends_with(crate::retencion::SUFIJO_DE_MARCA_DE_EPOCA_SOSPECHOSA)
-            })
-        {
-            continue;
-        }
-
+    for ruta in rutas_de_epoca_a_escanear_para_numerar(ruta_datos)? {
         let conexion = match abrir_solo_lectura(&ruta) {
             Ok(c) => c,
             Err(_) => continue,

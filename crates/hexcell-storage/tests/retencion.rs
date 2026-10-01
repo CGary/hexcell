@@ -19,8 +19,9 @@ use hexcell_storage::migraciones::aplicar_migraciones_de_conocimiento;
 use hexcell_storage::pools::GestorDePools;
 use hexcell_storage::promocion::promover_epoca;
 use hexcell_storage::retencion::{
-    EpocaConservada, MotivoDeConservacion, SUFIJO_DE_MARCA_DE_EPOCA_SOSPECHOSA,
-    VENTANA_DE_RETENCION_DE_EPOCAS_POR_DEFECTO, escribir_marca_de_epoca_sospechosa,
+    CertificacionDeArchivo, EpocaConservada, MotivoDeConservacion,
+    SUFIJO_DE_MARCA_DE_EPOCA_SOSPECHOSA, VENTANA_DE_RETENCION_DE_EPOCAS_POR_DEFECTO,
+    archivar_marca_de_epoca_sospechosa, escribir_marca_de_epoca_sospechosa,
     purgar_epocas_retiradas,
 };
 use rusqlite::Connection;
@@ -665,4 +666,82 @@ fn verificar_punto_ciego_b_marca_con_numero_discrepante_aborta_toda_la_purga() {
     // Ningún archivo de época fue purgado
     assert!(temp.ruta().join("knowledge_epoch_1.db").exists());
     assert!(temp.ruta().join("knowledge_epoch_2.db").exists());
+}
+
+/// GUARD-11-BIS: una marca ARCHIVADA (`.sospechosa.archivada`, HEX-093) sigue sin protección de
+/// recencia y su número sigue reservado.
+///
+/// Espejo de GUARD-11 con la marca de la época 3 archivada en vez de activa: con ventana 1, la
+/// época 3 marcada (aunque archivada) se purga y la época 2 ocupa la única plaza de ventana. El
+/// archivo de marca archivada sobrevive a la purga y el escaneo jamás lo toma por una base de
+/// época. Si la purga construyera su propio conjunto solo con marcas activas, la época 3 entraría
+/// como candidata sana, tomaría la plaza de ventana y la época 2 sería purgada — la prueba se
+/// pondría roja (guardas m3 y m6).
+#[test]
+fn verificar_guarda_11_bis_marca_archivada_sigue_sin_proteccion_de_recencia() {
+    let temp = DirectorioTemporal::nuevo("guarda-11-bis-marca-archivada");
+    let gestor = GestorDePools::abrir(temp.ruta()).expect("abrir gestor");
+
+    // Tres épocas: 1, 2, 3. Época viva es 1. Época 3 porta marca sospechosa ARCHIVADA.
+    crear_epoca_sellada(temp.ruta(), 1, "knowledge_epoch_1.db");
+    crear_epoca_sellada(temp.ruta(), 2, "knowledge_epoch_2.db");
+    crear_epoca_sellada(temp.ruta(), 3, "knowledge_epoch_3.db");
+
+    hexcell_storage::promocion::reasignar_enlace_simbolico_vivo(
+        temp.ruta(),
+        "knowledge_epoch_1.db",
+    )
+    .unwrap();
+
+    // Marca activa y luego archivada por el camino real de HEX-093 (renombrado + certificación).
+    escribir_marca_de_epoca_sospechosa(temp.ruta(), 3, "revertida por defecto", "2026-08-31")
+        .expect("escribir marca 3");
+    archivar_marca_de_epoca_sospechosa(
+        temp.ruta(),
+        3,
+        &CertificacionDeArchivo {
+            certifico: "operador de turno".to_string(),
+            motivo: "época defectuosa archivada".to_string(),
+        },
+    )
+    .expect("archivar marca 3");
+
+    // Precondición: la activa quedó renombrada y la archivada existe.
+    assert!(!temp.ruta().join("knowledge_epoch_3.sospechosa").exists());
+    assert!(
+        temp.ruta()
+            .join("knowledge_epoch_3.sospechosa.archivada")
+            .exists()
+    );
+
+    // Con ventana 1:
+    // - Época 1: EsLaEpocaViva
+    // - Época 2 (sana): DentroDeLaVentanaDeRetencion (ocupa la única plaza disponible)
+    // - Época 3 (marcada, aunque archivada): NO ocupa plaza y SE PURGA
+    let desenlace = purgar_epocas_retiradas(&gestor, temp.ruta(), 1).expect("purgar con ventana 1");
+
+    assert_eq!(desenlace.epocas_purgadas.len(), 1);
+    assert_eq!(desenlace.epocas_purgadas[0].numero_de_epoca, 3);
+    assert!(!temp.ruta().join("knowledge_epoch_3.db").exists());
+    assert!(
+        temp.ruta()
+            .join("knowledge_epoch_3.sospechosa.archivada")
+            .exists(),
+        "la marca archivada sobrevive a la purga de su época"
+    );
+
+    let mapa_conservadas: std::collections::BTreeMap<i64, MotivoDeConservacion> = desenlace
+        .epocas_conservadas
+        .into_iter()
+        .map(|c| (c.numero_de_epoca, c.motivo))
+        .collect();
+
+    assert_eq!(
+        mapa_conservadas.get(&1),
+        Some(&MotivoDeConservacion::EsLaEpocaViva)
+    );
+    assert_eq!(
+        mapa_conservadas.get(&2),
+        Some(&MotivoDeConservacion::DentroDeLaVentanaDeRetencion)
+    );
 }

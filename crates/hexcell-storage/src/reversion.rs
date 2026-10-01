@@ -36,7 +36,7 @@ use crate::validacion::{MotivoDeRechazo, VeredictoDeIntegridad, validar_integrid
 /// partir de hoy mentiría sobre cuándo ocurrió la reversión. Se reutiliza `tiempo::a_milisegundos`
 /// para no repetir su política de saturación en los extremos del reloj, y solo se añade aquí la
 /// conversión de milisegundos a fecha civil que el formato de la marca exige.
-fn fecha_absoluta_de_hoy() -> String {
+pub(crate) fn fecha_absoluta_de_hoy() -> String {
     let milisegundos = crate::tiempo::a_milisegundos(SystemTime::now());
     let dias_desde_epoch = milisegundos.div_euclid(86_400_000);
     let (anio, mes, dia) = fecha_civil_desde_dias_desde_epoch(dias_desde_epoch);

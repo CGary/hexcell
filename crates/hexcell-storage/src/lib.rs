@@ -82,9 +82,12 @@ pub use promocion::{
 pub use recuperacion::recuperar_contexto;
 pub use respaldo::{CopiaVerificada, respaldar_base, verificar_destino_disponible};
 pub use retencion::{
-    DesenlaceDePurga, EpocaConservada, EpocaPurgada, MarcaDeEpocaSospechosa, MotivoDeConservacion,
+    CertificacionDeArchivo, CertificacionRegistrada, DesenlaceDeArchivoDeMarca, DesenlaceDePurga,
+    EntradaDeMarcaListada, EpocaConservada, EpocaPurgada, EstadoDeMarca, MarcaDeEpocaSospechosa,
+    MotivoDeConservacion, MotivoDeRechazoDeArchivo, SUFIJO_DE_MARCA_ARCHIVADA,
     SUFIJO_DE_MARCA_DE_EPOCA_SOSPECHOSA, VENTANA_DE_RETENCION_DE_EPOCAS_POR_DEFECTO,
-    escribir_marca_de_epoca_sospechosa, leer_marcas_de_epoca_sospechosa, numeros_de_epoca_marcados,
+    archivar_marca_de_epoca_sospechosa, escribir_marca_de_epoca_sospechosa,
+    leer_marcas_de_epoca_sospechosa, listar_marcas_de_epoca_sospechosa, numeros_de_epoca_marcados,
     purgar_epocas_retiradas,
 };
 pub use reversion::{
