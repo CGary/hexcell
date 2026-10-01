@@ -1,0 +1,80 @@
+{
+  "commands": [
+    {
+      "command": "cargo fmt --check",
+      "duration_s": 0.35,
+      "exit_code": 0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "cargo clippy --workspace --all-targets -- -D warnings",
+      "duration_s": 0.11,
+      "exit_code": 0,
+      "output_excerpt": "    Checking hexcell-admin v0.1.0 (/home/gary/dev/hexcell/worktrees/HEX-093-new-spec/crates/hexcell-admin)\n    Checking hexcell v0.1.0 (/home/gary/dev/hexcell/worktrees/HEX-093-new-spec/crates/hexcell)\n    Finished `dev` profile [unoptimized + debuginfo] target(s) in 1.17s"
+    },
+    {
+      "command": "cargo test --workspace",
+      "duration_s": 16.02,
+      "exit_code": 0,
+      "output_excerpt": "98 test binaries ok; 761 passed, 0 failed"
+    },
+    {
+      "command": "test \"$(cargo tree -p hexcell-core --prefix none -e normal | grep -vc '^hexcell-core ')\" -eq 0",
+      "duration_s": 0.04,
+      "exit_code": 0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "test \"$(git rev-list --count main..HEAD)\" -ge 1 \u0026\u0026 test -z \"$(git status --porcelain)\"",
+      "duration_s": 0.01,
+      "exit_code": 0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "test -z \"$(git log main..HEAD --format=%B | grep -iE 'co-authored|claude')\"",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "git diff --quiet \"$(git merge-base main HEAD)\" -- crates/hexcell-admin sidecar deploy .github README.md docs/runbook-operacion.md docs/PRD.md Cargo.lock Cargo.toml crates/hexcell/Cargo.toml crates/hexcell-storage/Cargo.toml crates/hexcell-core crates/hexcell-storage/migraciones crates/hexcell-storage/src/error.rs crates/hexcell/tests/admin_http.rs crates/hexcell/tests/comun docs/adr/adr-0027-retencion-y-purga-de-epocas.md",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "test \"$(cargo test -q -p hexcell-storage --lib -- --list 2\u003e/dev/null | grep -cE '(archivar_renombra_y_conserva_contenido_original_con_certificacion|archivar_con_certificacion_vacia_se_rechaza_sin_tocar_archivos|numeros_marcados_cuenta_vigentes_y_archivadas|escaneo_de_epocas_excluye_marcas_archivadas|escaneo_de_purga_no_considera_marcas_archivadas|escaneo_de_numeracion_no_considera_marcas_archivadas): test$')\" -eq 6",
+      "duration_s": 0.04,
+      "exit_code": 0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "test \"$(cargo test -q -p hexcell-storage --test retencion -- --list 2\u003e/dev/null | grep -c 'verificar_guarda_11_bis_marca_archivada_sigue_sin_proteccion_de_recencia: test$')\" -eq 1",
+      "duration_s": 0.04,
+      "exit_code": 0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "test \"$(cargo test -q -p hexcell --test epocas_admin -- --list 2\u003e/dev/null | grep -cE '(post_archivar_valido_responde_archivada_y_get_la_muestra_archivada|post_archivar_sin_certifico_o_vacio_responde_400_sin_tocar_la_marca): test$')\" -eq 2",
+      "duration_s": 0.05,
+      "exit_code": 0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "bash \"$(git rev-parse --git-common-dir)/../.ai/tasks/active/HEX-093-new-spec/guarda-hex-093.sh\"",
+      "duration_s": 0.06,
+      "exit_code": 0,
+      "output_excerpt": "guarda-hex-093: OK"
+    },
+    {
+      "command": "bash \"$(git rev-parse --git-common-dir)/../.ai/tasks/active/HEX-093-new-spec/guarda-hex-093.sh\" --autoprueba",
+      "duration_s": 0.02,
+      "exit_code": 0,
+      "output_excerpt": "ok  m6 conjunto propio: esperado=purga-sin-fuente-unica obtenido=purga-sin-fuente-unica\nok  m6 conjunto propio además: esperado=purga-conjunto-propio obtenido=purga-conjunto-propio\nautoprueba: 45 casos, todos con el veredicto esperado"
+    }
+  ],
+  "executed_at": "2026-09-30T22:07:08Z",
+  "overall_result": "passed",
+  "summary": "12/12 verify commands exit 0 on HEAD 9cf3e20 (run by orchestrator; implement recovered from fleet forensic ref, rebased on main 35e6775).",
+  "task_id": "HEX-093"
+}

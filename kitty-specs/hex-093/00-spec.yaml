@@ -1,0 +1,88 @@
+task_id: HEX-093
+summary: Core admin routes to list and archive suspect-epoch marks (.sospechosa) with mandatory operator certification; marks are archived, never deleted, number stays reserved. Risk medium.
+goal: >-
+  Give the cell core an operator surface for sanitizing suspect-epoch marks (adr-0027, STATUS.md
+  Pendiente of 2026-08-31, HEX-057-b). Add GET /admin/epocas/sospechosas to list marks and
+  POST /admin/epocas/sospechosas/archivar (JSON body, exact-literal route, no path params) to archive one.
+  Archiving renames knowledge_epoch_N.sospechosa to knowledge_epoch_N.sospechosa.archivada and appends the
+  operator certification (certifico, motivo, absolute ISO date) while keeping the original content. The
+  epoch number stays reserved. Implemented as NEW public functions in hexcell-storage retencion.rs
+  (archivar_marca_de_epoca_sospechosa taking a CertificacionDeArchivo) plus handlers in
+  crates/hexcell/src/admin.rs. This is child "a" (core only); the hexcell-admin subcommand, README and
+  runbook belong to a later child "b". Plan append target is docs/plan/fase-a-5-conocimiento-shadow-db.md,
+  task 8 (retention and reversion of epochs), which owns adr-0027.
+invariants:
+  - A suspect-epoch mark file is never deleted on any path; archiving only renames and appends.
+  - The epoch number of an archived mark stays reserved, so numeros_de_epoca_marcados includes both active and archived marks and ordinary purge and next-number assignment behave as before.
+  - The epoch file scan never mistakes a .sospechosa.archivada file for an epoch database file.
+  - Archiving requires non-empty certifico and motivo; an empty or missing value is rejected with 400 and no file changes.
+  - Re-running archive on an already archived mark is idempotent and reports sin_cambios without modifying files.
+  - An unreadable or mismatched mark never turns the listing into a 500; it appears as an entry with estado ilegible.
+  - No existing public signature of hexcell-storage changes (only new functions, public_api false); no fsync is introduced, matching the existing writer (std::fs::write plus rename).
+  - hexcell-core keeps zero external dependencies.
+acceptance:
+  - id: AC-1
+    statement: GET /admin/epocas/sospechosas lists all marks as JSON with estado vigente or archivada and certificacion null or an object.
+    given: a cell data directory with zero marks, then with one written mark
+    when: the operator issues GET /admin/epocas/sospechosas
+    then: the first response is 200 with an empty marcas array; the second is 200 listing numero_de_epoca, motivo, fecha_absoluta, estado vigente and certificacion null.
+  - id: AC-2
+    statement: An unreadable or number-mismatched mark is reported as an entry with estado ilegible and an error variant name, and the rest of the listing is still returned with status 200.
+    given: a data directory with one valid mark and one corrupt or mismatched mark
+    when: the operator lists marks
+    then: the response is 200 containing the valid entry plus an entry with estado ilegible and an error field, never a 500.
+  - id: AC-3
+    statement: POST /admin/epocas/sospechosas/archivar with numero_de_epoca, non-empty certifico and non-empty motivo renames the mark to .sospechosa.archivada, appends the certification, keeps the original content, and answers 200 with resultado archivada.
+    given: an existing active mark for epoch N
+    when: the operator posts a valid archive body
+    then: the response is 200 with resultado archivada; knowledge_epoch_N.sospechosa no longer exists; knowledge_epoch_N.sospechosa.archivada exists with the original content plus the certification; a following GET shows estado archivada with the certification.
+  - id: AC-4
+    statement: Archiving an already archived mark returns 200 with resultado sin_cambios and leaves files untouched.
+    given: a mark for epoch N already archived
+    when: the operator posts the same archive body again
+    then: the response is 200 with resultado sin_cambios and the archived file is byte-identical.
+  - id: AC-5
+    statement: Archiving a non-existent mark returns 404 with an explicit JSON discriminant.
+    given: no mark exists for epoch N
+    when: the operator posts an archive body for N
+    then: the response is 404 with JSON resultado marca_inexistente and numero_de_epoca N (not an empty body).
+  - id: AC-6
+    statement: A body missing or with empty certifico or motivo, or a malformed body, is rejected with 400 and no file changes.
+    given: an existing active mark
+    when: the operator posts a body without certifico, with empty certifico, or with empty motivo
+    then: the response is 400 and the active mark file is unchanged.
+  - id: AC-7
+    statement: numeros_de_epoca_marcados counts active and archived marks, so ordinary purge and number assignment keep excluding and reserving archived epochs.
+    given: one active mark and one archived mark for different epochs
+    when: numeros_de_epoca_marcados is called
+    then: both epoch numbers are returned.
+  - id: AC-8
+    statement: The epoch file scan skips names ending in .sospechosa.archivada and does not treat them as epoch files.
+    given: a data directory containing a knowledge_epoch_N.sospechosa.archivada file
+    when: the epoch scan runs
+    then: no epoch candidate is produced from that file and no error is raised.
+  - id: AC-9
+    statement: Mutation guard m1 - an archive implementation that deletes the mark instead of renaming it turns red the storage unit test that asserts the .sospechosa.archivada file exists with the original content and the integration test epocas_admin that lists the archived mark after POST.
+  - id: AC-10
+    statement: Mutation guard m2 - an archive that does not require certifico turns red the storage unit test for empty certification and the epocas_admin integration test that posts a body without certifico expecting 400.
+  - id: AC-11
+    statement: Mutation guard m3 - a numeros_de_epoca_marcados that leaves out archived marks turns red the storage unit test that counts active plus archived marks (AC-7).
+  - id: AC-12
+    statement: Mutation guard m4 - removing the widening of the scan filter for the .sospechosa.archivada suffix turns red the storage unit test that asserts the epoch scan does not take an archived mark as an epoch (AC-8).
+  - id: AC-13
+    statement: Docs are updated append-only - a new ADR (next free number read from disk at implement time, today adr-0041) extending adr-0027 with its row in docs/adr/README.md; a bitacora entry at the next free D-NN (today D-60) only if the discard of truly deleting the mark is studied, in the same commit; an appended update sentence at the end of the docs/STATUS.md entry of line 469 without moving it to Definido; one appended sentence in docs/plan/fase-a-5-conocimiento-shadow-db.md task 8.
+  - id: AC-14
+    statement: Contract verification passes - cargo fmt --check, cargo clippy --workspace --all-targets -- -D warnings, cargo test --workspace, cargo tree -p hexcell-core with no external dependencies, and no commit message on the branch contains co-authored or claude.
+risk: medium
+non_goals:
+  - Do not touch crates/hexcell-admin (the admin subcommand is child b), nor README.md or docs/runbook-operacion.md.
+  - Do not delete mark files, add a purge or cleanup command, or re-debate D-57 (hexcell-admin opens no IPC with the sidecar) or D-59 (no sibling container with sqlite3).
+  - Do not introduce fsync, change existing public signatures of hexcell-storage, or add path-parameter routes.
+  - Do not touch sidecar, deploy, .github, Cargo.lock or crates/hexcell-storage/migraciones.
+constraints:
+  - All repository content (code identifiers, comments, docs, commits) is in Spanish; conventional commits with no AI attribution.
+  - Difficulty tier is logic on an existing skeleton; expected complexity band M, eligible for external fleet implementation.
+  - "Allowed touch is crates/hexcell/src/admin.rs, crates/hexcell-storage/src/retencion.rs, crates/hexcell-storage/src/error.rs (only if a new variant is needed), new crates/hexcell/tests/epocas_admin.rs, a new docs/adr file, docs/adr/README.md, docs/bitacora-de-descartes.md (append only), docs/STATUS.md (append only at line 469), docs/plan/fase-a-5-conocimiento-shadow-db.md (append only)."
+  - "Forbidden: crates/hexcell-admin/**, sidecar/**, deploy/**, .github/**, README.md, docs/runbook-operacion.md, Cargo.lock, crates/hexcell-storage/migraciones/**. If archiving turns out to require changing an existing public signature, stop and ask the human (it would raise the band to L)."
+  - The new route uses an exact literal in enrutar_admin, follows the RestablecerContacto handler pattern (bounded body, serde_json, respuesta_json), and integration tests reuse the admin_http.rs helpers.
+  - ADR and D-NN numbers must be read from disk at implement time, never assumed.

@@ -1,0 +1,58 @@
+entries:
+  - changed_files:
+      - crates/hexcell-storage/src/retencion.rs
+    notes:
+      - "Value objects añadidos en retencion.rs: SUFIJO_DE_MARCA_ARCHIVADA (.sospechosa.archivada), CertificacionDeArchivo, CertificacionRegistrada, EstadoDeMarca, EntradaDeMarcaListada, DesenlaceDeArchivoDeMarca y MotivoDeRechazoDeArchivo. El rechazo de certificación es un valor de resultado (precedente DesenlaceDeReversion::Rechazada), así que error.rs no se tocó y no hay variantes nuevas de ErrorDeAlmacen."
+      - "Parser privado interpretar_archivo_de_marca extraído de leer_marcas_de_epoca_sospechosa: interpreta UN archivo dado el sufijo de su nombre (activo o archivado) y lee además las líneas opcionales certificacion_certifico/certificacion_motivo/certificacion_fecha_absoluta. leer_marcas_de_epoca_sospechosa conserva firma y comportamiento exactos (solo activas, aborta ante la primera mala)."
+      - "archivar_marca_de_epoca_sospechosa: valida primero (certifico/motivo no vacíos tras trim, sin caracteres de control; Rechazada sin tocar el sistema de archivos), luego rename a .sospechosa.archivada y anexo de las tres líneas de certificación con OpenOptions::append (nunca trunca, sin fsync); fecha de crate::reversion::fecha_absoluta_de_hoy. Idempotencia: archivada con certificación -> SinCambios; archivada sin certificación (ventana de caída) -> solo anexo -> Archivada; ambos archivos presentes -> Err sin renombrar (rename sobrescribiría); ninguno -> MarcaInexistente. Ningún remove_file."
+      - "numeros_de_epoca_marcados ahora une marcas activas y archivadas (numeros_de_marcas_archivadas lee estrictamente por el parser compartido); purgar_epocas_retiradas paso 4 llama numeros_de_epoca_marcados(ruta_datos) y no arma su propio conjunto con leer_marcas_de_epoca_sospechosa."
+      - "Predicado compartido pub(crate) es_nombre_ajeno_al_escaneo_de_epocas (cinco cláusulas existentes + ends_with(SUFIJO_DE_MARCA_ARCHIVADA)) y una función de listado por sitio: rutas_de_epoca_a_escanear_en_purga (retencion.rs) y rutas_de_epoca_a_escanear_para_numerar (promocion.rs); cada escaneo itera su listado y ninguno conserva el filtro viejo en línea."
+      - "Módulo de pruebas #[cfg(test)] mod pruebas al final de retencion.rs con directorio temporal propio bajo std::env::temp_dir (nombre único por etiqueta/pid/secuencia) sin dependencias nuevas. El directorio no se borra al salir de alcance a propósito: la guarda estática de HEX-093 cuenta las apariciones del verbo de eliminación en retencion.rs y el módulo de pruebas vive en el mismo archivo."
+    verify_pending: true
+  - changed_files:
+      - crates/hexcell-storage/src/promocion.rs
+    notes:
+      - "rutas_de_epoca_a_escanear_para_numerar extraída (read_dir + salto de directorios + filtro por el predicado compartido); numero_de_epoca_siguiente itera el listado y conserva en el bucle la apertura SQLite y la consulta de metadatos. Unión con numeros_de_epoca_marcados intacta (ya hereda las marcas archivadas)."
+    verify_pending: true
+  - changed_files:
+      - crates/hexcell-storage/src/reversion.rs
+    notes:
+      - "Único cambio: fn fecha_absoluta_de_hoy pasa a pub(crate) para que retencion.rs anexe la misma fecha en la certificación de archivo."
+    verify_pending: true
+  - changed_files:
+      - crates/hexcell-storage/src/lib.rs
+    notes:
+      - "Reexportados los items públicos nuevos de retencion en el bloque pub use existente (se añaden nombres, no se quita ninguno)."
+    verify_pending: true
+  - changed_files:
+      - crates/hexcell/src/admin.rs
+    notes:
+      - "Dos variantes nuevas de RutaAdmin (ListarMarcasDeEpoca, ArchivarMarcaDeEpoca) y dos literales exactos en enrutar_admin: (GET, /admin/epocas/sospechosas) y (POST, /admin/epocas/sospechosas/archivar)."
+      - "DTO ArchivarMarcaEntrante { numero_de_epoca, #[serde(default)] certifico, #[serde(default)] motivo } con deny_unknown_fields: un cuerpo sin certifico/motivo deserializa con cadenas vacías y llega a la compuerta de la capa de persistencia (única puerta de validación, guarda m2 en las dos capas)."
+      - "atender_listado_de_marcas y atender_archivo_de_marca como servicios de aplicación puros (StatusCode, serde_json::Value); cableado en atender_peticion_de_admin siguiendo el patrón de RestablecerContacto (acumular_cuerpo_acotado 413, serde_json::from_slice 400, respuesta_json). Mapeo: Archivada/SinCambios 200, MarcaInexistente 404, Rechazada 400, Err 500; listado: Ok 200 {marcas:[...]}, Err 500."
+    verify_pending: true
+  - changed_files:
+      - crates/hexcell-storage/tests/retencion.rs
+    notes:
+      - "verificar_guarda_11_bis_marca_archivada_sigue_sin_proteccion_de_recencia añadida al final (append-only), espejo de guarda 11 con la marca 3 archivada por el camino real de HEX-093: con ventana 1 la época 3 marcada (aunque archivada) se purga, la 2 ocupa la plaza de ventana, la marca archivada sobrevive y el escaneo no la toma por base de época."
+    verify_pending: true
+  - changed_files:
+      - crates/hexcell/tests/epocas_admin.rs
+    notes:
+      - "Nuevo archivo de integración con mod comun y las ayudas existentes (DirectorioTemporal, lanzar_binario_con_ruta_de_datos, peticion_http_cruda, peticion_http_post_cruda, binario.direccion_admin). Ocho pruebas: listado vacío, vigente con certificación nula, ilegible sin 500, archivo válido + GET posterior, idempotencia byte a byte, 404 con discriminante, 400 sin tocar la marca (incluido el cuerpo sin certifico que debe llegar a la compuerta de almacenamiento vía serde default) y enrutado de literales exactos."
+    verify_pending: true
+  - changed_files:
+      - crates/hexcell-storage/src/retencion.rs
+    notes:
+      - "Guardas de mutación ejecutadas a mano (cada mutación confirmada con git diff no vacío antes de confiar en el rojo), m1..m7:"
+      - "m1 (rename reemplazado por remove_file+write vacío): rojo en archivar_renombra_y_conserva_contenido_original_con_certificacion y post_archivar_valido_responde_archivada_y_get_la_muestra_archivada."
+      - "m2 (validación de certificación eliminada): rojo en archivar_con_certificacion_vacia_se_rechaza_sin_tocar_archivos y post_archivar_sin_certifico_o_vacio_responde_400_sin_tocar_la_marca."
+      - "m3 (numeros_de_epoca_marcados solo activas): rojo en numeros_marcados_cuenta_vigentes_y_archivadas y verificar_guarda_11_bis_marca_archivada_sigue_sin_proteccion_de_recencia."
+      - "m4 (listado de purga con el filtro viejo en línea): rojo en escaneo_de_purga_no_considera_marcas_archivadas; escaneo_de_numeracion_no_considera_marcas_archivadas sigue verde."
+      - "m5 (listado de numeración con el filtro viejo en línea): rojo en escaneo_de_numeracion_no_considera_marcas_archivadas; escaneo_de_purga_no_considera_marcas_archivadas sigue verde."
+      - "m6 (purga arma su propio conjunto con leer_marcas_de_epoca_sospechosa): rojo en verificar_guarda_11_bis_marca_archivada_sigue_sin_proteccion_de_recencia y la guarda estática reporta FALLA[purga-sin-fuente-unica]."
+      - "m7 (cláusula archivada quitada del predicado compartido): rojo en escaneo_de_epocas_excluye_marcas_archivadas y en los dos escaneos de sitio."
+      - "Tras compactar el módulo de pruebas para cumplir el límite por clase de crates/hexcell-storage/src (899/900 líneas de diff), se re-verificaron por mutación las guardas estructurales m1, m2, m4 y m7 sobre las pruebas compactadas: todas siguen poniéndose rojas con las mismas pruebas (m1: archivar_renombra_y_conserva_contenido_original_con_certificacion; m2: archivar_con_certificacion_vacia_se_rechaza_sin_tocar_archivos; m4: escaneo_de_purga_no_considera_marcas_archivadas con escaneo_de_numeracion verde; m7: escaneo_de_epocas_excluye_marcas_archivadas más los dos escaneos de sitio)."
+    verify_pending: true
+summary: Core admin routes to list and archive suspect-epoch marks with mandatory certification; marks are renamed to .sospechosa.archivada plus appended certification, never deleted; numbers stay reserved.
+task_id: HEX-093

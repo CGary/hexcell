@@ -1,0 +1,20 @@
+{
+  "contract_compliance": true,
+  "fix_tasks": [],
+  "forbidden_files_touched": [],
+  "functional_risk": "low",
+  "missing_tests": [],
+  "notes": [
+    "Archive = rename + OpenOptions::append, no deletion (remove_file counts equal base), no fsync; numeros_de_epoca_marcados unions active+archived and purgar_epocas_retiradas calls it; per-site listing fns call the shared predicate; both admin routes are exact literals; listing is tolerant. STATUS entry stays Pendiente; adr-0041 extends adr-0027 and states the archived epoch remains an invalid reversion target; D-60 is a genuine discard with index row and header update.",
+    "contract-check ok=false with one violation: docs/adr/README.md matches forbid pattern README.md by base name; false positive, docs/adr/README.md is explicitly in touch and root README.md is untouched (verify command 7 passed). not_checked: forbid.behaviors (judged by hand).",
+    "Mutations in throwaway clone (diff non-empty confirmed each time): m1 -\u003e archivar_renombra_y_conserva_contenido_original_con_certificacion, post_archivar_valido_responde_archivada_y_get_la_muestra_archivada (also archivar_reejecutado, numeros_marcados, guarda_11_bis, post_archivar_repetido; guard FALLA[borrado]); m2 -\u003e archivar_con_certificacion_vacia_se_rechaza_sin_tocar_archivos, post_archivar_sin_certifico_o_vacio_responde_400_sin_tocar_la_marca; m3 -\u003e numeros_marcados_cuenta_vigentes_y_archivadas, verificar_guarda_11_bis_marca_archivada_sigue_sin_proteccion_de_recencia; m4 -\u003e escaneo_de_purga_no_considera_marcas_archivadas only (numeracion green; guard FALLA[escaneo-sin-predicado]); m5 -\u003e escaneo_de_numeracion_no_considera_marcas_archivadas only (purga green; guard FALLA[escaneo-sin-predicado]); m6 -\u003e verificar_guarda_11_bis plus guard FALLA[purga-sin-fuente-unica]; m7 -\u003e escaneo_de_epocas_excluye_marcas_archivadas plus both site tests. Extra m2b (control-char check removed) -\u003e unit test red via the newline case. No surviving mutation.",
+    "guarda-hex-093.sh: green on branch, red on base main with 5 named causes, --autoprueba 45/45 with matching FALLA codes; real-mode probes on hand-mutated docs fail for the stated reason (status-no-anexa, bitacora-no-anexa, plan-sin-hex, readme-no-anexa).",
+    "Failure paths probed with a throwaway test: both files present -\u003e Err, neither file touched; archived without certification -\u003e append only, SinCambios on rerun; partial certification -\u003e listed ilegible, archive Err (500), numeros_de_epoca_marcados Err (blocks purge/promotion/reversion as the ADR states); chmod 000 mark -\u003e listing continues with an ilegible entry; negative number -\u003e MarcaInexistente, no file; tab/CR/newline -\u003e Rechazada.",
+    "Per-class budget crates/hexcell-storage/src/** at 899/900 lines; all other limits within. STATUS.md conflict resolution preserved main's HEX-092 line byte-identical (only the HEX-093 entry line differs from main).",
+    "Non-blocking: new ADR file lacks a trailing newline; both scan listings now skip non-UTF-8 file names instead of opening them (epoch files are ASCII, harmless); retencion.rs unit-test temp dirs are intentionally never removed to keep the remove_file count; m7 is caught by the unit test, not the static guard (by design)."
+  ],
+  "summary": "Contract and human section 6 satisfied; 12/12 verify green; m1..m7 re-applied by hand, each red on exactly the named tests; docs append-only.",
+  "task_id": "HEX-093",
+  "unrequested_refactor": false,
+  "verdict": "approve"
+}

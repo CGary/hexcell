@@ -1,0 +1,154 @@
+task_id: HEX-093
+summary: "Core admin routes GET /admin/epocas/sospechosas and POST .../archivar; storage archives marks (rename+append), never deletes; archived numbers stay reserved."
+affected_files:
+  - crates/hexcell-storage/src/retencion.rs
+  - crates/hexcell-storage/src/promocion.rs
+  - crates/hexcell-storage/src/reversion.rs
+  - crates/hexcell-storage/src/lib.rs
+  - crates/hexcell/src/admin.rs
+  - crates/hexcell/tests/epocas_admin.rs
+  - crates/hexcell-storage/tests/retencion.rs
+  - docs/adr/adr-0041-archivo-certificado-de-marcas-de-epoca-sospechosa.md
+  - docs/adr/README.md
+  - docs/bitacora-de-descartes.md
+  - docs/STATUS.md
+  - docs/plan/fase-a-5-conocimiento-shadow-db.md
+symbols:
+  - "retencion::SUFIJO_DE_MARCA_ARCHIVADA (new pub const, value \".sospechosa.archivada\")"
+  - "retencion::CertificacionDeArchivo (new pub struct: certifico, motivo)"
+  - "retencion::CertificacionRegistrada (new pub struct: certifico, motivo, fecha_absoluta)"
+  - "retencion::EstadoDeMarca (new pub enum: Vigente, Archivada, Ilegible { error: &'static str })"
+  - "retencion::EntradaDeMarcaListada (new pub struct: numero_de_epoca Option<i64>, marca Option<MarcaDeEpocaSospechosa>, estado, certificacion Option<CertificacionRegistrada>)"
+  - "retencion::DesenlaceDeArchivoDeMarca (new pub enum: Archivada { ruta, certificacion }, SinCambios { ruta }, MarcaInexistente, Rechazada { motivo })"
+  - "retencion::MotivoDeRechazoDeArchivo (new pub enum: CertificoVacio, MotivoVacio, CaracterDeControl { campo: &'static str })"
+  - "retencion::archivar_marca_de_epoca_sospechosa (new pub fn)"
+  - "retencion::listar_marcas_de_epoca_sospechosa (new pub fn, tolerant listing)"
+  - "retencion::numeros_de_epoca_marcados (body only: now unions active and archived marks; signature unchanged)"
+  - "retencion::purgar_epocas_retiradas (body only: step 4 CALLS numeros_de_epoca_marcados(ruta_datos), the single source of truth for reserved numbers; no own set from leer_marcas_de_epoca_sospechosa; the file loop iterates rutas_de_epoca_a_escanear_en_purga)"
+  - "retencion::es_nombre_ajeno_al_escaneo_de_epocas (new pub(crate) fn, shared scan filter vocabulary)"
+  - "retencion::rutas_de_epoca_a_escanear_en_purga (new pub(crate) fn: the purge scan's own listing step, the only place that site filters names)"
+  - "promocion::rutas_de_epoca_a_escanear_para_numerar (new pub(crate) fn: the numbering scan's own listing step, the only place that site filters names)"
+  - "reversion::fecha_absoluta_de_hoy (visibility fn -> pub(crate) only)"
+  - "promocion::numero_de_epoca_siguiente (body only: the file loop iterates rutas_de_epoca_a_escanear_para_numerar)"
+  - "admin::RutaAdmin::ListarMarcasDeEpoca and admin::RutaAdmin::ArchivarMarcaDeEpoca (new variants)"
+  - "admin::enrutar_admin (two new exact literals)"
+  - "admin::ArchivarMarcaEntrante (new DTO, deny_unknown_fields, serde default on certifico/motivo)"
+  - "admin::atender_listado_de_marcas and admin::atender_archivo_de_marca (new pub fns returning (StatusCode, serde_json::Value))"
+dependencies:
+  - crates/hexcell-storage/src/error.rs
+  - crates/hexcell-storage/src/pools.rs
+  - crates/hexcell/tests/comun/mod.rs
+  - crates/hexcell/tests/admin_http.rs
+  - crates/hexcell-storage/tests/reversion.rs
+  - crates/hexcell-storage/tests/promocion.rs
+  - docs/adr/adr-0027-retencion-y-purga-de-epocas.md
+  - docs/adr/adr-0040-protocolo-ipc-version-de-cable-7.md
+test_scenarios:
+  - statement: "Storage unit test listar_marcas_vacio_y_vigente (retencion.rs #[cfg(test)] mod pruebas): empty dir lists nothing; one written mark lists as Vigente with certificacion None."
+    covers: [AC-1]
+  - statement: "Integration test get_sin_marcas_devuelve_lista_vacia and get_lista_marca_vigente_con_certificacion_nula (crates/hexcell/tests/epocas_admin.rs): 200 with marcas [] then 200 with numero_de_epoca, motivo, fecha_absoluta, estado vigente, certificacion null."
+    covers: [AC-1]
+  - statement: "Storage unit test listar_marcas_reporta_ilegible_sin_abortar: one valid mark, one content-number mismatch, one unparseable; listing is Ok with the valid entry plus two Ilegible entries whose error is NumeroDeMarcaDiscrepante / MarcaDeEpocaIlegible."
+    covers: [AC-2]
+  - statement: "Integration test get_con_marca_ilegible_responde_200_con_entrada_ilegible: GET is 200, contains the valid entry and an entry with estado ilegible and field error; never 500."
+    covers: [AC-2]
+  - statement: "Storage unit test archivar_renombra_y_conserva_contenido_original_con_certificacion (guard m1): returns Archivada; .sospechosa gone; .sospechosa.archivada exists, starts with the exact original bytes and ends with certificacion_certifico/certificacion_motivo/certificacion_fecha_absoluta lines."
+    covers: [AC-3, AC-9]
+  - statement: "Integration test post_archivar_valido_responde_archivada_y_get_la_muestra_archivada (guard m1): POST 200 resultado archivada; active file gone; archived file holds original content plus certification; following GET shows estado archivada with certificacion object."
+    covers: [AC-3, AC-9]
+  - statement: "Storage unit test archivar_reejecutado_devuelve_sin_cambios_y_no_toca_el_archivo: second call returns SinCambios and archived bytes are identical."
+    covers: [AC-4]
+  - statement: "Integration test post_archivar_repetido_responde_sin_cambios_y_archivo_identico: second POST 200 resultado sin_cambios, archived file byte-identical."
+    covers: [AC-4]
+  - statement: "Storage unit test archivar_marca_inexistente_devuelve_marca_inexistente plus integration test post_archivar_inexistente_responde_404_con_discriminante: 404 JSON resultado marca_inexistente and numero_de_epoca N, no file created."
+    covers: [AC-5]
+  - statement: "Storage unit test archivar_con_certificacion_vacia_se_rechaza_sin_tocar_archivos (guard m2): empty, whitespace-only certifico, empty motivo, and a newline inside certifico each return Rechazada and leave the active mark byte-identical with no archived file."
+    covers: [AC-6, AC-10]
+  - statement: "Integration test post_archivar_sin_certifico_o_vacio_responde_400_sin_tocar_la_marca (guard m2): body without certifico, with certifico empty, with motivo empty, and malformed JSON each give 400; active mark unchanged. Missing certifico must reach the storage check via serde default, not die in serde."
+    covers: [AC-6, AC-10]
+  - statement: "Storage unit test numeros_marcados_cuenta_vigentes_y_archivadas (guard m3): one active mark (epoch 3) and one archived mark (epoch 5) -> {3, 5}."
+    covers: [AC-7, AC-11]
+  - statement: "Storage integration test verificar_guarda_11_bis_marca_archivada_sigue_sin_proteccion_de_recencia (crates/hexcell-storage/tests/retencion.rs, append-only; guards m3 and m6): mirror of guarda 11 (epochs 1 live, 2, 3; window 1) with mark 3 archived; purge still purges epoch 3 and keeps epoch 2 in the window; archived mark file survives; no error from the archived file. If the purge builds its own active-only set, epoch 3 takes the window slot and epoch 2 is purged, so the test goes red."
+    covers: [AC-7, AC-8, AC-11]
+  - statement: "Storage unit test escaneo_de_purga_no_considera_marcas_archivadas (retencion.rs mod pruebas; guard m4, purge call site): rutas_de_epoca_a_escanear_en_purga over a dir with knowledge_epoch_1.db, knowledge_epoch_3.sospechosa and knowledge_epoch_3.sospechosa.archivada returns exactly [knowledge_epoch_1.db] (the .db is the non-trigger that must stay)."
+    covers: [AC-8, AC-12]
+  - statement: "Storage unit test escaneo_de_numeracion_no_considera_marcas_archivadas (retencion.rs mod pruebas via crate::promocion; guard m5, numbering call site): rutas_de_epoca_a_escanear_para_numerar over the same fixture returns exactly [knowledge_epoch_1.db]."
+    covers: [AC-8, AC-12]
+  - statement: "Storage unit test escaneo_de_epocas_excluye_marcas_archivadas (guard m7, shared predicate): es_nombre_ajeno_al_escaneo_de_epocas is true for knowledge_epoch_3.sospechosa.archivada and knowledge_epoch_3.sospechosa, false for knowledge_epoch_3.db (non-trigger)."
+    covers: [AC-8, AC-12]
+  - statement: "Integration test enrutar_admin_reconoce_las_rutas_de_epocas (epocas_admin.rs): exact literals map to the new variants; GET on /archivar, POST on the list path, and a trailing-slash or path-param variant are NoEncontrada."
+    covers: [AC-1, AC-3]
+  - statement: "Static guard guarda-hex-093.sh (and its --autoprueba) enforces append-only docs, ADR row/number, optional D-NN with header and index row, preserved public signatures and re-exports, unchanged remove_file/fsync counts, each scan site using its own listing fn that calls the shared predicate with no inline old filter, and purgar_epocas_retiradas calling numeros_de_epoca_marcados(ruta_datos) with no leer_marcas_de_epoca_sospechosa call."
+    covers: [AC-13]
+  - statement: "Contract verify commands (fmt, clippy all-targets, test workspace, hexcell-core dep tree, attribution on main..HEAD, committed tree) all pass."
+    covers: [AC-14]
+strategy:
+  - step: 1
+    action: "Value objects in retencion.rs: add SUFIJO_DE_MARCA_ARCHIVADA, CertificacionDeArchivo, CertificacionRegistrada, EstadoDeMarca, EntradaDeMarcaListada, DesenlaceDeArchivoDeMarca, MotivoDeRechazoDeArchivo, all with Spanish doc comments. Rejection is an outcome value (precedent DesenlaceDeReversion::Rechazada), so ErrorDeAlmacen and error.rs stay untouched."
+    files:
+      - crates/hexcell-storage/src/retencion.rs
+  - step: 2
+    action: "Extract a private parser from leer_marcas_de_epoca_sospechosa that interprets ONE mark file given its name suffix (active or archived) and also reads the optional certificacion_certifico/certificacion_motivo/certificacion_fecha_absoluta lines. leer_marcas_de_epoca_sospechosa keeps its exact signature and behavior (active marks only, aborts on the first bad mark)."
+    files:
+      - crates/hexcell-storage/src/retencion.rs
+  - step: 3
+    action: "Domain service listar_marcas_de_epoca_sospechosa(ruta_datos) -> Result<Vec<EntradaDeMarcaListada>, ErrorDeAlmacen>: scans active and archived marks, turns MarcaDeEpocaIlegible / NumeroDeMarcaDiscrepante into an Ilegible entry (error = variant name, numero_de_epoca from the file name when parseable) instead of aborting; only read_dir failure is an Err. Sort by numero_de_epoca."
+    files:
+      - crates/hexcell-storage/src/retencion.rs
+  - step: 4
+    action: "Domain service archivar_marca_de_epoca_sospechosa(ruta_datos, numero_de_epoca, &CertificacionDeArchivo) -> Result<DesenlaceDeArchivoDeMarca, ErrorDeAlmacen>. Order: validate first (trim-empty certifico or motivo, any char::is_control in either -> Rechazada, no fs access); active present and archived absent -> std::fs::rename to .sospechosa.archivada, then append the three certificacion_* lines with OpenOptions::append (never truncate, no fsync), date from crate::reversion::fecha_absoluta_de_hoy -> Archivada; active absent and archived present with certification -> SinCambios; archived present without certification (crash window) -> append only -> Archivada; both present -> Err ArchivoDeEpocaInaccesible with io AlreadyExists and NO rename (POSIX rename would overwrite); neither -> MarcaInexistente. No remove_file anywhere."
+    files:
+      - crates/hexcell-storage/src/retencion.rs
+      - crates/hexcell-storage/src/reversion.rs
+  - step: 5
+    action: "Keep numbers reserved with ONE source of truth (human condition a, tarea.md section 6): numeros_de_epoca_marcados unions active marks (leer_marcas_de_epoca_sospechosa) with archived marks read strictly by the shared parser; purgar_epocas_retiradas step 4 (retencion.rs ~:301-303) must CALL numeros_de_epoca_marcados(ruta_datos) and must not call leer_marcas_de_epoca_sospechosa nor build its own set. numero_de_epoca_siguiente (promocion.rs:212) and the reversion 4b check (reversion.rs:220) already call it and inherit the union."
+    files:
+      - crates/hexcell-storage/src/retencion.rs
+  - step: 6
+    action: "Validator plus one listing step PER SCAN SITE (human condition b): add pub(crate) fn es_nombre_ajeno_al_escaneo_de_epocas(nombre) = existing five clauses plus ends_with(SUFIJO_DE_MARCA_ARCHIVADA). Extract the read_dir + directory skip + name filter of each scan into its own pub(crate) listing fn returning Result<Vec<PathBuf>, ErrorDeAlmacen> that calls the predicate: rutas_de_epoca_a_escanear_en_purga (retencion.rs ~:306-335) and rutas_de_epoca_a_escanear_para_numerar (promocion.rs ~:163-192). Each scan then iterates its listing; symlink skip, SQLite open and query stay in the loops; per-entry read errors keep being skipped as today, a read_dir failure keeps mapping to RutaDeDatosInaccesible. No scan keeps the old inline filter. The listing seam exists because the end-to-end effect of the filter is unobservable (see risks)."
+    files:
+      - crates/hexcell-storage/src/retencion.rs
+      - crates/hexcell-storage/src/promocion.rs
+  - step: 7
+    action: "Re-export the new public items from lib.rs in the existing pub use retencion block (append names, remove none). Run cargo fmt."
+    files:
+      - crates/hexcell-storage/src/lib.rs
+  - step: 8
+    action: "Application service in admin.rs: two RutaAdmin variants and two exact literals in enrutar_admin ((GET, /admin/epocas/sospechosas), (POST, /admin/epocas/sospechosas/archivar)); ArchivarMarcaEntrante {numero_de_epoca: i64, #[serde(default)] certifico, #[serde(default)] motivo} with deny_unknown_fields; pub fn atender_listado_de_marcas(&Path) and pub fn atender_archivo_de_marca(&Path, ArchivarMarcaEntrante) returning (StatusCode, Value). admin.rs does NOT validate certifico/motivo itself: storage is the single gate so m2 reaches both layers."
+    files:
+      - crates/hexcell/src/admin.rs
+  - step: 9
+    action: "Wire in atender_peticion_de_admin following the RestablecerContacto arm: acumular_cuerpo_acotado (413 text), serde_json::from_slice (400 {resultado fallido, motivo cuerpo JSON invalido}), then respuesta_json. Mapping: Archivada 200 {resultado archivada, numero_de_epoca, certificacion}; SinCambios 200 {resultado sin_cambios, numero_de_epoca}; MarcaInexistente 404 {resultado marca_inexistente, numero_de_epoca}; Rechazada 400 {resultado fallido, motivo}; Err 500 {resultado fallido, motivo}. GET: Ok 200 {marcas: [...]} with estado vigente|archivada|ilegible, certificacion null|object, error only on ilegible; Err 500 JSON. Add a comment block like the other arms (no auth; boundary is the cell internal network)."
+    files:
+      - crates/hexcell/src/admin.rs
+  - step: 10
+    action: "Tests: #[cfg(test)] mod pruebas at the end of retencion.rs (unit tests that need pub(crate) items, own temp-dir helper under std::env::temp_dir with a unique name, no new dev-deps); append verificar_guarda_11_bis to crates/hexcell-storage/tests/retencion.rs reusing crear_epoca_sellada; NEW crates/hexcell/tests/epocas_admin.rs with mod comun; reusing DirectorioTemporal, lanzar_binario_con_ruta_de_datos, peticion_http_cruda, peticion_http_post_cruda and binario.direccion_admin. Marks are written with hexcell_storage::escribir_marca_de_epoca_sospechosa or std::fs::write for corrupt fixtures. Do not edit admin_http.rs or tests/comun."
+    files:
+      - crates/hexcell-storage/src/retencion.rs
+      - crates/hexcell-storage/tests/retencion.rs
+      - crates/hexcell/tests/epocas_admin.rs
+  - step: 11
+    action: "Run mutation guards m1..m7 by hand (edit, run the named tests, revert) and record in 04-implementation-log which test went red for each: m1 rename replaced by remove_file+write -> archivar_renombra_y_conserva_contenido_original_con_certificacion and post_archivar_valido_responde_archivada_y_get_la_muestra_archivada; m2 storage validation removed -> archivar_con_certificacion_vacia_se_rechaza_sin_tocar_archivos and post_archivar_sin_certifico_o_vacio_responde_400_sin_tocar_la_marca; m3 numeros_de_epoca_marcados back to active-only -> numeros_marcados_cuenta_vigentes_y_archivadas and verificar_guarda_11_bis_marca_archivada_sigue_sin_proteccion_de_recencia; m4 the purge listing (retencion.rs) reverts to the old ends_with(SUFIJO_DE_MARCA_DE_EPOCA_SOSPECHOSA) filter -> escaneo_de_purga_no_considera_marcas_archivadas (and escaneo_de_numeracion_... stays green); m5 the numbering listing (promocion.rs) reverts to the old filter -> escaneo_de_numeracion_no_considera_marcas_archivadas (and escaneo_de_purga_... stays green); m6 purgar_epocas_retiradas builds its own set from leer_marcas_de_epoca_sospechosa -> verificar_guarda_11_bis_marca_archivada_sigue_sin_proteccion_de_recencia (plus static FALLA[purga-sin-fuente-unica]); m7 archivada clause removed from the shared predicate -> escaneo_de_epocas_excluye_marcas_archivadas plus both site tests. Confirm each edit changed the file (git diff non-empty) before trusting a red."
+    files:
+      - crates/hexcell-storage/src/retencion.rs
+  - step: 12
+    action: "Docs (Spanish, append-only): read the next free ADR number and D-NN from disk (ls docs/adr; grep '### D-'), today adr-0041 / D-60. New ADR extends adr-0027 (archive with certification, never delete, number stays reserved, archived epoch still not a reversion target, rename+append without fsync). One row in docs/adr/README.md after the last row. If the ADR studies 'truly delete the mark', log it as D-NN in the bitacora in the SAME commit (section + index row + header Ultima actualizacion). Append the literal update sentence at the END of the STATUS.md line of the entry (still Pendiente). Append one sentence as a new indented line at the end of plan task 8. Commit everything on ai/HEX-093 with conventional commits, no AI attribution."
+    files:
+      - docs/adr/adr-0041-archivo-certificado-de-marcas-de-epoca-sospechosa.md
+      - docs/adr/README.md
+      - docs/bitacora-de-descartes.md
+      - docs/STATUS.md
+      - docs/plan/fase-a-5-conocimiento-shadow-db.md
+risks:
+  - "End-to-end observation of the per-site filter is impossible, concretely: a real archived mark is text, so without the filter the scan's abrir_solo_lectura/SELECT fails and the loop continues (identical result). The only file that could change a scan's result is a sealed SQLite DB named *.sospechosa.archivada, but both purgar_epocas_retiradas and numero_de_epoca_siguiente also call numeros_de_epoca_marcados, whose strict archived-mark reader fails on that binary file, so both functions return Err with or without the filter. Hence guards m4/m5 observe each site's own listing fn (rutas_de_epoca_a_escanear_en_purga / rutas_de_epoca_a_escanear_para_numerar), and the static guard checks that each scan iterates its own listing with no inline old filter."
+  - "An identical second scan exists in promocion.rs:189 (numero_de_epoca_siguiente); the widened touch (promocion.rs, reversion.rs pub(crate), lib.rs, storage tests/retencion.rs, error.rs forbidden) and the DesenlaceDeArchivoDeMarca return type were accepted by the human on 2026-09-30 (tarea.md section 6)."
+  - "The source task section 1 claimed purge reserves archived epochs through numeros_de_epoca_marcados, but purgar_epocas_retiradas calls leer_marcas_de_epoca_sospechosa directly (~:302); corrected in tarea.md section 6 (human, 2026-09-30): purge must call numeros_de_epoca_marcados(ruta_datos). Guarded by verificar_guarda_11_bis (m6) and guarda-hex-093.sh FALLA[purga-sin-fuente-unica]/[purga-conjunto-propio]."
+  - "Consequence of AC-7: reversion.rs:220 uses numeros_de_epoca_marcados, so an archived epoch remains an invalid reversion target (EpocaMarcadaComoSospechosa). Intended (number reserved); the ADR must say it. A corrupt archived mark now blocks purge/promotion/reversion exactly as a corrupt active mark does today."
+  - "fecha_absoluta_de_hoy is private in reversion.rs:39; reuse needs a pub(crate) visibility change (reversion.rs touched, guard allows exactly that edit). Duplicating the civil-date conversion is rejected."
+  - "Newline injection: certifico/motivo are written into a line-oriented file whose parser lets the last numero_de_epoca line win; an unvalidated newline could forge NumeroDeMarcaDiscrepante and block purge and promotion. Control characters are rejected as Rechazada (400)."
+  - "Band sits at the M/L edge: 5 counted production files (retencion, promocion, reversion, lib, admin) against l_max_files 5. Touching error.rs would make 6 and force band L, so error.rs is forbidden in the contract; the design needs no new ErrorDeAlmacen variant."
+  - "lib.rs re-export is a mechanical consequence not in the spec touch list; admin.rs reaches storage through hexcell_storage::retencion paths anyway, but the crate exports every retencion item at the root today."
+  - "STATUS.md:469 and plan task 8 are single long lines / a paragraph; the append must add text at the end of the line or a new continuation line, never rewrite. The bitacora index currently has no D-58 row (pre-existing gap, not to be fixed here)."
+  - "ADR/D numbers can be taken by a parallel session (HEX-092 is active): guarda-hex-093.sh fails with adr-colision / bitacora-colision against the tip of main; rebase and renumber if so."
+  - "Blocking std::fs calls inside the async admin handler are small single-file operations on the cell's own volume; acceptable like the rest of the storage calls, no spawn_blocking required."
+  - "Phase 1b external summarization skipped; targeted direct reads of retencion.rs, promocion.rs, reversion.rs, lib.rs, admin.rs and tests/comun/mod.rs replaced it. HSME advisor returned no results. No related failed tasks."
