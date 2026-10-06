@@ -98,7 +98,34 @@ Run automated structural and contract analysis before inspecting the diff by han
    ```bash
    echo '{"task_id":"<TASK_ID>","phase":"review","risk":"<risk>","complexity_band":"<band>","incumbent_family":"<familia del implementador según 07-trace>"}' | quorum fleet route
    ```
-   Si no resuelve, cae a `~/.claude/skills/think-cheap/scripts/rung0-cells.py --mode agentic --class standard`.
+   Si `quorum fleet route` no resuelve, usá el recetario manual de `/fleet-auto` como fallback (UNA sola tentativa; si falla, seguí con la revisión interna como hoy). El fallback reemplaza los pasos 4-5; el paso 3 (ruta) y el paso 6 (eliminación del worktree) se mantienen:
+   ```bash
+   RUN=$(~/.claude/skills/fleet-auto/scripts/start.sh <scratchpad>/fleet-auto \
+     --cwd <scratchpad>/review-<TASK_ID> --mode read < <scratchpad>/prompt.txt)
+   PICK_LINE=$(~/.claude/skills/fleet-auto/scripts/pick.sh "$RUN")
+   MODEL=$(jq -r '.data.primary.model // empty' "$RUN/decision.json")
+   TIER=$(jq -r '.data.claude_fallback // "sonnet"' "$RUN/decision.json")
+   if printf '%s\n' "$PICK_LINE" | grep -q '^PICK_FAILED' || [ -z "$MODEL" ] || [ "$MODEL" = null ]; then
+     python3 ~/.claude/skills/fleet-auto/scripts/log.py "$RUN" \
+       --final "claude:$TIER" --verdict fail --reason external_failed --notes "pick failed"
+     # Continue with el revisor interno (§3 Inspect Diff).
+   else
+     ~/.claude/skills/fleet-auto/scripts/attempt.sh "$RUN" 1 "$MODEL" <scratchpad>/review-<TASK_ID> 600 read
+     jq -r '.data.output' "$RUN/attempt-1.json" | jq -r 'select(.type=="text")|.part.text' > "$RUN/attempt-1.report.txt"
+     # Claude revisa attempt-1.report.txt contra el diff en §3 Inspect Diff.
+     if grep -qiE 'finding|hallazgo' "$RUN/attempt-1.report.txt"; then
+       printf 'pass\n' > "$RUN/attempt-1.verdict"
+       python3 ~/.claude/skills/fleet-auto/scripts/log.py "$RUN" \
+         --final "opencode_go:$MODEL" --verdict pass --notes "q-review fallback"
+     else
+       printf 'fail: no findings\n' > "$RUN/attempt-1.verdict"
+       python3 ~/.claude/skills/fleet-auto/scripts/log.py "$RUN" \
+         --final "opencode_go:$MODEL" --verdict fail --notes "q-review fallback"
+       # Continue with el revisor interno (§3 Inspect Diff).
+     fi
+   fi
+   ```
+   `MODEL` sale de `$RUN/decision.json` (`data.primary.model`, la línea que imprime `pick.sh`). Claude verifica `attempt-1.report.txt` con sus propios ojos en §3 Inspect Diff; la receta escribe `pass` o `fail: <motivo>` en `"$RUN/attempt-1.verdict"` y registra la tentativa.
 4. Ejecuta `quorum fleet run --agent opencode_go --model <celda> --cwd <scratchpad>/review-<TASK_ID> --input prompt.txt --timeout 300 --no-input --json --output out.jsonl`.
 5. Extrae el texto: concatena `part.text` de cada línea del `--output` con `type == "text"`.
 6. `git worktree remove --force <scratchpad>/review-<TASK_ID>`.
