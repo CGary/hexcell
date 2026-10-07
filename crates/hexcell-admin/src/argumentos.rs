@@ -387,7 +387,7 @@ impl fmt::Display for ErrorDeArgumentos {
             }
             ErrorDeArgumentos::GrupoDesconocido { grupo } => write!(
                 f,
-                "grupo desconocido: «{grupo}» (los grupos admitidos son «cell», «config» y «reporte»)"
+                "grupo desconocido: «{grupo}» (los grupos admitidos son «cell», «config», «reporte» y «contacto»)"
             ),
             ErrorDeArgumentos::SubcomandoDesconocido { nombre } => write!(
                 f,

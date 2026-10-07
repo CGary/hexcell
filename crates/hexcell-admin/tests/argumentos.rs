@@ -267,7 +267,7 @@ fn mensajes_de_error_son_literales_en_espanol() {
             grupo: "server".to_string()
         }
         .to_string(),
-        "grupo desconocido: «server» (los grupos admitidos son «cell», «config» y «reporte»)"
+        "grupo desconocido: «server» (los grupos admitidos son «cell», «config», «reporte» y «contacto»)"
     );
     assert_eq!(
         ErrorDeArgumentos::SubcomandoDesconocido {
