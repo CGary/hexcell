@@ -3,6 +3,7 @@
 * **Fecha de esta versión:** 2026-09-30 (redactado el 2026-09-24; alineado el 2026-09-30 con el comportamiento que entregó HEX-087).
 * **Tarea que lo redacta:** HEX-088 (tarea 21 de `docs/plan/fase-a-6-empaquetado-cli.md`); alineado con HEX-087 (tarea 15 del mismo plan).
 * **Alcance de esta versión:** procedimiento de operación de los subcomandos `cell` y `config render` de `hexcell-admin`, más el procedimiento de respuesta ante `OOMKilled`. Los cuatro comandos de ciclo de vida (`cell pause`, `cell unpause`, `cell terminate`, `cell rebind`) son reejecutables: cada sección describe qué hace una reejecución, y la sección «Reejecución de un comando» las reúne.
+* **Alcance añadido el 2026-10-07 con HEX-091:** procedimiento de `contacto restablecer`, incluida la simulación y la verificación de la baja revivida.
 
 ---
 
@@ -40,6 +41,7 @@ Lo que este runbook **no** cubre:
 | Listar todas las células conocidas | `hexcell-admin cell list` |
 | Reporte de consumo de unidades de presupuesto por conversación | `hexcell-admin reporte tokens --celula <celula_id> --copia <ruta.db> [--desde AAAA-MM-DD] [--hasta AAAA-MM-DD]` |
 | Renderizar la configuración de una célula (defecto + superposición) | `hexcell-admin config render --defecto <ruta_defecto.env> --superposicion <ruta_superposicion.env> --salida <ruta_salida.env>` |
+| Restablecer el estado operativo de un contacto | `hexcell-admin contacto restablecer --id <celula_id> --contacto <ct-...> [--incluir-baja --confirmar]` |
 
 ---
 
@@ -366,6 +368,41 @@ hexcell-admin config render --defecto deploy/celula.defecto.env.ejemplo --superp
 
 ---
 
+## 9. `contacto restablecer` — limpiar el estado persistente de un contacto
+
+**Cuándo:** una prueba o una operación autorizada quedó bloqueada por `cortacircuitos` o
+`presentacion_de_conversacion`.
+
+**Comando:**
+
+```bash
+hexcell-admin contacto restablecer --id <celula_id> --contacto <ct-...>
+hexcell-admin contacto restablecer --id <celula_id> --contacto <ct-...> --incluir-baja --confirmar
+```
+
+**Efecto:** el primer comando borra las filas de `cortacircuitos` y
+`presentacion_de_conversacion`. El segundo también borra `baja_de_contacto`, una acción irreversible
+que exige ambos marcadores. `--simular` no emite una petición ni modifica datos; no puede detectar
+un contacto desconocido.
+
+**Verificación:** el resultado debe nombrar cada tabla y sus filas eliminadas; si el contacto
+existe pero no tenía filas, además emite por stderr «sin cambios: el contacto no tenía filas que
+borrar» con código 0, como el patrón de HEX-087. Cuando se incluye la baja, comprobar en el log estructurado
+el evento exacto `identidad.baja_de_contacto_revivida` y el origen exacto
+`hexcell-admin contacto restablecer --incluir-baja --confirmar`. La ausencia de esa línea después
+de pedir la baja significa que la fila no fue eliminada.
+
+**Fallos comunes por código de salida:**
+
+| Código | Significado | Remediación |
+| :--- | :--- | :--- |
+| 0 | Contacto existente restablecido, incluso sin filas | — |
+| 1 | Célula ausente o detenida, sonda fallida, `contacto_desconocido`, `canal_sin_sesion`, timeout o cuerpo ilegible | Revisar stderr y el estado del núcleo |
+| 2 | Falta `--id`/`--contacto`, contacto mal formado o falta `--confirmar` con `--incluir-baja` | Corregir la invocación |
+
+Un contacto `contacto_desconocido` no es reejecutable. Una invocación válida sobre un contacto
+existente sin filas sí termina en éxito; por ello la reejecución no se decide por los contadores.
+
 ## Reejecución de un comando
 
 Los cuatro comandos de ciclo de vida son reejecutables desde HEX-087 (tarea 15 del plan de A-6): un fallo parcial se reanuda con el **mismo comando**, sin pasos previos a mano (la única limpieza manual es la del volumen huérfano de `cell terminate`, sección 3). Reejecutar un comando sobre una célula que el almacén ya tiene en el estado objetivo no se rechaza: la reejecución **concilia contra el estado real de Docker**, completa sólo lo que falta y **no registra ninguna transición ni toca el almacén**. Cuando no hay nada que hacer, responde por stderr «sin cambios: la célula ya está <estado>» con código 0.
@@ -377,6 +414,7 @@ Los cuatro comandos de ciclo de vida son reejecutables desde HEX-087 (tarea 15 d
 | `cell terminate` (fila `retirada`) | Elimina los restos que hayan quedado (contenedores y, si el núcleo sigue existiendo para resolverlo, el volumen), sin cierre de sesión. Sin restos: «sin cambios: la célula ya está retirada». |
 | `cell terminate` (fila `en ejecución`, `suspendida` o `reemparejando`) | Completa el retiro y persiste `Retirada` (ver «Fallos parciales y limpieza manual» en la sección 3). |
 | `cell rebind` (fila `reemparejando`) | Reanuda en el paso 8 de la secuencia (ver sección 4): primero consulta la sesión y, si ya está `activa`, omite el emparejamiento. |
+| `contacto restablecer` (contacto existente sin filas) | Termina en éxito con «sin cambios: el contacto no tenía filas que borrar» por stderr; un `contacto_desconocido` no se reejecuta. |
 
 La única excepción es la ausencia de recursos: `cell pause` y `cell unpause` sobre una célula a la que le falta el núcleo o el sidecar fallan con «célula no encontrada» (código 1), y `cell terminate` sin fila y sin contenedores falla igual.
 
@@ -438,6 +476,7 @@ Si el `OOMKilled` se repite en una misma célula en menos de 24 horas, la decisi
 * Tarea 21 del plan de la etapa A-6 (`docs/plan/fase-a-6-empaquetado-cli.md`) — esta tarea, que este runbook cierra.
 * HEX-085 / tarea 13 del plan de A-6 (`docs/plan/fase-a-6-empaquetado-cli.md`) — `cell rebind` y su mecanismo de reanudación.
 * HEX-087 / tarea 15 del plan de A-6 (`docs/plan/fase-a-6-empaquetado-cli.md`) — reejecución idempotente de `cell pause`, `cell unpause`, `cell terminate` y `cell rebind`, retiro parcial, cierre de sesión a mejor esfuerzo en `terminate` y recuperación de `ya_emparejada`; README.md, sección «9. Reejecución».
+* HEX-091 (sin número de tarea en el plan de A-6; cierra el pendiente de `docs/STATUS.md` sobre la superficie del operador) — `contacto restablecer`, sus guardas de confirmación y la verificación `identidad.baja_de_contacto_revivida`.
 * `crates/hexcell-admin/src/comandos.rs` — servicio de aplicación, códigos de discrepancia DISC-01 a DISC-05, lógica de `ejecutar_estado` y `ejecutar_reemparejamiento`, y las reejecuciones `reejecutar_pausa`, `reejecutar_reanudacion` y `reejecutar_retiro`.
 * `crates/hexcell-admin/src/ciclo_de_vida.rs` — secuencias sobre Docker: `retirar`, `completar_retiro`, `reconciliar_pausa` y `reconciliar_reanudacion`.
 * `crates/hexcell-admin/src/codigo_de_salida.rs` — contrato de códigos de salida (0 éxito, 1 fallo, 2 uso incorrecto, 3 reservado).

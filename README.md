@@ -222,3 +222,19 @@ destrucción de contenedores y volumen; la línea «sesión cerrada» sólo apar
 llegó a completarse. Si el núcleo ya no existe, el nombre del volumen no se puede resolver y la
 CLI avisa la limpieza manual (`docker volume rm <nombre>`); el procedimiento completo de los
 fallos habituales de `cell terminate` está en el runbook de operación.
+
+### 10. Restablecer un contacto
+
+```bash
+hexcell-admin contacto restablecer --id <celula> --contacto <ct-...> \
+  [--incluir-baja --confirmar] [--simular]
+```
+
+Por omisión elimina `cortacircuitos` y `presentacion_de_conversacion`. `baja_de_contacto` solo se
+incluye con `--incluir-baja --confirmar`. `--simular` describe las tres tablas sin contactar
+Docker y no exige `--confirmar`, aunque no puede detectar un contacto desconocido. Los códigos son
+0 para éxito, 1 para fallo de ejecución y 2 para uso incorrecto.
+
+Un contacto existente sin filas que borrar termina en 0 e imprime además, por stderr y con el
+patrón de HEX-087, «sin cambios: el contacto no tenía filas que borrar»; un `contacto_desconocido`
+termina en 1 sin línea de éxito, aunque sus contadores valgan cero.

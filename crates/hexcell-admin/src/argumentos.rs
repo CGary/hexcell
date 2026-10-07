@@ -94,10 +94,38 @@ pub struct Invocacion {
 }
 
 #[derive(Clone, PartialEq, Eq, Debug)]
+pub struct InvocacionContacto {
+    id: String,
+    contacto: String,
+    incluir_baja: bool,
+    confirmar: bool,
+    simular: bool,
+}
+
+impl InvocacionContacto {
+    pub fn id(&self) -> &str {
+        &self.id
+    }
+    pub fn contacto(&self) -> &str {
+        &self.contacto
+    }
+    pub fn incluir_baja(&self) -> bool {
+        self.incluir_baja
+    }
+    pub fn confirmar(&self) -> bool {
+        self.confirmar
+    }
+    pub fn simular(&self) -> bool {
+        self.simular
+    }
+}
+
+#[derive(Clone, PartialEq, Eq, Debug)]
 pub enum Comando {
     Cell(Invocacion),
     ConfigRender(InvocacionRenderizado),
     ReporteTokens(InvocacionReporte),
+    Contacto(InvocacionContacto),
 }
 
 impl Comando {
@@ -109,6 +137,7 @@ impl Comando {
             Self::Cell(i) => Some(i.subcomando),
             Self::ConfigRender(_) => None,
             Self::ReporteTokens(_) => None,
+            Self::Contacto(_) => None,
         }
     }
     pub fn id(&self) -> Option<&str> {
@@ -116,6 +145,7 @@ impl Comando {
             Self::Cell(i) => i.id(),
             Self::ConfigRender(_) => None,
             Self::ReporteTokens(_) => None,
+            Self::Contacto(i) => Some(i.id()),
         }
     }
     pub fn motivo(&self) -> Option<&str> {
@@ -123,6 +153,7 @@ impl Comando {
             Self::Cell(i) => i.motivo(),
             Self::ConfigRender(_) => None,
             Self::ReporteTokens(_) => None,
+            Self::Contacto(_) => None,
         }
     }
     pub fn metodo(&self) -> Option<MetodoDeEmparejamiento> {
@@ -130,6 +161,7 @@ impl Comando {
             Self::Cell(i) => i.metodo(),
             Self::ConfigRender(_) => None,
             Self::ReporteTokens(_) => None,
+            Self::Contacto(_) => None,
         }
     }
     pub fn simular(&self) -> bool {
@@ -137,6 +169,7 @@ impl Comando {
             Self::Cell(i) => i.simular(),
             Self::ConfigRender(i) => i.simular(),
             Self::ReporteTokens(i) => i.simular(),
+            Self::Contacto(i) => i.simular(),
         }
     }
     pub fn confirmar(&self) -> bool {
@@ -144,6 +177,7 @@ impl Comando {
             Self::Cell(i) => i.confirmar(),
             Self::ConfigRender(_) => false,
             Self::ReporteTokens(_) => false,
+            Self::Contacto(i) => i.confirmar(),
         }
     }
 }
@@ -326,6 +360,9 @@ pub enum ErrorDeArgumentos {
     ReporteInvalido {
         mensaje: String,
     },
+    ContactoInvalido {
+        mensaje: String,
+    },
     /// `--copia` se llama `sessions.db` o termina en `-wal`/`-shm`: el reporte solo lee
     /// copias `VACUUM INTO`, nunca la base caliente ni sus archivos de diario.
     ///
@@ -392,6 +429,7 @@ impl fmt::Display for ErrorDeArgumentos {
             ),
             ErrorDeArgumentos::ConfiguracionInvalida { mensaje } => f.write_str(mensaje),
             ErrorDeArgumentos::ReporteInvalido { mensaje } => f.write_str(mensaje),
+            ErrorDeArgumentos::ContactoInvalido { mensaje } => f.write_str(mensaje),
             // Cadena fija exigida literalmente por AC-3; ver el comentario de la variante.
             ErrorDeArgumentos::CopiaEsSessionsDb => {
                 f.write_str("el reporte sólo lee copias VACUUM INTO, nunca sessions.db")
@@ -435,7 +473,11 @@ Uso: hexcell-admin config render --defecto <ruta> --superposicion <ruta> --salid
 Uso: hexcell-admin reporte tokens --celula <id> --copia <ruta.db> [--desde AAAA-MM-DD] [--hasta AAAA-MM-DD] [--simular]
   Reportar el consumo de unidades de presupuesto por conversación de una célula,
   leyendo solo una copia VACUUM INTO de sessions.db, nunca la base caliente.
-  El periodo es UTC: --desde inclusivo, --hasta exclusivo.";
+  El periodo es UTC: --desde inclusivo, --hasta exclusivo.
+
+Uso: hexcell-admin contacto restablecer --id <celula> --contacto <ct-...> [--incluir-baja --confirmar] [--simular]
+  Restablecer cortacircuitos y presentación de conversación; la baja solo se toca con
+  --incluir-baja --confirmar. --simular no emite ninguna petición.";
 
 /// Analiza una porción de argumentos y produce una [`Invocacion`] validada o un
 /// [`ErrorDeArgumentos`] con la forma del rechazo.
@@ -455,6 +497,9 @@ pub fn analizar(argumentos: &[String]) -> Result<Comando, ErrorDeArgumentos> {
     }
     if grupo == "reporte" {
         return analizar_reporte(&argumentos[1..]);
+    }
+    if grupo == "contacto" {
+        return analizar_contacto(&argumentos[1..]);
     }
     if grupo != "cell" {
         return Err(ErrorDeArgumentos::GrupoDesconocido {
@@ -479,6 +524,104 @@ pub fn analizar(argumentos: &[String]) -> Result<Comando, ErrorDeArgumentos> {
     };
     let opciones = extraer_opciones(subcomando, &argumentos[2..])?;
     validar_opciones(subcomando, &opciones).map(Comando::Cell)
+}
+
+fn error_contacto(mensaje: impl Into<String>) -> ErrorDeArgumentos {
+    ErrorDeArgumentos::ContactoInvalido {
+        mensaje: mensaje.into(),
+    }
+}
+
+fn analizar_contacto(argumentos: &[String]) -> Result<Comando, ErrorDeArgumentos> {
+    if argumentos.first().map(String::as_str) != Some("restablecer") {
+        return Err(error_contacto(
+            "subcomando de contacto desconocido; se esperaba «restablecer»",
+        ));
+    }
+    let mut id = None;
+    let mut contacto = None;
+    let mut incluir_baja = false;
+    let mut confirmar = false;
+    let mut simular = false;
+    let mut i = 1;
+    while i < argumentos.len() {
+        let arg = &argumentos[i];
+        if arg == "--incluir-baja" || arg == "--confirmar" || arg == "--simular" {
+            let destino = match arg.as_str() {
+                "--incluir-baja" => &mut incluir_baja,
+                "--confirmar" => &mut confirmar,
+                _ => &mut simular,
+            };
+            if *destino {
+                return Err(error_contacto(format!("opción repetida: «{arg}»")));
+            }
+            *destino = true;
+            i += 1;
+            continue;
+        }
+        let (opcion, inline) = arg
+            .split_once('=')
+            .map_or((arg.as_str(), None), |(a, v)| (a, Some(v)));
+        let destino = match opcion {
+            "--id" => &mut id,
+            "--contacto" => &mut contacto,
+            _ => {
+                return Err(error_contacto(format!(
+                    "opción desconocida para «contacto restablecer»: «{arg}»"
+                )));
+            }
+        };
+        if destino.is_some() {
+            return Err(error_contacto(format!("opción repetida: «{opcion}»")));
+        }
+        let valor = match inline {
+            Some(v) if !v.is_empty() => v.to_string(),
+            Some(_) => return Err(error_contacto(format!("falta el valor de «{opcion}»"))),
+            None => {
+                let v = argumentos
+                    .get(i + 1)
+                    .ok_or_else(|| error_contacto(format!("falta el valor de «{opcion}»")))?;
+                if v.is_empty() {
+                    return Err(error_contacto(format!("falta el valor de «{opcion}»")));
+                }
+                i += 1;
+                v.clone()
+            }
+        };
+        *destino = Some(valor);
+        i += 1;
+    }
+    let id = id.ok_or_else(|| {
+        error_contacto("falta la opción obligatoria «--id» para «contacto restablecer»")
+    })?;
+    let contacto = contacto.ok_or_else(|| {
+        error_contacto("falta la opción obligatoria «--contacto» para «contacto restablecer»")
+    })?;
+    if !contacto.as_bytes().starts_with(b"ct-")
+        || contacto.len() != 35
+        || !contacto.as_bytes()[3..]
+            .iter()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(b))
+    {
+        return Err(error_contacto(
+            "el contacto debe tener la forma «ct-» más 32 hexadecimales minúsculos",
+        ));
+    }
+    if confirmar && !incluir_baja {
+        return Err(error_contacto(
+            "--confirmar solo se admite junto con --incluir-baja",
+        ));
+    }
+    if incluir_baja && !confirmar && !simular {
+        return Err(error_contacto("--incluir-baja requiere --confirmar"));
+    }
+    Ok(Comando::Contacto(InvocacionContacto {
+        id,
+        contacto,
+        incluir_baja,
+        confirmar,
+        simular,
+    }))
 }
 
 fn analizar_configuracion(argumentos: &[String]) -> Result<Comando, ErrorDeArgumentos> {

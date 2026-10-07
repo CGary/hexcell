@@ -17,6 +17,7 @@ pub mod argumentos;
 pub mod ciclo_de_vida;
 pub mod codigo_de_salida;
 pub mod comandos;
+pub mod contacto;
 pub mod docker;
 pub mod esquema_configuracion;
 pub mod estado_de_celula;
