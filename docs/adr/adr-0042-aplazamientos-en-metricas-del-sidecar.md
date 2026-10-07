@@ -19,9 +19,9 @@ existían en memoria (`ContadorAplazadasPorHorario`, `ContadorAplazadasPorRampa`
 aproximadamente una hora de diagnóstico en vivo entender por qué los mensajes no salían, y la única
 visibilidad era añadir `log.Printf` temporal al código.
 
-`adr-0033` y `adr-0035` entregaron la línea periódica `key=value` con cinco claves agregadas
-(`reconexiones_por_hora`, `silencio_entrante_ms`, `latencia_hasta_acuse_ms`, `contactos_omitidos` y
-la familia segmentada `ack_ratio.<id_conversacion>`). Los dos contadores de aplazamiento quedaron
+`adr-0033` y `adr-0035` entregaron la línea periódica `key=value` con cuatro claves agregadas
+(`reconexiones_por_hora`, `silencio_entrante_ms`, `latencia_hasta_acuse_ms`, `contactos_omitidos`) más
+la familia segmentada `ack_ratio.<id_conversacion>`. Los dos contadores de aplazamiento quedaron
 fuera: no existía una costura por la que el paquete hoja `internal/metricas` pudiera leerlos sin
 importar `internal/outbox`, lo que habría roto su disciplina de hoja.
 
