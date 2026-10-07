@@ -1,0 +1,46 @@
+{
+  "task_id": "HEX-095",
+  "bundle_hash": "9386994c507a53efa060569aa75d3e449af10d6a10cd779a1588efe772343502",
+  "files": [
+    ".ai/tasks/active/HEX-095-new-spec/guarda-hex-095.sh",
+    "crates/hexcell/src/main.rs",
+    "crates/hexcell/src/registro.rs",
+    "crates/hexcell/src/respaldar.rs",
+    "crates/hexcell/tests/comun/mod.rs",
+    "crates/hexcell/tests/respaldo_cli.rs"
+  ],
+  "protocol_version": "fleet-bundle-protocol/v2",
+  "created_at": "2026-10-07T04:55:58Z",
+  "dropped": [
+    {
+      "component": "code_slice",
+      "path": "sidecar/internal/canal/canal.go",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "scripts/laboratorio/entorno.ejemplo.sh",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "kitty-specs/hex-093/guarda-hex-093.sh",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "docs/runbook-canal-fase-a.md",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "docs/plan/fase-a-6-empaquetado-cli.md",
+      "reason": "bundle exceeded max_bytes budget"
+    },
+    {
+      "component": "code_slice",
+      "path": "docs/STATUS.md",
+      "reason": "bundle exceeded max_bytes budget"
+    }
+  ]
+}

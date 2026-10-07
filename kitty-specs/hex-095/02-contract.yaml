@@ -1,0 +1,91 @@
+task_id: HEX-095
+summary: "Stamp the real cell id on respaldar log lines, restore the Conectar honesty comment, warn about the volatile lab dir default, document emparejar discipline; four STATUS entries close by append."
+goal: >-
+  Close four Pendiente findings of docs/STATUS.md (lines 575, 576, 577, 580) mechanically.
+  Production change: one line in crates/hexcell/src/respaldar.rs, crate::registro::inicializar(id_celula.clone());
+  right after the id validation, plus the new real-binary test binario_real_respaldar_estampa_id_celula_real in
+  tests/respaldo_cli.rs. Comment-only additions in canal.go (Conectar) and entorno.ejemplo.sh; one bullet in the
+  channel runbook; in-line append of *(Resuelto 2026-10-DD, `HEX-095`: ...)* to the four STATUS entries; a dated
+  closing note at the end of the A-6 plan. The docs guard guarda-hex-095.sh and its --autoprueba prove the
+  append-only rules. The implementer MUST commit all work on branch ai/HEX-095 (conventional commits in
+  Spanish, no AI attribution); an uncommitted diff fails verify.
+read:
+  - crates/hexcell/src/respaldar.rs
+  - crates/hexcell/src/registro.rs
+  - crates/hexcell/src/main.rs
+  - crates/hexcell/tests/respaldo_cli.rs
+  - crates/hexcell/tests/comun/mod.rs
+  - sidecar/internal/canal/canal.go:160-180
+  - sidecar/internal/canal/emparejamiento_test.go:1-40
+  - scripts/laboratorio/entorno.ejemplo.sh
+  - docs/runbook-canal-fase-a.md:25-40
+  - docs/STATUS.md:570-581
+  - kitty-specs/hex-093/guarda-hex-093.sh
+touch:
+  - crates/hexcell/src/respaldar.rs
+  - crates/hexcell/tests/respaldo_cli.rs
+  - sidecar/internal/canal/canal.go
+  - scripts/laboratorio/entorno.ejemplo.sh
+  - docs/runbook-canal-fase-a.md
+  - docs/STATUS.md
+  - docs/plan/fase-a-6-empaquetado-cli.md
+  - .ai/tasks/active/HEX-095-new-spec/guarda-hex-095.sh
+forbid:
+  files:
+    - crates/hexcell/src/main.rs
+    - crates/hexcell/src/emparejar.rs
+    - crates/hexcell/src/registro.rs
+    - sidecar/internal/canal/reconexion.go
+    - sidecar/internal/servidor/**
+    - sidecar/internal/metricas/**
+    - sidecar/main.go
+    - crates/hexcell-admin/**
+    - deploy/**
+    - .github/**
+    - scripts/laboratorio/emparejar-qr-terminal.sh
+    - scripts/laboratorio/iniciar-nucleo.sh
+    - scripts/laboratorio/iniciar-sidecar.sh
+    - scripts/laboratorio/respaldar-celula.sh
+    - scripts/laboratorio/restablecer-contacto.sh
+    - Cargo.lock
+    - Cargo.toml
+    - crates/hexcell/Cargo.toml
+  behaviors:
+    - "do not change the default value of HEXCELL_LAB_DIR"
+    - "do not touch main.rs or registro.rs"
+    - "do not rewrite or move STATUS entries"
+    - "do not delete lines of the current Conectar comment"
+    - "do not add dependencies"
+verify:
+  commands:
+    - cargo fmt --check
+    - cargo test -p hexcell --test respaldo_cli
+    - cd sidecar && go build ./... && go vet ./... && go test ./internal/canal/ -count=1
+    - sh -n scripts/laboratorio/entorno.ejemplo.sh
+    - bash "$(git rev-parse --git-common-dir)/../.ai/tasks/active/HEX-095-new-spec/guarda-hex-095.sh"
+    - bash "$(git rev-parse --git-common-dir)/../.ai/tasks/active/HEX-095-new-spec/guarda-hex-095.sh" --autoprueba
+  target_s: 60
+acceptance:
+  bdd_suite: >-
+    cargo build --workspace && cargo test --workspace && cargo fmt --check &&
+    cargo clippy --workspace --all-targets -- -D warnings &&
+    cd sidecar && go build ./... && go vet ./... && go test ./... -count=1
+  human_gate: true
+limits:
+  max_files_changed: 8
+  max_diff_lines: 320
+  per_class:
+    - glob: crates/hexcell/src/**
+      max_diff_lines: 10
+    - glob: crates/hexcell/tests/**
+      max_diff_lines: 100
+    - glob: docs/**
+      max_diff_lines: 80
+    - glob: scripts/**
+      max_diff_lines: 15
+execution:
+  mode: worktree_edit
+  branch: ai/HEX-095
+retry_policy:
+  max_attempts: 2
+  escalate_after: 2

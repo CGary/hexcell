@@ -1,0 +1,73 @@
+task_id: HEX-095
+summary: "Stamp the real cell id on respaldar log lines (one call in respaldar.rs plus a binary test), restore the Conectar honesty comment, add a lab-dir volatility warning, document emparejar discipline."
+affected_files:
+  - crates/hexcell/src/respaldar.rs
+  - crates/hexcell/tests/respaldo_cli.rs
+  - sidecar/internal/canal/canal.go
+  - scripts/laboratorio/entorno.ejemplo.sh
+  - docs/runbook-canal-fase-a.md
+  - docs/STATUS.md
+  - docs/plan/fase-a-6-empaquetado-cli.md
+  - .ai/tasks/active/HEX-095-new-spec/guarda-hex-095.sh
+symbols:
+  - hexcell::respaldar::ejecutar_cli
+  - binario_real_respaldar_estampa_id_celula_real
+  - Sesion.Conectar
+dependencies:
+  - crates/hexcell/src/registro.rs
+  - crates/hexcell/src/main.rs
+  - crates/hexcell/tests/respaldo_cli.rs
+  - crates/hexcell/tests/registro_estructurado.rs
+  - crates/hexcell/tests/comun/mod.rs
+  - sidecar/internal/canal/emparejamiento_test.go
+  - docs/protocolo-ipc-nucleo-sidecar.md
+  - kitty-specs/hex-093/guarda-hex-093.sh
+test_scenarios:
+  - statement: "binario_real_respaldar_estampa_id_celula_real (new case in tests/respaldo_cli.rs, reusing FakeSidecar and comun helpers): the real hexcell binary run in respaldar mode with HEXCELL_ID_CELULA=celula-bin-real exits 0; stdout contains the exact text \"id_celula\":\"celula-bin-real\" and does not contain sin-configurar. Mutation: removing the crate::registro::inicializar call turns this named test RED (mutated copy proven different via diff, same build profile)."
+    covers: [AC-1]
+  - statement: "Guard rule canal: every main line of canal.go is still present in order, only // lines are added inside the Conectar comment block, the new text names the cancelled-context test and never says 'sigue pendiente'; the Go build stays green."
+    covers: [AC-2]
+  - statement: "Guard rule entorno: the HEXCELL_LAB_DIR default line is byte-identical, only # lines are inserted right after base line 4, the block carries AVISO DE VOLATILIDAD; sh -n is green."
+    covers: [AC-3]
+  - statement: "Guard rule runbook: the emparejar operator bullet is intact and a single Disciplina operacional bullet (DETENIDO, hexcell-admin cell rebind) is inserted right after it."
+    covers: [AC-4]
+  - statement: "Guard rules STATUS and plan: the four STATUS entries are located by their opening text and only grow with the suffix *(Resuelto 2026-10-DD, `HEX-095`: ...)*, no other line changes or moves; the A-6 plan gains an absolute-dated closing note only at end of file."
+    covers: [AC-5]
+  - statement: "Guard --autoprueba: synthetic cases show each rule green and red, including the two required mutations (delete a previous literal; rewrite in place) failing on STATUS, canal.go, entorno, runbook and plan; every mutation is asserted to have changed its sample."
+    covers: [AC-6]
+  - statement: "Full tree acceptance: cargo build --workspace, cargo test --workspace, cargo fmt --check, cargo clippy --workspace --all-targets -- -D warnings, and in sidecar go build ./..., go vet ./..., go test ./... -count=1 are all green."
+    covers: [AC-7]
+strategy:
+  - step: 1
+    action: "Application service change in respaldar.rs: right after the HEXCELL_ID_CELULA validation block in ejecutar_cli, add the exact line crate::registro::inicializar(id_celula.clone()); inicializar is idempotent and infallible; main.rs, registro.rs and emparejar.rs stay untouched."
+    files:
+      - crates/hexcell/src/respaldar.rs
+  - step: 2
+    action: "Validator test: append binario_real_respaldar_estampa_id_celula_real to tests/respaldo_cli.rs (no new file, no edits to existing cases), modeled on binario_real_despacha_respaldar_con_exito; assert the id_celula field and the absence of sin-configurar in stdout."
+    files:
+      - crates/hexcell/tests/respaldo_cli.rs
+  - step: 3
+    action: "Comment-only additions: append to the Conectar doc comment in canal.go the cancelled-context honesty note (lines 166-173 kept); add the volatility warning block after line 4 of entorno.ejemplo.sh (line 7 byte-identical)."
+    files:
+      - sidecar/internal/canal/canal.go
+      - scripts/laboratorio/entorno.ejemplo.sh
+  - step: 4
+    action: "Docs: insert the emparejar discipline bullet right after the operator bullet of the runbook; append the (Resuelto 2026-10-DD, HEX-095) suffix to the four STATUS entries in place; append a dated closing note at the end of the A-6 plan."
+    files:
+      - docs/runbook-canal-fase-a.md
+      - docs/STATUS.md
+      - docs/plan/fase-a-6-empaquetado-cli.md
+  - step: 5
+    action: "Run the docs guard and its --autoprueba from the task artifact directory against the worktree; before verify rebase on main and keep BOTH sides of the expected STATUS and plan conflicts, grepping the whole tree for conflict markers before rebase --continue."
+    files:
+      - .ai/tasks/active/HEX-095-new-spec/guarda-hex-095.sh
+risks:
+  - "Risk scorer computes medium (file_count_high: 8, symbols_count_high: 3) against the human-declared low; the human wins, divergence recorded in 07-trace.json. Production change is one wiring line."
+  - "Complexity scorer with the calibrated policy gives band M (4 counted files: respaldar.rs, canal.go, entorno.ejemplo.sh, the guard .sh; md and tests are noncounted), not the S the human announced by counting only Rust production files."
+  - "Mutation guard: removing crate::registro::inicializar must turn the new test RED. The test must run the real binary (CARGO_BIN_EXE_hexcell) so the process-global OnceLock starts empty; an in-process test would be vacuous."
+  - "The mutated copy must be proven different from the original (diff) and the red must come from the named test under the same build profile; the guard autoprueba asserts each synthetic mutation changed its sample."
+  - "Guard compares against git merge-base main HEAD, not the tip of main, so work merged by parallel sessions (T1, T2, T4) does not read as deleted; STATUS entries are found by opening text, not line number, because those lines shift on rebase."
+  - "Parallel tasks will conflict on docs/STATUS.md and the A-6 plan: rebase on main before verify and keep both additions."
+  - "Verify locates the guard through git rev-parse --git-common-dir (artifact lives in the canonical repo, not in the worktree); the guard is listed in touch only so the contract names it, it is not part of the branch diff."
+  - "Do not restore the deda117 wording and do not write 'sigue pendiente': docs/STATUS.md line 444 (HEX-028) contradicts it. The default value of HEXCELL_LAB_DIR must not change."
+  - "Locator divergence: after quorum task start, align the worktree and branch names by hand before dispatching (memory: locator divergente)."

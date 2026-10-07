@@ -1,0 +1,53 @@
+task_id: HEX-095
+summary: Stamp the real cell id on `hexcell respaldar` log lines, restore the Conectar honesty note, warn that the lab dir default is volatile, document emparejar discipline. Risk low.
+goal: >-
+  Close four Pendiente findings of docs/STATUS.md (lines 575, 576, 577, 580) in one mechanical task.
+  (1) Finding 11: the `respaldar` CLI mode must call the idempotent registry initializer with the
+  validated HEXCELL_ID_CELULA right after the id validation, so its structured log lines carry the
+  real cell id instead of `sin-configurar`; no change to main.rs, registro.rs or emparejar.rs.
+  (2) Restore, as comment-only additions in the Go sidecar `Conectar` doc comment, an honest note on
+  cancelled-context testing (only the connection-failure path under a cancelled context is unit-tested;
+  the 2026-08-18 lab session found the deadlock defect fixed in HEX-026; the later HEX-028 rehearsal
+  classified the network cut as a transport disconnect with autonomous reconnection; those lab
+  evidences are not a unit test of this function). (3) Add a volatility warning comment to the lab
+  environment example script without changing the default value of HEXCELL_LAB_DIR. (4) Document the
+  operational discipline of `hexcell emparejar` in the channel runbook (it displaces the running
+  core's IPC connection via the single-connection relay; run it with the core STOPPED and the sidecar
+  RUNNING; in a cell in service use `hexcell-admin cell rebind`). Each part closes its own STATUS
+  entry by in-line append, and a closing note is appended to the A-6 plan.
+invariants:
+  - The default value of HEXCELL_LAB_DIR does not change.
+  - Outside the structured log lines of `respaldar`, the binary does not change (same exit codes and same human-readable output).
+  - In canal.go and entorno.ejemplo.sh only comments are added; existing comment lines of Conectar are not deleted.
+  - The four STATUS entries only grow (previous text stays as an exact prefix); entries are never rewritten or moved.
+  - No new dependencies; hexcell-core keeps zero external dependencies.
+acceptance:
+  - id: AC-1
+    statement: "`binario_real_respaldar_estampa_id_celula_real` (new, in crates/hexcell/tests/respaldo_cli.rs) passes: stdout contains `\"id_celula\":\"celula-bin-real\"` and does not contain `sin-configurar`; the mutation 'remove `crate::registro::inicializar`' turns it RED (mutated copy proven different, same build profile)."
+    given: the real hexcell binary run in respaldar mode with HEXCELL_ID_CELULA=celula-bin-real against a fake sidecar
+    when: the mode emits its structured log lines
+    then: every id_celula field is celula-bin-real and the text sin-configurar does not appear in stdout
+  - id: AC-2
+    statement: "The `Conectar` comment (sidecar/internal/canal/canal.go) keeps its current lines 166-173 and adds the lines of point 2 of section 4 of the task description; `go build ./...` is green."
+  - id: AC-3
+    statement: "scripts/laboratorio/entorno.ejemplo.sh gains the volatility warning block after line 4; line 7 is byte-for-byte unchanged; `sh -n` is green."
+  - id: AC-4
+    statement: "docs/runbook-canal-fase-a.md gains the `hexcell emparejar` discipline bullet right after line 34; line 34 is intact."
+  - id: AC-5
+    statement: "The four STATUS lines (575, 576, 577, 580) only grow with the suffix `*(Resuelto 2026-10-DD, `HEX-095`: ...)*` (exact format of line 579); a closing note is appended at the end of the A-6 plan."
+  - id: AC-6
+    statement: "Docs guard `guarda-hex-095.sh` is green and its `--autoprueba` proves it detects the two mutations (deleting a previous literal; rewriting in place)."
+  - id: AC-7
+    statement: "Full acceptance commands are green on the final tree: cargo build --workspace, cargo test --workspace, cargo fmt --check, cargo clippy --workspace --all-targets -- -D warnings, and in sidecar go build ./..., go vet ./..., go test ./... -count=1."
+risk: low
+non_goals:
+  - No disciplinary message in the `emparejar` binary.
+  - Do not change the default lab directory.
+  - Do not touch main.rs, emparejar.rs, registro.rs, crates/hexcell-admin/**, deploy/**, .github/**.
+  - No ADR and no discards-log entry.
+constraints:
+  - Repository content is Spanish; conventional commits without AI attribution (no Co-Authored-By, no Claude-Session); dates are absolute; spec field values are English.
+  - "Difficulty tier: mechanical (band S, no decomposition; do not run /q-decompose). Routing override announced by the human: opus/medium."
+  - "If the blueprint computes risk medium, record risk_level_divergence in 07-trace.json and keep low (human authority)."
+  - "The docs guard guarda-hex-095.sh (precedent kitty-specs/hex-093/guarda-hex-093.sh) compares against `git show main:<file>`: STATUS lines are prefix-preserved and name HEX-095; canal.go keeps all main lines in order; entorno.ejemplo.sh line 7 and runbook line 34 are identical. AC-2..AC-5 are covered by the guard, not cargo test; blueprint test_scenarios[].covers must name these ids."
+  - "Do not restore the earlier deda117 wording and do not write 'sigue pendiente': docs/STATUS.md line 444 (HEX-028) contradicts it."

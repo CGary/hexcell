@@ -1,0 +1,56 @@
+{
+  "commands": [
+    {
+      "command": "cargo fmt --check",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "cargo test -p hexcell --test respaldo_cli",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "8 passed, 0 failed; binario_real_respaldar_estampa_id_celula_real ok"
+    },
+    {
+      "command": "cd sidecar \u0026\u0026 go build ./... \u0026\u0026 go vet ./... \u0026\u0026 go test ./internal/canal/ -count=1",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "ok"
+    },
+    {
+      "command": "sh -n scripts/laboratorio/entorno.ejemplo.sh",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "bash \"$(git rev-parse --git-common-dir)/../.ai/tasks/active/HEX-095-new-spec/guarda-hex-095.sh\"",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "bash \"$(git rev-parse --git-common-dir)/../.ai/tasks/active/HEX-095-new-spec/guarda-hex-095.sh\" --autoprueba",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "41 cases as expected"
+    },
+    {
+      "command": "mutation: remove crate::registro::inicializar; cargo test -p hexcell --test respaldo_cli (expected red)",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "mutant exit 101; only binario_real_respaldar_estampa_id_celula_real FAILED; restored"
+    },
+    {
+      "command": "acceptance bdd_suite (cargo build/test/fmt/clippy workspace + sidecar go build/vet/test)",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "rust 98 test binaries ok, 0 FAILED; go ok"
+    }
+  ],
+  "executed_at": "2026-10-07T05:02:38Z",
+  "overall_result": "passed",
+  "summary": "6/6 verify exit 0 on HEAD 4bfbc54 after literal fixes; full suite green; AC-1 mutation red.",
+  "task_id": "HEX-095"
+}
