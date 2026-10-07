@@ -173,11 +173,12 @@ func (s *Sesion) RegistrarManejador(supervisores ...*Supervisor) uint32 {
 // de reintento) mediante una función de conexión inyectada, nunca con una llamada real a whatsmeow;
 // la prueba contra un canal real es el ensayo de corte de red del laboratorio (tarea 15), no una prueba unitaria.
 //
-// Nota de honestidad (HEX-095): la única cobertura unitaria de esta función es la ruta de fallo
-// bajo un contexto cancelado (TestIniciarEmparejamientoQrSobreAlmacenVacioDevuelveErrorAlNoPoderConectar,
-// emparejamiento_test.go). La sesión de laboratorio del 2026-08-18 encontró el defecto de bloqueo que
-// corrigió HEX-026, y el ensayo posterior de HEX-028 clasificó el corte de red como una desconexión de
-// transporte con reconexión autónoma: esas evidencias de laboratorio no son una prueba unitaria de esta función.
+// Los tests de este paquete solo ejercitan la ruta de fallo de conexión con un contexto cancelado
+// (TestIniciarEmparejamientoQrSobreAlmacenVacioDevuelveErrorAlNoPoderConectar, emparejamiento_test.go);
+// la sesión de laboratorio del 2026-08-18 fue la que encontró el defecto (el interbloqueo por falta de
+// conexión, corregido en HEX-026) y el ensayo posterior de esa misma jornada (HEX-028) clasificó el corte
+// de red como desconexión de transporte con reconexión autónoma. Esas evidencias de laboratorio no son
+// una prueba unitaria de esta función.
 func (s *Sesion) Conectar(ctx context.Context) error {
 	return s.cliente.ConnectContext(ctx)
 }
