@@ -9,5 +9,5 @@ fn la_documentacion_de_contacto_conserva_los_contratos_clave() {
     assert!(readme.contains("### 10. Restablecer un contacto"));
     assert!(runbook.contains("identidad.baja_de_contacto_revivida"));
     assert!(runbook.contains("hexcell-admin contacto restablecer --incluir-baja --confirmar"));
-    assert!(estado.contains("Definido el 2026-09-30 con HEX-091"));
+    assert!(estado.contains("Definido el 2026-10-07 con HEX-091"));
 }

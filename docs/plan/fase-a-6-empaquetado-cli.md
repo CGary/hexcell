@@ -822,6 +822,6 @@ laboratorio advierte que el valor por omisión de `HEXCELL_LAB_DIR` (`/tmp/hexce
 volátil, sin cambiar ese valor. Cada entrada de STATUS cierra por anexo en su sitio y la guarda
 estática `guarda-hex-095.sh` prueba que las cuatro solo crecen.
 
-**Cierre append-only de HEX-091-b (2026-09-30):** `hexcell-admin contacto restablecer` queda
+**Cierre append-only de HEX-091-b (2026-10-07):** `hexcell-admin contacto restablecer` queda
 entregado con parser manual, sonda HTTP hermana, modo `--simular`, códigos de salida y documentación
 operativa. `--confirmar` marca las acciones irreversibles; revivir una baja es una de ellas.

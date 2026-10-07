@@ -3,7 +3,7 @@
 * **Fecha de esta versión:** 2026-09-30 (redactado el 2026-09-24; alineado el 2026-09-30 con el comportamiento que entregó HEX-087).
 * **Tarea que lo redacta:** HEX-088 (tarea 21 de `docs/plan/fase-a-6-empaquetado-cli.md`); alineado con HEX-087 (tarea 15 del mismo plan).
 * **Alcance de esta versión:** procedimiento de operación de los subcomandos `cell` y `config render` de `hexcell-admin`, más el procedimiento de respuesta ante `OOMKilled`. Los cuatro comandos de ciclo de vida (`cell pause`, `cell unpause`, `cell terminate`, `cell rebind`) son reejecutables: cada sección describe qué hace una reejecución, y la sección «Reejecución de un comando» las reúne.
-* **Alcance añadido el 2026-09-30 con HEX-091:** procedimiento de `contacto restablecer`, incluida la simulación y la verificación de la baja revivida.
+* **Alcance añadido el 2026-10-07 con HEX-091:** procedimiento de `contacto restablecer`, incluida la simulación y la verificación de la baja revivida.
 
 ---
 
