@@ -19,9 +19,10 @@
 
 use std::convert::Infallible;
 use std::net::SocketAddr;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use bytes::Bytes;
+use hexcell_core::canal::EstadoSesion;
 use hexcell_storage::GestorDePools;
 use http_body_util::Full;
 use hyper::body::Incoming;
@@ -30,11 +31,20 @@ use hyper::service::service_fn;
 use hyper::{Method, Request, Response, StatusCode};
 use hyper_util::rt::TokioIo;
 use tokio::net::TcpListener;
+use tokio::sync::watch;
 
 use crate::preparacion::{Preparacion, SesionDelCanal, evaluar_preparacion};
 
 /// Cuerpo de respuesta de este servidor: texto fijo, sin streaming.
 type CuerpoDeSalud = Full<Bytes>;
+
+/// Fuente tardía del estado de sesión del canal: un `OnceLock` poblado por la raíz de
+/// composición cuando el adaptador del canal publica su `watch::Receiver<EstadoSesion>` (hoy
+/// solo el canal whatsmeow; el simulado no registra fuente y conserva `siempre_activa()`).
+///
+/// Se envuelve en `Arc` para poder clonarse y compartirse entre la raíz de composición y el
+/// `EstadoDeSalud`, siguiendo el precedente de `RegistroDeSesion` en `admin.rs`.
+pub type FuenteDeSesion = Arc<OnceLock<watch::Receiver<EstadoSesion>>>;
 
 /// Lo que el servidor de salud necesita para responder: los pools y el estado de sesión.
 ///
@@ -43,23 +53,49 @@ type CuerpoDeSalud = Full<Bytes>;
 pub struct EstadoDeSalud {
     pools: Arc<GestorDePools>,
     sesion: SesionDelCanal,
+    // Fuente opcional del estado VIVO del canal. Cuando está poblada, `preparacion()` consulta el
+    // valor actual del watch en cada sondeo; cuando no lo está, el comportamiento es el de hoy
+    // (el valor estático con el que se construyó `EstadoDeSalud::nuevo`, normalmente
+    // `siempre_activa()` para el canal simulado).
+    fuente_de_sesion: Option<FuenteDeSesion>,
 }
 
 impl EstadoDeSalud {
     /// Agrupa los pools ya abiertos con el estado de sesión del canal.
     pub fn nuevo(pools: Arc<GestorDePools>, sesion: SesionDelCanal) -> Self {
-        Self { pools, sesion }
+        Self {
+            pools,
+            sesion,
+            fuente_de_sesion: None,
+        }
+    }
+
+    /// Registra la fuente tardía del estado vivo del canal. Encadenable, mismo estilo que los
+    /// builders de `outbox.ColaDeSalida` (HEX-072-a).
+    pub fn con_fuente_de_sesion(mut self, fuente: FuenteDeSesion) -> Self {
+        self.fuente_de_sesion = Some(fuente);
+        self
     }
 
     /// Evalúa la preparación consultando las dos sondas de vitalidad y el estado de sesión.
     ///
     /// Síncrona a propósito: las dos consultas se hacen y se cierran aquí, así que ningún
     /// guardián de cerrojo puede sobrevivir hasta el siguiente punto de espera del servidor.
+    /// Si hay una fuente de sesión poblada, se consulta el watch y se proyecta a
+    /// `SesionDelCanal::desde_estado`; el borrow del `RefCell` del watch se libera dentro de la
+    /// expresión y nunca cruza un `.await`.
     pub fn preparacion(&self) -> Preparacion {
+        let sesion = match &self.fuente_de_sesion {
+            Some(fuente) => match fuente.get() {
+                Some(rx) => SesionDelCanal::desde_estado(*rx.borrow()),
+                None => self.sesion,
+            },
+            None => self.sesion,
+        };
         evaluar_preparacion(
             self.pools.sesiones().vitalidad(),
             self.pools.conocimiento().vitalidad(),
-            &self.sesion,
+            &sesion,
         )
     }
 }

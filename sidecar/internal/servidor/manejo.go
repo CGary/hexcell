@@ -138,6 +138,39 @@ func (s *Servidor) atenderConexion(ctx context.Context, conn net.Conn) {
 	// 4. Iniciar bucles concurrentes de lectura y escritura
 	go s.leerEntrante(ctx, nueva, lector)
 	go s.escribirSaliente(ctx, nueva)
+
+	// 5. Reenvío del último estado de sesión al conectar (HEX-094).
+	//
+	// Si el supervisor ya emitió algún estado (por ejemplo, pausada con su expira_en_ms, o
+	// activa tras reconectar), el cliente IPC nuevo lo recibe después del saludo, sin
+	// esperar al próximo evento. El reenvío es SÍNCRONO: ocurre después de escribir el
+	// saludo y con s.actual = nueva ya fijado, y la codificación y el encolado en
+	// nueva.enviar suceden DENTRO de entregar, que ConUltimoEstado ejecuta bajo el mu del
+	// supervisor. Así la instantánea y el encolado son atómicos respecto de emitirEstado:
+	// una emisión concurrente o bien precede a la instantánea (y la instantánea ya es ella),
+	// o bien la sigue y se encola detrás del reenvío; en el cable queda saludo, estado
+	// reenviado y emisiones posteriores, nunca un estado viejo detrás de uno nuevo.
+	//
+	// Encolar bajo el mu del supervisor tiene la misma semántica de bloqueo que emitirEstado
+	// ya tiene hoy (su sumidero llega a EnviarEstadoSesion y a act.enviar bajo ese mu):
+	// enviar solo bloquea con la cola de 100 llena y la conexión sin drenar ni cerrar, y
+	// escribirSaliente nunca toma el mu del supervisor, así que no hay ciclo de candados.
+	//
+	// Sin fuente (canal que no publica estado) o sin emisión previa, no se escribe nada: el
+	// servidor no inventa un estado al conectar. Un error de codificación se registra y se
+	// descarta el frame.
+	if s.fuenteDeEstado != nil {
+		s.fuenteDeEstado(func(estado ipc.EstadoSesion) {
+			frame, err := ipc.Codificar(ipc.NuevoSobre(estado))
+			if err != nil {
+				if s.deps.Registro != nil {
+					s.deps.Registro.Error("servidor.error_codificar_reenvio_estado", registro.Campos{Detalle: err.Error()})
+				}
+				return
+			}
+			nueva.enviar(frame)
+		})
+	}
 }
 
 // leerEntrante decodifica líneas recibidas del cliente IPC y las enruta a los manejadores

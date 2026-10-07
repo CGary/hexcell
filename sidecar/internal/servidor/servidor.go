@@ -64,6 +64,13 @@ type Servidor struct {
 	actual   *conexionActiva
 	trabajo  chan struct{}
 	cerrado  bool
+	// fuenteDeEstado es el enlace tardío con el Supervisor: una función que entrega el último
+	// estado de sesión emitido a la función destino que se le pase. El servidor la llama en
+	// atenderConexion tras el saludo, de modo que un cliente IPC que conecta DESPUÉS de que
+	// el supervisor emitió un estado lo recibe de inmediato sin esperar al próximo evento.
+	// Se inyecta después de NuevoSupervisor vía ConFuenteDeEstado (mismo estilo que
+	// ConSumideroDeAcuse del outbox).
+	fuenteDeEstado func(func(ipc.EstadoSesion))
 }
 
 // NuevoServidor construye una nueva instancia del servidor con las dependencias inyectadas.
@@ -72,6 +79,19 @@ func NuevoServidor(deps Dependencias) *Servidor {
 		deps:    deps,
 		trabajo: make(chan struct{}, 1),
 	}
+}
+
+// ConFuenteDeEstado inyecta el enlace tardío con el Supervisor: una función que, dado un
+// destino, le entrega una copia del último estado de sesión emitido. Nil-segura (sin fuente
+// el servidor no reenvía nada al conectar). Devuelve el servidor para encadenar, mismo
+// estilo que outbox.ColaDeSalida.ConSumideroDeAcuse.
+//
+// El nombre se escribe con C mayúscula por convención del código (exportado, estilo
+// Go-idiomático con acrónimo inicial) y NO empieza por Enviar, por lo que el centinela de
+// rutas de envío de internal/outbox no lo marca.
+func (s *Servidor) ConFuenteDeEstado(fuente func(func(ipc.EstadoSesion))) *Servidor {
+	s.fuenteDeEstado = fuente
+	return s
 }
 
 // Escuchar ejecuta el procedimiento de inicio con detección de socket huérfano según la

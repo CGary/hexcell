@@ -180,11 +180,11 @@ func TestLaVersionDeCableDelSobreCoincideConElDocumentoYEsSiete(t *testing.T) {
 
 	documento := leerDocumento(t)
 	versionDelDocumento, cableSegunElDocumento := versionDeCableSegunElDocumento(t, documento)
-	if versionDelDocumento != "1.6" {
-		t.Errorf("versión del documento = %s, se esperaba 1.6", versionDelDocumento)
+	if versionDelDocumento != "1.7" {
+		t.Errorf("versión del documento = %s, se esperaba 1.7", versionDelDocumento)
 	}
-	if !strings.Contains(documento, "| 1.6 | `7` |") {
-		t.Errorf("el documento no declara la correspondencia 1.6 → cable 7")
+	if !strings.Contains(documento, "| 1.7 | `7` |") {
+		t.Errorf("el documento no declara la correspondencia 1.7 → cable 7")
 	}
 
 	linea, err := ipc.Codificar(ipc.NuevoSobre(ipc.OrdenRestablecerContacto{Contacto: contactoDePrueba, IncluirBaja: ipc.ValorNo}))

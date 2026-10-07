@@ -91,6 +91,28 @@ impl FakeSidecar {
         con.1.flush().await.expect("flush evento entrante");
     }
 
+    /// Envía un estado_sesion con la misma forma que los que produce el sidecar real
+    /// (`sidecar/internal/ipc/mensajes.go`). `expira_en_ms` viaja tal cual (0 si no aplica).
+    /// Lo usa el test de /health/ready con estado real: sin este método el FakeSidecar no
+    /// podría alterar el watch del adaptador.
+    async fn enviar_estado_sesion(
+        &mut self,
+        estado: &str,
+        causa: &str,
+        codigo: i64,
+        expira_en_ms: i64,
+    ) {
+        let con = self.conexion.as_mut().expect("sin conexión activa");
+        let frame = format!(
+            "{{\"version\":7,\"tipo\":\"estado_sesion\",\"estado\":\"{estado}\",\"causa\":\"{causa}\",\"codigo\":{codigo},\"expira_en_ms\":{expira_en_ms}}}\n"
+        );
+        con.1
+            .write_all(frame.as_bytes())
+            .await
+            .expect("enviar estado_sesion");
+        con.1.flush().await.expect("flush estado_sesion");
+    }
+
     async fn leer_linea_con_plazo(&mut self, plazo: Duration) -> String {
         let con = self.conexion.as_mut().expect("sin conexión activa");
         let mut linea = String::new();
@@ -105,6 +127,24 @@ impl FakeSidecar {
 impl Drop for FakeSidecar {
     fn drop(&mut self) {
         let _ = std::fs::remove_file(&self.ruta_socket);
+    }
+}
+
+/// Sondea `peticion_http_cruda` hasta que la respuesta empiece por el `status_line` esperado o
+/// el plazo se agote. Devuelve la última respuesta leída. Nunca usa un sleep fijo como espera:
+/// la condición puede cumplirse antes del plazo, y el plazo acota el peor caso.
+fn sondear_http_hasta(direccion: &str, ruta: &str, status_line: &str, plazo: Duration) -> String {
+    let limite = std::time::Instant::now() + plazo;
+    let mut ultima;
+    loop {
+        ultima = comun::peticion_http_cruda(direccion, ruta);
+        if ultima.starts_with(status_line) {
+            return ultima;
+        }
+        if std::time::Instant::now() >= limite {
+            return ultima;
+        }
+        std::thread::sleep(Duration::from_millis(50));
     }
 }
 
@@ -163,8 +203,87 @@ async fn servidor_de_salud_responde_con_canal_whatsmeow() {
     let respuesta_live = comun::peticion_http_cruda(&binario.direccion, "/health/live");
     assert!(respuesta_live.starts_with("HTTP/1.1 200 OK"));
 
-    let respuesta_ready = comun::peticion_http_cruda(&binario.direccion, "/health/ready");
-    assert!(respuesta_ready.starts_with("HTTP/1.1 200 OK"));
+    // El watch del adaptador nace en Reconectando y el adaptador publica Activa tras el saludo
+    // exitoso, así que /health/ready NO es 200 inmediatamente: se sondea con plazo en vez de
+    // asumir un 200 inmediato, que con el estado real sería una carrera.
+    let respuesta_ready = sondear_http_hasta(
+        &binario.direccion,
+        "/health/ready",
+        "HTTP/1.1 200 OK",
+        Duration::from_secs(5),
+    );
+    assert!(
+        respuesta_ready.starts_with("HTTP/1.1 200 OK"),
+        "/health/ready no llegó a 200 en 5s: {respuesta_ready}"
+    );
+
+    binario.enviar_sigterm();
+    let salida = binario.esperar_salida(Duration::from_secs(5));
+    assert!(salida.is_some_and(|s| s.success()));
+}
+
+// HEX-094 AC-4: /health/ready refleja el estado real del canal publicado por el sidecar a
+// través del IPC. El watch del adaptador nace en Reconectando, así que primero esperamos a
+// que el saludo dispare la publicación de Activa (200); luego el fake envía reconectando y
+// /health/ready debe caer a 503 con componente `sesion-del-canal`; finalmente el fake envía
+// activa y /health/ready vuelve a 200. Cada transición se observa por sondeo con plazo ≤ 5 s,
+// nunca por sleep fijo.
+#[tokio::test]
+async fn salud_ready_refleja_el_estado_de_sesion_del_sidecar() {
+    let mut sidecar = FakeSidecar::nuevo();
+    let ruta_socket = sidecar.ruta_socket_str();
+    let dir_temporal = comun::DirectorioTemporal::nuevo("canal-whatsmeow-salud-real");
+
+    let mut binario = comun::lanzar_binario_con_variables(
+        dir_temporal.ruta(),
+        &[
+            ("HEXCELL_CANAL", "whatsmeow"),
+            ("HEXCELL_SOCKET_IPC", &ruta_socket),
+        ],
+    );
+
+    sidecar.aceptar_y_saludar("piloto-01").await;
+
+    // 1. Esperar a que el adaptador publique Activa tras el saludo (200).
+    let primera = sondear_http_hasta(
+        &binario.direccion,
+        "/health/ready",
+        "HTTP/1.1 200 OK",
+        Duration::from_secs(5),
+    );
+    assert!(
+        primera.starts_with("HTTP/1.1 200 OK"),
+        "/health/ready no llegó a 200 tras el saludo: {primera}"
+    );
+
+    // 2. El sidecar falso publica reconectando: /health/ready debe caer a 503 con componente
+    //    `sesion-del-canal`.
+    sidecar
+        .enviar_estado_sesion("reconectando", "fallo_de_conexion", 0, 0)
+        .await;
+    let tras_reconectando = sondear_http_hasta(
+        &binario.direccion,
+        "/health/ready",
+        "HTTP/1.1 503",
+        Duration::from_secs(5),
+    );
+    assert!(
+        tras_reconectando.contains("sesion-del-canal"),
+        "503 sin componente sesion-del-canal: {tras_reconectando}"
+    );
+
+    // 3. El sidecar falso publica activa: /health/ready vuelve a 200.
+    sidecar.enviar_estado_sesion("activa", "", 0, 0).await;
+    let tras_activa = sondear_http_hasta(
+        &binario.direccion,
+        "/health/ready",
+        "HTTP/1.1 200 OK",
+        Duration::from_secs(5),
+    );
+    assert!(
+        tras_activa.starts_with("HTTP/1.1 200 OK"),
+        "/health/ready no volvió a 200 tras activa: {tras_activa}"
+    );
 
     binario.enviar_sigterm();
     let salida = binario.esperar_salida(Duration::from_secs(5));

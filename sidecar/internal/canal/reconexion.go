@@ -46,7 +46,11 @@ type Supervisor struct {
 	mu            sync.Mutex
 	intentos      int
 	intentosBaneo int
-	ultimoEstado  string
+	// ultimoEstado guarda el último ipc.EstadoSesion COMPLETO emitido (no solo el string
+	// Estado): el reenvío al conectar el IPC requiere los cuatro campos, particularmente
+	// ExpiraEnMs que el núcleo usa para Pausada. Su lectura solo es segura bajo mu.
+	ultimoEstado    ipc.EstadoSesion
+	hayUltimoEstado bool
 	// pausada es TERMINAL y de un solo sentido: se pone en true al proyectar el estado
 	// `pausada` por baneo temporal y NUNCA vuelve a false. No existe método exportado,
 	// evento, mensaje IPC ni secuencia de eventos que la limpie; la única salida es
@@ -243,9 +247,15 @@ func (s *Supervisor) registrarPoliticaEnCurso(causa string) {
 // emitirEstado serializa la entrega al sumidero bajo el candado: el protocolo IPC es de una
 // línea por mensaje y dos goroutines de eventos no deben entrelazar sus líneas.
 // Ningún llamador puede tener mu tomado al entrar aquí.
+//
+// Guarda el ipc.EstadoSesion COMPLETO (Estado, Causa, Codigo, ExpiraEnMs) junto con el flag
+// hayUltimoEstado: el reenvío al conectar el IPC requiere los cuatro campos, particularmente
+// ExpiraEnMs que el núcleo usa para Pausada. Guardar solo Estado habría perdido Causa,
+// Codigo y ExpiraEnMs y dejado al núcleo sin fecha de baneo al reconectar.
 func (s *Supervisor) emitirEstado(estado ipc.EstadoSesion) {
 	s.mu.Lock()
-	s.ultimoEstado = estado.Estado
+	s.ultimoEstado = estado
+	s.hayUltimoEstado = true
 	s.sumidero(estado)
 	s.mu.Unlock()
 	if s.registro != nil {
@@ -254,6 +264,21 @@ func (s *Supervisor) emitirEstado(estado ipc.EstadoSesion) {
 				estado.Estado, estado.Causa, estado.Codigo, estado.ExpiraEnMs),
 		})
 	}
+}
+
+// ConUltimoEstado entrega, bajo el mismo mu que emitirEstado, una copia del último
+// ipc.EstadoSesion emitido a la función destino. Sin estado previo no llama a entregar: el
+// servidor no inventa un estado al conectar un cliente nuevo. La entrega es atómica respecto
+// de emitirEstado: una emisión concurrente o bien precede a la entrega (y el cliente la ve) o
+// bien la sigue (y la verá la próxima conexión). entregar NO DEBE llamar de vuelta a ningún
+// método del Supervisor: mu no es reentrante y entraría en deadlock.
+func (s *Supervisor) ConUltimoEstado(entregar func(ipc.EstadoSesion)) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.hayUltimoEstado {
+		return
+	}
+	entregar(s.ultimoEstado)
 }
 
 func (s *Supervisor) reintentarConexion(ctx context.Context, causa string) {

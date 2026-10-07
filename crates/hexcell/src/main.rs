@@ -44,7 +44,7 @@
 //! siempre llega ya traducido desde el transporte a través del adaptador.
 
 use std::process::ExitCode;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::{Duration, SystemTime};
 
 use hexcell::admin::{
@@ -75,7 +75,7 @@ use hexcell::proveedor_embeddings::ProveedorDeEmbeddingsOpenRouter;
 use hexcell::proveedor_embeddings_gemini::ProveedorDeEmbeddingsGemini;
 use hexcell::proveedor_openai::ProveedorOpenAi;
 use hexcell::registro::{self, EntradaDeRegistro, NivelDeRegistro};
-use hexcell::salud::EstadoDeSalud;
+use hexcell::salud::{EstadoDeSalud, FuenteDeSesion};
 use hexcell_canal_simulado::{AdaptadorSimulado, RelojDelSistema};
 use hexcell_canal_whatsmeow::{
     AdaptadorWhatsmeow, AsaDeSesion, ErrorCanalWhatsmeow, InicioDeEmparejamiento,
@@ -378,10 +378,15 @@ async fn main() -> ExitCode {
     let receptor_apagado = senal_de_apagado.observador();
     let debe_apagar = move || *receptor_apagado.borrow();
 
-    let estado_de_salud = Arc::new(EstadoDeSalud::nuevo(
-        Arc::clone(&pools),
-        SesionDelCanal::siempre_activa(),
-    ));
+    // Fuente tardía del estado vivo del canal: la raíz de composición la crea vacía y la rama
+    // del canal whatsmeow la rellena con el receptor del watch del adaptador. El canal simulado
+    // no la rellena: `EstadoDeSalud::preparacion()` cae en el valor estático
+    // (`siempre_activa()`) y el comportamiento de /health/ready no cambia respecto a hoy.
+    let fuente_de_sesion: FuenteDeSesion = Arc::new(OnceLock::new());
+    let estado_de_salud = Arc::new(
+        EstadoDeSalud::nuevo(Arc::clone(&pools), SesionDelCanal::siempre_activa())
+            .con_fuente_de_sesion(Arc::clone(&fuente_de_sesion)),
+    );
     let estado_de_admin = Arc::new(EstadoDeAdmin::nuevo());
 
     let proveedor_embeddings = match &configuracion.embeddings {
@@ -533,6 +538,12 @@ async fn main() -> ExitCode {
             let _ = sesion.registrar(&registro_sesion);
 
             let mut receptor_estado_alertas = adaptador.suscribir_estado_con_expiracion();
+            // Registro del estado vivo de la sesión del canal para /health/ready. El watch del
+            // adaptador nace en Reconectando y se actualiza a Activa tras el saludo exitoso, y a
+            // los estados reales que publique el sidecar (reconectando, pausada, desvinculada).
+            // El OnceLock tolera un set() fallido (ya poblado): la composición nunca lo llena dos
+            // veces, pero la guarda defensiva evita pánicos en rearranques raros.
+            let _ = fuente_de_sesion.set(adaptador.suscribir_estado());
             let contadores = adaptador.contadores_de_acuse().clone();
             let emisor = Arc::clone(&emisor_alertas);
 
