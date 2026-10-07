@@ -1,7 +1,8 @@
-// Package metricas es el productor de métricas nativas del canal propio: agrega cuatro series
-// acotadas —ratio de acuse por contacto, reconexiones por hora, ventana de silencio entrante y
-// latencia hasta el acuse— y las emite en una sola línea periódica de registro estructurado
-// (`docs/adr/adr-0033`, extendido por `docs/adr/adr-0035`).
+// Package metricas es el productor de métricas nativas del canal propio: agrega seis series
+// acotadas —ratio de acuse por contacto, reconexiones por hora, ventana de silencio entrante,
+// latencia hasta el acuse, aplazamientos por ventana de atención y aplazamientos por rampa de
+// volumen— y las emite en una sola línea periódica de registro estructurado
+// (`docs/adr/adr-0033`, extendido por `docs/adr/adr-0035` y `docs/adr/adr-0042`).
 //
 // # Por qué es una hoja
 //
@@ -72,10 +73,10 @@ type correlacionPendiente struct {
 	creadaMs       int64
 }
 
-// Productor acumula las cuatro series y expone la instantánea determinista de texto plano que
+// Productor acumula las seis series y expone la instantánea determinista de texto plano que
 // sidecar/main.go emite por su Bucle. Todo el estado mutable vive detrás de mu: ObservarEnvio,
-// ObservarAcuse, ObservarEstadoSesion y ObservarEntrante se llaman desde manejadores de eventos de
-// whatsmeow, que whatsmeow despacha cada uno en su propia goroutine.
+// ObservarAcuse, ObservarEstadoSesion, ObservarEntrante y ObservarAplazamientos se llaman desde
+// manejadores de eventos de whatsmeow, que whatsmeow despacha cada uno en su propia goroutine.
 type Productor struct {
 	reg     *registro.Registro
 	ahoraMs func() int64
@@ -89,6 +90,8 @@ type Productor struct {
 	inicioMs              int64
 	ultimoEntranteMs      int64
 	ultimaLatenciaAcuseMs int64
+
+	aplazamientosFuente func() (int64, int64)
 }
 
 // NuevoProductor construye el productor con el reloj inyectado como costura de prueba: ninguna
@@ -108,6 +111,19 @@ func NuevoProductor(reg *registro.Registro, ahoraMs func() int64) *Productor {
 		inicioMs:         ahora,
 		ultimoEntranteMs: ahora,
 	}
+}
+
+// ObservarAplazamientos inyecta la fuente de los aplazamientos acumulados: horario es el total de
+// envíos diferidos por la ventana de atención comercial y rampa el diferido por el tope de la rampa
+// de volumen, ambos acumulados desde el arranque del proceso, sin delta ni reinicio por tick. El
+// productor no conoce de dónde salen esos números —no importa internal/outbox—: sidecar/main.go, la
+// raíz de composición, adapta allí los contadores atómicos. Sin fuente inyectada ambos valores son
+// 0 (Instantanea los emite siempre). La fuente se guarda bajo mu porque se lee dentro del crítico
+// de Instantanea.
+func (p *Productor) ObservarAplazamientos(fuente func() (int64, int64)) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.aplazamientosFuente = fuente
 }
 
 // pareceJID detecta la forma de una dirección cruda de WhatsApp (siempre lleva "@", como en
@@ -247,11 +263,12 @@ func (p *Productor) desalojarCorrelacion() {
 	p.contactosOmitidos++
 }
 
-// Instantanea construye el payload determinista de la línea periódica: siempre las cuatro series
+// Instantanea construye el payload determinista de la línea periódica: siempre las seis series
 // agregadas (reconexiones_por_hora, silencio_entrante_ms, latencia_hasta_acuse_ms,
-// contactos_omitidos) más una entrada ack_ratio.<id_conversacion> por cada contacto conocido, en
-// orden ascendente de id para que dos llamadas sobre el mismo estado produzcan el mismo texto byte
-// a byte, sin depender del orden de iteración del mapa de Go.
+// contactos_omitidos, aplazadas_por_horario y aplazadas_por_rampa) más una entrada
+// ack_ratio.<id_conversacion> por cada contacto conocido, en orden ascendente de id para que dos
+// llamadas sobre el mismo estado produzcan el mismo texto byte a byte, sin depender del orden de
+// iteración del mapa de Go.
 func (p *Productor) Instantanea() string {
 	ahora := p.ahoraMs()
 
@@ -269,6 +286,14 @@ func (p *Productor) Instantanea() string {
 		silencioMs = 0
 	}
 
+	// La fuente se consulta una sola vez por llamada, dentro del crítico: dos Instantanea()
+	// consecutivas sobre un estado sin cambios producen el mismo texto. Sin fuente inyectada
+	// ambos valores quedan en su cero de Go, que es el valor documentado.
+	var horario, rampa int64
+	if p.aplazamientosFuente != nil {
+		horario, rampa = p.aplazamientosFuente()
+	}
+
 	ids := make([]string, 0, len(p.contactos))
 	for id := range p.contactos {
 		ids = append(ids, id)
@@ -280,6 +305,8 @@ func (p *Productor) Instantanea() string {
 		fmt.Sprintf("silencio_entrante_ms=%d", silencioMs),
 		fmt.Sprintf("latencia_hasta_acuse_ms=%d", p.ultimaLatenciaAcuseMs),
 		fmt.Sprintf("contactos_omitidos=%d", p.contactosOmitidos),
+		fmt.Sprintf("aplazadas_por_horario=%d", horario),
+		fmt.Sprintf("aplazadas_por_rampa=%d", rampa),
 	}
 	for _, id := range ids {
 		c := p.contactos[id]

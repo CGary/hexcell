@@ -1,6 +1,6 @@
 # Bitácora de descartes
 
-> Registro de lo que se consideró y **no** se hizo. Última actualización: 2026-09-30 (D-60).
+> Registro de lo que se consideró y **no** se hizo. Última actualización: 2026-10-07 (D-61).
 
 ## Para qué sirve este documento
 
@@ -93,6 +93,7 @@ se apoya en un principio de diseño, no.
 | [D-57](#d-57) | `hexcell-admin` abre una conexión IPC directa con el sidecar | Reabrir si el protocolo IPC admite un canal de control separado o multiplexación |
 | [D-59](#d-59) | Contenedor hermano con `sqlite3` para restablecer contactos | Reabrir si la imagen de la sonda incorpora una herramienta aprobada y un ADR nuevo autoriza el acceso externo a `identidad.db` |
 | [D-60](#d-60) | Borrar la marca de época sospechosa al archivarla | Reabrir si la política de retención de evidencia cambia y un ADR nuevo autoriza la destrucción de marcas |
+| [D-61](#d-61) | Importar `internal/outbox` desde `internal/metricas` para leer directamente los contadores de aplazamiento por horario y rampa | Principio de diseño, no reabrir |
 
 ---
 
@@ -966,6 +967,37 @@ conservar la marca archivada es un archivo de texto diminuto por época saneada.
 Que la política de retención de evidencia cambiara y un ADR nuevo autorizara explícitamente la
 destrucción de marcas —p. ej. por un límite reglamentario de retención—, con la condición de
 reapertura registrada aquí.
+
+---
+
+### D-61: Importar `internal/outbox` desde `internal/metricas` para leer los contadores de aplazamiento
+
+**Descartado el:** 2026-10-07  
+**Decisión registrada en:** adr-0042
+
+### Qué se consideró
+
+Cerrar el Hallazgo 9 (`docs/STATUS.md:578`) haciendo que el paquete `internal/metricas` importara
+`internal/outbox` y leyera directamente `ContadorAplazadasPorHorario` y `ContadorAplazadasPorRampa`
+al construir la instantánea, en lugar de recibirlos por una fuente inyectada desde
+`sidecar/main.go`.
+
+### Por qué se descartó
+
+`adr-0033` fijó `internal/metricas` como **paquete hoja**: importa solo la biblioteca estándar más
+`internal/registro`, nunca `internal/outbox`, `internal/ipc` ni `internal/canal`. Importar `outbox`
+rompería esa frontera, arrastraría la costura de salida entera al binario de pruebas del productor y
+haría que un cambio en la disciplina de salida pudiera obligar a recompilar el productor de métricas.
+La fuente inyectada logra la misma visibilidad sin acoplar los paquetes, y es el patrón que el propio
+productor ya usa para el reloj (`ahoraMs func() int64`): la raíz de composición adapta los tipos
+concretos. Además, leer los contadores globales directamente habría dejado el productor sin costura
+de prueba para los aplazamientos, imposibilitando la mutación determinista que `adr-0042` exige.
+
+### Qué tendría que cambiar para reabrirlo
+
+Que se decidiera disolver la disciplina de paquete hoja de `internal/metricas` y un ADR nuevo
+autorizara explícitamente sus imports de `internal/outbox`, `internal/ipc` o `internal/canal`; sin
+esa decisión, el acoplamiento vuelve a discutirse desde cero.
 
 ---
 

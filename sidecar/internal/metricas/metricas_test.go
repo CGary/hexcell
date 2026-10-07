@@ -480,3 +480,65 @@ func TestLatenciaHastaAcuseNoSeMuevePorAcuseHuerfano(t *testing.T) {
 // cancelarse ctx- es la misma que ya cubre bucleDeDrenajeSalida en sidecar/main.go sin prueba
 // dedicada; Emitir() e Instantanea(), que sí concentran la lógica de negocio, quedan cubiertas
 // arriba de forma íntegra y determinista.
+
+// Escenario 17: con una fuente inyectada que devuelve (3, 7), la línea lleva las dos claves nuevas
+// con sus valores respectivos y en el orden fijado: después de contactos_omitidos y antes de toda
+// clave ack_ratio. Los valores son distintos a propósito para que un intercambio horario/rampa se
+// delate.
+// MUTACIÓN: intercambiar horario y rampa en los Sprintf de Instantanea() (o en la desestructuración
+// de la fuente) y esta prueba debe fallar en la aserción de valor; quitar cualquiera de las dos
+// claves y debe fallar en la aserción de presencia/orden.
+func TestAplazamientosVisiblesConFuenteInyectada(t *testing.T) {
+	t.Parallel()
+	reloj := &relojFalso{ahoraMs: 1_000}
+	p, _ := nuevoProductorDePrueba(reloj)
+
+	p.ObservarAplazamientos(func() (int64, int64) { return 3, 7 })
+	// Un contacto con un envío sembrado para que exista una clave ack_ratio.conv-1 y se pueda
+	// comprobar que las dos claves nuevas van antes que toda la familia segmentada.
+	p.ObservarEnvio("conv-1", "corr-1")
+
+	detalle := p.Instantanea()
+
+	if v := buscarClave(t, detalle, "aplazadas_por_horario"); v != "3" {
+		t.Errorf("aplazadas_por_horario = %s, se esperaba 3", v)
+	}
+	if v := buscarClave(t, detalle, "aplazadas_por_rampa"); v != "7" {
+		t.Errorf("aplazadas_por_rampa = %s, se esperaba 7", v)
+	}
+
+	posOmitidos := strings.Index(detalle, "contactos_omitidos=")
+	posHorario := strings.Index(detalle, "aplazadas_por_horario=")
+	posRampa := strings.Index(detalle, "aplazadas_por_rampa=")
+	posAck := strings.Index(detalle, "ack_ratio.conv-1=")
+	if posOmitidos < 0 || posHorario < 0 || posRampa < 0 || posAck < 0 {
+		t.Fatalf("faltó alguna clave para comparar el orden en %q", detalle)
+	}
+	if !(posOmitidos < posHorario && posHorario < posRampa && posRampa < posAck) {
+		t.Errorf("orden inesperado (omitidos=%d horario=%d rampa=%d ack=%d) en %q", posOmitidos, posHorario, posRampa, posAck, detalle)
+	}
+}
+
+// Escenario 18: sin fuente inyectada, las dos claves nuevas existen igual y valen 0, el valor por
+// omisión documentado: nunca ausentes, nunca basura de memoria.
+// MUTACIÓN: omitir las dos claves cuando no hay fuente, o devolver un valor distinto de cero, y
+// esta prueba debe fallar.
+func TestAplazamientosValenCeroSinFuenteInyectada(t *testing.T) {
+	t.Parallel()
+	reloj := &relojFalso{ahoraMs: 0}
+	p, _ := nuevoProductorDePrueba(reloj)
+
+	detalle := p.Instantanea()
+
+	for _, clave := range []string{"aplazadas_por_horario", "aplazadas_por_rampa"} {
+		if !tieneClave(detalle, clave) {
+			t.Fatalf("falta la clave %q en %q", clave, detalle)
+		}
+	}
+	if v := buscarClave(t, detalle, "aplazadas_por_horario"); v != "0" {
+		t.Errorf("aplazadas_por_horario = %s, se esperaba 0 sin fuente", v)
+	}
+	if v := buscarClave(t, detalle, "aplazadas_por_rampa"); v != "0" {
+		t.Errorf("aplazadas_por_rampa = %s, se esperaba 0 sin fuente", v)
+	}
+}
