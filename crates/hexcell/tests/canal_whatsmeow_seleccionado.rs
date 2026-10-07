@@ -91,7 +91,7 @@ impl FakeSidecar {
         con.1.flush().await.expect("flush evento entrante");
     }
 
-    /// Envía un estado_sesion shaped like los que produce el sidecar real
+    /// Envía un estado_sesion con la misma forma que los que produce el sidecar real
     /// (`sidecar/internal/ipc/mensajes.go`). `expira_en_ms` viaja tal cual (0 si no aplica).
     /// Lo usa el test de /health/ready con estado real: sin este método el FakeSidecar no
     /// podría alterar el watch del adaptador.
