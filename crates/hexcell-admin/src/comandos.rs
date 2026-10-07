@@ -32,6 +32,27 @@ use crate::docker::{ClienteDocker, ErrorDeClienteDocker, InventarioDocker};
 use crate::estado_de_celula::EstadoDeCelula;
 use crate::salida::Salida;
 
+/// Ruta pura de `contacto`: con `--simular` imprime la línea de simulación; sin él avisa
+/// «todavía no implementado» (los efectos viven en `ejecutar_con_efectos`).
+fn ejecutar_contacto_puro<S: Write, D: Write>(
+    invocacion: &crate::argumentos::InvocacionContacto,
+    salida: &mut Salida<S, D>,
+) -> CodigoDeSalida {
+    if invocacion.simular() {
+        match salida.linea(&crate::contacto::linea_de_simulacion_de_contacto(
+            invocacion,
+        )) {
+            Ok(()) => CodigoDeSalida::Exito,
+            Err(_) => CodigoDeSalida::Fallo,
+        }
+    } else {
+        match salida.diagnostico("subcomando «contacto restablecer» todavía no implementado") {
+            Ok(()) => CodigoDeSalida::NoImplementadoTodavia,
+            Err(_) => CodigoDeSalida::Fallo,
+        }
+    }
+}
+
 /// Despacha el resultado del análisis de argumentos contra los dos sumideros de salida y
 /// devuelve el código de salida del proceso.
 ///
@@ -67,27 +88,10 @@ pub fn ejecutar<S: Write, D: Write>(
     if let Comando::ReporteTokens(invocacion) = comando {
         return ejecutar_reporte_tokens(invocacion, salida);
     }
-    if let Comando::Contacto(invocacion) = &comando {
-        return if invocacion.simular() {
-            match salida.linea(&crate::contacto::linea_de_simulacion_de_contacto(
-                invocacion,
-            )) {
-                Ok(()) => CodigoDeSalida::Exito,
-                Err(_) => CodigoDeSalida::Fallo,
-            }
-        } else {
-            match salida.diagnostico("subcomando «contacto restablecer» todavía no implementado")
-            {
-                Ok(()) => CodigoDeSalida::NoImplementadoTodavia,
-                Err(_) => CodigoDeSalida::Fallo,
-            }
-        };
-    }
     let invocacion = match comando {
         Comando::Cell(invocacion) => invocacion,
-        Comando::ConfigRender(_) | Comando::ReporteTokens(_) | Comando::Contacto(_) => {
-            unreachable!()
-        }
+        Comando::Contacto(invocacion) => return ejecutar_contacto_puro(&invocacion, salida),
+        Comando::ConfigRender(_) | Comando::ReporteTokens(_) => unreachable!(),
     };
     if invocacion.simular() {
         let linea = linea_de_simulacion(&invocacion);
