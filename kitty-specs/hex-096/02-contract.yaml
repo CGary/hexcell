@@ -1,0 +1,90 @@
+task_id: HEX-096
+summary: "Two cumulative deferral keys in the sidecar metrics line via an injected source, wired from the outbox counters in main; ADR, discard entry and STATUS append."
+goal: >-
+  Deliver AC-1..AC-7 of HEX-096 (Finding 9, docs/STATUS.md:578). metricas.Productor gains the field
+  aplazamientosFuente and the method ObservarAplazamientos(fuente func() (int64, int64)) returning
+  (horario, rampa); Instantanea emits aplazadas_por_horario and aplazadas_por_rampa after
+  contactos_omitidos and before every ack_ratio key, cumulative and always present (0 without a
+  source). sidecar/main.go wires the real source right after NuevoProductor from the existing outbox
+  counters, so metricas stays a leaf. Docs in Spanish: new ADR extending adr-0033 and adr-0035, its
+  README row, a new D-NN in the bitacora with index row and header, an append to the end of STATUS
+  line 578, and series comments updated to six. The implementer MUST commit all work on the task
+  branch (conventional commits in Spanish, no AI attribution); an uncommitted diff fails verify.
+read:
+  - .ai/tasks/active/HEX-096-new-spec/00-spec.yaml
+  - .ai/tasks/active/HEX-096-new-spec/01-blueprint.yaml
+  - CLAUDE.md
+  - sidecar/internal/metricas/metricas.go
+  - sidecar/internal/metricas/metricas_test.go
+  - sidecar/internal/outbox/disciplina.go:30-50,185-220
+  - sidecar/main.go:60-145
+  - docs/adr/adr-0035-latencia-hasta-el-acuse-en-metricas-del-sidecar.md
+  - docs/adr/README.md
+  - docs/bitacora-de-descartes.md:90-100,917-975
+  - docs/STATUS.md:578-579
+touch:
+  - sidecar/internal/metricas/metricas.go
+  - sidecar/internal/metricas/metricas_test.go
+  - sidecar/main.go
+  - docs/adr/adr-0042-aplazamientos-en-metricas-del-sidecar.md
+  - docs/adr/README.md
+  - docs/bitacora-de-descartes.md
+  - docs/STATUS.md
+forbid:
+  files:
+    - sidecar/internal/outbox/**
+    - sidecar/internal/registro/**
+    - sidecar/internal/servidor/**
+    - sidecar/internal/canal/**
+    - sidecar/go.mod
+    - sidecar/go.sum
+    - crates/**
+    - deploy/**
+    - .github/**
+    - Cargo.lock
+    - Cargo.toml
+    - docs/adr/adr-0033-metricas-de-canal-propio-en-el-sidecar.md
+    - docs/adr/adr-0035-latencia-hasta-el-acuse-en-metricas-del-sidecar.md
+    - '**/*.db'
+    - '**/*.db-wal'
+    - '**/*.db-shm'
+    - '**/.env*'
+  behaviors:
+    - "do not import outbox, ipc or canal from metricas (the package stays a leaf; grep -c of the outbox import path in metricas.go must return 0)"
+    - "do not change the signature of NuevoProductor"
+    - "do not rename or move the outbox counters (ContadorAplazadasPorHorario, ContadorAplazadasPorRampa)"
+    - "do not emit JSON or a second line: the detail stays flat key=value text on one line"
+    - "do not rewrite prior text in STATUS, any ADR or the bitacora: docs are append-only, the only admitted replacement is the bitacora header number; STATUS gets text appended at the END of line 578 only"
+    - "do not touch registro.Campos"
+    - "do not edit existing lines of metricas_test.go (only new cases are added) and do not expose ContadorAplazadasPorLatencia or ContadorAplazadasPorErrorCortacircuitos"
+    - "ADR and D numbers are read from disk right before the commit (today adr-0042 and D-61); if another session took them, rebase, renumber and tell the orchestrator so it amends the touch path; the guard prints FALLA[adr-colision] or FALLA[bitacora-colision]"
+    - "mutation guards of AC-3 are run by hand after implementation, each confirmed with diff to have changed the copy and run under go test ./internal/metricas/ -count=1; the red test and assertion are recorded in 04-implementation-log"
+    - "commits are conventional in Spanish on the task branch, never a Co-Authored-By line, Claude-Session line or any AI attribution; never git merge; the working tree must be clean at verify time"
+verify:
+  commands:
+    - cd sidecar && go build ./... && go vet ./... && go test ./internal/metricas/ ./internal/outbox/ -count=1
+    - cd sidecar && test -z "$(gofmt -l .)"
+    - test "$(grep -c '"github.com/CGary/hexcell/sidecar/internal/outbox"' sidecar/internal/metricas/metricas.go)" -eq 0
+    - test "$(git rev-list --count main..HEAD)" -ge 1 && test -z "$(git status --porcelain)"
+    - test -z "$(git log main..HEAD --format=%B | grep -iE 'co-authored|claude')"
+    - bash "$(git rev-parse --git-common-dir)/../.ai/tasks/active/HEX-096-new-spec/guarda-hex-096.sh"
+    - bash "$(git rev-parse --git-common-dir)/../.ai/tasks/active/HEX-096-new-spec/guarda-hex-096.sh" --autoprueba
+  target_s: 60
+acceptance:
+  bdd_suite: >-
+    cd sidecar && go build ./... && go vet ./... && go test ./... -count=1 && cd .. &&
+    cargo build --workspace && cargo test --workspace && cargo fmt --check &&
+    cargo clippy --workspace --all-targets -- -D warnings
+  human_gate: true
+limits:
+  max_files_changed: 8
+  max_diff_lines: 420
+  per_class:
+    - glob: docs/**
+      max_diff_lines: 220
+execution:
+  mode: worktree_edit
+  branch: ai/HEX-096-new-spec
+retry_policy:
+  max_attempts: 1
+  escalate_after: 1

@@ -1,0 +1,51 @@
+task_id: HEX-096
+summary: Make schedule-window and ramp deferrals visible by adding two cumulative keys to the sidecar periodic metrics line. Risk low.
+goal: >-
+  Close Finding 9 (docs/STATUS.md:578). The sidecar periodic metrics producer
+  (event sidecar.metricas_instantanea) gains two cumulative keys,
+  aplazadas_por_horario and aplazadas_por_rampa, placed after contactos_omitidos
+  and before every ack_ratio.<id> key. Values are cumulative since startup (no
+  delta, no per-tick reset) and always present: 0 when no source is injected.
+  The leaf metrics package receives the values through a new injected source,
+  Productor.ObservarAplazamientos(fuente func() (int64, int64)) returning
+  (horario, rampa), wired in the sidecar main from the existing outbox
+  counters without the metrics package importing outbox. Documentation: a new
+  ADR extending adr-0033 and adr-0035, a new discard entry in the bitacora
+  (one log event per deferral), an append-only note on the STATUS finding, and
+  series-count comments updated to six.
+invariants:
+  - The internal/metricas package remains a leaf; it does not import outbox, ipc or canal.
+  - The NuevoProductor(reg, ahoraMs) signature is unchanged.
+  - The outbox counters are not renamed or moved.
+  - Existing keys and their order in the metrics line are unchanged; the new keys go after contactos_omitidos and before every ack_ratio. key.
+  - The detail stays flat key=value text on a single line, never JSON or a second line.
+  - registro.Campos is unchanged.
+  - sidecar/go.mod and go.sum stay byte-identical.
+acceptance:
+  - id: AC-1
+    statement: With an injected source returning (3, 7), Instantanea() contains aplazadas_por_horario=3 aplazadas_por_rampa=7, located after contactos_omitidos= and before any ack_ratio.
+  - id: AC-2
+    statement: Without an injected source, the line contains aplazadas_por_horario=0 aplazadas_por_rampa=0.
+  - id: AC-3
+    statement: Mutation guard - swapping horario and rampa in the Sprintf or in the closure turns TestAplazamientosVisiblesConFuenteInyectada red; removing one of the keys turns the same test red through another named assertion; each mutation changes the copy (diff) and runs under the same profile.
+  - id: AC-4
+    statement: TestInstantaneaLlevaLasCuatroSeriesALaVez, TestEmitirEscribeUnaLineaConEventoFijoYDetallePlano and TestInstantaneaEsDeterministaEntreLlamadasRepetidas stay green without being edited.
+  - id: AC-5
+    statement: sidecar/main.go wires the real source right after line 71; go build ./... and go vet ./... are green; metricas still does not import outbox (grep -c of the outbox import path in metricas.go returns 0, adjusting the module path to the real one in go.mod).
+  - id: AC-6
+    statement: New ADR, row in docs/adr/README.md, new D-NN entry in the bitacora, append to STATUS line 578 in the format of section 4 point 7, and series comments updated; the append-only docs guard is proven with two mutations (deleting a prior literal; rewriting in place).
+  - id: AC-7
+    statement: The section 8 commands are green on the final tree (cd sidecar && go build ./... && go vet ./... && go test ./... -count=1, plus cargo build --workspace, cargo test --workspace, cargo fmt --check, cargo clippy --workspace --all-targets -- -D warnings).
+risk: low
+non_goals:
+  - No /metrics endpoint.
+  - No health check.
+  - No log event per deferral.
+  - Do not expose ContadorAplazadasPorLatencia or ContadorAplazadasPorErrorCortacircuitos.
+  - Do not touch crates/**, deploy/**, .github/**, or sidecar/internal/{servidor,canal,outbox,registro}/**.
+constraints:
+  - Cumulative values, not deltas, consistent with D-50.
+  - Exact names - method ObservarAplazamientos(fuente func() (int64, int64)), field aplazamientosFuente, new tests TestAplazamientosVisiblesConFuenteInyectada and TestAplazamientosValenCeroSinFuenteInyectada, added only as new cases in metricas_test.go.
+  - No new Go dependencies.
+  - Repository content, including docs and comments, is written in Spanish; commits are conventional with no AI attribution.
+  - ADR and bitacora numbers are read from disk right before the commit, not from the task description.

@@ -1,0 +1,87 @@
+task_id: HEX-096
+summary: "Add two cumulative keys aplazadas_por_horario and aplazadas_por_rampa to the sidecar metrics line via an injected source; wire outbox counters in main; ADR, discard entry, STATUS append."
+affected_files:
+  - sidecar/internal/metricas/metricas.go
+  - sidecar/internal/metricas/metricas_test.go
+  - sidecar/main.go
+  - docs/adr/adr-0042-aplazamientos-en-metricas-del-sidecar.md
+  - docs/adr/README.md
+  - docs/bitacora-de-descartes.md
+  - docs/STATUS.md
+symbols:
+  - "metricas.Productor.aplazamientosFuente (new field, func() (int64, int64), nil by default)"
+  - "metricas.Productor.ObservarAplazamientos (new exported method, takes the source returning (horario, rampa); stores it under p.mu)"
+  - "metricas.Productor.Instantanea (body only: reads the source once, inserts two Sprintf parts after contactos_omitidos and before the ack_ratio loop)"
+  - "main.main (wiring only: one ObservarAplazamientos call right after metricas.NuevoProductor(reg, nil), closure returns outbox.ContadorAplazadasPorHorario.Load(), outbox.ContadorAplazadasPorRampa.Load())"
+  - "metricas_test.TestAplazamientosVisiblesConFuenteInyectada (new)"
+  - "metricas_test.TestAplazamientosValenCeroSinFuenteInyectada (new)"
+dependencies:
+  - sidecar/internal/outbox/disciplina.go
+  - sidecar/internal/outbox/salida_test.go
+  - sidecar/internal/registro/registro.go
+  - docs/adr/adr-0033-metricas-de-canal-propio-en-el-sidecar.md
+  - docs/adr/adr-0035-latencia-hasta-el-acuse-en-metricas-del-sidecar.md
+test_scenarios:
+  - statement: "TestAplazamientosVisiblesConFuenteInyectada (new case in metricas_test.go, package metricas_test, with a // MUTACION: comment): inject source returning (3, 7) via ObservarAplazamientos, seed one contact with ObservarEnvio so an ack_ratio.conv-1 key exists; Instantanea() has aplazadas_por_horario=3 and aplazadas_por_rampa=7 read through buscarClave (distinct values, so a swap turns it red), and strings.Index shows contactos_omitidos= < aplazadas_por_horario= < aplazadas_por_rampa= < ack_ratio.conv-1."
+    covers: [AC-1]
+  - statement: "TestAplazamientosValenCeroSinFuenteInyectada (new case): a producer with no injected source (ObservarAplazamientos never called) yields aplazadas_por_horario=0 and aplazadas_por_rampa=0, both present via tieneClave then buscarClave."
+    covers: [AC-2]
+  - statement: "Mutation guard by hand, same go test profile, each copy confirmed changed with diff: (m1) swap horario and rampa in the Sprintf arguments, (m2) swap the two destructured variables in Instantanea (horario, rampa = ... reversed), (m3) delete the aplazadas_por_rampa Sprintf, (m4) delete the aplazadas_por_horario Sprintf. m1, m2 go red on the named value assertions of TestAplazamientosVisiblesConFuenteInyectada; m3, m4 go red on its presence/order assertion. Record the red test and assertion in 04-implementation-log."
+    covers: [AC-3]
+  - statement: "Existing tests TestInstantaneaLlevaLasCuatroSeriesALaVez, TestEmitirEscribeUnaLineaConEventoFijoYDetallePlano and TestInstantaneaEsDeterministaEntreLlamadasRepetidas run green with metricas_test.go containing only added lines (guard FALLA[pruebas-no-anexa])."
+    covers: [AC-4]
+  - statement: "Static and build checks: go build ./... and go vet ./... green; test \"$(grep -c '\"github.com/CGary/hexcell/sidecar/internal/outbox\"' sidecar/internal/metricas/metricas.go)\" -eq 0; guarda-hex-096.sh checks the main.go closure order (horario before rampa, both .Load()) because no test in package main covers the closure; go.mod and go.sum byte-identical to the merge base."
+    covers: [AC-5]
+  - statement: "guarda-hex-096.sh in real mode is green on the final tree and --autoprueba shows each rule in green and red; docs append-only proven by two hand mutations on the final tree: (a) delete a prior literal from docs/STATUS.md line 578 or the bitacora, (b) rewrite a prior sentence in place; both must print FALLA[status-no-anexa] or FALLA[bitacora-no-anexa]. Also checks the bitacora index row and header, README row, ADR citing adr-0033 and adr-0035."
+    covers: [AC-6]
+  - statement: "Final-tree gate: cd sidecar && go build ./... && go vet ./... && go test ./... -count=1, then cargo build --workspace, cargo test --workspace, cargo fmt --check, cargo clippy --workspace --all-targets -- -D warnings, all exit 0."
+    covers: [AC-7]
+strategy:
+  - step: 1
+    action: "In metricas.go add field aplazamientosFuente func() (int64, int64) to Productor (domain state, behind mu) and method ObservarAplazamientos(fuente func() (int64, int64)) that stores it under p.mu. Do not touch NuevoProductor (signature or body) and add no import."
+    files:
+      - sidecar/internal/metricas/metricas.go
+  - step: 2
+    action: "In Instantanea declare var horario, rampa int64 and, if p.aplazamientosFuente != nil, assign horario, rampa = p.aplazamientosFuente() (inside the existing mu critical section, once per call so two calls on the same state stay byte-equal). Insert fmt.Sprintf(\"aplazadas_por_horario=%d\", horario) and fmt.Sprintf(\"aplazadas_por_rampa=%d\", rampa) after the contactos_omitidos part and before the ack_ratio loop. Cumulative values, no delta, no reset."
+    files:
+      - sidecar/internal/metricas/metricas.go
+  - step: 3
+    action: "Update the series-count comments to six: package doc lines 1-4, Productor doc line 75, Instantanea doc lines 250-254 (list now names aplazadas_por_horario and aplazadas_por_rampa), and sidecar/main.go comment line 69. Spanish, comments only."
+    files:
+      - sidecar/internal/metricas/metricas.go
+      - sidecar/main.go
+  - step: 4
+    action: "In main.go, right after productorMetricas := metricas.NuevoProductor(reg, nil) (line 71), add productorMetricas.ObservarAplazamientos with a closure returning outbox.ContadorAplazadasPorHorario.Load(), outbox.ContadorAplazadasPorRampa.Load() in that order. main.go already imports outbox (line 23). The composition root adapts; metricas stays a leaf. Touch nothing else in main.go (HEX-094 edits another region)."
+    files:
+      - sidecar/main.go
+  - step: 5
+    action: "Append the two new test cases to metricas_test.go (no edit to existing lines), reusing nuevoProductorDePrueba, buscarClave and tieneClave, each with a // MUTACION: comment as at lines 72, 93 and 317. Use distinct values 3 and 7."
+    files:
+      - sidecar/internal/metricas/metricas_test.go
+  - step: 6
+    action: "Run the hand mutations of AC-3 on a copy or with git stash/restore, confirming with diff that each mutation changed the file, and record the red test per mutation."
+    files:
+      - sidecar/internal/metricas/metricas.go
+  - step: 7
+    action: "Docs (Spanish, append-only). Re-read the next free numbers from disk right before the commit (ls docs/adr | sort | tail -2; grep -n '^### D-' docs/bitacora-de-descartes.md | tail -1). Create docs/adr/adr-0042-aplazamientos-en-metricas-del-sidecar.md from the adr-0035 template (header, Estado, Etapa A-6 HEX-096 closing Hallazgo 9 docs/STATUS.md:578, Relacion EXTIENDE adr-0033 and adr-0035; sections Contexto, Decision, Alternativas consideradas y descartadas, Consecuencias, Referencias; ContadorAplazadasPorLatencia and ContadorAplazadasPorErrorCortacircuitos named as excluded scope, not as a discard). Add one README row in the adr-0041 format. Add D-61 to the bitacora (format of D-60: Descartado el, Decision registrada en, Que se considero, Por que se descarto, Que tendria que cambiar para reabrirlo) plus its index row after the D-60 row (line 95) and the header Ultima actualizacion replaced by the new date and D-61. Append to the END of docs/STATUS.md line 578 the Resuelto sentence naming HEX-096 and adr-0042."
+    files:
+      - docs/adr/adr-0042-aplazamientos-en-metricas-del-sidecar.md
+      - docs/adr/README.md
+      - docs/bitacora-de-descartes.md
+      - docs/STATUS.md
+  - step: 8
+    action: "Commit everything on the task branch in conventional Spanish commits with no AI attribution (an uncommitted diff fails verify), rebase on main before verify, grep the whole tree for conflict markers, then run guarda-hex-096.sh and --autoprueba."
+risks:
+  - "MISMATCH bitacora: the human task says only a new entry is added, but docs/bitacora-de-descartes.md also has an index table (D-60 row at line 95) and a header line 3 'Ultima actualizacion ... (D-60)'. The new D-61 needs its index row and the header number replaced (the only admitted replacement). Contract touch is unchanged; the guard encodes this."
+  - "MISMATCH AC-3 closure mutation: the main.go closure that reads the two outbox counters is not exercised by any test (the metricas test injects its own closure and package main has no test for it). Swapping horario/rampa in main.go would stay green on go test; the static guard FALLA[main-cierre-intercambiado] in guarda-hex-096.sh is the only discriminator. A swap in the Sprintf or in the Instantanea destructuring does go red on the named test."
+  - "MISMATCH precedent line: the human text points at STATUS :579 as the append precedent; :579 is the Hallazgo 10 entry whose appended text ends with ')*.'. Line 578 (Hallazgo 9) is the target and currently ends with 'aplazamiento.'; append after it, never edit the previous text. The guard compares only the 578 line."
+  - "Main comment drift: sidecar/main.go:69 says 'tres series' while metricas.go says four; both become six per the human decision. The Instantanea doc comment enumerates four names and must gain the two new ones."
+  - "Adjusted verify: the human fixed two verify commands; this contract adds the guard, its self-test, a commit/clean-tree check and the AC-5 grep, because AC-6 and AC-5 require a proving guard and a delegate that leaves the diff uncommitted would otherwise fail on scope with an empty file list."
+  - "ADR and D numbers read from disk today: adr-0042 (last is adr-0041) and D-61 (last is D-60). A parallel session may take them; the guard prints FALLA[adr-colision] or FALLA[bitacora-colision] against the tip of main. The implementer must re-read the disk before the commit and, if taken, renumber (the touch path adr-0042-* then changes; tell the orchestrator)."
+  - "Shared file sidecar/main.go with HEX-094 (reconnection and server wiring, other region): clean rebase expected; on conflict keep both changes."
+  - "Locator divergence: task directory is HEX-096-new-spec while task start derives worktree and branch from the internal task_id (worktrees/HEX-096, ai/HEX-096). The orchestrator aligns worktree and branch names to the directory before dispatch and after clean."
+  - "Risk scorer: quorum analyze risk-score returns medium (file_count_high 7, symbols_count_high 6) against declared low; the human declared risk wins, divergence is recorded in 07-trace.json only."
+  - "Phase 1b external summarization skipped: the relevant files are small and were read directly (metricas.go 245-300 and 70-100, metricas_test.go 1-100 and 318-352, disciplina.go 28-46 and 180-222, main.go 60-75 and 136-146); graph index was fresh at HEAD 3bbd6ba but the neighbors were already known."
+  - "Complexity band M (calibrated policy over the production files metricas.go and main.go: 2 files, 4 symbols, outside S bounds; public_api false because the new method lives in an internal package and no existing exported symbol changes)."
+  - "Limits right-sized from the human text: estimated diff ~330 lines (metricas.go ~40, main.go ~10, tests ~90, docs ~190 of which ADR ~120), well under 420 and docs under 220; 7 files under max 8 (the guard lives in the task directory, outside the worktree)."
+  - "Go module path is github.com/CGary/hexcell/sidecar (go.mod line 1), not hexcell/sidecar as written in the human AC-5 text; the grep uses the real path."
