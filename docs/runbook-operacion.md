@@ -9,7 +9,7 @@
 
 ## Qué es esto
 
-Este runbook le dice al operador **qué comando ejecutar ante cada situación operativa** con una célula, **qué efecto tiene** ese comando sobre los contenedores, el almacén del plano de control y la sesión de canal, y **cómo verificar** que salió bien. Cubre los ocho comandos que `hexcell-admin` opera sobre una célula (`cell pause`, `cell unpause`, `cell terminate`, `cell rebind`, `cell list`, `cell status`, `reporte tokens`, `config render`) más el procedimiento de respuesta ante un contenedor muerto por límite de memoria (`OOMKilled`).
+Este runbook le dice al operador **qué comando ejecutar ante cada situación operativa** con una célula, **qué efecto tiene** ese comando sobre los contenedores, el almacén del plano de control y la sesión de canal, y **cómo verificar** que salió bien. Cubre los nueve comandos que `hexcell-admin` opera sobre una célula (`cell pause`, `cell unpause`, `cell terminate`, `cell rebind`, `cell list`, `cell status`, `reporte tokens`, `config render`, `contacto restablecer`) más el procedimiento de respuesta ante un contenedor muerto por límite de memoria (`OOMKilled`).
 
 Lo que este runbook **no** cubre:
 
@@ -41,7 +41,7 @@ Lo que este runbook **no** cubre:
 | Listar todas las células conocidas | `hexcell-admin cell list` |
 | Reporte de consumo de unidades de presupuesto por conversación | `hexcell-admin reporte tokens --celula <celula_id> --copia <ruta.db> [--desde AAAA-MM-DD] [--hasta AAAA-MM-DD]` |
 | Renderizar la configuración de una célula (defecto + superposición) | `hexcell-admin config render --defecto <ruta_defecto.env> --superposicion <ruta_superposicion.env> --salida <ruta_salida.env>` |
-| Restablecer el estado operativo de un contacto | `hexcell-admin contacto restablecer --id <celula_id> --contacto <ct-...> [--incluir-baja --confirmar]` |
+| Restablecer el estado operativo de un contacto | `hexcell-admin contacto restablecer --id <celula_id> --contacto <ct-...> [--incluir-baja --confirmar] [--simular]` |
 
 ---
 
