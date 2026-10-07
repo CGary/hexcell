@@ -75,8 +75,9 @@ type correlacionPendiente struct {
 
 // Productor acumula las seis series y expone la instantánea determinista de texto plano que
 // sidecar/main.go emite por su Bucle. Todo el estado mutable vive detrás de mu: ObservarEnvio,
-// ObservarAcuse, ObservarEstadoSesion, ObservarEntrante y ObservarAplazamientos se llaman desde
-// manejadores de eventos de whatsmeow, que whatsmeow despacha cada uno en su propia goroutine.
+// ObservarAcuse, ObservarEstadoSesion y ObservarEntrante se llaman desde manejadores de eventos de
+// whatsmeow, que whatsmeow despacha cada uno en su propia goroutine; ObservarAplazamientos se llama
+// una sola vez desde sidecar/main.go al componer, y la fuente que guarda se lee bajo mu en Instantanea.
 type Productor struct {
 	reg     *registro.Registro
 	ahoraMs func() int64
