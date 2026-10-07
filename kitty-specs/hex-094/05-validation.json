@@ -1,0 +1,74 @@
+{
+  "commands": [
+    {
+      "command": "cd sidecar \u0026\u0026 go vet ./... \u0026\u0026 go test ./internal/canal/ ./internal/servidor/ -count=1",
+      "duration_s": 1.03,
+      "exit_code": 0,
+      "output_excerpt": "ok  \tgithub.com/CGary/hexcell/sidecar/internal/canal\t0.051s\nok  \tgithub.com/CGary/hexcell/sidecar/internal/servidor\t0.507s"
+    },
+    {
+      "command": "cargo test -p hexcell --test canal_whatsmeow_seleccionado --test preparacion --test salud_http",
+      "duration_s": 0.73,
+      "exit_code": 0,
+      "output_excerpt": "     Running tests/preparacion.rs (target/debug/deps/preparacion-740e057419518ab4)\n     Running tests/salud_http.rs (target/debug/deps/salud_http-279b105191cbca9f)"
+    },
+    {
+      "command": "cargo fmt --check",
+      "duration_s": 0.35,
+      "exit_code": 0,
+      "output_excerpt": ""
+    },
+    {
+      "command": "cargo build --workspace",
+      "duration_s": 0.05,
+      "exit_code": 0,
+      "output_excerpt": "Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.02s"
+    },
+    {
+      "command": "cargo test --workspace",
+      "duration_s": 23.66,
+      "exit_code": 0,
+      "output_excerpt": "   Doc-tests hexcell_meta\n   Doc-tests hexcell_storage"
+    },
+    {
+      "command": "cargo clippy --workspace --all-targets -- -D warnings",
+      "duration_s": 0.8,
+      "exit_code": 0,
+      "output_excerpt": "    Checking hexcell v0.1.0 (/home/gary/dev/hexcell/worktrees/HEX-094/crates/hexcell)\n    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.73s"
+    },
+    {
+      "command": "cd sidecar \u0026\u0026 go build ./... \u0026\u0026 go vet ./... \u0026\u0026 go test ./... -count=1 -race",
+      "duration_s": 2.61,
+      "exit_code": 0,
+      "output_excerpt": "ok  \tgithub.com/CGary/hexcell/sidecar/internal/registro\t1.006s\nok  \tgithub.com/CGary/hexcell/sidecar/internal/servidor\t1.518s"
+    },
+    {
+      "command": "for i in 1 2 3 4 5; do cargo test -p hexcell --test canal_whatsmeow_seleccionado || exit 1; done",
+      "duration_s": 0.38,
+      "exit_code": 0,
+      "output_excerpt": "    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.02s\n     Running tests/canal_whatsmeow_seleccionado.rs (target/debug/deps/canal_whatsmeow_seleccionado-199506dcee3d0f0f)"
+    },
+    {
+      "command": "bash /home/gary/dev/hexcell/.ai/tasks/active/HEX-094-new-spec/guarda-hex-094.sh",
+      "duration_s": 0.03,
+      "exit_code": 0,
+      "output_excerpt": "guarda-hex-094: OK (base común aac95ee)"
+    },
+    {
+      "command": "bash /home/gary/dev/hexcell/.ai/tasks/active/HEX-094-new-spec/guarda-hex-094.sh --autoprueba",
+      "duration_s": 0.03,
+      "exit_code": 0,
+      "output_excerpt": "ok  REAL protocolo MUTACION (ii) reescribir literal de la sección 5: esperado=protocolo-reescribe obtenido=protocolo-reescribe\nautoprueba: 28 casos, todos con el veredicto esperado"
+    },
+    {
+      "command": "test -z \"$(git log main..HEAD --format=%B | grep -iE 'co-authored|claude')\" \u0026\u0026 test -z \"$(git status --porcelain)\"",
+      "duration_s": 0.01,
+      "exit_code": 0,
+      "output_excerpt": ""
+    }
+  ],
+  "executed_at": "2026-10-07T17:10:04Z",
+  "overall_result": "passed",
+  "summary": "11/11 exit 0 on HEAD 27749a2 (orchestrator-run, post-review fixes)",
+  "task_id": "HEX-094"
+}

@@ -1,0 +1,59 @@
+task_id: HEX-094
+summary: Sidecar resends its last full session state when the IPC connection is accepted, and the core /health/ready reads the live whatsmeow channel state instead of siempre_activa. Risk medium.
+goal: >-
+  Close two STATUS.md Pendiente entries (lines 572 and 574, HEX-094) as one indivisible task. Part A (Go sidecar):
+  the Supervisor stores the complete last ipc.EstadoSesion (Estado, Causa, Codigo, ExpiraEnMs) plus a "has state" flag,
+  and exposes a method that hands a copy of it to a destination function under its mutex; the Servidor gets a late-bound
+  state source, and atenderConexion, after writing the greeting and with the new connection already current, enqueues
+  that state on the new connection if any was emitted. Part B (Rust core): EstadoDeSalud reads the live session state
+  through a late-fillable source (Arc<OnceLock<watch::Receiver<EstadoSesion>>>) while preparacion() stays synchronous;
+  the whatsmeow branch of main.rs registers adaptador.suscribir_estado(); the simulated branch registers nothing and keeps
+  siempre_activa(). Docs: protocol document goes to 1.7 with a paragraph in section 5, STATUS.md gets append-only
+  resolution notes plus a new Pendiente for the residual, and the A-6 plan gets an append-only closing note.
+  Source of truth is the human-authored task file .tmp/hexcell-tarea-T2-hex-094-estado-real-de-sesion.md.
+  Difficulty tier is logic-on-existing-skeleton. No decomposition: part B without part A would leave /health/ready at 503
+  until the next state event.
+invariants:
+  - The full ipc.EstadoSesion is resent, never only the Estado string; Causa, Codigo and ExpiraEnMs are preserved.
+  - When the supervisor has not emitted any state yet, no state is invented and nothing is sent after the greeting.
+  - Snapshot and enqueue of the last state are atomic with respect to emitirEstado (done under the supervisor mutex).
+  - The resend is enqueued after the greeting and after the new connection is set as current, so it leaves after the greeting.
+  - IPC wire version VERSION_PROTOCOLO stays 7 and no new IPC message type is added; only the protocol document version goes from 1.6 to 1.7.
+  - The adapter publication of Activa after the greeting (adaptador.rs:979) is not modified.
+  - Ready means only Activa; Reconectando, Pausada and Desvinculada give 503 with component sesion-del-canal.
+  - The simulated channel keeps siempre_activa() and /health/ready keeps answering 200 by default.
+  - EstadoDeSalud::nuevo(pools, sesion) keeps its signature and preparacion() stays synchronous; without a registered source it behaves as today.
+  - No new Go-named call starting with Enviar outside outbox/ and _test.go (outbox sentinel test must stay green).
+  - No new dependencies; hexcell-core keeps zero external dependencies.
+acceptance:
+  - id: AC-1
+    statement: un cliente IPC que conecta DESPUÉS de que el supervisor emitió `pausada` con `Causa`, `Codigo` y `ExpiraEnMs` distintos de cero recibe, tras el saludo, un `estado_sesion` con los cuatro campos idénticos.
+  - id: AC-2
+    statement: sin emisión previa, tras el saludo no llega ningún `estado_sesion`.
+  - id: AC-3
+    statement: en relevo de conexión (dos clientes), la conexión nueva recibe el último estado y la vieja se cierra como hoy (`TestTakeoverConexionMasRecienteGana`, `servidor_test.go:324`).
+  - id: AC-4
+    statement: con canal whatsmeow, tras el saludo el sidecar falso envía `estado_sesion` `reconectando` → `/health/ready` responde 503 con componente `sesion-del-canal`; después `activa` → 200 (sondeo con plazo ≤ 5 s).
+  - id: AC-5
+    statement: con canal simulado (por omisión), `/health/ready` sigue respondiendo 200 (`tests/salud_http.rs:26` queda verde sin editar).
+  - id: AC-6
+    statement: "guardas por mutación nombradas: quitar el reenvío (AC-1 roja); reenviar solo `Estado` (AC-1 roja por `ExpiraEnMs`); reenviar un valor inventado sin estado previo (AC-2 roja); volver a `siempre_activa()` en la rama whatsmeow (AC-4 roja). Cada mutación debe cambiar la copia (`diff`) y correr bajo el mismo perfil que la prueba."
+  - id: AC-7
+    statement: "`docs/protocolo-ipc-nucleo-sidecar.md` pasa a 1.7 con el párrafo de reenvío en la sección 5; `VERSION_PROTOCOLO` sigue en 7; STATUS `:572` y `:574` reciben su anexo; nueva entrada Pendiente con el residuo de la sección 6; nota de cierre en el plan A-6. Guarda de docs append-only probada con dos mutaciones."
+risk: medium
+non_goals:
+  - "Residual out of scope: the adapter publishes Activa after the greeting and the sidecar supervisor does not emit reconectando at startup, so /health/ready may answer 200 before WhatsApp is connected if the core connects before the sidecar emits its first state. Closing it changes Activa semantics or sidecar startup behavior, a human decision; it is only recorded as a new Pendiente in STATUS.md."
+  - Do not change VERSION_PROTOCOLO nor add IPC message types.
+  - Do not touch crates/hexcell-canal-whatsmeow/src, hexcell-core, hexcell-storage, hexcell-admin, sidecar/internal/ipc, sidecar/internal/outbox, sidecar/internal/metricas, sidecar/internal/canal/canal.go, deploy or .github.
+  - Do not edit existing tests except the adjustment in crates/hexcell/tests/canal_whatsmeow_seleccionado.rs; preparacion.rs and salud_http.rs tests stay untouched.
+  - Do not give the simulated channel a session state.
+  - No new ADR (wire and architecture unchanged); a bitacora D-NN only if an alternative is discarded.
+constraints:
+  - All repository content (code identifiers, comments, docs, commits) is in Spanish; conventional commits with no AI attribution (no Co-Authored-By, no Claude-Session).
+  - No new dependencies.
+  - Go fixed names - Supervisor.ConUltimoEstado(entregar func(ipc.EstadoSesion)), fields ultimoEstado ipc.EstadoSesion plus hayUltimoEstado bool; Servidor.ConFuenteDeEstado(fuente func(func(ipc.EstadoSesion))) *Servidor; wired in sidecar/main.go after NuevoSupervisor and before go srv.Aceptar.
+  - Rust fixed names - pub type FuenteDeSesion = Arc<OnceLock<watch::Receiver<EstadoSesion>>>; EstadoDeSalud field fuente_de_sesion Option<FuenteDeSesion>; builder con_fuente_de_sesion; registration next to the suscribir_estado_con_expiracion call in the whatsmeow branch.
+  - Tests - new Go cases in sidecar/internal/servidor/servidor_test.go and a unit test of ConUltimoEstado in sidecar/internal/canal/reconexion_interno_test.go; Rust AC-4 and AC-6 in crates/hexcell/tests/canal_whatsmeow_seleccionado.rs extending its FakeSidecar, polling with a deadline of at most 5 s, never fixed sleep.
+  - Docs are append-only (STATUS lines 572 and 574 get an appended "Resuelto 2026-10-NN (HEX-094)" sentence; new Pendiente at the end of the Pendiente section; closing note at the end of docs/plan/fase-a-6-empaquetado-cli.md with an absolute date).
+  - Acceptance gate is the full suite (cargo build/test/fmt/clippy and go build/vet/test); the new Rust test and canal_whatsmeow_seleccionado run 5 times in a row to rule out races.
+  - If complexity-score gives band L, proceed as a single task (indivisible - part B depends on part A in the same startup) and implement internally; no q-decompose.

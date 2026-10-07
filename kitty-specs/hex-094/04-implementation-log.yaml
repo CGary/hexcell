@@ -1,0 +1,47 @@
+entries:
+    - changed_files:
+        - sidecar/internal/servidor/manejo.go
+      notes:
+        - 'Arreglo del review (reenvio-sincrono-bajo-mu): atenderConexion reenvía de forma síncrona; la codificación y nueva.enviar(frame) ocurren dentro de entregar, que ConUltimoEstado ejecuta bajo el mu del supervisor, después de escribir el saludo y con s.actual = nueva ya fijado. Se retiran la goroutine, time.Sleep(10 ms) y la comprobación s.actual == conexionReenvio. reconexion.go no cambia.'
+        - 'Semántica de bloqueo: emitirEstado ya llama hoy a su sumidero (Servidor.EnviarEstadoSesion -> act.enviar) bajo el mismo mu; enviar solo bloquea con la cola saliente de 100 llena y la conexión sin drenar ni cerrar. Es la misma propiedad preexistente, no un interbloqueo nuevo: escribirSaliente nunca toma el mu del supervisor y atenderConexion no sostiene s.mu del servidor al llamar a la fuente, así que el orden de candados (mu del supervisor -> s.mu del servidor en lectura) no se invierte.'
+      verify_pending: false
+    - changed_files:
+        - sidecar/internal/servidor/servidor_test.go
+      notes:
+        - 'TestRelevoDeConexionReenviaElUltimoEstadoALaNueva: c1 lee saludo y su propio reenvío (cuatro campos) mientras es la conexión actual; tras el relevo drena frames, acotado por plazo de lectura, hasta EOF admitiendo solo estado_sesion idénticos; c2 recibe su reenvío. Ayuda leerEstadoSesion compartida.'
+        - 'Prueba nueva TestEmisionTrasLaInstantaneaQuedaUltimaEnElCable (atomicidad instantánea+encolado, pedida por el orquestador tras el review): la fuente imita al supervisor con mu propio y emite Y por EnviarEstadoSesion justo después de soltar su mu; exige saludo, X y luego Y. Determinista: fuerza la intercalación peor en vez de esperar la carrera.'
+        - 'Diff de servidor_test.go contra main: 422 líneas (tope por clase 450). go test ./internal/servidor -race -count=10 sobre las pruebas de reenvío, relevo y takeover: ok.'
+      verify_pending: false
+    - changed_files:
+        - sidecar/internal/canal/reconexion.go
+        - sidecar/internal/servidor/manejo.go
+        - crates/hexcell/src/main.rs
+      notes:
+        - 'Guardas de mutación del contrato (verificadas por el orquestador antes del review; cada una confirmada con diff no vacío contra copia):'
+        - 'M1 (quitar el reenvío en atenderConexion): rojo en TestReenvioDeEstadoPausadaConservaLosCuatroCampos, TestRelevoDeConexionReenviaElUltimoEstadoALaNueva y TestFuenteDeEstadoConSupervisorRealReenviaActivaAlConectar.'
+        - 'M2 (reenviar solo Estado): rojo en TestConUltimoEstadoEntregaCopiaCompletaDelUltimoEstado.'
+        - 'M3 canal (ConUltimoEstado entrega un valor inventado sin emisión previa): rojo en TestConUltimoEstadoSinEmisionPreviaNoEntregaNada.'
+        - 'M3 servidor (atenderConexion inventa activa al conectar): rojo en TestSinEmisionPreviaNoLlegaEstadoSesionTrasElSaludo.'
+        - 'M4 (siempre_activa de vuelta en la rama whatsmeow de main.rs): rojo en salud_ready_refleja_el_estado_de_sesion_del_sidecar.'
+        - 'Guarda de docs guarda-hex-094.sh --autoprueba: 28 casos, todos con el veredicto esperado.'
+      verify_pending: false
+    - changed_files:
+        - sidecar/internal/servidor/manejo.go
+        - sidecar/internal/canal/reconexion.go
+      notes:
+        - 'Re-pruebas tras el arreglo, sobre copias en el scratchpad (nunca en el worktree; diff -q no vacío en todas), mismo perfil go test que la verificación:'
+        - 'M1 (nueva.enviar(frame) sustituido por descarte): rojo en TestReenvioDeEstadoPausadaConservaLosCuatroCampos, TestRelevoDeConexionReenviaElUltimoEstadoALaNueva (mensaje explícito: no llegó el estado_sesion reenviado a c1), TestFuenteDeEstadoConSupervisorRealReenviaActivaAlConectar y TestEmisionTrasLaInstantaneaQuedaUltimaEnElCable.'
+        - 'M3 servidor (encolar activa inventada antes de consultar la fuente): rojo en TestSinEmisionPreviaNoLlegaEstadoSesionTrasElSaludo (además de las de cuatro campos, relevo y atomicidad).'
+        - 'M5 nueva (el defecto del review: codificar dentro de entregar pero encolar después de que la fuente vuelve, fuera del mu): rojo SOLO en TestEmisionTrasLaInstantaneaQuedaUltimaEnElCable (orden roto: llegó Y antes que X); todas las demás verdes, lo que prueba que la atomicidad la custodia esa prueba.'
+        - 'M2 y M3 canal re-ejecutadas sobre copia de reconexion.go: rojo en TestConUltimoEstadoEntregaCopiaCompletaDelUltimoEstado y TestConUltimoEstadoSinEmisionPreviaNoEntregaNada respectivamente. M4 no se re-ejecutó (código Rust sin cambios en este arreglo).'
+      verify_pending: false
+    - changed_files:
+        - docs/STATUS.md
+        - docs/plan/fase-a-6-empaquetado-cli.md
+        - crates/hexcell/tests/canal_whatsmeow_seleccionado.rs
+      notes:
+        - 'Reemplazo de literal exacto solo en el texto que añadió HEX-094: el timer de 10 ms y el candado del servidor pasan a describir el reenvío síncrono bajo el mu del supervisor. guarda-hex-094.sh OK (base común 8ce2186) y --autoprueba 28 casos verdes tras el cambio; la guarda no fijaba el literal retirado.'
+        - Comentario con spanglish shaped like reescrito en español en canal_whatsmeow_seleccionado.rs.
+      verify_pending: false
+summary: Sidecar resends the last estado_sesion synchronously under the supervisor mutex; ready reads the live session state.
+task_id: HEX-094

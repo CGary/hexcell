@@ -1,0 +1,121 @@
+task_id: HEX-094
+summary: "Sidecar resends its last full session state when an IPC connection is accepted; core /health/ready reads the live whatsmeow session state through a late-filled watch source instead of siempre_activa."
+affected_files:
+  - sidecar/internal/canal/reconexion.go
+  - sidecar/internal/servidor/servidor.go
+  - sidecar/internal/servidor/manejo.go
+  - sidecar/main.go
+  - sidecar/internal/servidor/servidor_test.go
+  - sidecar/internal/canal/reconexion_interno_test.go
+  - crates/hexcell/src/salud.rs
+  - crates/hexcell/src/preparacion.rs
+  - crates/hexcell/src/main.rs
+  - crates/hexcell/tests/canal_whatsmeow_seleccionado.rs
+  - docs/protocolo-ipc-nucleo-sidecar.md
+  - docs/STATUS.md
+  - docs/plan/fase-a-6-empaquetado-cli.md
+symbols:
+  - "canal.Supervisor.ultimoEstado (field type changes from string to ipc.EstadoSesion; only use was the write in emitirEstado)"
+  - "canal.Supervisor.hayUltimoEstado (new bool field, guarded by mu)"
+  - "canal.Supervisor.emitirEstado (body only: stores the complete struct and sets hayUltimoEstado=true before calling the sink, all under mu)"
+  - "canal.Supervisor.ConUltimoEstado (new method: takes mu, calls entregar with a copy only if hayUltimoEstado)"
+  - "servidor.Servidor.fuenteDeEstado (new field func(func(ipc.EstadoSesion)))"
+  - "servidor.Servidor.ConFuenteDeEstado (new late-binding method returning *Servidor, same style as outbox ConSumideroDeAcuse)"
+  - "servidor.Servidor.atenderConexion (after the greeting write and after escribirSaliente starts, enqueues the last state on the NEW connection via nueva.enviar)"
+  - "main.go wiring: srv.ConFuenteDeEstado(supervisor.ConUltimoEstado) after NuevoSupervisor and before go srv.Aceptar"
+  - "salud::FuenteDeSesion (new pub type Arc<OnceLock<watch::Receiver<EstadoSesion>>>)"
+  - "salud::EstadoDeSalud.fuente_de_sesion (new Option<FuenteDeSesion> field; EstadoDeSalud::nuevo signature unchanged)"
+  - "salud::EstadoDeSalud::con_fuente_de_sesion (new chainable builder)"
+  - "salud::EstadoDeSalud::preparacion (stays synchronous; uses SesionDelCanal::desde_estado(*rx.borrow()) when the source is populated, else self.sesion)"
+  - "main.rs composition root: fuente_de_sesion created before EstadoDeSalud::nuevo, populated with adaptador.suscribir_estado() in the whatsmeow branch only"
+dependencies:
+  - crates/hexcell/tests/preparacion.rs
+  - crates/hexcell/tests/salud_http.rs
+  - crates/hexcell/tests/emparejamiento_ipc.rs
+  - sidecar/internal/outbox/centinela_rutas_de_envio_test.go
+  - sidecar/internal/ipc/mensajes.go
+  - crates/hexcell-canal-whatsmeow/src/adaptador.rs
+  - crates/hexcell-canal-whatsmeow/src/mensajes.rs
+  - crates/hexcell/tests/comun/mod.rs
+test_scenarios:
+  - statement: "Go TestReenvioDeEstadoPausadaConservaLosCuatroCampos (servidor_test.go): a Servidor with ConFuenteDeEstado fed by a source that delivers pausada with Causa, Codigo and ExpiraEnMs all nonzero; a client that connects afterwards reads the server greeting and then an estado_sesion whose four fields equal the delivered ones."
+    covers: [AC-1, AC-6]
+  - statement: "Go TestConUltimoEstadoEntregaCopiaCompletaDelUltimoEstado (reconexion_interno_test.go, internal package): emitirEstado(pausada with Causa, Codigo, ExpiraEnMs nonzero) then ConUltimoEstado delivers exactly one value equal on all four fields; a later emitirEstado replaces it. Goes red if only Estado is kept."
+    covers: [AC-1, AC-6]
+  - statement: "Go TestConUltimoEstadoSinEmisionPreviaNoEntregaNada (reconexion_interno_test.go): a fresh supervisor never calls entregar. Goes red if a zero or invented value is delivered."
+    covers: [AC-2, AC-6]
+  - statement: "Go TestSinEmisionPreviaNoLlegaEstadoSesionTrasElSaludo (servidor_test.go): real Supervisor never started wired through ConFuenteDeEstado; after the greeting the client triggers a marker srv.EnviarEstadoSesion(activa) (allowed in _test.go) and the FIRST message after the greeting must be that marker, so any resend would arrive earlier and fail the test; no read-deadline sleeps."
+    covers: [AC-2, AC-6]
+  - statement: "Go TestRelevoDeConexionReenviaElUltimoEstadoALaNueva (servidor_test.go): two clients; the second gets greeting then the last state; the first still sees EOF exactly like TestTakeoverConexionMasRecienteGana (which stays untouched and green)."
+    covers: [AC-3]
+  - statement: "Go TestFuenteDeEstadoConSupervisorRealReenviaActivaAlConectar (servidor_test.go): real Supervisor.Arrancar(ctx, true) with a fake conectar emits activa before any client exists; a client connecting afterwards receives greeting then estado_sesion activa through the real ConUltimoEstado path. Goes red when the resend in atenderConexion is removed."
+    covers: [AC-1, AC-6]
+  - statement: "Rust test salud_ready_refleja_el_estado_de_sesion_del_sidecar (canal_whatsmeow_seleccionado.rs, FakeSidecar gains an estado_sesion writer): after the greeting poll until 200 (adapter published Activa), fake sends reconectando, poll until 503 whose body names sesion-del-canal, then fake sends activa and poll until 200; every poll has a deadline of at most 5 s, never a fixed sleep. Goes red when the whatsmeow branch keeps siempre_activa()."
+    covers: [AC-4, AC-6]
+  - statement: "Existing servidor_de_salud_responde_con_canal_whatsmeow (canal_whatsmeow_seleccionado.rs, only edit allowed in an existing test): the immediate 200 after aceptar_y_saludar becomes a poll with a deadline of at most 5 s because the watch is born in Reconectando and Activa is published asynchronously after the greeting."
+    covers: [AC-4]
+  - statement: "Existing tests/salud_http.rs health_ready_responde_200_con_las_dos_bases_sanas and tests/preparacion.rs stay green with no edit: the simulated channel registers no source, so preparacion() keeps the siempre_activa behavior."
+    covers: [AC-5]
+  - statement: "Existing sidecar/internal/outbox/centinela_rutas_de_envio_test.go and sidecar/internal/ipc tests stay green: new code has no named call starting with Enviar outside _test.go and adds no IPC type."
+    covers: [AC-7]
+  - statement: "Docs guard run by hand and logged in 04-implementation-log with two mutations (free deletion of an existing line must fail; replacement of one exact literal passes): protocol doc at 1.7 with the section 5 paragraph and VERSION_PROTOCOLO still 7, STATUS lines Integracion del estado real and Sincronizacion del estado de conexion get an appended Resuelto sentence, a new Pendiente is appended at the end of the file, the A-6 plan gets a closing note after the Dependencias section."
+    covers: [AC-7]
+strategy:
+  - step: 1
+    action: "Application service state in reconexion.go (Supervisor): change ultimoEstado from string to ipc.EstadoSesion, add hayUltimoEstado bool, make emitirEstado store the full struct and set the flag under mu before the sink call; add ConUltimoEstado(entregar func(ipc.EstadoSesion)) that takes mu, calls entregar with a copy only when the flag is set, and never calls any other Supervisor method (mu is not reentrant)."
+    files:
+      - sidecar/internal/canal/reconexion.go
+  - step: 2
+    action: "Server late binding in servidor.go: add the fuenteDeEstado field and ConFuenteDeEstado(fuente func(func(ipc.EstadoSesion))) *Servidor, nil-safe, mirroring ConSumideroDeAcuse. Do not add any exported name that starts with Enviar."
+    files:
+      - sidecar/internal/servidor/servidor.go
+  - step: 3
+    action: "Resend in manejo.go atenderConexion: after nueva.conn.Write(b) succeeds and after go s.escribirSaliente starts, if s.fuenteDeEstado != nil call it with a closure that encodes ipc.NuevoSobre(estado) with ipc.Codificar and enqueues via nueva.enviar(b); on a codification error log and drop. s.actual = nueva is already set at that point, so the frame leaves after the greeting. Keep the sentinel green: no named call starting with Enviar."
+    files:
+      - sidecar/internal/servidor/manejo.go
+  - step: 4
+    action: "Composition wiring in sidecar/main.go only: srv.ConFuenteDeEstado(supervisor.ConUltimoEstado) after NuevoSupervisor and RegistrarManejador, before go srv.Aceptar (the Escuchar plus Aceptar block). No other change in this file (T4 edits its metrics wiring near line 71)."
+    files:
+      - sidecar/main.go
+  - step: 5
+    action: "Go tests: new cases in servidor_test.go reusing the existing helpers (net.Dial unix, hand-encoded nucleo greeting, ipc.Decodificar) for the four servidor scenarios, and the two ConUltimoEstado unit tests in reconexion_interno_test.go using its accumulating sink. Each test is given the exact name listed in test_scenarios so the mutations can be tied to a named red test."
+    files:
+      - sidecar/internal/servidor/servidor_test.go
+      - sidecar/internal/canal/reconexion_interno_test.go
+  - step: 6
+    action: "Core live state in salud.rs: add pub type FuenteDeSesion, the Option field, and con_fuente_de_sesion(mut self, fuente) -> Self; keep EstadoDeSalud::nuevo(pools, sesion) unchanged with the field set to None; preparacion() stays synchronous: if the source is populated evaluate SesionDelCanal::desde_estado(*rx.borrow()) (borrow guard dropped inside the expression, never held across an await), otherwise self.sesion. preparacion.rs is expected to need at most a doc-comment refresh on siempre_activa; leave it untouched if nothing there is stale."
+    files:
+      - crates/hexcell/src/salud.rs
+      - crates/hexcell/src/preparacion.rs
+  - step: 7
+    action: "Composition root in main.rs: create the source before EstadoDeSalud::nuevo, chain con_fuente_de_sesion(fuente.clone()), import FuenteDeSesion next to EstadoDeSalud, and in the Whatsmeow branch call fuente_de_sesion.set(adaptador.suscribir_estado()) next to the suscribir_estado_con_expiracion call, before Motor::nuevo consumes the adapter. The Simulado branch registers nothing."
+    files:
+      - crates/hexcell/src/main.rs
+  - step: 8
+    action: "Rust tests in canal_whatsmeow_seleccionado.rs only: extend FakeSidecar with a method that writes one estado_sesion line shaped like the real sidecar (version 7, tipo estado_sesion, estado, causa, codigo, expira_en_ms), add the AC-4 test with deadline polling (wait for the first 200 before sending reconectando so the born-in-Reconectando watch cannot produce a false 503), and turn the immediate 200 in servidor_de_salud_responde_con_canal_whatsmeow into a deadline poll."
+    files:
+      - crates/hexcell/tests/canal_whatsmeow_seleccionado.rs
+  - step: 9
+    action: "Mutation guards by hand, each confirmed with diff against a copy to prove the file changed, run under the same profile as the test, and recorded in 04-implementation-log with the named test that went red: m1 remove the resend in atenderConexion -> TestReenvioDeEstadoPausadaConservaLosCuatroCampos and TestFuenteDeEstadoConSupervisorRealReenviaActivaAlConectar; m2 store or deliver only Estado -> TestConUltimoEstadoEntregaCopiaCompletaDelUltimoEstado; m3 deliver an invented value without prior state -> TestConUltimoEstadoSinEmisionPreviaNoEntregaNada and TestSinEmisionPreviaNoLlegaEstadoSesionTrasElSaludo; m4 siempre_activa() back in the whatsmeow branch (skip the set) -> salud_ready_refleja_el_estado_de_sesion_del_sidecar."
+    files:
+      - sidecar/internal/canal/reconexion.go
+      - sidecar/internal/servidor/manejo.go
+      - crates/hexcell/src/main.rs
+  - step: 10
+    action: "Docs in Spanish, append-only, absolute dates, no line-number citations: protocol doc 1.6 to 1.7 (version line, row 1.7 with wire 7 in the table, one sentence stating that 1.7 does not change the wire version, resend paragraph in section 5), STATUS appends ' Resuelto 2026-10-NN (HEX-094): ...' at the end of the two Pendiente lines plus one new Pendiente at the end of the file for the residual in the spec non_goals, closing note at the end of the A-6 plan. No bitacora entry unless an alternative is discarded (then touch must be amended for D-61 read from disk). Probe the docs guard with the two mutations."
+    files:
+      - docs/protocolo-ipc-nucleo-sidecar.md
+      - docs/STATUS.md
+      - docs/plan/fase-a-6-empaquetado-cli.md
+risks:
+  - "Line claims of the source task were validated at HEAD 3bbd6ba: every grep of section 3 matches (reconexion.go:49 and :248, manejo.go:69/:103/:127/:139, sidecar/main.go:105/:116, salud.rs:50, main.rs:383/:535, adaptador.rs:332/:408, VERSION_PROTOCOLO=7 at mensajes.rs:15, protocol doc 1.6 at :3). No mismatch found. emitirEstado callers are at :162, :173 and :344, and the PRD :180 text matches. docs/plan/fase-a-2 :320 is the readiness risk row; the simulated always-active statement it relies on is also at :268."
+  - "Test-package constraint: servidor_test.go is package servidor_test and servidor imports canal, so a servidor test can only drive the real Supervisor through exported API (Arrancar emits only activa; pausada needs the unexported procesarEvento). The four-field pausada assertion at servidor level therefore uses a fake source, and fidelity of what the Supervisor stores (mutation 'only Estado') is held by the internal canal unit test. Both levels are named in test_scenarios; do not collapse them."
+  - "Concurrency: ConUltimoEstado calls entregar under mu, the same mutex emitirEstado holds while calling the sink, so snapshot plus enqueue are atomic and ordering is preserved. entregar must never call back into the Supervisor (non-reentrant mu, deadlock) and nueva.enviar may block if the 100-slot queue is full; at connection time the queue is empty. An emission between s.actual = nueva and the resend is delivered twice with the same value (idempotent for the Rust watch); acceptable and not to be 'fixed'."
+  - "Residual out of scope (human decision, recorded as a new Pendiente): the Rust adapter publishes Activa right after the greeting (adaptador.rs:979, not modified) and the sidecar supervisor emits nothing at startup until it connects, so if the core connects before the first sidecar state /health/ready can answer 200 before WhatsApp is connected. The resend only closes the case where the sidecar already emitted a state."
+  - "Rust test race: the whatsmeow watch is born Reconectando (adaptador.rs:332), so right after the greeting /health/ready is 503 until the adapter publishes Activa. The existing immediate-200 assertion in servidor_de_salud_responde_con_canal_whatsmeow becomes a race and must poll; the new test must wait for the first 200 before sending reconectando, otherwise a 503 observed earlier proves nothing. Acceptance runs both test files 5 times in a row."
+  - "Docs: this is the first protocol document bump that does not change the wire version. The version table maps each document version to a wire version, and the prose near the version-mismatch paragraph enumerates wire bumps, so 1.7 needs a row with wire 7 and an explicit sentence that the wire is unchanged. STATUS and plan line numbers drift with parallel tasks (T1 HEX-091-b, T3 HEX-095, T4 HEX-096); cite by text and expect append conflicts in STATUS.md and the A-6 plan on rebase (keep both additions, grep for conflict markers across the whole tree before continuing)."
+  - "Complexity band: 7 production files (4 Go, 3 Rust) exceed l_max_files 5, so the band is L and the external fleet is not eligible; per the source task the work stays one indivisible task (part B without part A leaves /health/ready at 503 until the next state event) and is implemented internally. preparacion.rs is in the touch list per the source task but the design needs it at most for a doc-comment refresh (desde_estado already exists); it can stay unchanged."
+  - "Guards are not in verify.commands: the contract verify list is fixed by the source task (go vet and tests of canal and servidor, three Rust test binaries, cargo fmt), so the four mutation guards and the append-only docs guard run by hand and are evidenced in 04-implementation-log; contract-check cannot enforce them. The full acceptance suite (cargo build/test/fmt/clippy, go build/vet/test, five repeated runs of the new Rust test file) is the merge gate."
+  - "Sizing: estimated diff about 540 lines (Go production ~70, Go tests ~230 split over two files, Rust production ~35, Rust tests ~130, docs ~70), under the fixed 1100 global and per-file test caps; per_class is evaluated per matching file, so servidor_test.go must stay well under its 450."
+  - "Sentinel: outbox/centinela_rutas_de_envio_test.go rejects any named call starting with Enviar outside outbox/ and _test.go. The new names ConFuenteDeEstado, ConUltimoEstado, the field call s.fuenteDeEstado(...) and nueva.enviar(...) are safe; do not call srv.EnviarEstadoSesion or any Enviar* from production code (the existing alias in sidecar/main.go stays as is)."
+  - "Branch locator: the task directory is HEX-094-new-spec while the source task names ai/HEX-094; check git worktree list and git branch --list after quorum task start and align the contract execution.branch with what the CLI actually created (see the locator-divergence precedent from HEX-093)."

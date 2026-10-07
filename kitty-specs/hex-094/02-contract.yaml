@@ -1,0 +1,162 @@
+task_id: HEX-094
+summary: "Sidecar resends its last complete estado_sesion after each IPC greeting; core /health/ready reads the live whatsmeow session state; protocol doc 1.7 plus STATUS and plan notes."
+goal: >-
+  Close two STATUS Pendiente entries (integration of the real channel state into readiness and
+  synchronization of the sidecar connection state on the IPC client connection) as one indivisible
+  task, no decomposition. Part A (Go): Supervisor stores the complete last ipc.EstadoSesion plus a
+  has-state flag and exposes ConUltimoEstado, which under mu hands a copy to a destination only if a
+  state was emitted; Servidor gets the late-bound ConFuenteDeEstado and atenderConexion, after the
+  greeting and with the new connection current, enqueues that state via nueva.enviar; sidecar/main.go
+  wires srv.ConFuenteDeEstado(supervisor.ConUltimoEstado) after NuevoSupervisor and before go srv.Aceptar.
+  Part B (Rust): salud.rs adds FuenteDeSesion = Arc<OnceLock<watch::Receiver<EstadoSesion>>>, the
+  fuente_de_sesion field and con_fuente_de_sesion, with preparacion() still synchronous and
+  EstadoDeSalud::nuevo unchanged; main.rs registers adaptador.suscribir_estado() in the whatsmeow
+  branch only and the simulated branch keeps siempre_activa(). Docs: protocol document 1.7 with the
+  resend paragraph in section 5 (wire version stays 7), append-only resolution sentences on the two
+  STATUS lines plus a new Pendiente for the residual, closing note in the A-6 plan. Acceptance
+  AC-1..AC-7 of 00-spec.yaml; source of truth is the human task file under .tmp. The implementer MUST
+  commit all work on the task branch in conventional Spanish commits with no AI attribution. DEVIATION (human-approved 2026-10-07): «consecuencia mecánica del bump de documento omitida en el contrato» — the 1.6->1.7 document bump forces a literal-only change (1.6 -> 1.7, plus the header date 2026-10-07 in documento_test.go) in three version-pinning tests and three doc comments (whatsmeow lib.rs:4, mensajes.rs:1,14; sidecar ipc/mensajes.go:2); VERSION_PROTOCOLO and VersionProtocolo stay 7; nothing else may change in those files.
+read:
+  - .ai/tasks/active/HEX-094-new-spec/00-spec.yaml
+  - .ai/tasks/active/HEX-094-new-spec/01-blueprint.yaml
+  - .tmp/hexcell-tarea-T2-hex-094-estado-real-de-sesion.md
+  - CLAUDE.md
+  - sidecar/internal/canal/reconexion.go
+  - sidecar/internal/canal/reconexion_interno_test.go
+  - sidecar/internal/servidor/manejo.go
+  - sidecar/internal/servidor/servidor.go
+  - sidecar/internal/servidor/servidor_test.go
+  - sidecar/internal/ipc/mensajes.go
+  - sidecar/internal/outbox/salida.go
+  - sidecar/internal/outbox/centinela_rutas_de_envio_test.go
+  - sidecar/main.go
+  - crates/hexcell/src/salud.rs
+  - crates/hexcell/src/preparacion.rs
+  - crates/hexcell/src/main.rs
+  - crates/hexcell/src/admin.rs
+  - crates/hexcell-core/src/canal.rs
+  - crates/hexcell-canal-whatsmeow/src/adaptador.rs
+  - crates/hexcell-canal-whatsmeow/src/mensajes.rs
+  - crates/hexcell/tests/canal_whatsmeow_seleccionado.rs
+  - crates/hexcell/tests/preparacion.rs
+  - crates/hexcell/tests/salud_http.rs
+  - crates/hexcell/tests/emparejamiento_ipc.rs
+  - crates/hexcell/tests/comun/mod.rs
+  - docs/protocolo-ipc-nucleo-sidecar.md
+  - docs/STATUS.md
+  - docs/plan/fase-a-6-empaquetado-cli.md
+  - docs/plan/fase-a-2-nucleo-persistencia.md
+  - docs/PRD.md
+touch:
+  - sidecar/internal/canal/reconexion.go
+  - sidecar/internal/servidor/manejo.go
+  - sidecar/internal/servidor/servidor.go
+  - sidecar/main.go
+  - sidecar/internal/servidor/servidor_test.go
+  - sidecar/internal/canal/reconexion_interno_test.go
+  - crates/hexcell/src/salud.rs
+  - crates/hexcell/src/preparacion.rs
+  - crates/hexcell/src/main.rs
+  - crates/hexcell/tests/canal_whatsmeow_seleccionado.rs
+  - docs/protocolo-ipc-nucleo-sidecar.md
+  - docs/STATUS.md
+  - docs/plan/fase-a-6-empaquetado-cli.md
+  - crates/hexcell-canal-whatsmeow/tests/restablecimiento_de_contacto.rs
+  - sidecar/internal/ipc/restablecimiento_test.go
+  - sidecar/internal/ipc/documento_test.go
+  - crates/hexcell-canal-whatsmeow/src/lib.rs
+  - crates/hexcell-canal-whatsmeow/src/mensajes.rs
+  - sidecar/internal/ipc/mensajes.go
+forbid:
+  files:
+    - crates/hexcell-canal-whatsmeow/src/adaptador.rs
+    - crates/hexcell-canal-whatsmeow/src/conexion.rs
+    - crates/hexcell-canal-whatsmeow/src/error.rs
+    - crates/hexcell-canal-whatsmeow/src/reconexion.rs
+    - crates/hexcell-core/**
+    - crates/hexcell-storage/**
+    - crates/hexcell-admin/**
+    - sidecar/internal/ipc/mensajes_test.go
+    - sidecar/internal/outbox/**
+    - sidecar/internal/metricas/**
+    - sidecar/internal/canal/canal.go
+    - crates/hexcell/tests/preparacion.rs
+    - crates/hexcell/tests/salud_http.rs
+    - crates/hexcell/tests/emparejamiento_ipc.rs
+    - crates/hexcell/tests/comun/**
+    - deploy/**
+    - .github/**
+    - README.md
+    - docs/PRD.md
+    - docs/bitacora-de-descartes.md
+    - Cargo.lock
+    - Cargo.toml
+    - crates/*/Cargo.toml
+    - sidecar/go.mod
+    - sidecar/go.sum
+    - '**/*.db'
+    - '**/*.db-wal'
+    - '**/*.db-shm'
+    - '**/.env*'
+  behaviors:
+    - "no cambiar VERSION_PROTOCOLO ni añadir tipos de mensaje IPC"
+    - "no modificar la publicación de Activa en adaptador.rs:979"
+    - "no inventar un estado cuando el supervisor aún no emitió ninguno"
+    - "no cambiar la firma de EstadoDeSalud::nuevo"
+    - "no editar pruebas existentes salvo canal_whatsmeow_seleccionado.rs"
+    - >-
+      The resend carries the COMPLETE ipc.EstadoSesion (Estado, Causa, Codigo, ExpiraEnMs), never only
+      Estado. Snapshot and enqueue happen under the supervisor mutex inside ConUltimoEstado, and the
+      destination function never calls back into the Supervisor. The resend is enqueued after the
+      greeting write and with s.actual = nueva already set, through nueva.enviar. No new named call
+      starting with Enviar outside _test.go (sentinel in outbox/centinela_rutas_de_envio_test.go) and
+      no new Go or Rust dependency.
+    - >-
+      Ready means only Activa; Reconectando, Pausada and Desvinculada keep answering 503 with component
+      sesion-del-canal. preparacion() stays synchronous and never holds the watch borrow across an
+      await. Without a registered source (simulated channel, the default) it behaves exactly as today
+      with siempre_activa(); the simulated branch of main.rs registers nothing.
+    - >-
+      New tests carry the exact names listed in the blueprint test_scenarios. New Rust tests poll with
+      a deadline of at most 5 s and never use a single fixed sleep as the wait. The four mutation guards
+      (remove the resend; resend only Estado; deliver an invented value without prior state; siempre_activa
+      back in the whatsmeow branch) are run by hand after implementation, each confirmed with diff against
+      a copy so the file really changed, under the same build profile as the test, and recorded in
+      04-implementation-log with the named test that went red.
+    - >-
+      Docs are in Spanish, append-only with absolute dates and no line-number citations: the protocol
+      document goes to 1.7 (version line, table row with wire 7, sentence that the wire is unchanged,
+      resend paragraph in section 5); STATUS gets an appended Resuelto sentence at the end of the two
+      Pendiente lines and one new Pendiente at the end of the file; the A-6 plan gets a closing note at
+      its end. Replacing one exact literal is allowed, free deletion is not; probe the guard with both.
+      No ADR. No bitacora entry (touch excludes it; if an alternative is discarded, stop and ask for the
+      touch amendment with D-NN read from disk).
+    - >-
+      Commits: conventional commits in Spanish on the task branch, never a Co-Authored-By or Claude-Session
+      line or any AI attribution; never git merge; the working tree is committed and clean at verify time.
+verify:
+  commands:
+    - "cd sidecar && go vet ./... && go test ./internal/canal/ ./internal/servidor/ -count=1"
+    - "cargo test -p hexcell --test canal_whatsmeow_seleccionado --test preparacion --test salud_http"
+    - "cargo fmt --check"
+  target_s: 60
+acceptance:
+  bdd_suite: >-
+    cargo build --workspace && cargo test --workspace && cargo fmt --check &&
+    cargo clippy --workspace --all-targets -- -D warnings &&
+    (cd sidecar && go build ./... && go vet ./... && go test ./... -count=1) &&
+    for i in 1 2 3 4 5; do cargo test -p hexcell --test canal_whatsmeow_seleccionado || exit 1; done
+  human_gate: true
+limits:
+  max_files_changed: 20
+  max_diff_lines: 1100
+  per_class:
+    - glob: "**/*_test.go"
+      max_diff_lines: 450
+    - glob: "crates/hexcell/tests/**"
+      max_diff_lines: 300
+execution:
+  mode: worktree_edit
+  branch: ai/HEX-094
+retry_policy:
+  max_attempts: 1
