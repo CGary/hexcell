@@ -346,6 +346,62 @@ async fn binario_real_despacha_respaldar_con_exito() {
     assert!(stdout.contains("respaldo completado exitosamente"));
 }
 
+#[tokio::test]
+async fn binario_real_respaldar_estampa_id_celula_real() {
+    let mut sidecar = FakeSidecar::nuevo();
+    let socket_path = sidecar.ruta_socket().clone();
+
+    let origen_temp = DirectorioTemporal::nuevo("respaldo-id-origen");
+    let (_pools, _repo, _almacen) = abrir_persistencia_con_identidad(origen_temp.ruta());
+    let destino_temp = DirectorioTemporal::nuevo("respaldo-id-destino");
+
+    let bin_path = env!("CARGO_BIN_EXE_hexcell");
+    let id_celula = "celula-bin-real";
+    let destino_path = destino_temp.ruta().to_path_buf();
+
+    let mut comando = Command::new(bin_path);
+    comando
+        .env_clear()
+        .env("HEXCELL_ID_CELULA", id_celula)
+        .env("HEXCELL_RUTA_DATOS", origen_temp.ruta())
+        .env("HEXCELL_SOCKET_IPC", &socket_path)
+        .arg("respaldar")
+        .arg("--directorio")
+        .arg(&destino_path);
+
+    let sidecar_dest_path = destino_path.clone();
+    let tarea_sidecar = tokio::spawn(async move {
+        sidecar.aceptar_y_saludar(id_celula).await;
+        sidecar.atender_orden_respaldo(&sidecar_dest_path).await;
+        sidecar.atender_orden_respaldo(&sidecar_dest_path).await;
+    });
+
+    let salida = tokio::task::spawn_blocking(move || {
+        comando
+            .output()
+            .expect("ejecutar binario hexcell respaldar")
+    })
+    .await
+    .unwrap();
+    tarea_sidecar.await.unwrap();
+
+    assert!(
+        salida.status.success(),
+        "el binario debe terminar con exit code 0; stderr:\n{}",
+        String::from_utf8_lossy(&salida.stderr)
+    );
+
+    let stdout = String::from_utf8_lossy(&salida.stdout);
+    assert!(
+        stdout.contains("\"id_celula\":\"celula-bin-real\""),
+        "stdout debe estampar el id real de la célula en sus líneas de registro: {stdout}"
+    );
+    assert!(
+        !stdout.contains("sin-configurar"),
+        "stdout no debe llevar el id por omisión sin-configurar: {stdout}"
+    );
+}
+
 #[test]
 fn binario_real_sin_argumento_falla_con_mensaje_espanol() {
     let bin_path = env!("CARGO_BIN_EXE_hexcell");

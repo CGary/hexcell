@@ -32,6 +32,7 @@ El operador solicita el código de vinculación utilizando la superficie existen
    * El código de vinculación generado nunca se escribe en el registro estructurado de logs a ningún nivel, asegurando la privacidad conforme a `adr-0019`.
 3. **Superficie de invocación del operador:**
    * El operador ejecuta `hexcell emparejar --metodo codigo_de_vinculacion` (o simplemente `hexcell emparejar`) en la terminal de la célula. El binario conecta al socket IPC, envía `orden_emparejar`, imprime el código de ocho caracteres recibido y aguarda el acuse terminal.
+   * **Disciplina operacional de `hexcell emparejar`:** abre su propio cliente IPC y, por el relevo de conexión única del sidecar (gana la conexión más reciente), desplaza la del núcleo en ejecución. Ejecútelo con el núcleo DETENIDO y el sidecar EN EJECUCIÓN; en una célula en servicio el camino es `hexcell-admin cell rebind`.
    * *Superficie remota (Pendiente, Etapa A-6):* La invocación remota sin acceso a terminal (subcomandos de `hexcell-admin`, transporte remoto y autenticación) permanece pendiente para la etapa A-6.
 
 ---

@@ -2,6 +2,9 @@
 # Entorno compartido para el arnés de laboratorio de la célula (tarea 15 de A-3).
 # AVISO: Este arnés opera procesos directos para pruebas de laboratorio.
 # El empaquetado operable final (Docker + hexcell-admin) corresponde a la etapa A-6.
+# AVISO DE VOLATILIDAD: el valor por omisión de HEXCELL_LAB_DIR apunta a /tmp/hexcell-laboratorio,
+# que es EFÍMERO: un reinicio del sistema borra el estado de la célula (hallazgo 8, HEX-095).
+# Para conservarlo entre reinicios, exporte HEXCELL_LAB_DIR a una ruta persistente antes de sourcear este archivo.
 
 # Directorio raíz del laboratorio (configurable por el operador)
 export HEXCELL_LAB_DIR="${HEXCELL_LAB_DIR:-/tmp/hexcell-laboratorio}"

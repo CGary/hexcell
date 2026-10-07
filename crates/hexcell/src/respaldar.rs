@@ -291,6 +291,10 @@ pub async fn ejecutar_cli(
         }
     };
 
+    // El modo respaldar también inicializa el registro estructurado para que sus líneas lleven el
+    // id real de la célula (hallazgo 11), no el valor por omisión `sin-configurar`.
+    crate::registro::inicializar(id_celula.clone());
+
     let ruta_datos = match fuente.leer(HEXCELL_RUTA_DATOS) {
         Some(val) if !val.trim().is_empty() => PathBuf::from(val),
         _ => {

@@ -807,3 +807,17 @@ Las entradas conservan su numeración; esta sección es la autoridad sobre el or
   la ventana de actualización también se fijan allí; aquí se ejecuta su escalonado.
 * **Decisiones de producto pendientes:** el **modelo de monetización** define cuándo se suspende a un
   cliente por falta de pago. El mecanismo se entrega aquí; la política que lo activa, no.
+
+---
+
+## Nota de cierre de HEX-095 (2026-10-07)
+
+Tarea mecánica de cierre de cuatro hallazgos de laboratorio registrados como pendientes en
+`docs/STATUS.md`: (Hallazgo 11) el modo `hexcell respaldar` inicializa ahora el registro
+estructurado con el id validado de la célula, de modo que sus líneas llevan el id real y no
+`sin-configurar`; (nota de honestidad) el comentario de `Conectar` en el sidecar recupera la
+advertencia sobre contextos cancelados y su cobertura unitaria parcial; (Hallazgo 7) el runbook del
+canal documenta la disciplina operacional de `hexcell emparejar`; (Hallazgo 8) el entorno de
+laboratorio advierte que el valor por omisión de `HEXCELL_LAB_DIR` (`/tmp/hexcell-laboratorio`) es
+volátil, sin cambiar ese valor. Cada entrada de STATUS cierra por anexo en su sitio y la guarda
+estática `guarda-hex-095.sh` prueba que las cuatro solo crecen.
