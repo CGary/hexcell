@@ -303,7 +303,7 @@ fn la_orden_no_es_un_mensaje_entrante_valido() {
 // ---------------------------------------------------------------------------
 
 /// Extrae del texto del documento la versión de su cabecera y el número de cable que le asigna la
-/// tabla de correspondencia (`| 1.6 | `7` |`).
+/// tabla de correspondencia (`| 1.7 | `7` |`).
 fn version_de_cable_segun_el_documento(documento: &str) -> (String, i64) {
     const MARCA: &str = "**Versión de este protocolo:** ";
     let inicio = documento
@@ -335,10 +335,10 @@ async fn la_version_de_cable_del_sobre_emitido_coincide_con_el_documento_y_es_si
     let documento = std::fs::read_to_string(&ruta).expect("no se pudo leer el documento");
     let (version_del_documento, cable_segun_el_documento) =
         version_de_cable_segun_el_documento(&documento);
-    assert_eq!(version_del_documento, "1.6");
+    assert_eq!(version_del_documento, "1.7");
     assert!(
-        documento.contains("| 1.6 | `7` |"),
-        "el documento no declara la correspondencia 1.6 -> cable 7"
+        documento.contains("| 1.7 | `7` |"),
+        "el documento no declara la correspondencia 1.7 -> cable 7"
     );
 
     let (mut sidecar, adaptador, _asa, _rx) = conectar().await;

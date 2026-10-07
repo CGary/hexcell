@@ -1,5 +1,5 @@
 // Package ipc es la representación tipada del protocolo que fija
-// `docs/protocolo-ipc-nucleo-sidecar.md`, versión 1.6 (versión de cable 7).
+// `docs/protocolo-ipc-nucleo-sidecar.md`, versión 1.7 (versión de cable 7).
 //
 // Aquí no hay socket, ni escucha, ni outbox: solo los objetos de valor de los diecinueve tipos de
 // mensaje y dos funciones puras, [Codificar] y [Decodificar]. El transporte llega con la tarea 3

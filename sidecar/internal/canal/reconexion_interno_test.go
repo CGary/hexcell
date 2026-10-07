@@ -774,3 +774,71 @@ func TestSupervisorArrancarConFallosReintentaSegunRetroceso(t *testing.T) {
 		t.Fatalf("log sin entradas para cada intento: %s", log)
 	}
 }
+
+// TestConUltimoEstadoEntregaCopiaCompletaDelUltimoEstado (HEX-094 AC-1): emitirEstado con un
+// estado pausada de cuatro campos y luego ConUltimoEstado entrega exactamente uno con los
+// cuatro campos iguales. Una segunda emisión reemplaza la anterior. Se pone roja si solo se
+// guarda Estado (ExpiraEnMs y Causa se pierden).
+func TestConUltimoEstadoEntregaCopiaCompletaDelUltimoEstado(t *testing.T) {
+	t.Parallel()
+
+	var entregados []ipc.EstadoSesion
+	supervisor := NuevoSupervisor(nil, retrocesoDePrueba(), func(context.Context) error {
+		return nil
+	}, func(ipc.EstadoSesion) {})
+
+	supervisor.emitirEstado(ipc.EstadoSesion{
+		Estado:     ipc.EstadoPausada,
+		Causa:      ipc.CausaBaneoTemporal,
+		Codigo:     102,
+		ExpiraEnMs: 1786083207000,
+	})
+
+	supervisor.ConUltimoEstado(func(e ipc.EstadoSesion) {
+		entregados = append(entregados, e)
+	})
+	if len(entregados) != 1 {
+		t.Fatalf("se esperaba una sola entrega, se obtuvieron %d", len(entregados))
+	}
+	recibido := entregados[0]
+	if recibido.Estado != ipc.EstadoPausada ||
+		recibido.Causa != ipc.CausaBaneoTemporal ||
+		recibido.Codigo != 102 ||
+		recibido.ExpiraEnMs != 1786083207000 {
+		t.Fatalf("la entrega no conservó los cuatro campos: %#v", recibido)
+	}
+
+	// Una segunda emisión reemplaza la anterior: el cliente nuevo ve el último, no el primero.
+	entregados = nil
+	supervisor.emitirEstado(ipc.EstadoSesion{
+		Estado:     ipc.EstadoActiva,
+		Causa:      "",
+		Codigo:     0,
+		ExpiraEnMs: 0,
+	})
+	supervisor.ConUltimoEstado(func(e ipc.EstadoSesion) {
+		entregados = append(entregados, e)
+	})
+	if len(entregados) != 1 || entregados[0].Estado != ipc.EstadoActiva {
+		t.Fatalf("la segunda emisión no reemplazó la anterior: %#v", entregados)
+	}
+}
+
+// TestConUltimoEstadoSinEmisionPreviaNoEntregaNada (HEX-094 AC-2): un supervisor fresco no
+// ha emitido nada y ConUltimoEstado no debe llamar a entregar. Se pone roja si se entrega un
+// valor inventado o un cero.
+func TestConUltimoEstadoSinEmisionPreviaNoEntregaNada(t *testing.T) {
+	t.Parallel()
+
+	supervisor := NuevoSupervisor(nil, retrocesoDePrueba(), func(context.Context) error {
+		return nil
+	}, func(ipc.EstadoSesion) {})
+
+	llamadas := 0
+	supervisor.ConUltimoEstado(func(ipc.EstadoSesion) {
+		llamadas++
+	})
+	if llamadas != 0 {
+		t.Fatalf("sin emisión previa hubo %d entregas; se esperaba ninguna", llamadas)
+	}
+}

@@ -122,6 +122,13 @@ func main() {
 		notificarEstadoIpc(estado)
 	})
 	recursos.Sesion.RegistrarManejador(supervisor)
+
+	// Enlace tardío del servidor con el supervisor: cada cliente IPC nuevo recibe, tras el
+	// saludo, el último estado de sesión emitido (si lo hay). Va justo después de
+	// RegistrarManejador y antes de go srv.Aceptar, cuando el supervisor ya existe pero
+	// todavía no ha arrancado su bucle de reconexión.
+	srv.ConFuenteDeEstado(supervisor.ConUltimoEstado)
+
 	go supervisor.Arrancar(ctx, recursos.Sesion.EstaEmparejada())
 
 	detectorBaja := canal.NuevoDetectorDeBaja(cfg.PalabrasDeBaja, cfg.TextoConfirmacionDeBaja, recursos.AlmacenIdentidad, portero)

@@ -1,6 +1,6 @@
 # Protocolo IPC entre el núcleo y el sidecar
 
-* **Versión de este protocolo:** 1.6, fijada el 2026-09-30.
+* **Versión de este protocolo:** 1.7, fijada el 2026-10-07.
 * **Etapa que lo redacta:** A-3 (tarea 1 de `docs/plan/fase-a-3-adaptador-whatsmeow.md`).
 * **Etapa que lo implementa:** A-3, repartida entre varias tareas. Este documento **declara** la
   semántica completa; el código que la cumple llega después y por partes: el outbox durable
@@ -33,6 +33,12 @@
 | 1.4 | `5` |
 | 1.5 | `6` |
 | 1.6 | `7` |
+| 1.7 | `7` |
+
+La versión 1.7 no cambia la versión de cable (sigue siendo `7`): solo documenta que al aceptar una
+conexión nueva, tras el saludo, el sidecar reenvía al núcleo el último `estado_sesion` emitido (si
+lo hay), sin añadir ningún tipo nuevo ni ningún campo nuevo al formato. El núcleo lo acepta porque
+el lector del watch tolera recibir el mismo estado en cualquier momento tras el saludo.
 
 ---
 
@@ -254,6 +260,19 @@ conecta. Todo lo que el sidecar no había confirmado sigue en el outbox y se ree
 Es el caso anterior con el reintento del núcleo empezando antes: no hay nada específico que hacer.
 El invariante que sostiene los tres casos es el mismo: **el estado que importa está en disco, no en
 la conexión**.
+
+### Reenvío del último estado de sesión al conectar
+
+Añadido en la versión 1.7 del documento. Cuando el núcleo conecta al sidecar y el apretón de manos
+de saludo se completa, el sidecar **reenvía al núcleo el último `estado_sesion` que emitió su
+supervisor**, si es que ya emitió alguno. El reenvío viaja como un `estado_sesion` ordinario, con
+los cuatro campos completos (`estado`, `causa`, `codigo`, `expira_en_ms`); no se reenvía solo el
+string `estado`, porque el núcleo necesita `expira_en_ms` para interpretar `pausada`. Si el
+supervisor todavía no ha emitido ningún estado (arranque frío, primera conexión antes de que el
+sidecar haya hablado con WhatsApp), no se inventa ningún valor: tras el saludo no llega ningún
+`estado_sesion` hasta que el supervisor emita el primero. El reenvío cierra la ventana en la que el
+núcleo, conectando tras un reinicio propio, podría leer el watch en un estado distinto al que el
+sidecar ya había publicado.
 
 ### Retroceso configurable del sidecar
 

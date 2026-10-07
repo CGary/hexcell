@@ -16,7 +16,10 @@ import (
 	"sync"
 	"syscall"
 	"testing"
+	"time"
 
+	"github.com/CGary/hexcell/sidecar/internal/canal"
+	"github.com/CGary/hexcell/sidecar/internal/configuracion"
 	"github.com/CGary/hexcell/sidecar/internal/ipc"
 	"github.com/CGary/hexcell/sidecar/internal/outbox"
 	"github.com/CGary/hexcell/sidecar/internal/registro"
@@ -932,5 +935,283 @@ func TestPausaDeEnvioRechazaYReanudaSobreSocket(t *testing.T) {
 	buzon.DB().QueryRow("SELECT COUNT(*) FROM cola_salida WHERE id_mensaje='msg-2'").Scan(&cuenta)
 	if cuenta != 1 {
 		t.Fatalf("el mensaje reanudado debía encolarse, filas=%d", cuenta)
+	}
+}
+
+// helperConCliente: abre servidor, acepta un cliente, hace el saludo del núcleo y devuelve el
+// lector sobre la conexión del cliente para leer lo que el servidor responda. El caller decide
+// cómo configurar srv antes de llamar a Escuchar/Aceptar.
+func helperServidorConFuente(t *testing.T, fuente func(func(ipc.EstadoSesion))) (string, *servidor.Servidor, context.CancelFunc) {
+	t.Helper()
+	socketPath := filepath.Join(t.TempDir(), "ipc.sock")
+	srv := servidor.NuevoServidor(servidor.Dependencias{
+		RutaSocket: socketPath,
+		IdCelula:   "test-cell",
+	})
+	if fuente != nil {
+		srv.ConFuenteDeEstado(fuente)
+	}
+	if err := srv.Escuchar(context.Background()); err != nil {
+		t.Fatalf("fallo al escuchar: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	go srv.Aceptar(ctx)
+	t.Cleanup(func() {
+		cancel()
+		_ = srv.Cerrar()
+	})
+	return socketPath, srv, cancel
+}
+
+func leerSaludoServidor(t *testing.T, lector *bufio.Reader) {
+	t.Helper()
+	resp, err := lector.ReadBytes('\n')
+	if err != nil {
+		t.Fatalf("error leyendo saludo del servidor: %v", err)
+	}
+	sobre, err := ipc.Decodificar(resp)
+	if err != nil || sobre.Tipo != ipc.TipoSaludo {
+		t.Fatalf("saludo de servidor inválido: %v, sobre=%+v", err, sobre)
+	}
+}
+
+func enviarSaludoNucleo(t *testing.T, conn net.Conn) {
+	t.Helper()
+	saludo, _ := ipc.Codificar(ipc.NuevoSobre(ipc.Saludo{Emisor: ipc.EmisorNucleo, IdCelula: "test-cell"}))
+	if _, err := conn.Write(saludo); err != nil {
+		t.Fatalf("error enviando saludo del núcleo: %v", err)
+	}
+}
+
+// TestReenvioDeEstadoPausadaConservaLosCuatroCampos (HEX-094 AC-1): tras emitir pausada con
+// Causa, Codigo y ExpiraEnMs no nulos, un cliente nuevo recibe el saludo y luego un
+// estado_sesion con los cuatro campos idénticos. Se pone roja si se reenvía solo Estado.
+func TestReenvioDeEstadoPausadaConservaLosCuatroCampos(t *testing.T) {
+	t.Parallel()
+
+	esperado := ipc.EstadoSesion{
+		Estado:     ipc.EstadoPausada,
+		Causa:      ipc.CausaBaneoTemporal,
+		Codigo:     102,
+		ExpiraEnMs: 1786083207000,
+	}
+	fuente := func(entregar func(ipc.EstadoSesion)) {
+		entregar(esperado)
+	}
+
+	socketPath, _, cancel := helperServidorConFuente(t, fuente)
+	defer cancel()
+
+	conn, err := net.Dial("unix", socketPath)
+	if err != nil {
+		t.Fatalf("error conectando: %v", err)
+	}
+	defer conn.Close()
+	lector := bufio.NewReader(conn)
+
+	enviarSaludoNucleo(t, conn)
+	leerSaludoServidor(t, lector)
+
+	lineaEstado, err := lector.ReadBytes('\n')
+	if err != nil {
+		t.Fatalf("error leyendo estado reenviado: %v", err)
+	}
+	sobre, err := ipc.Decodificar(lineaEstado)
+	if err != nil {
+		t.Fatalf("estado reenviado no decodifica: %v", err)
+	}
+	if sobre.Tipo != ipc.TipoEstadoSesion {
+		t.Fatalf("se esperaba estado_sesion, se recibió %q", sobre.Tipo)
+	}
+	recibido, ok := sobre.Cuerpo.(ipc.EstadoSesion)
+	if !ok {
+		t.Fatalf("cuerpo no es EstadoSesion: %#v", sobre.Cuerpo)
+	}
+	if recibido.Estado != esperado.Estado ||
+		recibido.Causa != esperado.Causa ||
+		recibido.Codigo != esperado.Codigo ||
+		recibido.ExpiraEnMs != esperado.ExpiraEnMs {
+		t.Fatalf("el reenvío no conservó los cuatro campos: esperado %#v, recibido %#v",
+			esperado, recibido)
+	}
+}
+
+// TestSinEmisionPreviaNoLlegaEstadoSesionTrasElSaludo (HEX-094 AC-2): sin fuente ni emisión
+// previa, tras el saludo el primer mensaje es el marcado por srv.EnviarEstadoSesion (único
+// sitio permitido fuera de outbox); cualquier reenvío inventado llegaría antes y fracasaría
+// el test. No hay sleeps ni plazos de lectura.
+func TestSinEmisionPreviaNoLlegaEstadoSesionTrasElSaludo(t *testing.T) {
+	t.Parallel()
+
+	socketPath, srv, cancel := helperServidorConFuente(t, nil)
+	defer cancel()
+
+	conn, err := net.Dial("unix", socketPath)
+	if err != nil {
+		t.Fatalf("error conectando: %v", err)
+	}
+	defer conn.Close()
+	lector := bufio.NewReader(conn)
+
+	enviarSaludoNucleo(t, conn)
+	leerSaludoServidor(t, lector)
+
+	// Disparamos un marcador permitido en _test.go. Si hubiera un reenvío previo, el
+	// primer mensaje leído NO sería este marcador.
+	srv.EnviarEstadoSesion(ipc.EstadoSesion{Estado: ipc.EstadoActiva})
+
+	linea, err := lector.ReadBytes('\n')
+	if err != nil {
+		t.Fatalf("error leyendo primer mensaje tras saludo: %v", err)
+	}
+	sobre, err := ipc.Decodificar(linea)
+	if err != nil {
+		t.Fatalf("mensaje tras saludo no decodifica: %v", err)
+	}
+	if sobre.Tipo != ipc.TipoEstadoSesion {
+		t.Fatalf("se esperaba estado_sesion marcador, se recibió %q", sobre.Tipo)
+	}
+	marcador, ok := sobre.Cuerpo.(ipc.EstadoSesion)
+	if !ok || marcador.Estado != ipc.EstadoActiva || marcador.Causa != "" ||
+		marcador.Codigo != 0 || marcador.ExpiraEnMs != 0 {
+		t.Fatalf("marcador inesperado: %#v", sobre.Cuerpo)
+	}
+}
+
+// TestRelevoDeConexionReenviaElUltimoEstadoALaNueva (HEX-094 AC-3): con dos clientes, la
+// nueva conexión recibe saludo + último estado, la vieja ve EOF (como el takeover ya
+// existente). Verifica que el reenvío va a la conexión ACTUAL y no a la anterior.
+func TestRelevoDeConexionReenviaElUltimoEstadoALaNueva(t *testing.T) {
+	t.Parallel()
+
+	estadoEsperado := ipc.EstadoSesion{
+		Estado:     ipc.EstadoPausada,
+		Causa:      ipc.CausaBaneoTemporal,
+		Codigo:     102,
+		ExpiraEnMs: 1786083207000,
+	}
+	fuente := func(entregar func(ipc.EstadoSesion)) {
+		entregar(estadoEsperado)
+	}
+
+	socketPath, _, cancel := helperServidorConFuente(t, fuente)
+	defer cancel()
+
+	// Cliente 1: saludo, luego es reemplazado.
+	c1, err := net.Dial("unix", socketPath)
+	if err != nil {
+		t.Fatalf("error conectando c1: %v", err)
+	}
+	defer c1.Close()
+	lector1 := bufio.NewReader(c1)
+	enviarSaludoNucleo(t, c1)
+	leerSaludoServidor(t, lector1)
+
+	// Espera EOF en c1 tras relevo en una goroutine separada: sin ella, el cierre del
+	// servidor puede llegar después del SetReadDeadline y ReadBytes devolvería el primer
+	// byte vacío sin error. Con la goroutine, la lectura bloquea hasta que el kernel
+	// entregue el RST o el deadline dispare.
+	errCh := make(chan error, 1)
+	go func() {
+		_, e := lector1.ReadBytes('\n')
+		errCh <- e
+	}()
+
+	// Cliente 2: relevo. Debe recibir saludo + estado reenviado.
+	c2, err := net.Dial("unix", socketPath)
+	if err != nil {
+		t.Fatalf("error conectando c2: %v", err)
+	}
+	defer c2.Close()
+	lector2 := bufio.NewReader(c2)
+	enviarSaludoNucleo(t, c2)
+	leerSaludoServidor(t, lector2)
+
+	select {
+	case errEof := <-errCh:
+		if !errors.Is(errEof, io.EOF) {
+			t.Fatalf("se esperaba EOF en c1 tras relevo, se obtuvo: %v", errEof)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("c1 no vio EOF tras relevo en 2s")
+	}
+
+	// Cliente 2 lee el estado reenviado.
+	lineaEstado, err := lector2.ReadBytes('\n')
+	if err != nil {
+		t.Fatalf("error leyendo estado reenviado en c2: %v", err)
+	}
+	sobre, err := ipc.Decodificar(lineaEstado)
+	if err != nil || sobre.Tipo != ipc.TipoEstadoSesion {
+		t.Fatalf("estado en c2 inválido: err=%v sobre=%+v", err, sobre)
+	}
+	recibido := sobre.Cuerpo.(ipc.EstadoSesion)
+	if recibido.Estado != estadoEsperado.Estado ||
+		recibido.Causa != estadoEsperado.Causa ||
+		recibido.Codigo != estadoEsperado.Codigo ||
+		recibido.ExpiraEnMs != estadoEsperado.ExpiraEnMs {
+		t.Fatalf("el reenvío a c2 no conservó los cuatro campos: %#v", recibido)
+	}
+}
+
+// TestFuenteDeEstadoConSupervisorRealReenviaActivaAlConectar (HEX-094 AC-1, fidelidad real):
+// usa el Supervisor de verdad (Arrancar + conectar falso que tiene éxito) para emitir activa
+// antes de que exista cliente, y verifica que un cliente posterior recibe, tras el saludo,
+// el estado_sesion activa a través del camino real ConUltimoEstado -> ConFuenteDeEstado ->
+// atenderConexion. Se pone roja si se quita el reenvío en atenderConexion.
+func TestFuenteDeEstadoConSupervisorRealReenviaActivaAlConectar(t *testing.T) {
+	t.Parallel()
+
+	socketPath := filepath.Join(t.TempDir(), "ipc.sock")
+	srv := servidor.NuevoServidor(servidor.Dependencias{
+		RutaSocket: socketPath,
+		IdCelula:   "test-cell",
+	})
+
+	reg := registro.Nuevo(&bytes.Buffer{}, slog.LevelInfo, "test-cell")
+	supervisor := canal.NuevoSupervisor(reg, configuracion.Retroceso{
+		IntervaloInicial: 1,
+		Factor:           1,
+		IntervaloMaximo:  1,
+		BaneoInicial:     1,
+		BaneoMaximo:      1,
+	}, func(context.Context) error {
+		return nil
+	}, nil)
+	srv.ConFuenteDeEstado(supervisor.ConUltimoEstado)
+
+	if err := srv.Escuchar(context.Background()); err != nil {
+		t.Fatalf("fallo al escuchar: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go srv.Aceptar(ctx)
+
+	supervisor.Arrancar(ctx, true)
+
+	conn, err := net.Dial("unix", socketPath)
+	if err != nil {
+		t.Fatalf("error conectando: %v", err)
+	}
+	defer conn.Close()
+	lector := bufio.NewReader(conn)
+
+	enviarSaludoNucleo(t, conn)
+	leerSaludoServidor(t, lector)
+
+	lineaEstado, err := lector.ReadBytes('\n')
+	if err != nil {
+		t.Fatalf("error leyendo estado reenviado: %v", err)
+	}
+	sobre, err := ipc.Decodificar(lineaEstado)
+	if err != nil {
+		t.Fatalf("estado reenviado no decodifica: %v", err)
+	}
+	if sobre.Tipo != ipc.TipoEstadoSesion {
+		t.Fatalf("se esperaba estado_sesion, se recibió %q", sobre.Tipo)
+	}
+	recibido := sobre.Cuerpo.(ipc.EstadoSesion)
+	if recibido.Estado != ipc.EstadoActiva {
+		t.Fatalf("se esperaba activa, se recibió %#v", recibido)
 	}
 }

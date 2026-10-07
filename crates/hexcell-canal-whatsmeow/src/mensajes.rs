@@ -1,4 +1,4 @@
-//! Objetos de valor del protocolo IPC versión 7 (documento 1.6): un struct por tipo de mensaje.
+//! Objetos de valor del protocolo IPC versión 7 (documento 1.7): un struct por tipo de mensaje.
 //!
 //! Cada struct lleva `#[serde(deny_unknown_fields)]` porque la regla 3 del protocolo
 //! (sección 1 de `docs/protocolo-ipc-nucleo-sidecar.md`) hace **obligatorio** rechazar campos
@@ -11,7 +11,7 @@
 
 use serde::{Deserialize, Serialize};
 
-/// Versión de cable del protocolo. En esta implementación, `7` (documento 1.6).
+/// Versión de cable del protocolo. En esta implementación, `7` (documento 1.7).
 pub const VERSION_PROTOCOLO: i64 = 7;
 
 /// Límite de línea del protocolo: 131 072 bytes (128 KiB), contando el salto de línea final.

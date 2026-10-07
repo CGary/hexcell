@@ -138,6 +138,46 @@ func (s *Servidor) atenderConexion(ctx context.Context, conn net.Conn) {
 	// 4. Iniciar bucles concurrentes de lectura y escritura
 	go s.leerEntrante(ctx, nueva, lector)
 	go s.escribirSaliente(ctx, nueva)
+
+	// 5. Reenvío del último estado de sesión al conectar (HEX-094).
+	//
+	// Si el supervisor ya emitió algún estado (por ejemplo, pausada con su expira_en_ms, o
+	// activa tras reconectar), el cliente IPC nuevo lo recibe después del saludo, sin
+	// esperar al próximo evento. La entrega se hace por un TIMER CORTO (10 ms) tras
+	// arrancar las goroutines: así cualquier relevo de conexión tiene tiempo de llegar y
+	// fijar s.actual antes de que el reenvío se escriba. Cuando un cliente A conecta y es
+	// inmediatamente reemplazado por B (relevo), el timer de A ve que s.actual ya no es A
+	// y no escribe nada en el socket de A (que estaría a punto de cerrarse y cuyo buffer
+	// del kernel sería leído por el cliente A al hacer la próxima read tras el cierre).
+	//
+	// Sin fuente (canal que no publica estado) o sin emisión previa, no se escribe nada: el
+	// servidor no inventa un estado al conectar. Un error de codificación se registra y se
+	// descarta el frame.
+	if s.fuenteDeEstado != nil {
+		conexionReenvio := nueva
+		go func() {
+			time.Sleep(10 * time.Millisecond)
+			s.mu.RLock()
+			actualEsMia := s.actual == conexionReenvio
+			s.mu.RUnlock()
+			if !actualEsMia {
+				return
+			}
+			var frame []byte
+			s.fuenteDeEstado(func(estado ipc.EstadoSesion) {
+				sobre := ipc.NuevoSobre(estado)
+				var err error
+				frame, err = ipc.Codificar(sobre)
+				if err != nil && s.deps.Registro != nil {
+					s.deps.Registro.Error("servidor.error_codificar_reenvio_estado", registro.Campos{Detalle: err.Error()})
+				}
+			})
+			if frame == nil {
+				return
+			}
+			conexionReenvio.enviar(frame)
+		}()
+	}
 }
 
 // leerEntrante decodifica líneas recibidas del cliente IPC y las enruta a los manejadores
