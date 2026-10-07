@@ -1012,9 +1012,12 @@ func TestReenvioDeEstadoPausadaConservaLosCuatroCampos(t *testing.T) {
 	enviarSaludoNucleo(t, conn)
 	leerSaludoServidor(t, lector)
 
+	if err := conn.SetReadDeadline(time.Now().Add(3 * time.Second)); err != nil {
+		t.Fatalf("error fijando plazo de lectura: %v", err)
+	}
 	lineaEstado, err := lector.ReadBytes('\n')
 	if err != nil {
-		t.Fatalf("error leyendo estado reenviado: %v", err)
+		t.Fatalf("no llegó el estado_sesion reenviado tras el saludo en 3s: %v", err)
 	}
 	sobre, err := ipc.Decodificar(lineaEstado)
 	if err != nil {
@@ -1036,11 +1039,77 @@ func TestReenvioDeEstadoPausadaConservaLosCuatroCampos(t *testing.T) {
 	}
 }
 
-// TestSinEmisionPreviaNoLlegaEstadoSesionTrasElSaludo (HEX-094 AC-2): sin fuente ni emisión
-// previa, tras el saludo el primer mensaje es el marcado por srv.EnviarEstadoSesion (único
+// TestSinEmisionPreviaNoLlegaEstadoSesionTrasElSaludo (HEX-094 AC-2): con una fuente de estado
+// NO nula (el Supervisor real, nunca arrancado, que no entrega nada) la rama de reenvío de
+// atenderConexion sí se ejecuta: la fuente avisa por un canal que fue consultada. Tras el
+// saludo y tras esa consulta, el cliente lee hasta que vence un plazo de lectura acotado y
+// exige que no haya llegado NINGÚN frame (en particular, ningún estado_sesion inventado). La
+// condición de éxito es el vencimiento del plazo (error de timeout), no una espera fija.
+func TestSinEmisionPreviaNoLlegaEstadoSesionTrasElSaludo(t *testing.T) {
+	t.Parallel()
+
+	reg := registro.Nuevo(&bytes.Buffer{}, slog.LevelInfo, "test-cell")
+	supervisor := canal.NuevoSupervisor(reg, configuracion.Retroceso{
+		IntervaloInicial: 1,
+		Factor:           1,
+		IntervaloMaximo:  1,
+		BaneoInicial:     1,
+		BaneoMaximo:      1,
+	}, func(context.Context) error {
+		return nil
+	}, nil)
+
+	consultada := make(chan struct{})
+	var unaVez sync.Once
+	fuente := func(entregar func(ipc.EstadoSesion)) {
+		supervisor.ConUltimoEstado(entregar)
+		unaVez.Do(func() { close(consultada) })
+	}
+
+	socketPath, _, cancel := helperServidorConFuente(t, fuente)
+	defer cancel()
+
+	conn, err := net.Dial("unix", socketPath)
+	if err != nil {
+		t.Fatalf("error conectando: %v", err)
+	}
+	defer conn.Close()
+	lector := bufio.NewReader(conn)
+
+	enviarSaludoNucleo(t, conn)
+	leerSaludoServidor(t, lector)
+
+	// La rama con fuente no nula debe ejecutarse; si no, la prueba sería vacua.
+	select {
+	case <-consultada:
+	case <-time.After(3 * time.Second):
+		t.Fatal("la fuente de estado no fue consultada tras el saludo: la rama de reenvío no corrió")
+	}
+
+	// Leer hasta que venza el plazo: cualquier frame recibido es un estado inventado.
+	if err := conn.SetReadDeadline(time.Now().Add(500 * time.Millisecond)); err != nil {
+		t.Fatalf("error fijando plazo de lectura: %v", err)
+	}
+	linea, err := lector.ReadBytes('\n')
+	if err == nil {
+		sobre, errDec := ipc.Decodificar(linea)
+		t.Fatalf("sin emisión previa no debía llegar ningún frame tras el saludo; llegó tipo=%q (err=%v): %s",
+			sobre.Tipo, errDec, linea)
+	}
+	var errRed net.Error
+	if !errors.As(err, &errRed) || !errRed.Timeout() {
+		t.Fatalf("se esperaba vencimiento del plazo de lectura sin frames, se obtuvo: %v (bytes parciales %q)", err, linea)
+	}
+	if len(linea) != 0 {
+		t.Fatalf("llegaron bytes parciales tras el saludo sin emisión previa: %q", linea)
+	}
+}
+
+// TestSinFuenteElPrimerMensajeTrasElSaludoEsElMarcador (HEX-094 AC-2, caso sin fuente): sin
+// fuente de estado inyectada, tras el saludo el primer mensaje es el marcado por srv.EnviarEstadoSesion (único
 // sitio permitido fuera de outbox); cualquier reenvío inventado llegaría antes y fracasaría
 // el test. No hay sleeps ni plazos de lectura.
-func TestSinEmisionPreviaNoLlegaEstadoSesionTrasElSaludo(t *testing.T) {
+func TestSinFuenteElPrimerMensajeTrasElSaludoEsElMarcador(t *testing.T) {
 	t.Parallel()
 
 	socketPath, srv, cancel := helperServidorConFuente(t, nil)
@@ -1137,9 +1206,12 @@ func TestRelevoDeConexionReenviaElUltimoEstadoALaNueva(t *testing.T) {
 	}
 
 	// Cliente 2 lee el estado reenviado.
+	if err := c2.SetReadDeadline(time.Now().Add(3 * time.Second)); err != nil {
+		t.Fatalf("error fijando plazo de lectura en c2: %v", err)
+	}
 	lineaEstado, err := lector2.ReadBytes('\n')
 	if err != nil {
-		t.Fatalf("error leyendo estado reenviado en c2: %v", err)
+		t.Fatalf("no llegó el estado_sesion reenviado a c2 tras el saludo en 3s: %v", err)
 	}
 	sobre, err := ipc.Decodificar(lineaEstado)
 	if err != nil || sobre.Tipo != ipc.TipoEstadoSesion {
@@ -1199,9 +1271,12 @@ func TestFuenteDeEstadoConSupervisorRealReenviaActivaAlConectar(t *testing.T) {
 	enviarSaludoNucleo(t, conn)
 	leerSaludoServidor(t, lector)
 
+	if err := conn.SetReadDeadline(time.Now().Add(3 * time.Second)); err != nil {
+		t.Fatalf("error fijando plazo de lectura: %v", err)
+	}
 	lineaEstado, err := lector.ReadBytes('\n')
 	if err != nil {
-		t.Fatalf("error leyendo estado reenviado: %v", err)
+		t.Fatalf("no llegó el estado_sesion reenviado tras el saludo en 3s: %v", err)
 	}
 	sobre, err := ipc.Decodificar(lineaEstado)
 	if err != nil {
