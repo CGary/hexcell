@@ -983,6 +983,21 @@ func enviarSaludoNucleo(t *testing.T, conn net.Conn) {
 	}
 }
 
+// leerEstadoSesion lee la próxima línea (bajo el plazo ya fijado por el llamante) y exige que
+// sea un estado_sesion reenviado tras el saludo.
+func leerEstadoSesion(t *testing.T, lector *bufio.Reader, quien string) ipc.EstadoSesion {
+	t.Helper()
+	linea, err := lector.ReadBytes('\n')
+	if err != nil {
+		t.Fatalf("no llegó el estado_sesion reenviado a %s tras el saludo: %v", quien, err)
+	}
+	sobre, err := ipc.Decodificar(linea)
+	if err != nil || sobre.Tipo != ipc.TipoEstadoSesion {
+		t.Fatalf("estado en %s inválido: err=%v sobre=%+v", quien, err, sobre)
+	}
+	return sobre.Cuerpo.(ipc.EstadoSesion)
+}
+
 // TestReenvioDeEstadoPausadaConservaLosCuatroCampos (HEX-094 AC-1): tras emitir pausada con
 // Causa, Codigo y ExpiraEnMs no nulos, un cliente nuevo recibe el saludo y luego un
 // estado_sesion con los cuatro campos idénticos. Se pone roja si se reenvía solo Estado.
@@ -1147,9 +1162,10 @@ func TestSinFuenteElPrimerMensajeTrasElSaludoEsElMarcador(t *testing.T) {
 	}
 }
 
-// TestRelevoDeConexionReenviaElUltimoEstadoALaNueva (HEX-094 AC-3): con dos clientes, la
-// nueva conexión recibe saludo + último estado, la vieja ve EOF (como el takeover ya
-// existente). Verifica que el reenvío va a la conexión ACTUAL y no a la anterior.
+// TestRelevoDeConexionReenviaElUltimoEstadoALaNueva (HEX-094 AC-3): con dos clientes, cada
+// uno recibe saludo + último estado mientras es la conexión actual; tras el relevo, c1 drena
+// lo que quede y ve EOF (como el takeover ya existente) y c2 recibe su propio reenvío.
+// Verifica que el reenvío va a la conexión ACTUAL en el momento de conectar.
 func TestRelevoDeConexionReenviaElUltimoEstadoALaNueva(t *testing.T) {
 	t.Parallel()
 
@@ -1166,7 +1182,7 @@ func TestRelevoDeConexionReenviaElUltimoEstadoALaNueva(t *testing.T) {
 	socketPath, _, cancel := helperServidorConFuente(t, fuente)
 	defer cancel()
 
-	// Cliente 1: saludo, luego es reemplazado.
+	// Cliente 1: saludo y su propio reenvío (c1 conectó con un estado ya emitido, AC-1).
 	c1, err := net.Dial("unix", socketPath)
 	if err != nil {
 		t.Fatalf("error conectando c1: %v", err)
@@ -1175,15 +1191,29 @@ func TestRelevoDeConexionReenviaElUltimoEstadoALaNueva(t *testing.T) {
 	lector1 := bufio.NewReader(c1)
 	enviarSaludoNucleo(t, c1)
 	leerSaludoServidor(t, lector1)
+	if err := c1.SetReadDeadline(time.Now().Add(3 * time.Second)); err != nil {
+		t.Fatalf("error fijando plazo de lectura en c1: %v", err)
+	}
+	if recibido := leerEstadoSesion(t, lector1, "c1"); recibido != estadoEsperado {
+		t.Fatalf("el reenvío a c1 no conservó los cuatro campos: %#v", recibido)
+	}
 
-	// Espera EOF en c1 tras relevo en una goroutine separada: sin ella, el cierre del
-	// servidor puede llegar después del SetReadDeadline y ReadBytes devolvería el primer
-	// byte vacío sin error. Con la goroutine, la lectura bloquea hasta que el kernel
-	// entregue el RST o el deadline dispare.
+	// Tras el relevo, c1 drena frames (acotado por el plazo de lectura) hasta EOF. Solo
+	// se admiten estado_sesion idénticos al esperado antes del cierre.
 	errCh := make(chan error, 1)
 	go func() {
-		_, e := lector1.ReadBytes('\n')
-		errCh <- e
+		for {
+			linea, e := lector1.ReadBytes('\n')
+			if e != nil {
+				errCh <- e
+				return
+			}
+			if sobre, errDec := ipc.Decodificar(linea); errDec != nil || sobre.Tipo != ipc.TipoEstadoSesion ||
+				sobre.Cuerpo.(ipc.EstadoSesion) != estadoEsperado {
+				errCh <- fmt.Errorf("frame inesperado en c1 antes del EOF: %s", linea)
+				return
+			}
+		}
 	}()
 
 	// Cliente 2: relevo. Debe recibir saludo + estado reenviado.
@@ -1209,19 +1239,7 @@ func TestRelevoDeConexionReenviaElUltimoEstadoALaNueva(t *testing.T) {
 	if err := c2.SetReadDeadline(time.Now().Add(3 * time.Second)); err != nil {
 		t.Fatalf("error fijando plazo de lectura en c2: %v", err)
 	}
-	lineaEstado, err := lector2.ReadBytes('\n')
-	if err != nil {
-		t.Fatalf("no llegó el estado_sesion reenviado a c2 tras el saludo en 3s: %v", err)
-	}
-	sobre, err := ipc.Decodificar(lineaEstado)
-	if err != nil || sobre.Tipo != ipc.TipoEstadoSesion {
-		t.Fatalf("estado en c2 inválido: err=%v sobre=%+v", err, sobre)
-	}
-	recibido := sobre.Cuerpo.(ipc.EstadoSesion)
-	if recibido.Estado != estadoEsperado.Estado ||
-		recibido.Causa != estadoEsperado.Causa ||
-		recibido.Codigo != estadoEsperado.Codigo ||
-		recibido.ExpiraEnMs != estadoEsperado.ExpiraEnMs {
+	if recibido := leerEstadoSesion(t, lector2, "c2"); recibido != estadoEsperado {
 		t.Fatalf("el reenvío a c2 no conservó los cuatro campos: %#v", recibido)
 	}
 }
@@ -1288,5 +1306,53 @@ func TestFuenteDeEstadoConSupervisorRealReenviaActivaAlConectar(t *testing.T) {
 	recibido := sobre.Cuerpo.(ipc.EstadoSesion)
 	if recibido.Estado != ipc.EstadoActiva {
 		t.Fatalf("se esperaba activa, se recibió %#v", recibido)
+	}
+}
+
+// TestEmisionTrasLaInstantaneaQuedaUltimaEnElCable (HEX-094, atomicidad instantánea+encolado):
+// la fuente imita al Supervisor (mu propio, último estado) y, en cuanto suelta su mu tras
+// entregar la instantánea X, emite Y por el sumidero real (EnviarEstadoSesion) como lo haría
+// un emitirEstado concurrente que ganó la carrera. Si el encolado de X ocurriera fuera del
+// mu, el cable diría Y, X y el cliente quedaría con el estado viejo. Determinista: la
+// intercalación peor se fuerza, no se espera.
+func TestEmisionTrasLaInstantaneaQuedaUltimaEnElCable(t *testing.T) {
+	t.Parallel()
+
+	x := ipc.EstadoSesion{Estado: ipc.EstadoPausada, Causa: ipc.CausaBaneoTemporal, Codigo: 102, ExpiraEnMs: 1786083207000}
+	y := ipc.EstadoSesion{Estado: ipc.EstadoActiva}
+	var mu sync.Mutex
+	var srv *servidor.Servidor
+	var unaVez sync.Once
+	fuente := func(entregar func(ipc.EstadoSesion)) {
+		mu.Lock()
+		entregar(x)
+		mu.Unlock()
+		unaVez.Do(func() {
+			mu.Lock()
+			srv.EnviarEstadoSesion(y)
+			mu.Unlock()
+		})
+	}
+
+	socketPath, s, cancel := helperServidorConFuente(t, fuente)
+	srv = s
+	defer cancel()
+
+	conn, err := net.Dial("unix", socketPath)
+	if err != nil {
+		t.Fatalf("error conectando: %v", err)
+	}
+	defer conn.Close()
+	lector := bufio.NewReader(conn)
+	enviarSaludoNucleo(t, conn)
+	leerSaludoServidor(t, lector)
+	if err := conn.SetReadDeadline(time.Now().Add(3 * time.Second)); err != nil {
+		t.Fatalf("error fijando plazo de lectura: %v", err)
+	}
+	if primero := leerEstadoSesion(t, lector, "cliente"); primero != x {
+		t.Fatalf("orden roto: el primer estado tras el saludo debía ser la instantánea %#v, llegó %#v", x, primero)
+	}
+	if ultimo := leerEstadoSesion(t, lector, "cliente"); ultimo != y {
+		t.Fatalf("el cliente quedó con un estado viejo: el último debía ser la emisión posterior %#v, llegó %#v", y, ultimo)
 	}
 }
