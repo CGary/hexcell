@@ -928,7 +928,7 @@ pub fn guion_de_peticion_http(url: &str, cuerpo: Option<&str>, limite: u64) -> V
 ///
 /// La eliminación se ejecuta siempre, también en los caminos de error, para que ninguna sonda
 /// quede huérfana en el demonio.
-fn consultar_por_hermano(
+pub(crate) fn consultar_por_hermano(
     cliente: &ClienteDocker,
     _nombres: &NombresDeCelula,
     imagen: &str,

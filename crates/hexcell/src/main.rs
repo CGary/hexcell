@@ -623,7 +623,10 @@ fn emitir_punto_de_control(resumen: ResumenDePuntoDeControl) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use hexcell::admin::{MetodoSolicitado, atender_emparejamiento};
+    use hexcell::admin::{
+        MetodoSolicitado, SolicitudDeRestablecimiento, atender_emparejamiento,
+        atender_restablecimiento_de_contacto,
+    };
     use hexcell_canal_whatsmeow::mensajes::{
         AcuseEmparejamiento, OrdenEmparejar, Saludo, VERSION_PROTOCOLO,
     };
@@ -734,5 +737,115 @@ mod tests {
             "el acuse fallido con el texto exacto del sidecar debe traducirse al literal fijado \
              por el contrato, no viajar crudo: {cuerpo}"
         );
+    }
+
+    fn registro_de_restablecimiento(
+        recibidas: std::sync::Arc<std::sync::Mutex<Vec<SolicitudDeRestablecimiento>>>,
+    ) -> RegistroDeSesion {
+        let operaciones = OperacionesDeSesion {
+            cerrar: Box::new(|| Box::pin(async { Ok(()) })),
+            pausar_envio: Box::new(|_| Box::pin(async { DesenlaceDePausa::Aplicado })),
+            emparejar: Box::new(|_, _| {
+                Box::pin(async {
+                    DesenlaceDeEmparejamiento::Fallido {
+                        motivo: "no usado".into(),
+                    }
+                })
+            }),
+            estado: Box::new(|| Box::pin(async { hexcell_core::canal::EstadoSesion::Activa })),
+            restablecer_contacto: Box::new(move |solicitud, _| {
+                recibidas.lock().unwrap().push(solicitud.clone());
+                Box::pin(async move {
+                    DesenlaceDeRestablecimiento::Aplicado {
+                        contacto: solicitud.contacto,
+                        incluir_baja: solicitud.incluir_baja,
+                        cortacircuitos: 1,
+                        presentacion_de_conversacion: 2,
+                        baja_de_contacto: if solicitud.incluir_baja { 3 } else { 0 },
+                    }
+                })
+            }),
+        };
+        let registro = Arc::new(std::sync::OnceLock::new());
+        let _ = SesionDeCanal::ConSesion(operaciones).registrar(&registro);
+        registro
+    }
+
+    #[tokio::test]
+    async fn restablecer_contacto_entrega_contacto_e_incluir_baja_false_en_su_propio_campo() {
+        let recibidas = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let registro = registro_de_restablecimiento(Arc::clone(&recibidas));
+        let (estado, cuerpo) = atender_restablecimiento_de_contacto(
+            &registro,
+            SolicitudDeRestablecimiento {
+                contacto: "ct-00000000000000000000000000000000".into(),
+                incluir_baja: false,
+            },
+            Duration::from_secs(1),
+        )
+        .await;
+        assert_eq!(estado, hyper::StatusCode::OK);
+        assert_eq!(
+            recibidas.lock().unwrap()[0].contacto,
+            "ct-00000000000000000000000000000000"
+        );
+        assert!(!recibidas.lock().unwrap()[0].incluir_baja);
+        assert_eq!(cuerpo["incluir_baja"], false);
+    }
+
+    #[tokio::test]
+    async fn restablecer_contacto_entrega_contacto_e_incluir_baja_true_en_su_propio_campo() {
+        let recibidas = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let registro = registro_de_restablecimiento(Arc::clone(&recibidas));
+        let (estado, cuerpo) = atender_restablecimiento_de_contacto(
+            &registro,
+            SolicitudDeRestablecimiento {
+                contacto: "ct-ffffffffffffffffffffffffffffffff".into(),
+                incluir_baja: true,
+            },
+            Duration::from_secs(1),
+        )
+        .await;
+        assert_eq!(estado, hyper::StatusCode::OK);
+        assert_eq!(
+            recibidas.lock().unwrap()[0].contacto,
+            "ct-ffffffffffffffffffffffffffffffff"
+        );
+        assert!(recibidas.lock().unwrap()[0].incluir_baja);
+        assert_eq!(cuerpo["baja_de_contacto"], 3);
+    }
+
+    #[tokio::test]
+    async fn restablecer_contacto_llama_al_adaptador_y_devuelve_el_acuse() {
+        let recibidas = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let registro = registro_de_restablecimiento(Arc::clone(&recibidas));
+        let (_, cuerpo) = atender_restablecimiento_de_contacto(
+            &registro,
+            SolicitudDeRestablecimiento {
+                contacto: "ct-00000000000000000000000000000000".into(),
+                incluir_baja: false,
+            },
+            Duration::from_secs(1),
+        )
+        .await;
+        assert_eq!(recibidas.lock().unwrap().len(), 1);
+        assert_eq!(cuerpo["resultado"], "aplicado");
+        assert_eq!(cuerpo["existe"], true);
+    }
+
+    #[tokio::test]
+    async fn restablecer_contacto_sin_conexion_responde_fallido_y_no_registra_orden() {
+        let registro = Arc::new(std::sync::OnceLock::new());
+        let (estado, cuerpo) = atender_restablecimiento_de_contacto(
+            &registro,
+            SolicitudDeRestablecimiento {
+                contacto: "ct-00000000000000000000000000000000".into(),
+                incluir_baja: false,
+            },
+            Duration::from_secs(1),
+        )
+        .await;
+        assert_eq!(estado, hyper::StatusCode::BAD_GATEWAY);
+        assert_eq!(cuerpo["resultado"], "fallido");
     }
 }

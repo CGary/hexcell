@@ -67,9 +67,27 @@ pub fn ejecutar<S: Write, D: Write>(
     if let Comando::ReporteTokens(invocacion) = comando {
         return ejecutar_reporte_tokens(invocacion, salida);
     }
+    if let Comando::Contacto(invocacion) = &comando {
+        return if invocacion.simular() {
+            match salida.linea(&crate::contacto::linea_de_simulacion_de_contacto(
+                invocacion,
+            )) {
+                Ok(()) => CodigoDeSalida::Exito,
+                Err(_) => CodigoDeSalida::Fallo,
+            }
+        } else {
+            match salida.diagnostico("subcomando «contacto restablecer» todavía no implementado")
+            {
+                Ok(()) => CodigoDeSalida::NoImplementadoTodavia,
+                Err(_) => CodigoDeSalida::Fallo,
+            }
+        };
+    }
     let invocacion = match comando {
         Comando::Cell(invocacion) => invocacion,
-        Comando::ConfigRender(_) | Comando::ReporteTokens(_) => unreachable!(),
+        Comando::ConfigRender(_) | Comando::ReporteTokens(_) | Comando::Contacto(_) => {
+            unreachable!()
+        }
     };
     if invocacion.simular() {
         let linea = linea_de_simulacion(&invocacion);
@@ -229,6 +247,13 @@ pub fn ejecutar_con_efectos<S: Write, D: Write>(
         Ok(comando) => comando,
         Err(error) => return ejecutar(Err(error), salida),
     };
+    if let Comando::Contacto(invocacion) = &comando {
+        let invocacion = invocacion.clone();
+        if invocacion.simular() {
+            return ejecutar(Ok(Comando::Contacto(invocacion)), salida);
+        }
+        return crate::contacto::ejecutar_contacto(invocacion, salida, cliente, &datos);
+    }
     if comando.simular() {
         return ejecutar(Ok(comando), salida);
     }
@@ -238,7 +263,7 @@ pub fn ejecutar_con_efectos<S: Write, D: Write>(
     // sin construir ni consumir el `ClienteDocker`.
     let invocacion = match comando {
         Comando::Cell(invocacion) => invocacion,
-        otro @ (Comando::ConfigRender(_) | Comando::ReporteTokens(_)) => {
+        otro @ (Comando::ConfigRender(_) | Comando::ReporteTokens(_) | Comando::Contacto(_)) => {
             return ejecutar(Ok(otro), salida);
         }
     };
