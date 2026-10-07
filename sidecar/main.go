@@ -66,9 +66,12 @@ func main() {
 	defer recursos.AlmacenIdentidad.Cerrar()
 	defer recursos.Buzon.Cerrar()
 
-	// productorMetricas agrega las tres series acotadas de HEX-072-b (adr-0033) y se cablea a las
-	// costuras existentes de envío, acuse, estado de sesión y evento entrante.
+	// productorMetricas agrega las seis series acotadas de adr-0033, adr-0035 y adr-0042 y se cablea
+	// a las costuras existentes de envío, acuse, estado de sesión, evento entrante y aplazamientos.
 	productorMetricas := metricas.NuevoProductor(reg, nil)
+	productorMetricas.ObservarAplazamientos(func() (int64, int64) {
+		return outbox.ContadorAplazadasPorHorario.Load(), outbox.ContadorAplazadasPorRampa.Load()
+	})
 
 	// La ColaDeSalida comparte el archivo y la conexión con el outbox. transmisorObservado decora
 	// el transmisor real: es la única costura donde id_conversacion e id_correlacion conviven, sin
