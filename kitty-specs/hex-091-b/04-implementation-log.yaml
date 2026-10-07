@@ -1,0 +1,36 @@
+task_id: HEX-091-b
+summary: 'contacto restablecer CLI; review fix: guards on real paths, mutation table recorded.'
+entries:
+- changed_files:
+  - crates/hexcell-admin/tests/contacto_ejecucion.rs
+  - crates/hexcell/src/main.rs
+  - crates/hexcell-admin/src/contacto.rs
+  - README.md
+  - docs/runbook-operacion.md
+  - docs/plan/fase-a-6-empaquetado-cli.md
+  notes:
+  - Rebased ai/HEX-091-b on main 0cbca95 (HEX-095). One conflict in docs/plan/fase-a-6-empaquetado-cli.md (both closing notes appended at the end); kept both, HEX-095 note first, then a blank line and the HEX-091-b note (fixes the lazy-continuation defect). Whole tree grepped for conflict markers before rebase --continue.
+  - contacto_ejecucion.rs rewritten to drive comandos::ejecutar_con_efectos against ServidorDockerFalso (tests/comun Guion, servir_guiones, recibir, exigir_silencio). Body and URL assertions read the Cmd of the recorded POST /containers/create request (wget --post-data body url). Added failure-path tests (unknown cell, core not running, canal_sin_sesion, fallido, unreadable body, failed or timed-out probe, aplicado with existe false). Contract test names kept.
+  - main.rs test module now builds the session with construir_sesion_de_canal over a real AdaptadorWhatsmeow connected to an inline fake sidecar socket that completes the saludo, records orden_restablecer_contacto and echoes an acuse; the disconnected case uses a never-started adapter through the real closure (sin_conexion, no connection accepted). The closure itself is unmodified.
+  - 'sin cambios now follows the HEX-087 pattern: diagnostic sink, text "sin cambios: el contacto no tenía filas que borrar"; README section 10 and runbook section 9 rows (task-added lines only) updated accordingly.'
+  - Runbook reference corrected HEX-091 has no task number in the A-6 plan (task 24 is the IPC logout/pause item); it closes the STATUS pending entry on the operator surface.
+  - guarda-hex-091-b.sh OK and --autoprueba m1..m4 red as expected after the docs edits.
+  verify_pending: true
+- changed_files:
+  - crates/hexcell-admin/tests/contacto_ejecucion.rs
+  - crates/hexcell/src/main.rs
+  notes:
+  - Mutation record. cargo test profile (unoptimized + debuginfo), same as verify; run in a throwaway clone of ai/HEX-091-b at fada2c7 under the session scratchpad with an isolated CARGO_TARGET_DIR; each mutation applied by exact-string replace asserted to match once, confirmed by git diff --stat, run with --no-fail-fast, then reverted and status checked clean. Canonical repo reflog unchanged.
+  - Mutation m1 CLI body incluir_baja always true (contacto.rs; diff 1+/1-) -> RED sin_incluir_baja_el_cuerpo_recibido_dice_false
+  - Mutation m2 CLI body incluir_baja always false (contacto.rs; diff 1+/1-) -> RED con_incluir_baja_el_cuerpo_recibido_dice_true
+  - Mutation m3 parser drops the --confirmar requirement (argumentos.rs; diff 1+/1-) -> RED incluir_baja_sin_confirmar_es_uso_incorrecto_y_nombra_confirmar, incluir_baja_sin_confirmar_no_emite_peticion_alguna
+  - Mutation m4a ContactoDesconocido mapped to Exito plus sin cambios (contacto.rs; diff 2+/1-) -> RED contacto_desconocido_sale_fallo_aunque_los_contadores_sean_cero, aplicado_con_existe_false_tambien_sale_fallo
+  - Mutation m4b existing contact with zero counters mapped to Fallo (contacto.rs; diff 3+) -> RED contacto_existente_sin_filas_sale_exito_con_la_linea_sin_cambios
+  - Mutation m5 --simular short-circuit removed from ejecutar_con_efectos (comandos.rs; diff 3-) -> RED simular_no_emite_ninguna_peticion_ni_crea_contenedor
+  - Mutation m6a real closure passes incluir hard-coded false (main.rs; diff 1+/1-) -> RED tests::restablecer_contacto_entrega_contacto_e_incluir_baja_true_en_su_propio_campo
+  - Mutation m6b real closure passes incluir hard-coded true (main.rs; diff 1+/1-) -> RED tests::restablecer_contacto_entrega_contacto_e_incluir_baja_false_en_su_propio_campo, tests::restablecer_contacto_llama_al_adaptador_y_devuelve_el_acuse
+  - Mutation m6c real closure passes another ct- contact to the adapter (main.rs; diff 1+/1-) -> RED both entrega tests and tests::restablecer_contacto_llama_al_adaptador_y_devuelve_el_acuse
+  - Mutation m7 real closure returns the sin_conexion path before calling the adapter (main.rs; diff 5+) -> RED tests::restablecer_contacto_llama_al_adaptador_y_devuelve_el_acuse and both entrega tests
+  - Mutation m8/m9 docs mutations via guarda-hex-091-b.sh --autoprueba (m1 delete prior literal, m2 rewrite in place, m3 event literal, m4 origin literal) -> all detected red
+  - 'Survivors: none'
+  verify_pending: true

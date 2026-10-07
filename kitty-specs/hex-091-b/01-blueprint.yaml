@@ -1,0 +1,121 @@
+task_id: HEX-091-b
+summary: "hexcell-admin gains the contacto restablecer group: hand-written parser, sibling-container probe against POST /admin/contacto/restablecer, typed output and exit codes, Guion tests, docs."
+affected_files:
+  - crates/hexcell-admin/src/argumentos.rs
+  - crates/hexcell-admin/src/comandos.rs
+  - crates/hexcell-admin/src/ciclo_de_vida.rs
+  - crates/hexcell-admin/src/lib.rs
+  - crates/hexcell-admin/src/contacto.rs
+  - crates/hexcell/src/main.rs
+  - crates/hexcell-admin/tests/contacto_argumentos.rs
+  - crates/hexcell-admin/tests/contacto_ejecucion.rs
+  - README.md
+  - docs/runbook-operacion.md
+  - docs/STATUS.md
+  - docs/plan/fase-a-6-empaquetado-cli.md
+  - docs/bitacora-de-descartes.md
+symbols:
+  - "argumentos::Comando::Contacto(InvocacionContacto) (new variant; arm added to the six accessors subcomando, id, motivo, metodo, simular, confirmar)"
+  - "argumentos::InvocacionContacto (new Value Object: id, contacto, incluir_baja, confirmar, simular, with accessors)"
+  - "argumentos::analizar_contacto(&[String]) -> Result<Comando, ErrorDeArgumentos> (new Validator, hand-written, D-53)"
+  - "argumentos::ErrorDeArgumentos::ContactoInvalido { mensaje: String } (new opaque variant, same profile as ReporteInvalido; Display writes the message)"
+  - "argumentos::analizar (group dispatch gains \"contacto\" before the cell check; GrupoDesconocido message untouched)"
+  - "argumentos::TEXTO_DE_USO (appended contacto restablecer block)"
+  - "contacto::validar_id_de_contacto (new Validator: ct- + 32 lowercase hex)"
+  - "contacto::ejecutar_contacto (new Application Service: resolve cell, require running core, warn, probe, print, exit code)"
+  - "contacto::linea_de_simulacion_de_contacto (new pure plan line listing the tables)"
+  - "contacto::DesenlaceDeRestablecimientoDeContacto and contacto::desenlace_de_restablecimiento (new Value Object plus body parser keyed on resultado and the explicit boolean existe)"
+  - "ciclo_de_vida::consultar_por_hermano (visibility fn -> pub(crate) only)"
+  - "ciclo_de_vida::resolver_datos_de_celula_para_rebind and NombresDeCelula::nueva (reused as is for network, admin port and core container name)"
+  - "comandos::ejecutar (Contacto arm replaces the unreachable arm: --simular prints the plan, otherwise the NoImplementadoTodavia notice like cell)"
+  - "comandos::ejecutar_con_efectos (Contacto branch delegates to contacto::ejecutar_contacto before the Cell destructuring)"
+  - "lib::contacto (new pub mod declaration)"
+  - "main (hexcell bin)::tests (new #[cfg(test)] cases beside construir_sesion_de_canal_traduce_ya_emparejada_hasta_la_ruta; closure restablecer_contacto at main.rs:196 is NOT modified)"
+dependencies:
+  - crates/hexcell-admin/src/salida.rs
+  - crates/hexcell-admin/src/codigo_de_salida.rs
+  - crates/hexcell-admin/src/docker/mod.rs
+  - crates/hexcell-admin/tests/argumentos.rs
+  - crates/hexcell-admin/tests/comandos.rs
+  - crates/hexcell-admin/tests/reemparejamiento.rs
+  - crates/hexcell-admin/tests/codigo_de_salida.rs
+  - crates/hexcell-admin/tests/salida.rs
+  - crates/hexcell-admin/tests/comun/mod.rs
+  - crates/hexcell/tests/restablecimiento_de_contacto_http.rs
+  - crates/hexcell/src/admin.rs
+  - crates/hexcell-canal-whatsmeow/src/mensajes.rs
+  - crates/hexcell-canal-whatsmeow/src/adaptador.rs
+  - sidecar/internal/servidor/manejo.go
+test_scenarios:
+  - statement: "Parser accepts contacto restablecer with --id and --contacto (valid ct- plus 32 lowercase hex) plus the optional flags, in both --clave valor and --clave=valor spellings, and exposes them through InvocacionContacto accessors."
+    covers: [AC-11]
+  - statement: "Parser returns UsoIncorrecto-bound ContactoInvalido for a missing --id or --contacto, a malformed contact (wrong prefix, uppercase hex, wrong length, multibyte input without panic), a duplicate flag, an unknown flag, and --incluir-baja or --confirmar under another group."
+    covers: [AC-11]
+  - statement: "Existing groups (cell, config render, reporte tokens) parse exactly as before and GrupoDesconocido keeps its literal message; TEXTO_DE_USO documents the contacto group."
+    covers: [AC-11]
+  - statement: "--incluir-baja without --confirmar (and without --simular) is rejected by the parser with a message naming --confirmar and exit code UsoIncorrecto (2), with zero Docker requests and zero rows deleted; --confirmar without --incluir-baja is UsoIncorrecto; the default reset needs no --confirmar. Mutation: removing the --confirmar requirement turns the named test red."
+    covers: [AC-11, AC-20]
+  - statement: "Resolution and probe: the command reuses resolver_datos_de_celula_para_rebind plus a running-state check of the core, then issues exactly one sibling-container probe through consultar_por_hermano and guion_de_peticion_http against http://<id>-nucleo:<puerto-admin>/admin/contacto/restablecer; the Guion Docker daemon records the probe Cmd; no IPC, no sqlite3, no store access."
+    covers: [AC-12]
+  - statement: "Body guard, CLI side: the probe Cmd received by the Guion server carries {contacto, incluir_baja:false} without the flag and incluir_baja:true with it; always-true and always-false mutants each turn a distinct named test red (sin_incluir_baja_el_cuerpo_recibido_dice_false, con_incluir_baja_el_cuerpo_recibido_dice_true)."
+    covers: [AC-13]
+  - statement: "--simular (with and without --incluir-baja, never needing --confirmar) emits zero requests to the Guion server, creates no container, writes nothing, exits 0 and prints the tables it would touch and whether baja_de_contacto is included; a mutant that emits a request turns a named test red."
+    covers: [AC-14, AC-21]
+  - statement: "Output and exit codes: success prints one line per table plus the baja count or an explicit baja_de_contacto: no tocada line and exits 0; the --incluir-baja warning goes to the diagnostic sink before the probe is created; unknown cell, core not running, contacto_desconocido, canal_sin_sesion, fallido, timeout, probe failure and unreadable body all exit Fallo (1) with a diagnostic and no success line."
+    covers: [AC-15]
+  - statement: "Existence guard: existe=false (contacto_desconocido) exits 1 with no success line even when every counter is zero; existe=true with all counters zero exits 0 with the «sin cambios» line. Two named tests, one per direction, so a counter-derived mutant is caught in both."
+    covers: [AC-19]
+  - statement: "Docs guard (static script) proves append-only edits on README, runbook, STATUS, plan and bitacora with two mutations (delete a prior literal, rewrite in place) and checks the STATUS :570 append, the plan closing note and the README section 10."
+    covers: [AC-16, AC-22]
+  - statement: "Acceptance commands pass on the final tree: every new test is in a new file, no existing test file is edited and no forbidden path changes."
+    covers: [AC-17]
+  - statement: "Composition test in the existing main.rs #[cfg(test)] module: an in-process unix-socket sidecar double completes the saludo handshake, reads the order the real adapter writes (orden_restablecer_contacto) and the route atender_restablecimiento_de_contacto is driven through construir_sesion_de_canal; for incluir_baja false and for true with distinct ct- values the order carries contacto and incluir_baja (si/no) in their own fields. Mutants that hard-code, negate or replace the closure arguments turn a named test red (two tests, one per incluir_baja value)."
+    covers: [AC-23]
+  - statement: "Same composition seam: a connected double that acks existe=si with counts receives exactly one order and the route body is the aplicado ack with existe and counts; a mutant closure returning the no-connection path makes the double see no order and the route answer fallido. With the double disconnected the route answers fallido and no order is recorded."
+    covers: [AC-24]
+  - statement: "Runbook section 9 documents the sensitive log line identidad.baja_de_contacto_revivida with origen equal to the sidecar literal; the static guard compares both literals for exact equality against sidecar/internal/servidor/manejo.go and its autoprueba mutates each literal."
+    covers: [AC-25]
+strategy:
+  - step: 1
+    action: "Parser (Validator and Value Object). Add Comando::Contacto, InvocacionContacto, ErrorDeArgumentos::ContactoInvalido and analizar_contacto in argumentos.rs; wire the group before the cell check in analizar; add the Contacto arm to the six Comando accessors and the Display arm; append the group to TEXTO_DE_USO. Rule: --confirmar is required with --incluir-baja EXCEPT under --simular (AC-21); --confirmar without --incluir-baja is always invalid. Validate id and contact shape before any effect and without byte-index slicing."
+    files:
+      - crates/hexcell-admin/src/argumentos.rs
+  - step: 2
+    action: "Execution (Application Service). New contacto.rs declared in lib.rs: ejecutar_contacto resolves names via NombresDeCelula::nueva and the data via resolver_datos_de_celula_para_rebind, checks the core State.Status is running, writes the --incluir-baja warning to the diagnostic sink, builds the JSON body {contacto, incluir_baja} with serde_json::json!, calls consultar_por_hermano (now pub(crate)) with guion_de_peticion_http, parses resultado plus the explicit existe boolean, prints one line per table and exits through CodigoDeSalida (Exito or Fallo only). Existence comes from existe, never from counters."
+    files:
+      - crates/hexcell-admin/src/contacto.rs
+      - crates/hexcell-admin/src/lib.rs
+      - crates/hexcell-admin/src/ciclo_de_vida.rs
+  - step: 3
+    action: "Dispatch (mechanical consequences). comandos::ejecutar handles Contacto (--simular prints the plan line listing the three tables; otherwise the NoImplementadoTodavia notice like cell, unreachable from main.rs) and replaces the unreachable arm; ejecutar_con_efectos delegates Contacto to ejecutar_contacto without touching the store."
+    files:
+      - crates/hexcell-admin/src/comandos.rs
+  - step: 4
+    action: "Guion tests in two NEW files (parser; execution). Helpers from reemparejamiento.rs are private to that file and comun/mod.rs cannot be edited, so the new execution file carries its own small helpers. Name the guard tests exactly as listed in the contract verify so the router and review can find them; run each mutation by hand and record which named test went red."
+    files:
+      - crates/hexcell-admin/tests/contacto_argumentos.rs
+      - crates/hexcell-admin/tests/contacto_ejecucion.rs
+  - step: 5
+    action: "Composition tests in the existing #[cfg(test)] module of crates/hexcell/src/main.rs, reusing SocketDeSidecarFalso and the saludo handshake of the ya_emparejada test; add a small helper that reads the orden_restablecer_contacto line, records it and writes the acuse echoing the received contacto and incluir_baja. No extraction to lib.rs; the closure at main.rs:196 is not modified."
+    files:
+      - crates/hexcell/src/main.rs
+  - step: 6
+    action: "Docs, append-only. README new ### 10 after section 9 plus at most one referral sentence appended to section 9; runbook new ## 9 before «Reejecución de un comando», one row in each of the two tables, scope line :5 and Referencias by append; STATUS entry :570 appended at the end of its line; plan closing note appended; bitacora D-61 only if an approach is discarded. Run .ai/tasks/active/HEX-091-b/guarda-hex-091-b.sh and its --autoprueba."
+    files:
+      - README.md
+      - docs/runbook-operacion.md
+      - docs/STATUS.md
+      - docs/plan/fase-a-6-empaquetado-cli.md
+      - docs/bitacora-de-descartes.md
+risks:
+  - "MISMATCH (fact): DatosDeCelulaParaRebind carries only red, puerto_admin and volumen (ciclo_de_vida.rs:846-852); it has NO core container name. The name comes from NombresDeCelula::nueva(id).nucleo (\"<id>-nucleo\"), which every other probe already uses. The resolver is reusable as is, but it neither checks State.Status nor the sidecar being up beyond existence, so a separate running-state check (one more inspect of the core, mirroring preparar_reemparejamiento) is needed and the Guion script order is nucleo, sidecar, nucleo, probe."
+  - "MISMATCH (spec AC-12): «resolves the cell from the control-plane store» does not match the rebind template, which resolves the cell by Docker inspection of the derived names; the store is only read to drive state transitions. A contact reset has no transition, so the blueprint resolves by Docker inspection and never opens the store (AC-14 also forbids a store write). ruta_almacen stays unused for this group."
+  - "MISMATCH (spec AC-13, AC-14, AC-23): Guion is a fake DOCKER daemon (tests/comun/mod.rs), not the core route. The body the CLI sends is observed in the create-container request Cmd (wget --post-data) and the route reply is injected as the probe container stdout. The recorded-request assertions of AC-13 and AC-14 run against that daemon."
+  - "MISMATCH (spec AC-23/AC-24): SidecarSimulado does not exist in crates/hexcell/tests. The test double at main.rs:661 is an in-process UnixListener fake (SocketDeSidecarFalso plus raw JSON lines), not SidecarSimulado; it records an order only if the test reads and stores the line. The new cases reuse its handshake and add a reader for orden_restablecer_contacto; the adapter verifies the ack echo, so the double must echo the RECEIVED contacto and incluir_baja, and the assertion is on the received order. The wire carries incluir_baja as si/no."
+  - "MISMATCH (spec AC-23 mutation): swapping contacto and incluir_baja in the closure does not compile (&str versus bool). The mutants that can survive are hard-coded, negated or replaced arguments (incluir always false, always true, !solicitud.incluir_baja, another contact). Two tests, one per incluir_baja value with distinct ct- values, catch each of them; the mutation record must say which test went red."
+  - "TENSION (brief section 5 versus AC-21): --incluir-baja requires --confirmar, but --simular with --incluir-baja must not. The parser requirement is therefore conditional on --simular is absent; --confirmar without --incluir-baja stays invalid under --simular too. TEXTO_DE_USO states it."
+  - "The pure comandos::ejecutar has an unreachable! arm today for the non-Cell groups; the Contacto arm must be a real arm (release profile uses panic = abort). main.rs of hexcell-admin routes non-simular commands to ejecutar_con_efectos, so the pure non-simular Contacto arm is defensive and prints the same NoImplementadoTodavia notice as cell."
+  - "Sizing: the brief limits (14 files, 1400 lines, tests 700, main.rs 200) are too short. Estimate ~1950-2000 diff lines: contacto.rs ~330, argumentos.rs ~170, comandos.rs ~70, hexcell-admin tests ~850 across two files (about 130 lines of helpers duplicated because reemparejamiento.rs helpers are private), main.rs tests ~280, docs ~220. Limits raised in 02-contract.yaml with the reasoning."
+  - "Band L by file count (6 production files: argumentos, comandos, ciclo_de_vida, lib, contacto, hexcell main); the human forbids decomposing. The L band keeps the task out of the external fleet per policy; internal executor ejecutor-opus-medium, review never weaker."
+  - "main.rs is also touched by sibling task HEX-094 (T2, regions near :383 and :535); the new tests live at the end of the file in the tests module, so the rebase before verify should be clean. STATUS.md, plan, README and runbook are shared append-only docs: expect a conflict on STATUS :570 neighbours and resolve keeping both appends, grepping conflict markers over the whole tree before --continue."
+  - "Code graph: index fresh at HEAD 3bbd6ba on the canonical root; used for neighbour discovery only. No prior failed tasks overlap (failure-lookup returned null) and HSME returned no advisories."

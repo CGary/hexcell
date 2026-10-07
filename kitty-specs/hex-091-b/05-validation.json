@@ -1,0 +1,86 @@
+{
+  "commands": [
+    {
+      "command": "cargo fmt --check",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "exit 0"
+    },
+    {
+      "command": "cargo clippy -p hexcell-admin -p hexcell --all-targets -- -D warnings",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "exit 0"
+    },
+    {
+      "command": "cargo test -p hexcell-admin",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "exit 0"
+    },
+    {
+      "command": "cargo test -p hexcell --bin hexcell",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "exit 0"
+    },
+    {
+      "command": "test \"$(git rev-list --count main..HEAD)\" -ge 1 \u0026\u0026 test -z \"$(git status --porcelain)\"",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "exit 0"
+    },
+    {
+      "command": "test -z \"$(git log main..HEAD --format=%B | grep -iE 'co-authored|claude')\"",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "exit 0"
+    },
+    {
+      "command": "git diff --quiet \"$(git merge-base main HEAD)\" -- crates/hexcell-storage deploy .github sidecar scripts/laboratorio/restablecer-contacto.sh crates/hexcell/src/admin.rs crates/hexcell/src/lib.rs crates/hexcell-core crates/hexcell-canal-whatsmeow crates/hexcell-admin/tests/argumentos.rs crates/hexcell-admin/tests/comandos.rs crates/hexcell-admin/tests/reemparejamiento.rs crates/hexcell-admin/tests/codigo_de_salida.rs crates/hexcell-admin/tests/salida.rs crates/hexcell-admin/tests/comun crates/hexcell/tests/restablecimiento_de_contacto_http.rs docs/PRD.md docs/adr Cargo.lock Cargo.toml crates/hexcell-admin/Cargo.toml crates/hexcell/Cargo.toml",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "exit 0"
+    },
+    {
+      "command": "test \"$(cargo test -q -p hexcell-admin --test contacto_argumentos -- --list 2\u003e/dev/null | grep -cE '(incluir_baja_sin_confirmar_es_uso_incorrecto_y_nombra_confirmar|confirmar_sin_incluir_baja_es_uso_incorrecto|restablecer_por_omision_no_pide_confirmar|simular_con_incluir_baja_no_pide_confirmar): test$')\" -eq 4",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "exit 0"
+    },
+    {
+      "command": "test \"$(cargo test -q -p hexcell-admin --test contacto_ejecucion -- --list 2\u003e/dev/null | grep -cE '(sin_incluir_baja_el_cuerpo_recibido_dice_false|con_incluir_baja_el_cuerpo_recibido_dice_true|simular_no_emite_ninguna_peticion_ni_crea_contenedor|contacto_desconocido_sale_fallo_aunque_los_contadores_sean_cero|contacto_existente_sin_filas_sale_exito_con_la_linea_sin_cambios|incluir_baja_sin_confirmar_no_emite_peticion_alguna): test$')\" -eq 6",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "exit 0"
+    },
+    {
+      "command": "test \"$(cargo test -q -p hexcell --bin hexcell -- --list 2\u003e/dev/null | grep -cE 'restablecer_contacto_(entrega_contacto_e_incluir_baja_false_en_su_propio_campo|entrega_contacto_e_incluir_baja_true_en_su_propio_campo|llama_al_adaptador_y_devuelve_el_acuse|sin_conexion_responde_fallido_y_no_registra_orden): test$')\" -eq 4",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "exit 0"
+    },
+    {
+      "command": "test \"$(git diff \"$(git merge-base main HEAD)\" -- crates/hexcell-admin/src crates/hexcell/src/main.rs | grep -c '^+.*unreachable!')\" -eq 0",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "exit 0"
+    },
+    {
+      "command": "bash \"$(git rev-parse --git-common-dir)/../.ai/tasks/active/HEX-091-b/guarda-hex-091-b.sh\"",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "exit 0"
+    },
+    {
+      "command": "bash \"$(git rev-parse --git-common-dir)/../.ai/tasks/active/HEX-091-b/guarda-hex-091-b.sh\" --autoprueba",
+      "duration_s": 0,
+      "exit_code": 0,
+      "output_excerpt": "exit 0"
+    }
+  ],
+  "executed_at": "2026-10-07T05:18:04Z",
+  "overall_result": "passed",
+  "summary": "13/13 verify.commands exit 0 tras rebase sobre main 0cbca95; HEAD fada2c7",
+  "task_id": "HEX-091-b"
+}

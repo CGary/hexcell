@@ -1,0 +1,151 @@
+task_id: HEX-091-b
+summary: "hexcell-admin contacto restablecer: parser, sibling-container probe, typed output and exit codes, Guion tests, README section 10, runbook section 9, STATUS append, plan note."
+goal: >-
+  Deliver AC-11..AC-17 and AC-19..AC-25 of HEX-091-b (CLI side only; the core route, IPC order and
+  sidecar store method already shipped in HEX-091-a). hexcell-admin gains the group
+  `contacto restablecer --id <celula> --contacto <ct-...> [--incluir-baja] [--confirmar] [--simular]`:
+  a hand-written parser (Comando::Contacto, InvocacionContacto, ErrorDeArgumentos::ContactoInvalido),
+  a new contacto.rs that resolves the cell by Docker inspection, requires its core running and POSTs
+  {contacto, incluir_baja} to /admin/contacto/restablecer through consultar_por_hermano (made
+  pub(crate), not duplicated) and guion_de_peticion_http, and prints one line per table with exit
+  codes from CodigoDeSalida (0 or 1, 2 from the parser). Existence is read from the boolean `existe`,
+  never from counters. Tests go in NEW files (two in hexcell-admin plus new cases in the existing
+  #[cfg(test)] module of crates/hexcell/src/main.rs for AC-23 and AC-24). Docs are append-only:
+  README section 10, runbook section 9 with the sidecar log literals, STATUS :570 append, plan note.
+  The implementer MUST commit all work on branch ai/HEX-091-b (conventional commits in Spanish, no AI
+  attribution); an uncommitted diff fails verify.
+read:
+  - .ai/tasks/active/HEX-091-b/00-spec.yaml
+  - .ai/tasks/active/HEX-091-b/01-blueprint.yaml
+  - CLAUDE.md
+  - crates/hexcell-admin/src/argumentos.rs
+  - crates/hexcell-admin/src/comandos.rs
+  - crates/hexcell-admin/src/ciclo_de_vida.rs
+  - crates/hexcell-admin/src/salida.rs
+  - crates/hexcell-admin/src/codigo_de_salida.rs
+  - crates/hexcell-admin/src/lib.rs
+  - crates/hexcell-admin/src/main.rs
+  - crates/hexcell/src/admin.rs
+  - crates/hexcell/src/main.rs
+  - crates/hexcell/tests/restablecimiento_de_contacto_http.rs
+  - crates/hexcell-canal-whatsmeow/src/mensajes.rs
+  - crates/hexcell-canal-whatsmeow/src/adaptador.rs
+  - crates/hexcell-admin/tests/argumentos.rs
+  - crates/hexcell-admin/tests/comandos.rs
+  - crates/hexcell-admin/tests/reemparejamiento.rs
+  - crates/hexcell-admin/tests/comun/mod.rs
+  - sidecar/internal/servidor/manejo.go
+  - README.md
+  - docs/runbook-operacion.md
+  - docs/STATUS.md
+  - docs/plan/fase-a-6-empaquetado-cli.md
+  - docs/bitacora-de-descartes.md
+  - docs/adr/adr-0040-protocolo-ipc-version-de-cable-7.md
+touch:
+  - crates/hexcell-admin/src/argumentos.rs
+  - crates/hexcell-admin/src/comandos.rs
+  - crates/hexcell-admin/src/ciclo_de_vida.rs
+  - crates/hexcell-admin/src/lib.rs
+  - crates/hexcell-admin/src/contacto.rs
+  - crates/hexcell-admin/tests/contacto_argumentos.rs
+  - crates/hexcell-admin/tests/contacto_ejecucion.rs
+  - crates/hexcell-admin/tests/contacto_guardas_de_revision.rs
+  - crates/hexcell/src/main.rs
+  - README.md
+  - docs/runbook-operacion.md
+  - docs/STATUS.md
+  - docs/plan/fase-a-6-empaquetado-cli.md
+  - docs/bitacora-de-descartes.md
+forbid:
+  files:
+    - crates/hexcell-storage/**
+    - deploy/**
+    - .github/**
+    - sidecar/**
+    - scripts/laboratorio/restablecer-contacto.sh
+    - crates/hexcell/src/admin.rs
+    - crates/hexcell/src/lib.rs
+    - crates/hexcell-core/**
+    - crates/hexcell-canal-whatsmeow/**
+    - crates/hexcell-admin/tests/argumentos.rs
+    - crates/hexcell-admin/tests/comandos.rs
+    - crates/hexcell-admin/tests/reemparejamiento.rs
+    - crates/hexcell-admin/tests/codigo_de_salida.rs
+    - crates/hexcell-admin/tests/salida.rs
+    - crates/hexcell-admin/tests/comun/**
+    - crates/hexcell/tests/restablecimiento_de_contacto_http.rs
+    - docs/PRD.md
+    - docs/adr/**
+    - Cargo.lock
+    - Cargo.toml
+    - crates/*/Cargo.toml
+    - '**/*.db'
+    - '**/*.db-wal'
+    - '**/*.db-shm'
+    - '**/.env*'
+  behaviors:
+    - "hexcell-admin never opens IPC or any cell database: no UnixStream to the sidecar, no rusqlite, no sqlite3, no read of identidad.db; the only channel is the HTTP probe from a sibling container (D-57, adr-0024). The control-plane store is not opened for this group."
+    - "No invented exit codes: only Exito, Fallo and UsoIncorrecto are produced, taken from codigo_de_salida.rs; NoImplementadoTodavia appears only in the defensive pure arm."
+    - "No existing test file is edited (tests/argumentos.rs, comandos.rs, reemparejamiento.rs, codigo_de_salida.rs, salida.rs, comun/**, crates/hexcell/tests/**); every new test is in a NEW file, except the new cases appended to the existing #[cfg(test)] module of crates/hexcell/src/main.rs."
+    - "The GrupoDesconocido message («los grupos admitidos son «cell», «config» y «reporte»») is not modified; tests/argumentos.rs:270 pins it. The new group is documented only in TEXTO_DE_USO. No variant is added to Subcomando."
+    - "README sections are not renumbered: the new section is ### 10 after section 9, and section 9 receives at most ONE appended referral sentence."
+    - "The closure restablecer_contacto in crates/hexcell/src/main.rs and everything outside the #[cfg(test)] module of that file stay unmodified; nothing is extracted to crates/hexcell/src/lib.rs."
+    - "consultar_por_hermano changes visibility only (fn -> pub(crate)); it is not duplicated and no existing signature or behavior of ciclo_de_vida.rs changes. If the parser needs a new Subcomando variant or an existing public signature must change, STOP and report BLOCKED."
+    - "Existence of the contact comes from the explicit boolean existe in the reply, never from counters at zero. Without --incluir-baja the body always carries incluir_baja=false; a missing or non-boolean value is never read as true. --incluir-baja without --confirmar is rejected by the parser (UsoIncorrecto, message names --confirmar) unless --simular is present; --confirmar without --incluir-baja is always UsoIncorrecto; --simular emits no request and creates no container."
+    - "The parser stays hand-written (D-53): no clap/argh/lexopt or any new dependency in any Cargo.toml; no byte-index slicing of operator input (multibyte input must be rejected, never panic; the release profile aborts on panic)."
+    - "Guard tests carry these exact names so review and the mutation record can cite them: in contacto_argumentos.rs incluir_baja_sin_confirmar_es_uso_incorrecto_y_nombra_confirmar, confirmar_sin_incluir_baja_es_uso_incorrecto, restablecer_por_omision_no_pide_confirmar, simular_con_incluir_baja_no_pide_confirmar; in contacto_ejecucion.rs sin_incluir_baja_el_cuerpo_recibido_dice_false, con_incluir_baja_el_cuerpo_recibido_dice_true, simular_no_emite_ninguna_peticion_ni_crea_contenedor, contacto_desconocido_sale_fallo_aunque_los_contadores_sean_cero, contacto_existente_sin_filas_sale_exito_con_la_linea_sin_cambios, incluir_baja_sin_confirmar_no_emite_peticion_alguna; in main.rs tests restablecer_contacto_entrega_contacto_e_incluir_baja_false_en_su_propio_campo, restablecer_contacto_entrega_contacto_e_incluir_baja_true_en_su_propio_campo, restablecer_contacto_llama_al_adaptador_y_devuelve_el_acuse, restablecer_contacto_sin_conexion_responde_fallido_y_no_registra_orden."
+    - "Mutation record, run by hand after implementation and written in the implementation log, each proving the mutation changes the copy (cmp or diff), naming WHICH test went red and running under the same cargo profile as the test: m1 CLI body always incluir_baja true -> sin_incluir_baja_el_cuerpo_recibido_dice_false; m2 CLI body always false -> con_incluir_baja_el_cuerpo_recibido_dice_true; m3 drop the --confirmar requirement in the parser -> incluir_baja_sin_confirmar_es_uso_incorrecto_y_nombra_confirmar and incluir_baja_sin_confirmar_no_emite_peticion_alguna; m4 outcome derived from counters (both directions) -> contacto_desconocido_sale_fallo_aunque_los_contadores_sean_cero and contacto_existente_sin_filas_sale_exito_con_la_linea_sin_cambios; m5 --simular emits a request -> simular_no_emite_ninguna_peticion_ni_crea_contenedor; m6 closure restablecer_contacto passes incluir hard-coded false -> ..._incluir_baja_true_en_su_propio_campo, and hard-coded true -> ..._incluir_baja_false_en_su_propio_campo (a swap of contacto and incluir_baja does not compile; use hard-coded, negated or replaced arguments); m7 closure returns the no-connection path instead of calling the adapter -> restablecer_contacto_llama_al_adaptador_y_devuelve_el_acuse; m8 and m9 docs mutations are produced by guarda-hex-091-b.sh --autoprueba. A guard whose discriminator is constant (can only turn red) does not count."
+    - "Docs are append-only and in Spanish: STATUS.md :570 gets text appended at the END of that same line (never rewritten) recording the delivered surface and the lab script as a superseded stopgap; the plan note and the README/runbook additions are appends or new blocks; dates are absolute. The runbook section 9 states that --simular cannot detect an unknown contact, that contacto_desconocido is not re-executable, and quotes the event identidad.baja_de_contacto_revivida with origen equal to the sidecar literal (exact equality guarded). If an approach is discarded, D-61 (next free, read from disk with grep -n '^### D-' docs/bitacora-de-descartes.md | tail -1) is written in the same commit; otherwise the bitacora stays untouched."
+    - "Commits: conventional commits in Spanish on ai/HEX-091-b, never a Co-Authored-By line, Claude-Session line or any AI attribution (CLAUDE.md overrides the harness reminder); never git merge; the working tree must be clean at verify time; rebase on main before verify."
+verify:
+  commands:
+    - cargo fmt --check
+    - cargo clippy -p hexcell-admin -p hexcell --all-targets -- -D warnings
+    - cargo test -p hexcell-admin
+    - cargo test -p hexcell --bin hexcell
+    - test "$(git rev-list --count main..HEAD)" -ge 1 && test -z "$(git status --porcelain)"
+    - test -z "$(git log main..HEAD --format=%B | grep -iE 'co-authored|claude')"
+    - git diff --quiet "$(git merge-base main HEAD)" -- crates/hexcell-storage deploy .github sidecar scripts/laboratorio/restablecer-contacto.sh crates/hexcell/src/admin.rs crates/hexcell/src/lib.rs crates/hexcell-core crates/hexcell-canal-whatsmeow crates/hexcell-admin/tests/argumentos.rs crates/hexcell-admin/tests/comandos.rs crates/hexcell-admin/tests/reemparejamiento.rs crates/hexcell-admin/tests/codigo_de_salida.rs crates/hexcell-admin/tests/salida.rs crates/hexcell-admin/tests/comun crates/hexcell/tests/restablecimiento_de_contacto_http.rs docs/PRD.md docs/adr Cargo.lock Cargo.toml crates/hexcell-admin/Cargo.toml crates/hexcell/Cargo.toml
+    - >-
+      test "$(cargo test -q -p hexcell-admin --test contacto_argumentos -- --list 2>/dev/null | grep -cE '(incluir_baja_sin_confirmar_es_uso_incorrecto_y_nombra_confirmar|confirmar_sin_incluir_baja_es_uso_incorrecto|restablecer_por_omision_no_pide_confirmar|simular_con_incluir_baja_no_pide_confirmar): test$')" -eq 4
+    - >-
+      test "$(cargo test -q -p hexcell-admin --test contacto_ejecucion -- --list 2>/dev/null | grep -cE '(sin_incluir_baja_el_cuerpo_recibido_dice_false|con_incluir_baja_el_cuerpo_recibido_dice_true|simular_no_emite_ninguna_peticion_ni_crea_contenedor|contacto_desconocido_sale_fallo_aunque_los_contadores_sean_cero|contacto_existente_sin_filas_sale_exito_con_la_linea_sin_cambios|incluir_baja_sin_confirmar_no_emite_peticion_alguna): test$')" -eq 6
+    - >-
+      test "$(cargo test -q -p hexcell --bin hexcell -- --list 2>/dev/null | grep -cE 'restablecer_contacto_(entrega_contacto_e_incluir_baja_false_en_su_propio_campo|entrega_contacto_e_incluir_baja_true_en_su_propio_campo|llama_al_adaptador_y_devuelve_el_acuse|sin_conexion_responde_fallido_y_no_registra_orden): test$')" -eq 4
+    - test "$(git diff "$(git merge-base main HEAD)" -- crates/hexcell-admin/src crates/hexcell/src/main.rs | grep -c '^+.*unreachable!')" -eq 0
+    - bash "$(git rev-parse --git-common-dir)/../.ai/tasks/active/HEX-091-b/guarda-hex-091-b.sh"
+    - bash "$(git rev-parse --git-common-dir)/../.ai/tasks/active/HEX-091-b/guarda-hex-091-b.sh" --autoprueba
+  target_s: 60
+acceptance:
+  bdd_suite: >-
+    cargo build --workspace && cargo test --workspace && cargo fmt --check &&
+    cargo clippy --workspace --all-targets -- -D warnings &&
+    (cd sidecar && go build ./... && go vet ./... && go test ./... -count=1)
+  human_gate: true
+limits:
+  # Raised from the brief (14 files, 1400 lines, tests 700, main.rs 200). Estimate ~1950-2000 lines:
+  # contacto.rs ~330, argumentos.rs ~170, comandos.rs ~70, ciclo_de_vida.rs/lib.rs ~4,
+  # hexcell-admin tests ~850 (two files; ~130 lines of probe helpers are duplicated because the
+  # helpers in reemparejamiento.rs are private and comun/mod.rs cannot be edited), main.rs tests
+  # ~280 (socket handshake, order reader, four cases), docs ~220 (README ~70, runbook ~110, STATUS,
+  # plan, bitacora). 2400 leaves ~20% headroom for review-added guards. per_class is evaluated per
+  # file: each hexcell-admin test file stays under 700, main.rs gets 320.
+  max_files_changed: 16
+  max_diff_lines: 2400
+  per_class:
+    - glob: crates/hexcell-admin/tests/**
+      max_diff_lines: 700
+    - glob: crates/hexcell/src/main.rs
+      max_diff_lines: 320
+    - glob: crates/hexcell-admin/src/contacto.rs
+      max_diff_lines: 480
+    - glob: crates/hexcell-admin/src/argumentos.rs
+      max_diff_lines: 300
+    - glob: docs/**
+      max_diff_lines: 260
+execution:
+  mode: worktree_edit
+  branch: ai/HEX-091-b
+retry_policy:
+  max_attempts: 2
+  escalate_after: 2
