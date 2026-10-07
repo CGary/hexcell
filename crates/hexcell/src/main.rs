@@ -628,7 +628,8 @@ mod tests {
         atender_restablecimiento_de_contacto,
     };
     use hexcell_canal_whatsmeow::mensajes::{
-        AcuseEmparejamiento, OrdenEmparejar, Saludo, VERSION_PROTOCOLO,
+        AcuseEmparejamiento, AcuseRestablecerContacto, OrdenEmparejar, OrdenRestablecerContacto,
+        Saludo, VERSION_PROTOCOLO,
     };
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
     use tokio::net::UnixListener;
@@ -739,113 +740,198 @@ mod tests {
         );
     }
 
-    fn registro_de_restablecimiento(
-        recibidas: std::sync::Arc<std::sync::Mutex<Vec<SolicitudDeRestablecimiento>>>,
-    ) -> RegistroDeSesion {
-        let operaciones = OperacionesDeSesion {
-            cerrar: Box::new(|| Box::pin(async { Ok(()) })),
-            pausar_envio: Box::new(|_| Box::pin(async { DesenlaceDePausa::Aplicado })),
-            emparejar: Box::new(|_, _| {
-                Box::pin(async {
-                    DesenlaceDeEmparejamiento::Fallido {
-                        motivo: "no usado".into(),
-                    }
-                })
-            }),
-            estado: Box::new(|| Box::pin(async { hexcell_core::canal::EstadoSesion::Activa })),
-            restablecer_contacto: Box::new(move |solicitud, _| {
-                recibidas.lock().unwrap().push(solicitud.clone());
-                Box::pin(async move {
-                    DesenlaceDeRestablecimiento::Aplicado {
-                        contacto: solicitud.contacto,
-                        incluir_baja: solicitud.incluir_baja,
-                        cortacircuitos: 1,
-                        presentacion_de_conversacion: 2,
-                        baja_de_contacto: if solicitud.incluir_baja { 3 } else { 0 },
-                    }
-                })
-            }),
-        };
-        let registro = Arc::new(std::sync::OnceLock::new());
-        let _ = SesionDeCanal::ConSesion(operaciones).registrar(&registro);
-        registro
+    /// Composición real de restablecimiento: el adaptador whatsmeow conectado a un sidecar falso
+    /// que completa el saludo, y la sesión construida con `construir_sesion_de_canal`, de modo
+    /// que la ruta pasa por el cierre `restablecer_contacto` de producción, no por uno de prueba.
+    struct SidecarDeRestablecimiento {
+        _socket: SocketDeSidecarFalso,
+        _adaptador: AdaptadorWhatsmeow,
+        _eventos: tokio::sync::mpsc::Receiver<hexcell_core::canal::EventoEntrante>,
+        registro: RegistroDeSesion,
+        lectura: BufReader<tokio::io::ReadHalf<tokio::net::UnixStream>>,
+        escritura: tokio::io::WriteHalf<tokio::net::UnixStream>,
     }
+
+    async fn componer_restablecimiento(etiqueta: &str) -> SidecarDeRestablecimiento {
+        let socket = SocketDeSidecarFalso::nueva(etiqueta);
+        let listener = UnixListener::bind(&socket.ruta).expect("vincular el socket unix falso");
+        let (adaptador, eventos) = AdaptadorWhatsmeow::nuevo(
+            socket.ruta.clone(),
+            "celula-test",
+            8,
+            Retroceso::nuevo(Duration::from_millis(10), 2, Duration::from_millis(10)),
+        );
+        adaptador.arrancar();
+        let (flujo, _) = listener.accept().await.expect("aceptar la conexión");
+        let (lectura, mut escritura) = tokio::io::split(flujo);
+        let mut lectura = BufReader::new(lectura);
+        let mut linea_saludo = String::new();
+        lectura.read_line(&mut linea_saludo).await.expect("saludo");
+        let saludo = Saludo {
+            version: VERSION_PROTOCOLO,
+            tipo: "saludo".to_string(),
+            emisor: "sidecar".to_string(),
+            id_celula: "celula-test".to_string(),
+        };
+        escritura
+            .write_all(format!("{}\n", serde_json::to_string(&saludo).unwrap()).as_bytes())
+            .await
+            .expect("enviar el saludo del sidecar falso");
+        let asa = adaptador.asa_de_sesion("contacto restablecer");
+        let sesion = construir_sesion_de_canal(asa, Duration::from_secs(5), Duration::from_secs(5));
+        let registro: RegistroDeSesion = Arc::new(std::sync::OnceLock::new());
+        let _ = sesion.registrar(&registro);
+        SidecarDeRestablecimiento {
+            _socket: socket,
+            _adaptador: adaptador,
+            _eventos: eventos,
+            registro,
+            lectura,
+            escritura,
+        }
+    }
+
+    impl SidecarDeRestablecimiento {
+        /// Lanza la ruta real en otra tarea y devuelve su asa.
+        fn lanzar_ruta(
+            &self,
+            contacto: &str,
+            incluir_baja: bool,
+        ) -> tokio::task::JoinHandle<(hyper::StatusCode, serde_json::Value)> {
+            let registro = Arc::clone(&self.registro);
+            let solicitud = SolicitudDeRestablecimiento {
+                contacto: contacto.to_string(),
+                incluir_baja,
+            };
+            tokio::spawn(async move {
+                atender_restablecimiento_de_contacto(&registro, solicitud, Duration::from_secs(3))
+                    .await
+            })
+        }
+
+        /// Orden que el sidecar falso registra, o `None` si no llega ninguna dentro del margen.
+        async fn registrar_orden(&mut self) -> Option<OrdenRestablecerContacto> {
+            let mut linea = String::new();
+            match tokio::time::timeout(Duration::from_secs(2), self.lectura.read_line(&mut linea))
+                .await
+            {
+                Ok(Ok(n)) if n > 0 => Some(
+                    serde_json::from_str(linea.trim_end()).expect("parsear la orden registrada"),
+                ),
+                _ => None,
+            }
+        }
+
+        /// Responde con un acuse `aplicado` que repite lo que la orden trajo.
+        async fn acusar(&mut self, orden: &OrdenRestablecerContacto, baja: i64) {
+            let acuse = AcuseRestablecerContacto {
+                version: VERSION_PROTOCOLO,
+                tipo: "acuse_restablecer_contacto".to_string(),
+                contacto: orden.contacto.clone(),
+                incluir_baja: orden.incluir_baja.clone(),
+                resultado: "aplicado".to_string(),
+                existe: "si".to_string(),
+                cortacircuitos: 4,
+                presentacion_de_conversacion: 5,
+                baja_de_contacto: baja,
+                motivo: String::new(),
+            };
+            self.escritura
+                .write_all(format!("{}\n", serde_json::to_string(&acuse).unwrap()).as_bytes())
+                .await
+                .expect("enviar el acuse del sidecar falso");
+        }
+    }
+
+    const CONTACTO_A: &str = "ct-a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1";
+    const CONTACTO_B: &str = "ct-b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2";
 
     #[tokio::test]
     async fn restablecer_contacto_entrega_contacto_e_incluir_baja_false_en_su_propio_campo() {
-        let recibidas = Arc::new(std::sync::Mutex::new(Vec::new()));
-        let registro = registro_de_restablecimiento(Arc::clone(&recibidas));
-        let (estado, cuerpo) = atender_restablecimiento_de_contacto(
-            &registro,
-            SolicitudDeRestablecimiento {
-                contacto: "ct-00000000000000000000000000000000".into(),
-                incluir_baja: false,
-            },
-            Duration::from_secs(1),
-        )
-        .await;
-        assert_eq!(estado, hyper::StatusCode::OK);
-        assert_eq!(
-            recibidas.lock().unwrap()[0].contacto,
-            "ct-00000000000000000000000000000000"
-        );
-        assert!(!recibidas.lock().unwrap()[0].incluir_baja);
+        let mut sidecar = componer_restablecimiento("restablecer-false").await;
+        let ruta = sidecar.lanzar_ruta(CONTACTO_A, false);
+        let orden = sidecar
+            .registrar_orden()
+            .await
+            .expect("el sidecar debía recibir la orden");
+        assert_eq!(orden.tipo, "orden_restablecer_contacto");
+        assert_eq!(orden.contacto, CONTACTO_A);
+        assert_eq!(orden.incluir_baja, "no");
+        sidecar.acusar(&orden, 0).await;
+        let (_, cuerpo) = ruta.await.expect("la ruta no debe entrar en pánico");
+        assert_eq!(cuerpo["resultado"], "aplicado", "{cuerpo}");
         assert_eq!(cuerpo["incluir_baja"], false);
     }
 
     #[tokio::test]
     async fn restablecer_contacto_entrega_contacto_e_incluir_baja_true_en_su_propio_campo() {
-        let recibidas = Arc::new(std::sync::Mutex::new(Vec::new()));
-        let registro = registro_de_restablecimiento(Arc::clone(&recibidas));
+        let mut sidecar = componer_restablecimiento("restablecer-true").await;
+        let ruta = sidecar.lanzar_ruta(CONTACTO_B, true);
+        let orden = sidecar
+            .registrar_orden()
+            .await
+            .expect("el sidecar debía recibir la orden");
+        assert_eq!(orden.contacto, CONTACTO_B);
+        assert_eq!(orden.incluir_baja, "si");
+        sidecar.acusar(&orden, 6).await;
+        let (_, cuerpo) = ruta.await.expect("la ruta no debe entrar en pánico");
+        assert_eq!(cuerpo["resultado"], "aplicado", "{cuerpo}");
+        assert_eq!(cuerpo["contacto"], CONTACTO_B);
+        assert_eq!(cuerpo["baja_de_contacto"], 6);
+    }
+
+    #[tokio::test]
+    async fn restablecer_contacto_llama_al_adaptador_y_devuelve_el_acuse() {
+        let mut sidecar = componer_restablecimiento("restablecer-acuse").await;
+        let ruta = sidecar.lanzar_ruta(CONTACTO_A, false);
+        let orden = sidecar.registrar_orden().await.expect(
+            "el cierre debía llamar al adaptador y el sidecar recibir exactamente una orden",
+        );
+        sidecar.acusar(&orden, 0).await;
+        let (estado, cuerpo) = ruta.await.expect("la ruta no debe entrar en pánico");
+        assert_eq!(estado, hyper::StatusCode::OK);
+        assert_eq!(cuerpo["resultado"], "aplicado", "{cuerpo}");
+        assert_eq!(cuerpo["existe"], true);
+        assert_eq!(cuerpo["cortacircuitos"], 4);
+        assert_eq!(cuerpo["presentacion_de_conversacion"], 5);
+        assert!(
+            sidecar.registrar_orden().await.is_none(),
+            "una sola orden por restablecimiento"
+        );
+    }
+
+    #[tokio::test]
+    async fn restablecer_contacto_sin_conexion_responde_fallido_y_no_registra_orden() {
+        let socket = SocketDeSidecarFalso::nueva("restablecer-sin-conexion");
+        let listener = UnixListener::bind(&socket.ruta).expect("vincular el socket unix falso");
+        // Adaptador sin arrancar: nunca conecta, así que el cierre real recibe `SinConexion`.
+        let (adaptador, _eventos) = AdaptadorWhatsmeow::nuevo(
+            socket.ruta.clone(),
+            "celula-test",
+            8,
+            Retroceso::nuevo(Duration::from_millis(10), 2, Duration::from_millis(10)),
+        );
+        let asa = adaptador.asa_de_sesion("contacto restablecer");
+        let sesion = construir_sesion_de_canal(asa, Duration::from_secs(5), Duration::from_secs(5));
+        let registro: RegistroDeSesion = Arc::new(std::sync::OnceLock::new());
+        let _ = sesion.registrar(&registro);
         let (estado, cuerpo) = atender_restablecimiento_de_contacto(
             &registro,
             SolicitudDeRestablecimiento {
-                contacto: "ct-ffffffffffffffffffffffffffffffff".into(),
-                incluir_baja: true,
+                contacto: CONTACTO_A.into(),
+                incluir_baja: false,
             },
             Duration::from_secs(1),
         )
         .await;
         assert_eq!(estado, hyper::StatusCode::OK);
-        assert_eq!(
-            recibidas.lock().unwrap()[0].contacto,
-            "ct-ffffffffffffffffffffffffffffffff"
-        );
-        assert!(recibidas.lock().unwrap()[0].incluir_baja);
-        assert_eq!(cuerpo["baja_de_contacto"], 3);
-    }
-
-    #[tokio::test]
-    async fn restablecer_contacto_llama_al_adaptador_y_devuelve_el_acuse() {
-        let recibidas = Arc::new(std::sync::Mutex::new(Vec::new()));
-        let registro = registro_de_restablecimiento(Arc::clone(&recibidas));
-        let (_, cuerpo) = atender_restablecimiento_de_contacto(
-            &registro,
-            SolicitudDeRestablecimiento {
-                contacto: "ct-00000000000000000000000000000000".into(),
-                incluir_baja: false,
-            },
-            Duration::from_secs(1),
-        )
-        .await;
-        assert_eq!(recibidas.lock().unwrap().len(), 1);
-        assert_eq!(cuerpo["resultado"], "aplicado");
-        assert_eq!(cuerpo["existe"], true);
-    }
-
-    #[tokio::test]
-    async fn restablecer_contacto_sin_conexion_responde_fallido_y_no_registra_orden() {
-        let registro = Arc::new(std::sync::OnceLock::new());
-        let (estado, cuerpo) = atender_restablecimiento_de_contacto(
-            &registro,
-            SolicitudDeRestablecimiento {
-                contacto: "ct-00000000000000000000000000000000".into(),
-                incluir_baja: false,
-            },
-            Duration::from_secs(1),
-        )
-        .await;
-        assert_eq!(estado, hyper::StatusCode::BAD_GATEWAY);
         assert_eq!(cuerpo["resultado"], "fallido");
+        assert_eq!(cuerpo["motivo"], MOTIVO_SIN_CONEXION);
+        assert!(
+            tokio::time::timeout(Duration::from_millis(300), listener.accept())
+                .await
+                .is_err(),
+            "sin conexión ningún sidecar puede registrar una orden"
+        );
     }
 }

@@ -234,3 +234,7 @@ Por omisión elimina `cortacircuitos` y `presentacion_de_conversacion`. `baja_de
 incluye con `--incluir-baja --confirmar`. `--simular` describe las tres tablas sin contactar
 Docker y no exige `--confirmar`, aunque no puede detectar un contacto desconocido. Los códigos son
 0 para éxito, 1 para fallo de ejecución y 2 para uso incorrecto.
+
+Un contacto existente sin filas que borrar termina en 0 e imprime además, por stderr y con el
+patrón de HEX-087, «sin cambios: el contacto no tenía filas que borrar»; un `contacto_desconocido`
+termina en 1 sin línea de éxito, aunque sus contadores valgan cero.

@@ -173,7 +173,7 @@ pub fn ejecutar_contacto<S: Write, D: Write>(
                 && presentacion_de_conversacion == 0
                 && (!invocacion.incluir_baja() || baja_de_contacto == 0)
             {
-                let _ = salida.linea("sin cambios");
+                let _ = salida.diagnostico("sin cambios: el contacto no tenía filas que borrar");
             }
             CodigoDeSalida::Exito
         }
