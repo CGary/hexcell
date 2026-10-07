@@ -812,8 +812,8 @@ Las entradas conservan su numeración; esta sección es la autoridad sobre el or
 
 ## Nota de cierre de HEX-095 (2026-10-07)
 
-Tarea mecánica de cierre de cuatro hallazgos de laboratorio registrados como pendientes en
-`docs/STATUS.md`: (Hallazgo 11) el modo `hexcell respaldar` inicializa ahora el registro
+Tarea mecánica de cierre de tres hallazgos de laboratorio y una nota de honestidad registrados como
+pendientes en `docs/STATUS.md`: (Hallazgo 11) el modo `hexcell respaldar` inicializa ahora el registro
 estructurado con el id validado de la célula, de modo que sus líneas llevan el id real y no
 `sin-configurar`; (nota de honestidad) el comentario de `Conectar` en el sidecar recupera la
 advertencia sobre contextos cancelados y su cobertura unitaria parcial; (Hallazgo 7) el runbook del
