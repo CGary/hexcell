@@ -6,7 +6,7 @@
   que el 2026-09-12 fijó el productor `sidecar/internal/metricas` y su línea periódica `key=value`, y
   `adr-0035-latencia-hasta-el-acuse-en-metricas-del-sidecar.md`, que el 2026-09-13 añadió la cuarta
   clave agregada. Este ADR añade dos claves más —`aplazadas_por_horario` y `aplazadas_por_rampa`— a
-  esa misma línea, sin tipo IPC nuevo, sin subir la versión de cable (sigue en 6, `adr-0032`), sin
+  esa misma línea, sin tipo IPC nuevo, sin subir la versión de cable (sigue en 7, `adr-0040`), sin
   tocar ningún crate Rust y sin añadir dependencia Go. La lista de claves agregadas pasa de cuatro a
   seis.
 
