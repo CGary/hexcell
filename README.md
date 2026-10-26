@@ -82,7 +82,7 @@ Estado (2026-09-14): la gramática de los seis subcomandos `cell` existe en `hex
 
 La suite de administración central compila como un binario nativo que interactúa directamente con el socket Unix de Docker (`/var/run/docker.sock`). En la Fase B interactúa además con la API local de administración en memoria de Caddy (`http://localhost:2019`).
 
-Para un mapa situación-a-comando y el detalle de cada subcomando, ver el runbook de operación en [docs/runbook-operacion.md](docs/runbook-operacion.md).
+Para un mapa situación-a-comando y el detalle de cada subcomando, ver el runbook de operación en [docs/runbook-operacion.md](docs/runbook-operacion.md). El estado del servidor real y el encargo de levantar la primera célula en él están en [docs/runbook-despliegue-optiplex.md](docs/runbook-despliegue-optiplex.md).
 
 ### 1. Suspender Temporalmente una Célula (Falta de pago / Pausa)
 
